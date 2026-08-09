@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **A non-ASCII name is now rejected (gh-784, second half).**
+    `valid_identifier` gained an `isascii()` term. `str.isalnum()` is
+    Unicode-aware, so `café` and `Ωmega` passed a check whose message talked
+    about letters and digits and were then written into the **sacred** header
+    — where GCC accepts UTF-8 identifiers as an extension and MSVC's behaviour
+    differs. A name that compiles on one toolchain and not another is exactly
+    the portability trap `[project] platforms` exists to make explicit,
+    arriving silently through a name instead. Uppercase stays accepted and
+    that is deliberate: a view's class name is legitimately `CamelCase`
+    through this same predicate, so gh-784's first half fixed the *message*
+    (v0.55.0) rather than the code.
+
+    **This reaches manifests that already carry one.** `jm apply` replays a
+    manifest through the same declaration commands, so such a project stops
+    applying until the name is renamed — in the header, the manifest and the
+    generated glue. That is the tightening the issue asks for, staged as it
+    asks: `jm status` has listed every non-ASCII declared name since v0.55.0,
+    which is the release of warning the change was waiting on. The report
+    outlives it and now prints *before* `status`'s own scratch replay, so a
+    refused project still gets the whole rename list in one run instead of
+    one `error:` at a time.
+
 ## [0.55.0] — 2026-08-09
 
 Completes gh-805, the declarative binding surface: every section (A–H) now has

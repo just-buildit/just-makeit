@@ -261,6 +261,36 @@ def run(
             )
         return 0
 
+    # gh-784: names that built yesterday and do not today. `valid_identifier`
+    # rejects non-ASCII since the term landed, and `apply` replays a manifest
+    # through the same declaration commands — so a tree that already carries
+    # one is refused by the scratch replay below, which ends the report before
+    # it starts. Printed HERE, ahead of that replay, for exactly that reason:
+    # the trees this section exists for are precisely the trees that no longer
+    # reach the rest of the function, and one `error:` naming one name is a
+    # rename-recompile-repeat loop where this names all of them at once.
+    #
+    # Never counted as drift — nothing here is a file apply would change — so
+    # it stays out of `--check`, whose whole output is that count.
+    if not as_json and not check:
+        _non_ascii = C.non_ascii_names(cfg)
+        if _non_ascii:
+            print(
+                f"NON-ASCII NAMES ({len(_non_ascii)}) — already declared, "
+                "portability risk:"
+            )
+            for _kind, _name in _non_ascii:
+                print(f"  ? {_kind} {_name!r}")
+            print(
+                "  GCC accepts UTF-8 identifiers as an extension and MSVC "
+                "differs, so these can\n"
+                "  compile on one toolchain and not another. Rename them to "
+                "ASCII; jm no longer\n"
+                "  accepts one, so `apply` refuses the manifest until you "
+                "do. Not counted as drift."
+            )
+            print()
+
     allow_patterns = list(allow) + C.status_allow(cfg)
     # gh-830: collected during the walk below.
     managed_paths: list[str] = []
@@ -753,27 +783,6 @@ def run(
         # the person reading this output, and a CI job passing a defensive
         # one for a file that does not exist yet is not carrying a stale
         # exemption.
-        # gh-784: names that build today and may not tomorrow. Reported a
-        # release ahead of any tightening, so a project can rename on its own
-        # schedule rather than discovering it when `apply` starts refusing.
-        # Never counted as drift — nothing here is a file apply would change.
-        _non_ascii = C.non_ascii_names(cfg)
-        if _non_ascii:
-            print(
-                f"NON-ASCII NAMES ({len(_non_ascii)}) — accepted today, "
-                "portability risk:"
-            )
-            for _kind, _name in _non_ascii:
-                print(f"  ? {_kind} {_name!r}")
-            print(
-                "  GCC accepts UTF-8 identifiers as an extension and MSVC "
-                "differs, so these can\n"
-                "  compile on one toolchain and not another. Renaming to "
-                "ASCII is the safe move.\n"
-                "  Not counted as drift."
-            )
-            print()
-
         _manifest_allow = C.status_allow(cfg)
         _unmatched = [
             pat

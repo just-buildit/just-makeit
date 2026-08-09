@@ -249,9 +249,15 @@ Each `--state name:type[:default]` generates:
 
 **Naming rules**
 
-- Lowercase letters, digits, and underscores only.
+- ASCII letters, digits, and underscores only.
 - Must not start with a digit.
 - Examples: `engine`, `parser`, `rate_limiter`
+
+Uppercase is accepted (a view's class name is `CamelCase` through the same
+check), though object names are conventionally lowercase since the Python
+class name is derived from them. Non-ASCII is rejected (gh-784): GCC accepts
+UTF-8 identifiers as an extension and MSVC may not, so such a name compiles
+on one toolchain and not another.
 
 The Python class name is derived automatically:
 
