@@ -1470,15 +1470,13 @@ def make_methods_ctx(
             variable_output
             and not multi_output
             and (not has_params or _single_array_param)
-            # gh-788: not offered for a structured result yet. The out=
-            # branch acquires the caller's buffer with PyArray_FROM_OTF and a
-            # scalar NPY_ enum, which for a record would silently CAST the
-            # caller's structured array to that scalar type rather than
-            # reject it -- the exact silent-reinterpretation this feature
-            # exists to prevent. Doing it properly needs PyArray_EquivTypes
-            # against the cached descr; tracked separately rather than left
-            # as an undocumented carve-out.
-            and not record_dtype
+            # gh-805 §E: a structured result gets `out=` too. Three places
+            # in this branch spoke in scalar NPY_ enums -- the guard, the
+            # acquisition, and the trimmed view -- and each has a record form
+            # below. A scalar enum cannot name a record layout (its type num
+            # is NPY_VOID), and coercing to one would silently reinterpret
+            # the caller's buffer, which is why this was carved out until the
+            # descr-based path existed rather than shipped half-working.
         )
         # gh-412: keyword parsing is independent of the `out=` buffer feature.
         # A variable_output method with named params (e.g. Farrow.delay(x, mu))
@@ -1768,22 +1766,67 @@ def make_methods_ctx(
                     if none_on_empty
                     else ""
                 )
-                _vo_out_guard = _coerce.out_buffer_guard(
-                    "out_obj",
-                    _vo_out_np,
-                    decrefs=_decref_early_vo.strip(),
-                    indent=" " * 8,
+                _vo_out_guard = (
+                    _coerce.out_buffer_guard_record(
+                        "out_obj",
+                        f"{_sid}_get_dtype",
+                        decrefs=_decref_early_vo.strip(),
+                        indent=" " * 8,
+                    )
+                    if record_dtype
+                    else _coerce.out_buffer_guard(
+                        "out_obj",
+                        _vo_out_np,
+                        decrefs=_decref_early_vo.strip(),
+                        indent=" " * 8,
+                    )
+                )
+                # The guard has already proved exact dtype, C-contiguity and
+                # writeability, so the record path has nothing to convert:
+                # borrow the caller's array and take one reference, which is
+                # the same ownership FROM_OTF hands back on the scalar path.
+                _vo_acquire = (
+                    (
+                        "        PyArrayObject *out_arr ="
+                        " (PyArrayObject *)out_obj;\n"
+                        "        Py_INCREF(out_arr);\n"
+                    )
+                    if record_dtype
+                    else (
+                        f"        PyArrayObject *out_arr ="
+                        f" (PyArrayObject *)PyArray_FROM_OTF(\n"
+                        f"            out_obj, {_vo_out_np},\n"
+                        f"            NPY_ARRAY_C_CONTIGUOUS"
+                        f" | NPY_ARRAY_WRITEABLE);\n"
+                        f"        if (!out_arr) {{"
+                        f" {_decref_early_vo}return NULL; }}\n"
+                    )
+                )
+                # PyArray_NewFromDescr STEALS the descr on both paths, so the
+                # new reference from _get_dtype() is balanced with no decref.
+                _vo_view = (
+                    (
+                        f"        PyArray_Descr *_vdescr ="
+                        f" {_sid}_get_dtype();\n"
+                        f"        if (!_vdescr)"
+                        f" {{ Py_DECREF(out_arr); return NULL; }}\n"
+                        f"        PyObject *_oview = PyArray_NewFromDescr(\n"
+                        f"            &PyArray_Type, _vdescr, 1, &_odim,\n"
+                        f"            NULL, PyArray_DATA(out_arr),"
+                        f" 0, NULL);\n"
+                    )
+                    if record_dtype
+                    else (
+                        f"        PyObject *_oview ="
+                        f" PyArray_SimpleNewFromData(\n"
+                        f"            1, &_odim, {_vo_out_np},"
+                        f" PyArray_DATA(out_arr));\n"
+                    )
                 )
                 _out_branch = (
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_vo_out_guard}"
-                    f"        PyArrayObject *out_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"            out_obj, {_vo_out_np},\n"
-                    f"            NPY_ARRAY_C_CONTIGUOUS"
-                    f" | NPY_ARRAY_WRITEABLE);\n"
-                    f"        if (!out_arr) {{"
-                    f" {_decref_early_vo}return NULL; }}\n"
+                    f"{_vo_acquire}"
                     f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
                     f"        size_t _omax ="
                     f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
@@ -1823,9 +1866,7 @@ def make_methods_ctx(
                     f"{_out_decref}"
                     f"{_out_none}"
                     f"        npy_intp _odim = (npy_intp)n_out;\n"
-                    f"        PyObject *_oview = PyArray_SimpleNewFromData(\n"
-                    f"            1, &_odim, {_vo_out_np},"
-                    f" PyArray_DATA(out_arr));\n"
+                    f"{_vo_view}"
                     f"        if (!_oview)"
                     f" {{ Py_DECREF(out_arr); return NULL; }}\n"
                     f"        PyArray_SetBaseObject("
@@ -2739,13 +2780,12 @@ def make_methods_ctx(
         # single-array-param method (params=[{array}], no other params) is
         # eligible too -- see _single_array_param above.
         _stub_enable_out = (
-            m_var
-            and not m_multi
-            and (not params or _single_array_param)
-            # gh-788: mirrors `_enable_out` above — a structured result is
-            # not offered an out= buffer yet, and a stub that advertised one
-            # would type-check a call the binding rejects at runtime.
-            and not record_dtype
+            m_var and not m_multi and (not params or _single_array_param)
+            # gh-805 §E: mirrors `_enable_out` above, which now offers the
+            # buffer for a structured result too. Kept adjacent and kept in
+            # step: a stub advertising an out= the binding rejects, or a
+            # binding accepting one the stub hides, is the same defect in
+            # either direction.
         )
         # gh-527: a variable_output method with no input to size from is the
         # generator shape -- the parse block above seeds a leading `count` for
