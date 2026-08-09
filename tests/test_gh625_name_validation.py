@@ -59,9 +59,15 @@ class TestThePredicate:
         assert C.valid_identifier(name)
 
     @pytest.mark.parametrize(
-        "name", [BAD, "", "2fast", "has space", "has-dash", "a.b", "_"]
+        "name",
+        [BAD, "", "2fast", "has space", "has-dash", "a.b", "_", "café"],
     )
     def test_rejects_what_breaks_generated_code(self, name):
+        # `café` joined this list in gh-784's second half: `str.isalnum()` is
+        # Unicode-aware, so it passed here while GCC and MSVC disagreed about
+        # the header it landed in. Listed in both test files on purpose —
+        # this one pins the predicate's exact semantics, and a term dropped
+        # from it should fail the file that claims to hold them.
         assert not C.valid_identifier(name)
 
     def test_the_empty_name_does_not_raise(self):

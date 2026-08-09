@@ -16,12 +16,20 @@ Two halves, and they are not the same question:
 would be wrong, so the *message* was the defect — and it is the only thing a
 user ever sees.
 
-**Non-ASCII is the half worth rejecting, and is not rejected here.** GCC
-accepts UTF-8 identifiers as an extension, MSVC differs, and the `.pyi` is
-fine either way — so a name can compile on one toolchain and not another. But
-a project carrying one *builds today*, so tightening the predicate outright
-would break trees that work. `jm status` reports them for a release first;
-`apply` refusing comes later, on its own decision.
+**Non-ASCII is the half worth rejecting, and is now rejected.** GCC accepts
+UTF-8 identifiers as an extension, MSVC differs, and the `.pyi` is fine either
+way — so a name can compile on one toolchain and not another, arriving through
+a name instead of through `[project] platforms`. A project carrying one
+*builds today*, so this could not be a same-day tightening: `jm status` listed
+every non-ASCII declared name for a release (v0.55.0) first, and the
+`isascii()` term landed after.
+
+The tightening reaches further than the command line, which is the part worth
+pinning: `jm apply` replays a manifest through the same declaration commands,
+so a tree that already carries `café` is refused too. `jm status` therefore
+prints the rename list **before** its own scratch replay — otherwise the
+report exists only for projects that do not need it, and the one project that
+does gets a single `error:` per run and a rename-recompile-repeat loop.
 """
 
 from __future__ import annotations
@@ -31,11 +39,14 @@ import io
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
 from just_makeit import _status
 from just_makeit._apply import run as apply_run
+from just_makeit._method import run as method_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -71,21 +82,86 @@ def test_a_digit_start_is_still_rejected():
     assert C.validate_name("9lives", "object") is not None
 
 
-def test_non_ascii_still_passes_the_predicate(tmp_path):
-    """Reported, NOT rejected — the staged migration, pinned.
+def test_non_ascii_is_rejected(tmp_path):
+    """The second half, landed. This test used to assert the opposite.
 
-    If this starts failing, the predicate was tightened. That is a real
-    tightening: it breaks projects that build today, so it needs its own
-    decision and a release of warning first, not a quiet change here.
+    It pinned the permissive behaviour on purpose — so that tightening the
+    predicate could not happen quietly, only as a decision someone had to
+    come here and reverse. The reporting release it was waiting for is
+    v0.55.0 (`jm status` has listed every non-ASCII declared name since), so
+    the condition it guarded is met and the assertion is inverted rather
+    than deleted: the same line now holds the rule the other way.
     """
-    assert C.valid_identifier("café"), (
-        "non-ASCII names are now rejected outright — that breaks trees which "
-        "build today and skips the reporting release gh-784 asks for"
+    assert not C.valid_identifier("café")
+    assert not C.valid_identifier("Ωmega")
+    assert not C.valid_identifier("naïve_gain")
+
+
+def test_the_message_says_why_a_word_made_of_letters_was_refused():
+    """`café` satisfies the generic message, so printing it says nothing.
+
+    "Use ASCII letters, digits, and underscores only; must not start with a
+    digit" is a rule `café` does not visibly break — every character is a
+    letter. A user who typed it needs the term that actually rejected it, or
+    the error reads as a bug in jm.
+    """
+    msg = C.validate_name("café", "method")
+    assert msg is not None
+    assert "ASCII" in msg, msg
+    assert "MSVC" in msg, (
+        f"the message refuses the name without naming the portability "
+        f"reason, which is the only thing that makes it actionable:\n{msg}"
+    )
+
+
+def test_the_module_id_message_explains_it_too():
+    """The peer message over the same predicate.
+
+    gh-784's first half had to be fixed twice because two messages sit over
+    `valid_identifier`; the second half inherits exactly that shape. A dotted
+    id is rejected segment-by-segment, so the non-ASCII segment is what the
+    explanation must follow.
+    """
+    assert C.validate_module_id("café") is not None
+    msg = C.validate_module_id("dsp.filtrés")
+    assert msg is not None
+    assert "MSVC" in msg, (
+        f"the module message rejects a non-ASCII segment with the generic "
+        f"wording, leaving half the users who hit this unhelped:\n{msg}"
+    )
+
+
+def test_the_command_that_would_declare_one_now_refuses(tmp_path, capsys):
+    """End to end, because the predicate alone proves nothing reaches it.
+
+    `require_name` is what turns the predicate into a refusal, and gh-625
+    exists because two commands never called it. A unit test on
+    `valid_identifier` passes just as happily when no command consults it.
+    """
+    root = tmp_path / "p"
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_run("p", root, [], [])
+        object_run(root, "w", None, arg_type="float", return_type="float")
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        method_run(root, "w", "café", None, "void", "int", False, [])
+    err = capsys.readouterr().err
+    assert "not a valid method name" in err, err
+    assert C.methods(C.load(root), "w") == [], (
+        "the command exited non-zero but had already written the name into "
+        "the manifest"
     )
 
 
 def test_status_reports_a_non_ascii_name(tmp_path):
-    """The migration signal: a project can see it before apply refuses."""
+    """The migration signal, on the tree that now needs it most.
+
+    `status` replays `apply` on a scratch copy to compute drift, and that
+    replay refuses this manifest — so the report has to be printed before it,
+    or the only project carrying a non-ASCII name is the only one that never
+    sees the list of names to rename. `SystemExit` here is expected and is
+    not what this test is about; the output written before it is.
+    """
     root = tmp_path / "p"
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, [], [])
@@ -99,7 +175,8 @@ def test_status_reports_a_non_ascii_name(tmp_path):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         with contextlib.redirect_stderr(io.StringIO()):
-            _status.run(root)
+            with contextlib.suppress(SystemExit):
+                _status.run(root)
     out = buf.getvalue()
     assert "NON-ASCII" in out, (
         f"a non-ASCII declared name is invisible, so the project gets no "
@@ -175,7 +252,8 @@ def test_status_reports_a_non_ascii_function_name(tmp_path):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         with contextlib.redirect_stderr(io.StringIO()):
-            _status.run(root)
+            with contextlib.suppress(SystemExit):
+                _status.run(root)
     out = buf.getvalue()
     # Anchored on the report's own line format, not on the name appearing
     # somewhere in the output. Declaring the function also creates drift, so
@@ -210,14 +288,21 @@ def test_the_module_message_does_not_claim_lowercase_either():
     )
 
 
-def test_it_is_not_counted_as_drift(tmp_path):
-    """A name is not a file `apply` would rewrite, so it cannot fail CI.
+def test_apply_refuses_a_manifest_that_already_carries_one(tmp_path, capsys):
+    """The reach the predicate alone does not show, measured not assumed.
 
-    The tree is brought into sync first, deliberately. Declaring the method
-    and stopping there leaves genuine drift — the `.pyi` and the binding both
-    move — and a non-zero count would then prove nothing about the name. The
-    first cut of this test asserted `rc == 0` on an unapplied tree and failed
-    with `3`, which was the setup talking, not the feature.
+    `apply` replays a manifest through the same declaration commands, so the
+    `isascii()` term lands on names already written, not only on newly typed
+    ones — a tree carrying `café` stops applying at this version. That is the
+    tightening gh-784 asks for (a name only GCC accepts does not become safe
+    by being old), and it is the whole reason the `status` report had to move
+    ahead of the replay.
+
+    This test used to be `test_it_is_not_counted_as_drift`, asserting the
+    opposite end of the same setup: apply succeeds, `status` returns 0, a
+    name is an advisory and never CI-red. It cannot both be true and is worth
+    the note — the drift question it pinned is now unreachable, because the
+    manifest never gets as far as producing files to compare.
     """
     root = tmp_path / "p"
     with contextlib.redirect_stdout(io.StringIO()):
@@ -228,19 +313,43 @@ def test_it_is_not_counted_as_drift(tmp_path):
         {"name": "café", "arg_type": "void", "return_type": "int"}
     ]
     C.save(root, cfg)
+
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        apply_run(root)
+    assert "not a valid method name" in capsys.readouterr().err
+
+
+def test_status_names_every_offender_before_the_replay_kills_it(tmp_path):
+    """One run must hand over the whole rename list, not the first name.
+
+    The replay refuses at the first bad name, so a report printed after it
+    would be a rename-recompile-repeat loop over a manifest whose remaining
+    offenders are never named. Two objects here, because one cannot tell the
+    difference between "prints the list" and "prints the name apply happened
+    to die on".
+    """
+    root = tmp_path / "p"
     with contextlib.redirect_stdout(io.StringIO()):
-        with contextlib.redirect_stderr(io.StringIO()):
-            apply_run(root)
+        new_run("p", root, [], [])
+        object_run(root, "w", None, arg_type="float", return_type="float")
+        object_run(root, "v", None, arg_type="float", return_type="float")
+    cfg = C.load(root)
+    cfg["w"]["methods"] = [
+        {"name": "café", "arg_type": "void", "return_type": "int"}
+    ]
+    cfg["v"]["methods"] = [
+        {"name": "Ωmega", "arg_type": "void", "return_type": "int"}
+    ]
+    C.save(root, cfg)
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         with contextlib.redirect_stderr(io.StringIO()):
-            rc = _status.run(root)
-    assert "NON-ASCII" in buf.getvalue(), (
-        "the name stopped being reported once the tree was in sync, so the "
-        "report depends on unrelated drift rather than on the name"
-    )
-    assert rc == 0, (
-        f"a non-ASCII name was counted as drift (rc={rc}); it is a naming "
-        f"advisory, not a file apply would rewrite:\n{buf.getvalue()}"
+            with contextlib.suppress(SystemExit):
+                _status.run(root)
+    out = buf.getvalue()
+    assert "café" in out and "Ωmega" in out, (
+        f"the report reached only as far as the replay let it, so renaming "
+        f"what it lists still leaves the manifest refused:\n{out}"
     )

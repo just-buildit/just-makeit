@@ -794,17 +794,58 @@ def valid_identifier(name: str) -> bool:
     not parseable Python.
 
     One implementation, so a command added later inherits the check instead
-    of being remembered. Semantics are byte-for-byte what the five copies
-    did, deliberately: they accept more than the message describes (`Foo`
-    and `café` both pass), and tightening that would reject names existing
-    projects may already carry. That mismatch is worth its own issue, not a
-    silent change here.
+    of being remembered. gh-625 preserved the five copies' semantics
+    byte-for-byte, which put their shared mismatch in one place where it
+    could be decided; gh-784 decided it, and the two halves got opposite
+    answers:
+
+    **Uppercase stays accepted.** A view's class name is legitimately
+    CamelCase and comes through this same predicate (`_view.py`), so the
+    *message* was the defect, not the code.
+
+    **Non-ASCII is rejected — the ``isascii()`` term.** ``str.isalnum()`` is
+    Unicode-aware, so ``café`` and ``Ωmega`` passed a check about letters and
+    digits and were then written into the **sacred** header, where GCC accepts
+    UTF-8 identifiers as an extension and MSVC's behaviour differs: a name
+    that compiles on one toolchain and not another, arriving silently through
+    a name rather than through ``[project] platforms``.
+
+    What earned the tightening is that it was reported first. ``jm status``
+    has listed every non-ASCII declared name since v0.55.0 (see
+    ``non_ascii_names``), so a project had a release to rename before any
+    command refused.
+
+    **The reach is wider than the command line, and that is measured, not
+    assumed.** ``jm apply`` replays a manifest through these same declaration
+    commands, so this term refuses a name *already written* just as firmly as
+    a newly typed one: a tree carrying ``café`` stops applying at the version
+    that adds it. That is the tightening gh-784 asks for rather than a side
+    effect of it — a name only GCC accepts is not made safe by being old —
+    but it is why ``non_ascii_names`` outlives this and why ``jm status``
+    prints it before its own replay, which would otherwise refuse and take
+    the rename list down with it.
     """
     return (
         bool(name)
+        and name.isascii()
         and name.replace("_", "").isalnum()
         and not name[0].isdigit()
     )
+
+
+#: Why a name made only of letters was refused. `café` satisfies every word
+#: of the generic message ("letters, digits, and underscores"), so printing
+#: that at someone who typed it says nothing they can act on — the rule they
+#: broke is one the generic wording does not contain. Shared by the two
+#: messages over `valid_identifier` (`validate_name` and `validate_module_id`)
+#: because a hint written twice is the peer-implementation shape that has
+#: already cost this predicate one whole-defect-left-intact round.
+_NON_ASCII_HINT = (
+    "Non-ASCII names reach the generated C header, where GCC accepts UTF-8\n"
+    "identifiers as an extension and MSVC may not — the name would compile "
+    "on\none toolchain and not another. Use ASCII letters, digits, and "
+    "underscores."
+)
 
 
 def validate_name(name: str, kind: str) -> str | None:
@@ -819,14 +860,13 @@ def validate_name(name: str, kind: str) -> str | None:
     # described a stricter rule than the code enforced, and it is the only
     # thing a user ever sees, so the message was what was wrong.
     #
-    # "letters" is now accurate rather than aspirational: `isalnum()` accepts
-    # non-ASCII letters too, and this deliberately does not claim otherwise.
-    # Rejecting those is a real tightening that would break projects building
-    # today, so `jm status` reports them for a release first — see
-    # `non_ascii_names`.
+    # The other half went the other way: non-ASCII is now rejected, so
+    # "ASCII letters" is the rule the code enforces rather than a hedge.
+    if name and not name.isascii():
+        return f"'{name}' is not a valid {kind} name.\n{_NON_ASCII_HINT}"
     return (
         f"'{name}' is not a valid {kind} name.\n"
-        "Use letters, digits, and underscores only; "
+        "Use ASCII letters, digits, and underscores only; "
         "must not start with a digit."
     )
 
@@ -834,11 +874,19 @@ def validate_name(name: str, kind: str) -> str | None:
 def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     """``[(kind, name), ...]`` for every declared name outside ASCII.
 
-    The half of gh-784 worth actually rejecting, reported before it is.
-    ``valid_identifier`` accepts them today — ``str.isalnum()`` is
-    Unicode-aware, so ``café`` and ``Ωmega`` pass a check whose message talks
-    about letters and digits — and a project carrying one **builds**, which is
-    exactly why tightening the predicate outright would break trees that work.
+    The half of gh-784 worth actually rejecting, reported a release before it
+    was. ``valid_identifier`` accepted them through v0.55.0 — ``str.isalnum()``
+    is Unicode-aware, so ``café`` and ``Ωmega`` passed a check whose message
+    talked about letters and digits — and a project carrying one **builds**,
+    which is why the predicate could not simply be tightened on the spot.
+
+    **This report outlives the tightening, and matters more after it.** The
+    ``isascii()`` term does not stop only new declarations: ``apply`` replays
+    the manifest through the same commands, so a tree already carrying
+    ``café`` is refused outright. Its author needs the list of names to
+    rename, and the refusal hands them one at a time — which is why
+    ``_status`` prints this *before* the scratch replay that dies. A report
+    reachable only by projects that do not need it is not a migration story.
 
     Why non-ASCII is the dangerous half, where uppercase is not: GCC accepts
     UTF-8 identifiers as an extension, MSVC's behaviour differs, and the
@@ -846,9 +894,9 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     another — the portability trap ``[project] platforms`` exists to make
     explicit, arriving silently through a name instead.
 
-    Reporting first gives a project a release to rename before `apply` starts
-    refusing, which is the migration story gh-784 asks for. Nothing here
-    rejects anything.
+    Reporting first is what gave a project a release to rename before `apply`
+    started refusing, which is the migration story gh-784 asks for. Nothing
+    here rejects anything, then or now.
 
     **Every declared name, or the promise is worthless.** A staged tightening
     says one thing: rename what this lists and `apply` will not refuse you
@@ -921,11 +969,14 @@ def validate_module_id(module_id: str) -> str | None:
     segs = module_id.split(".")
     for seg in segs:
         if not valid_identifier(seg):
+            head = f"'{module_id}' is not a valid module name.\n"
+            if not seg.isascii():
+                return head + _NON_ASCII_HINT
             return (
-                f"'{module_id}' is not a valid module name.\n"
-                "Use letters, digits, and underscores only; dotted "
-                "names (e.g. dsp.filters) nest the module in a subpackage. "
-                "Each dot-separated segment must not start with a digit."
+                head + "Use ASCII letters, digits, and underscores only; "
+                "dotted names (e.g. dsp.filters) nest the module in a "
+                "subpackage. Each dot-separated segment must not start "
+                "with a digit."
             )
     return None
 
