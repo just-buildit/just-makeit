@@ -9,11 +9,34 @@ on:
       version:
         description: "Version to test (e.g. 0.10.2)"
         required: true
+  # gh-851: callable BEFORE publish. Of the 31 steps below exactly one
+  # touches PyPI -- the install. Every other step exercises the installed
+  # tool, and behaves identically whether it came from PyPI or from the
+  # wheel this release just built. Running them post-publish only ever
+  # answered "is the artifact we already shipped broken?"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version under test, for the version assertion"
+        type: string
+        required: false
+      wheel-artifact:
+        description: >
+          Name of an uploaded artifact holding the built wheel. When set, the
+          wheel is installed instead of resolving from PyPI, which is what
+          makes this usable as a pre-publish gate.
+        type: string
+        required: false
 
 jobs:
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
+    # `github.event_name` inside a reusable workflow is the CALLER's event
+    # (a tag push, here), not `workflow_call` -- so the wheel input is what
+    # identifies the pre-publish invocation. Without this the job silently
+    # skips and the gate reads green while having run nothing.
     if: >
+      inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ${{ matrix.os }}
@@ -29,7 +52,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Download the built wheel
+        if: inputs.wheel-artifact != ''
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: ${{ inputs.wheel-artifact }}
+          path: dist
+
+      # No retry loop here, and that is the point: a local wheel either
+      # exists or the build job failed. The 20x30s retry below exists solely
+      # because a fresh PyPI upload is not immediately resolvable.
+      - name: Install just-makeit from the built wheel
+        if: inputs.wheel-artifact != ''
+        run: |
+          pip install dist/*.whl numpy --no-cache-dir
+          VERSION="${{ inputs.version }}"
+          if [ -n "$VERSION" ]; then
+            pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+          fi
+
       - name: Install just-makeit from PyPI (with retry)
+        if: inputs.wheel-artifact == ''
         run: |
           VERSION="${{ github.event.inputs.version || github.event.workflow_run.head_branch }}"
           for i in $(seq 1 20); do
