@@ -213,8 +213,29 @@ jobs:
           source .smoke/bin/activate
           just-makeit example fir_filter
 
+  # gh-851: the full artifact smoke suite, run against the wheel we are about
+  # to publish rather than against the one we already did.
+  #
+  # `artifact.yml` used to run ONLY post-publish, on `workflow_run` after
+  # Release completed. It could not block anything by construction, nothing
+  # reported its failure, and it sat red across 34 runs and three releases
+  # with every dashboard green. A gate whose result nobody reads is worse than
+  # an absent one, because its presence gets cited as coverage.
+  #
+  # Exactly one of its 31 steps needs real PyPI (the install), so the other 30
+  # are moved to where they can still stop a release. The post-publish trigger
+  # stays for the one thing only a published artifact can answer: that PyPI
+  # actually serves an installable wheel at that version.
+  artifact-smoke:
+    name: Artifact smoke (pre-publish)
+    needs: [resolve, build]
+    uses: ./.github/workflows/artifact.yml
+    with:
+      wheel-artifact: dist
+      version: ${{ needs.resolve.outputs.tag }}
+
   publish:
-    needs: smoke
+    needs: [smoke, artifact-smoke]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
