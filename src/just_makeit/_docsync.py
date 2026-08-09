@@ -315,6 +315,42 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
 
 
+#: jm's generic `tp_doc`, from `_object.py`'s ``[f"{Component} type."]``
+#: else-branch, matched against `_norm`'s whitespace-stripped form (so the
+#: space before ``type`` is gone by the time this runs). Anchored end to end:
+#: a docstring that merely *opens* this way carries prose underneath that a
+#: human wrote, and this predicate is a licence to overwrite.
+_GENERIC_TP_DOC_RE = re.compile(r"^\w+type\.$")
+
+
+def _is_generic_tp_doc(cur: str) -> bool:
+    """True when *cur* is jm's own placeholder class docstring.
+
+    The `tp_doc` counterpart of :func:`_is_reclaimable_glue`, and it rests on
+    the same argument: there is nothing of the author's here to protect. jm
+    emits ``"<Component> type."`` precisely when it had no header ``@brief``
+    and no declaration to build a class block from, so a fragment still
+    carrying it has never had a real class docstring at all.
+
+    *cur* is a raw field slot — C string literals, quotes included — because
+    that is what `_tp_doc_span` yields and what `_norm` knows how to read.
+
+    Examples
+    --------
+    >>> _is_generic_tp_doc('"W type.\\\\n"')
+    True
+    >>> _is_generic_tp_doc('"Resampler type."')
+    True
+    >>> _is_generic_tp_doc('"W type.\\\\n" "\\\\n" "Hand-written prose.\\\\n"')
+    False
+    >>> _is_generic_tp_doc('"Resamples a signal.\\\\n"')
+    False
+    >>> _is_generic_tp_doc("NULL")
+    False
+    """
+    return bool(_GENERIC_TP_DOC_RE.match(_norm(cur)))
+
+
 def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
     """True when *name* is jm-owned glue whose slot still holds jm's old text.
 
@@ -467,6 +503,23 @@ def transplant_docs(
             ref_tp[2] if ref_tp else None,
             fb_tp[2] if fb_tp else None,
         )
+        # gh-805 §F: `tp_doc` is one of the prose-only slots `_is_jm_shaped`
+        # deliberately leaves on strict scaffold equality — it has no synopsis
+        # line to anchor on. That rule silently froze this slot the moment the
+        # *fallback* moved: declaring `create_error` on an existing object made
+        # jm render the full class block in both the derived and the scaffold
+        # form, so the fragment's `"<Component> type."` matched neither and was
+        # classified hand-written. The `.pyi` gained a `Raises` section that
+        # `help(Obj)` did not, and `jm status` reported up to date — the exact
+        # gh-871 shape, one slot over.
+        #
+        # `"<Component> type."` is not a hand-written docstring. It is jm's own
+        # literal from `_object.py`'s else-branch, emitted when there was
+        # nothing to build a block from, and matching it costs a downstream
+        # only a one-line summary jm wrote itself.
+        if new_tp is None and _is_generic_tp_doc(ex_tp[2]) and ref_tp:
+            if _norm(ref_tp[2]) != _norm(ex_tp[2]):
+                new_tp = ref_tp[2]
         if new_tp is not None:
             edits.append((ex_tp[0], ex_tp[1], new_tp))
 

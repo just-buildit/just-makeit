@@ -1334,6 +1334,8 @@ def build_component_ctxs(
         # class block the .pyi carries — same builder, so they cannot disagree.
         # With nothing authored there is no block to build and the generic
         # one-liner stands, exactly as before.
+        # gh-805 §F: same derivation the .pyi beside it uses.
+        _cls_raises, _cls_warns = S.class_diagnostics(cfg, obj)
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
                 obj,
@@ -1348,8 +1350,13 @@ def build_component_ctxs(
                 custom_reset=bool(C.init_params(cfg, obj))
                 or C.is_no_reset(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),
+                raises=_cls_raises,
+                warns=_cls_warns,
             )
-            if _cdoc
+            # gh-805 §F: a manifest-declared failure is as much a reason to
+            # build the block as an authored @brief — and unlike doc_blocks it
+            # is readable on every path, so this cannot desync the scaffold.
+            if _cdoc or _cls_raises or _cls_warns
             else [f"{ctx['Component']} type."]
         )
         # Nested-module slots: override `module` to the cname (the fragment

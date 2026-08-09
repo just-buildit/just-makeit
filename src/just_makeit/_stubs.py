@@ -26,6 +26,7 @@ import ast
 import re as _re
 import sys as _sys
 import textwrap
+from typing import Sequence
 
 from . import _codec as _codec
 from . import _coerce
@@ -35,7 +36,9 @@ from . import _context as Ctx
 from . import _types as T
 from dataclasses import replace as _replace
 
+from ._context._diagnostics import create_raises_doc as _create_raises_doc
 from ._context._diagnostics import raises_doc as _raises_doc
+from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     STUB_TARGET_WIDTH,
@@ -841,6 +844,8 @@ def _build_class_docstring(
     brief: str = "",
     custom_reset: bool = False,
     create_blk=None,
+    raises: "Sequence[tuple[str, str]]" = (),
+    warns: "Sequence[tuple[str, str]]" = (),
 ) -> list[str]:
     """Return lines for a numpy-style class docstring (indented 4 spaces).
 
@@ -948,6 +953,8 @@ def _build_class_docstring(
         return class_docstring(
             summary,
             params=params,
+            raises=raises,
+            warns=warns,
             trailer=trailer,
             blank_before_close=True,
         )
@@ -1060,6 +1067,8 @@ def class_docstring_block(
     manifest_doc: str = "",
     custom_reset: bool = False,
     create_fn: str | None = None,
+    raises: "Sequence[tuple[str, str]]" = (),
+    warns: "Sequence[tuple[str, str]]" = (),
 ) -> str:
     """Assemble a component's class docstring block (the whole ``\"\"\"...\"\"\"``,
     4-space indented, ready to drop under ``class X:``).
@@ -1076,6 +1085,12 @@ def class_docstring_block(
     (``_is_scaffold_brief``), so an un-enriched header falls back to the
     generic ``"<Component> component."`` and produces byte-identical output
     to the pre-unification template.
+
+    gh-805 §F: *raises* and *warns* are the manifest-declared failure surface,
+    derived once by `class_diagnostics` and passed in rather than read from a
+    config here — this function has never taken a ``cfg``, and `class_runtime_doc`
+    is derived from its output, so both faces get the sections from that one
+    derivation for free.
     """
     create_blk = (doc_blocks or {}).get(create_fn or f"{obj}_create")
     brief = manifest_doc or (
@@ -1092,7 +1107,35 @@ def class_docstring_block(
             brief=brief,
             custom_reset=custom_reset,
             create_blk=create_blk,
+            raises=raises,
+            warns=warns,
         )
+    )
+
+
+def class_diagnostics(
+    cfg: dict, obj: str
+) -> "tuple[list[tuple[str, str]], list[tuple[str, str]]]":
+    """``(raises, warns)`` for *obj*'s class docstring, from the manifest.
+
+    gh-805 §F. Four call sites build a class docstring from a `cfg`
+    (`_glue`, `_stubs`'s module aggregator, `_object`'s ``tp_doc``, and
+    `_bind`), and each would otherwise read `create_error` and `warnings` for
+    itself. That is the two-generator shape gh-446 is named after — so the
+    read happens once, here, and the sites pass the result through.
+
+    Returns
+    -------
+    tuple
+        ``(raises, warns)``, each a list of ``(class_name, description)``.
+        Both empty for an object declaring neither, which is the common case
+        and renders byte-identically to before gh-805 §F.
+    """
+    return (
+        _create_raises_doc(
+            C.create_error(cfg, obj), C.create_error_message(cfg, obj)
+        ),
+        _warns_doc(C.warnings(cfg, obj)),
     )
 
 
@@ -1109,6 +1152,8 @@ def class_runtime_doc(
     manifest_doc: str = "",
     custom_reset: bool = False,
     create_fn: str | None = None,
+    raises: "Sequence[tuple[str, str]]" = (),
+    warns: "Sequence[tuple[str, str]]" = (),
 ) -> list[str]:
     """The class docstring as runtime ``tp_doc`` lines (gh-642).
 
@@ -1142,6 +1187,8 @@ def class_runtime_doc(
         manifest_doc=manifest_doc,
         custom_reset=custom_reset,
         create_fn=create_fn,
+        raises=raises,
+        warns=warns,
     ).split("\n")
     out = [lines[0].lstrip()[3:]] + [
         ln[4:] if ln.startswith("    ") else ln for ln in lines[1:-1]
@@ -1385,6 +1432,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # reset(); skip the "reset restores defaults" demo there. gh-542: `no_reset`
     # removes the method, so the demo would be a failing doctest under
     # `pytest --doctest-glob='*.pyi'`, not just stale prose.
+    _raises, _warns = class_diagnostics(cfg, obj)
     doc_lines = class_docstring_block(
         obj,
         Component,
@@ -1397,6 +1445,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         manifest_doc=cfg.get(obj, {}).get("doc", ""),
         custom_reset=bool(ip) or no_reset,
         create_fn=C.object_create_fn(cfg, obj),
+        raises=_raises,
+        warns=_warns,
     ).split("\n")
     # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
     # cannot be subclassed at runtime; the stub says so with @final. (Composer
