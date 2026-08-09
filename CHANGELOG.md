@@ -2,6 +2,110 @@
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-08-09
+
+Completes gh-805, the declarative binding surface: every section (A–H) now has
+an outcome. Two of the remaining asks turned out to need no code — the
+capability already existed and the objects were hand-owned anyway, which is the
+same freezing-out the issue is about, one layer up.
+
+### Added
+
+- **An enum's per-choice docs reach the parameter (gh-901).**
+    `extract_member_docs` has parsed `FIR_LOW = 0, ///< Lowpass.` since gh-671
+    and the result reached nothing, because a `string_enum`'s choices are
+    Python strings that need not correspond to a C enum at all. An `[[enum]]`
+    may now carry an `enumerators` list parallel to `values`; the mapping is
+    **declared, never inferred**, because `"low"` could mean `FIR_LOW`,
+    `FIR_LOWPASS` or `LOW` and a wrong guess attaches confident prose to the
+    wrong value. The list renders under the parameter — numpydoc has no
+    `Choices` section — on both faces.
+
+- **An array init-param can name its length and put it first (gh-900).**
+    `derived = "num_taps"` (CLI: `--init-param 'h:float[]:derived:num_taps'`)
+    emits `hbdecim_create(size_t num_taps, const float *h)` instead of jm's
+    trailing `<name>_len`. The value is the array's own length, so it never
+    reaches `kwlist`, the `PyArg` format or the `.pyi` — a caller who had to
+    pass it could pass a wrong one.
+
+- **`exact_max_out` trusts `max_out` as a true bound (gh-805 §D).** A
+    variable-output binding sizes its output at `max(max_out(...), n)`, which
+    made a decimator producing 256 from 1024 allocate 1024 and **reject** an
+    `out=` buffer correctly sized to 256. `pass_capacity` already escaped the
+    clamp but only by changing the kernel's signature; this is the same trust
+    without that. Deliberately an assertion rather than a derivation: arity
+    says what the C function was *told*, never what it does with it, so
+    trusting a length-bearing prototype on its own reintroduces gh-600's heap
+    corruption for the generator shape.
+
+- **An array param can state its rank and its interleave (gh-805 §C).**
+    `rank = 1` emits a `PyArray_NDIM` guard — without it a 2-D array handed to
+    a 1-D contract silently flattens through `PyArray_SIZE`.
+    `elements_per_sample = 2` divides that count into the unit the kernel
+    counts; with `pass_capacity` the old behaviour handed a kernel an element
+    count where it expected a pair count and wrote twice as far as the
+    caller's buffer allows. Both are opt-in and default to today's output.
+
+- **`Raises` and `Warns` from what the manifest declares (gh-805 §F).**
+    `create_error`/`create_error_message` (gh-482) and `[[<obj>.warnings]]`
+    (gh-481) now render numpy sections on both the `.pyi` and the runtime
+    `tp_doc`. jm is the only thing that knows this: no header `@throws` can
+    name the exception class jm chose. An undeclared `MemoryError` stays
+    undocumented, for the reason `declared_raise` omits the liveness guard.
+
+- **`out=` buffer for a structured (`record_dtype`) result (gh-805 §E).**
+
+- **`jm upgrade` reports stale manifest keys instead of claiming up to date
+    (gh-887).**
+
+- **A `status_allow` entry that matches nothing is reported (gh-830).**
+
+- **UNRECONCILED says why, so a pin bump can be answered (gh-848).**
+
+- **A module can include hand-written C before its fragments (gh-862).**
+
+### Fixed
+
+- **`jm regenerate` keeps the author's `max_out` prototype (gh-903).** gh-761
+    gave the author that signature and made jm read it, and
+    `_apply._refresh_core_h_decls` protects it — but regenerate **deletes** the
+    header first, so apply rebuilt it with jm's default and both faces then
+    re-derived from jm's own rewrite. Exactly the instability
+    `declared_max_outs`'s docstring warns about. The declaration is now
+    preserved across the delete/rebuild cycle, and the glue re-derived from it.
+
+- **The variable-output wrapper calls `max_out` at its declared arity
+    (gh-761).** gh-761 made the declaration, the standalone binding and the
+    stub follow the header's prototype, and missed the two calls **inside** the
+    wrapper — so a project declaring `max_out(state)` got glue calling
+    `max_out(state, n)`, which does not compile. Latent because sacred
+    fragments keep the text they were created with.
+
+- **The non-ASCII name report covers every declared name (gh-784).** It walked
+    six declaration kinds and missed three — module functions, state fields and
+    init params — so a project could rename everything it was shown and still
+    be refused later for a name nothing mentioned.
+
+- **The name check's message describes the rule it enforces (gh-784).** The
+    predicate accepts `Foo`; the message said lowercase. Uppercase is
+    load-bearing (a view's class name is CamelCase through the same
+    predicate), so the message was the defect.
+
+- **`jm status` says why when its internal apply refuses (gh-886).** It exited
+    1 with the actionable message swallowed, because the replay runs on a
+    scratch copy whose stderr was suppressed.
+
+- **A module object's stub documents what the standalone one does (gh-867).**
+
+- **Every built-in falls back to the section skeleton (gh-877).**
+
+- **The stub parity gate covers every I/O shape (gh-881).**
+
+- **Test workers no longer share a build environment (gh-879).** Each xdist
+    worker builds in its own environment, inherits every `sys.path` entry with
+    pip seeded, leaves PATH discovery alone, and pins its installs to the
+    parent's numpy release.
+
 ## [0.54.4] — 2026-08-08
 
 ### Fixed
