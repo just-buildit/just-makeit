@@ -116,7 +116,7 @@ Known placeholders:
 
 | Placeholder                    | Substituted with                                          |
 | ------------------------------ | --------------------------------------------------------- |
-| `{component}`                  | lowercase object name (`agc`)                             |
+| `{component}`                  | object name, exactly as declared (`agc`)                  |
 | `{Component}`                  | title-cased class name (`Agc`)                            |
 | `{module}` / `{Module}`        | module name / title-cased                                 |
 | `{arg_type}` / `{return_type}` | step argument and return types                            |

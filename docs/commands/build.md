@@ -357,7 +357,7 @@ just-makeit status
 | `--diff`       | Print a unified diff per stale file.                                                                                                                                    |
 | `--check`      | One-line summary only — the per-file listing is suppressed, the exit code is unchanged. CI mode.                                                                        |
 
-Prints a table of files in one of six states:
+Prints a table of files, each in one of these states:
 
 | Status        | Meaning                                                                                                                                                                                                                                                                                                                                                                  | Gates CI? |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
@@ -373,6 +373,32 @@ Prints a table of files in one of six states:
 
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
+
+### `NON-ASCII NAMES` — an advisory, not drift
+
+Alongside the file table, `jm status` lists every **declared name** outside
+ASCII — object, module, function, method, property, view class, state field
+and init param. A name is not a file `apply` would rewrite, so this is never
+counted in the exit code and never appears under `--check`.
+
+```text
+NON-ASCII NAMES (1) — already declared, portability risk:
+  ? method 'café'
+  GCC accepts UTF-8 identifiers as an extension and MSVC differs, so these can
+  compile on one toolchain and not another. Rename them to ASCII; jm no longer
+  accepts one, so `apply` refuses the manifest until you do. Not counted as drift.
+```
+
+It is printed **before** the report's other sections, and that ordering is
+load-bearing: `status` computes drift by replaying `apply` on a scratch copy,
+and since gh-784 that replay *refuses* a manifest carrying such a name. Were
+the list printed in table order it would never be reached by the one project
+that needs it, and renaming would proceed one `error:` at a time instead of
+from a complete list.
+
+Shipped in v0.55.0, a release ahead of the rejection, so a project could
+rename on its own schedule. See *Naming rules* under
+[`jm object`](scaffold.md).
 
 ### Why `UNBUILT` gates
 

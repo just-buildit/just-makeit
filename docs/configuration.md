@@ -704,11 +704,11 @@ is whatever you passed to `just-makeit object <name>`.
 
 One entry per `--state` declaration.
 
-| Key       | Type   | Notes                                 |
-| --------- | ------ | ------------------------------------- |
-| `name`    | string | Valid C identifier                    |
-| `type`    | string | C type; append `[N]` for fixed arrays |
-| `default` | string | C initialiser expression              |
+| Key       | Type   | Notes                                              |
+| --------- | ------ | -------------------------------------------------- |
+| `name`    | string | ASCII letters/digits/underscores, no leading digit |
+| `type`    | string | C type; append `[N]` for fixed arrays              |
+| `default` | string | C initialiser expression                           |
 
 ### `[[<object>.array_args]]`
 
