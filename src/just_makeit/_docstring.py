@@ -1675,6 +1675,28 @@ def render_numpy_doc(
     # docstring raw fixes it while preserving the markup for a docs build;
     # escaping would render `\\log`. Only docstrings containing a backslash
     # change, so this is invisible everywhere else.
+    # gh-877: a skeleton with nothing to put in it collapses to the one-line
+    # form. The renderer omits a section it cannot fill, so a member with no
+    # parameters and no return value (`reset`) reaches here with the summary
+    # alone — and the two-line spelling of that summary carries exactly as much
+    # information as the one-line spelling.
+    #
+    # That matters because `jm status --check` compares byte-for-byte: emitting
+    # the long form would report drift in every existing project, for every
+    # such member, in exchange for a newline. "Skeleton everywhere" is a rule
+    # about what gets *documented*, not a licence to reformat what does not.
+    # `override` is deliberately NOT part of this condition: a built-in always
+    # supplies its canned summary as the override, so requiring its absence
+    # would mean this never fires for the members it exists for.
+    if (
+        block is None
+        and skeleton_fallback
+        and not raises
+        and not examples
+        and len(lines) == 1
+    ):
+        return [f'{pad}"""{lines[0]}"""']
+
     quote = 'r"""' if needs_raw_string(lines + examples) else '"""'
     out = [f"{pad}{quote}{lines[0]}"]
     # Blank separators must stay genuinely blank: `pad` on an empty line is
