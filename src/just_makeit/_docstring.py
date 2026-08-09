@@ -1527,6 +1527,21 @@ def class_docstring(
         for p in params:
             lines.append(f"{pad}{p.type_line}")
             for note in p.notes:
+                # gh-901: a note carrying newlines is a preserved structure —
+                # an enum's choice list is the case that introduced it — so
+                # each line wraps within itself instead of being re-flowed
+                # into one paragraph. Same rule and same primitive the member
+                # face uses for a bullet list (`_numpy_sections`); this
+                # builder simply never had a caller that needed it.
+                if "\n" in note:
+                    for sline in note.split("\n"):
+                        lines += [
+                            f"{pad}    {w}".rstrip()
+                            for w in wrap_structured_line(
+                                sline, CLASS_DESC_WIDTH
+                            )
+                        ]
+                    continue
                 lines += [
                     f"{pad}    {w}" for w in _wrap(note, CLASS_DESC_WIDTH)
                 ]

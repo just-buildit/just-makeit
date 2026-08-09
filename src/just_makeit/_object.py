@@ -1336,6 +1336,8 @@ def build_component_ctxs(
         # one-liner stands, exactly as before.
         # gh-805 §F: same derivation the .pyi beside it uses.
         _cls_raises, _cls_warns = S.class_diagnostics(cfg, obj)
+        # gh-901: per-choice enum docs, from the same header read.
+        _cls_enums = C.enum_choice_docs(cfg, _doc_blocks)
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
                 obj,
@@ -1352,11 +1354,12 @@ def build_component_ctxs(
                 create_fn=C.object_create_fn(cfg, obj),
                 raises=_cls_raises,
                 warns=_cls_warns,
+                enum_choices=_cls_enums,
             )
             # gh-805 §F: a manifest-declared failure is as much a reason to
             # build the block as an authored @brief — and unlike doc_blocks it
             # is readable on every path, so this cannot desync the scaffold.
-            if _cdoc or _cls_raises or _cls_warns
+            if _cdoc or _cls_raises or _cls_warns or _cls_enums
             else [f"{ctx['Component']} type."]
         )
         # Nested-module slots: override `module` to the cname (the fragment

@@ -1797,6 +1797,78 @@ def resolve_enum_type(cfg: dict, ptype: str) -> str:
     return "string_enum:" + ",".join(registry[name])
 
 
+def enum_choice_docs(
+    cfg: dict, doc_blocks: "dict | None"
+) -> "dict[str, list[tuple[str, str]]]":
+    """``{resolved string_enum spec: [(choice, doc), …]}`` (gh-901).
+
+    ``extract_member_docs`` has always parsed trailing enum-value docs —
+    ``FIR_LOW = 0,  ///< Lowpass.`` — and they reached nothing, because a
+    ``string_enum``'s choices are Python strings that need not correspond to a
+    C enum at all. Nothing connected ``"low"`` to ``FIR_LOW``.
+
+    **The mapping is declared, never guessed.** An ``[[enum]]`` may carry an
+    ``enumerators`` list parallel to ``values``:
+
+    .. code-block:: toml
+
+        [[enum]]
+        name = "fir_kind"
+        values      = ["low",     "high",     "band"]
+        enumerators = ["FIR_LOW", "FIR_HIGH", "FIR_BAND"]
+
+    Inferring it by stripping a common prefix was the obvious alternative and
+    is the one thing gh-901 rules out: ``"low"`` could mean ``FIR_LOW``,
+    ``FIR_LOWPASS`` or ``LOW``, and a wrong guess attaches confident prose to
+    the wrong value — worse than no documentation, and invisible in review.
+
+    Keyed by the **resolved** spec, because that is all a parameter's type
+    carries by the time any doc face sees it (`resolve_enum_type` expands
+    ``enum:fir_kind`` to ``string_enum:low,high,band`` and the name is gone).
+    The value list is the enum's identity, so the match is exact.
+
+    Two enums with identical values collide on that key, and such a pair is
+    skipped rather than resolved first-wins: they are indistinguishable here
+    by construction, so picking one would be the same guess this function
+    exists to avoid.
+
+    Parameters
+    ----------
+    cfg : dict
+        The manifest.
+    doc_blocks : dict or None
+        The sacred header's parsed blocks, carrying member docs under
+        `_docstring.member_doc_key`.
+
+    Returns
+    -------
+    dict
+        Empty when no ``[[enum]]`` declares ``enumerators`` or the header
+        documents none of them — which is every project that has not opted in.
+    """
+    from ._docstring import member_doc
+
+    out: dict[str, list[tuple[str, str]]] = {}
+    seen: set[str] = set()
+    for e in cfg.get("enum", []):
+        values = list(e.get("values", []))
+        enumerators = list(e.get("enumerators", []))
+        if not values or not enumerators:
+            continue
+        spec = "string_enum:" + ",".join(values)
+        if spec in seen:
+            out.pop(spec, None)
+            continue
+        seen.add(spec)
+        pairs = [
+            (v, member_doc(doc_blocks, en))
+            for v, en in zip(values, enumerators)
+        ]
+        if any(doc for _v, doc in pairs):
+            out[spec] = pairs
+    return out
+
+
 def find_packages(cfg: dict) -> list[str]:
     """Return CMake package names declared under [project].
 
