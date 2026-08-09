@@ -201,6 +201,11 @@ PARAM_KEYS = frozenset(
         "doc",
         "capsule",
         "header",
+        # gh-805 §C: array shape/interleave metadata. `rank` is the opt-in
+        # `PyArray_NDIM` guard; `elements_per_sample` is the interleave factor
+        # between numpy's element count and the samples the kernel counts.
+        "rank",
+        "elements_per_sample",
         # A codec method's params carry the tag/variant role (`_codec.py`).
         "role",
     }
@@ -262,8 +267,24 @@ FUNCTION_KEYS = frozenset(
 )
 
 #: Keys valid on a ``[[module.<mod>.functions.params]]`` entry.
+#:
+#: gh-805 §C: `rank` and `elements_per_sample` are here as well as in
+#: `PARAM_KEYS` because `_render`'s function-param builder and
+#: `_context/_parse`'s method-param builder are the documented peer pair that
+#: emits array acquisition — they now share the emitter, so recognising the
+#: key on only one side would accept it in the manifest and drop it in the C.
 FUNCTION_PARAM_KEYS = frozenset(
-    {"name", "type", "out", "mutable", "default", "enum", "doc"}
+    {
+        "name",
+        "type",
+        "out",
+        "mutable",
+        "default",
+        "enum",
+        "doc",
+        "rank",
+        "elements_per_sample",
+    }
 )
 
 

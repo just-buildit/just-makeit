@@ -323,10 +323,22 @@ def _build_params_parse(
                 f"        {obj_var}, {npy_enum}, {npy_flags});\n"
                 f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
             )
+            # gh-805 §C: an opt-in rank guard, before the length is taken —
+            # `PyArray_SIZE` on a 2-D array silently yields its total element
+            # count, which is a valid-looking length for a 1-D contract.
+            _rank = p.get("rank")
+            if _rank:
+                arr_acq.append(
+                    _coerce.array_rank_guard(
+                        pname, arr_var, int(_rank), prior_decrefs.strip()
+                    ).rstrip("\n")
+                )
             arr_acq.append(
                 f"    {const_qual}{elem_disp} *{pname} = "
                 f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
-                f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var});"
+                + _coerce.array_len_c(
+                    pname, arr_var, int(p.get("elements_per_sample", 1) or 1)
+                )
             )
             arr_names.append(arr_var)
             call_args.extend([pname, f"{pname}_len"])
