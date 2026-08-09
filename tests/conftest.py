@@ -134,10 +134,11 @@ def _provision_worker_env() -> None:
     environment with no numpy at all, which the gate in
     ``test_gh879_worker_env_isolation.py`` catches.
 
-    Three variables are set because the three consumers disagree on where to
-    look: ``uv pip install`` reads ``VIRTUAL_ENV``, the generated Makefile
-    resolves ``python3`` off ``PATH`` (templates/make/Makefile:18), and
-    ``JUST_BUILDIT_PYTHON`` is the explicit override that beats both.
+    Two variables are set, because the two consumers disagree on where to look:
+    ``uv pip install`` reads ``VIRTUAL_ENV``, and the generated Makefile takes
+    ``JUST_BUILDIT_PYTHON`` ahead of its ``python3``-off-``PATH`` fallback
+    (templates/make/Makefile:18). ``PATH`` itself is left alone on purpose —
+    see the note at the end of this function.
 
     No-ops outside xdist: with one process there is no concurrent writer, and
     paying a venv creation for ``pytest tests/test_cli.py`` would be a tax on
@@ -173,10 +174,22 @@ def _provision_worker_env() -> None:
     _worker_env_root = root
     bindir = venv / ("Scripts" if os.name == "nt" else "bin")
     os.environ["VIRTUAL_ENV"] = str(venv)
-    os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
     os.environ["JUST_BUILDIT_PYTHON"] = str(
         bindir / ("python.exe" if os.name == "nt" else "python")
     )
+    # PATH is deliberately NOT prepended with this venv's bin, though the
+    # generated Makefile does fall back to `python3` off PATH. It does not need
+    # to: `JUST_BUILDIT_PYTHON` is the first arm of that `$(or ...)`
+    # (templates/make/Makefile:18) and already wins.
+    #
+    # Prepending it actively breaks things, which cost a red CI to learn. Some
+    # tests invoke `cmake` directly rather than through the generated Makefile,
+    # so they pass no `-DPython3_EXECUTABLE` and CMake discovers an interpreter
+    # itself — off PATH. It would then find this venv, whose numpy is reachable
+    # only through the `.pth` above, and `FindPython3`'s NumPy probe does not
+    # honour that: `Could NOT find Python3 (missing: Python3_NumPy_INCLUDE_DIRS
+    # NumPy)`. Isolation belongs on the writes, not on interpreter discovery
+    # for every subprocess in the suite.
     # NOTE for anyone tempted to bridge the other direction with PYTHONPATH —
     # letting the *parent* interpreter see what the worker installed — so that
     # the e2e tests can keep running `sys.executable`. It does not work, and it
