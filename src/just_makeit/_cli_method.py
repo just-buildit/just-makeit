@@ -24,6 +24,7 @@ def run(args: list[str]) -> None:
     return_type = "float _Complex"
     variable_output = False
     pass_capacity = False
+    exact_max_out = False
     count_default = ""
     nogil = False
     varargs = False
@@ -74,6 +75,9 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--pass-capacity":
             pass_capacity = True
+            i += 1
+        elif tok == "--exact-max-out":
+            exact_max_out = True
             i += 1
         elif tok == "--count-default":
             # gh-657: C expression seeding a void-input variable_output
@@ -513,6 +517,7 @@ def run(args: list[str]) -> None:
         varargs=varargs,
         manual_stub=manual_stub,
         pass_capacity=pass_capacity,
+        exact_max_out=exact_max_out,
         count_default=count_default,
         nogil=nogil,
         fn=fn,

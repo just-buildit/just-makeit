@@ -693,6 +693,7 @@ def run(
     varargs: bool = False,
     manual_stub: bool = False,
     pass_capacity: bool = False,
+    exact_max_out: bool = False,
     count_default: str = "",
     nogil: bool = False,
     status_return: bool = False,
@@ -1143,6 +1144,8 @@ def run(
         method_entry["variable_output"] = True
     if pass_capacity:
         method_entry["pass_capacity"] = True
+    if exact_max_out:
+        method_entry["exact_max_out"] = True
     if count_default:
         method_entry["count_default"] = count_default
     if nogil:
