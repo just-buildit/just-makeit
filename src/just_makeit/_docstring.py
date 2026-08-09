@@ -550,6 +550,57 @@ def declared_max_outs(header_text: str) -> "frozenset[str]":
     )
 
 
+def max_out_prototypes(header_text: str) -> "dict[str, str]":
+    """``{name: full declaration text}`` for every ``*_max_out`` (gh-903).
+
+    `declared_max_outs` answers "which of these does the author own", which is
+    all `_apply` needs — it edits a header that is still on disk. `jm
+    regenerate` **deletes** the header and rebuilds it, so by the time apply
+    runs there is nothing left to read the contract off, and the author's
+    prototype is silently replaced by jm's default. Preserving it needs the
+    declaration itself, not just its name.
+
+    Returns the matched text verbatim, including the trailing semicolon, so
+    restoring is a substitution rather than a re-render.
+    """
+    return {
+        m.group(1): m.group(0) for m in _MAX_OUT_ARITY_RE.finditer(header_text)
+    }
+
+
+def restore_max_out_prototypes(
+    header_text: str, saved: "dict[str, str]"
+) -> "tuple[str, list[str]]":
+    """Put author-owned ``*_max_out`` declarations back (gh-903).
+
+    The counterpart of :func:`max_out_prototypes`, for the regenerate cycle:
+    capture before the header is deleted, restore after it is rebuilt.
+
+    Only a declaration that actually differs is rewritten, and its name is
+    reported — the caller needs to know, because the glue beside it was
+    already generated against jm's default and has to be re-derived. Silently
+    fixing the header alone would leave a binding that calls the restored
+    prototype at the wrong arity, which is a compile error rather than a
+    disagreement.
+
+    Returns
+    -------
+    tuple
+        ``(text, changed_names)``. ``changed_names`` is empty for the common
+        case where jm's re-render already matches, so the caller can skip the
+        second pass entirely.
+    """
+    changed: list[str] = []
+    out = header_text
+    for name, decl in saved.items():
+        for m in _MAX_OUT_ARITY_RE.finditer(header_text):
+            if m.group(1) != name or m.group(0) == decl:
+                continue
+            out = out.replace(m.group(0), decl, 1)
+            changed.append(name)
+    return out, changed
+
+
 def max_out_arity_key() -> str:
     """The reserved key `scan_max_out_arity`'s result rides under."""
     return _MAX_OUT_KEY

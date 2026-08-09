@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from ._docstring import max_out_prototypes, restore_max_out_prototypes
 from ._object import _extract_c_function_bodies, _restore_c_function_bodies
 from ._remove import _confirm, _object_paths, _rm
 
@@ -88,10 +89,19 @@ def run(
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     preserved_h: dict[str, str] = {}
     preserved_c: dict[str, str] = {}
+    # gh-903: the author owns every `*_max_out` signature (gh-761), and
+    # `_apply._refresh_core_h_decls` protects it by reading the declaration
+    # off the header. That protection cannot fire here: regenerate DELETES the
+    # header first, so apply rebuilds it with jm's default and the contract is
+    # gone. A prototype has no body, so the body-preserving machinery below
+    # never covered it either — this is its declaration-level peer.
+    preserved_max_out: dict[str, str] = {}
     if not discard:
         if core_h.exists():
+            _h_text = core_h.read_text(encoding="utf-8")
+            preserved_max_out = max_out_prototypes(_h_text)
             preserved_h = _extract_c_function_bodies(
-                core_h.read_text(encoding="utf-8"), require_static=False
+                _h_text, require_static=False
             )
         if core_c.exists():
             preserved_c = _extract_c_function_bodies(
@@ -149,6 +159,22 @@ def run(
         )
         core_c.write_text(restored, encoding="utf-8")
         print(f"  restore hand-written bodies in {core_c}")
+
+    # gh-903: put the author's `*_max_out` declarations back, and re-derive
+    # from them. The second apply is not belt-and-braces — the glue above was
+    # generated against jm's default arity, so restoring the header alone
+    # leaves a binding calling the restored prototype with the wrong number of
+    # arguments. It runs only when a declaration actually changed, which is
+    # never for a project that has not overridden one.
+    if preserved_max_out and core_h.exists():
+        restored, changed = restore_max_out_prototypes(
+            core_h.read_text(encoding="utf-8"), preserved_max_out
+        )
+        if changed:
+            core_h.write_text(restored, encoding="utf-8")
+            for _name in changed:
+                print(f"  keep author-owned prototype {_name}()")
+            _apply.run(root)
 
     # Delete any pre-built extension module so cmake is forced to relink.
     for so in _stale_ext_modules(root, pkg, component, module):
