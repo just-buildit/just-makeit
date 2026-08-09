@@ -339,3 +339,118 @@ class TestTheWrapperCallsTheDeclaredArity:
             f"gh-607's contract and the other half of this compile break: "
             f"{calls}"
         )
+
+
+class TestRegeneratePreservesTheAuthorsPrototype:
+    """gh-903: `jm regenerate` must not revert an author-owned signature.
+
+    gh-761 gave the author the `*_max_out` prototype and made jm read it.
+    `_apply._refresh_core_h_decls` protects it by consulting the header — and
+    that protection cannot fire under `jm regenerate`, which **deletes** the
+    header before calling apply. Apply then rebuilds it with jm's default and
+    the contract is gone.
+
+    `_docstring.declared_max_outs` predicted exactly this consequence:
+
+        Overwriting it would revert the contract and make the derivation
+        unstable — the next apply would read jm's own rewrite back and flip
+        both faces to match it.
+
+    The existing body-preserving machinery never covered it because a
+    prototype has no body, so this is its declaration-level peer.
+    """
+
+    def _setup(self, tmp_path):
+        from just_makeit._regenerate import run as regenerate_run
+
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        object_run(
+            root, "widget", None, state_vars=[("gain", "double", "1.0")]
+        )
+        method_run(
+            root,
+            "widget",
+            "run",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]")],
+        )
+        _make_state_only(root, "widget", "run")
+        regenerate_run(root, "widget", force=True)
+        return root
+
+    def test_the_declaration_survives(self, tmp_path):
+        root = self._setup(tmp_path)
+        header = (
+            root / "native" / "inc" / "widget" / "widget_core.h"
+        ).read_text()
+        decls = [
+            ln.strip()
+            for ln in header.splitlines()
+            if "widget_run_max_out" in ln and ln.rstrip().endswith(";")
+        ]
+        assert decls, "no max_out declaration found — the probe missed it"
+        for d in decls:
+            assert "," not in d, (
+                f"regenerate reverted the author's prototype to jm's "
+                f"default: {d}"
+            )
+
+    def test_the_glue_is_re_derived_from_it(self, tmp_path):
+        """Restoring the header alone would be worse than not restoring it.
+
+        The glue was already generated against jm's default arity, so a
+        header-only fix leaves a binding calling the restored prototype with
+        the wrong number of arguments — a compile error rather than a
+        disagreement between faces.
+        """
+        import re
+
+        root = self._setup(tmp_path)
+        ext = "".join(
+            p.read_text()
+            for p in (root / "native" / "src" / "widget").glob("*_ext*.c")
+        )
+        calls = re.findall(
+            r"widget_run_max_out\s*\(([^)]*)\)", re.sub(r"\s+", " ", ext)
+        )
+        assert calls, "no max_out call sites found — the probe missed them"
+        for args in calls:
+            assert "," not in args, (
+                f"the glue still calls `max_out({args})` against a "
+                f"single-parameter prototype; this does not compile"
+            )
+
+    def test_a_project_that_never_overrode_one_is_untouched(self, tmp_path):
+        """No second apply, no churn, for the case that is every project."""
+        from just_makeit._regenerate import run as regenerate_run
+
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        object_run(
+            root, "widget", None, state_vars=[("gain", "double", "1.0")]
+        )
+        method_run(
+            root,
+            "widget",
+            "run",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]")],
+        )
+        before = (
+            root / "native" / "inc" / "widget" / "widget_core.h"
+        ).read_text()
+        regenerate_run(root, "widget", force=True)
+        after = (
+            root / "native" / "inc" / "widget" / "widget_core.h"
+        ).read_text()
+        assert "size_t x_len" in after, "the default form was lost"
+        assert before == after, "regenerate churned an unmodified header"
