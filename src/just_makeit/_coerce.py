@@ -343,3 +343,90 @@ def out_buffer_guard(
         f"{i}    return NULL;\n"
         f"{i}}}\n"
     )
+
+
+def array_rank_guard(
+    pname: str,
+    arr_var: str,
+    rank: int,
+    decrefs: str = "",
+    fail: str = "return NULL;",
+) -> str:
+    """A ``PyArray_NDIM`` guard for an array param (gh-805 §C).
+
+    ``PyArray_FROM_OTF`` with ``NPY_ARRAY_C_CONTIGUOUS`` accepts an array of
+    **any** rank, and jm then measures it with ``PyArray_SIZE`` — the total
+    element count. So a 2-D array handed to a parameter whose C contract is
+    1-D does not fail; it flattens, and the kernel reads a buffer whose shape
+    it was never told about. Nothing raises and nothing warns.
+
+    Opt-in via ``rank`` on the param, deliberately. Flattening is the current
+    behaviour and some callers rely on it — passing a C-contiguous 2-D block
+    to a kernel that genuinely wants the flat run is legitimate — so an
+    unconditional guard would break working trees. Declaring ``rank`` is the
+    author saying which of the two this parameter is.
+
+    Parameters
+    ----------
+    pname : str
+        Parameter name, for the message the caller sees.
+    arr_var : str
+        The ``PyArrayObject *`` local to test.
+    rank : int
+        Required ``PyArray_NDIM``.
+    decrefs : str
+        Cleanup for arrays already acquired on this path, emitted before the
+        bailout. The guard runs after *arr_var* is acquired, so it releases
+        that one itself on top of these.
+    fail : str
+        ``return NULL;`` in a method wrapper, ``return -1;`` in an ``initproc``
+        — the same split `capsule_new_c` draws, and for the same reason: a
+        hard-coded ``return NULL`` inside an ``initproc`` compiles and reports
+        success.
+
+    Examples
+    --------
+    >>> print(array_rank_guard("h", "h_arr", 1), end="")
+        if (PyArray_NDIM(h_arr) != 1) {
+            PyErr_SetString(PyExc_ValueError,
+                            "h must be a 1-D array");
+            Py_DECREF(h_arr); return NULL;
+        }
+    """
+    release = f"{decrefs} " if decrefs else ""
+    return (
+        f"    if (PyArray_NDIM({arr_var}) != {rank}) {{\n"
+        f"        PyErr_SetString(PyExc_ValueError,\n"
+        f'                        "{pname} must be a {rank}-D array");\n'
+        f"        {release}Py_DECREF({arr_var}); {fail}\n"
+        f"    }}\n"
+    )
+
+
+def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
+    """The ``size_t <p>_len`` line, in the unit the C kernel counts (gh-805 §C).
+
+    ``PyArray_SIZE`` counts **elements**. A kernel taking an interleaved buffer
+    counts **logical samples** — a complex pair in an ``int16_t[]`` is two
+    elements and one sample — and jm had no way to say so, so every length
+    crossing the boundary was out by the interleave factor.
+
+    That mismatch is the dangerous kind because it compiles. `pass_capacity`
+    on such a method hands the kernel an element count where it expects a pair
+    count, and the kernel then writes twice as far as the caller's buffer
+    allows: not a wrong answer, an overrun.
+
+    ``elements_per_sample`` defaults to 1, so every existing param renders the
+    line it always did.
+
+    Examples
+    --------
+    >>> array_len_c("x", "x_arr")
+    '    size_t x_len = (size_t)PyArray_SIZE(x_arr);'
+    >>> array_len_c("x", "x_arr", 2)
+    '    size_t x_len = (size_t)PyArray_SIZE(x_arr) / 2;'
+    """
+    divisor = f" / {elements_per_sample}" if elements_per_sample != 1 else ""
+    return (
+        f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var}){divisor};"
+    )
