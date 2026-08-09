@@ -259,3 +259,83 @@ class TestStubAndBindingCannotDisagree:
             assert takes_arg == (flag == "METH_VARARGS"), (
                 f"{meth}: stub takes_arg={takes_arg} but binding is {flag}"
             )
+
+
+class TestTheWrapperCallsTheDeclaredArity:
+    """The call sites gh-761 did not reach, found while scoping gh-805 §D.
+
+    gh-761 made three surfaces follow the header's prototype: the declaration
+    it splices into the sacred ``_core.h``, the standalone ``*_max_out``
+    Python binding, and the stub. It missed the two calls **inside** the
+    variable-output wrapper, which passed a count unconditionally — so a
+    project whose header says ``max_out(state)`` got a wrapper calling
+    ``max_out(state, n)``. That is not a subtle disagreement; it is a C
+    compile error, in generated glue the author cannot edit.
+
+    Exercised on the default single-``_ext.c`` layout, because that is where
+    `apply` re-renders the wrapper. Under ``fragments=True`` the per-object
+    fragment is sacred and keeps whatever it was created with, which is why
+    the fault stayed latent: only a fresh render shows it.
+    """
+
+    def _setup(self, tmp_path, state_only: bool):
+        from just_makeit._apply import run as apply_run
+
+        root = tmp_path / "proj"
+        new_run("proj", root)
+        object_run(
+            root, "widget", None, state_vars=[("gain", "double", "1.0")]
+        )
+        method_run(
+            root,
+            "widget",
+            "run",
+            None,
+            "void",
+            "float _Complex",
+            True,
+            [],
+            params=[("x", "float _Complex[]")],
+        )
+        if state_only:
+            _make_state_only(root, "widget", "run")
+        apply_run(root)
+        return root
+
+    def _wrapper_calls(self, root: Path) -> list[str]:
+        """Argument text of every ``widget_run_max_out(...)`` call in glue."""
+        import re
+
+        ext = "".join(
+            p.read_text()
+            for p in (root / "native" / "src" / "widget").glob("*.c")
+        )
+        # The *_core.c definition matches this shape too; drop anything that
+        # declares a parameter type rather than passing a value.
+        return [
+            a
+            for a in re.findall(
+                r"widget_run_max_out\s*\(([^)]*)\)", re.sub(r"\s+", " ", ext)
+            )
+            if "state_t" not in a
+        ]
+
+    def test_a_state_only_header_gets_no_count_argument(self, tmp_path):
+        """The compile break: every call must match the one prototype."""
+        calls = self._wrapper_calls(self._setup(tmp_path, state_only=True))
+        assert calls, "no max_out call sites found — the probe missed them"
+        for args in calls:
+            assert "," not in args, (
+                f"a state-only `max_out` is called as `max_out({args})`; the "
+                f"header declares one parameter, so this does not compile"
+            )
+
+    def test_the_default_still_passes_its_count(self, tmp_path):
+        """The other direction, so the fix cannot be a blanket suppression."""
+        calls = self._wrapper_calls(self._setup(tmp_path, state_only=False))
+        assert calls, "no max_out call sites found — the probe missed them"
+        assert all("," in args for args in calls), (
+            f"a length-bearing `max_out` lost its count argument, which is "
+            f"gh-607's contract and the other half of this compile break: "
+            f"{calls}"
+        )

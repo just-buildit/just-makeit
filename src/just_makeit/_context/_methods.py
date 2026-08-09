@@ -1681,10 +1681,26 @@ def make_methods_ctx(
                 # gh-607: same value about to be passed to the kernel as n.
                 _moc_arg = _lazy_fallback
 
-            # gh-607: `*_max_out()`'s call-site argument list — empty only
-            # for the all-scalar-params shape, whose kernel has no count to
-            # mirror (see `_max_out_count_param_ctx`).
-            _moc_call_arg = f", {_moc_arg}" if _moc_arg else ""
+            # gh-607: `*_max_out()`'s call-site argument list — empty for the
+            # all-scalar-params shape, whose kernel has no count to mirror
+            # (see `_max_out_count_param_ctx`).
+            #
+            # ...and empty for a state-only prototype, which gh-761 missed
+            # here. It suppressed the count in the *declaration* (above) and
+            # in the standalone `*_max_out` Python binding, but not at the two
+            # call sites inside the variable-output wrapper — so a project
+            # whose header says `max_out(state)` got a wrapper calling
+            # `max_out(state, n)`, which does not compile. It stayed latent
+            # because per-object fragments are sacred: an existing one keeps
+            # the text it was created with, and `refresh_glue_bindings`
+            # repairs the `*_max_out` row specifically, not this wrapper. Only
+            # a newly added method or a `jm regenerate` renders it fresh.
+            _moc_state_only = max_out_is_state_only(
+                doc_blocks, f"{c_fn}_max_out"
+            )
+            _moc_call_arg = (
+                f", {_moc_arg}" if (_moc_arg and not _moc_state_only) else ""
+            )
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
