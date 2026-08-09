@@ -813,11 +813,67 @@ def validate_name(name: str, kind: str) -> str | None:
     ``"method"``, ``"function"``, ``"project"``, ``"component"``."""
     if valid_identifier(name):
         return None
+    # gh-784: "lowercase" was the false word. `str.isalnum()` is case-blind,
+    # and uppercase is load-bearing — a view's class name is legitimately
+    # CamelCase and goes through this same predicate (`_view.py`). The message
+    # described a stricter rule than the code enforced, and it is the only
+    # thing a user ever sees, so the message was what was wrong.
+    #
+    # "letters" is now accurate rather than aspirational: `isalnum()` accepts
+    # non-ASCII letters too, and this deliberately does not claim otherwise.
+    # Rejecting those is a real tightening that would break projects building
+    # today, so `jm status` reports them for a release first — see
+    # `non_ascii_names`.
     return (
         f"'{name}' is not a valid {kind} name.\n"
-        "Use lowercase letters, digits, and underscores only; "
+        "Use letters, digits, and underscores only; "
         "must not start with a digit."
     )
+
+
+def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
+    """``[(kind, name), ...]`` for every declared name outside ASCII.
+
+    The half of gh-784 worth actually rejecting, reported before it is.
+    ``valid_identifier`` accepts them today — ``str.isalnum()`` is
+    Unicode-aware, so ``café`` and ``Ωmega`` pass a check whose message talks
+    about letters and digits — and a project carrying one **builds**, which is
+    exactly why tightening the predicate outright would break trees that work.
+
+    Why non-ASCII is the dangerous half, where uppercase is not: GCC accepts
+    UTF-8 identifiers as an extension, MSVC's behaviour differs, and the
+    ``.pyi`` is fine either way. So a name can compile on one toolchain and not
+    another — the portability trap ``[project] platforms`` exists to make
+    explicit, arriving silently through a name instead.
+
+    Reporting first gives a project a release to rename before `apply` starts
+    refusing, which is the migration story gh-784 asks for. Nothing here
+    rejects anything.
+
+    Returns
+    -------
+    list of (str, str)
+        ``kind`` is the noun a user sees ("object", "method", ...). Empty for
+        every project whose names are ASCII, which is effectively all of them.
+    """
+    found: list[tuple[str, str]] = []
+
+    def _check(kind: str, name: str) -> None:
+        if name and not name.isascii():
+            found.append((kind, name))
+
+    _check("project", project_name(cfg))
+    for module in modules(cfg):
+        _check("module", module)
+    for comp in components(cfg):
+        _check("object", comp)
+        for meth in methods(cfg, comp):
+            _check("method", meth.get("name", ""))
+        for prop in properties(cfg, comp):
+            _check("property", prop.get("name", ""))
+        for view in views(cfg, comp):
+            _check("view class", view.get("class_name", ""))
+    return found
 
 
 def require_name(name: str, kind: str) -> None:

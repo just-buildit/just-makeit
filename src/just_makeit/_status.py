@@ -753,6 +753,27 @@ def run(
         # the person reading this output, and a CI job passing a defensive
         # one for a file that does not exist yet is not carrying a stale
         # exemption.
+        # gh-784: names that build today and may not tomorrow. Reported a
+        # release ahead of any tightening, so a project can rename on its own
+        # schedule rather than discovering it when `apply` starts refusing.
+        # Never counted as drift — nothing here is a file apply would change.
+        _non_ascii = C.non_ascii_names(cfg)
+        if _non_ascii:
+            print(
+                f"NON-ASCII NAMES ({len(_non_ascii)}) — accepted today, "
+                "portability risk:"
+            )
+            for _kind, _name in _non_ascii:
+                print(f"  ? {_kind} {_name!r}")
+            print(
+                "  GCC accepts UTF-8 identifiers as an extension and MSVC "
+                "differs, so these can\n"
+                "  compile on one toolchain and not another. Renaming to "
+                "ASCII is the safe move.\n"
+                "  Not counted as drift."
+            )
+            print()
+
         _manifest_allow = C.status_allow(cfg)
         _unmatched = [
             pat
