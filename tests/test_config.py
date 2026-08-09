@@ -283,8 +283,22 @@ class TestAddComponentFlags:
         # 12 fields since gh-790 added (capsule, header) — see `init_params`
         # for the full field list.
         assert result == [
-            ("n", "int", "16", "", "", "", False, "", False, "", "", ""),
-            ("order", "int", "4", "", "", "", False, "", False, "", "", ""),
+            ("n", "int", "16", "", "", "", False, "", False, "", "", "", ""),
+            (
+                "order",
+                "int",
+                "4",
+                "",
+                "",
+                "",
+                False,
+                "",
+                False,
+                "",
+                "",
+                "",
+                "",
+            ),
         ]
 
 

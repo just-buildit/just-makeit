@@ -2081,6 +2081,9 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # the pointed-to type, since it is not one jm knows.
             p.get("capsule", ""),
             p.get("header", ""),
+            # gh-900: the C name of this array's length parameter,
+            # which is emitted BEFORE the data pointer when set.
+            p.get("derived", ""),
         )
         for p in param_dicts
     ]
@@ -2118,6 +2121,11 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["capsule"] = p[10]
     if len(p) > 11 and p[11]:
         rec["header"] = p[11]
+    # gh-900. Same reasoning as the pair above: a dropped key here
+    # round-trips the param back to the default trailing-length shape,
+    # silently changing the C prototype on the next apply.
+    if len(p) > 12 and p[12]:
+        rec["derived"] = p[12]
     return rec
 
 

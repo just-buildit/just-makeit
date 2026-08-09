@@ -245,6 +245,9 @@ class TestOptionalArrayToml:
             # gh-790: (capsule, header) — empty for every non-capsule param.
             "",
             "",
+            # gh-900: (derived) — empty unless the array names its own length
+            # parameter, which moves it ahead of the data pointer.
+            "",
         )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
@@ -263,7 +266,7 @@ class TestOptionalArrayToml:
         )
         result = init_params(cfg, "gen")
         assert result == [
-            ("n", "int", "16", "", "", "", False, "", False, "", "", "")
+            ("n", "int", "16", "", "", "", False, "", False, "", "", "", "")
         ]
 
 

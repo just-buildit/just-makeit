@@ -334,6 +334,15 @@ def _build_no_state_init_ctx(
     _arr_meta: dict[str, tuple] = {
         n: (act, andim) for n, act, andim, _ in arr_ip
     }
+    # gh-900: `{array name: C name of its length parameter}`. Present only for
+    # a param declaring `derived`, which moves the length ahead of the data
+    # pointer and names it — the shape an adopted C API often already has
+    # (`hbdecim_create(size_t num_taps, const float *h)`). The C local is
+    # still `<name>_len`, produced by `array_args_parse_block`; only the
+    # declared parameter name and its position change.
+    _derived_len: dict[str, str] = {
+        p[0]: p[12] for p in params if len(p) > 12 and p[12]
+    }
     _def_arr_meta: dict[str, tuple] = {
         n: (act, andim) for n, act, andim, _ in def_arr_ip
     }
@@ -441,6 +450,22 @@ def _build_no_state_init_ctx(
                     f" {pname}_dim0, {pname}_dim1"
                 )
                 c_create_parts_ordered.append("NULL, 0, 0")
+            elif pname in _derived_len:
+                # gh-900: length first, and named. The value is still the
+                # `{pname}_len` local — only the declared parameter's name and
+                # position differ, so nothing downstream of the call changes.
+                _dname = _derived_len[pname]
+                sig_parts.append(f"size_t {_dname}, const {adisp} *{pname}")
+                doc_parts.append(
+                    f" * @param {_dname}  Number of {adisp} elements in"
+                    f" {pname}.\n"
+                    f" * @param {pname}  Input {adisp} array"
+                    f" (length passed as {_dname})."
+                )
+                call_parts.append(
+                    f"{pname}_len, (const {adisp} *)PyArray_DATA({pname}_arr)"
+                )
+                c_create_parts_ordered.append("0, NULL")
             else:
                 sig_parts.append(f"const {adisp} *{pname}, size_t {pname}_len")
                 doc_parts.append(
