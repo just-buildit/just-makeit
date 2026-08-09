@@ -1280,7 +1280,6 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         py_params,
         ret_ann,
         fallback_doc,
-        skeleton=False,
         param_fallback="Input sample.",
         return_fallback="Output sample.",
     ):
@@ -1295,20 +1294,23 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         module object is the common shape (nearly every doppler object is
         one), the abbreviated stub was what most users actually got.
 
-        *skeleton* is per built-in ON PURPOSE, because it mirrors what the
-        standalone face already emits rather than imposing a policy: `step`
-        renders the sections there, `steps` and `reset` render the summary
-        alone. Making every built-in render sections here would fix `step`
-        and break the other two in the opposite direction -- which is what
-        the first attempt at this did, giving the module face MORE than the
-        standalone for `steps`. Parity is the deliverable; whether the
-        standalone face should itself be consistent is gh-877.
+        gh-877: the skeleton is no longer per built-in. It used to be, to
+        mirror a standalone face that rendered sections for `step` and a bare
+        summary for `steps` and `reset` -- correct for a parity fix, and an
+        unsatisfying end state, since `steps` is where the types are least
+        guessable and it was the one going without. Both faces now render the
+        skeleton for every built-in.
+
+        There is nothing to special-case for the shapes that have less to say:
+        the renderer omits a section it cannot fill, so a member with no
+        parameters gets no `Parameters` and a `None` return gets no `Returns`.
+        `reset` has neither and so still renders its summary alone -- not an
+        exception to the rule, but the rule applied to a member with nothing
+        else to state.
         """
         blk = doc_blocks.get(cfn)
         if blk is not None:
             return _method_doc_lines(blk, cfn, py_params, ret_ann)
-        if not skeleton:
-            return [f'        """{fallback_doc}"""']
         from ._docstring import render_numpy_doc
 
         return render_numpy_doc(
@@ -1554,7 +1556,6 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             [("x", _py(arg_type))],
             _py(return_type),
             "Process one input sample.",
-            skeleton=True,
         )
         if return_type != "void":
             lines += [
@@ -1569,8 +1570,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 [("x", f"NDArray[{_np(arg_type)}]")],
                 f"NDArray[{_np(return_type)}]",
                 # gh-867: the standalone face's exact wording. Two
-                # spellings of one canned summary is the same drift one layer
-                # down. No skeleton: the standalone renders this summary alone.
+                # spellings of one canned summary is the same drift one
+                # layer down.
                 "Process a samples array. Returns ndarray, or fills out= if "
                 "supplied.",
             )
@@ -1606,6 +1607,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 [("n", "int")],
                 f"NDArray[{_np(return_type)}]",
                 "Generate n output samples.",
+                param_fallback="Number of samples to generate.",
             )
         else:
             lines += [
@@ -1617,6 +1619,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 [("n", "int")],
                 "None",
                 "Advance state by n ticks.",
+                param_fallback="Number of iterations to run.",
             )
 
     # extra methods

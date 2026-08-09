@@ -60,6 +60,70 @@ def _swap_pyi_summary(doc: str, brief: str) -> str:
     return doc[:start] + brief + doc[end:]
 
 
+def _split_steps_stub_signature(stub: str) -> "str | None":
+    """The signature of a generated ``steps()`` stub, up to and including ``:``.
+
+    ``make_sample_ctx`` bakes the stub per I/O shape, and the shapes do not
+    agree on how the body is spelled: three carry a one-line docstring, and the
+    blockwise (array-in / array-out) one carries a bare ``...`` on the same line
+    as the return annotation. gh-877 replaces that body with the section
+    skeleton, so both spellings have to be recognised.
+
+    Returns ``None`` for a shape this does not recognise, which leaves the stub
+    untouched — a stub rendered wrong is worse than one rendered plainly.
+
+    Examples
+    --------
+    >>> q = chr(34) * 3
+    >>> _split_steps_stub_signature(
+    ...     f'\\n    def steps(self) -> None:\\n        {q}Doc.{q}\\n'
+    ... )
+    '\\n    def steps(self) -> None:'
+    >>> _split_steps_stub_signature("\\n    def steps(self) -> int: ...\\n")
+    '\\n    def steps(self) -> int:'
+    >>> _split_steps_stub_signature("nonsense") is None
+    True
+    """
+    marker = chr(34) * 3
+    if marker in stub:
+        return stub.split(marker)[0].rstrip("\n ")
+    body = stub.rstrip()
+    if body.endswith(": ..."):
+        return body[: -len(" ...")]
+    return None
+
+
+def _steps_stub_summary(stub: str) -> "str | None":
+    """The summary sentence of a generated ``steps()`` stub, if it has one.
+
+    Used to keep gh-877's section skeleton purely additive: the sections are
+    what was missing, so the summary already in the stub is carried through
+    rather than replaced with the runtime face's differently-worded one.
+
+    ``None`` when the stub has no docstring at all — the blockwise shape, whose
+    body is a bare ``...``.
+
+    Examples
+    --------
+    >>> q = chr(34) * 3
+    >>> _steps_stub_summary(f'    def steps(): ...\\n        {q}Do it.{q}\\n')
+    'Do it.'
+    >>> _steps_stub_summary("    def steps(self) -> int: ...\\n") is None
+    True
+    """
+    marker = chr(34) * 3
+    i = stub.find(marker)
+    if i < 0:
+        return None
+    start = i + len(marker)
+    close = stub.find(marker, start)
+    nl = stub.find("\n", start)
+    end = close if (close != -1 and (nl == -1 or close < nl)) else nl
+    if end < 0:
+        return None
+    return stub[start:end].strip() or None
+
+
 def _is_authored(blk) -> bool:
     """True when the header says more about a built-in than its ``@brief``.
 
@@ -1436,8 +1500,25 @@ def make_step_ctx(
 
     # Seeded before the branch: the stub section below reads these whether or
     # not a steps() binding was generated (`pyi_steps_stub` arrives via ctx).
+    # gh-877: the generator shape takes `n`, and it is a real parameter — the
+    # signature is `steps(self, n: int = 1)`. It was omitted here while the
+    # module face documented it (`_stubs` passes `[("n", "int")]`), a
+    # disagreement that only became visible once both faces rendered the
+    # skeleton: before, `steps` showed a summary alone and there was no
+    # Parameters section for the two to differ in.
     _steps_params: list[tuple[str, str]] = (
-        [] if _is_void_arg else [("x", f"NDArray[{_in_np_str}]")]
+        [("n", "int")] if _is_void_arg else [("x", f"NDArray[{_in_np_str}]")]
+    )
+    # ...and the placeholder has to suit it. "Input sample." is wrong for a
+    # count, and this is the wording the module face already uses.
+    _steps_param_fallback = (
+        (
+            "Number of samples to generate."
+            if not is_void_return
+            else "Number of iterations to run."
+        )
+        if _is_void_arg
+        else "Input sample."
     )
     _steps_ret = "None" if is_void_return else f"NDArray[np.{_out_np_str}]"
     _steps_desc = "Process a block of samples in batch."
@@ -1615,6 +1696,45 @@ def make_step_ctx(
     elif _sblk and _sblk.brief:
         _pyi_step_doc = _swap_pyi_summary(_pyi_step_doc, _sblk.brief)
     _ssb = _db.get(f"{component}_steps")
+    # gh-877: the unauthored fallback is the section skeleton here too. `step`
+    # has rendered its sections since forever (the literals above); `steps` got
+    # a one-line summary, which is backwards — `steps` is where the types are
+    # least guessable, an NDArray in and an NDArray out. `make_sample_ctx` bakes
+    # four different one-line bodies (and, for the blockwise shape, a bare
+    # `...`), so the rebuild happens here, where the parameter and return
+    # metadata the renderer needs already exists for the runtime face.
+    #
+    # Ordering matters: this replaces the BASE stub, so the `@brief` swap below
+    # still applies on top and a brief-only header keeps its summary while
+    # gaining the sections — exactly how `step` already behaves.
+    if pyi_steps and not _is_authored(_ssb):
+        _steps_sig_only = _split_steps_stub_signature(pyi_steps)
+        if _steps_sig_only is not None:
+            # The stub's OWN summary is kept, not `_steps_desc`. The two have
+            # never been the same string ("Process a samples array. Returns
+            # ndarray, or fills out= if supplied." here against "Process a
+            # block of samples in batch." on the runtime face), and gh-877 is
+            # about the missing sections, not about the wording. Substituting
+            # would rewrite the summary of every existing project's `steps` for
+            # no gain, and `jm status --check` compares byte-for-byte.
+            _steps_stub_desc = _steps_stub_summary(pyi_steps) or _steps_desc
+            pyi_steps = (
+                f"{_steps_sig_only}\n"
+                + "\n".join(
+                    render_numpy_doc(
+                        None,
+                        "steps",
+                        _steps_params,
+                        _steps_ret,
+                        _steps_stub_desc,
+                        indent=8,
+                        skeleton_fallback=True,
+                        param_fallback=_steps_param_fallback,
+                        return_fallback="Output sample.",
+                    )
+                )
+                + "\n"
+            )
     if _is_authored(_ssb) and pyi_steps:
         _pyi_steps_sig = pyi_steps.split('"""')[0].rstrip("\n ")
         pyi_steps = (
