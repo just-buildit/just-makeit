@@ -50,7 +50,11 @@ tests had simply never run.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
+import sysconfig
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -84,6 +88,115 @@ def _missing_runtime_deps() -> list[str]:
         except ImportError:
             missing.append("tomli")
     return missing
+
+
+# Where this worker's private environment lives, so `pytest_unconfigure` can
+# remove exactly what `pytest_configure` created. None when isolation is off.
+_worker_env_root: Path | None = None
+
+
+def _provision_worker_env() -> None:
+    """Give this xdist worker its own environment for subprocess builds.
+
+    **The problem.** Every xdist worker is a separate process, but they all
+    inherit the single environment their parent ``uv run`` resolved —
+    ``--no-project`` does not isolate anything, it only declines to install
+    *this* project, and uv still discovers ``.venv`` and exports
+    ``VIRTUAL_ENV``. So N workers share one site-packages, and the end-to-end
+    tests *write* to it: they ``uv pip install -e .`` scaffolded projects into
+    it, and every generated project's ``make`` runs the gh-824 header guard,
+    which repairs an absent numpy include directory by shelling out to
+    ``pip install --force-reinstall numpy``.
+
+    Concurrently that races with teeth. A worker that force-reinstalls numpy
+    deletes and rewrites the include directory every other compiling worker is
+    reading, so their builds die on ``numpy/arrayobject.h: No such file or
+    directory`` — and their own gh-824 guards then fire and reinstall in turn.
+    One transient miss cascades, which is why gh-879 picked a different victim
+    each time and only on the busiest runner. Two scaffolds also share the
+    distribution name ``my_fir``, so the same env got two different projects
+    installed over each other.
+
+    **Why isolation rather than a lock.** A lock would serialize the slowest
+    part of the suite. Instead each worker gets a venv whose ``site-packages``
+    is its own, with a ``.pth`` adding the *parent's* ``site-packages`` behind
+    it. Reads therefore still resolve to the shared base — which keeps numpy's
+    C-API identical to the one the generated extension is compiled against and
+    later imported with under ``sys.executable`` — while everything a worker
+    writes lands in its own directory, invisible to its peers. The ordering is
+    the point: the worker's own entry precedes the inherited one, so a local
+    reinstall shadows the shared copy instead of being shadowed by it.
+
+    ``--system-site-packages`` is deliberately *not* how that inheritance is
+    done. It inherits the base *interpreter's* site-packages, and under ``uv
+    run`` the packages the suite needs live in the project ``.venv`` rather
+    than in the interpreter uv built it from — so the flag yields an
+    environment with no numpy at all, which the gate in
+    ``test_gh879_worker_env_isolation.py`` catches.
+
+    Three variables are set because the three consumers disagree on where to
+    look: ``uv pip install`` reads ``VIRTUAL_ENV``, the generated Makefile
+    resolves ``python3`` off ``PATH`` (templates/make/Makefile:18), and
+    ``JUST_BUILDIT_PYTHON`` is the explicit override that beats both.
+
+    No-ops outside xdist: with one process there is no concurrent writer, and
+    paying a venv creation for ``pytest tests/test_cli.py`` would be a tax on
+    the common case.
+    """
+    global _worker_env_root
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+
+    root = Path(tempfile.mkdtemp(prefix=f"jm-{worker}-env-"))
+    venv = root / "venv"
+    proc = subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(venv)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        shutil.rmtree(root, ignore_errors=True)
+        raise pytest.UsageError(
+            f"could not create the private environment for xdist worker "
+            f"{worker}, so the end-to-end tests would share one environment "
+            f"and race on numpy's headers (gh-879):\n{proc.stderr}"
+        )
+
+    # Inherit the parent's packages for reading, behind this worker's own.
+    inherited = sysconfig.get_path("purelib")
+    site_dirs = sorted(venv.glob("lib/python*/site-packages"))
+    if not site_dirs:  # Windows lays it out flat
+        site_dirs = sorted(venv.glob("Lib/site-packages"))
+    (site_dirs[0] / "_jm_inherited.pth").write_text(inherited + "\n")
+
+    _worker_env_root = root
+    bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+    os.environ["VIRTUAL_ENV"] = str(venv)
+    os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
+    os.environ["JUST_BUILDIT_PYTHON"] = str(
+        bindir / ("python.exe" if os.name == "nt" else "python")
+    )
+    # NOTE for anyone tempted to bridge the other direction with PYTHONPATH —
+    # letting the *parent* interpreter see what the worker installed — so that
+    # the e2e tests can keep running `sys.executable`. It does not work, and it
+    # fails in a way that looks like it should: PYTHONPATH entries go on
+    # sys.path, but `.pth` files are only executed for directories `site`
+    # registers, and an editable install IS a `.pth` redirect. The directory
+    # lands on sys.path with the redirect never run, so the import still fails.
+    # The tests use `JUST_BUILDIT_PYTHON` instead: a project installed into an
+    # environment is run by that environment's interpreter.
+
+
+def pytest_configure(config):
+    """Isolate this worker before anything collects or builds."""
+    _provision_worker_env()
+
+
+def pytest_unconfigure(config):
+    """Remove what `pytest_configure` created, if anything."""
+    if _worker_env_root is not None:
+        shutil.rmtree(_worker_env_root, ignore_errors=True)
 
 
 # The fixture that runs `uv pip install -e .` in a scaffolded temp project.
