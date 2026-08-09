@@ -105,6 +105,47 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
         create_fn = parts[3] if len(parts) >= 4 else ""
         return (name, ctype, "", "", "", "", True, create_fn, False), i + 1
 
+    # Derived-length syntax: name:type:derived:<c-param-name> (gh-900).
+    # The array's length is passed as a NAMED scalar argument placed
+    # immediately before the data pointer, instead of the trailing
+    # `<name>_len` jm emits by default — `hbdecim_create(size_t num_taps,
+    # const float *h)` rather than `(const float *h, size_t h_len)`.
+    if len(parts) >= 3 and parts[2].lower() == "derived":
+        if len(parts) < 4 or not parts[3]:
+            print(
+                f"error: --init-param '{spec}': 'derived' needs the name of"
+                " the C parameter carrying the length, e.g.\n"
+                "  --init-param 'h:float[]:derived:num_taps'\n"
+                "That name goes in the create() prototype; the value is this"
+                " array's length, so it is never a Python argument.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not T.is_array_param_type(ctype) or ctype.endswith("[][]"):
+            print(
+                f"error: --init-param '{spec}': 'derived' is only valid for a"
+                " 1-D array type (ending with '[]').\n"
+                "A 2-D array already passes its shape as two arguments after"
+                " the data pointer.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return (
+            name,
+            ctype,
+            "",
+            "",
+            "",
+            "",
+            False,
+            "",
+            False,
+            "",
+            "",
+            "",
+            parts[3],
+        ), i + 1
+
     # Capsule syntax: name:type:capsule:<capsule-name>[:<header>] (gh-790).
     # Checked before the type validation below, because the type is the
     # foreign pointer's own spelling (`dp_tlm_t *`) — deliberately not a

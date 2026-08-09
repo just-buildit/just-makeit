@@ -126,6 +126,13 @@ def _init_param_spec(p: dict) -> str:
         if not p.get("required"):
             spec += ":optional"
         return spec
+    # gh-900: also a slot-3 positional word, so it belongs among these rather
+    # than after the default. Dropping it replays the array with jm's trailing
+    # `<name>_len` instead of the author's leading named length — a script
+    # that rebuilds the project with a DIFFERENT create() prototype, which is
+    # the divergence class this docstring is about.
+    if p.get("derived"):
+        return f"{name}:{typ}:derived:{p['derived']}"
     if p.get("optional"):
         spec = f"{name}:{typ}:optional"
         if p.get("create_fn"):

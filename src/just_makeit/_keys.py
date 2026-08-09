@@ -131,6 +131,10 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     ("doc", False),
     ("capsule", False),
     ("header", False),
+    # gh-900: pass this array's length as a NAMED scalar argument
+    # placed immediately before its data pointer, rather than as the
+    # trailing `<name>_len` jm emits by default.
+    ("derived", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
