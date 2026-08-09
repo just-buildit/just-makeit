@@ -262,6 +262,8 @@ def run(
         return 0
 
     allow_patterns = list(allow) + C.status_allow(cfg)
+    # gh-830: collected during the walk below.
+    managed_paths: list[str] = []
 
     # gh-442: init-param default mismatch between the manifest and the
     # sacred header's own @param (default: X) doc — a static comparison,
@@ -374,6 +376,9 @@ def run(
             real = root / rel
             after = (scratch / rel).read_bytes()
             rel_posix = rel.as_posix()
+            # gh-830: every managed path, so an allow entry that
+            # matches none of them can be named below.
+            managed_paths.append(rel_posix)
             dropped: frozenset = frozenset()
             if not real.exists():
                 state, diff = "missing", ""
@@ -726,6 +731,49 @@ def run(
             print(f"ALLOWED ({len(allowed)}) — known deviations, not counted:")
             for p, st, _, _, _ in allowed:
                 print(f"  {'+' if st == 'missing' else '~'} {p}")
+            print()
+
+        # gh-830: an entry that matches no managed file at all. Unambiguous
+        # and safe to report on its own — a rename or a deleted component
+        # leaves the pattern behind, and nothing ever said so, which is the
+        # failure gh-823 is about one level up: an exemption outliving its
+        # cause, keeping a check switched off for a file nobody is thinking
+        # about any more.
+        #
+        # Deliberately NOT the other shape — a pattern matching files, none
+        # of which currently deviate. That one *looks* stale and often is
+        # not: a glob covering a directory is doing its job by matching clean
+        # files, and a pattern kept ahead of a known-coming change is
+        # legitimate. Reporting it needs an answer to what `status_allow` is
+        # FOR — a burn-down list you are expected to empty, or a standing
+        # statement about files the gate does not govern — and those want
+        # different reports. That question is still open on gh-830.
+        #
+        # Manifest entries only. A `--allow` on the command line was typed by
+        # the person reading this output, and a CI job passing a defensive
+        # one for a file that does not exist yet is not carrying a stale
+        # exemption.
+        _manifest_allow = C.status_allow(cfg)
+        _unmatched = [
+            pat
+            for pat in _manifest_allow
+            if not any(_is_allowed(f, [pat]) for f in managed_paths)
+        ]
+        if _unmatched:
+            print(
+                f"STALE ALLOW ({len(_unmatched)}) — `status_allow` "
+                "entries matching no managed file:"
+            )
+            for pat in _unmatched:
+                print(f"  ? {pat}")
+            print(
+                "  Nothing in the project matches these, so they suppress "
+                "nothing. A renamed or\n"
+                "  deleted component leaves the pattern behind, and it then "
+                "keeps every check off\n"
+                "  for whatever path later happens to match it. Not counted "
+                "as drift."
+            )
             print()
 
     # gh-426: printed regardless of --check — this is the one section meant
