@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _context as Ctx
+from . import _keys
 from . import _render as R
 
 
@@ -285,6 +286,24 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             print(f"  update  {bench_c.relative_to(root)}")
 
 
+def _where_declared(root: Path, unknown) -> str:
+    """``"objects/<name>.toml: "`` when that fragment exists, else ``""``.
+
+    `_config.load` merges split-layout fragments before anything sees them, so
+    provenance is gone by the time a key is judged. A project with forty
+    fragment files gets told *which object* and left to find the file, which is
+    the same "left to the reader" gap this whole report exists to close.
+
+    Derived by **existence**, never guessed: the owning object is the first
+    dotted segment of `where`, and the path is only printed when that file is
+    really there. A module function or a single-file manifest yields nothing
+    and the message is unchanged — a wrong path would be worse than none.
+    """
+    owner = unknown.where.split(".")[0]
+    frag = root / "objects" / f"{owner}.toml"
+    return f"{frag.relative_to(root).as_posix()}: " if frag.exists() else ""
+
+
 def run(root: Path) -> None:
     """Advance the project at *root* to CURRENT_SCHEMA."""
     cfg = C.load(root)
@@ -296,7 +315,38 @@ def run(root: Path) -> None:
     target = C.CURRENT_SCHEMA
 
     if current >= target:
-        print(f"already up to date (schema {current})")
+        # gh-887: the schema number is not a compatibility statement, and
+        # "already up to date" is read as one. doppler sat at schema 7 —
+        # genuinely current — while carrying `check_return` on a method, a
+        # function-only key this jm no longer honours. `upgrade` reported up
+        # to date, changed nothing, and the next `jm apply` refused with a
+        # message naming neither the key nor the file. The connection was
+        # left to the reader, across two commands.
+        #
+        # Reported, never rewritten. The replacement is mechanically trivial
+        # and the warning already states it — but `check_return` ->
+        # `status_return` changes whether a non-zero return raises, and that
+        # is the author's call. A schema migration moves jm-owned structure;
+        # silently editing a *declaration* changes what the project says its
+        # own API does. A migration that quietly alters runtime behaviour is
+        # worse than one that refuses.
+        stale = _keys.unknown_keys(cfg)
+        if not stale:
+            print(f"already up to date (schema {current})")
+            return
+        print(f"schema {current} — current.")
+        print(
+            f"\n{len(stale)} manifest key(s) not valid for just-makeit "
+            f"{C.jm_cli_version()}:"
+        )
+        for unknown in stale:
+            print(f"  {_where_declared(root, unknown)}{unknown.message()}")
+        print(
+            "\nNot up to date: `just-makeit apply` will refuse until these "
+            "are resolved.\nEach must be changed by hand — the replacement "
+            "can alter what your API does,\nso it is yours to make, not a "
+            "migration's."
+        )
         return
 
     ctx = _build_ctx(cfg)
