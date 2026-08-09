@@ -846,6 +846,7 @@ def _build_class_docstring(
     create_blk=None,
     raises: "Sequence[tuple[str, str]]" = (),
     warns: "Sequence[tuple[str, str]]" = (),
+    enum_choices: "dict[str, list[tuple[str, str]]] | None" = None,
 ) -> list[str]:
     """Return lines for a numpy-style class docstring (indented 4 spaces).
 
@@ -868,14 +869,32 @@ def _build_class_docstring(
     # `class_runtime_doc` is derived from this function's output rather than
     # rebuilt beside it, so both faces wrap once.
 
-    def _pdesc(name: str, manifest_doc: str, required: bool) -> str:
+    enum_choices = enum_choices or {}
+
+    def _pdesc(
+        name: str, manifest_doc: str, required: bool, ctype: str = ""
+    ) -> str:
         stub = (
             f"{name} constructor parameter (required)."
             if required
             else f"{name} constructor parameter."
         )
         hdr = create_blk.param_desc(name) if create_blk else None
-        return manifest_doc or hdr or stub
+        desc = manifest_doc or hdr or stub
+        # gh-901: an enum's per-choice `///<` docs, as a definition list under
+        # the parameter they belong to. numpydoc has no `Choices` section, and
+        # a parameter's description is free prose — so this is where a reader
+        # already looks for "what may I pass", and it renders in every
+        # consumer rather than needing one to understand a custom heading.
+        choices = enum_choices.get(ctype)
+        if choices:
+            # The blank line is required: reST does not read a bullet
+            # list that butts against the paragraph above it, so
+            # without it a docs build renders one run-on sentence.
+            desc += "\n\n" + "\n".join(
+                f'- ``"{v}"`` — {d}' for v, d in choices if d
+            )
+        return desc
 
     # Parameters section. init_params win when present (they are what create()
     # actually takes — the #69 contract); state vars are documented only for a
@@ -901,7 +920,7 @@ def _build_class_docstring(
                 params.append(
                     ClassParam(
                         f"{name} : {py_t}",
-                        (_pdesc(name, manifest_doc, True),),
+                        (_pdesc(name, manifest_doc, True, ctype),),
                     )
                 )
                 continue
@@ -917,7 +936,7 @@ def _build_class_docstring(
                 ClassParam(
                     f"{name} : {py_t}"
                     + (f", default {py_d}" if dflt.strip() else ""),
-                    (_pdesc(name, manifest_doc, False),),
+                    (_pdesc(name, manifest_doc, False, ctype),),
                 )
             )
     elif state_vars and not no_state:
@@ -1069,6 +1088,7 @@ def class_docstring_block(
     create_fn: str | None = None,
     raises: "Sequence[tuple[str, str]]" = (),
     warns: "Sequence[tuple[str, str]]" = (),
+    enum_choices: "dict[str, list[tuple[str, str]]] | None" = None,
 ) -> str:
     """Assemble a component's class docstring block (the whole ``\"\"\"...\"\"\"``,
     4-space indented, ready to drop under ``class X:``).
@@ -1109,6 +1129,7 @@ def class_docstring_block(
             create_blk=create_blk,
             raises=raises,
             warns=warns,
+            enum_choices=enum_choices,
         )
     )
 
@@ -1154,6 +1175,7 @@ def class_runtime_doc(
     create_fn: str | None = None,
     raises: "Sequence[tuple[str, str]]" = (),
     warns: "Sequence[tuple[str, str]]" = (),
+    enum_choices: "dict[str, list[tuple[str, str]]] | None" = None,
 ) -> list[str]:
     """The class docstring as runtime ``tp_doc`` lines (gh-642).
 
@@ -1189,6 +1211,7 @@ def class_runtime_doc(
         create_fn=create_fn,
         raises=raises,
         warns=warns,
+        enum_choices=enum_choices,
     ).split("\n")
     out = [lines[0].lstrip()[3:]] + [
         ln[4:] if ln.startswith("    ") else ln for ln in lines[1:-1]
@@ -1447,6 +1470,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         create_fn=C.object_create_fn(cfg, obj),
         raises=_raises,
         warns=_warns,
+        enum_choices=C.enum_choice_docs(cfg, doc_blocks),
     ).split("\n")
     # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
     # cannot be subclassed at runtime; the stub says so with @final. (Composer

@@ -221,6 +221,10 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
     # gh-805 §F: the declared failure surface, from the one derivation every
     # class-docstring producer shares. Both faces below take it.
     _cls_raises, _cls_warns = _S.class_diagnostics(cfg, object_name)
+    # gh-901: per-choice enum docs, from the same header read.
+    _cls_enums = C.enum_choice_docs(
+        cfg, cfg.get(object_name, {}).get("_doc_blocks", {})
+    )
     ctx["class_docstring"] = _S.class_docstring_block(
         object_name,
         Component,
@@ -235,6 +239,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
         create_fn=C.object_create_fn(cfg, object_name),
         raises=_cls_raises,
         warns=_cls_warns,
+        enum_choices=_cls_enums,
     )
     # gh-644/gh-676: the runtime class docstring. The module aggregator has
     # derived this from create()'s @brief since gh-602; the standalone template
@@ -260,7 +265,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
     # cannot make a fresh scaffold report STALE against itself. Without this
     # the object's own `.pyi` documented an exception that `help(Obj)` did
     # not, which is the two-faces-disagree bug gh-642 exists to prevent.
-    if _tp or _cls_raises or _cls_warns:
+    if _tp or _cls_raises or _cls_warns or _cls_enums:
         # gh-642: the whole class block, not just the brief — the same text
         # the .pyi beside it carries.
         ctx["tp_doc"] = _build_ml_doc(
@@ -279,6 +284,7 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
                 create_fn=C.object_create_fn(cfg, object_name),
                 raises=_cls_raises,
                 warns=_cls_warns,
+                enum_choices=_cls_enums,
             )
         )
     return ctx
