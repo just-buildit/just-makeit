@@ -718,7 +718,10 @@ def _max_out_count_param_ctx(
 
 
 def _capacity_exprs(
-    pass_capacity: bool, exact_max_out: bool, fallback: str
+    pass_capacity: bool,
+    exact_max_out: bool,
+    fallback: str,
+    max_out_state_only: bool = False,
 ) -> "tuple[str, str]":
     """``(alloc_clamp, min_cap_expr)`` for a variable-output method (gh-805 §D).
 
@@ -730,7 +733,8 @@ def _capacity_exprs(
 
     ``pass_capacity``
         The kernel is handed the capacity and enforces the bound itself, so
-        the exact value is trusted and there is no clamp. Unchanged by gh-805.
+        the exact value is trusted and there is no clamp — **provided the
+        header's ``max_out`` can see the count** (gh-920, below).
 
     ``exact_max_out``
         gh-805 §D. The same trust, without changing the kernel's signature.
@@ -741,6 +745,25 @@ def _capacity_exprs(
 
     neither
         ``max(max_out, n)``. The historical default and still the right one.
+
+    **gh-920: a state-only ``max_out`` earns neither trust.** gh-607 shipped
+    two halves — the exact allocation, and the count parameter that makes an
+    exact answer *possible* — and a project can be in the seam: opted into
+    ``pass_capacity`` while its header still declares the pre-gh-607
+    ``max_out(state)``. A value that cannot see ``n`` cannot be a per-call
+    bound, so trusting it exactly turns the caller's request into a silent
+    truncation: doppler's ``NCO.steps_u32(393_216)`` returned 65536 samples
+    and raised nothing, because a fixed internal cap was read as the answer to
+    a question about *this* call. jm already knows the arity here (gh-761's
+    ``max_out_is_state_only``), so it falls back to the clamped form rather
+    than extending a trust the signature cannot carry. The kernel is still
+    handed the true allocation, so the ``pass_capacity`` contract is intact —
+    this decides how large the buffer is, never what the kernel is told.
+
+    ``exact_max_out`` is deliberately *not* gated the same way: it is the
+    author asserting the bound holds for any call, which is exactly the claim
+    a state-only prototype cannot make on its own. Setting it is how a project
+    that really does have a call-independent bound keeps the exact allocation.
 
     **Why this is an assertion and not a derivation.** The obvious rule —
     "trust it when the prototype takes ``n_in``, since it was given the input
@@ -761,6 +784,9 @@ def _capacity_exprs(
     fallback : str
         C expression for the call's own length — ``_need`` at the allocation
         site, the lazy-fallback expression at the ``out=`` site.
+    max_out_state_only : bool
+        The header declares ``max_out(state)`` (gh-761), so the bound is
+        provably call-independent and *cannot* be trusted as an exact one.
 
     Examples
     --------
@@ -770,8 +796,15 @@ def _capacity_exprs(
     ('    if (!_cap) _cap = _need;\\n', '        size_t _min_cap = _omax ? _omax : (_need);\\n')
     >>> _capacity_exprs(True, False, "_need")
     ('    (void)_need;\\n', '        size_t _min_cap = _omax;\\n')
+
+    gh-920: the same method, whose header kept the pre-gh-607 prototype.
+
+    >>> _capacity_exprs(True, False, "_need", max_out_state_only=True)[0]
+    '    if (!_cap || _cap < _need) _cap = _need;\\n'
+    >>> _capacity_exprs(True, True, "_need", max_out_state_only=True)[0]
+    '    if (!_cap) _cap = _need;\\n'
     """
-    if pass_capacity:
+    if pass_capacity and not max_out_state_only:
         return "    (void)_need;\n", "        size_t _min_cap = _omax;\n"
     if exact_max_out:
         return (
@@ -1944,8 +1977,14 @@ def make_methods_ctx(
                     # changing the kernel signature. `_capacity_exprs` holds
                     # all three cases and also produces `_vo_alloc`'s clamp
                     # below, so the two cannot answer differently.
+                    #
+                    # gh-920: except when the header's `max_out` takes only the
+                    # state, which is a bound that cannot see this call.
                     + _capacity_exprs(
-                        bool(pass_capacity), exact_max_out, _lazy_fallback
+                        bool(pass_capacity),
+                        exact_max_out,
+                        _lazy_fallback,
+                        _moc_state_only,
                     )[1]
                     + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
@@ -2003,9 +2042,16 @@ def make_methods_ctx(
                 # gh-805 §D: `exact_max_out` drops the clamp too, keeping only
                 # the zero-guard — a mechanically migrated `return 0;` must
                 # still allocate `_need` rather than nothing.
-                + _capacity_exprs(bool(pass_capacity), exact_max_out, "_need")[
-                    0
-                ]
+                #
+                # gh-920: a state-only `max_out(state)` keeps the clamp under
+                # `pass_capacity`, because a call-independent value read as an
+                # exact per-call bound truncates the request instead.
+                + _capacity_exprs(
+                    bool(pass_capacity),
+                    exact_max_out,
+                    "_need",
+                    _moc_state_only,
+                )[0]
                 + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(
                     (

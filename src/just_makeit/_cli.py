@@ -106,6 +106,12 @@ Commands:
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
                                 Composes with --variable-output.
+    --exact-max-out             Assert <comp>_<name>_max_out() bounds ANY call,
+                                so the binding allocates it exactly instead of
+                                max(max_out, n). Say this when the bound is
+                                call-independent -- a `max_out(state)` that
+                                never sees the count cannot claim it, and is
+                                clamped without this flag (gh-920).
     --nogil                     Release the GIL across the pure-C kernel so a
                                 thread-per-shard worker scales across cores.
                                 Numpy accessors are hoisted out first. Sound

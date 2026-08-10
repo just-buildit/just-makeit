@@ -202,6 +202,24 @@ the kernel rather than overflowing the allocation. Opt in when a kernel can
 genuinely bounds-check its own writes; the exact allocation is the entire
 point of doing so.
 
+!!! warning "The trust is earned by the signature, not by the flag"
+
+    That exactness requires a `max_out` that can *see* the call. A header
+    still declaring the pre-gh-607 `max_out(state)` returns the same number
+    for every `n`, so reading it as a per-call bound silently truncates any
+    request above it — `steps(393_216)` returning 65536 samples and raising
+    nothing. jm reads the arity off your header
+    ([gh-761](https://github.com/just-buildit/just-makeit/issues/761)) and
+    keeps the clamp for the state-only form
+    ([gh-920](https://github.com/just-buildit/just-makeit/issues/920)); the
+    kernel is still handed the true allocation, so the `pass_capacity`
+    contract is unaffected.
+
+    To get the exact allocation back, give `max_out` the count and return a
+    bound computed from it. If the bound genuinely is call-independent, say so
+    with `exact_max_out = true` (below) — an assertion the prototype cannot
+    make on its own.
+
 ## Layer 3 — `out=` is for placement and determinism
 
 `out=` writes into an array you supply. Use it when *where* the samples land
@@ -290,10 +308,23 @@ defect reached from the other side. Note the overlap with the alignment note
 above — slicing is the common way to arrive at both problems, except a strided
 slice now raises where a merely misaligned one is quietly slower.
 
-An undersized `out=` raises `ValueError`; the requirement is
-`len(out) >= max(max_out(state, n_requested), n_requested)` — independent of
-`pass_capacity`, since `out=` validates the *caller's* buffer, not the
-internal allocation.
+An undersized `out=` raises `ValueError`. The requirement is **whatever the
+binding would have allocated for the same call**, and it comes from one
+emitter so the two faces cannot answer differently — an `out=` that validated
+more loosely would accept a buffer the internal path considers too small:
+
+| the method declares                    | `len(out) >=`                       |
+| -------------------------------------- | ----------------------------------- |
+| neither flag                           | `max(max_out(state, n), n)`         |
+| `pass_capacity`, count-bearing max_out | `max_out(state, n)`                 |
+| `pass_capacity`, `max_out(state)` only | `max(max_out(state), n)`            |
+| `exact_max_out`                        | `max_out(...)`, or `n` if it is `0` |
+
+So a buffer sized to the request is accepted exactly when the author has said
+the bound is a per-call one. Where `out=` demands more than the call could
+possibly produce, the answer is on the C side — give `max_out` the count, or
+assert `exact_max_out` — not a looser check here, which would only move the
+silent truncation from the allocation into the caller's own buffer.
 
 ## Who owns what, by shape
 

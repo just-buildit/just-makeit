@@ -278,7 +278,10 @@ out = decim.execute(block)   # a fresh NumPy-owned array, trimmed to n_out
 sizes the allocation from the call itself. It is a *sizing contract*, not a
 guarantee: the real bound is `n_out <= max(max_out(state), n_requested)`,
 because a generator's `steps(count)` writes exactly `count`. If your kernel
-must know the capacity it was actually given, add `pass_capacity = true`.
+must know the capacity it was actually given, add `pass_capacity = true` —
+which also lets the binding size the allocation from `max_out()` alone, but
+only once `max_out()` takes the count and can answer for *this* call. See
+[Array memory ownership](../memory-ownership.md) for the exact rule.
 
 **Accumulating results is safe.** Every call returns an independent
 NumPy-owned array, so holding them in a list, concatenating them, or passing
