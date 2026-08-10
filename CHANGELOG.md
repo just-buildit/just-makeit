@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pass_capacity` trusted a `max_out()` that cannot see the call
+    (gh-920).** gh-607 shipped two halves: the exact allocation
+    (`pass_capacity` hands the kernel its capacity, so the binding allocates
+    `max_out(state, n)` with no clamp) and the count parameter that makes an
+    exact answer possible. A project can be in the seam — opted into
+    `pass_capacity` while its header still declares the pre-gh-607
+    `max_out(state)` — and jm extended the exactness to a value that provably
+    cannot depend on `n`. A call-independent cap read as a per-call bound is a
+    **silent truncation**: doppler's `NCO.steps_u32(393_216)` returned 65536
+    samples and raised nothing.
+
+    jm already reads that arity off the sacred header (gh-761), for this same
+    wrapper, so a state-only prototype now keeps the clamp on both faces. The
+    kernel is still handed the true allocation, so `pass_capacity`'s contract
+    is untouched — this decides how large the buffer is, never what the kernel
+    is told. `exact_max_out` is deliberately *not* gated the same way: it is
+    the author asserting the bound holds for any call, which is exactly the
+    claim a state-only prototype cannot make on its own, and remains the way
+    to keep the exact allocation without changing the kernel's signature.
+
+    The `out=` face follows the allocation, from the one emitter that produces
+    both — so a buffer sized to the request is accepted exactly when the
+    author has said the bound is per-call. Where `out=` demands more than a
+    call could produce, the fix is on the C side; a looser check would only
+    move the truncation into the caller's own buffer.
+
+### Documented
+
+- **`exact_max_out` is discoverable.** It shipped in 0.55.0 as a live CLI flag
+    and manifest key with no entry in `jm help method` and no row in the
+    configuration tables — and gh-920 makes it the designated escape hatch for
+    a call-independent bound. Both added, along with the `out=` sizing rule
+    per method shape, which `memory-ownership.md` stated as one rule for every
+    shape when the emitter has had three since 0.55.0.
+
 ## [0.55.2] — 2026-08-10
 
 Two generated-output fixes, both surfaced by bumping doppler onto 0.55.1: one
