@@ -63,27 +63,31 @@ repos:
         pass_filenames: false
         types: [markdown]
 
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v22.1.8
-    hooks:
+      # These two were the last hooks running a tool from an upstream mirror
+      # rather than through make. That put their versions in a `rev:` instead
+      # of the dev group, and — because the make-ssot hook derives its map
+      # from the makefiles — left both INVISIBLE to it: `ruff check .` was
+      # denied while `clang-format -i native/src/x.c` was allowed, in the repo
+      # whose entire C surface is generated. The file selection each mirror
+      # applied now lives in the Makefile, unchanged, and the pins moved to
+      # the dev group at the exact versions the revs carried.
+      #
+      # `additional_dependencies: [pyyaml]` is gone with them: that existed
+      # only to repair cmake-format's ISOLATED hook env, which could not see
+      # the project's own. Running through `make` there is no second env.
       - id: clang-format
+        name: clang-format
+        entry: make -s lint-clang-format
+        language: system
+        pass_filenames: false
         types_or: [c, c++]
-        # tests/fixtures/doxygen: the byte-exact shape of each header IS the
-        # test input for the derivation corpus (gh-649) — a reformat there
-        # silently changes what the parser is being asked to parse.
-        exclude: ^(\.venv/|src/just_makeit/templates/|tests/fixtures/doxygen/)
 
-  - repo: https://github.com/cheshirekow/cmake-format-precommit
-    rev: v0.6.13
-    hooks:
       - id: cmake-format
+        name: cmake-format
+        entry: make -s lint-cmake-format
+        language: system
+        pass_filenames: false
         files: ^src/just_makeit/templates/cmake/
-        # Templates that lead with ``<<placeholder>>`` tokens are not valid
-        # CMake until rendered, so cmake-format's tokenizer rejects them.
-        exclude: CMakeLists_(component|module|object_core)\.cmake
-        # cmake-format reads .cmake-format.yaml; its isolated hook env needs
-        # PyYAML to parse it, else the hook dies with ModuleNotFoundError.
-        additional_dependencies: [pyyaml]
 
   # Must stay LAST: an example README inlines its .steps/ scripts verbatim, so
   # this has to observe the rewrites ruff-format/clang-format just made rather

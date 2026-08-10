@@ -62,6 +62,25 @@ RUFF_PATHS = .
 # also keeps the exclusions greppable in one place rather than as a second copy
 # of this regex in .pre-commit-config.yaml.
 MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/|docs/index\.md$$)
+# C/C++ sources clang-format owns, and the two trees it must never touch.
+# templates/ holds /*<<token>>*/ C that is only valid once rendered;
+# tests/fixtures/doxygen holds headers whose BYTE-EXACT shape is the input to
+# the derivation corpus (gh-649), so reformatting one silently changes what the
+# parser is being asked to parse. Copied verbatim from the pre-commit mirror
+# this replaced — the file selection is behaviour, not incidental.
+C_INCLUDE_RE  = \.(c|h|cc|cpp|hpp)$$
+C_EXCLUDE_RE  = ^(src/just_makeit/templates/|tests/fixtures/doxygen/)
+# cmake-format runs ONLY over the CMake templates, and skips the three whose
+# leading <<placeholder>> tokens its tokenizer rejects outright.
+#
+# The `\.cmake$$` anchor is load-bearing and was NOT in the mirror's `files:`
+# regex — pre-commit's own `cmake-format` hook declares `types: [cmake]`, and
+# that implicit filter is what kept `package.pc.in` (a pkg-config template
+# living in this directory) away from a CMake parser. Selecting by directory
+# alone fed it in and cmake-format died with an InternalError traceback.
+# `.cmake.in` is deliberately included: it IS CMake, and formats cleanly.
+CMAKE_INCLUDE_RE = ^src/just_makeit/templates/cmake/.*\.cmake(\.in)?$$
+CMAKE_EXCLUDE_RE = CMakeLists_(component|module|object_core)\.cmake
 
 # ── lint-<tool> dispatch ─────────────────────────────────────────────────────
 # LINT_TOOLS stamps out one `lint-<tool>` target each; .pre-commit-config.yaml
@@ -75,17 +94,46 @@ MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/
 # is on PATH rather than the locked dev env (sync_version.py needs tomllib, so
 # on a 3.9/3.10 PATH python it did not run at all), and with the command living
 # only in the hook there was no way to run by hand what pre-commit runs.
-LINT_TOOLS   = ruff ruff-format mdformat sync-version assemble-examples
+#
+# clang-format and cmake-format are here for the same reason, and they were the
+# last two exceptions. They ran from upstream pre-commit mirrors, so the make
+# map had no entry for them — and the make-ssot hook DERIVES that map from the
+# makefiles, which meant a raw `clang-format -i` on generated C was silently
+# ALLOWED while `ruff check .` was denied. In a repo whose entire C surface is
+# generated, that is the ungated command that matters most.
+LINT_TOOLS   = ruff ruff-format mdformat clang-format cmake-format \
+               sync-version assemble-examples
 # `format` is the auto-fixer, so sync-version is deliberately NOT here: it
 # exits 1 when it rewrites jb.toml (pre-commit's "re-stage me" convention),
 # and a fixer that fails because it fixed something is a trap. assemble-examples
 # returns 0 either way, and must stay LAST for the same reason it is last in
 # the hook config -- it inlines scripts ruff-format may have just rewrapped.
-FORMAT_TOOLS = ruff-format ruff mdformat assemble-examples
+FORMAT_TOOLS = ruff-format ruff mdformat clang-format cmake-format \
+               assemble-examples
+
+CLANG_FORMAT = $(DEV_RUN) clang-format
+CMAKE_FORMAT = $(DEV_RUN) cmake-format
 
 LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
 LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
 LINT_sync-version = $(DEV_RUN) python scripts/sync_version.py
+
+# `git ls-files` rather than a directory walk, so .venv/ and every build tree
+# are excluded by virtue of being untracked — the mirror hook needed an
+# explicit `\.venv/` exclusion for exactly that reason.
+define LINT_clang-format
+@git ls-files \
+    | grep -E '$(C_INCLUDE_RE)' \
+    | grep -Ev '$(C_EXCLUDE_RE)' \
+    | xargs -r $(CLANG_FORMAT) -i
+endef
+
+define LINT_cmake-format
+@git ls-files \
+    | grep -E '$(CMAKE_INCLUDE_RE)' \
+    | grep -Ev '$(CMAKE_EXCLUDE_RE)' \
+    | xargs -r $(CMAKE_FORMAT) -i
+endef
 
 # Whole-tree, like every other tool here. The hook used to pass pre-commit's
 # staged paths, so it re-assembled only the examples a commit touched -- which
