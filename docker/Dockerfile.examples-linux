@@ -58,11 +58,36 @@ RUN python -m pip install --no-cache-dir /src
 RUN just-makeit install-deps
 
 # ── Scaffold, build, and test all bundled examples ────────────────────────────
+# This is the expensive layer — twenty-odd projects scaffolded, compiled and
+# tested. It records WHAT it built to $JM_HOME/.jm-built.json and renders no
+# prose; the page itself is written by the step below, from that manifest.
+#
+# The split is for separability, not build caching: `welcome.py` is copied
+# here because build_examples imports `describe` from it, so editing it does
+# still invalidate this layer. What it buys is a pure renderer a test can
+# drive with any mapping, and a page that can be regenerated inside a running
+# container without rebuilding anything.
 RUN mkdir -p ${JM_HOME}/examples
-COPY docker/build_examples.py /tmp/build_examples.py
+COPY docker/build_examples.py docker/welcome.py /tmp/
 RUN python3 /tmp/build_examples.py ${JM_HOME}/examples
 
+# ── The welcome page, from what the step above observed ──────────────────────
+RUN python3 /tmp/welcome.py ${JM_HOME} && \
+    test -s ${JM_HOME}/README.md
+
+# ── Tutorials, somewhere a human can type ────────────────────────────────────
+# The per-example walkthroughs are package data, so they sit at a site-packages
+# path nobody will retype. The symlink target is DISCOVERED rather than written
+# down: it moves with the Python version, and a hardcoded 3.12 would break the
+# next base-image bump silently — the link would dangle and `less` would just
+# say "No such file".
+RUN ln -sfn "$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples")')" \
+        ${JM_HOME}/tutorials && \
+    test -r ${JM_HOME}/tutorials/fir_filter/README.md
+
 # ── Welcome message ──────────────────────────────────────────────────────────
+# One source, two surfaces: the editor opens $JM_HOME/README.md and this prints
+# the same file. JM_HOME is already ENV, so motd.sh resolves it at runtime.
 COPY docker/motd.sh /etc/profile.d/00-jm-examples.sh
 RUN chmod +x /etc/profile.d/00-jm-examples.sh && \
     chown -R user:user ${JM_HOME}

@@ -1,14 +1,28 @@
 {
   "name": "just-makeit playground",
   "image": "ghcr.io/just-buildit/jm-examples-linux:latest",
-  "remoteUser": "root",
+
+  // `user`, not `root`. The image's USER is `user` (uid 1000) and its home IS
+  // the workspace folder, so as root every `~/examples/...` path the welcome
+  // prints resolves under /root and does not exist — the greeting was telling
+  // Codespaces users to cd somewhere that is not there. Measured, both ways.
+  "remoteUser": "user",
   "workspaceFolder": "/home/just-makeit",
+
+  // Codespaces opens an editor, not a login shell, so the /etc/profile.d
+  // greeting can go entirely unseen. Two independent paths to it:
+  //   1. the README opens as a rendered preview on first attach
+  //   2. postAttachCommand prints it into the terminal
+  // Either alone leaves a way in that shows nothing.
+  "postAttachCommand": "cat /home/just-makeit/README.md",
+
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-vscode.cpptools-extension-pack"
       ],
       "settings": {
+        "workbench.startupEditor": "readme",
         "terminal.integrated.defaultProfile.linux": "bash (login)",
         "terminal.integrated.profiles.linux": {
           "bash (login)": {

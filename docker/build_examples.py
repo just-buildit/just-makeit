@@ -10,6 +10,7 @@ directories so the generated Python test suites are exercised too.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -66,12 +67,28 @@ def _run_pytest(proj: Path) -> bool:
     return r.returncode in (0, 5)
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from welcome import describe  # noqa: E402
+
+# What each example actually put on disk, and what it is for. Collected as we
+# go so the sandbox's welcome page can be generated from it rather than
+# hand-listed — the hand-listed version advertised a `my_corr/` no example
+# produces and omitted ~25 that exist.
+#
+# Recorded to a manifest here and RENDERED by `welcome.py` in the next Docker
+# step, so this script observes and that one writes prose. The renderer is then
+# pure enough for a test to drive it with a mapping no image contains — the
+# only way to prove the page follows its input rather than the tree it runs in.
+built: dict[str, list[str]] = {}
+descriptions: dict[str, str] = {}
+
 failed = []
 for name in _EXAMPLES:
     ex_dir = _find(name)
     if ex_dir is None:
         print(f"  {name}: skipped (not found)", flush=True)
         continue
+    descriptions[name] = describe(ex_dir)
     spec = importlib.util.spec_from_file_location(
         f"jm_ex_{name}", ex_dir / "test.py"
     )
@@ -91,6 +108,7 @@ for name in _EXAMPLES:
 
     # Run pytest against every project directory created by this example.
     after = {d for d in dest.iterdir() if d.is_dir()}
+    built[name] = sorted(p.name for p in (after - before))
     for proj in sorted(after - before):
         print(f"  [{name}] pytest {proj.name}/src ...", flush=True)
         if _run_pytest(proj):
@@ -102,5 +120,16 @@ for name in _EXAMPLES:
 if failed:
     print(f"\nFailed: {', '.join(failed)}", file=sys.stderr)
     sys.exit(1)
+
+# What was built, for `welcome.py --render` to turn into the README in a later
+# layer. JSON rather than the finished page so the two concerns stay in the two
+# layers that should own them.
+manifest = dest.parent / ".jm-built.json"
+manifest.write_text(
+    json.dumps({"built": built, "descriptions": descriptions}, indent=2),
+    encoding="utf-8",
+)
+n_projects = sum(len(v) for v in built.values())
+print(f"  wrote {manifest} ({n_projects} projects)", flush=True)
 
 print(f"\nAll {len(_EXAMPLES)} examples built and tested in {dest}")
