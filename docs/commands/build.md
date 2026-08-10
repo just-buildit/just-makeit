@@ -370,6 +370,7 @@ Prints a table of files, each in one of these states:
 | `UNBUILT`     | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.                                                                                                                                                           | yes       |
 | `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions. | no        |
 | `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible.                                                                                                                                              | yes       |
+| `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                       | no        |
 
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
@@ -399,6 +400,39 @@ from a complete list.
 Shipped in v0.55.0, a release ahead of the rejection, so a project could
 rename on its own schedule. See *Naming rules* under
 [`jm object`](scaffold.md).
+
+### `NOTE` — an opt-in that cannot take effect
+
+`pass_capacity` hands the kernel its output capacity so the binding can trust
+`max_out()` exactly, allocating it instead of the defensive `max(max_out, n)`.
+That trust needs `max_out` to be able to *see* the call, which is the other
+half of gh-607: the count parameter. A project can sit between the two — the
+manifest opts in, the sacred header still declares the pre-gh-607
+`max_out(state)`:
+
+```text
+NOTE (1) — `pass_capacity` is set but cannot take effect:
+  . nco.steps_u32: nco_steps_u32_max_out(state) cannot see the call, so the
+      allocation stays clamped to max(max_out, n).
+```
+
+Since gh-920 this is **safe**: a bound that cannot depend on `n` is not read as
+a per-call one, so the clamp stays and nothing truncates. Before that fix it
+was not — doppler's `NCO.steps_u32(393_216)` returned 65536 samples and raised
+nothing. What remains is only that the opt-in is inert and says so nowhere, so
+`status` says it. Two ways out, both in the message: give `max_out` the count,
+or declare `exact_max_out` if the bound really is call-independent.
+
+It is a note rather than a gate because it cannot be wrong — the arity is read
+off the header's own declaration and the flag off the manifest, with nothing
+inferred between them — and because the allocation it describes is correct.
+Failing CI over a correct allocation would be worse than the silence.
+
+It lives here rather than on `jm apply` for the same reason `NON-ASCII NAMES`
+does: the condition is per method, and on a tree with dozens of
+variable-output methods an apply-time note is a wall of lines arriving exactly
+when the reader is watching for what changed. This is a standing property of
+the manifest, not an event.
 
 ### Why `UNBUILT` gates
 

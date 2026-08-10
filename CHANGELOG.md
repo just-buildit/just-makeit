@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports a `pass_capacity` opt-in that cannot take effect
+    (gh-921).** gh-920 made the seam safe — a `max_out(state)` that cannot see
+    the call is no longer trusted as a per-call bound, so the allocation keeps
+    the `max(max_out, n)` clamp and nothing truncates. It did not make it
+    visible: a project with `pass_capacity` in the manifest and the pre-gh-607
+    prototype in its header asked for the exact allocation, got the clamped
+    one, and could learn so only by reading the generated glue. `jm status` now
+    prints a `NOTE` naming the method, the C symbol and both ways out — give
+    `max_out` the count (gh-607), or declare `exact_max_out` if the bound
+    really is call-independent.
+
+    A note, not a gate: the arity comes from the header's own declaration and
+    the flag from the manifest, so it cannot be wrong about a method it names,
+    and the allocation it describes is correct. It is never counted in the exit
+    code, never printed under `--check`, and does not take the summary out of
+    "up to date". It lives in `status` rather than on the mutating commands
+    because the condition is per method — on a tree carrying dozens of
+    variable-output methods, an apply-time note is a wall of lines arriving
+    exactly when the reader is watching for what changed.
+
 ## [0.55.3] — 2026-08-10
 
 One fix, found by bumping doppler onto 0.55.2: a `pass_capacity` binding read
