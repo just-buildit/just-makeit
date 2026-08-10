@@ -4,6 +4,35 @@
 
 ### Fixed
 
+- **Names held in a bare list are walked and gated too (gh-911).** gh-910
+    derived the walk from the manifest for every key called `name` or ending
+    in `_name`; a handful of names are stored instead as a plain list of
+    strings, with no key to recognise them by — `aliases` (a ctor kwarg in a
+    composer's generated `tp_init`), `extra_types` (spliced as
+    `PyType_Ready(&<T>Type)`), `objects`, `depends_on`, `composes`, `c_deps`,
+    `exclude_methods`, `factories`, and every list in a
+    `[<module>.reexports]` table, whose keys are source-module names the
+    project chooses and so cannot be enumerated.
+
+    The test is not "is this a declaration" but **"does jm splice it into
+    generated code as an identifier"**. Most of these are references, and they
+    still belong in the walk: a malformed one breaks the generated C or
+    `__init__.py` whether or not the manifest is where the name was born. On
+    doppler's manifest the walk goes from 2031 names to 2156.
+
+    **This half fails open, unlike its neighbour, and the docstring says so.**
+    A list of strings is not a shape reserved for names — measured on the same
+    manifest, it also carries CMake generator expressions
+    (`$<TARGET_OBJECTS:…>`, `Threads::Threads`), an argv, file paths, enum
+    choice strings and numeric literals — so fail-closed would refuse
+    manifests that build today. The boundary is pinned: sweeping every string
+    list in, the tempting over-fix, turns eight tests red.
+
+    gh-911 was filed claiming `multi_output` declared names. It does not — the
+    key holds **C types**, validated against `_CTYPE_META` by the CLI, and its
+    outputs are positional (`out1`, `out2`). Pinned by a test, because the
+    issue said otherwise in writing.
+
 - **Every declared name is now walked, and every walked name is gated
     (gh-910).** `non_ascii_names` promised in its own docstring that it named
     *every* declared name — "partial coverage is worse than none, because it

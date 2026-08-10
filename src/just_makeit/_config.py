@@ -900,6 +900,52 @@ _NAME_WALK_SKIP = frozenset({"app"})
 #: a plain CamelCase identifier that becomes a Python type.
 _NOT_IDENT_NAME_KEYS = frozenset({"capsule_name"})
 
+#: List-valued keys whose elements jm splices into generated code as
+#: identifiers. gh-911, and the reason it is a set rather than a rule: the
+#: ``*_name`` half above can be fail-closed because that key shape is reserved
+#: for names, and a list of strings is not. Measured across every manifest
+#: available, the same shape also carries CMake generator expressions
+#: (``extra_link_libs = ["$<TARGET_OBJECTS:stream_core_obj>", "Threads::Threads"]``),
+#: an argv (``py_format_command``), file paths (``status_allow``), arbitrary
+#: enum choice strings (``values``), numeric literals (``to_json_trailing``),
+#: a fixed vocabulary (``platforms``, ``loop``) and **C types**
+#: (``multi_output``, validated against ``_CTYPE_META`` at the CLI — gh-911 was
+#: filed claiming this one declared names, and it does not; its outputs are
+#: positional ``out1``/``out2``).
+#:
+#: So this half fails OPEN, deliberately and unlike its neighbour: a list key
+#: added later is unchecked until it is named here, because the alternative
+#: refuses manifests that are correct today. The classification below is
+#: measured, not guessed — every element of all 43 occurrences in doppler's
+#: manifest is a valid identifier.
+#:
+#: "Declared" is the wrong test for these and was the wrong word in gh-911.
+#: Most are *references* — ``objects``, ``depends_on``, ``composes``,
+#: ``c_deps``, ``exclude_methods`` name something declared elsewhere or
+#: hand-written in C. They belong here anyway: jm writes each one into
+#: generated C or Python verbatim (a ``PyType_Ready(&<extra_type>Type)``, a
+#: CMake target, an ``__init__.py`` import), so a malformed one breaks the
+#: generated file whether or not this manifest is where it was born.
+_NAME_LIST_KEYS = frozenset(
+    {
+        "aliases",
+        "extra_types",
+        "objects",
+        "depends_on",
+        "composes",
+        "c_deps",
+        "exclude_methods",
+        "factories",
+    }
+)
+
+#: Tables where EVERY list of strings is names, whatever the key. A
+#: ``[module.<m>.reexports]`` table is keyed by the *source module*
+#: (``wfm_writer = ["Writer", "write_blue_header"]``), so its keys are chosen
+#: by the project and cannot be enumerated here — the table is the only stable
+#: thing about it. Each element becomes a name in the generated `__init__.py`.
+_NAME_LIST_TABLES = frozenset({"reexports"})
+
 #: The noun a user reads for a name found under table ``<key>``. Cosmetic
 #: ONLY — coverage comes from the walk, so a table missing from this map is
 #: still reported, just under the fallback noun. That split is the point: the
@@ -907,6 +953,12 @@ _NOT_IDENT_NAME_KEYS = frozenset({"capsule_name"})
 #: of names checked) down with it.
 _KIND_LABELS = {
     "state": "state field",
+    "aliases": "alias",
+    "extra_types": "extra type",
+    "objects": "object",
+    "composes": "composed module",
+    "c_deps": "C dependency",
+    "exclude_methods": "excluded method",
     "init_params": "init param",
     "array_args": "array arg",
     "create_args": "create arg",
@@ -948,6 +1000,22 @@ def _is_name_key(key: str) -> bool:
     ) and key not in _NOT_IDENT_NAME_KEYS
 
 
+def _is_name_list(key: str, table_key: str, value: "object") -> bool:
+    """True when *value* is a list whose elements are names (gh-911).
+
+    Recognised by the key, or by the enclosing table for ``reexports`` — whose
+    keys are source-module names the project chooses. Only lists that are
+    entirely strings qualify: the same key can carry tables elsewhere
+    (``depends_on`` and ``factories`` both appear in both shapes), and those
+    are walked as tables so their ``name`` key is found the ordinary way.
+    """
+    if not isinstance(value, list) or not value:
+        return False
+    if not all(isinstance(element, str) for element in value):
+        return False
+    return key in _NAME_LIST_KEYS or table_key in _NAME_LIST_TABLES
+
+
 def declared_names(cfg: dict) -> "list[tuple[str, str, str]]":
     """``[(kind, name, where), ...]`` for every name a manifest declares.
 
@@ -965,22 +1033,14 @@ def declared_names(cfg: dict) -> "list[tuple[str, str, str]]":
     the name, and a **module** is a key under ``[module]``. Everything else —
     including ``[project] name`` — is found by the walk.
 
-    **Bare lists of names are NOT covered, and that is a decision.** A handful
+    **Lists of names are covered too, by an allow-list (gh-911).** A handful
     of keys hold names as a plain list of strings rather than as tables with a
-    ``name`` key — ``multi_output`` is the one that genuinely *declares* names
-    nowhere else. It cannot be swept in by the same fail-closed rule the
-    ``*_name`` keys get, because that shape is not reserved for names:
-    measured against doppler's manifest, list-valued keys also hold CMake
-    generator expressions (``extra_link_libs``), an argv (``py_format_command``),
-    file paths (``status_allow``), arbitrary enum choice strings (``values``)
-    and numeric literals (``to_json_trailing``). Treating every string list as
-    identifiers would refuse manifests that are correct today; an allow-list of
-    the ones that are names is precisely the enumeration gh-910 exists to
-    delete, and would fail open the same way. Most such keys are also
-    *references* to names declared elsewhere (``objects``, ``depends_on``,
-    ``composes``, ``c_deps``) and so are already checked where they are
-    declared. The residue — ``multi_output`` — needs its own decision; see
-    gh-911.
+    ``name`` key — ``aliases``, ``extra_types``, ``objects``, the
+    ``[<module>.reexports]`` table. Those cannot use the fail-closed rule the
+    ``*_name`` keys get, because a list of strings is not a shape reserved for
+    names: it also carries CMake generator expressions, an argv, file paths,
+    enum choice strings and C types. See ``_NAME_LIST_KEYS`` for the
+    classification and why this half fails open where the other half does not.
 
     ``where`` is the dotted manifest path (``w.state[0].name``), so an error
     can point at the declaration instead of leaving the author to find which
@@ -1005,6 +1065,20 @@ def declared_names(cfg: dict) -> "list[tuple[str, str, str]]":
                             ".".join(trail + [key]),
                         )
                     )
+                elif _is_name_list(key, table_key, value):
+                    label = (
+                        "re-export"
+                        if table_key in _NAME_LIST_TABLES
+                        else _kind_label(key, "name")
+                    )
+                    for index, element in enumerate(value):
+                        found.append(
+                            (
+                                label,
+                                element,
+                                ".".join(trail + [f"{key}[{index}]"]),
+                            )
+                        )
                 else:
                     _walk(value, trail + [key], key)
         elif isinstance(node, list):
@@ -1069,11 +1143,19 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
         ``kind`` is the noun a user sees ("object", "method", ...). Empty for
         every project whose names are ASCII, which is effectively all of them.
     """
-    return [
-        (kind, name)
-        for kind, name, _ in declared_names(cfg)
-        if not name.isascii()
-    ]
+    # Deduplicated on (kind, name), because one name can legitimately be
+    # declared in two places: a module's `objects = [...]` list repeats the
+    # component names that are already top-level tables (gh-911 brought that
+    # list into the walk). The gate below wants every occurrence and its path;
+    # a person reading a rename list wants each name once.
+    seen: set[tuple[str, str]] = set()
+    report: list[tuple[str, str]] = []
+    for kind, name, _ in declared_names(cfg):
+        if name.isascii() or (kind, name) in seen:
+            continue
+        seen.add((kind, name))
+        report.append((kind, name))
+    return report
 
 
 def require_name(name: str, kind: str) -> None:
