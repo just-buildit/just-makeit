@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.55.3] — 2026-08-10
+
+One fix, found by bumping doppler onto 0.55.2: a `pass_capacity` binding read
+a `max_out()` that cannot see the call as if it bounded one, and truncated the
+request to it without saying so.
+
 ### Fixed
 
 - **`pass_capacity` trusted a `max_out()` that cannot see the call
@@ -30,7 +36,7 @@
     call could produce, the fix is on the C side; a looser check would only
     move the truncation into the caller's own buffer.
 
-### Documented
+### Docs
 
 - **`exact_max_out` is discoverable.** It shipped in 0.55.0 as a live CLI flag
     and manifest key with no entry in `jm help method` and no row in the
