@@ -340,8 +340,18 @@ correct. The generated `Makefile` still detects `OS=Windows_NT` at make-time
 - Images are rebuilt on push to `main` (paths: `docker/**`, `src/**`,
     `pyproject.toml`) and on every release tag via `docker.yml` called from
     `release.yml`
-- `.devcontainer/devcontainer.json` — Codespaces config; login shell so
-    `docker/motd.sh` fires automatically
+- `.devcontainer/devcontainer.json` — Codespaces config. `remoteUser` must be
+    the image's own `USER`, not `root`: the image's home **is** the workspace
+    folder, so as root every `~/...` path the sandbox prints resolves under
+    `/root` and does not exist. Gated by
+    `tests/test_devcontainer_and_welcome.py`.
+- The sandbox's welcome text has one source and is **generated**, never
+    written: `docker/build_examples.py` records what it actually built to
+    `.jm-built.json`, `docker/welcome.py` renders that into
+    `$JM_HOME/README.md`, the editor opens it (`workbench.startupEditor`) and
+    `docker/motd.sh` prints the same file. The hand-written version advertised
+    a `my_corr/` no example produces and cited a
+    `just_makeit._example_readme` module that has never existed.
 
 ### Makefile standard (`standard.mk`)
 
