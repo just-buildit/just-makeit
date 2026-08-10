@@ -167,6 +167,25 @@ def run(
     check_return: bool = False,
 ) -> None:
     C.require_name(fn_name, "function")
+    # gh-910: the function's own name was already checked; its parameters and
+    # result fields were not, and this command writes the module's C before it
+    # saves the manifest — so `save`'s gate fired only after `gaïn` had reached
+    # the generated source. Same reason as the matching block in `_init.run`.
+    C.require_declared_names(
+        {
+            "module": {
+                module: {
+                    "functions": [
+                        {
+                            "name": fn_name,
+                            "params": C.as_named_tables(params),
+                            "result_fields": C.as_named_tables(result_fields),
+                        }
+                    ]
+                }
+            }
+        }
+    )
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

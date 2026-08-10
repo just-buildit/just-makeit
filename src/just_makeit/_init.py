@@ -792,6 +792,31 @@ def run(
     declared_methods: "list[dict] | None" = None,
 ) -> None:
     C.require_name(component, "component")
+    # gh-910: every OTHER name this object declares, checked here because the
+    # manifest section is composed at the very end of this function (the
+    # `add_component` call) while the sacred header is written two hundred
+    # lines earlier. `C.save`'s gate catches all of these, but by then
+    # `native/inc/<comp>/<comp>_core.h` already contains `double gaïn;` and
+    # the command has left a half-made tree behind — which is the recovery
+    # cost gh-625 was filed about, reached by a different route.
+    #
+    # The payload list is enumerated because these arrive as parameters and
+    # there is nothing to derive it from; the walk inside still derives the
+    # names within each. A payload kind added later and forgotten here is
+    # refused by `save` exactly as it is today, not let through.
+    C.require_declared_names(
+        {
+            component: {
+                "state": C.as_named_tables(state_vars),
+                "init_params": C.as_named_tables(init_params),
+                "array_args": C.as_named_tables(array_args),
+                "opaque_fields": C.as_named_tables(opaque_fields),
+                "methods": C.as_named_tables(declared_methods),
+                "destroy": destroy or {},
+                **({"class_name": class_name} if class_name else {}),
+            }
+        }
+    )
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

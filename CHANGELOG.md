@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every declared name is now walked, and every walked name is gated
+    (gh-910).** `non_ascii_names` promised in its own docstring that it named
+    *every* declared name — "partial coverage is worse than none, because it
+    reads as a clean bill of health". It was hand-written three times, each
+    pass adding what the last had missed, and the third still missed
+    `array_args`, every method and function `param`, a custom `destroy` name,
+    a `record_name`, an `[[enum]]` name and the whole handle/composer surface
+    (`create_args`, `getters.fields`, `methods.args`, `factories`,
+    `serializers`). Enforcement had the matching hole from the other side:
+    `require_name` was reachable from six of the eight kinds the report did
+    cover, so `jm object --state gaïn:double:1.0` wrote `double gaïn;` into
+    the **sacred** header and exited 0.
+
+    Both halves are one fix. The walk is now derived from the manifest —
+    `C.declared_names` treats any key called `name` or ending in `_name` as an
+    identifier, so a declaration kind added later is covered with no edit —
+    and the check runs in `C.save`, the one place every manifest write passes
+    through, so a *command* added later inherits it too. On doppler's manifest
+    the derived walk finds 2031 names across 24 kinds where the hand-written
+    one covered nine.
+
+    Fail-closed, deliberately: the one `*_name` key that is not an identifier
+    (`capsule_name`, a dotted PyCapsule string) is an explicit, measured
+    exception rather than the default. `[app]` stays excluded — `jm app --name   my-tool` legitimately takes a hyphen.
+
+    Commands keep their own early checks, because `save` alone fires *after*
+    `jm object` has written the sacred header and `jm method` has rendered the
+    binding — exit 1 with a half-made tree is the recovery cost gh-625 was
+    filed about, reached by another route.
+
+    Names declared as a bare list of strings (`multi_output`) are still
+    unchecked and are not swept in by guesswork: that shape also carries CMake
+    generator expressions, argv lists and file paths, so a fail-closed rule
+    would refuse correct manifests. Filed as gh-911.
+
 ### Changed
 
 - **A non-ASCII name is now rejected (gh-784, second half).**

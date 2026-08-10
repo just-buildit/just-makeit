@@ -52,6 +52,20 @@ from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 
 
+def _legacy_declare(root, toml_text):
+    """Append a declaration the way an OLDER jm left it on disk.
+
+    Every test below that models "a tree already carrying a non-ASCII name"
+    used to build it with `C.save`. Since gh-910 that is the one thing which
+    cannot produce this state: `save` is the gate, so a manifest carrying such
+    a name is by definition one that never passed through today's `save` — an
+    older jm wrote it. Going through `save` would be modelling a tree that
+    cannot exist, and the tests would have been pinning the gate's absence.
+    """
+    path = root / C.FILENAME
+    path.write_text(path.read_text() + toml_text, encoding="utf-8")
+
+
 def test_the_message_does_not_claim_lowercase():
     """The word that was false. Uppercase passes, so saying otherwise misled.
 
@@ -166,11 +180,11 @@ def test_status_reports_a_non_ascii_name(tmp_path):
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, [], [])
         object_run(root, "w", None, arg_type="float", return_type="float")
-    cfg = C.load(root)
-    cfg["w"]["methods"] = [
-        {"name": "café", "arg_type": "void", "return_type": "int"}
-    ]
-    C.save(root, cfg)
+    _legacy_declare(
+        root,
+        '\n[[w.methods]]\nname = "café"\n'
+        'arg_type = "void"\nreturn_type = "int"\n',
+    )
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -245,9 +259,9 @@ def test_status_reports_a_non_ascii_function_name(tmp_path):
         new_run("p", root, [], [])
         module_run(root, "m")
         object_run(root, "w", "m", arg_type="float", return_type="float")
-    cfg = C.load(root)
-    C.add_module_function(cfg, "m", {"name": "café", "doc": ""})
-    C.save(root, cfg)
+    _legacy_declare(
+        root, '\n[[module.m.functions]]\nname = "café"\ndoc = ""\n'
+    )
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -308,11 +322,11 @@ def test_apply_refuses_a_manifest_that_already_carries_one(tmp_path, capsys):
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, [], [])
         object_run(root, "w", None, arg_type="float", return_type="float")
-    cfg = C.load(root)
-    cfg["w"]["methods"] = [
-        {"name": "café", "arg_type": "void", "return_type": "int"}
-    ]
-    C.save(root, cfg)
+    _legacy_declare(
+        root,
+        '\n[[w.methods]]\nname = "café"\n'
+        'arg_type = "void"\nreturn_type = "int"\n',
+    )
 
     capsys.readouterr()
     with pytest.raises(SystemExit):
@@ -334,14 +348,13 @@ def test_status_names_every_offender_before_the_replay_kills_it(tmp_path):
         new_run("p", root, [], [])
         object_run(root, "w", None, arg_type="float", return_type="float")
         object_run(root, "v", None, arg_type="float", return_type="float")
-    cfg = C.load(root)
-    cfg["w"]["methods"] = [
-        {"name": "café", "arg_type": "void", "return_type": "int"}
-    ]
-    cfg["v"]["methods"] = [
-        {"name": "Ωmega", "arg_type": "void", "return_type": "int"}
-    ]
-    C.save(root, cfg)
+    _legacy_declare(
+        root,
+        '\n[[w.methods]]\nname = "café"\n'
+        'arg_type = "void"\nreturn_type = "int"\n'
+        '\n[[v.methods]]\nname = "\u03a9mega"\n'
+        'arg_type = "void"\nreturn_type = "int"\n',
+    )
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
