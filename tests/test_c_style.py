@@ -339,3 +339,36 @@ def test_formatted_project_builds(tmp_path):
         timeout=600,
     )
     assert bld.returncode == 0, f"{bld.stdout}\n{bld.stderr}"
+
+
+def test_coverage_artifacts_are_not_manifest_owned(tmp_path):
+    """`.coverage` in a project root is not drift (jm #929's CI failure).
+
+    Running a generated project's own suite under coverage drops `.coverage`
+    (and per-process `.coverage.<host>.<pid>.<rand>` siblings) into its root.
+    `jm apply` never writes them, so `_walk_managed` counted them as STALE and
+    `status --check` returned 1 — a finding no user can act on, in the count
+    whose entire value is that everything in it is actionable.
+
+    This surfaced only because jm #929 put clang-format in the dev group: the
+    `c_style` suite is guarded by `shutil.which("clang-format")` and had
+    therefore never run in CI, where the Coverage job sets
+    `COVERAGE_PROCESS_START` and so instruments the `jm` subprocesses these
+    tests spawn. A skip hid it.
+    """
+    from just_makeit import _apply
+
+    root = tmp_path / "p"
+    new_run("p", root, object_names=["widget"])
+    assert _cli("apply", cwd=root).returncode == 0
+
+    (root / ".coverage").write_bytes(b"SQLite format 3\x00not really")
+    (root / ".coverage.host.4711.98123").write_bytes(b"x")
+
+    for name in (".coverage", ".coverage.host.4711.98123"):
+        assert _apply.is_skipped(Path(name)), name
+
+    check = _cli("status", "--check", cwd=root)
+    assert check.returncode == 0, (
+        f"coverage output counted as drift: {check.stdout}"
+    )

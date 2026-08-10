@@ -101,9 +101,40 @@ def _resolve_impl(
 
 
 # Directory names and filenames never copied from the replay.
+#
+# `.coverage` (and coverage's per-process `.coverage.<host>.<pid>.<rand>`
+# siblings) are tool output landing in the project root, exactly like the
+# `__pycache__` and `.so` entries beside them. Without this, running a
+# generated project's own suite under coverage leaves a file `apply` never
+# writes, and `jm status` reports it as STALE — drift a user cannot act on,
+# in the count whose whole value is that everything in it is actionable.
+#
+# Found via the c_style convergence tests, which had never run in CI because
+# clang-format was not installed there: `status --check` returned 1 with
+# `~ .coverage` as the sole finding.
 _SKIP_DIRS = {"build", ".venv", ".git", "dist", "__pycache__"}
-_SKIP_FILES = {C.FILENAME, "compile_commands.json"}
+_SKIP_FILES = {C.FILENAME, "compile_commands.json", ".coverage"}
 _SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".pyd"}
+# Prefixes, for tool output whose suffix is a random per-process token rather
+# than a fixed extension — `.coverage.runner.4711.981234`.
+_SKIP_PREFIXES = (".coverage.",)
+
+
+def is_skipped(rel: Path) -> bool:
+    """True when *rel* is not manifest-owned and must never be compared.
+
+    One predicate rather than the condition written out at each walk. It was
+    duplicated in :func:`_sync_missing` and :func:`_status._walk_managed`, and
+    a rule expressed twice is the peer pair this codebase keeps rediscovering
+    — the `.coverage` case had to be fixed in both to fix it at all.
+
+    *rel* is a path relative to the project root.
+    """
+    if set(rel.parts) & _SKIP_DIRS or rel.name in _SKIP_FILES:
+        return True
+    if rel.suffix in _SKIP_SUFFIXES:
+        return True
+    return rel.name.startswith(_SKIP_PREFIXES)
 
 
 def _object_kwargs(cfg: dict, comp: str) -> dict:
@@ -847,9 +878,7 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
         if not src.is_file():
             continue
         rel = src.relative_to(temp_root)
-        if set(rel.parts) & _SKIP_DIRS or rel.name in _SKIP_FILES:
-            continue
-        if rel.suffix in _SKIP_SUFFIXES:
+        if is_skipped(rel):
             continue
         dst = root / rel
         if dst.exists():

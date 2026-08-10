@@ -59,12 +59,21 @@ from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
 from . import _stubs
-from ._apply import _SKIP_DIRS, _SKIP_FILES, _SKIP_SUFFIXES
+from ._apply import _SKIP_DIRS
 
 # Directories/files never copied into the scratch tree (build artefacts,
 # VCS, caches) — not manifest-owned, and copying them only slows status.
 _COPY_IGNORE = shutil.ignore_patterns(
-    *_SKIP_DIRS, "*.so", "*.pyd", "*.pyc", "*.pyo", "compile_commands.json"
+    *_SKIP_DIRS,
+    "*.so",
+    "*.pyd",
+    "*.pyc",
+    "*.pyo",
+    "compile_commands.json",
+    # Not merely ignorable but pointless to copy: coverage databases can be
+    # large, and the scratch tree exists only to be re-applied and diffed.
+    ".coverage",
+    ".coverage.*",
 )
 
 
@@ -75,9 +84,7 @@ def _walk_managed(base: Path) -> list[Path]:
         if not p.is_file():
             continue
         rel = p.relative_to(base)
-        if set(rel.parts) & _SKIP_DIRS or rel.name in _SKIP_FILES:
-            continue
-        if rel.suffix in _SKIP_SUFFIXES:
+        if _apply.is_skipped(rel):
             continue
         out.append(rel)
     return out
