@@ -708,6 +708,26 @@ def run(
     sink_fn: str = "",
 ) -> None:
     C.require_name(method_name, "method")  # gh-625
+    # gh-910: the method's parameters and result fields, before this command
+    # writes any C. `C.save`'s gate catches them either way, but this command
+    # renders the binding and the stub before it saves, so without this a
+    # refused `--param gaïn:double` still reached the generated source.
+    C.require_declared_names(
+        {
+            object_name: {
+                "methods": [
+                    {
+                        "name": method_name,
+                        "params": C.as_named_tables(params),
+                        "result_fields": C.as_named_tables(result_fields),
+                        **(
+                            {"record_name": record_name} if record_name else {}
+                        ),
+                    }
+                ]
+            }
+        }
+    )
     # gh-788: `record_dtype` is only meaningful as the element type of a
     # variable-output result, and the dtype cannot be built without the
     # member list. Both are checked here rather than left to fail later as a

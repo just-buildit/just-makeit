@@ -575,6 +575,12 @@ def save(root: Path, cfg: dict) -> None:
     live in the manifest. New objects go to `objects/<name>.toml` when
     the project uses the split layout, or to the manifest otherwise.
     A fragment file that ends up with no sections is deleted."""
+    # gh-910: the name gate, here because this is the one place every
+    # manifest write passes through. Ahead of the `deferred_save` return so a
+    # bad name is refused at the command that declares it, not hundreds of
+    # deferred mutations later when the scope exits and the author has to work
+    # out which one it was.
+    require_declared_names(cfg)
     # gh-764: under `deferred_save()` this becomes a cache update; the single
     # real write happens when that scope exits.
     #
@@ -871,6 +877,153 @@ def validate_name(name: str, kind: str) -> str | None:
     )
 
 
+#: Top-level manifest sections the name walk does not enter. ``app`` is the
+#: only one, and it is a decision rather than an oversight: ``jm app --name``
+#: becomes a filename, a CMake target and a console script's ``prog``, all of
+#: which legitimately allow a hyphen (``my-tool``), so it is excluded from the
+#: identifier check on purpose (pinned in `tests/test_gh625_name_validation`).
+#: Reporting one under a heading that says jm will refuse it would be false —
+#: nothing refuses an app name, then or later.
+_NAME_WALK_SKIP = frozenset({"app"})
+
+#: ``*_name`` keys whose value is NOT an identifier, and so must not be held
+#: to one. The walk is deliberately inverted around this: **any** key called
+#: ``name`` or ending in ``_name`` is treated as an identifier unless it is
+#: listed here, so a key added later is covered by default and a new exception
+#: has to be argued for. Failing open is what gh-910 was.
+#:
+#: ``capsule_name`` is measured, not assumed: doppler declares
+#: ``capsule_name = "doppler.wfm.compose_state"``, a dotted PyCapsule string
+#: that reaches C as a string *literal* passed to ``PyCapsule_GetPointer``,
+#: never as a symbol. Every other ``*_name`` in that manifest
+#: (``class_name``, ``type_name``, ``composer_type_name``, ``record_name``) is
+#: a plain CamelCase identifier that becomes a Python type.
+_NOT_IDENT_NAME_KEYS = frozenset({"capsule_name"})
+
+#: The noun a user reads for a name found under table ``<key>``. Cosmetic
+#: ONLY — coverage comes from the walk, so a table missing from this map is
+#: still reported, just under the fallback noun. That split is the point: the
+#: thing that goes stale (prose) cannot take the thing that must not (the set
+#: of names checked) down with it.
+_KIND_LABELS = {
+    "state": "state field",
+    "init_params": "init param",
+    "array_args": "array arg",
+    "create_args": "create arg",
+    "result_fields": "result field",
+    "properties": "property",
+    "factories": "factory",
+    "depends_on": "dependency",
+    "enum": "enum",
+    "destroy": "destroy method",
+    "project": "project",
+}
+
+
+def _kind_label(table_key: str, name_key: str) -> str:
+    """The noun for a name found at ``<table_key>.<name_key>``.
+
+    Falls back to the table key with one trailing ``s`` dropped, which is
+    right for every regular plural jm has (``methods`` -> ``method``,
+    ``getters`` -> ``getter``, ``serializers`` -> ``serializer``) and is only
+    ever cosmetic when it is not.
+    """
+    if name_key != "name":
+        # `class_name` under `views` is a view's Python class; the same key on
+        # an object is that object's own `--class-name` override. Same word,
+        # two declarations, and the report should not call both "view class".
+        if name_key == "class_name":
+            return "view class" if table_key == "views" else "class name"
+        return name_key.replace("_", " ")
+    if table_key in _KIND_LABELS:
+        return _KIND_LABELS[table_key]
+    label = table_key[:-1] if table_key.endswith("s") else table_key
+    return label.replace("_", " ")
+
+
+def _is_name_key(key: str) -> bool:
+    """True when *key* holds a name that must be a valid identifier."""
+    return (
+        key == "name" or key.endswith("_name")
+    ) and key not in _NOT_IDENT_NAME_KEYS
+
+
+def declared_names(cfg: dict) -> "list[tuple[str, str, str]]":
+    """``[(kind, name, where), ...]`` for every name a manifest declares.
+
+    Derived from the manifest rather than enumerated, because enumerating it
+    is what gh-910 is. Three separate hand-written passes each listed the
+    declaration kinds they could think of, and each missed some — the last one
+    missing `array_args`, every method `param`, a custom `destroy` name, and
+    the entire handle/composer/capsule surface (`create_args`, `getters.
+    fields`, `methods.args`, `factories`, `serializers`). A check that can only
+    stay correct by being remembered is the shape this repo has decided does
+    not work.
+
+    Two things are structural rather than declared in a ``name`` key, and are
+    the only special cases: an **object** is a top-level table whose *key* is
+    the name, and a **module** is a key under ``[module]``. Everything else —
+    including ``[project] name`` — is found by the walk.
+
+    **Bare lists of names are NOT covered, and that is a decision.** A handful
+    of keys hold names as a plain list of strings rather than as tables with a
+    ``name`` key — ``multi_output`` is the one that genuinely *declares* names
+    nowhere else. It cannot be swept in by the same fail-closed rule the
+    ``*_name`` keys get, because that shape is not reserved for names:
+    measured against doppler's manifest, list-valued keys also hold CMake
+    generator expressions (``extra_link_libs``), an argv (``py_format_command``),
+    file paths (``status_allow``), arbitrary enum choice strings (``values``)
+    and numeric literals (``to_json_trailing``). Treating every string list as
+    identifiers would refuse manifests that are correct today; an allow-list of
+    the ones that are names is precisely the enumeration gh-910 exists to
+    delete, and would fail open the same way. Most such keys are also
+    *references* to names declared elsewhere (``objects``, ``depends_on``,
+    ``composes``, ``c_deps``) and so are already checked where they are
+    declared. The residue — ``multi_output`` — needs its own decision; see
+    gh-911.
+
+    ``where`` is the dotted manifest path (``w.state[0].name``), so an error
+    can point at the declaration instead of leaving the author to find which
+    of eleven methods carries the bad param.
+
+    Returns
+    -------
+    list of (str, str, str)
+        ``(kind, name, where)``. ``kind`` is the noun a user reads; see
+        :func:`_kind_label`.
+    """
+    found: list[tuple[str, str, str]] = []
+
+    def _walk(node: object, trail: list[str], table_key: str) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str) and _is_name_key(key):
+                    found.append(
+                        (
+                            _kind_label(table_key, key),
+                            value,
+                            ".".join(trail + [key]),
+                        )
+                    )
+                else:
+                    _walk(value, trail + [key], key)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                _walk(value, trail[:-1] + [f"{trail[-1]}[{index}]"], table_key)
+
+    comps = set(components(cfg))
+    for key, value in cfg.items():
+        if key in _NAME_WALK_SKIP:
+            continue
+        if key in comps:
+            found.append(("object", key, key))
+        elif key == "module":
+            for module_id in value if isinstance(value, dict) else ():
+                found.append(("module", module_id, f"module.{module_id}"))
+        _walk(value, [key], key)
+    return found
+
+
 def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     """``[(kind, name), ...]`` for every declared name outside ASCII.
 
@@ -903,10 +1056,12 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
     later. Covering some kinds and not others breaks precisely that — the
     project renames what it was shown, ships, and is refused anyway for a name
     it was never told about, having read a partial list as a clean bill of
-    health. Functions, state fields and init params were missed on the first
-    pass; each is written into the **sacred** header (a C symbol, a struct
-    member, a ``create()`` parameter), so each carries the identical
-    GCC-accepts-it/MSVC-may-not trap that put the other six on the list.
+    health. gh-910 is what that cost: this walk was hand-written three times,
+    each pass adding the kinds the last one missed, and the third still missed
+    ``array_args``, every method ``param``, a custom ``destroy`` name, and the
+    whole handle/composer surface. It is :func:`declared_names` now — derived
+    from the manifest, so a declaration kind added later is covered without an
+    edit here.
 
     Returns
     -------
@@ -914,33 +1069,11 @@ def non_ascii_names(cfg: dict) -> "list[tuple[str, str]]":
         ``kind`` is the noun a user sees ("object", "method", ...). Empty for
         every project whose names are ASCII, which is effectively all of them.
     """
-    found: list[tuple[str, str]] = []
-
-    def _check(kind: str, name: str) -> None:
-        if name and not name.isascii():
-            found.append((kind, name))
-
-    _check("project", project_name(cfg))
-    for module in modules(cfg):
-        _check("module", module)
-        for fn in module_functions(cfg, module):
-            _check("function", fn.get("name", ""))
-    for comp in components(cfg):
-        _check("object", comp)
-        for meth in methods(cfg, comp):
-            _check("method", meth.get("name", ""))
-        for prop in properties(cfg, comp):
-            _check("property", prop.get("name", ""))
-        for view in views(cfg, comp):
-            _check("view class", view.get("class_name", ""))
-        # Both accessors return positional tuples whose first slot is the
-        # name; unpacking the rest would couple this walk to two shapes that
-        # grow a field whenever a declaration gains an option.
-        for var in state_vars(cfg, comp):
-            _check("state field", var[0])
-        for param in init_params(cfg, comp):
-            _check("init param", param[0])
-    return found
+    return [
+        (kind, name)
+        for kind, name, _ in declared_names(cfg)
+        if not name.isascii()
+    ]
 
 
 def require_name(name: str, kind: str) -> None:
@@ -950,6 +1083,70 @@ def require_name(name: str, kind: str) -> None:
     if msg:
         print(f"error: {msg}", file=_sys.stderr)
         _sys.exit(1)
+
+
+def as_named_tables(entries: "object") -> "list[dict]":
+    """Normalise a declaration payload to the manifest's own table shape.
+
+    A command's ``params`` / ``state_vars`` / ``init_params`` argument is a
+    list of positional tuples when it came from the CLI and a list of dicts
+    when it came from `apply` replaying the manifest. Callers of
+    :func:`require_declared_names` need the dict form, and writing
+    ``p["name"] if isinstance(p, dict) else p[0]`` at each of them is three
+    copies of one decision — the shape that has cost this module a defect
+    every time. The first cut did exactly that and raised ``KeyError: 0``
+    through every replay in the suite.
+
+    Only the name is read, so the tuple's remaining slots are dropped rather
+    than guessed at: they differ per payload (``(name, type)`` vs
+    ``(name, type, default)``) and nothing here needs them.
+    """
+    return [
+        entry if isinstance(entry, dict) else {"name": entry[0]}
+        for entry in (entries or ())
+    ]
+
+
+def require_declared_names(cfg: dict) -> None:
+    """Exit 1 when any name *cfg* declares is not a valid identifier.
+
+    The gate behind :func:`save`, and therefore the one thing here that cannot
+    be forgotten. gh-625 made the predicate one implementation and left it
+    reachable from six commands; gh-910 was the other half of that — six of
+    the eight kinds `non_ascii_names` reported were enforced, two were not, and
+    the walk that decided "eight" had itself missed a dozen more.
+
+    Both halves are answered by putting the check where **every** manifest
+    write already goes. A command added later inherits it without calling
+    anything, a declaration kind added later inherits it without an edit to
+    :func:`declared_names`, and a section authored by hand in TOML is checked
+    on the `apply` that materialises it rather than by the C compiler three
+    files downstream.
+
+    Commands keep their own :func:`require_name` calls. Those are not made
+    redundant by this: they fire on the flag the user typed, before anything
+    is written, and say ``object name`` rather than pointing at a manifest
+    path. This is the backstop, and it reports ``where`` because by the time
+    it fires the offending declaration is one of hundreds.
+    """
+    for kind, name, where in declared_names(cfg):
+        # A module id is the one declared name that is legitimately NOT an
+        # identifier: `dsp.filters` nests the module in a subpackage, and each
+        # dot-separated segment is validated instead. Its own predicate exists
+        # for exactly this, so the gate dispatches rather than re-deciding —
+        # the first cut sent it through `validate_name` and refused every
+        # nested module in the suite.
+        msg = (
+            validate_module_id(name)
+            if kind == "module"
+            else validate_name(name, kind)
+        )
+        if msg:
+            print(
+                f"error: {msg}\nDeclared at {where} in {FILENAME}.",
+                file=_sys.stderr,
+            )
+            _sys.exit(1)
 
 
 def validate_module_id(module_id: str) -> str | None:
