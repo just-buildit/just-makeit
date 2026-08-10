@@ -153,6 +153,63 @@ class TestTheDetector:
         )
         assert inert_pass_capacity(C.load(root), root, "nco") == []
 
+    def test_it_reports_only_the_method_in_the_seam(self, tmp_path_factory):
+        """Three `pass_capacity` methods on one object, one of them inert.
+
+        Both non-reports are their own gap rather than padding:
+
+        - ``steps_plain`` keeps gh-607's count-bearing prototype, so the walk
+          reaches the arity check, declines, and must carry on to the next
+          method. A detector that stopped at the first non-match would report
+          nothing at all here.
+        - ``tally`` sets ``pass_capacity`` without ``variable_output``. Nothing
+          couples those keys — `jm method --pass-capacity` writes it either way
+          — and `_capacity_exprs` runs on the variable-output path alone, so
+          there is no allocation for the opt-in to be inert about.
+        """
+        dest = tmp_path_factory.mktemp("gh921mixed") / "p"
+        from just_makeit._apply import run as apply_run
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_run("p", dest)
+            object_run(
+                dest,
+                "nco",
+                module=None,
+                state_vars=[("phase", "uint32_t", "0")],
+            )
+            for mname, var_out in (
+                ("steps_u32", True),
+                ("steps_plain", True),
+                ("tally", False),
+            ):
+                method_run(
+                    dest,
+                    "nco",
+                    mname,
+                    None,
+                    "void",
+                    "uint32_t",
+                    var_out,
+                    [],
+                    pass_capacity=True,
+                )
+            header = dest / "native/inc/nco/nco_core.h"
+            text = header.read_text("utf-8")
+            text, n_sub = re.subn(
+                r"size_t nco_steps_u32_max_out\s*\([^)]*\)",
+                STATE_ONLY,
+                text,
+                count=1,
+            )
+            assert n_sub == 1, "header shape changed; update this test"
+            header.write_text(text, encoding="utf-8")
+            apply_run(dest)
+
+        assert inert_pass_capacity(C.load(dest), dest, "nco") == [
+            ("steps_u32", "nco_steps_u32")
+        ]
+
     def test_an_absent_header_reports_nothing(self, seam, tmp_path):
         """Best-effort in the same direction as gh-442's init-param drift.
 
