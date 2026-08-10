@@ -1147,6 +1147,7 @@ def _make_view_ctx(
             ctx["ComponentW"],
             C.destroy_spec(cfg, obj),
             C.methods(cfg, obj),
+            class_name=C.class_name(cfg, obj) or "",
         )
     )
     ctx.update(
@@ -1301,6 +1302,7 @@ def build_component_ctxs(
                 ctx["ComponentW"],
                 C.destroy_spec(cfg, obj),
                 C.methods(cfg, obj),
+                class_name=C.class_name(cfg, obj) or "",
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -2121,6 +2123,7 @@ def run(
             declared_methods
             if declared_methods is not None
             else C.methods(cfg, ctx["component"]),
+            class_name=class_name or "",
         )
     )
 

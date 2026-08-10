@@ -601,7 +601,12 @@ def serializable_triplet_parts(
     # literals these replaced had drifted -- get_state named "the engine",
     # a component from a long-gone example rather than the object it
     # documents.
-    _glue = glue_methods(_W)
+    # gh-915: the PROSE names the Python class, so it takes `Component` (the
+    # `class_name` override when one is declared) and not `_W`, which is a C
+    # symbol prefix and gains an `Obj` suffix on a no_state object. Passing
+    # `_W` documented `--class-name DDC` as "Lets a DdcObj be used…" — a name
+    # that appears nowhere in the API the reader is holding.
+    _glue = glue_methods(Component)
     _meth_c = {
         "state_bytes": "METH_NOARGS",
         "get_state": "METH_NOARGS",

@@ -861,6 +861,13 @@ def run(
     ctx = _make_component_ctx(component)
     if class_name is not None:
         ctx["Component"] = class_name
+        # gh-915: the seed built `tp_doc` from the derived name before the
+        # override was known, so `--class-name DDC` produced a class whose
+        # own runtime docstring called it a "Ddc". Usually invisible —
+        # `_glue.component_ctx` replaces this from create()'s @brief once the
+        # header has one — which is exactly why it survived: it is wrong only
+        # on the objects nobody has documented yet.
+        ctx["tp_doc"] = f'"{class_name} component. Wraps {component}_state_t."'
     ctx.update(
         {
             "package": pkg,
@@ -956,6 +963,7 @@ def run(
             declared_methods
             if declared_methods is not None
             else C.methods(cfg, component),
+            class_name=class_name or "",
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so

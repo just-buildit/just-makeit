@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated prose names the class you can import (gh-915).** An object that
+    overrides its Python class name (`--class-name DDC`) had the class emitted
+    correctly and every sentence *about* it built from the derived title-case
+    name — so `class DDC:` carried `Lets a Ddc be used in a with statement`
+    and, worse, a `Returns\n-------\nDdc` annotation naming a class that
+    cannot be imported.
+
+    Three call sites build this prose and only one was right, which is why it
+    lasted: `_stubs.py` honoured the override, `_context/_destroy.py` used
+    `default_class_name`, and `_context/_methods.py` passed the **C wrapper
+    prefix** — a different wrong answer, visible only under `no_state`, where
+    it gains an `Obj` suffix and the state-blob prose reads "the `DDCObj` has
+    already been destroyed". `component` and `ComponentW` still name every C
+    symbol; only the words moved.
+
+    Not a regression — 0.54.3 emits the same text. It surfaced because
+    doppler carried correct `DDC` docstrings from an older jm that `apply` had
+    not been rewriting, and the 0.55.1 pin bump made the degradation land.
+
 ## [0.55.1] — 2026-08-10
 
 Closes the name-validation arc: gh-784 -> gh-910 -> gh-911. One release,
