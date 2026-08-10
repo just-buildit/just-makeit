@@ -301,3 +301,144 @@ def test_a_clean_project_still_saves(tmp_path):
     cfg["w"]["state"] = [{"name": "gain", "type": "double", "default": "1.0"}]
     C.save(root, cfg)
     assert C.state_vars(C.load(root), "w")[0][0] == "gain"
+
+
+# --------------------------------------------------------------------------
+# Lists of names (gh-911)
+# --------------------------------------------------------------------------
+#
+# Same walk, same gate, so the tests live beside gh-910's rather than in a
+# peer file that would have to be kept in agreement with it. What is different
+# is the direction of failure: the `*_name` half above is fail-closed and its
+# exception list has one entry, while this half is fail-open and its inclusion
+# list is the whole of its coverage. Both halves therefore need pinning, and
+# the second group below — the keys that must NOT be swept in — is the one
+# that matters most. Sweeping every string list is the obvious "fix" here and
+# it refuses manifests that are correct today.
+
+
+NAME_LISTS = [
+    ("alias", {"m": {"fields": [{"name": "freq", "aliases": ["f_stärt"]}]}}),
+    ("extra type", {"m": {"extra_types": ["Wïdget"]}}),
+    ("object", {"m": {"objects": ["fïr"]}}),
+    ("dependency", {"m": {"depends_on": ["nco_cöre"]}}),
+    ("composed module", {"m": {"composes": ["wfm_sÿnth"]}}),
+    ("C dependency", {"m": {"c_deps": ["fftw3ï"]}}),
+    ("excluded method", {"m": {"views": {"exclude_methods": ["tüne"]}}}),
+    ("factory", {"m": {"factories": ["tône"]}}),
+    ("re-export", {"m": {"reexports": {"wfm_writer": ["Wrïter"]}}}),
+]
+
+
+@pytest.mark.parametrize(
+    "label,fragment",
+    NAME_LISTS,
+    ids=[n[0].replace(" ", "_") for n in NAME_LISTS],
+)
+def test_a_name_in_a_bare_list_is_found(label, fragment):
+    """Each of these holds a name with no `name` key to recognise it by.
+
+    jm splices every one into generated C or Python verbatim — a
+    `PyType_Ready(&<extra_type>Type)`, a CMake target, an `__init__.py`
+    import — so a malformed one breaks the generated file regardless of
+    whether this manifest is where the name was born.
+    """
+    cfg = {"project": {"name": "p"}, **fragment}
+    found = [n for _, n, _ in C.declared_names(cfg)]
+    bad = [n for n in found if not n.isascii()]
+    assert bad, (
+        f"a non-ASCII {label} in a bare list is invisible to the walk, so it "
+        f"is neither reported nor gated: {C.declared_names(cfg)}"
+    )
+
+
+# Every one of these is a real value from doppler's manifest. A list of
+# strings is NOT a shape reserved for names, which is why this half cannot be
+# fail-closed the way the `*_name` half is.
+NOT_NAME_LISTS = [
+    ("extra_link_libs", ["Threads::Threads", "$<TARGET_OBJECTS:stream_obj>"]),
+    ("status_allow", ["native/src/wfm/wfm_ext_wfm_synth.c", "zensical.toml"]),
+    ("py_format_command", ["ruff", "format", "--group", "dev"]),
+    ("values", ["CENTER_FREQ", "F_C", "RF_FREQ"]),
+    ("to_json_trailing", ["0.0"]),
+    ("platforms", ["linux", "macos"]),
+    ("loop", ["continuous", "once", "repeat"]),
+]
+
+
+@pytest.mark.parametrize(
+    "key,value", NOT_NAME_LISTS, ids=[n[0] for n in NOT_NAME_LISTS]
+)
+def test_a_list_that_is_not_names_is_left_alone(key, value):
+    """The boundary, and the reason gh-911 is an allow-list.
+
+    Every value here is real, from doppler's manifest. Sweeping all string
+    lists into the walk is the obvious shortcut and it refuses projects that
+    build today: `Threads::Threads` and `$<TARGET_OBJECTS:…>` are not
+    identifiers and are not supposed to be.
+    """
+    cfg = {"project": {"name": "p"}, "m": {key: value}}
+    found = [n for _, n, _ in C.declared_names(cfg)]
+    assert not (set(found) & set(value)), (
+        f"'{key}' was swept into the name walk; its values are not "
+        f"identifiers and every project using it now fails to save"
+    )
+    C.require_declared_names(cfg)  # must not raise
+
+
+def test_multi_output_holds_types_not_names():
+    """gh-911 was filed claiming this key declared names. It does not.
+
+    `--multi-output` takes a **C type**, validated against `_types._CTYPE_META`
+    by the CLI parser; the outputs it declares are positional (`out1`, `out2`)
+    and carry no author-chosen name at all. Pinned because the issue said
+    otherwise in writing, and the next person to read it will believe it.
+    """
+    cfg = {
+        "project": {"name": "p"},
+        "w": {"methods": [{"name": "go", "multi_output": ["uint8_t"]}]},
+    }
+    assert "uint8_t" not in [n for _, n, _ in C.declared_names(cfg)], (
+        "`multi_output` was swept into the name walk on the strength of "
+        "gh-911's wording; it carries C types, so this holds every project "
+        "using it to the identifier rule for a value that is one by accident"
+    )
+
+
+def test_a_repeated_name_is_reported_once():
+    """A module's `objects` list repeats names that are top-level tables.
+
+    The gate wants every occurrence (each has its own path); a person reading
+    a rename list wants each name once. Without the dedupe, bringing `objects`
+    into the walk made every non-ASCII component print twice.
+    """
+    cfg = {
+        "project": {"name": "p"},
+        "module": {"m": {"objects": ["fïr"]}},
+        "fïr": {"arg_type": "float"},
+    }
+    assert C.non_ascii_names(cfg).count(("object", "fïr")) == 1
+
+
+def test_both_shapes_of_a_dual_shape_key_are_walked():
+    """`depends_on` and `factories` appear as string lists AND as tables.
+
+    A rule that recognised only the list form would silently stop covering
+    the table form — which is how the walk is written for every other key.
+    """
+    listed = {"project": {"name": "p"}, "m": {"depends_on": ["nco_cöre"]}}
+    tabled = {
+        "project": {"name": "p"},
+        "m": {"depends_on": [{"name": "nco_cöre", "test_only": True}]},
+    }
+    for cfg in (listed, tabled):
+        assert "nco_cöre" in [n for _, n, _ in C.declared_names(cfg)], cfg
+
+
+def test_the_gate_refuses_a_malformed_alias(tmp_path):
+    """End to end: an alias is a ctor kwarg name in the generated tp_init."""
+    root = _project(tmp_path / "p")
+    cfg = C.load(root)
+    cfg["w"]["fields"] = [{"name": "freq", "aliases": ["f stärt"]}]
+    with pytest.raises(SystemExit):
+        C.save(root, cfg)
