@@ -84,6 +84,16 @@ _NAMED_PATH = re.compile(
 # property of the template rather than a claim about this tree.
 _VERSION_CLAIM = re.compile(r"\b0\.(?!1\.0\b)\d+\.\d+\b|schema\s+\d+", re.I)
 
+# A cardinality claim about a set that lives in the tree — "jm has exactly
+# one", "there are three". Same disease as `_VERSION_CLAIM` one level out: the
+# value is derivable, the prose copy is not maintained, and nothing reads the
+# prose back. Deliberately anchored to the sentence that also names the set,
+# so ordinary counting prose elsewhere in the file is untouched.
+_COUNT_WORD = (
+    r"(?:exactly |only |just )?"
+    r"(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)"
+)
+
 # There is deliberately NO allowlist. It landed with 33 entries, shrank to 27
 # once the gate stopped insisting on a `.py` suffix the table does not always
 # use, and emptied when those 27 were written up from their own module
@@ -167,6 +177,51 @@ class TestEveryClaimIsTrue:
         assert not broken, (
             f"CLAUDE.md names paths that do not exist: {sorted(set(broken))}"
         )
+
+    def test_local_targets_are_not_counted_or_enumerated(self, md):
+        """CLAUDE.md may explain a local target; it may not inventory them.
+
+        `LOCAL_TARGETS` is a set the tree owns, and the prose copy went stale
+        exactly the way every version literal did — CLAUDE.md said jm "has
+        exactly one: `examples-clean`" while `local.mk` listed five. Nothing
+        ever reads a prose count back, so it fails silently and forever.
+
+        Both failure shapes are rejected: a **cardinality** claim, and an
+        **enumeration** (naming two or more of the members, which is an
+        inventory whether or not it says so). Naming exactly one as the
+        illustrative example stays legal — that is the durable content, since
+        `examples-clean` is in `local.mk` for a reason worth writing down.
+
+        The member list is parsed from `local.mk`, so adding a local target
+        needs no edit here. `make help`'s *Local* section is the SSOT the
+        prose should point at.
+        """
+        local_mk = (_ROOT / "local.mk").read_text(encoding="utf-8")
+        m = re.search(r"^LOCAL_TARGETS\s*=\s*(.+)$", local_mk, re.M)
+        assert m, "local.mk no longer defines LOCAL_TARGETS"
+        members = m.group(1).split()
+        assert len(members) >= 2, (
+            "this gate needs at least two local targets to distinguish an "
+            "illustrative mention from an inventory"
+        )
+
+        for para in _strip_fenced(md).split("\n\n"):
+            if "LOCAL_TARGETS" not in para:
+                continue
+            counted = re.search(
+                r"\b(?:has|have|is|are)\s+" + _COUNT_WORD + r"\b", para
+            )
+            assert not counted, (
+                f"CLAUDE.md states how many local targets jm has "
+                f"({counted.group(0)!r}). `make help` answers that; prose "
+                f"does not, and this exact sentence was wrong by four."
+            )
+            named = [t for t in members if t in para]
+            assert len(named) < 2, (
+                f"CLAUDE.md enumerates local targets {sorted(named)}. An "
+                "inventory in prose goes stale the moment local.mk gains a "
+                "target — name one as an example, and point at `make help`."
+            )
 
     def test_no_version_or_schema_literal_in_prose(self, md):
         claims = _VERSION_CLAIM.findall(_strip_fenced(md))

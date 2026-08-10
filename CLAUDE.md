@@ -356,28 +356,38 @@ just-buildit/.github README under "Makefile standard".
     `standard-check` drift gate fails `make lint` on any difference from
     canonical. Per-repo variation is a variable in `Makefile`; a shared change
     goes to canonical and comes back through the vendored copy.
+
 - `HAS_PYTHON/DOCS/BENCH/RELEASE/EXAMPLES` are on here. `HAS_C` is off — jm
     generates C but builds none itself, so `build` would have nothing to build;
     the C toolchain is exercised via `test-examples`.
+
 - Three gates hang off `lint`, so CI (which runs `make lint` and nothing else)
     enforces them: `standard-check` (drift), `help-check` (every target
     documented, every rule listed), `ghost-check` (no `.PHONY` entry without a
     recipe or prerequisites). `tests/test_lint_ssot.py` guards the wiring.
+
 - `help` is generated from the `## description` on each rule; a hand-written
     target list is what let `make wheel` stay advertised in doppler after its
     rule was gone.
+
 - **The drift gate is live.** `STANDARD_URL` defaults to canonical inside
     `standard.mk`, so vendoring the file is what arms it — there is no per-repo
     line to forget. `make lint` therefore needs network; that is deliberate, as
     a gate that cannot reach its reference has not passed. A deliberate opt-out
     is `STANDARD_URL =` in the Makefile.
+
 - A genuinely repo-local target goes in `local.mk` and is named in
-    `LOCAL_TARGETS` (so `help` and the gates see it). jm has exactly one:
-    `examples-clean`. It is deliberately NOT in `HAS_EXAMPLES` — doppler has
-    examples too but cleans them from its own `clean`, so a required
-    `EXAMPLES_CLEAN_CMD` would force it to invent a command for a target it
-    does not want. Criterion 10 requires shared targets to be *in* the
-    standard; it does not license the converse.
+    `LOCAL_TARGETS` (so `help` and the gates see it). **Which ones jm has is
+    answered by `make help`'s *Local* section, never by a list here** — this
+    said "exactly one" while `LOCAL_TARGETS` held five, the same shape as the
+    version and schema literals below.
+
+    `examples-clean` is the one worth explaining rather than counting: it is
+    deliberately NOT in `HAS_EXAMPLES` — doppler has examples too but cleans
+    them from its own `clean`, so a required `EXAMPLES_CLEAN_CMD` would force
+    it to invent a command for a target it does not want. Criterion 10
+    requires shared targets to be *in* the standard; it does not license the
+    converse.
 
 ### CI / release
 
