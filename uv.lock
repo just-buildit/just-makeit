@@ -501,7 +501,7 @@ wheels = [
 
 [[package]]
 name = "just-makeit"
-version = "0.55.0"
+version = "0.55.1"
 source = { editable = "." }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },

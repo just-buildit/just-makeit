@@ -2,36 +2,38 @@
 
 ## [Unreleased]
 
+## [0.55.1] — 2026-08-10
+
+Closes the name-validation arc: gh-784 -> gh-910 -> gh-911. One release,
+one rename — the tightening and the coverage that makes it complete ship
+together, so a project carrying a non-ASCII name renames once rather than
+discovering a second kind of it an upgrade later.
+
+### Breaking
+
+- **A non-ASCII name is now rejected (gh-784, second half).**
+    `valid_identifier` gained an `isascii()` term. `str.isalnum()` is
+    Unicode-aware, so `café` and `Ωmega` passed a check whose message talked
+    about letters and digits and were then written into the **sacred** header
+    — where GCC accepts UTF-8 identifiers as an extension and MSVC's behaviour
+    differs. A name that compiles on one toolchain and not another is exactly
+    the portability trap `[project] platforms` exists to make explicit,
+    arriving silently through a name instead. Uppercase stays accepted and
+    that is deliberate: a view's class name is legitimately `CamelCase`
+    through this same predicate, so gh-784's first half fixed the *message*
+    (v0.55.0) rather than the code.
+
+    **This reaches manifests that already carry one.** `jm apply` replays a
+    manifest through the same declaration commands, so such a project stops
+    applying until the name is renamed — in the header, the manifest and the
+    generated glue. That is the tightening the issue asks for, staged as it
+    asks: `jm status` has listed every non-ASCII declared name since v0.55.0,
+    which is the release of warning the change was waiting on. The report
+    outlives it and now prints *before* `status`'s own scratch replay, so a
+    refused project still gets the whole rename list in one run instead of
+    one `error:` at a time.
+
 ### Fixed
-
-- **Names held in a bare list are walked and gated too (gh-911).** gh-910
-    derived the walk from the manifest for every key called `name` or ending
-    in `_name`; a handful of names are stored instead as a plain list of
-    strings, with no key to recognise them by — `aliases` (a ctor kwarg in a
-    composer's generated `tp_init`), `extra_types` (spliced as
-    `PyType_Ready(&<T>Type)`), `objects`, `depends_on`, `composes`, `c_deps`,
-    `exclude_methods`, `factories`, and every list in a
-    `[<module>.reexports]` table, whose keys are source-module names the
-    project chooses and so cannot be enumerated.
-
-    The test is not "is this a declaration" but **"does jm splice it into
-    generated code as an identifier"**. Most of these are references, and they
-    still belong in the walk: a malformed one breaks the generated C or
-    `__init__.py` whether or not the manifest is where the name was born. On
-    doppler's manifest the walk goes from 2031 names to 2156.
-
-    **This half fails open, unlike its neighbour, and the docstring says so.**
-    A list of strings is not a shape reserved for names — measured on the same
-    manifest, it also carries CMake generator expressions
-    (`$<TARGET_OBJECTS:…>`, `Threads::Threads`), an argv, file paths, enum
-    choice strings and numeric literals — so fail-closed would refuse
-    manifests that build today. The boundary is pinned: sweeping every string
-    list in, the tempting over-fix, turns eight tests red.
-
-    gh-911 was filed claiming `multi_output` declared names. It does not — the
-    key holds **C types**, validated against `_CTYPE_META` by the CLI, and its
-    outputs are positional (`out1`, `out2`). Pinned by a test, because the
-    issue said otherwise in writing.
 
 - **Every declared name is now walked, and every walked name is gated
     (gh-910).** `non_ascii_names` promised in its own docstring that it named
@@ -68,29 +70,45 @@
     generator expressions, argv lists and file paths, so a fail-closed rule
     would refuse correct manifests. Filed as gh-911.
 
-### Changed
+- **Names held in a bare list are walked and gated too (gh-911).** gh-910
+    derived the walk from the manifest for every key called `name` or ending
+    in `_name`; a handful of names are stored instead as a plain list of
+    strings, with no key to recognise them by — `aliases` (a ctor kwarg in a
+    composer's generated `tp_init`), `extra_types` (spliced as
+    `PyType_Ready(&<T>Type)`), `objects`, `depends_on`, `composes`, `c_deps`,
+    `exclude_methods`, `factories`, and every list in a
+    `[<module>.reexports]` table, whose keys are source-module names the
+    project chooses and so cannot be enumerated.
 
-- **A non-ASCII name is now rejected (gh-784, second half).**
-    `valid_identifier` gained an `isascii()` term. `str.isalnum()` is
-    Unicode-aware, so `café` and `Ωmega` passed a check whose message talked
-    about letters and digits and were then written into the **sacred** header
-    — where GCC accepts UTF-8 identifiers as an extension and MSVC's behaviour
-    differs. A name that compiles on one toolchain and not another is exactly
-    the portability trap `[project] platforms` exists to make explicit,
-    arriving silently through a name instead. Uppercase stays accepted and
-    that is deliberate: a view's class name is legitimately `CamelCase`
-    through this same predicate, so gh-784's first half fixed the *message*
-    (v0.55.0) rather than the code.
+    The test is not "is this a declaration" but **"does jm splice it into
+    generated code as an identifier"**. Most of these are references, and they
+    still belong in the walk: a malformed one breaks the generated C or
+    `__init__.py` whether or not the manifest is where the name was born. On
+    doppler's manifest the walk goes from 2031 names to 2156.
 
-    **This reaches manifests that already carry one.** `jm apply` replays a
-    manifest through the same declaration commands, so such a project stops
-    applying until the name is renamed — in the header, the manifest and the
-    generated glue. That is the tightening the issue asks for, staged as it
-    asks: `jm status` has listed every non-ASCII declared name since v0.55.0,
-    which is the release of warning the change was waiting on. The report
-    outlives it and now prints *before* `status`'s own scratch replay, so a
-    refused project still gets the whole rename list in one run instead of
-    one `error:` at a time.
+    **This half fails open, unlike its neighbour, and the docstring says so.**
+    A list of strings is not a shape reserved for names — measured on the same
+    manifest, it also carries CMake generator expressions
+    (`$<TARGET_OBJECTS:…>`, `Threads::Threads`), an argv, file paths, enum
+    choice strings and numeric literals — so fail-closed would refuse
+    manifests that build today. The boundary is pinned: sweeping every string
+    list in, the tempting over-fix, turns eight tests red.
+
+    gh-911 was filed claiming `multi_output` declared names. It does not — the
+    key holds **C types**, validated against `_CTYPE_META` by the CLI, and its
+    outputs are positional (`out1`, `out2`). Pinned by a test, because the
+    issue said otherwise in writing.
+
+### Docs
+
+- **The naming rules, the `{component}` placeholder and the `jm status`
+    sections say what the code does.** `jm object`'s rules still said
+    *lowercase*, the word gh-784's first half removed from the code's own
+    message; `{component}` was documented in two places as the lowercased
+    object name when `_apply._object_ctx` passes it verbatim; the
+    `NON-ASCII NAMES` report shipped undocumented in v0.55.0 and is now
+    documented, including why it prints ahead of the file table; and the
+    status table announced "six states" while listing nine.
 
 ## [0.55.0] — 2026-08-09
 
