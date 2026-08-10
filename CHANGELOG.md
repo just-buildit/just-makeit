@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- **A member reconciled in place is formatted (gh-917).** On a `c_style`
+    project, `jm apply` left one fragment holding **two** C styles: the members
+    jm had just rewritten in its own K&R, everything around them in the
+    project's GNU, and a `}` in the middle still on the old indentation.
+
+    Two independent causes, either of which alone leaves the bug. The
+    formatter's file set globbed `*_ext.c`, and gh-729 had split the aggregator
+    into per-object fragments named `<module>_ext_<obj>.c` — which that pattern
+    does not match, so a fragment was never formatted on either side. And
+    `apply` formats the throwaway scaffold it compares against (gh-493), while
+    the member-level reconciliation writes into the **real** tree afterwards
+    from a fresh render; nothing formatted that.
+
+    Both fixed: the glob covers fragments (excluding the hand-written
+    `*_ext_extra.c`, which jm never writes), and `apply` formats the files it
+    wrote, scoped to those rather than sweeping the tree. Measured on doppler,
+    same tree and manifest with only jm differing: 17 GNU / 2 K&R definitions
+    before, 19 / 0 after.
+
 - **Generated prose names the class you can import (gh-915).** An object that
     overrides its Python class name (`--class-name DDC`) had the class emitted
     correctly and every sentence *about* it built from the derived title-case
