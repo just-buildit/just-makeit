@@ -92,12 +92,25 @@ exclude_lines = [
 # to whatever released today and silently reformats files the pinned ruff does
 # not), and nothing should carry a second copy of the version.
 dev = [
-    "cmakelang",
     "just-buildit",
     # Formatters. Pinned exactly: a formatter is only useful if every machine
     # and CI agree byte-for-byte on its output, so these move deliberately, not
     # on resolution. `ruff` must match the version the CI lint gate runs.
     "ruff==0.15.21",
+    # The C and CMake formatters. These used to run from upstream pre-commit
+    # mirrors instead, which broke the rule stated directly above in two ways:
+    # the version lived in a `rev:` rather than here, and — because no make
+    # target wrapped them — the make-ssot hook could not see them at all. That
+    # was measured, not inferred: `ruff check .` and `mdformat README.md` were
+    # DENIED while `clang-format -i native/src/x.c` was ALLOWED, in the repo
+    # whose whole C surface is generated and must not be hand-formatted.
+    #
+    # `cmakelang` was additionally pinned TWICE — here (unpinned, so whatever
+    # resolved) and as the mirror's `rev: v0.6.13` — with nothing holding the
+    # two equal. Both pins below are the exact versions those mirrors carried,
+    # so this move changes no formatting output on day one.
+    "clang-format==22.1.8",
+    "cmakelang==0.6.13",
     # mdformat's plugins were previously unpinned pre-commit
     # `additional_dependencies`, which is how the env drifted to
     # mdformat-mkdocs 5.1.4 while the config still claimed 1.0.0. Gated to
