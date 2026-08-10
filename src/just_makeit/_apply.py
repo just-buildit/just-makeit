@@ -2154,6 +2154,22 @@ def run(
         root, cfg, only_mod=only_mod
     )
 
+    # gh-917: format what was just written into the REAL tree. The pass above
+    # (line ~2120) formats the throwaway scaffold, which is the right thing for
+    # the comparison it feeds — but the member-level reconciliation writes
+    # here, afterwards, from a fresh render. On a c_style project that left one
+    # fragment holding two C styles: jm's for the members it had rewritten, the
+    # project's for everything around them, with a `}` in the middle keeping
+    # the old indentation.
+    #
+    # Scoped to the files this run touched, not the whole tree — an unrelated
+    # `apply` should not turn a drifted project into a hundred-file diff.
+    from . import _cfmt as _cfmt_mod
+
+    _cfmt_mod.format_files(
+        root, cfg, [*created, *updated, *frag_doc_updated, *bench_updated]
+    )
+
     for rel in created:
         print(f"  create  {root / rel}")
     for path in impl_patched:

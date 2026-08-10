@@ -65,12 +65,30 @@ from . import _fmtprobe
 def _generated_c_files(root: Path) -> list[Path]:
     """The C files jm regenerates wholesale — the only ones safe to reformat.
 
-    Only the CPython binding ``*_ext.c`` under ``native/src/**`` is rewritten
-    from the manifest on every mutating command, so it is the only C file
-    whose *style* can drift from the committed (house-style) version and make
-    ``jm status --check`` report it stale. Reformatting it is exactly what
-    ``c_style`` is for, and it is safe: the file is overwritten from scratch
-    each time, so clang-format has nothing to fight.
+    The CPython binding under ``native/src/**`` — both the aggregator
+    ``<module>_ext.c`` and the per-object fragments ``<module>_ext_<obj>.c``
+    that gh-729 split out of it. These are the C files jm writes from the
+    manifest, so they are the ones whose *style* can drift from the committed
+    (house-style) version and make ``jm status --check`` report them stale.
+
+    **The fragments were missed until gh-917, because the glob said
+    ``*_ext.c`` and a fragment is named ``ddc_ext_ddcr.c``.** The split moved
+    the file and left this rule behind. The visible symptom was a fragment
+    carrying *two* C styles at once: `_docsync` rewrites individual members in
+    place from a fresh render (jm's K&R), the project's own formatter had made
+    the rest GNU, and nothing here ever reached the file to reconcile them.
+
+    The safety argument differs between the two, and it is worth stating
+    because it is not the same sentence:
+
+    - an aggregator is overwritten from scratch each time, so clang-format has
+      nothing to fight;
+    - a fragment is reconciled member-by-member and *does* hold author-written
+      wrapper bodies. Formatting it is still right — a project that sets
+      ``c_style`` is asking for its own style over jm's glue, and its own
+      formatter already covers these files, which is precisely why the
+      spliced member stood out. What is excluded is the hand-written
+      ``*_ext_extra.c``, which jm never writes and therefore does not format.
 
     Everything else under ``native/`` is skipped, deliberately (gh-493):
 
@@ -93,7 +111,15 @@ def _generated_c_files(root: Path) -> list[Path]:
     src = root / "native" / "src"
     if not src.is_dir():
         return []
-    return sorted(src.rglob("*_ext.c"))
+    return sorted(
+        p
+        for p in src.rglob("*_ext*.c")
+        # `<comp>_ext_extra.c` / `<module>_ext_<obj>_extra.c` — hand-written,
+        # #included by the glue, and never touched by jm. The glob above
+        # reaches it (`*_ext` then `ra.c`), so it is excluded by name rather
+        # than by hoping the pattern misses it.
+        if not p.name.endswith("_extra.c")
+    )
 
 
 # Upper bound on convergence passes (gh-758). Two is the observed worst case
@@ -158,6 +184,56 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
     files = _generated_c_files(root)
     if not files:
         return
+    _run_formatter(command, files)
+
+    if not quiet:
+        n = len(files)
+        print(f"  format  {n} C file{'s' if n != 1 else ''} (clang-format)")
+
+
+def format_files(
+    root: Path, cfg: dict, paths: "list[Path]", *, quiet: bool = True
+) -> None:
+    """Reformat just *paths*, keeping to the generated-C set.
+
+    gh-917. `format_project` runs on the throwaway scaffold `apply` builds and
+    compares against (gh-493); the files `apply` then rewrites **in the real
+    tree** — the member-level reconciliation in `_docsync`, which splices a
+    freshly rendered member into a fragment the project already formatted —
+    are written after that and were never formatted at all. One fragment ended
+    up carrying two C styles: jm's for the members it had just rewritten, the
+    project's for everything around them.
+
+    Scoped to what `apply` actually touched rather than reformatting the whole
+    tree. A c_style project whose committed glue has drifted should not
+    discover it as a hundred-file diff attached to an unrelated command; that
+    is `format_project`'s job, and the CLI post-command hook already calls it.
+
+    *paths* may contain anything `apply` wrote — non-C files and files outside
+    the generated set are filtered out here rather than at each call site.
+    """
+    if not C.c_formatting_on(cfg):
+        return
+    command = C.c_format_command(cfg)
+    if shutil.which(command[0]) is None:
+        # Silent here, unlike `format_project`: this runs inside `apply`,
+        # which has already warned through that path in the same run.
+        return
+    wanted = set(_generated_c_files(root))
+    files = sorted(
+        {(root / p if not p.is_absolute() else p).resolve() for p in paths}
+        & {f.resolve() for f in wanted}
+    )
+    if not files:
+        return
+    _run_formatter(command, files)
+    if not quiet:
+        n = len(files)
+        print(f"  format  {n} reconciled C file{'s' if n != 1 else ''}")
+
+
+def _run_formatter(command: "list[str]", files: "list[Path]") -> None:
+    """Run *command* over *files* until the bytes stop changing."""
 
     # Each pass re-runs only the files the previous one changed, so reaching
     # the fixed point costs one extra invocation over the handful that are
@@ -200,10 +276,6 @@ def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:
             f"and will read as stale to `jm status`:\n  {names}",
             file=sys.stderr,
         )
-
-    if not quiet:
-        n = len(files)
-        print(f"  format  {n} C file{'s' if n != 1 else ''} (clang-format)")
 
 
 def format_version(cfg: dict, cwd: "Path | None" = None) -> str:
