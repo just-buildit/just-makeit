@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.55.2] — 2026-08-10
+
+Two generated-output fixes, both surfaced by bumping doppler onto 0.55.1: one
+names the class you can import, the other stops a reconciled member arriving
+in jm's C style inside a file the project formats.
+
 ### Fixed
 
 - **A member reconciled in place is formatted (gh-917).** On a `c_style`
