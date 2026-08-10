@@ -449,6 +449,7 @@ def make_destroy_ctx(
     ComponentW: str,
     spec: "dict | None",
     methods: "list[dict] | None",
+    class_name: str = "",
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -463,6 +464,12 @@ def make_destroy_ctx(
         The ``[<comp>.destroy]`` table. ``None``/``{}`` reproduces the
         pre-gh-541 hardcoded text byte for byte, which is what makes these
         slots safe to introduce into templates every existing project renders.
+    class_name : str, optional
+        The declared ``class_name`` override, when the object has one. Names
+        the Python class in the generated PROSE only — every C symbol keeps
+        using *component* / *ComponentW*. Empty means "derive it", which is
+        what an object without an override wants and what every pre-gh-915
+        caller got.
     methods : list of dict or None
         The component's declared methods, needed to resolve ``exit``
         (gh-805 §H). Omitting it while ``exit`` is declared **raises** rather
@@ -574,7 +581,13 @@ def make_destroy_ctx(
     # These two had drifted into disagreement -- the runtime table said
     # "Release resources." while the stub said "Release C resources
     # immediately." -- which is exactly what a shared definition prevents.
-    Component = C.default_class_name(component)
+    # gh-915: the declared `class_name` when there is one. This said
+    # `default_class_name` outright, so an object declaring
+    # `class_name = "DDC"` had its teardown and context-manager prose talk
+    # about a `Ddc` — a class the reader cannot find, in the docstring of the
+    # class they are looking at. `ComponentW` stays the C symbol prefix; only
+    # the prose moves.
+    Component = class_name or C.default_class_name(component)
     _raises: list[tuple[str, str]] = []
     if fallible:
         # gh-864: the RESOLVED category, not the raw key. The emitter went
