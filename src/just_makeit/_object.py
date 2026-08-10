@@ -44,6 +44,7 @@ from ._docstring import (
     authored_class_brief,
     is_scaffold_doc,
     max_out_arity_key,
+    max_out_is_state_only,
     parse_doxygen_block,
     scan_max_out_arity,
 )
@@ -209,6 +210,60 @@ def init_param_drift(
             continue
         drift.append((name, dflt, hdr_dflt))
     return drift
+
+
+def inert_pass_capacity(
+    cfg: dict, root: Path, obj: str
+) -> list[tuple[str, str]]:
+    """Methods whose ``pass_capacity`` opt-in cannot take effect (gh-921).
+
+    Returns ``(method_name, c_symbol)`` for every ``[[<obj>.methods]]`` entry
+    sitting in the gh-920 seam: ``pass_capacity`` is set in the manifest, the
+    sacred header still declares the pre-gh-607 ``<c_fn>_max_out(state)``, and
+    ``exact_max_out`` is absent.
+
+    gh-920 made that combination *safe* — a bound that cannot see the call is
+    no longer trusted as a per-call one, so the allocation keeps the historical
+    ``max(max_out, n)`` clamp instead of truncating the caller's request. It
+    did not make it *visible*: the author asked for the exact allocation, got
+    the clamped one, and nothing said so. Short of reading the generated glue
+    there is no signal, which is what this reports.
+
+    Both inputs are read, never inferred — the arity comes from the header's
+    own declaration and the flag from the manifest — so this cannot be wrong
+    about a method it names. It is therefore a note rather than a warning, and
+    :mod:`_status` neither counts it as drift nor gates on it.
+
+    ``exact_max_out`` is excluded because it is the documented way *out* of the
+    seam: it is the author asserting the bound holds for any call, and it drops
+    the clamp on its own (see :func:`_context._methods._capacity_exprs`). A
+    method carrying it has the exact allocation it opted into, so there is
+    nothing to report.
+
+    Only ``variable_output`` methods are considered: ``_capacity_exprs`` runs on
+    that path alone, so ``pass_capacity`` elsewhere has no allocation to be
+    inert about.
+
+    Best-effort in the same direction as :func:`init_param_drift` — a header
+    that is absent or declares no ``max_out`` at all yields nothing, because
+    :func:`~._docstring.max_out_is_state_only` is False without a declaration
+    to read. A method jm has not scaffolded yet keeps gh-607's count-bearing
+    default and is not in the seam.
+    """
+    doc_blocks = _load_doc_blocks(root, obj)
+    if not doc_blocks:
+        return []
+    inert: list[tuple[str, str]] = []
+    for m in C.methods(cfg, obj):
+        if not m.get("pass_capacity") or m.get("exact_max_out"):
+            continue
+        if not m.get("variable_output"):
+            continue
+        name = m.get("name", "")
+        c_fn = m.get("fn", "") or f"{obj}_{name}"
+        if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
+            inert.append((name, c_fn))
+    return inert
 
 
 def _load_module_doc_blocks(root: Path, module: str) -> dict:

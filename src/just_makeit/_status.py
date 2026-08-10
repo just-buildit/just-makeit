@@ -24,6 +24,12 @@ the files `apply` *merges* rather than overwrites (the package
               declaration is silently deleted on regen — this is content
               loss, not routine drift, and is never suppressed by
               `status_allow`.
+  - NOTE    — (gh-921) a method sets `pass_capacity` while its header still
+              declares `max_out(state)`, so the exact allocation the opt-in
+              asks for is not the one generated. Not a file `apply` would
+              write and not a defect — gh-920 keeps the clamp, so the
+              allocation is correct — which is why it is never counted and
+              never printed under `--check`.
 
 Your `_core.c` is sacred: `apply` never changes it, so hand-edited
 algorithm code never shows up as STALE. To rebuild a component from the
@@ -305,6 +311,22 @@ def run(
         (obj, name, m_dflt, h_dflt)
         for obj in C.components(cfg)
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj)
+    ]
+
+    # gh-921: `pass_capacity` methods whose header keeps the pre-gh-607
+    # `max_out(state)`. Same static manifest-vs-header shape as gh-442 above,
+    # and computed the same way — nothing here is a file `apply` would write.
+    #
+    # It lives in `status` rather than on the mutating commands deliberately.
+    # The condition is per method, and a tree like doppler's carries dozens of
+    # variable-output methods, so an `apply`-time note is a wall of lines
+    # arriving at the moment the reader is watching for what changed. `status`
+    # is the surface read on purpose, and this is a standing property of the
+    # manifest, not an event.
+    inert_cap_entries: list[tuple[str, str, str]] = [
+        (obj, name, c_fn)
+        for obj in C.components(cfg)
+        for name, c_fn in _obj_mod.inert_pass_capacity(cfg, root, obj)
     ]
 
     # (rel_posix, state, allowed, diff_text, dropped_symbols)
@@ -658,6 +680,11 @@ def run(
                         }
                         for s in _silent
                     ],
+                    # gh-921: a note, so it appears here and in no count.
+                    "inert_pass_capacity": [
+                        {"object": o, "method": n, "c_function": f}
+                        for (o, n, f) in inert_cap_entries
+                    ],
                     "ok": ok_count,
                     "drift": drift_count,
                     "dropped_files": n_dropped_files,
@@ -913,6 +940,40 @@ def run(
         print(
             "  One of these is stale — jm can't tell which; update the "
             "manifest default or the header doc to match. See gh-442."
+        )
+        print()
+
+    # gh-921: deliberately NOT the "impossible to miss" treatment the three
+    # sections around it get. Nothing here is broken — gh-920 made this seam
+    # safe, and the allocation is the historical clamped one, which is correct
+    # for a bound that cannot see the call. What is wrong is only that the
+    # author asked for something else and was not told they did not get it.
+    #
+    # So it prints under a plain `jm status` and nowhere else: not counted in
+    # `drift_count`, not gating `--check`, and not among the conditions that
+    # take the summary out of its "OK — up to date" branch. A note that failed
+    # a gate would be a warning, and this one cannot be wrong in the direction
+    # that would earn that — see `_object.inert_pass_capacity`.
+    if inert_cap_entries and not check:
+        print(
+            f"NOTE ({len(inert_cap_entries)}) — `pass_capacity` is set but "
+            "cannot take effect:"
+        )
+        for obj, name, c_fn in inert_cap_entries:
+            print(
+                f"  . {obj}.{name}: {c_fn}_max_out(state) cannot see the "
+                f"call, so the\n"
+                f"      allocation stays clamped to max(max_out, n)."
+            )
+        print(
+            "  These are safe — a bound that cannot see the call is not "
+            "trusted as a per-call\n"
+            "  one (gh-920), so nothing truncates. But the exact allocation "
+            "the opt-in asks for\n"
+            "  is not what you get. Give max_out the count (gh-607) for the "
+            "exact allocation,\n"
+            "  or declare `exact_max_out` if the bound really is "
+            "call-independent. Not drift."
         )
         print()
 
