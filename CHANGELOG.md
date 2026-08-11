@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-08-10
+
 ### Added
 
 - **`jm status` reports a `pass_capacity` opt-in that cannot take effect
@@ -23,6 +25,50 @@
     because the condition is per method — on a tree carrying dozens of
     variable-output methods, an apply-time note is a wall of lines arriving
     exactly when the reader is watching for what changed.
+
+### Fixed
+
+- **The Codespaces sandbox now greets you, and every path it prints is real
+    (gh-928).** Opening the Codespace dropped you into an editor with no
+    README, no instructions and no message. `docker/` had no tests, and behind
+    that one symptom were four defects: `remoteUser` was `root` against an
+    image whose `USER` is `user` and whose home *is* the workspace folder, so
+    every `~/examples/...` path the welcome printed resolved under `/root` and
+    did not exist; the workspace folder held only dotfiles, so the editor had
+    nothing to open; the project list was hand-written, advertising a
+    `my_corr/` no example produces while omitting ~25 that do; and it told
+    readers to run `python3 -m just_makeit._example_readme`, a module that has
+    never existed.
+
+    The welcome page is now **generated** from what the image actually built,
+    with three independent ways to reach it (the startup editor,
+    `postAttachCommand`, and the login-shell greeting) because each alone can
+    show nothing. The per-example tutorials are symlinked to `~/tutorials`,
+    with the link target discovered rather than hardcoded.
+
+- **Coverage output in a project root is no longer reported as drift.**
+    Running a generated project's own test suite under coverage leaves a
+    `.coverage` database (and per-process `.coverage.<host>.<pid>.<rand>`
+    siblings) that `jm apply` never writes, so `jm status` counted them as
+    STALE — a finding no user can act on, in the count whose entire value is
+    that everything in it is actionable. The rule was written out at both
+    walks; it is now one `_apply.is_skipped()` predicate.
+
+- **An example that ships no README still gets a sandbox summary (gh-927).**
+    Three bundled examples are deliberately unpublished regression drivers, so
+    their rows in the generated page had a blank *What it shows* cell. The
+    summary now falls back to the example's `test.py` module docstring, which
+    ships inside the package.
+
+### Changed
+
+- **`clang-format` and `cmake-format` run through `make`, like every other
+    tool.** They were the last two hooks invoking a tool around the Makefile,
+    which put their versions in a pre-commit `rev:` instead of the dev group,
+    left `make format` unable to format C, and — because the make-SSOT gate
+    derives its map from the makefiles — made a raw `clang-format -i` on
+    generated C invisible to it. Both are now pinned in the dev group at the
+    exact versions the mirrors carried, so no formatting output changed.
 
 ## [0.55.3] — 2026-08-10
 
