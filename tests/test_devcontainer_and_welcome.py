@@ -197,29 +197,73 @@ class TestTheWelcomeIsDerivedNotWritten:
         assert "ghost" not in page
         assert "proj" in page
 
-    def test_an_example_with_a_readme_yields_a_description(self):
+    def test_an_unpublished_example_still_gets_a_summary(self, tmp_path):
+        """gh-927: a blank cell, fixed WITHOUT publishing a regression driver.
+
+        In this repo a `README.md` means *published to the docs gallery* — the
+        `copy_examples` reconcile gate rejects one with no gallery entry. So
+        the obvious fix (write READMEs for the three examples that lack them)
+        would have pushed three regression drivers into a gallery curated down
+        to its current set on purpose. That gate caught the attempt.
+
+        The summary comes from the `test.py` module docstring instead: already
+        written, already maintained, and inside the package — unlike
+        `UNPUBLISHED`, which lives in `scripts/` and is absent from the image.
+        """
+        ex = tmp_path / "widget_demo"
+        ex.mkdir()
+        (ex / "test.py").write_text(
+            '"""End-to-end test: `jm widget` does a thing worth naming.\n\n'
+            'Called by tests/test_examples.py via run(root).\n"""\n',
+            encoding="utf-8",
+        )
+        assert not (ex / "README.md").exists()
+        assert describe(ex) == "`jm widget` does a thing worth naming."
+
+    def test_the_readme_wins_when_there_is_one(self, tmp_path):
+        """The docstring is a fallback, never an override."""
+        ex = tmp_path / "widget_demo"
+        ex.mkdir()
+        (ex / "test.py").write_text('"""End-to-end test: the docstring."""\n')
+        (ex / "README.md").write_text(
+            "# widget_demo example\n\nThe README sentence.\n", encoding="utf-8"
+        )
+        assert describe(ex) == "The README sentence."
+
+    def test_an_example_with_neither_yields_nothing(self, tmp_path):
+        """Still no inventing text the tree does not own."""
+        ex = tmp_path / "bare"
+        ex.mkdir()
+        assert describe(ex) == ""
+
+    def test_every_example_yields_a_description(self):
         """Defect 3's other half: a blank cell for a real project.
 
-        Scoped to examples that actually ship a `README.md`, which is the
-        property `describe` can be held to — three bundled examples
-        (`app_shapes`, `bench_upgrade`, `jm_remove`) have none, and are
-        mechanism demos rather than tutorials. Naming those three here would
-        be a registration list that goes stale the moment one gains a README;
-        deriving the set instead means a *new* example whose README prose
-        cannot be parsed fails when it is added.
+        This was scoped to examples that *had* a `README.md`, because three
+        (`app_shapes`, `bench_upgrade`, `jm_remove`) shipped without one and
+        appeared in the sandbox with an empty *What it shows* cell — filed as
+        gh-927 rather than explained away. They have READMEs now, so the gate
+        ratchets to the property actually wanted: **every** bundled example
+        yields a summary.
+
+        Deliberately derived from the examples on disk, with no list of names
+        here. A new example arrives covered, and one whose prose cannot be
+        parsed fails when it is added rather than when someone opens the
+        sandbox and finds a blank row.
         """
         from just_makeit._example import _EXAMPLES, _find
 
         missing = []
         for name in _EXAMPLES:
             ex_dir = _find(name)
-            if ex_dir is None or not (ex_dir / "README.md").is_file():
+            if ex_dir is None:
                 continue
             if not describe(ex_dir):
                 missing.append(name)
         assert not missing, (
-            f"examples whose README has no summary line: {sorted(missing)}. "
-            "The sandbox lists one line per project; these would be blank."
+            f"examples with no summary: {sorted(missing)}. The sandbox lists "
+            "one line per project; these would be blank. Give the example a "
+            "README.md whose first paragraph opens with a plain sentence."
         )
 
     def test_the_worked_example_is_one_a_reader_can_follow(self):

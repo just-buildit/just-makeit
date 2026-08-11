@@ -26,6 +26,7 @@ readable when catted into a terminal.
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 from pathlib import Path
@@ -78,6 +79,46 @@ make && python3 -c "import my_proj; print(my_proj.MyObj())"
 """
 
 
+def _from_test_docstring(example_dir: Path) -> str:
+    """Summary for an example that ships no ``README.md`` (gh-927).
+
+    Three bundled examples have none, and it is deliberate rather than an
+    oversight: ``app_shapes``, ``bench_upgrade`` and ``jm_remove`` are
+    **regression drivers**, listed in ``copy_examples.UNPUBLISHED`` with a
+    reason. In this repo a README means *published to the docs gallery* — the
+    reconcile gate rejects one that has no gallery entry — so writing READMEs
+    to fill the sandbox's blank cells would quietly push three regression
+    drivers into a gallery that was curated down to its current set on
+    purpose. The gate caught exactly that attempt.
+
+    Their `test.py` module docstring is the summary that already exists, is
+    already maintained, and — unlike `UNPUBLISHED`, which lives in `scripts/`
+    — ships **inside the package**, so it is readable from the sandbox image
+    where `scripts/` does not exist.
+
+    Parsed with :mod:`ast` rather than imported: these modules execute a whole
+    scaffold-and-build when run, and the welcome page must not.
+    """
+    test_py = example_dir / "test.py"
+    if not test_py.is_file():
+        return ""
+    try:
+        doc = ast.get_docstring(ast.parse(test_py.read_text(encoding="utf-8")))
+    except SyntaxError:
+        return ""
+    if not doc:
+        return ""
+    # The docstrings open "End-to-end test: <what it does>" — a description of
+    # the TEST, where the sandbox wants a description of the example. Drop the
+    # lead-in when it is there and keep what follows.
+    text = " ".join(doc.split())
+    for lead in ("End-to-end test for the ", "End-to-end test: "):
+        if text.startswith(lead):
+            text = text[len(lead) :]
+            break
+    return _first_sentence(text)
+
+
 def describe(example_dir: Path) -> str:
     """One-line summary of an example, taken from its own ``README.md``.
 
@@ -92,7 +133,7 @@ def describe(example_dir: Path) -> str:
     """
     readme = example_dir / "README.md"
     if not readme.is_file():
-        return ""
+        return _from_test_docstring(example_dir)
 
     # Collect the whole first prose PARAGRAPH, not its first line. The bundled
     # READMEs are hard-wrapped at 79 columns, so a line ends wherever the
@@ -118,9 +159,17 @@ def describe(example_dir: Path) -> str:
     if not para:
         return ""
 
-    text = " ".join(para)
-    # First sentence. The period must be followed by a space or end-of-text so
-    # that "8 bytes/sample) is a cf32." survives and "cf32 (complex float-32,
+    return _first_sentence(" ".join(para))
+
+
+def _first_sentence(text: str) -> str:
+    """One table cell's worth of *text*, safe to drop into a markdown row.
+
+    Shared by both description sources so they cannot disagree about where a
+    sentence ends or how wide a cell may be.
+    """
+    # The period must be followed by a space or end-of-text, so that
+    # "8 bytes/sample) is a cf32." survives while "cf32 (complex float-32,
     # 8 bytes/sample)" is not cut at a decimal point or an abbreviation dot.
     for i, ch in enumerate(text):
         if ch == "." and (i + 1 == len(text) or text[i + 1] == " "):

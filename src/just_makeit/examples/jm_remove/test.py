@@ -1,4 +1,5 @@
-"""End-to-end test for the jm_remove example.
+"""End-to-end test: `jm remove` deletes a declaration from both the manifest
+and the generated bindings, across every removal surface it exposes.
 
 Called by tests/test_examples.py as: run(root: Path) -> None
 
