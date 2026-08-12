@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `jm new` emits `bootstrap.toml`, not `jb.toml`.** The old name
+    pointed at the wrong tool — `jb` reads as just-buildit, the PEP 517 build
+    backend, which never opens the file; it is read by `jbx`/`install-deps`.
+    The new name says what the file declares: what must exist before the
+    language ecosystem's own package manager can run.
+
+    **Existing projects**: `git mv jb.toml bootstrap.toml`. Nothing inside
+    changes. Until you do, `jm status --check` reports the file as missing —
+    jm now expects the new name. The tools still read the old one, with a
+    deprecation warning, so builds keep working either way.
+
 ## [0.56.0] — 2026-08-10
 
 ### Added

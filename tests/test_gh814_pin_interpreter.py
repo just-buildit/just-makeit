@@ -2,7 +2,7 @@
 
 `find_package(Python3 ... NumPy)` takes the numpy headers from whatever
 interpreter CMake resolves. On any machine with more than one numpy — a
-system `python3-numpy` plus a venv one, which `jb.toml` actively creates —
+system `python3-numpy` plus a venv one, which `bootstrap.toml` actively creates —
 the extension can compile against one and be imported under the other. That
 surfaces at IMPORT time as an ABI error, arbitrarily far from the build.
 

@@ -59,7 +59,7 @@ below) do.
     ├── CMakeLists.txt
     ├── Makefile
     ├── pyproject.toml
-    ├── jb.toml
+    ├── bootstrap.toml
     ├── Doxyfile
     ├── zensical.toml
     ├── .gitignore

@@ -73,7 +73,7 @@ README_MD = _load("doc/README.md")
 # ── TOML / config ────────────────────────────────────────────────────────────
 ZENSICAL_TOML = _load("toml/zensical.toml")
 PYPROJECT_TOML = _load("toml/pyproject.toml")
-JB_TOML = _load("toml/jb.toml")
+BOOTSTRAP_TOML = _load("toml/bootstrap.toml")
 # ── Misc ─────────────────────────────────────────────────────────────────────
 GITIGNORE = _load("misc/.gitignore")
 # ── Python ───────────────────────────────────────────────────────────────────

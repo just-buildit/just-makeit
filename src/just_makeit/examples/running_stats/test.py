@@ -55,13 +55,13 @@ def run(root: Path) -> None:
     )
     proj = root / "my_stats"
 
-    # Verify jb.toml was generated with expected structure
+    # Verify bootstrap.toml was generated with expected structure
     try:
         import tomllib
     except ModuleNotFoundError:  # Python < 3.11
         import tomli as tomllib
 
-    with (proj / "jb.toml").open("rb") as f:
+    with (proj / "bootstrap.toml").open("rb") as f:
         jbt = tomllib.load(f)
     assert jbt["project"]["name"] == "my_stats"
     assert jbt["tools"]["install-deps"]["source"] == "just-bashit:install-deps"

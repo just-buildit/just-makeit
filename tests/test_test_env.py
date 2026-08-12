@@ -111,16 +111,16 @@ class TestDepsActuallyPresent:
 
 
 class TestSystemDepsCoverWhatTheSuiteCompiles:
-    """jm's own `jb.toml` must provide what the projects it builds need.
+    """jm's own `bootstrap.toml` must provide what the projects it builds need.
 
     The suite scaffolds projects and compiles them, and a generated
     `CMakeLists.txt` does `find_package(Python … NumPy)` — so numpy's C headers
-    have to be installed, not just importable. `jb.toml` is the manifest for
+    have to be installed, not just importable. `bootstrap.toml` is the manifest for
     that, and `make install-deps` is what reads it.
 
-    This drifted and CI did not notice for a while: jm SHIPS a `jb.toml`
+    This drifted and CI did not notice for a while: jm SHIPS a `bootstrap.toml`
     template listing `python3-numpy` (and the per-platform equivalents) on
-    every platform, while jm's OWN `jb.toml` listed none. The matrix used to
+    every platform, while jm's OWN `bootstrap.toml` listed none. The matrix used to
     run `jm-install-deps`, which provisions numpy into a venv and so papered
     over it; when that step became `make install-deps` the provisioning went
     with it, and generated builds started failing on
@@ -136,8 +136,8 @@ class TestSystemDepsCoverWhatTheSuiteCompiles:
     for, and forcing equality would be asserting a coincidence.
     """
 
-    TEMPLATE = ROOT / "src/just_makeit/templates/toml/jb.toml"
-    OWN = ROOT / "jb.toml"
+    TEMPLATE = ROOT / "src/just_makeit/templates/toml/bootstrap.toml"
+    OWN = ROOT / "bootstrap.toml"
 
     @staticmethod
     def _groups(path: Path) -> dict[str, list[str]]:
@@ -155,7 +155,7 @@ class TestSystemDepsCoverWhatTheSuiteCompiles:
     def test_parses_both_manifests(self):
         """A regex that matches nothing would make the check below vacuous."""
         assert self._groups(self.TEMPLATE), "parsed no [dev.*] from template"
-        assert self._groups(self.OWN), "parsed no [dev.*] from jb.toml"
+        assert self._groups(self.OWN), "parsed no [dev.*] from bootstrap.toml"
 
     def test_numpy_wherever_the_shipped_template_has_it(self):
         template, own = self._groups(self.TEMPLATE), self._groups(self.OWN)
@@ -166,7 +166,7 @@ class TestSystemDepsCoverWhatTheSuiteCompiles:
             if not any("numpy" in p for p in own.get(platform, [])):
                 missing.append(platform)
         assert not missing, (
-            f"jb.toml's {missing} group(s) provide no numpy, but the template "
+            f"bootstrap.toml's {missing} group(s) provide no numpy, but the template "
             "jm ships does. The suite compiles generated projects and their "
             "CMake does find_package(Python … NumPy), so `make install-deps` "
             "must install numpy's headers or the build fails on "

@@ -122,15 +122,15 @@ jobs:
             --state "delay:float _Complex[16]" \
             --state "gain:float:1.0"
 
-      - name: Verify jb.toml generated
+      - name: Verify bootstrap.toml generated
         working-directory: my_fir
         run: |
-          test -f jb.toml
-          grep 'install-deps' jb.toml
-          grep 'cmake' jb.toml
-          grep 'my_fir' jb.toml
+          test -f bootstrap.toml
+          grep 'install-deps' bootstrap.toml
+          grep 'cmake' bootstrap.toml
+          grep 'my_fir' bootstrap.toml
 
-      - name: Install build deps via generated jb.toml (Linux)
+      - name: Install build deps via generated bootstrap.toml (Linux)
         if: runner.os == 'Linux'
         working-directory: my_fir
         run: |
@@ -159,7 +159,7 @@ jobs:
           fi
           jbx install-deps -g dev -s apt
 
-      - name: Install build deps via generated jb.toml (macOS)
+      - name: Install build deps via generated bootstrap.toml (macOS)
         if: runner.os == 'macOS'
         working-directory: my_fir
         run: jbx install-deps -g dev -s brew

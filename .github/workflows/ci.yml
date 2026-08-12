@@ -66,8 +66,8 @@ jobs:
           fi
 
           # A release commit necessarily touches four files, not two: the
-          # bump edits pyproject.toml, then the uv-lock and sync-jb-version
-          # hooks regenerate uv.lock and jb.toml. Skipping on only the first
+          # bump edits pyproject.toml, then the uv-lock and sync-bootstrap-version
+          # hooks regenerate uv.lock and bootstrap.toml. Skipping on only the first
           # two meant every release PR ran the full matrix for a version
           # string.
           changed=$(git diff --name-only "$base" HEAD)
@@ -118,7 +118,7 @@ jobs:
 
       # `make install-deps` — the standard target whose whole job is this, and
       # which `make help` already advertises as "Install system build
-      # dependencies (jb.toml)". It hooks jb.toml's `dev` group
+      # dependencies (bootstrap.toml)". It hooks bootstrap.toml's `dev` group
       # (build-essential, cmake, pkg-config, python3-dev), which is exactly
       # what the suite needs to cmake-build the projects it scaffolds.
       #

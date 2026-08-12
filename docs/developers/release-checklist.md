@@ -28,7 +28,7 @@ ______________________________________________________________________
 ```sh
 # pyproject.toml — single source of truth for the version
 version = "X.Y.Z"
-# jb.toml is auto-synced by the pre-commit hook (sync-jb-version)
+# bootstrap.toml is auto-synced by the pre-commit hook (sync-bootstrap-version)
 
 # CHANGELOG.md — entries were already added under `## [Unreleased]` in the
 # PR that made each change (add yours there when you author a change, not here).
@@ -45,7 +45,7 @@ Commit on a branch and merge via PR (`main` is protected — no direct pushes):
 
 ```sh
 git checkout -b chore/bump-X.Y.Z
-git add pyproject.toml CHANGELOG.md jb.toml uv.lock
+git add pyproject.toml CHANGELOG.md bootstrap.toml uv.lock
 git commit -m "chore: bump to X.Y.Z"
 git push -u origin chore/bump-X.Y.Z
 gh pr create --fill
@@ -54,11 +54,11 @@ gh pr create --fill
 ```
 
 > **Pre-commit will rewrite files and abort the first commit.** The
-> `sync-jb-version` hook regenerates `jb.toml`, `uv-lock` refreshes `uv.lock`,
+> `sync-bootstrap-version` hook regenerates `bootstrap.toml`, `uv-lock` refreshes `uv.lock`,
 > and `mdformat`/`ruff format` may reflow what you touched. This is expected:
 > re-stage everything the hooks changed (`git add -A`) and commit again — the
 > second run passes because the files are already normalized. Make sure the
-> hook-generated `jb.toml` and `uv.lock` land in the commit.
+> hook-generated `bootstrap.toml` and `uv.lock` land in the commit.
 
 ______________________________________________________________________
 

@@ -19,11 +19,11 @@
 repos:
   - repo: local
     hooks:
-      - id: sync-jb-version
-        name: sync jb.toml version from pyproject.toml
+      - id: sync-bootstrap-version
+        name: sync bootstrap.toml version from pyproject.toml
         entry: make -s lint-sync-version
         language: system
-        files: ^(pyproject\.toml|jb\.toml)$
+        files: ^(pyproject\.toml|bootstrap\.toml)$
         pass_filenames: false
 
   - repo: https://github.com/astral-sh/uv-pre-commit

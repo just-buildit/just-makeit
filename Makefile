@@ -104,7 +104,7 @@ CMAKE_EXCLUDE_RE = CMakeLists_(component|module|object_core)\.cmake
 LINT_TOOLS   = ruff ruff-format mdformat clang-format cmake-format \
                sync-version assemble-examples
 # `format` is the auto-fixer, so sync-version is deliberately NOT here: it
-# exits 1 when it rewrites jb.toml (pre-commit's "re-stage me" convention),
+# exits 1 when it rewrites bootstrap.toml (pre-commit's "re-stage me" convention),
 # and a fixer that fails because it fixed something is a trap. assemble-examples
 # returns 0 either way, and must stay LAST for the same reason it is last in
 # the hook config -- it inlines scripts ruff-format may have just rewrapped.
@@ -308,12 +308,12 @@ BENCH_COMPARE_CMD = $(PYTEST_B) tests/bench_scaffold.py \
                         --benchmark-compare --benchmark-disable-gc
 
 # ── Release ──────────────────────────────────────────────────────────────────
-# jb.toml's version is synced from pyproject.toml by a pre-commit hook, so it is
+# bootstrap.toml's version is synced from pyproject.toml by a pre-commit hook, so it is
 # a real second manifest and `version-check` probes both — a desync would
 # otherwise ship silently.
 define VERSION_PROBES
 pyproject.toml|grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'
-jb.toml|grep '^version' jb.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
+bootstrap.toml|grep '^version' bootstrap.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
 endef
 
 BUMP_VERSION_CMD = sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' \

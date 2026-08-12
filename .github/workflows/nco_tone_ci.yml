@@ -26,7 +26,7 @@ on:
     paths-ignore:
       - CHANGELOG.md
       - pyproject.toml
-      - jb.toml
+      - bootstrap.toml
       - uv.lock
   pull_request:
     paths:
@@ -50,7 +50,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # `make install-deps-dev`, not a hand-picked apt line: jb.toml is the
+      # `make install-deps-dev`, not a hand-picked apt line: bootstrap.toml is the
       # SSOT for which system packages a build needs, and the transcribed
       # `cmake gcc` here was already a narrower list than the dev group it
       # meant to install.

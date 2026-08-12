@@ -122,7 +122,7 @@ coverage:
 # to the raw variable: it is set by just-buildit and EMPTY otherwise, and an
 # empty `-DPython3_EXECUTABLE=` does not mean "use the default", it means
 # CMake picks the interpreter itself. On any box with more than one numpy (a
-# system python3-numpy plus a venv one — which jb.toml actively creates) the
+# system python3-numpy plus a venv one — which bootstrap.toml actively creates) the
 # extension can then compile against one numpy and be imported under the
 # other. That surfaces as `compiled using NumPy 1.x cannot be run in NumPy
 # 2.x` at IMPORT time, arbitrarily far from the build that caused it.

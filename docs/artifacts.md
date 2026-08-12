@@ -6,7 +6,7 @@ one-line annotations.
 
 Files omitted from all trees for brevity: `README.md`, `.gitignore`,
 `benchmarks/history/.gitkeep`, `Doxyfile`, `zensical.toml`, `docs/index.md`,
-`docs/api.md`, `jb.toml`, `cmake/<project>-config.cmake.in`. Every project
+`docs/api.md`, `bootstrap.toml`, `cmake/<project>-config.cmake.in`. Every project
 also defaults to the split-fragment layout (see
 [Declarative scaffolding](declarative-scaffolding.md)): each object/module
 gets its own `objects/<name>.toml` / `modules/<name>.toml` fragment file

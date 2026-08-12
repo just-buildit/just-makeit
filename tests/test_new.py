@@ -52,7 +52,7 @@ class TestNewProjectFiles:
         assert (project / "just-makeit.toml").exists()
 
     def test_jb_toml_exists(self, project):
-        assert (project / "jb.toml").exists()
+        assert (project / "bootstrap.toml").exists()
 
     def test_umbrella_header_exists(self, project):
         assert (project / "native" / "inc" / "my_filter.h").exists()
@@ -198,7 +198,7 @@ class TestJbToml:
         except ModuleNotFoundError:  # Python < 3.11
             import tomli as tomllib
 
-        with (project / "jb.toml").open("rb") as f:
+        with (project / "bootstrap.toml").open("rb") as f:
             return tomllib.load(f)
 
     def test_project_name(self, project):
@@ -254,11 +254,11 @@ class TestJbToml:
         assert "runtime" not in cfg
 
     def test_no_stray_placeholders(self, project):
-        text = (project / "jb.toml").read_text(encoding="utf-8")
+        text = (project / "bootstrap.toml").read_text(encoding="utf-8")
         assert "<<" not in text
 
     def test_scaffold_also_gets_jb_toml(self, scaffold):
-        assert (scaffold / "jb.toml").exists()
+        assert (scaffold / "bootstrap.toml").exists()
         cfg = self._load(scaffold)
         assert cfg["project"]["name"] == "my_proj"
 
