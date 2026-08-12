@@ -321,8 +321,14 @@ BUMP_VERSION_CMD = sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' \
 # Autonomously watch release.yml: stream job outcomes, auto-rerun ONE
 # pre-publish flake (safe — publish is gated behind smoke), and verify the real
 # artifacts (PyPI per-version then latest, GitHub Release) at the end.
-RELEASE_WATCH_CMD = REPO=just-buildit/just-makeit scripts/release-watch.sh \
-                        "$(VERSION)"
+#
+# The script is VENDORED from canonical and gated by standard-check; everything
+# repo-specific is here. RW_PUBLISH_JOB takes the anchored default: the loose
+# `publish` this repo used to carry also matched all twelve
+# "Artifact smoke (pre-publish) / …" jobs, which succeed before PyPI is touched,
+# so the flake recovery below could never actually fire.
+RELEASE_WATCH_CMD = REPO=just-buildit/just-makeit RW_PKG=just-makeit \
+                        scripts/release-watch.sh "$(VERSION)"
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 CLEAN_PATHS = dist/ site/ .pytest_cache/
@@ -336,5 +342,10 @@ find src -name "*.pyc" -delete
 find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
 $(MAKE) -s examples-clean
 endef
+
+# ── Vendored from canonical ──────────────────────────────────────────────────
+# Verbatim copies the drift gate holds to canonical, alongside standard.mk
+# itself. Edit canonical and re-vendor; never edit these in place.
+VENDORED_FILES = scripts/release-watch.sh
 
 include standard.mk
