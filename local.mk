@@ -76,7 +76,7 @@ endif
 # does not exist for what you need, that is a gap in the Makefile — reaching
 # around it just moves the drift somewhere nobody looks.
 
-# `install-deps` (standard) installs jb.toml's system packages with no group
+# `install-deps` (standard) installs bootstrap.toml's system packages with no group
 # and no source selector, which is why ci.yml called `jbx` directly for the dev
 # group and picked apt/brew in YAML. This ADDS a sibling rather than
 # redefining the standard target — local.mk may only add, and make would warn
@@ -87,7 +87,7 @@ endif
 INSTALL_DEPS_GROUP  ?= dev
 INSTALL_DEPS_SOURCE ?= $(if $(filter Darwin,$(shell uname -s)),brew,apt)
 
-install-deps-dev: ## Install the dev-group system packages (jb.toml)
+install-deps-dev: ## Install the dev-group system packages (bootstrap.toml)
 	@command -v jbx >/dev/null 2>&1 \
 	    || curl -sSL https://just-buildit.github.io/get-jb.sh | bash
 	PATH="$$HOME/.local/bin:$$PATH" \

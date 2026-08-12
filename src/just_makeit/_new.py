@@ -174,7 +174,7 @@ def run(
             encoding="utf-8",
         )
     print(f"  create  {root / C.FILENAME}")
-    _write(root / "jb.toml", r(T.JB_TOML))
+    _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))
     print()
 
     if object_names:

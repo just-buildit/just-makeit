@@ -107,7 +107,7 @@ my_project/
 ├── CMakeLists.txt
 ├── Makefile
 ├── just-makeit.toml
-└── jb.toml            # tool + system-dep manifest (jbx install-deps)
+└── bootstrap.toml            # tool + system-dep manifest (jbx install-deps)
 ```
 
 ______________________________________________________________________
