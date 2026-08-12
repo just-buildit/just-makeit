@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 
-### Changed
+## [0.57.0] — 2026-08-12
 
-- **BREAKING: `jm new` emits `bootstrap.toml`, not `jb.toml`.** The old name
+### Breaking
+
+- **`jm new` emits `bootstrap.toml`, not `jb.toml`.** The old name
     pointed at the wrong tool — `jb` reads as just-buildit, the PEP 517 build
     backend, which never opens the file; it is read by `jbx`/`install-deps`.
     The new name says what the file declares: what must exist before the
