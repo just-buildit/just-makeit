@@ -18,11 +18,13 @@
 #   - checks turned OFF because they are wrong ABOUT THIS CODE. jm's module
 #     layout and CPython's own idioms trip them on every project, forever.
 #     Each is named with the construct it misfires on.
-#   - checks left ON that currently REPORT. jm's generated C has real findings
-#     open against it (just-buildit/just-makeit#944). They are not suppressed,
-#     because a suppressed finding is one nobody fixes.
+#   - checks left ON. jm's generated C reported real findings when this file
+#     was added (gh-944): a leaked benchmark allocation, an unclosed stream,
+#     sixteen reserved identifiers. Those were FIXED rather than suppressed,
+#     which is why `WarningsAsErrors` can be set at all — see below.
 #
-# That second group is why `WarningsAsErrors` is not set yet — see below.
+# Two NOLINT regions exist in generated headers, each naming one check and the
+# construct it misfires on. Neither is a blanket suppression.
 
 Checks: >-
   -*,
@@ -65,20 +67,19 @@ Checks: >-
 #                                 rule, just not one scaffold boilerplate
 #                                 answers.
 
-# NOT set yet, deliberately:
+# Every finding is an error. A generated project reports clean today -- that
+# is measured, not assumed: `make tidy` on a scaffold with --perf, a module,
+# a standalone object and a C app returns zero (gh-944).
 #
-#   WarningsAsErrors: "*"
+# It was off while jm's own generated C still had findings, because a
+# `make tidy` that fails on a project you just created is the fastest way to
+# teach someone never to run it. That is fixed, so this is a real gate now.
 #
-# Turn it on once your project reports clean, and it becomes a real gate. It
-# is off in the scaffold because jm's own generated C does not yet report
-# clean — reserved identifiers in the C test and jm_perf.h, an unparenthesised
-# macro argument, a benchmark allocation freed on only one path, and an
-# unclosed stream in `jm app`'s executable. Those are tracked in
-# just-buildit/just-makeit#944 and #943, and this line goes in when they land.
-#
-# Shipping `WarningsAsErrors: "*"` today would have meant `make tidy` failing
-# on a project you just created, which is the fastest way to teach someone to
-# never run it again.
+# If a newer clang-tidy adds a check that fires on generated code, comment
+# this out rather than working around the diagnostic -- this file is yours
+# (just-makeit writes it once and never rewrites it), and a scaffold going red
+# on a toolchain bump is not your bug to fix.
+WarningsAsErrors: "*"
 
 # Only report diagnostics for this project's headers, not system or
 # third-party ones. Widen this if you add a header tree of your own.
