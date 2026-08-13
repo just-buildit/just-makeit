@@ -35,6 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._new import run as new_run  # noqa: E402
+
 _TEMPLATES = Path(__file__).parent.parent / "src" / "just_makeit" / "templates"
 
 #: `#define _FOO` / `#define _foo(x)` — a macro whose NAME is reserved.
@@ -109,3 +111,55 @@ def test_no_shipped_c_template_declares_a_reserved_identifier():
         "implementation may define these itself, and then the generated "
         f"project stops compiling: {found}"
     )
+
+
+class TestEveryEarlyReturnReleasesWhatItHolds:
+    """gh-944: the two real leaks clang-analyzer found, and their shape.
+
+    Both were an early `return 1;` that skipped the cleanup the normal path
+    runs — the benchmark bailing out of a failed second `malloc` still holding
+    the first, and the generated app bailing out of a failed `create()` still
+    holding both streams. Neither is dramatic on its own (the process is
+    exiting), but the shape is: cleanup written once, at the bottom, and every
+    early return a chance to forget it.
+
+    Asserted on the generated TEXT because the diagnostic that found them needs
+    clang-tidy, which this suite does not require. Text is enough here: the
+    question is whether the release appears on the bail-out path at all.
+    """
+
+    def _app(self, tmp_path):
+        from just_makeit._app import run as app_run
+
+        root = tmp_path / "ap"
+        new_run("ap", root, object_names=["gain"])
+        app_run(root, target="c", object_="gain")
+        return (root / "native" / "src" / "app" / "ap.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_bench_frees_the_first_buffer_when_the_second_fails(
+        self, tmp_path
+    ):
+        root = tmp_path / "bp"
+        new_run("bp", root, object_names=["gain"])
+        body = (
+            root / "native" / "benchmarks" / "bench_gain_core.c"
+        ).read_text(encoding="utf-8")
+
+        out_guard = next(
+            ln for ln in body.splitlines() if "!out" in ln and "return 1" in ln
+        )
+        assert "free(in)" in out_guard, (
+            f"the out-allocation bail-out leaks `in`: {out_guard.strip()!r}"
+        )
+
+    def test_the_app_closes_its_streams_on_every_bail_out(self, tmp_path):
+        body = self._app(tmp_path)
+        # Each `return 1;` inside main() must be preceded by the closes.
+        for marker in ("cannot open input/output", "_create() failed"):
+            i = body.index(marker)
+            branch = body[i : body.index("return 1;", i)]
+            assert "fclose(in)" in branch and "fclose(out)" in branch, (
+                f"bail-out after {marker!r} leaves streams open: {branch!r}"
+            )

@@ -86,6 +86,25 @@ def _bench_in_init(sample_type: str, samp: dict) -> str:
     return f"({_ctype_display(sample_type)})(i)"
 
 
+def _bench_out_decl(disp: str, cleanup: str = "") -> str:
+    """The benchmark's `out` allocation, plus its OOM guard.
+
+    gh-944: *cleanup* is what has already been allocated at this point and
+    must be released if this malloc fails. It used to be nothing, so a
+    benchmark whose second allocation failed returned 1 while still holding
+    the first -- clang-analyzer-unix.Malloc, and a real leak on the OOM path.
+
+    It is a parameter rather than a fixed `free(in);` because the three call
+    sites do not agree: a component with no input buffer allocates `out`
+    alone, and emitting a free for an `in` that was never declared would not
+    compile. The caller knows which shape it is building; this does not.
+    """
+    return (
+        f"    {disp} *out = malloc(BENCH_N * sizeof({disp}));\n"
+        f'    if (!out) {{ fprintf(stderr, "OOM\\n"); {cleanup}return 1; }}'
+    )
+
+
 def _bench_warmup(samp: dict) -> str:
     z = samp["zero"]
     if samp["kind"] == "complex":
@@ -421,11 +440,7 @@ def make_sample_ctx(
             "bench_step_inner_loop": "        ",  # no per-element inner loop
             "bench_steps_in_arg": " in, BENCH_N,",
             "bench_free_in": "    free(in);",
-            "bench_out_decl": (
-                f"    {out_disp} *out = "
-                f"malloc(BENCH_N * sizeof({out_disp}));\n"
-                f'    if (!out) {{ fprintf(stderr, "OOM\\n"); return 1; }}'
-            ),
+            "bench_out_decl": _bench_out_decl(out_disp, "free(in); "),
             "bench_volatile_sink": "",
             "bench_sink_assign": "",
             "bench_steps_out_arg": " out",
@@ -476,17 +491,17 @@ def make_sample_ctx(
     if is_void_return:
         step_example_lhs = ""
         bench_out_decl = ""
+        bench_out_decl_after_in = ""
         bench_volatile_sink = ""
         bench_sink_assign = ""
         bench_steps_out_arg = " BENCH_N"
         bench_free_out = ""
     else:
         step_example_lhs = f"{ret_disp} y = "
-        bench_out_decl = (
-            f"    {ret_disp} *out = "
-            f"malloc(BENCH_N * sizeof({ret_disp}));\n"
-            f'    if (!out) {{ fprintf(stderr, "OOM\\n"); return 1; }}'
-        )
+        # Two spellings, because the three consumers below do not agree on
+        # whether an `in` buffer exists to be freed (gh-944).
+        bench_out_decl = _bench_out_decl(ret_disp)
+        bench_out_decl_after_in = _bench_out_decl(ret_disp, "free(in); ")
         bench_volatile_sink = (
             f"    /* volatile sink prevents DCE of the step() loop */\n"
             f"    volatile {ret_disp} _sink;"
@@ -630,7 +645,7 @@ def make_sample_ctx(
             "bench_step_inner_loop": "        ",  # no inner loop
             "bench_steps_in_arg": "",  # no steps() for array arg
             "bench_free_in": "    free(in);",
-            "bench_out_decl": bench_out_decl,
+            "bench_out_decl": bench_out_decl_after_in,
             "bench_volatile_sink": bench_volatile_sink,
             "bench_sink_assign": bench_sink_assign,
             "bench_steps_out_arg": bench_steps_out_arg,
@@ -728,7 +743,7 @@ def make_sample_ctx(
         "bench_step_inner_loop": _bench_inner_loop_scalar,
         "bench_steps_in_arg": " in,",
         "bench_free_in": "    free(in);",
-        "bench_out_decl": bench_out_decl,
+        "bench_out_decl": bench_out_decl_after_in,
         "bench_volatile_sink": bench_volatile_sink,
         "bench_sink_assign": bench_sink_assign,
         "bench_steps_out_arg": bench_steps_out_arg,

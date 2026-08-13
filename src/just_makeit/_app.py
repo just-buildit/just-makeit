@@ -501,9 +501,21 @@ def _c_argv_parser(
             if (want_in and want_out)
             else ("!in" if want_in else "!out")
         )
+        # gh-944: close whichever stream DID open before bailing out. The
+        # normal path already closes both (see the `tail` below); this branch
+        # returned holding one of them, which is the only place
+        # clang-analyzer-unix.Stream had to complain about. Guarded on
+        # non-NULL and on not being the std stream, exactly as the tail is --
+        # fclose(stdin) is not this program's to call.
+        fails = []
+        if want_in:
+            fails.append("        if (in && in != stdin) fclose(in);")
+        if want_out:
+            fails.append("        if (out && out != stdout) fclose(out);")
         opens += [
             f"    if ({cond}) {{",
             '        fprintf(stderr, "error: cannot open input/output\\n");',
+            *fails,
             "        return 1;",
             "    }",
         ]
@@ -1347,6 +1359,14 @@ def _build_ctx(
         "helpers": helpers,
         "app_create_line": f"    {component}_state_t *state = {create_call};",
         "cleanup_tail": cleanup_tail,
+        # gh-944: the same closes, one block deeper, for the `create() failed`
+        # early return. Derived from cleanup_tail rather than written twice --
+        # the two ran out of step once already, which is how a bail-out that
+        # held both streams open shipped in the first place.
+        "cleanup_tail_deep": "\n".join(
+            "    " + ln if ln.strip() else ln
+            for ln in cleanup_tail.splitlines()
+        ),
     }
 
 

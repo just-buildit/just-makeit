@@ -159,7 +159,19 @@
 #endif
 
 /* Full form: CPARAMS / CARGS are paren-wrapped control suffixes (see header
- * comment). Both () for the no-control case. */
+ * comment). Both () for the no-control case.
+ *
+ * gh-944: state_t and sample_t are TYPE parameters, spliced into a parameter
+ * declaration. bugprone-macro-parentheses wants `(state_t) *state`, which in
+ * that position is a cast expression, not a declaration -- it would not
+ * compile. The tell that this is a heuristic misfire rather than a finding:
+ * the adjacent `const sample_t *input` is NOT flagged, because a leading
+ * `const` happens to defeat the same heuristic.
+ *
+ * Scoped to this macro with a reason, deliberately, rather than disabling the
+ * check project-wide in the shipped .clang-tidy -- it is a good check, and it
+ * has no other false positive here. */
+/* NOLINTBEGIN(bugprone-macro-parentheses) */
 #define JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK,      \
                            CPARAMS, CARGS)                                    \
 void fn##_steps(                                                               \
@@ -176,5 +188,6 @@ void fn##_steps(                                                               \
 
 #define JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)         \
     JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK, (), ())
+/* NOLINTEND(bugprone-macro-parentheses) */
 
 #endif /* JM_PERF_H */
