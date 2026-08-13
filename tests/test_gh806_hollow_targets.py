@@ -421,7 +421,16 @@ class TestTheScaffoldCheckCount:
         # Statements only. The unanchored count picked up the macro's own
         # `#define` and a comment that mentioned `CHECK()`, and overstated by
         # one — which keeps the banner showing after a real check is added.
-        assert stamped == len(re.findall(r"^\s*CHECK\s*\(", text, re.M))
+        # (gh-934 moved the `#define` out to jm_test.h, so only the comment
+        # hazard is left; the anchor still earns its place.)
+        #
+        # REQUIRE counts too, since gh-934: `obj_null_check` emits one, and a
+        # count blind to it would understate the stamp by one — the same
+        # off-by-one in the opposite direction, clearing the banner for a file
+        # nobody has written a test into.
+        assert stamped == len(
+            re.findall(r"^\s*(?:CHECK|REQUIRE)\s*\(", text, re.M)
+        )
         assert stamped > 0
 
     @_needs_cc
@@ -429,7 +438,7 @@ class TestTheScaffoldCheckCount:
         root = _project(tmp_path, "fir")
         out = _run_c_test(root, "fir", tmp_path)
         assert "PASSED (4 checks)" in out, out
-        assert "scaffold coverage only" in out
+        assert "no assertions beyond" in out
 
     @_needs_cc
     def test_the_banner_clears_when_a_real_check_is_added(self, tmp_path):
@@ -446,7 +455,7 @@ class TestTheScaffoldCheckCount:
         )
         out = _run_c_test(root, "fir", tmp_path)
         assert "PASSED (5 checks)" in out, out
-        assert "scaffold coverage only" not in out
+        assert "no assertions beyond" not in out
 
 
 class TestTheEmptyBenchmarkSaysSo:

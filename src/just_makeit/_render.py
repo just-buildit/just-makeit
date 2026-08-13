@@ -37,6 +37,7 @@ PYEX_COMMON_H = _load("c/inc/pyex_common.h")
 JM_SIMD_H = _load("c/inc/jm_simd.h")
 JM_PERF_H = _load("c/inc/jm_perf.h")
 JM_BENCH_H = _load("c/inc/jm_bench.h")
+JM_TEST_H = _load("c/inc/jm_test.h")
 COMPONENT_CORE_H = _load("c/inc/component_core.h")
 MODULE_CORE_H = _load("c/inc/module_core.h")
 UMBRELLA_H = _load("c/inc/umbrella.h")
@@ -134,12 +135,19 @@ def render_component_pyi(ctx: dict) -> str:
     return reflow_pyi(render(COMPONENT_PYI, ctx))
 
 
-#: A ``CHECK(...)`` **statement** in the rendered C test. Anchored to the
-#: start of the line on purpose: every emitter in `_context._state` writes the
-#: call as a statement of its own, and anchoring is what keeps the macro's own
-#: ``#define`` — and any prose in a comment that happens to mention ``CHECK()``
-#: — out of the count. The unanchored form got both wrong on its first run.
-_CHECK_CALL = re.compile(r"^\s*CHECK\s*\(", re.M)
+#: An assertion **statement** in the rendered C test. Anchored to the start of
+#: the line on purpose: every emitter in `_context._state` writes the call as a
+#: statement of its own, and anchoring is what keeps any prose in a comment
+#: that happens to mention ``CHECK()`` out of the count. The unanchored form
+#: got that wrong on its first run — and, back when the macro was stamped into
+#: this template, its own ``#define`` too. gh-934 moved the definitions to
+#: jm_test.h, so that second hazard is gone; the anchor stays for the first.
+#:
+#: ``REQUIRE`` counts as well, and must: it is an assertion like any other, and
+#: ``obj_null_check`` emits one. Counting only ``CHECK`` would understate
+#: JM_SCAFFOLD_CHECKS by one and make the gh-806 note claim an author had
+#: written a test when they had not.
+_CHECK_CALL = re.compile(r"^\s*(?:CHECK|REQUIRE)\s*\(", re.M)
 
 
 def render_component_test_c(ctx: dict) -> str:

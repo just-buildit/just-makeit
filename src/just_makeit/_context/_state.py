@@ -1577,9 +1577,12 @@ def _ctor_seed_slots(component: str, init_params: list) -> dict:
     unseed = _unseedable_required(init_params)
     if not unseed:
         return {
-            "obj_null_check": (
-                "    CHECK(obj != NULL);\n    if (!obj) return 1;"
-            ),
+            # gh-934: REQUIRE, not CHECK + a bare `return 1`. The old pair
+            # left the process with exit 1 and NOTHING printed -- no FAIL
+            # line, no summary -- so a create() returning NULL in CI looked
+            # like a crash. REQUIRE reports, then returns through the same
+            # epilogue every other exit path uses.
+            "obj_null_check": "    REQUIRE(obj != NULL);",
             "pytest_class_skip": "",
             "pytest_module_skip": "",
         }

@@ -161,22 +161,19 @@ def _enrich_doxygen(core_h: Path) -> None:
 # preserved across reset because it's the configured ring-buffer size).
 _C_TEST_BODY = """\
 #include "delay_line/delay_line_core.h"
-#include <stdio.h>
-#include <stdlib.h>
 
-#define CHECK(cond) \\
-    do { if (!(cond)) { \\
-        fprintf(stderr, "FAIL %s:%d  %s\\n", __FILE__, __LINE__, #cond); \\
-        _fails++; \\
-    } } while (0)
+/* gh-934: CHECK, REQUIRE and the epilogue come from the shared harness
+   just-makeit writes once per project.  This example used to carry its own
+   copy of the CHECK macro -- which is exactly the divergence jm_test.h
+   exists to prevent, demonstrated in just-makeit's own example. */
+#define JM_TEST_NAME "test_delay_line_core"
+#include "jm_test.h"
 
 int main(void)
 {
-    int _fails = 0;
     const uint32_t N = 8;
     delay_line_state_t *obj = delay_line_create(N, 0);
-    CHECK(obj != NULL);
-    if (!obj) return 1;
+    REQUIRE(obj != NULL);
 
     CHECK(delay_line_get_length(obj) == N);
     CHECK(delay_line_get_idx(obj) == 0);
@@ -203,12 +200,7 @@ int main(void)
     }
 
     delay_line_destroy(obj);
-    if (_fails) {
-        fprintf(stderr, "test_delay_line_core FAILED (%d)\\n", _fails);
-        return 1;
-    }
-    printf("test_delay_line_core PASSED\\n");
-    return 0;
+    JM_TEST_EPILOGUE();
 }
 """
 

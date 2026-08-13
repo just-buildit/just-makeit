@@ -86,8 +86,42 @@ class TestScaffoldWiring:
         # The regex names this project's header tree. A config carrying some
         # other project's layout filters out everything and reports clean,
         # which is how jm's own root copy sat dead for a year.
-        assert 'HeaderFilterRegex: "native/inc/.*"' in tidy.read_text()
+        assert "HeaderFilterRegex:" in tidy.read_text()
         assert (root / "native" / "inc").is_dir()
+
+    def test_header_filter_covers_every_tree_jm_writes_headers_into(
+        self, tmp_path
+    ):
+        """Derived, not spelled out — a new header tree must not slip past.
+
+        This asserted the literal `"native/inc/.*"` until gh-934 added
+        `native/tests/jm_test.h`, at which point the literal was still true
+        and the property it stood for was false: two shared harness headers
+        (jm_bench.h, jm_test.h) sat outside the filter and were exempt from
+        every check in the config. A filter that excludes a directory the
+        generator uses is a check that covers less than it claims.
+
+        So match the regex against the headers actually on disk rather than
+        against a string someone has to remember to update.
+        """
+        root = _scaffold(tmp_path / "ccproj")
+        text = (root / ".clang-tidy").read_text(encoding="utf-8")
+        pattern = re.search(
+            r'^HeaderFilterRegex:\s*"(.+)"\s*$', text, re.MULTILINE
+        ).group(1)
+        rx = re.compile(pattern)
+
+        headers = sorted(root.glob("native/**/*.h"))
+        assert headers, "scaffold produced no headers at all"
+        uncovered = [
+            str(h.relative_to(root))
+            for h in headers
+            if not rx.search(str(h.relative_to(root)))
+        ]
+        assert not uncovered, (
+            "generated headers excluded from clang-tidy by HeaderFilterRegex "
+            f"{pattern!r}: {uncovered}"
+        )
 
     def test_clang_tidy_ships_only_where_a_target_runs_it(self, tmp_path):
         """A config with no runner is the bug, not the fix (gh-941).
