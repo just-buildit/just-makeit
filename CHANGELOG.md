@@ -2,6 +2,70 @@
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-08-13
+
+### Added
+
+- **A shared `native/tests/jm_test.h`.** `CHECK`, a new aborting `REQUIRE`,
+    the counters and the epilogue are written once per project — as
+    `jm_bench.h` already was beside the benchmarks — instead of stamped into
+    every scaffolded test. Copies diverge: one downstream reached 90
+    definitions of `CHECK` in 6 mutually incompatible variants, and in 20
+    files the failure gate had drifted *above* later assertions, leaving 75
+    assertions unable to affect the exit code. Gate and report are now one
+    macro, so a gate cannot be left behind by a report.
+
+- **`.clang-tidy` and a `make tidy` target** in scaffolded cmake projects.
+    `tidy` takes its file list from the compile database, so it lints exactly
+    the translation units cmake compiles. The config sets
+    `WarningsAsErrors: "*"` — a freshly scaffolded project reports clean.
+
+- **`make compile-commands`**, which refreshes the compile database at the
+    project root where clangd and clang-tidy look for it.
+
+### Changed
+
+- **cmake owns `compile_commands.json`; jm no longer writes one.** jm had been
+    hand-rolling it from a fixed list of source shapes, so every source kind
+    added since that list was frozen went missing, and only 6 of the 15
+    commands that write C ever refreshed it. cmake already emits a complete
+    one. **Existing projects**: delete the `compile_commands.json` in your
+    project root — it is hand-rolled, incomplete, and nothing refreshes it —
+    then run `make compile-commands`.
+
+- **No shipped C header declares a reserved identifier.** 16 of them across
+    `jm_perf.h`, `jm_simd.h` and `jm_bench.h` (`_JM_LIKELY_`,
+    `_jm_hsum256_f32`, …) — reserved to the implementation, which may define
+    the same name. **The public surface is unchanged**: `JM_LIKELY`,
+    `JM_DEFINE_STEPS`, `JM_HSUM_F32` and the rest keep their spelling; only
+    the private layer behind them was renamed.
+
+- **`jm status --check` now says what it did not compare.** It cannot detect a
+    stale create-only file — it re-applies the manifest to a scratch copy and
+    diffs, and `apply` does not rewrite those files, so they match by
+    construction. The line carries that limit rather than reading as absolute.
+
+### Fixed
+
+- The generated `Makefile`'s `compile_commands.json` rule was keyed on
+    `CMakeCache.txt`, which does not move when the source list does, so it
+    copied once and never again. It is a phony `compile-commands` target now,
+    with no timestamp to get wrong.
+
+- Generated C no longer leaks on its bail-out paths: the benchmark freed only
+    one of two buffers when the second allocation failed, and `jm app`'s
+    executable returned from a failed `create()` — and from a failed open —
+    holding its streams.
+
+- `obj_null_check` emits `REQUIRE(obj != NULL)` rather than a `CHECK` followed
+    by a bare `return 1`, which exited non-zero having printed nothing at all.
+
+### Docs
+
+- A migration guide for existing projects, in `docs/upgrading.md`. Everything
+    above lands in create-only files, so an existing project receives none of
+    it until you migrate — and the three steps have three different mechanics.
+
 ## [0.57.0] — 2026-08-12
 
 ### Breaking
