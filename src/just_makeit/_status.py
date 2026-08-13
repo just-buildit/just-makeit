@@ -1067,7 +1067,13 @@ def run(
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
         _sil = f"; {len(_silent)} silent bench" if _silent else ""
-        # gh-949: name what was NOT compared. `status` re-applies the manifest
+        # gh-949: name what was NOT compared.
+        #
+        # Deliberately not the word "NOTE", and deliberately not "stale":
+        # gh-921's report already owns "NOTE" in this output and asserts it is
+        # absent under --check, and gh-542 asserts "stale" is absent over a
+        # clean tree. Reusing either token here made two unrelated tests fail
+        # and would have made the output ambiguous for a reader too. `status` re-applies the manifest
         # to a scratch copy and diffs, and `apply` does not rewrite a
         # create-only file -- so those files are byte-identical in both trees
         # however many versions behind they are, and the diff is empty by
@@ -1083,14 +1089,14 @@ def run(
             f"{suffix}{_unrec}{_kw}{_orph}{_sil}."
         )
         print(
-            "  NOTE: create-only files are not compared — the Makefile,"
+            "  not compared: create-only files — the Makefile,"
             " .clang-tidy,\n"
             "        jm_test.h, jm_bench.h, jm_perf.h and your own C tests."
             " `apply`\n"
             "        never rewrites them, so this check cannot tell a current"
-            " one from\n"
-            "        a stale one. See docs/upgrading.md to adopt what a newer"
-            " jm ships."
+            " one\n"
+            "        from an outdated one. See docs/upgrading.md to adopt what"
+            " a newer\n        jm ships."
         )
     else:
         print(

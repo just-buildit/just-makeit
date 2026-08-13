@@ -49,7 +49,7 @@ def test_a_clean_tree_still_reports_ok(tmp_path):
 def test_the_ok_line_names_what_it_did_not_compare(tmp_path):
     """The claim has to carry its own limit, or it is read as absolute."""
     out = _status_out(_project(tmp_path))
-    assert "create-only files are not compared" in out
+    assert "not compared: create-only files" in out
     # Naming them matters more than the count: a reader has to know whether
     # the file they are about to trust is in this set.
     for name in ("Makefile", ".clang-tidy", "jm_test.h"):
@@ -74,4 +74,4 @@ def test_it_says_so_over_a_provably_stale_makefile(tmp_path):
     out = _status_out(root)
     assert "\ntidy:" not in mk.read_text(encoding="utf-8")
     assert "OK — up to date" in out
-    assert "create-only files are not compared" in out
+    assert "not compared: create-only files" in out
