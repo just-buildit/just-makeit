@@ -1122,6 +1122,12 @@ def run(
         root / "native" / "tests" / f"test_{comp}_core.c",
         R.render_component_test_c(ctx),
     )
+    # gh-934: the shared assertion harness, written once per project like
+    # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
+    # it, so a project may extend it.
+    jm_test_h = root / "native" / "tests" / "jm_test.h"
+    if not jm_test_h.exists():
+        _write(jm_test_h, R.JM_TEST_H)
 
     # C benchmark
     _write(

@@ -270,13 +270,17 @@ class TestSeedDeferral:
             [("fs", "double", "2.048e6", "", "", "", False, "", True)],
         )
         c = _csmoke(dest)
-        assert "CHECK(obj != NULL)" in c
+        # gh-934: REQUIRE, not CHECK — the strict path still asserts
+        # non-null, it just reports before returning now.
+        assert "REQUIRE(obj != NULL)" in c
         assert "SKIPPED" not in c
         assert "def setUp(self):" not in _pytest_py(dest)
 
     def test_all_optional_unaffected(self, tmp_path):
         dest = _build(tmp_path, [_opt("gain", "double", "1.5")])
         c = _csmoke(dest)
-        assert "CHECK(obj != NULL)" in c
+        # gh-934: REQUIRE, not CHECK — the strict path still asserts
+        # non-null, it just reports before returning now.
+        assert "REQUIRE(obj != NULL)" in c
         assert "SKIPPED" not in c
         assert "def setUp(self):" not in _pytest_py(dest)

@@ -534,8 +534,9 @@ Two runtime signals back this up in newly scaffolded components, so a CI log
 tells a placeholder from a suite without anyone running `jm status`:
 
 - a generated C test prints its assertion count — `PASSED (4 checks)` — plus
-    a `scaffold coverage only` note that clears itself the moment an author adds
-    a check of their own;
+    a `no assertions beyond the N just-makeit generated` note that clears itself
+    the moment an author adds a check of their own. Both the counters and that
+    note live in `native/tests/jm_test.h`, written once per project (gh-934);
 - `jm_bench_write_json` prints `no measurements recorded` when a benchmark
     timed nothing.
 

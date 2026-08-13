@@ -93,6 +93,7 @@ mylib/
 │   │       ├── engine_core.c       # lifecycle + algorithm ← implement here
 │   │       └── engine_ext.c        # thin Python binding (auto-regenerated)
 │   └── tests/
+│       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       └── test_engine_core.c      # CTest — exercises C API directly
 ├── cmake/
 │   └── mylib.pc.in
@@ -151,6 +152,7 @@ mylib/
 │   │       ├── CMakeLists.txt
 │   │       └── filt_core.c         # algorithm ← implement here
 │   └── tests/
+│       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       └── test_filt_core.c        # CTest
 ├── cmake/
 │   └── mylib.pc.in
@@ -212,6 +214,7 @@ mylib/
 │   │       ├── CMakeLists.txt
 │   │       └── biquad_core.c
 │   └── tests/
+│       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       ├── test_fir_core.c
 │       └── test_biquad_core.c
 ├── cmake/
@@ -277,6 +280,7 @@ mylib/
 │   │       ├── CMakeLists.txt
 │   │       └── reader_core.c
 │   └── tests/
+│       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       ├── test_fir_core.c
 │       └── test_reader_core.c
 ├── cmake/

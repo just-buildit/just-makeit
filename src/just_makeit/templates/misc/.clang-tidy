@@ -81,9 +81,15 @@ Checks: >-
 # never run it again.
 
 # Only report diagnostics for this project's headers, not system or
-# third-party ones. native/inc/ is where just-makeit puts them; widen this if
-# you add a header tree of your own.
-HeaderFilterRegex: "native/inc/.*"
+# third-party ones. Widen this if you add a header tree of your own.
+#
+# All THREE directories just-makeit writes headers into, not just native/inc/.
+# It was inc-only, which silently exempted the two shared harness headers --
+# native/benchmarks/jm_bench.h and native/tests/jm_test.h -- from every check
+# here. A filter that excludes a directory the generator actually uses is a
+# check that covers less than it claims, which is the failure this config was
+# added to fix (gh-941), one level in.
+HeaderFilterRegex: "native/(inc|tests|benchmarks)/.*"
 
 # Apply the project's clang-format style to suggested fixes.
 FormatStyle: file
