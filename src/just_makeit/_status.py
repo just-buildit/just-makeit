@@ -1093,10 +1093,11 @@ def run(
             " .clang-tidy,\n"
             "        jm_test.h, jm_bench.h, jm_perf.h and your own C tests."
             " `apply`\n"
-            "        never rewrites them, so this check cannot tell a current"
-            " one\n"
-            "        from an outdated one. See docs/upgrading.md to adopt what"
-            " a newer\n        jm ships."
+            "        never rewrites them — so this check cannot tell a"
+            " current one\n"
+            "        from an outdated one, nor jm's content from yours."
+            " Read one\n"
+            "        before replacing it; see docs/upgrading.md."
         )
     else:
         print(
