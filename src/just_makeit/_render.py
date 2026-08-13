@@ -76,6 +76,7 @@ PYPROJECT_TOML = _load("toml/pyproject.toml")
 BOOTSTRAP_TOML = _load("toml/bootstrap.toml")
 # ── Misc ─────────────────────────────────────────────────────────────────────
 GITIGNORE = _load("misc/.gitignore")
+CLANG_TIDY = _load("misc/.clang-tidy")
 # ── Python ───────────────────────────────────────────────────────────────────
 MODULE_INIT_PY = _load("py/module_init.py")
 MODULE_INIT_PY_EMPTY = _load("py/module_init_empty.py")

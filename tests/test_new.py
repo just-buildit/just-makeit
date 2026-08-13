@@ -106,22 +106,26 @@ class TestNewComponentFiles:
             project / "src" / "my_filter" / "tests" / "test_my_filter.py"
         ).exists()
 
-    def test_compile_commands_exists(self, project):
-        assert (project / "compile_commands.json").exists()
+    def test_no_hand_rolled_compile_commands(self, project):
+        """gh-939: cmake owns the compile database, not jm.
 
-    def test_compile_commands_json(self, project):
-        import json
+        These two assertions replace a pair that did the opposite. One
+        checked `.exists()`; the other pinned `len(data) == 4` and named the
+        three source shapes the hand-rolled writer knew about. That second
+        one is the more instructive failure: it did not merely fail to catch
+        the incompleteness, it *encoded* it — the package lib TU and
+        `jm app`'s executable were missing, and a test asserting an exact
+        count of four would have gone red if either had ever been added.
 
-        data = json.loads(
-            (project / "compile_commands.json").read_text(encoding="utf-8")
-        )
-        assert isinstance(data, list)
-        assert len(data) == 4
-        files = {e["file"] for e in data}
-        assert any("my_filter_core.c" in f for f in files)
-        assert any("my_filter_ext.c" in f for f in files)
-        assert any("bench_my_filter_core.c" in f for f in files)
-        assert all("directory" in e for e in data)
+        `jm status --check` covers the file's absence staying correct; the
+        contents are cmake's business, gated in
+        tests/test_gh942_compile_db_coverage.py.
+        """
+        assert not (project / "compile_commands.json").exists()
+
+    def test_clang_tidy_shipped(self, project):
+        """gh-941: the config lands where a `make tidy` target can run it."""
+        assert (project / ".clang-tidy").exists()
 
 
 class TestNewScaffoldOnly:

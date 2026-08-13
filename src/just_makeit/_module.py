@@ -24,7 +24,6 @@ from . import _render as T
 from ._init import (
     _to_title,
     _write,
-    _write_compile_commands,
     ensure_parent_packages,
 )
 
@@ -220,9 +219,6 @@ def run(
         ] = "true"
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
-
-    # compile_commands.json — include the new module's ext.c from the start
-    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
 
     print()
     print(

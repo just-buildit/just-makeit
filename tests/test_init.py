@@ -67,8 +67,22 @@ class TestInitAddsFiles:
             project_with_engine / "src" / "myproj" / "tests" / "test_engine.py"
         ).exists()
 
-    def test_compile_commands_created(self, project_with_engine):
-        assert (project_with_engine / "compile_commands.json").exists()
+    def test_no_hand_rolled_compile_commands(self, project_with_engine):
+        """jm must not write a compile database of its own (gh-939).
+
+        This assertion is inverted from what it used to be. jm hand-rolled
+        `compile_commands.json` from a fixed list of source shapes, so every
+        source kind added later — the per-object binding fragments, the
+        package lib TU, `jm app`'s executable — was silently missing, and
+        the nine commands that write C but never called the writer left it
+        stale. cmake emits the real thing from
+        `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`; `make compile-commands` copies
+        it to the root where clangd and clang-tidy look.
+
+        The old test asserted only `.exists()`, which is why none of that
+        was ever caught.
+        """
+        assert not (project_with_engine / "compile_commands.json").exists()
 
 
 class TestInitUpdatesCMake:

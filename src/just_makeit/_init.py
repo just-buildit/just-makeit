@@ -6,9 +6,7 @@ Called by `just-makeit object` (no --module) and `just-makeit new --object`.
 
 from __future__ import annotations
 
-import json
 import re
-import sysconfig
 import sys
 from pathlib import Path
 
@@ -682,72 +680,6 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     print(f"  update  {init_py}")
 
 
-def _write_compile_commands(
-    root: Path,
-    all_components: list[str],
-    all_modules: list[str] | None = None,
-) -> None:
-    r = root.resolve()
-    python_inc = sysconfig.get_path("include")
-    try:
-        import numpy as np
-
-        numpy_inc = np.get_include()
-    except ImportError:
-        numpy_inc = None
-
-    base_inc = [str(r / "native" / "inc")]
-    if python_inc:
-        base_inc.append(python_inc)
-    if numpy_inc:
-        base_inc.append(numpy_inc)
-    base_flags = "cc -std=c99 -Wall -Wextra -fPIC " + " ".join(
-        f"-I{d}" for d in base_inc
-    )
-
-    def _entry(src_rel: str, flags: str) -> dict:
-        abs_src = str(r / src_rel)
-        return {
-            "directory": str(r),
-            "command": f"{flags} -c {abs_src} -o /dev/null",
-            "file": abs_src,
-        }
-
-    entries = []
-
-    for comp in all_components:
-        comp_inc = base_inc + [str(r / "native" / "inc" / comp)]
-        comp_flags = "cc -std=c99 -Wall -Wextra -fPIC " + " ".join(
-            f"-I{d}" for d in comp_inc
-        )
-        test_flags = (
-            f"cc -std=c99 -Wall"
-            f" -I{r / 'native' / 'inc'}"
-            f" -I{r / 'native' / 'inc' / comp}"
-        )
-        entries.append(_entry(f"native/src/{comp}/{comp}_core.c", comp_flags))
-        # Standalone objects have their own _ext.c; module objects do not
-        # (they share <module>_ext.c, added below in the modules loop).
-        ext_c = r / "native" / "src" / comp / f"{comp}_ext.c"
-        if ext_c.exists():
-            entries.append(
-                _entry(f"native/src/{comp}/{comp}_ext.c", comp_flags)
-            )
-        entries += [
-            _entry(f"native/tests/test_{comp}_core.c", test_flags),
-            _entry(f"native/benchmarks/bench_{comp}_core.c", test_flags),
-        ]
-
-    for mod in all_modules or []:
-        entries.append(_entry(f"native/src/{mod}/{mod}_ext.c", base_flags))
-        entries.append(_entry(f"native/src/{mod}/{mod}_core.c", base_flags))
-
-    dest = root / "compile_commands.json"
-    verb = "create" if not dest.exists() else "update"
-    dest.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
-    print(f"  {verb}  {dest}")
-
-
 def run(
     root: Path,
     component: str,
@@ -1279,10 +1211,6 @@ def run(
                     cmake_text += sub + obj_lines
                 cmake_path.write_text(cmake_text, encoding="utf-8")
                 print(f"  update  {cmake_path}")
-
-        # compile_commands.json
-        all_comps = C.components(cfg) + [comp]
-        _write_compile_commands(root, all_comps, C.modules(cfg))
 
     else:
         # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile

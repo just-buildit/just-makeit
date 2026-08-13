@@ -32,7 +32,6 @@ from ._init import (
     _make_component_ctx,
     _to_title,
     _write,
-    _write_compile_commands,
     ensure_parent_packages,
 )
 from ._docstring import (
@@ -2477,10 +2476,6 @@ def run(
             )
             umbrella.write_text(umbrella_text, encoding="utf-8")
             print(f"  update  {umbrella}")
-
-    # compile_commands.json
-    all_comps = C.components(cfg)
-    _write_compile_commands(root, all_comps, C.modules(cfg))
 
     # Save config
     C.save(root, cfg)

@@ -1,12 +1,14 @@
 # <<project>> project Makefile
 #
 # Targets:
-#   make              Configure + build (Release)
-#   make test         CTest + <<py_test_label>>
-#   make bench        C + Python benchmarks; dated snapshot in benchmarks/history/
-#   make just-build   PEP 517 hook for just-buildit
-#   make clean        Remove build artifacts
-#   make help         Show this message
+#   make                   Configure + build (Release)
+#   make test              CTest + <<py_test_label>>
+#   make bench             C + Python benchmarks; dated snapshot in benchmarks/history/
+#   make compile-commands  Refresh compile_commands.json for clangd / clang-tidy
+#   make tidy              Run clang-tidy over the project's C sources
+#   make just-build        PEP 517 hook for just-buildit
+#   make clean             Remove build artifacts
+#   make help              Show this message
 
 ifeq ($(OS), Windows_NT)
 SHELL      = cmd.exe
@@ -56,7 +58,23 @@ else
 CMAKE_GEN_FLAG  :=
 endif
 
-.PHONY: all build test bench just-build docs clean help
+# The one configure invocation, named once. It was written out three times
+# (the cache rule, just-build, and the compile-commands rule that replaced
+# gh-940's broken one), which is how `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
+# comes to be present in two of three copies and forgotten in the third.
+#
+# A variable rather than a `define` on purpose: make condenses backslash-newline
+# to a single space when ASSIGNING a variable, but preserves it inside a recipe
+# and hands it to the shell — and on Windows that shell is cmd.exe, which does
+# not understand line continuations. Expanding this yields one line everywhere.
+CMAKE_CONFIGURE = cmake -B $(BUILD_DIR) -S . \
+	$(CMAKE_GEN_FLAG) \
+	-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
+	-DPython3_EXECUTABLE=$(PYTHON) \
+	-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+.PHONY: all build test bench coverage compile-commands tidy just-build docs \
+        clean help
 
 all: build
 
@@ -70,14 +88,29 @@ else
 	@$(PYTHON) -c "$(NUMPY_HEADERS_VERIFY)"
 <<ensure_pytest_unix>>
 endif
-	cmake -B $(BUILD_DIR) -S . \
-		$(CMAKE_GEN_FLAG) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DPython3_EXECUTABLE=$(PYTHON) \
-		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	$(CMAKE_CONFIGURE)
 
-compile_commands.json: $(BUILD_DIR)/CMakeCache.txt
-	cp $(BUILD_DIR)/compile_commands.json $@
+# clangd and clang-tidy read compile_commands.json from the PROJECT ROOT, while
+# cmake writes it into $(BUILD_DIR) — hence the copy.
+#
+# Phony, and re-configuring every time, on purpose. This was a file target
+# prerequisite on $(BUILD_DIR)/CMakeCache.txt (gh-940): the cache does not move
+# when the source list does, so the copy ran once and never again, and anything
+# that touched the root copy afterwards pinned it as up to date forever. There
+# is no timestamp here to get wrong. Configure is idempotent and costs a second.
+compile-commands: $(BUILD_DIR)/CMakeCache.txt
+	$(CMAKE_CONFIGURE)
+	cp $(BUILD_DIR)/compile_commands.json compile_commands.json
+
+# The file list comes from the compile database rather than a `find native`,
+# so tidy sees exactly the translation units cmake compiles — no more (a
+# generated .c no target references) and no less. find/xargs is Unix-only, as
+# in `clean` below; clang-tidy on Windows is not a path this project claims.
+tidy: compile-commands
+	@command -v clang-tidy >/dev/null 2>&1 || \
+	  { echo "clang-tidy not found — install it first"; exit 1; }
+	@$(PYTHON) -c "import json; print('\n'.join(e['file'] for e in json.load(open('compile_commands.json'))))" \
+	  | xargs clang-tidy -p .
 
 build: $(BUILD_DIR)/CMakeCache.txt
 	cmake --build $(BUILD_DIR) --parallel $(NPROC)
@@ -129,11 +162,7 @@ coverage:
 # $(PYTHON) already prefers $(JUST_BUILDIT_PYTHON) and falls back to a real
 # interpreter, so it is correct in both cases and empty in neither.
 just-build:
-	cmake -B $(BUILD_DIR) -S . \
-		$(CMAKE_GEN_FLAG) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DPython3_EXECUTABLE=$(PYTHON) \
-		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	$(CMAKE_CONFIGURE)
 	cmake --build $(BUILD_DIR) --parallel $(NPROC)
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)
 	cp -r src/<<package>> $(JUST_BUILDIT_OUTPUT_DIR)/<<package>>
@@ -156,10 +185,12 @@ help:
 	@echo ""
 	@echo "<<project>> build targets"
 	@echo ""
-	@echo "  make               Configure + build"
-	@echo "  make test          Run CTest + <<py_test_label>>"
-	@echo "  make bench         Run C + Python benchmarks"
-	@echo "  make coverage      C (lcov) + Python (pytest-cov) coverage reports"
-	@echo "  make docs          Doxygen (C) + Zensical (Python) API docs"
-	@echo "  make clean         Remove build artifacts"
+	@echo "  make                    Configure + build"
+	@echo "  make test               Run CTest + <<py_test_label>>"
+	@echo "  make bench              Run C + Python benchmarks"
+	@echo "  make coverage           C (lcov) + Python (pytest-cov) coverage reports"
+	@echo "  make compile-commands   Refresh compile_commands.json (clangd, clang-tidy)"
+	@echo "  make tidy               Run clang-tidy over the project's C sources"
+	@echo "  make docs               Doxygen (C) + Zensical (Python) API docs"
+	@echo "  make clean              Remove build artifacts"
 	@echo ""

@@ -22,7 +22,6 @@ from typing import Union
 
 from . import _config as C
 from . import _render as T
-from ._init import _write_compile_commands
 from ._object import _regenerate_module
 
 # A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
@@ -382,9 +381,6 @@ def run(
 
     # Regenerate module ext.c (updates _bind_ wrappers + PyMethodDef)
     _regenerate_module(root, cfg, module, pkg)
-
-    # compile_commands.json
-    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
 
     print()
     if inline:

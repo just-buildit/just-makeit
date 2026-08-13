@@ -24,7 +24,6 @@ from . import _render as R
 from . import _stubs as S
 from ._init import (
     _to_title,
-    _write_compile_commands,
     standalone_extra_include,
 )
 from ._object import _regenerate_module
@@ -304,8 +303,6 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     # objects that remain.
     if module:
         _regenerate_module(root, cfg, module, pkg)
-
-    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
     print()
     print(f"Done!  Object '{obj}' removed.")
 
@@ -412,8 +409,6 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     _prune_parent_packages(root, pkg, cfg, mp)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
-
-    _write_compile_commands(root, C.components(cfg), C.modules(cfg))
     print()
     print(f"Done!  Module '{module}' removed.")
 
