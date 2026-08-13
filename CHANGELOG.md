@@ -4,6 +4,11 @@
 
 ### Docs
 
+- **`jm status --check` says a create-only file may be YOURS, not just that it
+    may be stale.** The first wording named only staleness, and a reader
+    correctly inferred "may be out of date" rather than "may hold your edits" —
+    which is the reading that matters before deleting one (gh-954).
+
 - **The migration guide now warns that deleting a create-only file destroys
     local edits.** Deleting and re-applying is the only way to pick up new
     content in one, which is exactly why it is destructive — and the headers
