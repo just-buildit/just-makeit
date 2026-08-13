@@ -135,6 +135,97 @@ for the full behavior.
 
 No TOML changes, no `jm upgrade` required.
 
+### v0.58 — clang-tidy, a shared test harness, and the compile database
+
+Four related changes. **Every file involved is create-only**, so an existing
+project receives none of them until you migrate it — and the migration is
+three steps with three different mechanics, because `jm apply` reaches some of
+these files and not others.
+
+| what                                     | how it arrives                     |
+| ---------------------------------------- | ---------------------------------- |
+| `.clang-tidy`                            | `jm apply`                         |
+| `native/tests/jm_test.h`                 | `jm apply`                         |
+| `make compile-commands` / `make tidy`    | delete `Makefile`, then `jm apply` |
+| your existing `test_<comp>_core.c` files | by hand                            |
+
+#### 1. `jm apply` — the two new files
+
+```sh
+jm apply
+```
+
+Materialises `.clang-tidy` and `native/tests/jm_test.h` because they are
+missing. It will not overwrite either one afterwards, so you can edit both.
+
+#### 2. The Makefile — delete it and re-apply
+
+`jm apply` does **not** rewrite an existing `Makefile`, so the new
+`compile-commands` and `tidy` targets do not arrive on their own:
+
+```sh
+rm Makefile && jm apply
+```
+
+**This discards any local edits to that Makefile.** Diff it first
+(`git diff Makefile`) and re-apply your changes. If you have customised it
+heavily, add the two targets by hand instead — copy them from a freshly
+scaffolded project.
+
+#### 3. Existing C tests — by hand
+
+`test_<comp>_core.c` is yours; `jm` created it once and has never touched it
+since. Each one still carries its own copy of `CHECK`, the counters and the
+epilogue. To adopt the shared harness, replace the machinery at the top with:
+
+```c
+#define JM_TEST_NAME       "test_<comp>_core"
+#define JM_SCAFFOLD_CHECKS 0
+#include "jm_test.h"
+```
+
+and replace the closing block with `JM_TEST_EPILOGUE();`. Keep your
+assertions. `REQUIRE(x)` is available for a precondition whose failure makes
+everything after it meaningless.
+
+Leave `JM_SCAFFOLD_CHECKS` at `0` in a test you have actually written — it is
+the count `jm` generated, and `0` correctly says "none of these are mine".
+
+**Why bother:** copies diverge. One downstream reached 90 definitions of
+`CHECK` in 6 mutually incompatible variants, and in 20 files the failure gate
+had drifted *above* later assertions — 75 assertions that could not affect the
+exit code, which hid a real heap buffer overflow.
+
+#### A caveat worth knowing before you start
+
+**`jm status --check` will report your project up to date throughout all of
+this.** That is not a bug you can work around, it is how the check is built:
+`status` re-applies the manifest to a scratch copy and diffs, and `apply` does
+not rewrite create-only files — so those files match in both trees no matter
+how old they are. A clean `status` means "the files jm owns are current", not
+"your scaffold is current".
+
+#### Then run it
+
+```sh
+make compile-commands   # cmake's compile database, at the project root
+make tidy               # clang-tidy over exactly the TUs cmake compiles
+```
+
+`jm` no longer writes `compile_commands.json` itself — cmake emits it, and
+`make compile-commands` copies it where clangd and clang-tidy look. If your
+project root has one that predates this change, delete it; it was hand-rolled,
+incomplete, and is not refreshed by anything.
+
+The shipped `.clang-tidy` sets `WarningsAsErrors: "*"`, so `make tidy` is a
+gate. A **freshly scaffolded** project reports clean. An existing one very
+likely will not on the first run — that is the point, and the findings are
+about your code, not the scaffold. If a toolchain upgrade later adds a check
+that fires on generated code, comment that line out rather than working around
+the diagnostic: the file is yours, and `jm` will not rewrite it.
+
+No TOML changes, no `jm upgrade` required.
+
 ______________________________________________________________________
 
 ## For project maintainers
