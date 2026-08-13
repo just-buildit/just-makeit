@@ -52,7 +52,7 @@ mylib/
 │           ├── __init__.py         # from .dsp import compute
 │           └── dsp.pyi             # type stub for dsp.so
 ├── CMakeLists.txt
-├── compile_commands.json
+├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -107,7 +107,7 @@ mylib/
 │           ├── __init__.py
 │           └── test_engine.py      # pytest
 ├── CMakeLists.txt
-├── compile_commands.json
+├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -161,7 +161,7 @@ mylib/
 │           ├── __init__.py         # from .dsp import Filt
 │           └── dsp.pyi             # type stub for dsp.so
 ├── CMakeLists.txt
-├── compile_commands.json
+├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -223,7 +223,7 @@ mylib/
 │           ├── __init__.py         # from .dsp import Fir, Biquad
 │           └── dsp.pyi             # one stub for both types
 ├── CMakeLists.txt
-├── compile_commands.json
+├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -291,7 +291,7 @@ mylib/
 │           ├── __init__.py         # from .io import Reader
 │           └── io.pyi
 ├── CMakeLists.txt
-├── compile_commands.json
+├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml

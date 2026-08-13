@@ -96,6 +96,10 @@ def run(
     if build_system == "cmake":
         _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
         _write(root / "Makefile", r(T.MAKEFILE))
+        # Only the cmake build emits a compile database, so only it can run
+        # clang-tidy — and a config with nothing to run it is exactly the dead
+        # file gh-941 was about. The `make` build system gets no .clang-tidy.
+        _write(root / ".clang-tidy", r(T.CLANG_TIDY))
     else:
         _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))

@@ -83,6 +83,44 @@ just-makeit bench --check --threshold 0.10   # fail if anything is >10% slower
 
 ______________________________________________________________________
 
+## `make compile-commands` and `make tidy`
+
+`make compile-commands` copies cmake's compile database to the project root,
+where clangd and clang-tidy look for it:
+
+```sh
+make compile-commands
+```
+
+It re-configures and re-copies every time. That is deliberate — the database
+tracks the CMake source list, so a rule keyed on a timestamp goes stale the
+moment you add a component.
+
+`make tidy` runs clang-tidy over exactly the translation units cmake compiles,
+refreshing the database first:
+
+```sh
+make tidy
+```
+
+The file list comes from the database rather than a directory walk, so a
+generated `.c` that no CMake target builds is never linted into a false sense
+of coverage.
+
+The scaffolded `.clang-tidy` opts into `bugprone-*`, `cert-*` and
+`clang-analyzer-*`, with the checks that misfire on jm's own layout turned off
+and each one annotated with the construct it misfires on.
+
+**It does not set `WarningsAsErrors`**, so `make tidy` reports and exits 0.
+Turn it on in your `.clang-tidy` once your project reports clean and it becomes
+a real gate — the line is written out in a comment there, ready to uncomment.
+It is off in the scaffold because jm's own generated C does not yet report
+clean ([#944](https://github.com/just-buildit/just-makeit/issues/944)), and a
+`make tidy` that fails on a project you just created teaches you to never run
+it again.
+
+______________________________________________________________________
+
 ## `make coverage`
 
 Generate C and Python coverage HTML reports. Run from the project root after
