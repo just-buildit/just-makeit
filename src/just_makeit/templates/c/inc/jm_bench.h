@@ -63,7 +63,7 @@ jm_bench_add(jm_bench_t *b, const char *name,
 
 /* qsort comparator for double */
 static int
-_jm_dcmp(const void *a, const void *b)
+jm_dcmp(const void *a, const void *b)
 {
     double da = *(const double *)a, db = *(const double *)b;
     return (da > db) - (da < db);
@@ -71,7 +71,7 @@ _jm_dcmp(const void *a, const void *b)
 
 /* Linear-interpolation quantile on sorted array s[0..n-1]. */
 static double
-_jm_quantile(const double *s, int n, double p)
+jm_quantile(const double *s, int n, double p)
 {
     double pos = p * (double)(n - 1);
     int    lo  = (int)pos;
@@ -150,7 +150,7 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
         double *s = (double *)malloc((size_t)n * sizeof(double));
         if (!s) continue;
         memcpy(s, e->times, (size_t)n * sizeof(double));
-        qsort(s, (size_t)n, sizeof(double), _jm_dcmp);
+        qsort(s, (size_t)n, sizeof(double), jm_dcmp);
 
         double mn  = s[0], mx = s[n - 1];
         double sum = 0.0;
@@ -162,9 +162,9 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
             var += d * d;
         }
         double stddev = (n > 1) ? sqrt(var / (double)(n - 1)) : 0.0;
-        double median = _jm_quantile(s, n, 0.5);
-        double q1     = _jm_quantile(s, n, 0.25);
-        double q3     = _jm_quantile(s, n, 0.75);
+        double median = jm_quantile(s, n, 0.5);
+        double q1     = jm_quantile(s, n, 0.25);
+        double q3     = jm_quantile(s, n, 0.75);
         double iqr    = q3 - q1;
         double ops    = (double)e->iters / mean;
 
