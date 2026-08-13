@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Docs
+
+- **The migration guide now warns that deleting a create-only file destroys
+    local edits.** Deleting and re-applying is the only way to pick up new
+    content in one, which is exactly why it is destructive — and the headers
+    (`jm_simd.h`, `jm_perf.h`, `jm_test.h`, `jm_bench.h`) are files a project
+    is invited to extend. The guide warned about this for the Makefile and
+    nothing else; a downstream lost a local SIMD macro to it (gh-954).
+
 ## [0.58.0] — 2026-08-13
 
 ### Added
