@@ -326,6 +326,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          # `changelog-check` asks what THIS branch changed, which needs the
+          # merge base. The default shallow checkout has neither the history
+          # nor an `origin/main` ref, and the gate fails closed rather than
+          # guessing — so it would be red on every PR without this.
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v9.0.0
         with:
@@ -341,6 +347,11 @@ jobs:
         run: make setup
 
       - name: Run make lint
+        # The PR's base SHA, not `origin/main`: a pull_request checkout has no
+        # local main branch, and on a push event the default is correct and the
+        # gate goes inert anyway.
+        env:
+          CHANGELOG_BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
         run: make lint
 
       # A hook that rewrites a file exits non-zero, so the step above already
