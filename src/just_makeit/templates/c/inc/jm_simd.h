@@ -231,4 +231,42 @@ static inline double jm_dot_f64(
     return s;
 }
 
+/* ── Sum of squares: the energy of one buffer ─────────────────────────── */
+/*
+ * Not expressible as jm_dot_f32(a, a, n): both dot parameters are
+ * JM_RESTRICT, and passing one pointer to two restrict-qualified parameters
+ * is undefined behaviour. A single-pointer signature is the whole reason
+ * this exists separately -- it promises nothing it cannot keep.
+ */
+
+static inline float jm_sumsq_f32(const float * JM_RESTRICT a, int n)
+{
+    JM_VEC_F32 acc = JM_ZERO_F32();
+    int i = 0;
+#if JM_SIMD_WIDTH_F32 > 1
+    for (; i <= n - JM_SIMD_WIDTH_F32; i += JM_SIMD_WIDTH_F32) {
+        JM_VEC_F32 v = JM_LOAD_F32(a + i);
+        JM_FMA_F32(acc, v, v);
+    }
+#endif
+    float s = JM_HSUM_F32(acc);
+    for (; i < n; i++) s += a[i] * a[i];
+    return s;
+}
+
+static inline double jm_sumsq_f64(const double * JM_RESTRICT a, int n)
+{
+    JM_VEC_F64 acc = JM_ZERO_F64();
+    int i = 0;
+#if JM_SIMD_WIDTH_F64 > 1
+    for (; i <= n - JM_SIMD_WIDTH_F64; i += JM_SIMD_WIDTH_F64) {
+        JM_VEC_F64 v = JM_LOAD_F64(a + i);
+        JM_FMA_F64(acc, v, v);
+    }
+#endif
+    double s = JM_HSUM_F64(acc);
+    for (; i < n; i++) s += a[i] * a[i];
+    return s;
+}
+
 #endif /* JM_SIMD_H */

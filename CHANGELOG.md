@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm_sumsq_f32` / `jm_sumsq_f64` in `jm_simd.h`.** 0.58.0 moved the
+    composite reductions from macros to `static inline` functions and
+    `JM_SUMSQ_F32` did not survive the move, while that release's notes state
+    the public surface was unchanged. It is restored in the new shape,
+    alongside `jm_dot_*`.
+
+    It cannot be spelled `jm_dot_f32(a, a, n)`: both dot parameters are
+    `JM_RESTRICT`, and passing one pointer to two restrict-qualified
+    parameters is undefined behaviour. A single-pointer signature is the
+    point — it promises nothing it cannot keep. Reported from doppler, whose
+    AGC power estimator was the call site that broke the 0.58.0 bump (#954).
+
 ## [0.58.0] — 2026-08-13
 
 ### Added
