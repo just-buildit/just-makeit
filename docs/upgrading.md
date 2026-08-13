@@ -142,12 +142,37 @@ project receives none of them until you migrate it — and the migration is
 three steps with three different mechanics, because `jm apply` reaches some of
 these files and not others.
 
-| what                                     | how it arrives                     |
-| ---------------------------------------- | ---------------------------------- |
-| `.clang-tidy`                            | `jm apply`                         |
-| `native/tests/jm_test.h`                 | `jm apply`                         |
-| `make compile-commands` / `make tidy`    | delete `Makefile`, then `jm apply` |
-| your existing `test_<comp>_core.c` files | by hand                            |
+| what                                     | how it arrives                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| `.clang-tidy`                            | `jm apply`                                                                |
+| `native/tests/jm_test.h`                 | `jm apply`                                                                |
+| `make compile-commands` / `make tidy`    | delete `Makefile`, then `jm apply` — **destroys local edits, see step 0** |
+| your existing `test_<comp>_core.c` files | by hand                                                                   |
+
+#### 0. First: these files may be yours
+
+`jm apply` never rewrites a create-only file, which is what makes the
+delete-and-re-apply step below the only way to pick up new content — **and what
+makes it destructive.** `jm_simd.h`, `jm_perf.h`, `jm_test.h`, `jm_bench.h` and
+the Makefile are all files a project is invited to extend, and deleting one
+throws away every local addition with it.
+
+That is not hypothetical. doppler added a `JM_SUMSQ_F32` energy macro to its
+`jm_simd.h` and lost it to this migration, which then failed the build at a
+call site in its AGC — and it was reported as a just-makeit regression before
+the history showed the macro had always been a local extension
+([#954](https://github.com/just-buildit/just-makeit/issues/954)).
+
+So before deleting anything:
+
+```sh
+git diff --stat HEAD -- native/inc/ native/tests/ native/benchmarks/ Makefile
+git status --short          # untracked local headers count too
+```
+
+and after re-applying, diff again and copy your additions back. If a file has
+local content you would rather not re-merge, add the new content by hand
+instead — copy it from a freshly scaffolded project.
 
 #### 1. `jm apply` — the two new files
 
