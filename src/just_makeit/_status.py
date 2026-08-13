@@ -1067,9 +1067,30 @@ def run(
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
         _sil = f"; {len(_silent)} silent bench" if _silent else ""
+        # gh-949: name what was NOT compared. `status` re-applies the manifest
+        # to a scratch copy and diffs, and `apply` does not rewrite a
+        # create-only file -- so those files are byte-identical in both trees
+        # however many versions behind they are, and the diff is empty by
+        # construction rather than by being current. Measured: a Makefile with
+        # none of v0.58's targets, `jm apply`, then this line saying OK.
+        #
+        # gh-767's rule, one step further out. That established jm must not say
+        # "up to date" over files the generator no longer agrees with; this is
+        # files the generator never looked at. Qualifying is the same answer,
+        # and the same reason -- the exit code alone is right and unread.
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
             f"{suffix}{_unrec}{_kw}{_orph}{_sil}."
+        )
+        print(
+            "  NOTE: create-only files are not compared — the Makefile,"
+            " .clang-tidy,\n"
+            "        jm_test.h, jm_bench.h, jm_perf.h and your own C tests."
+            " `apply`\n"
+            "        never rewrites them, so this check cannot tell a current"
+            " one from\n"
+            "        a stale one. See docs/upgrading.md to adopt what a newer"
+            " jm ships."
         )
     else:
         print(
