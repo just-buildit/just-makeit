@@ -113,7 +113,7 @@ typedef __m256d JM_VEC_F64;
 #define JM_MAC_F64(acc, ptr, s)  JM_FMA_F64(acc, JM_LOAD_F64(ptr), JM_SPLAT_F64(s))
 
 /* Horizontal-sum helpers (SSE3 hadd guaranteed when AVX2 is available) */
-static inline float _jm_hsum256_f32(__m256 v) {
+static inline float jm_hsum256_f32(__m256 v) {
     __m128 lo = _mm256_castps256_ps128(v);
     __m128 hi = _mm256_extractf128_ps(v, 1);
     __m128 s  = _mm_add_ps(lo, hi);
@@ -121,15 +121,15 @@ static inline float _jm_hsum256_f32(__m256 v) {
     s = _mm_hadd_ps(s, s);
     return _mm_cvtss_f32(s);
 }
-static inline double _jm_hsum256_f64(__m256d v) {
+static inline double jm_hsum256_f64(__m256d v) {
     __m128d lo = _mm256_castpd256_pd128(v);
     __m128d hi = _mm256_extractf128_pd(v, 1);
     __m128d s  = _mm_add_pd(lo, hi);
     s = _mm_hadd_pd(s, s);
     return _mm_cvtsd_f64(s);
 }
-#define JM_HSUM_F32(v)           _jm_hsum256_f32(v)
-#define JM_HSUM_F64(v)           _jm_hsum256_f64(v)
+#define JM_HSUM_F32(v)           jm_hsum256_f32(v)
+#define JM_HSUM_F64(v)           jm_hsum256_f64(v)
 
 /* ════════════════════════════════════════════════════════════════════════
  * Tier 3 — NEON  (4 float / 2 double lanes; aarch64 only — 32-bit ARM NEON

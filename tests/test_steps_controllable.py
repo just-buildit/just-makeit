@@ -603,7 +603,11 @@ class TestPerfMacro:
         init_run(root, "c", arg_type="float", return_type="float", perf=True)
         perf_h = (root / "native/inc/jm_perf.h").read_text()
         assert "JM_DEFINE_STEPS_EX(" in perf_h
-        assert "_JM_EVAL_" in perf_h
+        # gh-944: the private layer is JM_EVAL_IMPL now. It was `_JM_EVAL_` —
+        # a reserved identifier, which the implementation may define itself.
+        # The public surface (JM_DEFINE_STEPS / _EX) is unchanged.
+        assert "JM_EVAL_IMPL" in perf_h
+        assert "_JM_EVAL_" not in perf_h
         # plain JM_DEFINE_STEPS forwards to EX with empty suffixes.
         assert (
             "JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK,"
