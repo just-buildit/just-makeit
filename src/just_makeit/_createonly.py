@@ -303,3 +303,56 @@ def outdated(root: Path, replay_root: Path) -> list[str]:
         if dst.read_bytes() != src.read_bytes():
             found.append(rel_posix)
     return sorted(found)
+
+
+def missing_anchors(root: Path, replay_root: Path) -> list[tuple[str, str]]:
+    """`PARTIAL` files in *root* that have lost a splice anchor jm renders.
+
+    Returns ``(path, anchor)`` pairs, project-relative POSIX and sorted.
+
+    A `PARTIAL` file cannot be diffed whole — `apply` writes only into the
+    regions it owns and the rest is the author's, so a byte comparison would
+    report their work as jm being behind, forever. What *can* be compared
+    without reading a line the author wrote is whether the **anchors those
+    writes are placed against** are still there. They are machine-written
+    comments that exist for nothing else, so a project is missing one because
+    an older jm never emitted it or because an edit removed it — never because
+    the author meant something by it.
+
+    This is not a cosmetic finding. Every cmake splice locates its anchor by
+    string and returns "nothing changed" when it is absent, which is
+    indistinguishable from "already correct" — so gh-975's project lost its
+    module wiring entirely with `apply` printing nothing and `status --check`
+    exiting 0 over a tree whose extension was never built.
+
+    Compared against the replay for `outdated`'s reason: it is jm's current
+    render, so the anchor set follows the templates with nothing here to keep
+    in step. An anchor jm no longer emits stops being required the moment the
+    template drops it, and one it starts emitting is required from that moment.
+    Which strings are anchors is `_apply.CMAKE_SPLICE_ANCHORS`, the same map the
+    splices themselves read.
+    """
+    from . import _apply
+
+    found: list[tuple[str, str]] = []
+    for src in sorted(replay_root.rglob("*")):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(replay_root)
+        if _apply.is_skipped(rel):
+            continue
+        rel_posix = rel.as_posix()
+        rule = classify(rel_posix)
+        if rule is None or rule.kind != PARTIAL:
+            continue
+        dst = root / rel
+        # Absent altogether is MISSING, which `apply` fixes and `status`
+        # already reports; there is no anchor question to ask about it.
+        if not dst.is_file():
+            continue
+        rendered = src.read_text(encoding="utf-8")
+        real = dst.read_text(encoding="utf-8")
+        for anchor in _apply.CMAKE_SPLICE_ANCHORS:
+            if anchor in rendered and anchor not in real:
+                found.append((rel_posix, anchor))
+    return sorted(found)

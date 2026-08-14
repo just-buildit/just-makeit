@@ -420,6 +420,8 @@ Prints a table of files, each in one of these states:
 | `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                                   | no        |
 | `OUTDATED`    | A **create-only** file whose content is jm's own — the `Makefile`, `.clang-tidy`, `.clang-format`, `jm_test.h`, `jm_bench.h`, `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates — and which differs from what this jm renders (gh-949). `apply` never rewrites a create-only file, so adopting the new version is your call; suppressible with `status_allow`. | no        |
 
+| `UNANCHORED` | The top `CMakeLists.txt` has lost a sentinel jm splices against — `# ── Components` or `# ── Modules` (gh-975). Every splice treats a missing anchor as nothing to do, so the wiring was never written and a module with no `add_subdirectory()` is not built at all. Put the line back, or keep that wiring yourself and name the file in `status_allow`. | yes |
+
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
 

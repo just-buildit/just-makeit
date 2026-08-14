@@ -34,6 +34,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _createonly
 from . import _report
 from . import _stubs as S
 from ._init import _to_title
@@ -902,6 +903,30 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
 _EXTDEPS_BEGIN = "# ── External deps"
 _EXTDEPS_END = "# ── End external deps"
 
+# The sentinel lines every cmake splice anchors on, and what each one carries.
+#
+# Every splice below locates its anchor by string and treats an absent one as
+# "nothing to do" (`_splice_cmake_components._insert`, `_add_cmake_block_for`).
+# That return value is indistinguishable from "already correct", so a top
+# CMakeLists missing an anchor loses the wiring silently — `apply` printed
+# nothing, `status --check` exited 0, and the module was never built (gh-975).
+#
+# One place, read by the splices themselves and by `_createonly.missing_anchors`
+# — the check `status` and `apply` both report from. A second copy of these
+# strings is exactly the peer pair that goes out of step.
+#
+# `_EXTDEPS_BEGIN` / `_EXTDEPS_END` are deliberately NOT here. That block is
+# *created* on demand (anchored on `# ── Components`) rather than spliced into,
+# so its absence from a project that has never declared a dependency is normal
+# and `apply` fixes it — reporting it would fire on every such project.
+_COMPONENTS_ANCHOR = "# ── Components"
+_MODULES_ANCHOR = "# ── Modules"
+
+CMAKE_SPLICE_ANCHORS = {
+    _COMPONENTS_ANCHOR: "the add_subdirectory() wiring for standalone objects",
+    _MODULES_ANCHOR: "the add_subdirectory() wiring for modules",
+}
+
 
 def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
     """Insert or replace the managed external-deps block in the top CMakeLists.
@@ -947,9 +972,9 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
         end_idx = real.index(_EXTDEPS_END)
         new_real = real[:begin_line_end] + content + real[end_idx:]
     elif not has_begin and not has_end:
-        if "# ── Components" not in real:
+        if _COMPONENTS_ANCHOR not in real:
             return False
-        idx = real.index("# ── Components")
+        idx = real.index(_COMPONENTS_ANCHOR)
         block = f"{_EXTDEPS_BEGIN}\n{content}{_EXTDEPS_END}\n\n"
         new_real = real[:idx] + block + real[idx:]
     else:
@@ -1023,8 +1048,8 @@ def _splice_cmake_components(
         idx = text.index("\n", idx) + 1
         return text[:idx] + content + text[idx:]
 
-    new_real = _insert(new_real, "# ── Components", "".join(component_blocks))
-    new_real = _insert(new_real, "# ── Modules", "".join(module_blocks))
+    new_real = _insert(new_real, _COMPONENTS_ANCHOR, "".join(component_blocks))
+    new_real = _insert(new_real, _MODULES_ANCHOR, "".join(module_blocks))
 
     if new_real != real:
         real_path.write_text(new_real, encoding="utf-8")
@@ -1327,7 +1352,7 @@ def _add_cmake_block_for(
         return False
 
     module_names = set(C.modules(cfg))
-    sentinel = "# ── Modules" if comp in module_names else "# ── Components"
+    sentinel = _MODULES_ANCHOR if comp in module_names else _COMPONENTS_ANCHOR
     if sentinel not in real:
         return False
 
@@ -2199,6 +2224,11 @@ def run(
         # some of whose files it had just written itself.
         if replay_out is not None:
             shutil.copytree(temp_root, replay_out, dirs_exist_ok=True)
+        # gh-975: measured against the same snapshot, and before the splices
+        # below run — a splice with no anchor writes nothing and reports
+        # "unchanged", which is what made the loss silent. Printed after the
+        # created/updated lines so it is the last thing on screen.
+        unanchored = _createonly.missing_anchors(root, temp_root)
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
         # gh-541: promote an already-scaffolded component's sacred destructor
@@ -2252,6 +2282,24 @@ def run(
     for path in updated + bench_updated + frag_doc_updated:
         print(f"  update  {path}")
 
+    # gh-975: a splice whose anchor is gone writes nothing and says
+    # "unchanged", which reads exactly like "already correct". Name it, with
+    # what was not written and where the line belongs — the alternative jm
+    # cannot take is putting the anchor back itself, since its position in a
+    # file the author owns is a guess, and guessing wrong wires a component in
+    # ahead of the targets it needs.
+    for rel, anchor in unanchored:
+        _report.warn(
+            f"{rel} has no `{anchor}` line, so jm did not write "
+            f"{CMAKE_SPLICE_ANCHORS[anchor]} into it. "
+            "Restore the line (jm's scaffold puts it after "
+            "`enable_testing()`), or keep that wiring yourself and silence "
+            "this with [project] status_allow.",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
     # gh-442: non-fatal — jm has no way to know which side (manifest or
     # hand-written header doc) is the stale one, so it warns rather than
     # failing the apply. `jm status --check` promotes this to a CI-gating
@@ -2286,6 +2334,15 @@ def run(
             f"patched {len(impl_patched)} impl(s), and "
             f"reconciled {_reconciled} wiring file(s)"
             f" from {C.FILENAME}."
+        )
+    elif unanchored:
+        # gh-975: "already matches — nothing to do" is the sentence that made
+        # the loss invisible. jm did nothing here because it could not, which
+        # is the opposite claim.
+        print(
+            f"Done!  No file changed — but {len(unanchored)} splice(s) above "
+            f"had nowhere to go, so this run did NOT\n"
+            f"       reconcile {C.FILENAME}."
         )
     else:
         print(f"Done!  Project already matches {C.FILENAME} — nothing to do.")

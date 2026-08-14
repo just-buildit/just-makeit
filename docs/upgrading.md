@@ -247,6 +247,13 @@ Two limits worth knowing before you rely on it:
     above is not something `status` will ever remind you about.**
 - **A clean run means "the files jm owns are current"**, not "your scaffold is
     current".
+- **Three files are compared only for the anchors jm writes into.** The top
+    `CMakeLists.txt`, `src/<pkg>/__init__.py` and each `<mod>_ext_<obj>.c` are
+    part yours and part jm's, so a whole-file diff would report your own
+    targets and re-exports as jm being behind, forever. What `status` does
+    check is that the sentinels jm splices against are still there — a missing
+    one means a write that never happened, and it gates (gh-975). The prose
+    around them is not compared to anything (gh-959).
 
 Before v0.58 this section warned that `status` would report the project up to
 date throughout the whole migration. That was true, and
