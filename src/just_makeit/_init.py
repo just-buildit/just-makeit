@@ -17,6 +17,18 @@ from . import _render as R
 from . import _types as T
 from ._docstring import scaffold_doc_block
 
+# gh-981/gh-984: the combined-C-library wiring — emitter and detector — lives
+# in one module so a reader cannot look for a line the writer does not write.
+# Re-exported here because every generator already imports from `_init`.
+from ._libwiring import (  # noqa: F401
+    COMPONENTS_SENTINEL,
+    MODULES_SENTINEL,
+    cmake_core_wiring,
+    component_core_libs,
+    dep_core_libs,
+    splice_cmake_component,
+)
+
 
 def _to_title(snake: str) -> str:
     """C-side class name for *snake* — see ``_config.default_class_name``.
@@ -45,130 +57,6 @@ def standalone_extra_include(root: Path, component: str) -> str:
             f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
         )
     return ""
-
-
-COMPONENTS_SENTINEL = "# ── Components"
-MODULES_SENTINEL = "# ── Modules"
-
-
-def component_core_libs(root: Path, comp: str) -> list[str]:
-    """The OBJECT libraries ``native/src/<comp>/CMakeLists.txt`` declares.
-
-    The root CMakeLists folds each of these into the project's combined C
-    library, so this is what decides whether a component contributes any
-    out-of-line symbol to ``lib<pkg>.a`` / ``.so`` at all.
-
-    Derived from the component's own generated file rather than from the
-    manifest (gh-981). A ``kind = "capsule"``/``"handle"``/``"composer"``
-    module owns no core — its kernels live in a ``depends_on`` component —
-    and a module whose leaf name is also one of its objects has that object's
-    ``add_library`` in place of its own. Reading the file gets all three
-    right without a table of which module kinds have a core, and covers a
-    ``no_generate`` module's hand-written CMakeLists for free.
-
-    Returns an empty list when the component has no CMakeLists (the `make`
-    build backend, or a component not yet written).
-    """
-    path = root / "native" / "src" / comp / "CMakeLists.txt"
-    if not path.exists():
-        return []
-    return re.findall(
-        r"^add_library\((\w+) OBJECT\b", path.read_text(encoding="utf-8"), re.M
-    )
-
-
-def dep_core_libs(depends_on: list) -> list[str]:
-    """``<name>_core`` for every entry of a component's ``depends_on``.
-
-    gh-130: a caller may write ``depends_on = ["lo_core"]`` or
-    ``["lo"]`` and mean the same OBJECT library, so a trailing ``_core`` is
-    stripped before it is re-appended rather than doubled into ``lo_core_core``.
-    """
-    out = []
-    for dep in C.dep_names(depends_on):
-        out.append(f"{dep[:-5] if dep.endswith('_core') else dep}_core")
-    return out
-
-
-def cmake_core_wiring(cmake_text: str, pkg: str, cores: list[str]) -> str:
-    """``target_sources`` lines folding each core in *cores* into every
-    combined C library target the root CMakeLists declares.
-
-    This is the single emitter for those lines (gh-981). Three copies of it
-    used to exist and each emitted a different subset, so which of a
-    project's cores reached which library came down to the order the
-    generators happened to run in:
-
-    ==============================  ========  ===============
-    path                            ``_lib``  ``_lib_static``
-    ==============================  ========  ===============
-    standalone object               yes       **no**
-    object in a module              yes       yes
-    a module's own core             **no**    **no**
-    ==============================  ========  ===============
-
-    Lines already present in *cmake_text* are skipped, so every caller is
-    idempotent and a second generator touching the same component adds only
-    what the first left out.
-
-    Which library targets exist is read back out of *cmake_text* rather than
-    assumed: the `make` backend declares none, and a project scaffolded
-    before the combined library existed has only some of them.
-    """
-    targets = [
-        t
-        for t in (f"{pkg}_lib", f"{pkg}_lib_static")
-        if f"add_library({t} " in cmake_text
-    ]
-    lines = ""
-    for core in cores:
-        for target in targets:
-            line = (
-                f"target_sources({target} PRIVATE $<TARGET_OBJECTS:{core}>)\n"
-            )
-            if line not in cmake_text and line not in lines:
-                lines += line
-    return lines
-
-
-def splice_cmake_component(
-    root: Path,
-    pkg: str,
-    comp: str,
-    cores: list[str],
-    sentinel: str = COMPONENTS_SENTINEL,
-) -> None:
-    """Wire *comp* into the root CMakeLists: ``add_subdirectory`` under
-    *sentinel*, and :func:`cmake_core_wiring` for *cores* directly beneath it.
-
-    The two halves are independent — a module named after one of its objects
-    may already have the ``add_subdirectory`` from the ``jm module`` step
-    while its ``target_sources`` lines are still missing — so each is checked
-    on its own.
-
-    Keeping the wiring adjacent to the ``add_subdirectory`` is what lets
-    ``_apply._SUBDIR_BLOCK`` lift the whole block as a unit when it
-    reconciles a real project against a fresh replay.
-    """
-    cmake_path = root / "CMakeLists.txt"
-    if not cmake_path.exists():
-        return
-    text = cmake_path.read_text(encoding="utf-8")
-    original = text
-    sub = f"add_subdirectory(native/src/{comp})\n"
-    if sub not in text:
-        if sentinel in text:
-            idx = text.index("\n", text.index(sentinel)) + 1
-            text = text[:idx] + sub + text[idx:]
-        else:
-            text += sub
-    wiring = cmake_core_wiring(text, pkg, cores)
-    if wiring:
-        idx = text.index("\n", text.index(sub)) + 1
-        text = text[:idx] + wiring + text[idx:]
-    if text != original:
-        cmake_path.write_text(text, encoding="utf-8")
-        print(f"  update  {cmake_path}")
 
 
 def _make_component_ctx(component: str) -> dict[str, str]:

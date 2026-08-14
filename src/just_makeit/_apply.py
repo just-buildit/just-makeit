@@ -35,6 +35,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _createonly
+from . import _libwiring
 from . import _report
 from . import _stubs as S
 from ._init import _to_title
@@ -986,6 +987,10 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
     return False
 
 
+_WIRED_CORE = re.compile(
+    r"^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:(\w+)>\)[ \t]*\n"
+)
+
 _SUBDIR_BLOCK = re.compile(
     r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
     r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)[ \t]*\n)*",
@@ -1050,6 +1055,29 @@ def _splice_cmake_components(
 
     new_real = _insert(new_real, _COMPONENTS_ANCHOR, "".join(component_blocks))
     new_real = _insert(new_real, _MODULES_ANCHOR, "".join(module_blocks))
+
+    # gh-984: drop a wiring line naming a `_core` that no longer exists.
+    #
+    # The reinstatement above only covers lines the block regex lifted, and
+    # that regex requires an `add_subdirectory` immediately above — so an
+    # orphaned `target_sources` on its own (an interrupted removal, a bad
+    # merge) survived every apply. That is not cosmetic: cmake resolves
+    # `$<TARGET_OBJECTS:>` at CONFIGURE time, so the project does not build,
+    # and `status` reported it with nothing able to clear it.
+    #
+    # Known = declared in the real tree OR in the replay. The union matters
+    # because the two disagree exactly when apply is doing its job: a
+    # component the manifest declares but the tree has lost exists only in
+    # the replay at this point (`_sync_missing` restores it afterwards), and
+    # a hand-written `c_deps` dir exists only in the real tree.
+    known = set(_libwiring.declared_cores(real_path.parent)) | set(
+        _libwiring.declared_cores(temp_path.parent)
+    )
+    new_real = "".join(
+        line
+        for line in new_real.splitlines(keepends=True)
+        if not ((m := _WIRED_CORE.match(line)) and m.group(1) not in known)
+    )
 
     if new_real != real:
         real_path.write_text(new_real, encoding="utf-8")

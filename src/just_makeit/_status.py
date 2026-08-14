@@ -638,6 +638,38 @@ def run(
         o.rel: _is_allowed(o.rel, allow_patterns) for o in _orphans
     }
     _silent = _hollow.silent_benches(root, cfg)
+    # gh-984: components whose OBJECT library reaches no combined C library,
+    # and wiring lines naming a core that is gone. Computed here, above the
+    # JSON return, for the reason `_wide` and `_orphans` are: a gate that
+    # fires for a human and not for `--json` is found the hard way.
+    #
+    # Alone among the findings here this needs no replay — it compares the
+    # project against itself — so it also answers on a tree jm could not
+    # re-render, and costs two file reads.
+    from . import _libwiring
+
+    _unwired = _libwiring.unwired(root, cfg)
+    _dangling = _libwiring.dangling(root, cfg)
+    # Suppressed by the file, like the UNANCHORED entry beside it, and ALSO
+    # per component via `CMakeLists.txt:<core>`.
+    #
+    # Both, not one. Allowing the file is a project saying it owns this
+    # wiring — gh-975 established that, and it stays true here: jm looks for
+    # one exact `target_sources` spelling, so an author who links their cores
+    # some other way would otherwise get a finding they cannot clear.
+    #
+    # The per-component key exists because that is a heavy hammer for the
+    # common case. A root CMakeLists is `partial`, so it drifts as soon as the
+    # author adds anything of their own, and `CMakeLists.txt` in status_allow
+    # is the obvious way to quiet that — which would then silence every future
+    # component too. Naming the one core kept out of the library on purpose
+    # says only what is meant.
+    _wiring_allowed = {
+        u.core: _is_allowed("CMakeLists.txt", allow_patterns)
+        or _is_allowed(f"CMakeLists.txt:{u.core}", allow_patterns)
+        for u in _unwired
+    }
+    _n_unwired = sum(1 for u in _unwired if not _wiring_allowed[u.core])
     drift_count = (
         len(drift)
         + sum(1 for e in allowed if e[4])
@@ -679,6 +711,18 @@ def run(
         # Suppressible by name, for a project that wires its own targets and
         # means to.
         + sum(1 for e in unanchored_entries if not e[2])
+        # gh-984: gates, on gh-975's rule — the reader can do something about
+        # it. A component in no library is a write that did not happen, and
+        # `jm apply` puts the line back; that is the difference from the
+        # OUTDATED beside it, which is jm's opinion about a file that works.
+        # Suppressible for a project that wires its own library targets.
+        #
+        # The dangling half is never suppressed, and is the sharper case: it
+        # names a target cmake will not resolve, so the project does not
+        # configure. There is no reading of `status_allow` under which a
+        # tree that cannot build is what the author meant.
+        + _n_unwired
+        + len(_dangling)
     )
 
     if as_json:
@@ -753,6 +797,27 @@ def run(
                     "unanchored": [
                         {"path": p, "anchor": a, "allowed": al}
                         for (p, a, al) in unanchored_entries
+                    ],
+                    # gh-984: a component whose `_core` is folded into no
+                    # combined C library, so its public header ships and its
+                    # symbols do not. `targets` names the libraries it is
+                    # missing from — a core in the shared one and not the
+                    # static archive is the half-wired state gh-981 left.
+                    "unwired_cores": [
+                        {
+                            "core": u.core,
+                            "component": u.component,
+                            "targets": list(u.targets),
+                            "allowed": _wiring_allowed[u.core],
+                        }
+                        for u in _unwired
+                    ],
+                    # gh-984: the mirror — wiring naming a core no component
+                    # declares. Never `allowed`: cmake will not resolve it, so
+                    # the project does not configure.
+                    "dangling_wiring": [
+                        {"core": d.core, "targets": list(d.targets)}
+                        for d in _dangling
                     ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
@@ -973,6 +1038,59 @@ def run(
         )
         print()
 
+    # gh-984: printed on both paths, like UNANCHORED and UNBUILT above, and
+    # for the same reason sharpened one more turn — there is nothing wrong
+    # anywhere a reader would think to look. The component compiles, the
+    # extension imports, `ctest` passes, and the header installs; the symbol
+    # is simply in no library, and the first report comes from a C consumer
+    # weeks later.
+    if _unwired:
+        print(
+            f"UNWIRED ({len(_unwired)}) — component core(s) folded into no C "
+            "library:"
+        )
+        for u in _unwired:
+            tag = " [status_allow]" if _wiring_allowed[u.core] else ""
+            print(
+                f"  ⊘ {u.core} (native/src/{u.component}) — missing from "
+                f"{', '.join(u.targets)}{tag}"
+            )
+        print(
+            "  These build, and their symbols ship in neither lib<pkg>.so nor"
+            " lib<pkg>.a,\n"
+            "  so the installed header declares functions a C consumer cannot"
+            " link. Python\n"
+            "  is unaffected — the extension links each core directly — which"
+            " is why this\n"
+            "  goes unnoticed. `jm apply` writes the missing"
+            " target_sources() line. Keep a\n"
+            "  core out of the library on purpose by naming"
+            " `CMakeLists.txt:<core>` in\n"
+            "  [project] status_allow; naming `CMakeLists.txt` itself exempts"
+            " every core,\n"
+            "  for a project that links its cores its own way."
+        )
+        print()
+
+    # gh-984: the mirror, and the one finding here that stops the build
+    # outright rather than quietly shipping less than it claims.
+    if _dangling:
+        print(
+            f"DANGLING ({len(_dangling)}) — C library wiring naming a core "
+            "that is gone:"
+        )
+        for d in _dangling:
+            print(f"  ⊗ {d.core} — named by {', '.join(d.targets)}")
+        print(
+            "  cmake resolves $<TARGET_OBJECTS:> at CONFIGURE time, so this"
+            " project does\n"
+            "  not build at all. `jm apply` drops the line. Not suppressible"
+            " — there is no\n"
+            "  reading of status_allow under which an unconfigurable tree is"
+            " intended."
+        )
+        print()
+
     # gh-806: same "impossible to miss" treatment, and for the sharpest
     # version of the same reason — every other listing here describes
     # something that is visibly wrong somewhere. This one describes a tree
@@ -1161,6 +1279,14 @@ def run(
         # that issue is about — it was said, twice, over a tree where cmake
         # had zero targets for the module.
         and not any(not e[2] for e in unanchored_entries)
+        # gh-984: and once more. This is the case with the strongest claim to
+        # the branch on every signal a reader has — nothing is missing, stale,
+        # dropped or unbuilt — and the weakest claim in fact: the tree ships a
+        # header whose symbols are in no library. Saying "OK — up to date" is
+        # how the condition survived undetected long enough to be found from
+        # the other side, by a consumer who could not link.
+        and not _n_unwired
+        and not _dangling
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -1200,6 +1326,11 @@ def run(
             if unanchored_entries
             else ""
         )
+        # gh-984: same rule again — only an allowed one reaches here, and it
+        # is named anyway. This exemption means the project's own targets are
+        # what put its components in a library, which is worth saying out loud
+        # beside a line that otherwise reads as jm vouching for the wiring.
+        _wire = f"; {len(_unwired)} unwired (allowed)" if _unwired else ""
         # gh-949: name what was NOT compared.
         #
         # Deliberately not the word "NOTE", and deliberately not "stale":
@@ -1229,7 +1360,7 @@ def run(
         # four glue files, is in it.
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}{_anch}."
+            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}{_anch}{_wire}."
         )
         print(
             "  create-only files: jm's own — the Makefile, .clang-tidy,"
@@ -1298,6 +1429,11 @@ def run(
                 if any(not e[2] for e in unanchored_entries)
                 else ""
             )
+            # gh-984: on the skim line too, marked as gating. `jm apply` does
+            # clear this one, unlike the anchor gap above it — which is why
+            # the sentence below about apply is the right thing to read next.
+            + (f", {_n_unwired} unwired (!)" if _n_unwired else "")
+            + (f", {len(_dangling)} dangling (!)" if _dangling else "")
             + ".\n"
             "Your `_core.c` is sacred — apply never changes it; use "
             "`jm regenerate <component>` to rebuild one from the manifest."
