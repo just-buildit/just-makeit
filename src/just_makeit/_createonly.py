@@ -123,8 +123,8 @@ RULES: tuple[Rule, ...] = (
     Rule(
         ".clang-format",
         JM,
-        "jm's house style for generated C. Never fires today — see the"
-        " carve-out in `outdated`, and gh-960.",
+        "jm's house style for generated C. A project that has taken it over"
+        " says so with status_allow, as for any other JM file.",
     ),
     Rule(".gitignore", JM, "jm's ignore set, tracking what jm builds."),
     Rule("Doxyfile", JM, "jm's doxygen configuration."),
@@ -273,16 +273,14 @@ def outdated(root: Path, replay_root: Path) -> list[str]:
 
     Returned paths are project-relative POSIX strings, sorted.
 
-    **Carve-out.** `.clang-format` can never be reported, and the reason is
-    structural rather than an omission here: `_apply._replay` calls `_new.run`
-    without the project's ``c_style``, so the replay grows no `.clang-format`
-    of its own, and `apply` then *copies the real one in* before the formatting
-    passes so both trees format alike. The replay's copy is therefore the
-    project's file by construction and always compares equal. It stays
-    classified ``JM`` because it is jm's content and the day the replay carries
-    its own render this starts working; it is tracked as a gap rather than
-    papered over with a render-the-template fallback, which is the peer
-    implementation this function exists to avoid. Tracked as gh-960.
+    `.clang-format` was the one file this could never report, and the reason
+    was structural rather than an omission here: the replay grew no
+    `.clang-format` of its own, and `apply` copied the *real* one in before
+    the formatting passes, so the file compared was the project's own and was
+    equal by construction. gh-960 closed that by threading the project's
+    ``c_style`` / ``c_format_command`` through `_apply._replay` — the replay
+    renders its own style file, and the copy that formats both trees alike is
+    now undone before the snapshot this function reads.
     """
     from . import _apply
 

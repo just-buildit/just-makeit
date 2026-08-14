@@ -50,7 +50,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit import _apply, _createonly, _status  # noqa: E402
+from just_makeit import (  # noqa: E402
+    _apply,
+    _cfmt,
+    _config,
+    _createonly,
+    _status,
+)
 from just_makeit._app import run as app_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
@@ -73,22 +79,7 @@ SHAPES: dict[str, dict] = {
     "app": {"app": True},
 }
 
-# The c_style shape cannot be derived, and the reason is this file's own
-# scaffolding rather than a defect. `_scaffold` drives the private API, and
-# **formatting is a post-command hook on the CLI dispatcher**
-# (`_cli._C_EMITTING_COMMANDS`), not part of emission — `_new.run` formats its
-# own tree because the hook cannot reach a subdirectory, and every other
-# emitter relies on the hook. So `new_run` followed by a separate `object_run`
-# leaves the binding unformatted here, `status` never says "up to date" over
-# it, and the corrupt-and-ask oracle would read every file as seen for a
-# reason that has nothing to do with the corruption.
-#
-# gh-958 was filed calling that a bug in `--c-style` projects and closed once
-# the same sequence through the real CLI came out clean; gh-958's gate now
-# holds the CLI side. Excluded from the derivation only — the shape still
-# scaffolds for the other gates, which is what keeps `.clang-format`
-# classified and out of `test_no_rule_is_dead`.
-DERIVABLE = [s for s in sorted(SHAPES) if s != "c_style"]
+DERIVABLE = sorted(SHAPES)
 
 
 def _scaffold(root: Path, **shape) -> Path:
@@ -102,6 +93,17 @@ def _scaffold(root: Path, **shape) -> Path:
         object_run(root, "gain", module, perf=perf)
         if app:
             app_run(root, target="c", name="runner")
+        # Formatting is a post-command hook on the CLI dispatcher
+        # (`_cli._C_EMITTING_COMMANDS`), not part of emission: `_new.run`
+        # formats its own tree because the hook cannot reach a subdirectory,
+        # and every other emitter relies on the hook. Driving the private API
+        # therefore leaves the object's binding unformatted, so a `c_style`
+        # project would start out stale here through nothing to do with jm —
+        # and the corrupt-and-ask oracle below would read every file as seen.
+        # A no-op for the shapes that do not format, and a soft one wherever
+        # clang-format is absent (both trees then keep jm's style, still
+        # comparable).
+        _cfmt.format_project(root, _config.load(root), quiet=True)
     return root
 
 
@@ -359,6 +361,67 @@ def test_json_carries_it(tmp_path):
     assert payload["outdated"] == [{"path": "Makefile", "allowed": False}]
     # Never in the gating count, for the same reason it does not gate above.
     assert payload["drift"] == 0
+
+
+def _stale_clang_format(root: Path) -> None:
+    """A `.clang-format` that is not jm's current render.
+
+    A YAML comment rather than a changed setting, for `_corrupt`'s reason one
+    layer along: a project whose style file really does say something else has
+    glue formatted to that other style, which is ordinary STALE drift and
+    would sit on top of the finding under test. What is being asserted here is
+    that a create-only file differing from jm's render is *seen*.
+    """
+    cf = root / ".clang-format"
+    cf.write_text(
+        cf.read_text(encoding="utf-8") + "\n# an older jm's style file\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_stale_clang_format_is_named(tmp_path):
+    """gh-960: the one file this could never report.
+
+    `_apply._replay` used to call `_new.run` without the project's `c_style`,
+    so the replay grew no `.clang-format`, `apply` copied the **real** one in
+    before the formatting passes, and the file compared was therefore the
+    project's own — equal however far behind it was.
+
+    Sabotage: drop either half and this goes green-when-it-should-be-red.
+    Stop threading `c_style` through `_replay` and the replay carries no style
+    file to compare against; stop restoring jm's render after the gh-493 copy
+    in `_apply.run` and the project's own file is what lands in the snapshot.
+    """
+    root = _scaffold(tmp_path / "p", **SHAPES["c_style"])
+    _stale_clang_format(root)
+    out, rc = _status_out(root, check=True)
+    assert "OUTDATED (1)" in out, out
+    assert "↑ .clang-format" in out
+    # Same treatment as every other create-only file: named, never gating.
+    assert rc == 0
+
+
+def test_a_project_that_formats_c_without_a_style_file_grows_one(tmp_path):
+    """The knock-on, asserted rather than left to be discovered.
+
+    A project that declares `c_format_command` and ships no `.clang-format`
+    was running `clang-format --style=file` against nothing and silently
+    getting the fallback style. Now that the replay renders one, `_sync_
+    missing` materialises it — a real behaviour change in `apply`, and the
+    one jm already applies to every other file it knows how to create.
+    """
+    root = _scaffold(tmp_path / "p", **SHAPES["c_style"])
+    (root / ".clang-format").unlink()
+
+    out, _ = _status_out(root)
+    assert "MISSING (1)" in out, out
+    assert "+ .clang-format" in out
+
+    _quiet_apply(root, honor_status_allow=False)
+    assert (root / ".clang-format").is_file()
+    out, rc = _status_out(root, check=True)
+    assert "OK — up to date" in out, out
+    assert rc == 0
 
 
 def test_a_pristine_project_reports_nothing(tmp_path):
