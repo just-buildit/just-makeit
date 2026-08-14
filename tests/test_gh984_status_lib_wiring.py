@@ -328,3 +328,226 @@ def test_the_detector_reads_the_same_line_the_generator_writes():
     )
     # ...and the detector's own pattern matches it.
     assert _libwiring._WIRING.match(line)
+
+
+# ── Hand-written CMakeLists (gh-988) ─────────────────────────────────────────
+#
+# Every fixture above is scaffolded by jm, and jm always writes `add_library`
+# at column 1 — so none of them can express the input that breaks a
+# column-anchored regex. That is why gh-988 shipped: the detector could not
+# see a core declared inside a conditional, called its perfectly good wiring
+# DANGLING, and `apply` deleted it. A `c_dep` is the shape that gets this
+# right, because jm never rewrites its CMakeLists — the file really is the
+# author's, indentation and all.
+
+
+def _c_dep_project(tmp_path: Path) -> Path:
+    """A project with a hand-owned `c_dep` whose core is declared inside an
+    `if()`, and wired into both libraries from the root.
+
+    Modelled on doppler's `wfmcompose`, where the guard is real (`timing_core`
+    is POSIX-only) — the indentation is not a style choice there, it is what a
+    conditional target looks like.
+    """
+    assert _cli("new", "p", "--c-dep", "pacing", cwd=tmp_path).returncode == 0
+    root = tmp_path / "p"
+    (root / "native" / "inc" / "pacing").mkdir(parents=True, exist_ok=True)
+    (root / "native" / "src" / "pacing").mkdir(parents=True, exist_ok=True)
+    (root / "native" / "inc" / "pacing" / "pacing_core.h").write_text(
+        "#ifndef PACING_CORE_H\n#define PACING_CORE_H\n"
+        "double pacing_now(void);\n#endif\n",
+        encoding="utf-8",
+    )
+    (root / "native" / "src" / "pacing" / "pacing_core.c").write_text(
+        '#include "pacing/pacing_core.h"\n'
+        "double pacing_now(void) { return 0.0; }\n",
+        encoding="utf-8",
+    )
+    (root / "native" / "src" / "pacing" / "CMakeLists.txt").write_text(
+        "# pacing — hand-owned c_dep; jm emits only the add_subdirectory.\n"
+        "if(UNIX)\n"
+        "    add_library(pacing_core OBJECT\n"
+        "        ${CMAKE_SOURCE_DIR}/native/src/pacing/pacing_core.c)\n"
+        "    target_include_directories(pacing_core PUBLIC\n"
+        "        ${CMAKE_SOURCE_DIR}/native/inc)\n"
+        "endif()\n",
+        encoding="utf-8",
+    )
+    cmake = root / "CMakeLists.txt"
+    cmake.write_text(
+        cmake.read_text(encoding="utf-8").replace(
+            "# ── Modules",
+            "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:pacing_core>)\n"
+            "target_sources(p_lib_static PRIVATE"
+            " $<TARGET_OBJECTS:pacing_core>)\n\n# ── Modules",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert _cli("object", "engine", cwd=root).returncode == 0
+    assert _cli("apply", cwd=root).returncode == 0
+    return root
+
+
+def test_an_indented_declaration_is_not_reported_dangling(tmp_path: Path):
+    """Note what this asserts LAST, and why.
+
+    The fixture ends with `jm apply` to reach a clean baseline — and a broken
+    apply *destroys the evidence*: it strips the wiring, after which there is
+    no line left to call dangling and `status` is quiet for the wrong reason.
+    Measured, not guessed: with the reader reverted to column-1 this test
+    passed while its two neighbours went red. Asserting the lines survived is
+    what gives it teeth of its own.
+    """
+    root = _c_dep_project(tmp_path)
+    r = _cli("status", "--check", cwd=root)
+    assert "DANGLING" not in r.stdout, r.stdout
+    assert "pacing_core" not in r.stdout, r.stdout
+    assert r.returncode == 0, r.stdout
+    body = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert body.count("pacing_core") == 2, body
+
+
+def test_apply_does_not_delete_an_indented_core_s_wiring(tmp_path: Path):
+    """The destructive half, and the reason gh-988 was a stop-everything.
+
+    `apply` strips a wiring line whose core it cannot find — so a core it
+    cannot SEE gets its correct wiring removed, silently unwiring a real
+    symbol from both libraries. That is the failure gh-981 was filed about,
+    reintroduced by the fix for it.
+    """
+    root = _c_dep_project(tmp_path)
+    cmake = root / "CMakeLists.txt"
+    assert cmake.read_text(encoding="utf-8").count("pacing_core") == 2
+
+    assert _cli("apply", cwd=root).returncode == 0
+
+    body = cmake.read_text(encoding="utf-8")
+    assert body.count("pacing_core") == 2, body
+    for target in ("p_lib", "p_lib_static"):
+        assert (
+            f"target_sources({target} PRIVATE"
+            " $<TARGET_OBJECTS:pacing_core>)" in body
+        ), body
+    # ...and the declaration the reader has to find is still indented, so a
+    # future reformat of the fixture cannot quietly retire this test.
+    decl = (root / "native" / "src" / "pacing" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "\n    add_library(pacing_core OBJECT" in decl, decl
+
+
+def test_a_genuinely_orphaned_line_is_still_removed(tmp_path: Path):
+    """Reading generously must not stop the strip working at all — otherwise
+    the gh-988 fix would trade a false positive for a dead feature."""
+    root = _c_dep_project(tmp_path)
+    cmake = root / "CMakeLists.txt"
+    cmake.write_text(
+        cmake.read_text(encoding="utf-8").replace(
+            "# ── Modules",
+            "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:ghost_core>)\n\n"
+            "# ── Modules",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert "DANGLING (1)" in _cli("status", "--check", cwd=root).stdout
+    assert _cli("apply", cwd=root).returncode == 0
+    body = cmake.read_text(encoding="utf-8")
+    assert "ghost_core" not in body
+    assert body.count("pacing_core") == 2, body
+
+
+def test_a_core_declared_in_a_NESTED_cmakelists_is_found(tmp_path: Path):
+    """The residual gap gh-988 was one instance of, found by sabotaging.
+
+    Widening the reader to tolerate indentation is not the whole property —
+    the reader also has to LOOK in the right places. It globbed
+    `native/src/*/CMakeLists.txt`, one level, which was never a decision: it
+    is just the shape jm's own scaffolds have. A hand-owned `c_dep` is free
+    to nest, and a core the reader misses is one whose correct wiring `apply`
+    deletes, exactly as an indented one was.
+
+    This is the test the `read generously` half deserved. The first version
+    asserted the *stripper* stayed anchored at column 1 instead, and sabotaging
+    that was silent — because the stripper only ever removes a line whose core
+    is unknown, so anchoring it changes no outcome that `known` does not
+    already decide. Keeping it anchored is defence in depth, not a behaviour;
+    saying so in a test would have been decoration.
+    """
+    root = _c_dep_project(tmp_path)
+    nested = root / "native" / "src" / "pacing" / "clock"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "clock_core.c").write_text(
+        "int clock_tick(void) { return 0; }\n", encoding="utf-8"
+    )
+    (nested / "CMakeLists.txt").write_text(
+        "if(UNIX)\n"
+        "    add_library(clock_core OBJECT\n"
+        "        ${CMAKE_SOURCE_DIR}/native/src/pacing/clock/clock_core.c)\n"
+        "endif()\n",
+        encoding="utf-8",
+    )
+    cmake = root / "CMakeLists.txt"
+    cmake.write_text(
+        cmake.read_text(encoding="utf-8").replace(
+            "# ── Modules",
+            "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:clock_core>)\n"
+            "target_sources(p_lib_static PRIVATE"
+            " $<TARGET_OBJECTS:clock_core>)\n\n# ── Modules",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    r = _cli("status", "--check", cwd=root)
+    assert "DANGLING" not in r.stdout, r.stdout
+
+    assert _cli("apply", cwd=root).returncode == 0
+    body = cmake.read_text(encoding="utf-8")
+    assert body.count("clock_core") == 2, body
+    assert body.count("pacing_core") == 2, body
+
+
+def test_wiring_from_a_component_cmakelists_counts(tmp_path: Path):
+    """A core reaches the library if ANY CMakeLists says so, not only the root.
+
+    doppler wires its POSIX-only `timing_core` from the component's own
+    CMakeLists — deliberately, to keep a conditional out of the jm-managed
+    block — and reading only the root called five correctly-shipped cores
+    UNWIRED. cmake does not care which file said it; neither should the check.
+
+    This is the same defect as the indented `add_library` one directory over:
+    a reader looking in too few places. It is a separate test because it is a
+    separate place.
+    """
+    root = _c_dep_project(tmp_path)
+    cmake = root / "CMakeLists.txt"
+    # Take the wiring out of the root entirely...
+    cmake.write_text(
+        re.sub(
+            r"^target_sources\(\w+ PRIVATE"
+            r" \$<TARGET_OBJECTS:pacing_core>\)\n",
+            "",
+            cmake.read_text(encoding="utf-8"),
+            flags=re.M,
+        ),
+        encoding="utf-8",
+    )
+    # ...and put it in the component's own file, under its guard.
+    comp = root / "native" / "src" / "pacing" / "CMakeLists.txt"
+    comp.write_text(
+        comp.read_text(encoding="utf-8").replace(
+            "endif()",
+            "    target_sources(p_lib PRIVATE"
+            " $<TARGET_OBJECTS:pacing_core>)\n"
+            "    target_sources(p_lib_static PRIVATE"
+            " $<TARGET_OBJECTS:pacing_core>)\n"
+            "endif()",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    r = _cli("status", "--check", cwd=root)
+    assert "UNWIRED" not in r.stdout, r.stdout
+    assert "pacing_core" not in r.stdout, r.stdout

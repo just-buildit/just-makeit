@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **0.60.0 regression: a core jm could not SEE had its correct wiring
+    deleted** (gh-988). `_libwiring`'s readers were too narrow in three ways,
+    and each one made `jm status` report `DANGLING`/`UNWIRED` on a correct
+    tree — unclearably, since `DANGLING` is deliberately not suppressible —
+    while `jm apply` stripped the `target_sources` line, silently unwiring a
+    real symbol from both libraries. The exact failure gh-981 was filed about,
+    reintroduced by the fix for it.
+
+    | the reader                  | missed                                                                                                 |
+    | --------------------------- | ------------------------------------------------------------------------------------------------------ |
+    | `add_library(X_core OBJECT` | anything **indented** — i.e. declared inside an `if()`, which is what a platform-gated core looks like |
+    | the component scan          | anything **nested** deeper than `native/src/*/CMakeLists.txt`                                          |
+    | the wiring scan             | wiring done from a **component's own** CMakeLists rather than the root                                 |
+
+    All three are now generous. The writer and the stripper stay anchored at
+    column 1 — deliberately, though as defence in depth rather than as a
+    behaviour: measured, widening the stripper changes no outcome the reader
+    has not already decided, because it only ever removes a line whose core is
+    unknown.
+
+    **Why the 0.60.0 gate missed it:** every fixture in `test_lib_wiring.py`
+    is scaffolded by jm, and jm always writes `add_library` at column 1 — so
+    the fixture set could not express the input that breaks a column-anchored
+    regex. The new tests use a hand-owned `c_dep`, whose CMakeLists jm never
+    rewrites, so the file really is the author's.
+
 ## [0.60.0] — 2026-08-14
 
 ### Added

@@ -41,10 +41,38 @@ from . import _config as C
 COMPONENTS_SENTINEL = "# ── Components"
 MODULES_SENTINEL = "# ── Modules"
 
-_DECLARES_CORE = re.compile(r"^add_library\((\w+) OBJECT\b", re.M)
-_DECLARES_LIB = re.compile(r"^add_library\((\w+_lib(?:_static)?) ", re.M)
+# gh-988: the READERS tolerate leading whitespace; the writer and the stripper
+# do not. That asymmetry is deliberate and it is the whole fix.
+#
+# A project may declare a core inside a conditional — indented, as cmake style
+# requires — and doppler does. Anchored at column 1, `dangling` then reported
+# the root's perfectly good wiring as naming a core that does not exist, and
+# `apply` DELETED it: the exact failure gh-981 was filed about, caused by the
+# fix for it.
+#
+# Reading generously is safe: a core found is one more thing that must be
+# wired, and one fewer line that looks orphaned.
+#
+# `_WIRING` stays anchored at column 1, but honestly: that is defence in
+# depth, NOT a behaviour. The stripper only ever removes a line whose core is
+# unknown, so anchoring it changes no outcome that the reader has not already
+# decided — measured, by widening it and watching every test stay green. It is
+# kept because jm writes these lines only at column 1, so restricting deletion
+# to lines shaped like jm's own bounds the blast radius if the reader is ever
+# incomplete again. A test asserting it would be decoration; the property that
+# earns a test is the reader finding everything, which two now pin.
+_DECLARES_CORE = re.compile(r"^[ \t]*add_library\(\s*(\w+)\s+OBJECT\b", re.M)
+_DECLARES_LIB = re.compile(
+    r"^[ \t]*add_library\(\s*(\w+_lib(?:_static)?)\s", re.M
+)
 _WIRING = re.compile(
     r"^target_sources\((\w+) PRIVATE \$<TARGET_OBJECTS:(\w+)>\)", re.M
+)
+# The generous counterpart, for asking "does this core reach the library at
+# all" (gh-988). Indentation allowed, because a conditional wiring block is
+# what a platform-gated core looks like in a hand-written CMakeLists.
+_WIRING_ANY = re.compile(
+    r"^[ \t]*target_sources\((\w+) PRIVATE \$<TARGET_OBJECTS:(\w+)>\)", re.M
 )
 
 
@@ -98,10 +126,15 @@ def declared_cores(root: Path) -> dict[str, str]:
     src = root / "native" / "src"
     if not src.is_dir():
         return found
-    for cmake in sorted(src.glob("*/CMakeLists.txt")):
+    # gh-988: every depth, not just `native/src/*/`. A hand-owned `c_dep` is
+    # free to nest, and a core this misses is one whose correct wiring `apply`
+    # DELETES — the same failure as the indented declaration, reached by a
+    # different route. One level was never a decision, only the shape jm's own
+    # scaffolds happen to have; deriving from the tree means asking the tree.
+    for cmake in sorted(src.rglob("CMakeLists.txt")):
         text = cmake.read_text(encoding="utf-8")
         for core in _DECLARES_CORE.findall(text):
-            found[core] = cmake.parent.name
+            found[core] = cmake.parent.relative_to(src).as_posix()
     return found
 
 
@@ -218,10 +251,21 @@ def unwired(root: Path, cfg: dict) -> list[Unwired]:
 
     The gh-981 finding, asked of a real tree. Unlike everything else in
     ``status``, this needs no replay: it compares the project against
-    *itself*, so it holds on a tree jm could not re-render and costs two file
-    reads. A component that declares a core and is not named in a
-    ``target_sources`` line is shipping a public header whose symbols are in
-    no library — the exact state doppler was in for nine functions.
+    *itself*, so it holds on a tree jm could not re-render. A component that
+    declares a core and is named in no ``target_sources`` line is shipping a
+    public header whose symbols are in no library — the exact state doppler
+    was in for nine functions.
+
+    gh-988: "named in no ``target_sources`` line" means **anywhere in the
+    project**, not only in the root. jm writes its own wiring into the root,
+    but a project may wire a core from the component's own CMakeLists — and
+    doppler deliberately does, for a POSIX-only core, precisely to keep a
+    conditional out of the jm-managed block. Reading only the root called five
+    correctly-shipped cores unwired, which would gate a green project's CI.
+
+    The scan is the same "read generously" rule as :func:`declared_cores`: the
+    question is whether the symbol reaches the library, and cmake does not
+    care which file said so.
     """
     cmake_path = root / "CMakeLists.txt"
     if not cmake_path.exists():
@@ -230,9 +274,16 @@ def unwired(root: Path, cfg: dict) -> list[Unwired]:
     targets = lib_targets(text, C.project_name(cfg))
     if not targets:
         return []
+    wired = {(t, c) for t, c in _WIRING_ANY.findall(text)}
+    src = root / "native"
+    if src.is_dir():
+        for cmake in sorted(src.rglob("CMakeLists.txt")):
+            wired |= set(
+                _WIRING_ANY.findall(cmake.read_text(encoding="utf-8"))
+            )
     found = []
     for core, comp in sorted(declared_cores(root).items()):
-        missing = tuple(t for t in targets if wiring_line(t, core) not in text)
+        missing = tuple(t for t in targets if (t, core) not in wired)
         if missing:
             found.append(Unwired(core, comp, missing))
     return found
