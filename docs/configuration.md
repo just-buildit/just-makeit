@@ -432,8 +432,6 @@ succeeds with generated C in jm's default style. When `jm status` reports
 drift on a `c_style` project it also prints the formatter's version, so
 "stale in CI, clean locally" names its own cause.
 
-\<<\<<\<<< HEAD
-
 ### Authored `@code` examples — the 79-column budget
 
 An `@code` block in a sacred header becomes the `Examples` section of the
@@ -468,7 +466,8 @@ to bring one back under budget, none of which changes what the example does:
     `>>>` code, then its output, then a blank line, then prose again — and the
     prose wraps freely, so a long aside reads better there anyway.
 
-# `jm status` prints the outstanding count, so a project sweeping them has a burn-down number.
+`jm status` prints the outstanding count, so a project sweeping them has a
+burn-down number.
 
 ### Generated Python style — `py_format_command`
 
@@ -505,8 +504,6 @@ As with `c_format_command`: an argv list, never a shell string; only `argv[0]`
 is resolved on `PATH`, so `uv run …` works when the formatter itself is not on
 `PATH`; and a missing binary is a soft failure — one warning, the command
 still succeeds, and *neither* tree is formatted, so they still compare equal.
-
-> > > > > > > d19e3ae (feat: run the project's pinned Python formatter over generated stubs (gh-746))
 
 ### `[<component>]` keys
 

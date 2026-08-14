@@ -9,7 +9,7 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check
+                changelog-check conflict-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -169,3 +169,15 @@ changelog-check: ## Verify a branch that changes src/ also touches CHANGELOG.md
 	 echo "  release is a promotion rather than an archaeology exercise."; \
 	 echo "  A purely internal change still gets one honest line."; \
 	 exit 1
+
+# gh-974: a merge-conflict marker that reached the published docs site and sat
+# there for ten days and a release. The check lives in a script rather than in
+# this recipe so its own gate can run it over seeded files — a lint target that
+# can only be exercised by corrupting the repo is a target nobody proves.
+#
+# Hung off `lint` for changelog-check's reason: CI runs `make lint` and nothing
+# else, and a rule in the Makefile is a rule tests/test_lint_ssot.py rejects.
+lint: conflict-check
+
+conflict-check: ## Fail on a merge-conflict marker in a tracked text file
+	@scripts/conflict-check.sh
