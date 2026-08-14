@@ -1,6 +1,8 @@
 // /*<<project>>*/ — /*<<name>>*/: /*<<function>>*/() CLI (scaffolded by just-makeit).
 // Build:  make && ./build//*<<name>>*/
-// Re-running `just-makeit app` overwrites this file; edit for custom logic.
+// Regenerated from `[app]` by `just-makeit app` AND by every `just-makeit
+// apply` — edits here are discarded. Put custom logic in a component
+// (`jm method`) and call it from main().
 
 #include <stdio.h>
 #include <stdlib.h>

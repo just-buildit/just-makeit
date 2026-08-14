@@ -39,6 +39,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _render as R
+from . import _report
 from . import _types as T
 from ._init import _to_title
 
@@ -1530,9 +1531,32 @@ def _run_c(
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     main_c = app_dir / f"{name}.c"
-    main_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
-    verb = "update" if main_c.exists() else "create"
-    print(f"  {verb}  {main_c}")
+    rendered = R.render(tmpl, ctx)
+    # gh-962: this file is regenerated wholesale, by `jm app` AND by every
+    # `jm apply` (the replay re-runs the verb from `[app]`). Nothing preserves
+    # a body here the way `_restore_c_function_bodies` preserves `_core.c`, and
+    # there is no `_extra.c` escape hatch for an app — so an edit is simply
+    # lost. Say so at the moment it happens, naming the file.
+    #
+    # Reported rather than refused: refusing would leave a stale app no command
+    # could refresh, and `apply`'s whole contract is to reconcile. The author
+    # is told what was discarded and where the logic belongs instead.
+    #
+    # Only when the bytes actually differ, so a re-run over an untouched
+    # scaffold — which is most of them — stays quiet.
+    _existed = main_c.exists()
+    if _existed and main_c.read_text(encoding="utf-8") != rendered:
+        _report.warn(
+            f"{main_c}: this app is regenerated from `[app]` in the manifest,"
+            " by `jm app` and by every `jm apply`, and your edits to it have"
+            " just been discarded. Nothing preserves a body here — put custom"
+            " logic in a component (`jm method`) and call it from the"
+            " generated main(), or keep your own copy outside native/src/app/."
+        )
+    main_c.write_text(rendered, encoding="utf-8")
+    # gh-962: computed BEFORE the write. It was after, so `exists()` was
+    # trivially true and a first-time scaffold announced itself as `update`.
+    print(f"  {'update' if _existed else 'create'}  {main_c}")
 
     tgt = exe_target or name
     if tgt != name:

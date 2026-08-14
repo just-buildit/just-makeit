@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- **Losing an edit to a generated app is no longer silent, and the file no
+    longer invites one.** `native/src/app/<name>.c` is regenerated wholesale by
+    `jm app` **and by every `jm apply`** (the replay re-runs the verb from
+    `[app]`). Nothing preserves a body there and an app has no `_extra.c`
+    escape hatch — yet its own banner read "Re-running `just-makeit app`
+    overwrites this file; **edit for custom logic**", naming only one of the two
+    commands that do it and inviting an edit with nowhere to live (gh-962).
+
+    `jm apply` now names the file and says the edits were discarded, only when
+    the bytes actually differ, so an untouched scaffold stays quiet. Every
+    `app_*` template's banner tells the truth, and a gate walks them all so a
+    seventh app target inherits the rule. Reported rather than refused:
+    refusing would leave a stale app no command could refresh.
+
+- **`jm app` announced a brand-new file as `update`.** The create/update verb
+    was chosen *after* the write, so `exists()` was trivially true. Found while
+    reading the write site for the above.
+
 - **`jm add` on a module object now reaches the constructor.** A module
     object's binding lives in a per-object fragment (`<mod>_ext_<obj>.c`), and
     that fragment was not in the set `jm regenerate` rebuilds. Everything

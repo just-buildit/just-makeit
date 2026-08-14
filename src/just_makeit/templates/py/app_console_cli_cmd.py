@@ -1,6 +1,8 @@
 """<<project>> — <<name>>: multi-command CLI (scaffolded by just-makeit).
 
-Re-running `just-makeit app` overwrites this file; fill each command body.
+Regenerated from `[app]` by `just-makeit app` AND by every `just-makeit
+apply` — edits here are discarded, command bodies included. Put the
+implementation in a component and call it from each body.
 Install:  pip install -e .   Run:  <<name>> --help
 """
 
