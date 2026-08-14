@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.59.1] — 2026-08-14
+
 ### Fixed
 
 - **`docs/configuration.md` shipped an unresolved merge conflict, and it was
