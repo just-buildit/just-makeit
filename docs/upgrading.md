@@ -221,14 +221,37 @@ the count `jm` generated, and `0` correctly says "none of these are mine".
 had drifted *above* later assertions — 75 assertions that could not affect the
 exit code, which hid a real heap buffer overflow.
 
-#### A caveat worth knowing before you start
+#### What `jm status` can and cannot tell you here
 
-**`jm status --check` will report your project up to date throughout all of
-this.** That is not a bug you can work around, it is how the check is built:
-`status` re-applies the manifest to a scratch copy and diffs, and `apply` does
-not rewrite create-only files — so those files match in both trees no matter
-how old they are. A clean `status` means "the files jm owns are current", not
-"your scaffold is current".
+`jm status` names the jm-owned files that are behind, in an `OUTDATED` section:
+
+```
+OUTDATED (1) — create-only file(s) behind jm's current version:
+  ↑ Makefile
+```
+
+Use it to drive the steps above and to confirm afterwards that step 2 landed.
+It is **not** a gate — the exit code stays 0, because `jm apply` cannot fix a
+create-only file and failing CI on a finding no command clears would be worse
+than saying nothing. Suppress a file you have deliberately taken over with
+`[project] status_allow`.
+
+Two limits worth knowing before you rely on it:
+
+- **Your own files are still invisible.** `status` re-applies the manifest to a
+    scratch copy and diffs, and `apply` rewrites no create-only file, so both
+    trees carry whatever you already had. jm's own files are compared against its
+    current render instead — but `test_<comp>_core.c`, `_core.c`, `README.md` and
+    `pyproject.toml` differ from their scaffold the moment your project is real,
+    so there is no version for them to be behind and nothing to report. **Step 3
+    above is not something `status` will ever remind you about.**
+- **A clean run means "the files jm owns are current"**, not "your scaffold is
+    current".
+
+Before v0.58 this section warned that `status` would report the project up to
+date throughout the whole migration. That was true, and
+[#949](https://github.com/just-buildit/just-makeit/issues/949) fixed the half
+of it that could be fixed.
 
 #### Then run it
 

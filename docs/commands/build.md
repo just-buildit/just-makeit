@@ -111,13 +111,22 @@ The scaffolded `.clang-tidy` opts into `bugprone-*`, `cert-*` and
 `clang-analyzer-*`, with the checks that misfire on jm's own layout turned off
 and each one annotated with the construct it misfires on.
 
-**It does not set `WarningsAsErrors`**, so `make tidy` reports and exits 0.
-Turn it on in your `.clang-tidy` once your project reports clean and it becomes
-a real gate — the line is written out in a comment there, ready to uncomment.
-It is off in the scaffold because jm's own generated C does not yet report
-clean ([#944](https://github.com/just-buildit/just-makeit/issues/944)), and a
-`make tidy` that fails on a project you just created teaches you to never run
-it again.
+**It sets `WarningsAsErrors: "*"`**, so `make tidy` is a real gate — every
+finding is an error.
+
+It was off while jm's own generated C still had findings, because a `make tidy`
+that fails on a project you just created is the fastest way to teach someone
+never to run it again. That is fixed
+([#944](https://github.com/just-buildit/just-makeit/issues/944)): a scaffold
+with `--perf`, a module, a standalone object and a C app returns zero, measured
+rather than assumed. A **freshly scaffolded** project reports clean; an
+existing one very likely will not on the first run, and those findings are
+about your code.
+
+If a newer clang-tidy adds a check that fires on generated code, comment the
+line out rather than working around the diagnostic — the file is yours (jm
+writes it once and never rewrites it), and a scaffold going red on a toolchain
+bump is not your bug to fix.
 
 ______________________________________________________________________
 
@@ -409,6 +418,7 @@ Prints a table of files, each in one of these states:
 | `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions. | no        |
 | `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible.                                                                                                                                              | yes       |
 | `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                       | no        |
+| `OUTDATED`    | A **create-only** file whose content is jm's own — the `Makefile`, `.clang-tidy`, `jm_test.h`, `jm_bench.h`, `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates — and which differs from what this jm renders (gh-949). `apply` never rewrites a create-only file, so adopting the new version is your call; suppressible with `status_allow`.      | no        |
 
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.

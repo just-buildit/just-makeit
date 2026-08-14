@@ -47,21 +47,32 @@ def test_a_clean_tree_still_reports_ok(tmp_path):
 
 
 def test_the_ok_line_names_what_it_did_not_compare(tmp_path):
-    """The claim has to carry its own limit, or it is read as absolute."""
+    """The claim has to carry its own limit, or it is read as absolute.
+
+    The detection half took half this note's job: jm's own create-only files
+    are compared now (see `test_gh949_outdated.py`). The limit that remains is
+    the author-owned kind, and it is the larger half — 28 of a plain project's
+    32 manifest-owned files are invisible to the copy/diff, so leaving the
+    line unqualified would still read as absolute.
+    """
     out = _status_out(_project(tmp_path))
-    assert "not compared: create-only files" in out
+    assert "create-only files:" in out
+    assert "NOT compared" in out
     # Naming them matters more than the count: a reader has to know whether
-    # the file they are about to trust is in this set.
-    for name in ("Makefile", ".clang-tidy", "jm_test.h"):
-        assert name in out, f"{name} not named in the note"
+    # the file they are about to trust is in this set, and on which side.
+    for name in ("_core.c", "README", "pyproject.toml"):
+        assert name in out, f"{name} not named as uncompared"
 
 
 def test_it_says_so_over_a_provably_stale_makefile(tmp_path):
     """The reported scenario, end to end.
 
     A Makefile stripped of a target a newer jm ships, `apply` run, and status
-    asked. `apply` cannot fix it and the exit code stays 0 — so the note is
-    the only thing standing between a reader and the wrong conclusion.
+    asked. `apply` still cannot fix it and the exit code is still 0 — that was
+    never the bug. What changed with the detection half is that the file is
+    now *named* rather than merely disclaimed, so the reader is not left to
+    work out from a general note whether their Makefile is one of the ones the
+    check could not see.
     """
     root = _project(tmp_path)
     mk = root / "Makefile"
@@ -74,4 +85,5 @@ def test_it_says_so_over_a_provably_stale_makefile(tmp_path):
     out = _status_out(root)
     assert "\ntidy:" not in mk.read_text(encoding="utf-8")
     assert "OK — up to date" in out
-    assert "not compared: create-only files" in out
+    assert "OUTDATED (1)" in out
+    assert "↑ Makefile" in out

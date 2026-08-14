@@ -2,7 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports WHICH create-only files are behind, as `OUTDATED`.**
+    `status` re-applies the manifest to a scratch copy and diffs, and `apply`
+    never rewrites a create-only file — so those files are byte-identical on
+    both sides *because neither run touched them*, and the diff is empty by
+    construction however many versions behind they are. jm's own create-only
+    files (the `Makefile`, `.clang-tidy`, `jm_test.h`, `jm_bench.h`,
+    `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates)
+    are now compared against the replay tree `apply` already builds and named
+    individually. Reported, never counted: `apply` cannot fix a create-only
+    file, so gating on it would fail CI with no command that clears it.
+    Suppressible with `status_allow` (gh-949).
+
+    Author-owned create-only files are deliberately excluded — `_core.c`, your
+    C and Python tests, `README.md`, `pyproject.toml`. jm renders their
+    *starting* content, so they differ from their scaffold the moment a project
+    is real and diffing them would mark every project outdated forever.
+
+    Measuring this turned up that the blind set is far larger than the issue
+    assumed: `status` cannot see drift in **28 of a plain project's 32**
+    manifest-owned files, not the five the v0.58 note named. The `--check`
+    note now says so.
+
 ### Docs
+
+- **`make tidy` was documented as the opposite of what ships.**
+    `docs/commands/build.md` stated in bold that the scaffolded `.clang-tidy`
+    "does not set `WarningsAsErrors`", with a paragraph explaining how to turn
+    it on — while the template has set `WarningsAsErrors: "*"` since gh-944
+    made a fresh scaffold report clean. Found while adding the `OUTDATED` row
+    to the same table.
 
 - **`jm status --check` says a create-only file may be YOURS, not just that it
     may be stale.** The first wording named only staleness, and a reader
