@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-08-14
+
 ### Fixed
 
 - **`jm method` / `property` / `warning` / `error` silently did the wrong thing
