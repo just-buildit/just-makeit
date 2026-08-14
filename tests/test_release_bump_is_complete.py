@@ -20,6 +20,11 @@ that can only fail by coincidence is a description, not a control.
 
 `uv.lock` is not covered here: refreshing it is a `uv lock` call, so there is
 nothing of jm's to test. `tests/test_lint_ssot.py` guards the Makefile wiring.
+
+Running the script under `sys.executable` is what caught that it hard-imported
+`tomllib` — fine in the dev env (3.12) where it had only ever run as a
+pre-commit hook, and a `ModuleNotFoundError` on the 3.9 and 3.10 legs of the
+CI matrix. A script exercised on one interpreter is untested on the other five.
 """
 
 from __future__ import annotations
