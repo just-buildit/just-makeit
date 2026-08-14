@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.60.2] — 2026-08-14
+
 ### Fixed
 
 - **`STALE ALLOW` reported gh-984's own `CMakeLists.txt:<core>` entries as
