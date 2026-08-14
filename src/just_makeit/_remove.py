@@ -158,19 +158,18 @@ def _strip_cmake_object(root: Path, obj: str) -> None:
 
 
 def _strip_cmake_module(root: Path, module: str) -> None:
-    """Drop the module's add_subdirectory line from the top CMakeLists.txt."""
-    cmake = root / "CMakeLists.txt"
-    if not cmake.exists():
-        return
-    lines = cmake.read_text(encoding="utf-8").splitlines(keepends=True)
-    kept = [
-        ln
-        for ln in lines
-        if ln.strip() != f"add_subdirectory(native/src/{module})"
-    ]
-    if len(kept) != len(lines):
-        cmake.write_text("".join(kept), encoding="utf-8")
-        print(f"  update  {cmake}")
+    """Drop the module's add_subdirectory + target_sources lines from the top
+    CMakeLists.txt.
+
+    Identical to :func:`_strip_cmake_object` since gh-981 gave a module's own
+    OBJECT library the same combined-library wiring a component has always
+    had. Left as a separate name because the two call sites remove different
+    things and read better saying so; the shared body is what keeps them from
+    drifting back apart. Stripping only the ``add_subdirectory`` would leave
+    `target_sources(... $<TARGET_OBJECTS:<mod>_core>)` naming a target the
+    removal just deleted, which fails at configure time, not at build time.
+    """
+    _strip_cmake_object(root, module)
 
 
 def _strip_umbrella(root: Path, pkg: str, obj: str) -> None:

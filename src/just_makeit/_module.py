@@ -22,9 +22,12 @@ from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
 from ._init import (
+    MODULES_SENTINEL,
     _to_title,
     _write,
+    component_core_libs,
     ensure_parent_packages,
+    splice_cmake_component,
 )
 
 
@@ -163,21 +166,22 @@ def run(
         S.make_module_pyi(cfg, module, root),
     )
 
-    # Root CMakeLists.txt — insert add_subdirectory into Modules sentinel section.
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        cmake_text = cmake_path.read_text(encoding="utf-8")
-        sub = f"add_subdirectory(native/src/{cname})\n"
-        if sub not in cmake_text:
-            sentinel = "# ── Modules"
-            if sentinel in cmake_text:
-                idx = cmake_text.index(sentinel)
-                idx = cmake_text.index("\n", idx) + 1
-                cmake_text = cmake_text[:idx] + sub + cmake_text[idx:]
-            else:
-                cmake_text += sub
-            cmake_path.write_text(cmake_text, encoding="utf-8")
-            print(f"  update  {cmake_path}")
+    # Root CMakeLists.txt — insert add_subdirectory into the Modules sentinel
+    # section, and fold the module's own OBJECT library into the combined C
+    # library the same way a component's is (gh-981). Without the second half a
+    # module whose C surface is module-level *functions* builds its core, links
+    # it straight into the Python extension, and ships it in no library at all —
+    # so `jm function` compiles, imports and tests clean while a C consumer gets
+    # `undefined reference`. `component_core_libs` reads the file just written
+    # above, so a module with no core of its own (capsule/handle/composer, or a
+    # collocated object supplying the `add_library`) wires nothing.
+    splice_cmake_component(
+        root,
+        pkg,
+        cname,
+        component_core_libs(root, cname),
+        sentinel=MODULES_SENTINEL,
+    )
 
     # Ensure C test and benchmark directories exist (even before any objects
     # or functions are added — users may want to write their own C tests).
