@@ -332,16 +332,32 @@ class TestScriptRoundTrip:
 
 
 class TestCLIGuards:
-    def test_view_requires_module(self, project, capsys):
+    # gh-963: this asserted that omitting `--module` on a MODULE-owned object
+    # was an error. The manifest records the owner, so it never should have
+    # been — and treating the flag as the only source of truth is what let the
+    # sibling verbs take the standalone path and emit a class with the member
+    # missing. What survives is the guard where it means something: a view on a
+    # genuinely standalone object, which cannot have one.
+    def test_view_on_a_standalone_object_is_rejected(self, project, capsys):
+        object_run(project, "solo", None, [("s", "double", "0.0")])
         with pytest.raises(SystemExit):
             error_run(
                 project,
-                "rateconv",
+                "solo",
                 "ValueError",
                 VIEW_MSG,
                 view="MatchedRateConverter",
             )
-        assert "--view requires --module" in capsys.readouterr().err
+        assert "is standalone" in capsys.readouterr().err
+
+    def test_a_module_owned_view_no_longer_needs_the_flag(self, project):
+        error_run(
+            project,
+            "rateconv",
+            "ValueError",
+            VIEW_MSG,
+            view="MatchedRateConverter",
+        )
 
     def test_unknown_view_is_rejected(self, project, capsys):
         with pytest.raises(SystemExit):
