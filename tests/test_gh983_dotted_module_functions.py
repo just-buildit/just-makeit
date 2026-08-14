@@ -51,6 +51,7 @@ thought of yet.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -79,7 +80,14 @@ def _cli(*args, cwd) -> subprocess.CompletedProcess:
         cwd=cwd,
         capture_output=True,
         text=True,
-        env={"PYTHONPATH": str(SRC), "PATH": "/usr/bin:/bin", "NO_COLOR": "1"},
+        # A REPLACED environment drops COVERAGE_PROCESS_START and
+        # COVERAGE_FILE, so everything these tests drive through the CLI is
+        # instrumented and then discarded — gh-978's defect, reintroduced one
+        # layer out by a test helper rather than by the Makefile. It shows up
+        # as `codecov/patch` failing on code the suite plainly exercises, which
+        # is the signal that found it. Merge, do not replace; `NO_COLOR` and
+        # `PYTHONPATH` still win.
+        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
     )
 
 
