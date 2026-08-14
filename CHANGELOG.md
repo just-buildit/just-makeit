@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- **`jm add` on a module object now reaches the constructor.** A module
+    object's binding lives in a per-object fragment (`<mod>_ext_<obj>.c`), and
+    that fragment was not in the set `jm regenerate` rebuilds. Everything
+    downstream is member-level and additive, so nothing could rewrite the one
+    function a structural change alters — `<Obj>_init`, which carries the
+    constructor's `kwlist`. Adding a state field left the compiled object
+    rejecting the keyword its own `.pyi` advertised (gh-965).
+
+    jm was **not** silent about this: it warned on stderr naming the file and
+    the change, and gated `jm status --check` on it (gh-612/gh-823). What was
+    wrong is that the remedy it named is written for an author who hand-wrote
+    the constructor — here jm wrote it, and there was nothing to reconcile.
+
+    Scoped to `--discard`, the flag whose prompt already reads "This discards
+    hand-written bodies": a hand-written binding in the fragment is given up
+    under the same warning and confirmation. Plain `jm regenerate` preserves
+    and does not touch the fragment.
+
 - **`make bump-version` now writes every file that carries the version, so the
     first release commit no longer aborts.** It edited `pyproject.toml` alone,
     leaving the `sync-version` and `uv-lock` hooks to rewrite `bootstrap.toml`
