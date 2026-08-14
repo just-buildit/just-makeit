@@ -51,6 +51,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _apply, _createonly, _status  # noqa: E402
+from just_makeit._app import run as app_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
@@ -69,25 +70,38 @@ SHAPES: dict[str, dict] = {
     # Both flags together, because the split layout writes `objects/*.toml`
     # and `modules/*.toml` and only a module project produces the second.
     "fragments": {"fragments": True, "module": "filter"},
+    "app": {"app": True},
 }
 
-# gh-958: a `--c-style` project reports its own untouched scaffold as STALE, so
-# `status` never says "up to date" over one and the corrupt-and-ask oracle
-# cannot run there — every file would read as seen for a reason that has
-# nothing to do with the corruption. Excluded from the derivation only; the
-# shape still scaffolds for the other gates, which is what keeps
-# `.clang-format` classified and out of `test_no_rule_is_dead`.
+# The c_style shape cannot be derived, and the reason is this file's own
+# scaffolding rather than a defect. `_scaffold` drives the private API, and
+# **formatting is a post-command hook on the CLI dispatcher**
+# (`_cli._C_EMITTING_COMMANDS`), not part of emission — `_new.run` formats its
+# own tree because the hook cannot reach a subdirectory, and every other
+# emitter relies on the hook. So `new_run` followed by a separate `object_run`
+# leaves the binding unformatted here, `status` never says "up to date" over
+# it, and the corrupt-and-ask oracle would read every file as seen for a
+# reason that has nothing to do with the corruption.
+#
+# gh-958 was filed calling that a bug in `--c-style` projects and closed once
+# the same sequence through the real CLI came out clean; gh-958's gate now
+# holds the CLI side. Excluded from the derivation only — the shape still
+# scaffolds for the other gates, which is what keeps `.clang-format`
+# classified and out of `test_no_rule_is_dead`.
 DERIVABLE = [s for s in sorted(SHAPES) if s != "c_style"]
 
 
 def _scaffold(root: Path, **shape) -> Path:
     module = shape.pop("module", None)
+    app = shape.pop("app", False)
     perf = shape.get("perf", False)
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, **shape)
         if module:
             module_run(root, module)
         object_run(root, "gain", module, perf=perf)
+        if app:
+            app_run(root, target="c", name="runner")
     return root
 
 
