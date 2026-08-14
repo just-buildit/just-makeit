@@ -292,9 +292,13 @@ jobs:
       # The *gate*, not the report: `-q` used to keep the percentage out of
       # every log, so "coverage" was enforced by remembering to open Codecov.
       # This fails the job when it drops below COVERAGE_MIN.
+      # gh-978: `COVERAGE_PROCESS_START: pyproject.toml` used to live here, and
+      # a workflow is the wrong place for it twice over — the Makefile is the
+      # SSOT for how a tool runs, and the value was RELATIVE, so each `jm`
+      # subprocess resolved it against the scaffolded project it had cd'd into
+      # (which has a pyproject.toml of its own). Both paths are absolute in
+      # COVERAGE_ENV now, so a local `make coverage` measures what CI measures.
       - name: Run full test suite with coverage
-        env:
-          COVERAGE_PROCESS_START: pyproject.toml
         run: make coverage-gate
 
       - name: Upload coverage to Codecov
