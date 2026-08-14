@@ -21,6 +21,24 @@
     Wiring keys are now validated rather than skipped: an entry naming a core
     no component declares is the genuinely stale case and is still reported.
 
+- **A core that ships in a library other than `<pkg>_lib` was reported as
+    reaching none** (gh-991). The fourth reader gap of the gh-988 family, and
+    it had two halves — `_libwiring` treated `<pkg>_lib{,_static}` as the only
+    libraries a project may build, and read only `target_sources(...)`, never
+    objects passed straight to `add_library(NAME SHARED $<TARGET_OBJECTS:X>)`.
+
+    doppler builds a second pair, `doppler_stream{,_static}`, exactly that
+    way; two of its five `UNWIRED` findings were cores living there and
+    nowhere else. A core folded into any SHARED or STATIC library is now
+    shipped, and silent.
+
+    `MODULE` is excluded, deliberately: a Python extension is a `MODULE` and
+    every core is linked into one, so counting them would answer "shipped" for
+    every component forever — which is exactly the gh-981 state, a symbol
+    reachable from Python and from no C consumer. That exclusion has its own
+    test rather than a comment, because getting it wrong retires the whole
+    check silently.
+
 ## [0.60.1] — 2026-08-14
 
 ### Fixed
