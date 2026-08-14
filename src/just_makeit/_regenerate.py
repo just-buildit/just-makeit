@@ -84,6 +84,37 @@ def run(
         for p in _object_paths(root, cfg, pkg, component, module)
         if p.exists()
     ]
+    # gh-965: a module object's binding lives in a per-object fragment
+    # (`<mod>_ext_<obj>.c`, gh-729), and that fragment was not in the set this
+    # command rebuilds. Everything downstream of here is member-level and
+    # ADDITIVE — `_docsync` transplants docs and splices in missing bindings —
+    # so nothing could rewrite the one function whose text a structural change
+    # actually alters: `<Obj>_init`, which carries the constructor's `kwlist`.
+    #
+    # The result was that `jm add --state` on a module object left the kwlist
+    # at its old shape. jm *said so*, loudly and on stderr, and gated
+    # `status --check` on it (gh-612) — but the remedy it named ("reconcile the
+    # manifest with the binding, or keep the hand-written constructor in an
+    # _extra.c") is written for an author who hand-wrote that constructor, and
+    # here jm wrote it. Measured: deleting the fragment and re-applying
+    # produces the correct `kwlist[] = {"gain", "bias", NULL}`, which is what
+    # this now does.
+    #
+    # `discard` only. That is the flag whose prompt already says "This discards
+    # hand-written bodies", so a hand-written binding in the fragment is being
+    # given up with the same warning and the same confirmation as a
+    # hand-written `_core.c` body. Plain `jm regenerate` preserves, and is
+    # unchanged — it does not touch the fragment at all.
+    if discard and module:
+        _frag = (
+            root
+            / "native"
+            / "src"
+            / C.module_paths(module).cname
+            / f"{C.module_paths(module).cname}_ext_{component}.c"
+        )
+        if _frag.exists():
+            paths.append(_frag)
 
     core_h = root / "native" / "inc" / component / f"{component}_core.h"
     core_c = root / "native" / "src" / component / f"{component}_core.c"
