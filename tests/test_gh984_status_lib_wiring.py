@@ -584,3 +584,65 @@ def test_an_exemption_naming_no_core_is_still_stale(project: Path):
     r = _cli("status", cwd=project)
     assert "STALE ALLOW (1)" in r.stdout, r.stdout
     assert "CMakeLists.txt:ghost_core" in r.stdout
+
+
+# ── A core may ship in a library that is not <pkg>_lib (gh-991) ──────────────
+
+
+def _second_library(root: Path, kind: str, core: str) -> None:
+    """Declare an extra library built directly from *core*'s objects, the way
+    doppler builds `doppler_stream` — objects as `add_library` ARGUMENTS, not
+    via `target_sources`."""
+    cmake = root / "CMakeLists.txt"
+    cmake.write_text(
+        cmake.read_text(encoding="utf-8").replace(
+            "# ── Modules",
+            f"add_library(extra {kind}\n"
+            f"    $<TARGET_OBJECTS:{core}>)\n\n# ── Modules",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("kind", ["SHARED", "STATIC"])
+def test_a_core_in_a_second_library_is_not_unwired(
+    tmp_path: Path, project: Path, kind: str
+):
+    """doppler's shape, and two of its five findings were this.
+
+    `<pkg>_lib` is where jm would put a core, not the only place it may
+    legitimately live. A project that builds a second library — doppler's
+    `doppler_stream`, POSIX-only and optional — ships those symbols, and there
+    is nothing for a reader to do about which library they are in.
+    """
+    _unwire(project, "mpsk_core")
+    _second_library(project, kind, "mpsk_core")
+    r = _cli("status", "--check", cwd=project)
+    assert "UNWIRED" not in r.stdout, r.stdout
+    assert "mpsk_core" not in r.stdout, r.stdout
+
+
+def test_a_core_only_in_a_python_extension_is_STILL_unwired(project: Path):
+    """The exclusion that makes the above safe, and the one that would
+    silently retire this entire check if it were ever loosened.
+
+    Every core is linked into a Python extension — that is what jm builds. A
+    `MODULE` is not a library a C consumer can link, so counting one would
+    answer "shipped" for every component forever, which is precisely the
+    gh-981 state: reachable from Python, reachable from no C consumer. That is
+    the whole defect, so it gets its own test rather than a comment.
+    """
+    _unwire(project, "mpsk_core")
+    _second_library(project, "MODULE", "mpsk_core")
+    r = _cli("status", "--check", cwd=project)
+    assert "UNWIRED (1)" in r.stdout, r.stdout
+    assert "mpsk_core" in r.stdout
+
+
+def test_a_core_in_no_library_at_all_is_still_unwired(project: Path):
+    """The negative control: reading more places must not mean finding
+    everything shipped."""
+    _unwire(project, "mpsk_core")
+    r = _cli("status", "--check", cwd=project)
+    assert "UNWIRED (1)" in r.stdout, r.stdout

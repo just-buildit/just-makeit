@@ -74,6 +74,14 @@ _WIRING = re.compile(
 _WIRING_ANY = re.compile(
     r"^[ \t]*target_sources\((\w+) PRIVATE \$<TARGET_OBJECTS:(\w+)>\)", re.M
 )
+# gh-991: `add_library(NAME SHARED|STATIC …)` — the other way objects reach a
+# library, and the only way doppler's second library gets its two cores.
+# MODULE is excluded on purpose (see `shipped_cores`): counting a Python
+# extension would answer "shipped" for every core, forever.
+_DECLARES_SHIPPED_LIB = re.compile(
+    r"^[ \t]*add_library\(\s*(\w+)\s+(?:SHARED|STATIC)\b([^)]*)\)", re.M
+)
+_TARGET_OBJECTS = re.compile(r"\$<TARGET_OBJECTS:(\w+)>")
 
 
 def wiring_line(target: str, core: str) -> str:
@@ -136,6 +144,41 @@ def declared_cores(root: Path) -> dict[str, str]:
         for core in _DECLARES_CORE.findall(text):
             found[core] = cmake.parent.relative_to(src).as_posix()
     return found
+
+
+def shipped_cores(root: Path) -> set[str]:
+    """Cores that reach *some* shared or static library the project builds.
+
+    gh-991, and the fourth reader gap of the gh-988 family. Two assumptions
+    were baked in and both are wrong for a real project:
+
+    - **`<pkg>_lib{,_static}` are not the only libraries.** doppler builds a
+      second pair, `doppler_stream{,_static}`, and two cores live there and
+      nowhere else. They ship; the check called them unwired.
+    - **``target_sources`` is not the only way to fold objects in.** Those two
+      arrive as ``add_library(NAME SHARED $<TARGET_OBJECTS:X> …)`` arguments,
+      which the wiring scan does not read at all.
+
+    ``MODULE`` is deliberately excluded, and that exclusion is the whole
+    reason this cannot simply be "any target": a Python extension is a
+    ``MODULE``, every core is linked into one, and counting those would make
+    the check answer "yes" for every component forever — which is precisely
+    the gh-981 state, a symbol reachable from Python and from no C consumer.
+
+    ``OBJECT`` is excluded for the same reason one step earlier: an OBJECT
+    library is what is being *placed*, not somewhere to place it.
+    """
+    shipped: set[str] = set()
+    files = [root / "CMakeLists.txt"]
+    if (root / "native").is_dir():
+        files += sorted((root / "native").rglob("CMakeLists.txt"))
+    for path in files:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in _DECLARES_SHIPPED_LIB.finditer(text):
+            shipped |= set(_TARGET_OBJECTS.findall(m.group(2)))
+    return shipped
 
 
 def lib_targets(cmake_text: str, pkg: str) -> list[str]:
@@ -275,6 +318,7 @@ def unwired(root: Path, cfg: dict) -> list[Unwired]:
     if not targets:
         return []
     wired = {(t, c) for t, c in _WIRING_ANY.findall(text)}
+    shipped = shipped_cores(root)
     src = root / "native"
     if src.is_dir():
         for cmake in sorted(src.rglob("CMakeLists.txt")):
@@ -283,6 +327,12 @@ def unwired(root: Path, cfg: dict) -> list[Unwired]:
             )
     found = []
     for core, comp in sorted(declared_cores(root).items()):
+        # gh-991: a core that reaches SOME shared/static library is shipped,
+        # and there is nothing for a reader to do about which one. The finding
+        # is "the symbols are in no library"; `<pkg>_lib` is where jm would put
+        # them, not the only place they may legitimately be.
+        if core in shipped:
+            continue
         missing = tuple(t for t in targets if (t, core) not in wired)
         if missing:
             found.append(Unwired(core, comp, missing))
