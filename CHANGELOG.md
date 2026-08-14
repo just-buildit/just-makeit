@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- **`jm method` / `property` / `warning` / `error` silently did the wrong thing
+    on a module object when `--module` was omitted.** They consulted the flag
+    and nothing else, so its absence selected the *standalone* code path rather
+    than raising: the verb wrote the C stub, never touched the module's binding
+    fragment, printed `Done!` and exited 0. The project then **builds and
+    imports** with the member missing from the class — measured,
+    `hasattr(Gain, "scale")` was False on a tree that compiled cleanly. The
+    only signal was `jm status` reporting drift, which nothing prompts you to
+    run after a command that said `Done!` (gh-963).
+
+    The manifest has always recorded the owning module, and an object belongs
+    to at most one; `jm regenerate` was the one verb in the family that
+    behaved, because it resolved the owner that way. That resolution is now a
+    shared primitive, `C.resolve_module`. Passing `--module` still works and is
+    still validated, and inference is asserted to produce a byte-identical
+    fragment to the explicit flag.
+
+    **`jm add` is not fixed by this** — it fails on a module object for an
+    unrelated mechanism (body preservation restores the constructor's old
+    `kwlist`) and is filed as gh-965.
+
 - **`native/src/app/<name>.c` had no rule in the gh-949 create-only registry.**
     Nothing reported it — an unclassified path is never called outdated, which
     is the safe direction — but the derivation gate could not see it either,

@@ -873,6 +873,14 @@ def run(
     cfg = C.load(root)
 
     # Resolve which component this belongs to
+    # gh-963: the manifest already records which module owns this object,
+    # so `--module` is a confirmation rather than the only way jm can know.
+    # Without this the branch below fell through to the standalone path on a
+    # module-owned object: the verb wrote the C stub, never touched the
+    # module's binding fragment, printed `Done!`, and left a project that
+    # compiles and imports with the member missing from the class.
+    module = C.resolve_module(cfg, object_name, module)
+
     all_comps = C.components(cfg)
     if module:
         mod_objs = C.module_objects(cfg, module)
@@ -897,8 +905,9 @@ def run(
     if view:
         if not module:
             print(
-                "error: --view requires --module (views are a module-object "
-                "feature).",
+                f"error: object '{object_name}' is standalone, so it cannot have a\n"
+                "  view — views are a module-object feature (gh-504). "
+                "Move the object into a\n  module, or drop --view.",
                 file=sys.stderr,
             )
             sys.exit(1)

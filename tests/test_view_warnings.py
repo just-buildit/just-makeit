@@ -155,7 +155,10 @@ class TestScaffold:
 
 
 class TestSurvivesRegeneration:
-    def test_view_requires_module(self, tmp_path, capsys):
+    # gh-963: see the note in tests/test_views.py. Omitting `--module` on a
+    # module-owned object is no longer an error — the manifest knows the owner.
+    # The guard is kept where it still means something.
+    def test_view_on_a_standalone_object_is_rejected(self, tmp_path, capsys):
         dest = tmp_path / "p2"
         new_run("p2", dest, [], [])
         module_run(dest, "eng")
@@ -164,7 +167,22 @@ class TestSurvivesRegeneration:
                 dest, "widget", "eng", [("ready", "int", "0")], no_step=True
             )
             view_run(dest, "widget", "Gadget", "eng", "widget_forge_gadget")
+            object_run(
+                dest, "solo", None, [("ready", "int", "0")], no_step=True
+            )
         with pytest.raises(SystemExit):
+            warning_run(dest, "solo", "ready", "x", view="Gadget")
+        assert "is standalone" in capsys.readouterr().err
+
+    def test_a_module_owned_view_no_longer_needs_the_flag(self, tmp_path):
+        dest = tmp_path / "p3"
+        new_run("p3", dest, [], [])
+        module_run(dest, "eng")
+        with contextlib.redirect_stdout(io.StringIO()):
+            object_run(
+                dest, "widget", "eng", [("ready", "int", "0")], no_step=True
+            )
+            view_run(dest, "widget", "Gadget", "eng", "widget_forge_gadget")
             warning_run(dest, "widget", "ready", "x", view="Gadget")
 
     def test_apply_restores_view_warning(self, project):

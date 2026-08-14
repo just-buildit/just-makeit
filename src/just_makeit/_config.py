@@ -695,6 +695,34 @@ def component_module(cfg: dict, component: str) -> str | None:
     return None
 
 
+def resolve_module(
+    cfg: dict, component: str, declared: str | None = None
+) -> str | None:
+    """Which module a mutating verb should regenerate for *component*.
+
+    *declared* is the command's ``--module``. When it is absent this falls back
+    to :func:`component_module`, so the flag is a confirmation rather than the
+    only way jm can know — which it never was: the manifest records the owner,
+    and an object belongs to at most one module.
+
+    **This exists because five verbs treated the flag as the only source of
+    truth and silently did the wrong thing without it** (gh-963). `jm method
+    gain scale` on a module-owned `gain` took the *standalone* path: it wrote
+    the C stub and the benchmark, never touched the module's binding fragment,
+    printed ``Done!``, and left a project that compiles and imports with no
+    `.scale()` on the class. The only signal was `jm status` reporting drift,
+    which nothing prompted the user to run.
+
+    `jm regenerate` already resolved it this way, which is why it was the one
+    verb in the family that behaved. One primitive, so the next verb to need
+    it cannot get a sixth private answer.
+
+    Returns None for a standalone component — the same value ``--module``'s
+    absence carried before, so the standalone paths are unchanged.
+    """
+    return declared or component_module(cfg, component)
+
+
 def scaffold_module(cfg: dict, module: str) -> dict:
     """Add an empty module entry (no objects yet)."""
     cfg.setdefault("module", {})[module] = {"objects": []}

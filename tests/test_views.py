@@ -733,19 +733,34 @@ class TestDivergingSurfaces:
         _view.run(dest, "acq", "V", "dsp", "acq_make")
         return dest
 
-    def test_property_view_requires_module(self, tmp_path):
+    # gh-963: these asserted that omitting `--module` on a MODULE-owned object
+    # was an error. It never should have been — the manifest records the owner
+    # — and treating the flag as the only source of truth is precisely what let
+    # `jm method` take the standalone path and emit a class without the member.
+    # The guard survives where it means something: a view on a genuinely
+    # STANDALONE object, which cannot have one.
+    def test_property_view_on_a_standalone_object_is_rejected(self, tmp_path):
         dest = self._module_object_with_view(tmp_path)
-        with pytest.raises(SystemExit):  # --view without --module
+        object_run(dest, "solo", None, [("s", "double", "0.0")])
+        with pytest.raises(SystemExit):
             property_run(
-                dest, "acq", "x", None, "size_t", False, field=True, view="V"
+                dest, "solo", "x", None, "size_t", False, field=True, view="V"
             )
 
-    def test_method_view_requires_module(self, tmp_path):
+    def test_method_view_on_a_standalone_object_is_rejected(self, tmp_path):
         dest = self._module_object_with_view(tmp_path)
+        object_run(dest, "solo", None, [("s", "double", "0.0")])
         with pytest.raises(SystemExit):
             method_run(
-                dest, "acq", "x", None, "void", "void", False, [], view="V"
+                dest, "solo", "x", None, "void", "void", False, [], view="V"
             )
+
+    def test_a_module_owned_view_no_longer_needs_the_flag(self, tmp_path):
+        """The behaviour change the two tests above used to forbid."""
+        dest = self._module_object_with_view(tmp_path)
+        method_run(dest, "acq", "x", None, "void", "void", False, [], view="V")
+        frag = (dest / "native/src/dsp/dsp_ext_v.c").read_text()
+        assert "V_x" in frag
 
     def test_method_rejects_missing_view(self, tmp_path):
         dest = self._module_object_with_view(tmp_path)
