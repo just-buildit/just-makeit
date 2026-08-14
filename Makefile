@@ -316,8 +316,31 @@ pyproject.toml|grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'
 bootstrap.toml|grep '^version' bootstrap.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'
 endef
 
+# Every file a release commit touches, written HERE — not left for the
+# pre-commit hooks to discover.
+#
+# This used to sed `pyproject.toml` alone, so the `sync-version` and `uv-lock`
+# hooks then rewrote `bootstrap.toml` and `uv.lock` and **aborted the first
+# `git commit` of every release**. That was survivable (re-run the identical
+# commit and it passes) and it had been survived often enough to be written
+# into the release runbook as expected behaviour — which is the tell that it
+# had stopped being read as a defect.
+#
+# It was never harmless. A hook that aborts a commit does not stop the next
+# command in the script, so `git commit -am ... ; git push` pushes the
+# UNCHANGED head — the exact foot-gun the runbook warns about two paragraphs
+# later, armed by this line. And "the release commit is four files, two means
+# you pushed a half-bump" is a rule that only exists because the bump did not
+# write four files.
+#
+# `--exit-zero` on sync_version keeps the write and drops the pre-commit
+# convention of exiting 1 on change; the hook still calls it without the flag,
+# so the gate is unchanged. `uv lock` is idempotent when the version already
+# matches, so re-running the bump is free.
 BUMP_VERSION_CMD = sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' \
-                       pyproject.toml
+                       pyproject.toml && \
+                   $(DEV_RUN) python scripts/sync_version.py --exit-zero && \
+                   $(UV) lock --quiet
 # Autonomously watch release.yml: stream job outcomes, auto-rerun ONE
 # pre-publish flake (safe — publish is gated behind smoke), and verify the real
 # artifacts (PyPI per-version then latest, GitHub Release) at the end.

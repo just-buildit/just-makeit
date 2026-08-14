@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`make bump-version` now writes every file that carries the version, so the
+    first release commit no longer aborts.** It edited `pyproject.toml` alone,
+    leaving the `sync-version` and `uv-lock` hooks to rewrite `bootstrap.toml`
+    and `uv.lock` at commit time — which fails the commit. Re-running the
+    identical commit worked, so it was survivable, and it had been survived
+    often enough to be written into the release runbook as expected behaviour.
+
+    It was never harmless: a hook that aborts a commit does not stop the next
+    command, so `git commit -am … ; git push` pushes the **unchanged** head.
+    The rule "the release commit is four files; two means you pushed a
+    half-bump" existed only because the bump did not write four files.
+
+    `scripts/sync_version.py` gained `--exit-zero` (keep the write, drop the
+    pre-commit convention of exiting 1 on change) and `--root` so the bump can
+    be exercised against a throwaway copy in the test suite rather than by a
+    check that reads the Makefile and agrees with itself.
+
 ## [0.59.0] — 2026-08-14
 
 ### Fixed
