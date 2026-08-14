@@ -21,6 +21,13 @@
     Wiring keys are now validated rather than skipped: an entry naming a core
     no component declares is the genuinely stale case and is still reported.
 
+- **Two CLI-driven test files contributed no coverage** — their subprocess
+    helper *replaced* the environment rather than merging it, dropping
+    `COVERAGE_PROCESS_START` and `COVERAGE_FILE`, so everything they drove
+    through the CLI was instrumented and then discarded. gh-978's defect one
+    layer out: not the Makefile this time, but a test helper. Found by
+    `codecov/patch` failing on code the suite plainly exercises.
+
 - **A core that ships in a library other than `<pkg>_lib` was reported as
     reaching none** (gh-991). The fourth reader gap of the gh-988 family, and
     it had two halves — `_libwiring` treated `<pkg>_lib{,_static}` as the only
