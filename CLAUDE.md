@@ -91,7 +91,7 @@ the user only writes the DSP algorithm.
 | `_status.py`         | `just-makeit status` / `--check` — reports manifest-vs-tree drift                                                                                                                |
 | `_createonly.py`     | Which create-only files can be *behind* (`OUTDATED`) and which merely differ from their scaffold                                                                                 |
 | `_regenerate.py`     | `just-makeit regenerate <component>` — rebuilds one component's glue                                                                                                             |
-| `_migrate.py`        | `just-makeit migrate-to-fragments` — splits a monolithic `_ext.c`                                                                                                                |
+| `_migrate.py`        | `just-makeit migrate-to-fragments` — moves `[obj]`/`[module.X]` out of the central manifest into `objects/*.toml` + `modules/*.toml` (TOML only; it never touches C)             |
 | `_view.py`           | `just-makeit view` — a second Python class over one C core (gh-504)                                                                                                              |
 | `_cli_view.py`       | CLI handler for `just-makeit view`                                                                                                                                               |
 | `_glue.py`           | Regenerates a component's Python glue from the manifest                                                                                                                          |

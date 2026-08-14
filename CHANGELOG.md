@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`native/src/app/<name>.c` had no rule in the gh-949 create-only registry.**
+    Nothing reported it — an unclassified path is never called outdated, which
+    is the safe direction — but the derivation gate could not see it either,
+    because its project shapes did not include one built with `jm app`. Added
+    the shape, and the gate then named the file on its own. It classifies as
+    `RECONCILED`, against the first guess: `[app]` is in the manifest, so a
+    replay re-runs the verb and `apply` rewrites the file wholesale. That the
+    file's own banner invites the author to edit it anyway is gh-962.
+
 ### Added
 
 - **`jm status` reports WHICH create-only files are behind, as `OUTDATED`.**
@@ -27,6 +38,18 @@
     note now says so.
 
 ### Docs
+
+- **Turning on `c_format_command` in an existing project needs one
+    `jm apply`.** There is no `jm config` key for it, so the opt-in is a
+    hand-edit to `just-makeit.toml` — and formatting only happens after a
+    command that emits C, so declaring it leaves the committed binding
+    4-space while the tree `status` compares it against is now house-styled.
+    The next `jm status --check` exits 1 on a tree nobody touched. `jm apply`
+    clears it permanently; `docs/configuration.md` now says so (gh-958).
+
+- **`CLAUDE.md` described `_migrate.py` as splitting a monolithic `_ext.c`.**
+    It moves manifest sections into `objects/*.toml` and `modules/*.toml` and
+    never touches C. Found while auditing which CLI commands emit C.
 
 - **`make tidy` was documented as the opposite of what ships.**
     `docs/commands/build.md` stated in bold that the scaffolded `.clang-tidy`

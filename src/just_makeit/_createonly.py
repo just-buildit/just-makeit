@@ -228,6 +228,14 @@ RULES: tuple[Rule, ...] = (
         "regenerated per component from the manifest.",
     ),
     Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
+    Rule(
+        "native/src/app/*",
+        RECONCILED,
+        "`jm app`'s executable. Classified from the measurement, against the"
+        " first guess: `[app]` is in the manifest, so a replay re-runs the"
+        " verb and `apply` rewrites the file wholesale. Its banner invites"
+        " the author to edit it anyway and nothing preserves that — gh-962.",
+    ),
     Rule("src/*/*.pyi", RECONCILED, "generated type stubs."),
 )
 
