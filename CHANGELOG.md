@@ -22,6 +22,16 @@
     was chosen *after* the write, so `exists()` was trivially true. Found while
     reading the write site for the above.
 
+- **`jm_simd.h`'s usage example is fenced with `@code`/`@endcode`.** Unfenced,
+    doxygen rendered it as prose, mkdoxy emitted it as prose, and CommonMark
+    read the `[k]` in `coeffs[k]` as a shortcut link reference with no
+    definition — failing a downstream `zensical build --strict` (gh-968).
+    `jm_simd.h` is create-only, so an existing project adopts the fix itself;
+    `jm status` now reports it as `OUTDATED` (gh-949).
+
+    Scope measured rather than assumed: three headers carry indented example
+    blocks, and only this one sits in a `/**` block a renderer ever sees.
+
 - **`jm add` on a module object now reaches the constructor.** A module
     object's binding lives in a per-object fragment (`<mod>_ext_<obj>.c`), and
     that fragment was not in the set `jm regenerate` rebuilds. Everything
