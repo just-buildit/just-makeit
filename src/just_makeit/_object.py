@@ -281,7 +281,14 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     Doxygen) falls back to the name-based stub, preserving idempotence.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
-    header = doc_root / "native" / "inc" / module / f"{module}_core.h"
+    # gh-983: the header is named for the cname, not the dotted id. Using the
+    # id made this the quietest member of that family — the header is simply
+    # not found, the documented `{}` fallback fires, and every function in a
+    # dotted module gets the name-based stub docstring while its authored
+    # Doxygen sits in the header unread. Nothing fails; the docs are just
+    # worse, forever.
+    cname = C.module_paths(module).cname
+    header = doc_root / "native" / "inc" / cname / f"{cname}_core.h"
     if not header.exists():
         return {}
     raw = extract_doc_blocks(header.read_text(encoding="utf-8"))

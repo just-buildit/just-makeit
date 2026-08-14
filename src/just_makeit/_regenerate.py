@@ -35,7 +35,7 @@ from ._remove import _confirm, _object_paths, _rm
 
 
 def _stale_ext_modules(
-    root: Path, pkg: str, component: str, module: str | None
+    root: Path, cfg: dict, pkg: str, component: str, module: str | None
 ) -> list[Path]:
     """Return pre-built extension-module files for *component*.
 
@@ -45,11 +45,21 @@ def _stale_ext_modules(
     1-second resolution on the build artefact that was produced by an earlier
     cmake run and may be seen as 'newer' than the freshly-regenerated sources
     on some runners).
+
+    gh-983: the module's three names are all different here and this used the
+    dotted id for both halves. The directory is the ``pypath`` (``dsp/filters``)
+    — or the gh-523 ``package`` override, which aims it at a sibling package
+    entirely — and the file is named for the ``leaf`` (``filters``), since
+    that is what CMake's ``OUTPUT_NAME`` sets. So the path it built existed for
+    no project, it found nothing to delete, and the guarantee this function is
+    the whole point of quietly did not hold.
     """
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     if module:
-        # Module objects share a single .so named after the module.
-        so = root / "src" / pkg / module / f"{module}{suffix}"
+        # Module objects share a single .so named after the module's leaf.
+        mp = C.module_paths(module)
+        out_pkg = C.module_package(cfg, module) or mp.pypath
+        so = root / "src" / pkg / out_pkg / f"{mp.leaf}{suffix}"
     else:
         so = root / "src" / pkg / f"{component}{suffix}"
     return [so] if so.exists() else []
@@ -208,6 +218,6 @@ def run(
             _apply.run(root)
 
     # Delete any pre-built extension module so cmake is forced to relink.
-    for so in _stale_ext_modules(root, pkg, component, module):
+    for so in _stale_ext_modules(root, cfg, pkg, component, module):
         so.unlink()
         print(f"  remove  {so}  (stale build artefact; cmake will rebuild)")

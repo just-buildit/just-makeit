@@ -43,6 +43,28 @@
     what an interrupted removal or a bad merge leaves — matched nothing and
     survived every apply.
 
+- **A dotted module id was used as a filesystem path in four places, so
+    `jm function --module dsp.filters` crashed and three quieter things went
+    wrong.** `C.module_paths(id)` splits the name into `cname` (`dsp_filters`:
+    the native directory and every C identifier), `leaf` (`filters`: the `.so`
+    basename), and `pypath` (`dsp/filters`: the Python package). The dotted id
+    itself names nothing on disk (gh-983).
+
+    | site                   | how it failed                                                                                                                                       |
+    | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `jm function`          | **traceback** — opened `native/inc/dsp.filters/dsp.filters_core.h`, which `jm module` never wrote                                                   |
+    | `jm remove --function` | silent — deleted a `.c` that was never at that path, stripped a header it never opened                                                              |
+    | `jm regenerate`        | silent — found no stale `.so`, so the unconditional relink it exists to guarantee did not happen                                                    |
+    | docstring derivation   | silent — the documented "header absent" fallback fired, and every function in a dotted module got a name-based stub instead of its authored Doxygen |
+
+    Only the first raised, and it raised on the *creating* side — which is the
+    only reason the other three were never reached: a dotted module could not
+    have a module-level function at all, so nothing downstream could be
+    observed. Fixing the loud one is what put the other three in reach.
+
+    `jm regenerate` also learnt the gh-523 `package` override while it was
+    there, since the `.so` a module builds lands wherever that points.
+
 - **A module's own C core was folded into no library, so its symbols shipped
     in neither `lib<pkg>.so` nor `lib<pkg>.a`.** A module whose C surface is
     module-level *functions* keeps every symbol in `<mod>_core` — and nothing

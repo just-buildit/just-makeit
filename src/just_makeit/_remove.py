@@ -708,9 +708,16 @@ def _remove_function(
     # entirely in <mod>_core.h as a static-inline body, which we leave (the
     # user may have written real code there).
     inline = bool(entry.get("inline"))
-    core_h = root / "native" / "inc" / module / f"{module}_core.h"
+    # gh-983: the cname names the native dir and the header, the dotted id is
+    # the manifest key. This read the id for both, so removing a function from
+    # a dotted module deleted nothing and stripped nothing — silently, since
+    # `fn_c.exists()` is False for a path that was never written and
+    # `_strip_decl_from_header` on a missing file is a no-op. The creating side
+    # crashed outright, which is the only reason this half was never reached.
+    cname = C.module_paths(module).cname
+    core_h = root / "native" / "inc" / cname / f"{cname}_core.h"
     if not inline:
-        fn_c = root / "native" / "src" / module / f"{name}.c"
+        fn_c = root / "native" / "src" / cname / f"{name}.c"
         if fn_c.exists():
             fn_c.unlink()
             print(f"  delete  {fn_c}")
@@ -720,7 +727,7 @@ def _remove_function(
     _regenerate_module(root, cfg, module, pkg)
     print()
     note = (
-        f"\n  note: {name}() remains as a static inline in {module}_core.h"
+        f"\n  note: {name}() remains as a static inline in {cname}_core.h"
         " — delete it by hand."
         if inline
         else ""
