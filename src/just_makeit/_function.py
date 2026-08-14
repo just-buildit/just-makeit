@@ -7,11 +7,17 @@ Adds a module-level C function to an existing module.
     just-makeit function window_kaiser    --module fft
 
 The C implementation stub is written to its own sacred source file at
-native/src/{module}/{fn_name}.c and the declaration is injected into
-native/inc/{module}/{module}_core.h.  The module CMakeLists compiles every
+native/src/{cname}/{fn_name}.c and the declaration is injected into
+native/inc/{cname}/{cname}_core.h.  The module CMakeLists compiles every
 such per-function .c into the module's OBJECT library.  The Python wrapper
-(_bind_{fn_name}) is generated into {module}_ext.c the next time
+(_bind_{fn_name}) is generated into {cname}_ext.c the next time
 _regenerate_module runs (called here after updating the config).
+
+`{cname}` is the module's id with dots replaced by underscores
+(`C.module_paths(id).cname`) — it names every native directory and C
+identifier, while the dotted id stays a manifest key. The helpers below take
+the cname for that reason, and gh-983 is what happens when they are handed
+the id instead: `dsp.filters` addressed a directory `jm module` never wrote.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ FnParam = Union[
 
 def _write_function_c(
     path: Path,
-    module: str,
+    cname: str,
     fn_name: str,
     params: list[FnParam],
     return_type: str,
@@ -75,9 +81,9 @@ def _write_function_c(
         stub = I.inject_body_into_stub(stub, impl_body)
     text = (
         f"/*\n"
-        f" * {fn_name}.c — {module} module-level function.\n"
+        f" * {fn_name}.c — {cname} module-level function.\n"
         f" */\n"
-        f'#include "{module}/{module}_core.h"\n\n'
+        f'#include "{cname}/{cname}_core.h"\n\n'
         f"{stub}"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +96,7 @@ def _inject_into_core_h(
     fn_name: str,
     params: list[FnParam],
     return_type: str,
-    module: str,
+    cname: str,
     out_type: str = "",
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
@@ -115,7 +121,7 @@ def _inject_into_core_h(
             cplusplus_end, f"{decl}\n\n{cplusplus_end}"
         )
     else:
-        marker = f"#endif /* {module.upper()}_CORE_H */"
+        marker = f"#endif /* {cname.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{decl}\n{marker}")
     path.write_text(existing, encoding="utf-8")
     print(f"  update  {path}")
@@ -126,7 +132,7 @@ def _inject_inline_into_core_h(
     fn_name: str,
     params: list[FnParam],
     return_type: str,
-    module: str,
+    cname: str,
 ) -> None:
     """Inject a ``static inline`` body stub into ``_core.h``.
 
@@ -142,7 +148,7 @@ def _inject_inline_into_core_h(
             cplusplus_end, f"{stub}\n\n{cplusplus_end}"
         )
     else:
-        marker = f"#endif /* {module.upper()}_CORE_H */"
+        marker = f"#endif /* {cname.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{stub}\n{marker}")
     path.write_text(existing, encoding="utf-8")
     print(f"  update  {path}")
@@ -238,10 +244,19 @@ def run(
 
     params = params or []
 
-    fn_c = root / "native" / "src" / module / f"{fn_name}.c"
-    core_h = root / "native" / "inc" / module / f"{module}_core.h"
+    # gh-983: the module's `cname` — dots to underscores — is what names the
+    # native directory, the header, and every C identifier; the dotted id is
+    # only a manifest key. This function used the dotted id for all of them,
+    # so `jm function --module dsp.filters` looked for
+    # `native/inc/dsp.filters/dsp.filters_core.h`, which `jm module` had never
+    # written, and died with a traceback. The split is `C.module_paths`, the
+    # same call `_module.run` makes when it writes those files.
+    cname = C.module_paths(module).cname
 
-    core_c = root / "native" / "src" / module / f"{module}_core.c"
+    fn_c = root / "native" / "src" / cname / f"{fn_name}.c"
+    core_h = root / "native" / "inc" / cname / f"{cname}_core.h"
+
+    core_c = root / "native" / "src" / cname / f"{cname}_core.c"
     # gh-247: a module may opt to keep all its free functions in one TU
     # (<module>_core.c) rather than one .c per function.
     in_core = C.functions_in_core(cfg, module)
@@ -251,22 +266,20 @@ def run(
     # the warning would be spurious.
     if core_c.exists() and not in_core and not inline:
         core_text = core_c.read_text(encoding="utf-8")
-        full_name = f"{module}_{fn_name}"
+        full_name = f"{cname}_{fn_name}"
         if full_name in core_text:
             print(
                 f"WARNING: '{full_name}' appears to be implemented in "
                 f"{core_c.relative_to(root)}.\n"
                 f"  The new stub {fn_name}.c will define it too — "
-                f"remove the body from {module}_core.c to avoid a\n"
+                f"remove the body from {cname}_core.c to avoid a\n"
                 f"  duplicate-symbol linker error.",
                 file=sys.stderr,
             )
 
     if inline:
         # Inline functions live entirely in the header — no .c entry.
-        _inject_inline_into_core_h(
-            core_h, fn_name, params, return_type, module
-        )
+        _inject_inline_into_core_h(core_h, fn_name, params, return_type, cname)
     elif in_core:
         # gh-247: append the stub to the shared <module>_core.c (which already
         # includes the header), exactly like `jm method` appends to an object
@@ -295,7 +308,7 @@ def run(
             fn_name,
             params,
             return_type,
-            module,
+            cname,
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
@@ -305,7 +318,7 @@ def run(
         # Each function gets its own sacred <fn_name>.c translation unit.
         _write_function_c(
             fn_c,
-            module,
+            cname,
             fn_name,
             params,
             return_type,
@@ -322,7 +335,7 @@ def run(
             fn_name,
             params,
             return_type,
-            module,
+            cname,
             out_type=out_type,
             result_fields=result_fields,
             max_results_param=max_results_param,
