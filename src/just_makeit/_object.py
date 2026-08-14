@@ -29,10 +29,14 @@ from . import _render as R
 from . import _stubs as S
 from . import _types as T
 from ._init import (
+    MODULES_SENTINEL,
     _make_component_ctx,
     _to_title,
     _write,
+    component_core_libs,
+    dep_core_libs as _dep_core_libs,
     ensure_parent_packages,
+    splice_cmake_component as _splice_cmake_component,
 )
 from ._docstring import (
     DoxyBlock,
@@ -1863,6 +1867,23 @@ def _regenerate_module_now(
         collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
         "update",
     )
+    # gh-981: reconcile the module's combined-library wiring against the file
+    # just written. This is the self-heal for a project scaffolded before the
+    # module path emitted any — `jm function`, `jm method`, `jm object
+    # --module` and `jm view` all land here, so the first command to touch such
+    # a module fixes it without waiting for `jm apply`. Idempotent, and the
+    # cores are read back out of the CMakeLists, so a module that has just lost
+    # its last core (a collocated object took over the `add_library`) adds
+    # nothing. Whole-module removal never reaches this function — it deletes the
+    # directory and calls `_strip_cmake_module` instead — so this cannot
+    # resurrect wiring a removal stripped.
+    _splice_cmake_component(
+        root,
+        pkg,
+        cname,
+        component_core_libs(root, cname),
+        sentinel=MODULES_SENTINEL,
+    )
 
     # Subpackage __init__.py — merge new exports into existing file so that
     # user-written wrapper classes and docstrings are not destroyed.
@@ -2425,51 +2446,9 @@ def run(
     # These two operations are independent: a same-name module (module.agc with
     # object "agc") may have the add_subdirectory already present from the
     # `just-makeit module` step, but the target_sources lines still need adding.
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        cmake_text = cmake_path.read_text(encoding="utf-8")
-        changed = False
-        sub = f"add_subdirectory(native/src/{comp})\n"
-        if sub not in cmake_text:
-            sentinel = "# ── Components"
-            if sentinel in cmake_text:
-                idx = cmake_text.index(sentinel)
-                idx = cmake_text.index("\n", idx) + 1
-                cmake_text = cmake_text[:idx] + sub + cmake_text[idx:]
-            else:
-                cmake_text += sub
-            changed = True
-        obj_lines = ""
-        for dep in C.dep_names(depends_on):
-            # gh-130: strip a trailing _core suffix so callers can write
-            # depends_on = ["lo_core"] without getting lo_core_core.
-            dep_name = dep[:-5] if dep.endswith("_core") else dep
-            ts = (
-                f"target_sources({pkg}_lib PRIVATE "
-                f"$<TARGET_OBJECTS:{dep_name}_core>)\n"
-            )
-            if ts not in cmake_text:
-                obj_lines += (
-                    ts + f"target_sources({pkg}_lib_static PRIVATE "
-                    f"$<TARGET_OBJECTS:{dep_name}_core>)\n"
-                )
-        ts = f"target_sources({pkg}_lib PRIVATE $<TARGET_OBJECTS:{comp}_core>)\n"
-        if ts not in cmake_text:
-            obj_lines += (
-                ts + f"target_sources({pkg}_lib_static PRIVATE "
-                f"$<TARGET_OBJECTS:{comp}_core>)\n"
-            )
-        if obj_lines:
-            sub_idx = cmake_text.find(sub)
-            if sub_idx != -1:
-                ins = cmake_text.index("\n", sub_idx) + 1
-                cmake_text = cmake_text[:ins] + obj_lines + cmake_text[ins:]
-            else:
-                cmake_text += obj_lines
-            changed = True
-        if changed:
-            cmake_path.write_text(cmake_text, encoding="utf-8")
-            print(f"  update  {cmake_path}")
+    _splice_cmake_component(
+        root, pkg, comp, _dep_core_libs(depends_on) + [f"{comp}_core"]
+    )
 
     # Umbrella header
     umbrella = root / "native" / "inc" / f"{pkg}.h"

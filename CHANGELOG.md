@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A module's own C core was folded into no library, so its symbols shipped
+    in neither `lib<pkg>.so` nor `lib<pkg>.a`.** A module whose C surface is
+    module-level *functions* keeps every symbol in `<mod>_core` — and nothing
+    emitted the `target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:<mod>_core>)`
+    line that folds it in. The core still compiled, the Python extension still
+    linked it directly, the tests still passed, and `jm status --check` still
+    exited 0; the only observer was a C consumer, who got `undefined   reference` (gh-981).
+
+    The emitter had forked into three copies that each shipped a different
+    subset, so which of a project's cores reached which library came down to
+    the order the generators happened to run in:
+
+    | path                   | `<pkg>_lib` | `<pkg>_lib_static` |
+    | ---------------------- | ----------- | ------------------ |
+    | standalone object      | yes         | **no**             |
+    | object inside a module | yes         | yes                |
+    | a module's own core    | **no**      | **no**             |
+
+    So this was never only the module case. **Every** project shipped a static
+    archive holding nothing but `<pkg>_version` — `_init.py` emitted the shared
+    line and returned, and `_object.py`'s copy, which emits the pair, checked
+    for the shared line first and skipped both. A module object was wired only
+    because `_init.py`'s splice does not run on that path.
+
+    There is now one emitter. Which library targets exist is read back out of
+    the root `CMakeLists.txt` rather than assumed, and which cores a component
+    contributes is read out of its own generated `CMakeLists.txt` — so a
+    capsule/handle/composer module (no core of its own), a module named after
+    one of its objects (the object supplies the `add_library`), and a
+    `no_generate` module's hand-written file are all right without a table of
+    which kinds have a core.
+
+    Existing projects: `jm apply` splices the missing wiring, and any command
+    that regenerates a module — `jm function`, `jm method`, `jm object   --module`, `jm view` — now heals it in passing. `jm remove <module>` learnt
+    to strip the wiring it never used to emit; leaving one behind names a
+    deleted target and fails at *configure* time.
+
 ## [0.59.1] — 2026-08-14
 
 ### Fixed
