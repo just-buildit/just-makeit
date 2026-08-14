@@ -9,10 +9,12 @@
  *
  * Typical usage (FIR inner loop):
  *
+ * @code
  *   JM_VEC_F32 acc = JM_ZERO_F32();
  *   for (int k = 0; k < N_TAPS; k++)
  *       JM_MAC_F32(acc, window + k, coeffs[k]);
  *   *out = JM_HSUM_F32(acc);
+ * @endcode
  *
  * JM_SIMD_WIDTH_F32 tells you how many floats the loop above advances
  * per iteration — stride your outer loop accordingly.
