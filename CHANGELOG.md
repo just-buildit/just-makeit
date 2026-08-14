@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- **`docs/configuration.md` shipped an unresolved merge conflict, and it was
+    live on the docs site.** Three artifacts from 2026-08-04, rendering as page
+    content for ten days and several releases (gh-974).
+
+    They survived every `make lint` because **mdformat normalises the markers
+    rather than refusing them**, so each pass made the corruption less visible:
+    `<<<<<<< HEAD` became `\<<\<<\<<< HEAD`, `>>>>>>> <sha>` became seven
+    nested blockquotes, and `=======` — a line of `=` under text — was read as
+    a **setext heading underline** and silently promoted the sentence above it
+    to a top-level `#`, inside the page's table of contents.
+
+    Fixed, and gated: `make lint` now fails on a conflict marker in any tracked
+    text file, matching the mdformat-rewritten forms as well as the raw ones. A
+    marker indented inside a fenced code block still passes — the changelog
+    quotes one in a worked example, and git never writes one indented.
+
 - **A top `CMakeLists.txt` with no `# ── Modules` anchor lost its module
     wiring, silently.** Every cmake splice locates its sentinel by string and
     treats an absent one as nothing to do, and that return value is
