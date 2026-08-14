@@ -466,6 +466,14 @@ def run(
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
         ]
+        # gh-975: the other half of what the replay knows about a create-only
+        # file — not "is it behind" but "can jm still write into it". Same
+        # operands as `outdated` above and for the same reason: the real root,
+        # inside the temp tree's lifetime.
+        unanchored_entries = [
+            (p, a, _is_allowed(p, allow_patterns))
+            for (p, a) in _createonly.missing_anchors(root, replay_root)
+        ]
 
         for rel in _walk_managed(scratch):
             real = root / rel
@@ -663,6 +671,14 @@ def run(
         # The stub it writes parses, so the next status run is clean over a
         # tree that has lost members no manifest can put back.
         + len(unparseable_entries)
+        # gh-975: gates, unlike the OUTDATED beside it, and the difference is
+        # whether the reader can do anything. An outdated create-only file is
+        # jm's opinion about a file that works; a missing anchor is a write
+        # that did not happen — the module has no `add_subdirectory`, so the
+        # extension is not built at all — and putting the line back clears it.
+        # Suppressible by name, for a project that wires its own targets and
+        # means to.
+        + sum(1 for e in unanchored_entries if not e[2])
     )
 
     if as_json:
@@ -730,6 +746,13 @@ def run(
                     "outdated": [
                         {"path": p, "allowed": a}
                         for (p, a) in outdated_entries
+                    ],
+                    # gh-975: a splice anchor jm renders and the file lacks,
+                    # so the wiring it carries was never written. Counted,
+                    # unlike `outdated` above — see `drift_count`.
+                    "unanchored": [
+                        {"path": p, "anchor": a, "allowed": al}
+                        for (p, a, al) in unanchored_entries
                     ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
@@ -926,6 +949,30 @@ def run(
         )
         print()
 
+    # gh-975: printed on both paths for OUTDATED's reason, and counted for the
+    # opposite one — this is a write that did not happen, not an opinion about
+    # a file that works.
+    if unanchored_entries:
+        print(
+            f"UNANCHORED ({len(unanchored_entries)}) — jm cannot write into "
+            "these; the wiring is missing:"
+        )
+        for p, anchor, al in unanchored_entries:
+            tag = " [status_allow]" if al else ""
+            print(f"  ⚓ {p}: no `{anchor}` line{tag}")
+        print(
+            "  jm splices in after that line and treats its absence as"
+            " nothing to do, so\n"
+            "  what belongs there was never written — a module with no"
+            " add_subdirectory()\n"
+            "  is not built at all. Put the line back (jm's scaffold has it"
+            " after\n"
+            "  `enable_testing()`), or keep that wiring yourself and name the"
+            " file in\n"
+            "  [project] status_allow."
+        )
+        print()
+
     # gh-806: same "impossible to miss" treatment, and for the sharpest
     # version of the same reason — every other listing here describes
     # something that is visibly wrong somewhere. This one describes a tree
@@ -1109,6 +1156,11 @@ def run(
         # would be right and unread.
         and not any(not _orphan_allowed[o.rel] for o in _orphans)
         and not unparseable_entries
+        # gh-975: and for the same reason again. "OK — up to date" over a
+        # project whose module has no add_subdirectory() is the exact sentence
+        # that issue is about — it was said, twice, over a tree where cmake
+        # had zero targets for the module.
+        and not any(not e[2] for e in unanchored_entries)
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -1139,6 +1191,15 @@ def run(
         _out = (
             f"; {len(outdated_entries)} outdated" if outdated_entries else ""
         )
+        # gh-975: only an allowed one reaches this branch — an unsuppressed
+        # anchor gap gates and never gets here. Named anyway, on gh-767's
+        # rule: exempt from the gate is not the same as in sync, and this
+        # exemption means jm is not maintaining wiring it believes it owns.
+        _anch = (
+            f"; {len(unanchored_entries)} unanchored (allowed)"
+            if unanchored_entries
+            else ""
+        )
         # gh-949: name what was NOT compared.
         #
         # Deliberately not the word "NOTE", and deliberately not "stale":
@@ -1168,7 +1229,7 @@ def run(
         # four glue files, is in it.
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}."
+            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}{_anch}."
         )
         print(
             "  create-only files: jm's own — the Makefile, .clang-tidy,"
@@ -1227,6 +1288,14 @@ def run(
             + (
                 f", {len(outdated_entries)} outdated"
                 if outdated_entries
+                else ""
+            )
+            # gh-975: with the gating mark, unlike `outdated` above it — this
+            # one fails `--check` and `jm apply` does not clear it.
+            + (
+                f", {sum(1 for e in unanchored_entries if not e[2])}"
+                " unanchored (!)"
+                if any(not e[2] for e in unanchored_entries)
                 else ""
             )
             + ".\n"

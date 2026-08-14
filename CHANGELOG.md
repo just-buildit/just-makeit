@@ -4,6 +4,26 @@
 
 ### Fixed
 
+- **A top `CMakeLists.txt` with no `# ── Modules` anchor lost its module
+    wiring, silently.** Every cmake splice locates its sentinel by string and
+    treats an absent one as nothing to do, and that return value is
+    indistinguishable from "already correct" — so `jm apply` printed nothing,
+    `jm status --check` exited 0 saying "OK — up to date", and cmake had **zero
+    targets** for the module: it was never built (gh-975).
+
+    The file is create-only and only partly jm's, so nothing compared it; a
+    whole-file diff would report the author's own targets as jm being behind
+    forever (gh-959). What can be compared without reading a line the author
+    wrote is whether jm's **anchors** are still there — they are machine-written
+    comments that exist for nothing else. `status` reports a missing one as
+    `UNANCHORED` and **gates** on it, unlike the `OUTDATED` beside it: this is a
+    write that did not happen, and putting the line back clears it. `apply`
+    names it at the moment it skips the splice, and no longer signs off with
+    "Project already matches — nothing to do".
+
+    Suppressible by name with `[project] status_allow`, for a project that
+    keeps that wiring itself.
+
 - **`.clang-format` can be reported `OUTDATED` — it never could before.** The
     file was classified as jm's content, so a project on an older house style
     should have heard about it, and the check could not fire for a structural
