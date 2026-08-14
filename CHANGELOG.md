@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.60.1] — 2026-08-14
+
 ### Fixed
 
 - **0.60.0 regression: a core jm could not SEE had its correct wiring
