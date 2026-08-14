@@ -950,10 +950,28 @@ def run(
         # one for a file that does not exist yet is not carrying a stale
         # exemption.
         _manifest_allow = C.status_allow(cfg)
+        # gh-991: a `CMakeLists.txt:<core>` entry is a FINDING key, not a path.
+        # It can never match a managed file, so every working per-component
+        # wiring exemption was reported as suppressing nothing — in the same
+        # run that printed `[status_allow]` beside the finding it was
+        # suppressing. Both cannot be true, and the advice was wrong in the
+        # destructive direction: the message says a leftover pattern "keeps
+        # every check off", so the reader deletes it, and the one spelling
+        # that DOES match a managed file is the blanket `CMakeLists.txt`
+        # gh-984 exists to avoid. Following the advice would have re-opened
+        # gh-981 on the project that reported this.
+        #
+        # Validated rather than merely skipped: an entry naming a core no
+        # component declares is the genuinely stale case, and still reported.
+        _wiring_keys = {
+            f"CMakeLists.txt:{core}"
+            for core in _libwiring.declared_cores(root)
+        }
         _unmatched = [
             pat
             for pat in _manifest_allow
-            if not any(_is_allowed(f, [pat]) for f in managed_paths)
+            if pat not in _wiring_keys
+            and not any(_is_allowed(f, [pat]) for f in managed_paths)
         ]
         if _unmatched:
             print(

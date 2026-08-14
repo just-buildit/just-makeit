@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`STALE ALLOW` reported gh-984's own `CMakeLists.txt:<core>` entries as
+    suppressing nothing, and the repair it implied re-opened gh-981**
+    (gh-991). That entry is a *finding* key, not a path, so the scan — which
+    tests every pattern against the managed-file list — could never match it.
+    A working per-component wiring exemption was therefore called stale in the
+    same run that printed `[status_allow]` beside the finding it was
+    suppressing.
+
+    The advice was wrong in the destructive direction: the message says a
+    leftover pattern "keeps every check off", so the reader deletes it, and
+    the one spelling that DOES match a managed file is the blanket
+    `CMakeLists.txt` gh-984 exists to avoid — which would have hidden the
+    unlinkable symbols gh-981 was filed about.
+
+    Wiring keys are now validated rather than skipped: an entry naming a core
+    no component declares is the genuinely stale case and is still reported.
+
 ## [0.60.1] — 2026-08-14
 
 ### Fixed

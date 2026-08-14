@@ -551,3 +551,36 @@ def test_wiring_from_a_component_cmakelists_counts(tmp_path: Path):
     r = _cli("status", "--check", cwd=root)
     assert "UNWIRED" not in r.stdout, r.stdout
     assert "pacing_core" not in r.stdout, r.stdout
+
+
+# ── STALE ALLOW and the finding key (gh-991) ─────────────────────────────────
+
+
+def test_a_working_wiring_exemption_is_not_called_stale(project: Path):
+    """`CMakeLists.txt:<core>` is a FINDING key, not a path.
+
+    The stale-allow scan tests every pattern against the managed-file list, so
+    a per-component wiring exemption could never match and was reported as
+    suppressing nothing — in the same run that printed `[status_allow]` beside
+    the finding it was suppressing. Both cannot be true.
+
+    Worse than contradictory: the message says a leftover pattern "keeps every
+    check off", so the reader deletes it, and the one spelling that DOES match
+    a managed file is the blanket `CMakeLists.txt` that gh-984 exists to avoid.
+    Following the advice re-opens gh-981.
+    """
+    _unwire(project, "mpsk_core")
+    _allow(project, "CMakeLists.txt:mpsk_core")
+    r = _cli("status", cwd=project)
+    assert "[status_allow]" in r.stdout, r.stdout
+    assert "STALE ALLOW" not in r.stdout, r.stdout
+
+
+def test_an_exemption_naming_no_core_is_still_stale(project: Path):
+    """Validated, not merely skipped — otherwise the fix would trade a false
+    positive for a blind spot, and a renamed component would leave a pattern
+    behind with nothing ever saying so."""
+    _allow(project, "CMakeLists.txt:ghost_core")
+    r = _cli("status", cwd=project)
+    assert "STALE ALLOW (1)" in r.stdout, r.stdout
+    assert "CMakeLists.txt:ghost_core" in r.stdout
