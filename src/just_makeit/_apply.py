@@ -1987,7 +1987,16 @@ def run(
     only: str | None = None,
     *,
     honor_status_allow: bool = True,
+    replay_out: Path | None = None,
 ) -> None:
+    """Reconcile *root* against its manifest.
+
+    ``replay_out`` — gh-949. When given, the manifest replay (jm's current
+    render of every file, formatted to the project's own style) is copied
+    there before anything in *root* is touched, and survives this call. Only
+    `status` uses it, to compare create-only files that `apply` itself will
+    never rewrite; passing it does not change what `apply` does.
+    """
     # gh-823: apply is the command where these findings are actionable, so
     # it is the one that counts them and says how many matter. Reset here
     # rather than at import: a process running apply twice (the test suite
@@ -2153,6 +2162,18 @@ def run(
         from . import _pyfmt as _pyfmt_mod
 
         _pyfmt_mod.format_project(temp_root, cfg, quiet=True)
+        # gh-949: hand the finished replay back to the caller. It is jm's
+        # current render of the whole project — the only tree that knows what
+        # a create-only file *would* look like today — and it dies with the
+        # `with` block, so `status` cannot compute OUTDATED without it.
+        #
+        # Snapshotted here, after the formatting passes (so both sides have
+        # been through the project's own style) and before `_sync_missing`,
+        # which is the first step to touch the real tree. A caller that
+        # diffs a post-reconcile snapshot would be comparing against a tree
+        # some of whose files it had just written itself.
+        if replay_out is not None:
+            shutil.copytree(temp_root, replay_out, dirs_exist_ok=True)
         created = _sync_missing(temp_root, root)
         impl_patched = _patch_step_impls(root, cfg)
         # gh-541: promote an already-scaffolded component's sacred destructor

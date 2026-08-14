@@ -89,6 +89,7 @@ the user only writes the DSP algorithm.
 | `_error.py`          | `just-makeit error` — declares a `create()`-failure exception (gh-482)                                                                                                           |
 | `_warning.py`        | `just-makeit warning` — post-construction `PyErr_WarnEx` block (gh-481)                                                                                                          |
 | `_status.py`         | `just-makeit status` / `--check` — reports manifest-vs-tree drift                                                                                                                |
+| `_createonly.py`     | Which create-only files can be *behind* (`OUTDATED`) and which merely differ from their scaffold                                                                                 |
 | `_regenerate.py`     | `just-makeit regenerate <component>` — rebuilds one component's glue                                                                                                             |
 | `_migrate.py`        | `just-makeit migrate-to-fragments` — splits a monolithic `_ext.c`                                                                                                                |
 | `_view.py`           | `just-makeit view` — a second Python class over one C core (gh-504)                                                                                                              |

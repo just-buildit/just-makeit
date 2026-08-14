@@ -24,6 +24,16 @@ the files `apply` *merges* rather than overwrites (the package
               declaration is silently deleted on regen — this is content
               loss, not routine drift, and is never suppressed by
               `status_allow`.
+  - OUTDATED— (gh-949) a create-only file whose content is jm's own — the
+              Makefile, `.clang-tidy`, `jm_test.h`, the common headers — and
+              which differs from what this jm renders today. `apply` never
+              rewrites a create-only file, so the copy/diff above is blind to
+              it by construction; this is computed against the replay tree
+              instead. Adopting the new render is the author's call, so it is
+              reported and never counted. Files whose *starting* content jm
+              renders but whose content is the author's (`_core.c`, your C
+              tests, README) are excluded — they differ from their scaffold
+              the moment the project is real.
   - NOTE    — (gh-921) a method sets `pass_capacity` while its header still
               declares `max_out(state)`, so the exact allocation the opt-in
               asks for is not the one generated. Not a file `apply` would
@@ -55,6 +65,7 @@ from pathlib import Path
 from . import _apply
 from . import _cfmt
 from . import _config as C
+from . import _createonly
 from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
@@ -397,12 +408,23 @@ def run(
         # the least informative way available. Suppressing progress and
         # suppressing errors were one decision sharing one redirect.
         _replay_out, _replay_err = io.StringIO(), io.StringIO()
+        # gh-949: keep the replay. Everything below compares the scratch copy
+        # before `apply` against the scratch copy after it, which is blind to
+        # a create-only file by construction — `apply` does not rewrite one, so
+        # both sides carry whatever the project already had, however many
+        # versions behind that is. The replay tree is the only place jm's
+        # *current* render of those files exists.
+        replay_root = Path(tmp) / "jm-replay"
         try:
             with (
                 contextlib.redirect_stdout(_replay_out),
                 contextlib.redirect_stderr(_replay_err),
             ):
-                _apply.run(scratch, honor_status_allow=False)
+                _apply.run(
+                    scratch,
+                    honor_status_allow=False,
+                    replay_out=replay_root,
+                )
         except SystemExit as _exc:
             # stderr first: that is where apply puts `error:`. stdout is the
             # fallback for the few exits that print there, and is not shown
@@ -430,6 +452,20 @@ def run(
             raise SystemExit(
                 _exc.code if isinstance(_exc.code, int) else 1
             ) from None
+
+        # gh-949: computed inside the temp directory's lifetime, against the
+        # *real* root rather than the scratch copy. For a versioned file the
+        # two are identical (that is the whole point — `apply` never touched
+        # it), so this is the same answer with the honest operand.
+        # `status_allow`/`--allow` suppress it like any other deviation: a
+        # project that has deliberately taken its Makefile over says so once
+        # and stops hearing about it. Suppressible because adopting jm's
+        # render is the author's call — unlike the gh-426 dropped symbol
+        # beside it, nothing is being lost here.
+        outdated_entries = [
+            (p, _is_allowed(p, allow_patterns))
+            for p in _createonly.outdated(root, replay_root)
+        ]
 
         for rel in _walk_managed(scratch):
             real = root / rel
@@ -687,6 +723,14 @@ def run(
                         }
                         for s in _silent
                     ],
+                    # gh-949: create-only files whose content is jm's and is
+                    # behind. Reported, never counted — `jm apply` will not
+                    # rewrite a create-only file, so gating on this would
+                    # fail a CI run with no command that clears it.
+                    "outdated": [
+                        {"path": p, "allowed": a}
+                        for (p, a) in outdated_entries
+                    ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
                         {"object": o, "method": n, "c_function": f}
@@ -857,6 +901,28 @@ def run(
         print(
             "  A method/class with zero manifest declaration silently"
             " disappears on regen — see gh-426."
+        )
+        print()
+
+    # gh-949: printed regardless of --check, and that is the entire feature.
+    # The reported scenario is a reader running `status --check` *before*
+    # migrating, seeing OK, and concluding there is nothing to do; collapsing
+    # this into the summary line would reproduce it with extra steps.
+    if outdated_entries:
+        print(
+            f"OUTDATED ({len(outdated_entries)}) — create-only file(s) "
+            "behind jm's current version:"
+        )
+        for p, al in outdated_entries:
+            tag = " [status_allow]" if al else ""
+            print(f"  ↑ {p}{tag}")
+        print(
+            "  jm owns the content of these and ships a newer one, but"
+            " `apply` will NOT\n"
+            "  rewrite a create-only file — adopting it is your call, and"
+            " your own edits\n"
+            "  to it are here too. Diff before replacing; see"
+            " docs/upgrading.md. Not counted."
         )
         print()
 
@@ -1067,6 +1133,12 @@ def run(
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
         _sil = f"; {len(_silent)} silent bench" if _silent else ""
+        # gh-949: a file jm ships a newer version of is not "up to date",
+        # even though `apply` cannot fix it. Same qualification as
+        # `unreconciled` beside it, for the same gh-767 reason.
+        _out = (
+            f"; {len(outdated_entries)} outdated" if outdated_entries else ""
+        )
         # gh-949: name what was NOT compared.
         #
         # Deliberately not the word "NOTE", and deliberately not "stale":
@@ -1084,20 +1156,33 @@ def run(
         # "up to date" over files the generator no longer agrees with; this is
         # files the generator never looked at. Qualifying is the same answer,
         # and the same reason -- the exit code alone is right and unread.
+        #
+        # The detection half then took half of this note's job away, and
+        # widened the other half. jm's own create-only files are compared
+        # now, against the replay tree, and reported as OUTDATED above. What
+        # is still uncompared is the *author-owned* kind -- and that set is
+        # much larger than this note first claimed. Measured on a plain
+        # one-object project: 27 of 32 manifest-owned files are invisible to
+        # the copy/diff, not the five this note used to name. Every file
+        # `jm new` writes once, and everything scaffolded per object bar the
+        # four glue files, is in it.
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}{_orph}{_sil}."
+            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}."
         )
         print(
-            "  not compared: create-only files — the Makefile,"
-            " .clang-tidy,\n"
-            "        jm_test.h, jm_bench.h, jm_perf.h and your own C tests."
-            " `apply`\n"
-            "        never rewrites them — so this check cannot tell a"
-            " current one\n"
-            "        from an outdated one, nor jm's content from yours."
-            " Read one\n"
-            "        before replacing it; see docs/upgrading.md."
+            "  create-only files: jm's own — the Makefile, .clang-tidy,"
+            " jm_test.h,\n"
+            "        jm_bench.h, jm_perf.h, the common headers — are"
+            " compared against\n"
+            "        this jm's render and reported as OUTDATED. NOT"
+            " compared: the ones\n"
+            "        whose content is yours — _core.c, your C and Python"
+            " tests, README,\n"
+            "        pyproject.toml — which differ from their scaffold as"
+            " soon as the\n"
+            "        project is real. `apply` rewrites neither kind; see"
+            " docs/upgrading.md."
         )
     else:
         print(
@@ -1133,6 +1218,15 @@ def run(
             + (
                 f", {len(unparseable_entries)} unparseable (!)"
                 if unparseable_entries
+                else ""
+            )
+            # gh-949: on this line too. A tree can be drifting *and* behind,
+            # and `jm apply` clears only the first — a reader who runs it and
+            # re-checks would otherwise meet the OK line's version of this
+            # for the first time on the second run.
+            + (
+                f", {len(outdated_entries)} outdated"
+                if outdated_entries
                 else ""
             )
             + ".\n"
