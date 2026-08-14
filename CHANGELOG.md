@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-08-14
+
 ### Added
 
 - **`jm status` reports a component whose C core reaches no library, and one
