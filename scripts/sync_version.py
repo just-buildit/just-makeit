@@ -22,8 +22,17 @@ file and agrees with itself.
 
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+# 3.9/3.10 have no `tomllib`; `tomli` is the backport and is already a runtime
+# dependency below 3.11. This script only ever ran in the dev env (3.12) as a
+# pre-commit hook, so the bare import was fine — until its test began running
+# it under `sys.executable`, which on CI is every version in the matrix. Same
+# resolution `_config.py` makes, for the same reason.
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - version-dependent
+    import tomli as tomllib
 
 if "--root" in sys.argv:
     root = Path(sys.argv[sys.argv.index("--root") + 1]).resolve()
