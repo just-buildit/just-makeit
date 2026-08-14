@@ -198,7 +198,14 @@ def test_json_carries_it(project: Path):
             "allowed": False,
         }
     ]
-    assert payload["drift"] == 1
+    # Two, not one. `_strip_anchor` removes the whole `# ── Modules` block,
+    # which is what an older jm's file looked like — and the module's
+    # `target_sources` lines were inside it, so `filt_core` really is folded
+    # into no C library now. gh-984 reports that separately from the missing
+    # anchor, and both count. Asserting 1 here would be asserting that jm
+    # stays quiet about a component whose symbols ship in no library.
+    assert [u["core"] for u in payload["unwired_cores"]] == ["filt_core"]
+    assert payload["drift"] == 2
 
 
 def test_status_allow_suppresses_it(project: Path):

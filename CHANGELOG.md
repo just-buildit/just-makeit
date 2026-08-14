@@ -2,7 +2,46 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports a component whose C core reaches no library, and one
+    the wiring names that no longer exists** (gh-984). The carve-out left by
+    gh-981: the generation was fixed and `jm apply` retrofits an affected
+    project, but nothing told a project it *was* affected. The component
+    builds, the extension imports, `ctest` passes and the header installs;
+    only a C consumer finds out, months later.
+
+    - `UNWIRED` — a `<X>_core` OBJECT library folded into neither
+        `lib<pkg>.so` nor `lib<pkg>.a`. Names the core and the libraries it is
+        missing from, so gh-981's half-wired state (in the shared library, not
+        the static archive) reads as the partial thing it is. Gates, on
+        gh-975's rule: the reader can do something about it, and `jm apply`
+        does it. Suppressible per component as `CMakeLists.txt:<core>` —
+        naming the file itself still exempts every core, for a project that
+        links its cores its own way, but quieting the root CMakeLists' routine
+        drift no longer has to mean quieting this.
+    - `DANGLING` — wiring naming a core no component declares. Never
+        suppressible: cmake resolves `$<TARGET_OBJECTS:>` at **configure**
+        time, so such a tree does not build at all.
+
+    Both are derived from the project against *itself* rather than against a
+    replay, so they also answer on a tree jm could not re-render, and cost two
+    file reads.
+
+    Emitter and detector now live in one module, `_libwiring.py`, and build
+    the line through one function. Two modules is what let gh-981 happen at
+    the generator level, and a detector looking for a line the writer does not
+    write is the same failure one layer out — it reports nothing, forever, and
+    reads as green.
+
 ### Fixed
+
+- **`jm apply` could not clear a `target_sources` line naming a deleted
+    core**, so the one finding above that stops a build outright had no
+    command that fixed it (gh-984). The reconcile lifts `add_subdirectory`
+    blocks and the wiring lines beneath them, so an orphaned line on its own —
+    what an interrupted removal or a bad merge leaves — matched nothing and
+    survived every apply.
 
 - **A module's own C core was folded into no library, so its symbols shipped
     in neither `lib<pkg>.so` nor `lib<pkg>.a`.** A module whose C surface is

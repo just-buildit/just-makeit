@@ -422,6 +422,10 @@ Prints a table of files, each in one of these states:
 
 | `UNANCHORED` | The top `CMakeLists.txt` has lost a sentinel jm splices against — `# ── Components` or `# ── Modules` (gh-975). Every splice treats a missing anchor as nothing to do, so the wiring was never written and a module with no `add_subdirectory()` is not built at all. Put the line back, or keep that wiring yourself and name the file in `status_allow`. | yes |
 
+| `UNWIRED` | A component declares a `<X>_core` OBJECT library that the top `CMakeLists.txt` folds into no combined C library (gh-984), so its symbols ship in neither `lib<pkg>.so` nor `lib<pkg>.a` while its header installs anyway. Python is unaffected — the extension links each core directly — which is why this hides. `jm apply` writes the missing `target_sources()` line. Suppressible per component with `CMakeLists.txt:<core>`, or wholesale with `CMakeLists.txt` if you link your cores your own way. | yes |
+
+| `DANGLING` | The top `CMakeLists.txt` wires a `<X>_core` that no component declares (gh-984) — an interrupted removal or a bad merge. cmake resolves `$<TARGET_OBJECTS:>` at **configure** time, so the project does not build at all. `jm apply` drops the line. Never suppressible. | yes |
+
 The exit code is the count of gating drift, so `jm status --check` is a
 drop-in CI gate: zero means `jm apply` is a no-op.
 
