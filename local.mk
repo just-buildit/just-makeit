@@ -9,7 +9,7 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check conflict-check
+                changelog-check conflict-check coverage-subprocess-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -181,3 +181,15 @@ lint: conflict-check
 
 conflict-check: ## Fail on a merge-conflict marker in a tracked text file
 	@scripts/conflict-check.sh
+
+# gh-978: hung off `coverage-gate` rather than `lint`, because that is the
+# target whose environment it is about — and the one CI runs with pytest-cov
+# present. A pytest test could not host this: `make test` runs the suite
+# without that plugin, so the check would skip, and a skip is not a pass.
+#
+# COVERAGE_ENV is passed in rather than defaulted inside the script, so this
+# proves the Makefile's own value works. Break COVERAGE_ENV and this goes red.
+coverage-gate: coverage-subprocess-check
+
+coverage-subprocess-check: ## Prove a CLI-driven test counts toward coverage
+	@$(COVERAGE_ENV) $(DEV_RUN) sh scripts/coverage-subprocess-check.sh

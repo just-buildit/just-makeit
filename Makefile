@@ -260,8 +260,29 @@ GATES_PROVISION = install-deps install-deps-dev tool-install setup
 COVERAGE_MIN     ?= 87
 COVERAGE_REPORTS  = --cov=just_makeit --cov-report=xml --cov-report=term \
                     --junitxml=junit.xml -o junit_family=legacy
-COVERAGE_BASE     = $(DEV_RUN) pytest $(PYTEST_PARALLEL) $(EXAMPLES_IGNORE) \
-                    $(COVERAGE_REPORTS)
+
+# gh-978: count the tests that drive the shipped CLI. Both paths are ABSOLUTE,
+# and that is the entire fix — a test that runs `jm` in a scaffolded project
+# gives the subprocess a different cwd, so a relative value resolves against
+# THAT directory:
+#
+#   COVERAGE_FILE          data written to the tmp project, never combined,
+#                          deleted with the tmpdir. The subprocess was
+#                          instrumented all along; its measurements were thrown
+#                          away. `tests/test_gh975_missing_cmake_anchor.py`
+#                          alone went 0% -> 42% on `_status.py`; the full suite
+#                          moved `_cli.py` 68% -> 78% and the total 91% -> 92%.
+#   COVERAGE_PROCESS_START worse than useless relative: a scaffolded project
+#                          HAS a pyproject.toml, so the subprocess read the
+#                          generated project's config instead of this one.
+#
+# Here rather than in ci.yml (where COVERAGE_PROCESS_START used to live alone)
+# so `make coverage` measures locally exactly what CI measures. The gate that
+# holds it is `coverage-subprocess-check` in local.mk.
+COVERAGE_ENV      = COVERAGE_PROCESS_START=$(CURDIR)/pyproject.toml \
+                    COVERAGE_FILE=$(CURDIR)/.coverage
+COVERAGE_BASE     = $(COVERAGE_ENV) $(DEV_RUN) pytest $(PYTEST_PARALLEL) \
+                    $(EXAMPLES_IGNORE) $(COVERAGE_REPORTS)
 COVERAGE_CMD      = $(COVERAGE_BASE)
 COVERAGE_GATE_CMD = $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN)
 

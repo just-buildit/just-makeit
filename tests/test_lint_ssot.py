@@ -223,6 +223,45 @@ class TestTheStandardStaysTheStandard:
             "nothing else, so a gate outside it never runs on a PR"
         )
 
+    def test_coverage_gate_runs_the_subprocess_check(self):
+        """gh-978's gate hangs off the target whose environment it is about.
+
+        Not `lint`: the check needs pytest-cov, and it is `coverage-gate`'s
+        `COVERAGE_ENV` it proves. Unhook it and CLI-driven tests can go back
+        to measuring nothing without anything saying so — which is how the
+        condition survived long enough to fail a PR's patch coverage.
+        """
+        m = re.search(r"^coverage-gate:(.*)$", _make_db(), re.M)
+        assert m, "no `coverage-gate` target in the make database"
+        assert "coverage-subprocess-check" in m.group(1).split(), (
+            "`make coverage-gate` does not run coverage-subprocess-check"
+        )
+
+    def test_the_coverage_env_paths_are_absolute(self):
+        """Relative is the bug, and it is invisible in the passing direction.
+
+        A subprocess that has cd'd into a scaffolded project resolves both
+        variables against *that* directory — which even has a `pyproject.toml`
+        of its own for `COVERAGE_PROCESS_START` to find. The gate above is the
+        control; this names the mistake at the line where it would be made.
+        """
+        # The EXPANDED recipe, not the definition: `$(CURDIR)/x` and `/abs/x`
+        # are the same answer, and a future spelling neither of those is still
+        # judged on the path it actually produces.
+        recipe = subprocess.run(
+            ["make", "-nrR", "coverage-subprocess-check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        ).stdout
+        for var in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+            m = re.search(rf"{var}=(\S+)", recipe)
+            assert m, f"{var} not in the coverage-subprocess-check recipe"
+            assert m.group(1).startswith("/"), (
+                f"{var} is not an absolute path: {m.group(1)}"
+            )
+
 
 class TestTheDocsCannotDriftFromTheMakefile:
     """Every `make <target>` this repo's own docs name must exist.
