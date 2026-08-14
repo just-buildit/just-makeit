@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- **`.clang-format` can be reported `OUTDATED` — it never could before.** The
+    file was classified as jm's content, so a project on an older house style
+    should have heard about it, and the check could not fire for a structural
+    reason rather than a missing case: `jm status` compares create-only files
+    against the tree `apply` builds by replaying the manifest, that replay was
+    run *without* the project's `c_style`, so it grew no `.clang-format` of its
+    own — and `apply` then copied the **real** one in before its formatting
+    passes (gh-493). The file being compared was the project's own, equal
+    however far behind it was (gh-960).
+
+    The replay now carries both `c_style` and `c_format_command`, and the copy
+    that keeps both trees formatting alike is undone before the snapshot the
+    comparison reads: the formatting pass sees the project's style file, the
+    comparison sees jm's render.
+
+    **Behaviour change in `apply`:** a project that declares a C formatter and
+    ships no `.clang-format` now gets one. It was running
+    `clang-format --style=file` against nothing and silently taking the LLVM
+    fallback. It is create-only like every other file in this category —
+    yours to edit, and `[project] status_allow` suppresses the report.
+
 - **Losing an edit to a generated app is no longer silent, and the file no
     longer invites one.** `native/src/app/<name>.c` is regenerated wholesale by
     `jm app` **and by every `jm apply`** (the replay re-runs the verb from

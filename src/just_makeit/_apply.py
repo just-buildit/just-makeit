@@ -231,6 +231,15 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-213: the temp project must target the same platforms so the
         # per-component Windows CMake blocks match (apply/status diff cleanly).
         platforms=cfg.get("project", {}).get("platforms"),
+        # gh-960: and the same C-formatting opt-in, so the replay renders its
+        # own `.clang-format`. Without it the replay had none, `run` copied
+        # the real one in, and the file `status` compared was therefore the
+        # project's own — equal by construction, so an out-of-date style file
+        # could never be reported. Both keys, not just the opt-in: `_new.run`
+        # would otherwise fill in the default command for a project that
+        # declares its own.
+        c_style=C.c_style(cfg),
+        c_format_command=cfg.get("project", {}).get("c_format_command"),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
@@ -2146,16 +2155,32 @@ def run(
         # unformatted on both sides and already compare equal. No-op unless
         # c_style is set, and a soft no-op if clang-format is absent (both
         # sides then stay jm-style, still equal). The real project's
-        # .clang-format must be seeded into the temp tree first — _replay
-        # rebuilds via _object/_module, which do not re-emit it, so
-        # `clang-format --style=file` would otherwise fall back to LLVM there
-        # and the two sides would diverge on style instead of converging.
+        # .clang-format decides the layout on both sides, so it is what the
+        # temp tree must hold *for the pass*: a project that has edited its
+        # style would otherwise have its glue formatted two ways and read as
+        # perpetual drift.
+        #
+        # gh-960: the replay now renders a `.clang-format` of its own, which
+        # is the whole point — it is what makes an out-of-date one visible to
+        # `status`. So jm's render is put back afterwards, before the snapshot
+        # the create-only comparison is taken from. The pass sees the
+        # project's file; the comparison sees jm's.
+        #
+        # A project that formats its C and ships no style file keeps jm's
+        # render for the pass. Its glue reads as stale for exactly one run —
+        # `_sync_missing` below writes the style file and `_sync_aggregates`
+        # rewrites the glue to match it, so the two converge together rather
+        # than the style file landing first and the glue going stale after.
         from . import _cfmt
 
         real_cf = root / ".clang-format"
+        temp_cf = temp_root / ".clang-format"
+        rendered_cf = temp_cf.read_bytes() if temp_cf.is_file() else None
         if C.c_formatting_on(cfg) and real_cf.is_file():
-            shutil.copy2(real_cf, temp_root / ".clang-format")
+            shutil.copy2(real_cf, temp_cf)
         _cfmt.format_project(temp_root, cfg, quiet=True)
+        if rendered_cf is not None:
+            temp_cf.write_bytes(rendered_cf)
         # gh-746: the same symmetry for generated Python. Formatting the real
         # tree but not the tree it is compared against is what makes a drift
         # gate unclearable (gh-635); both sides run the same command.

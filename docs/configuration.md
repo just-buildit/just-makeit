@@ -414,6 +414,15 @@ guess about quoting, and the first thing that goes here is a path that may
 contain spaces. jm appends `-i --style=file --fallback-style=LLVM` and the file
 list, so the committed `.clang-format` still decides the layout.
 
+**A project that formats its C gets a `.clang-format`** (gh-960).
+`--style=file` with no file falls back to LLVM silently, so declaring the
+formatter and shipping no style file was a project asking for a layout nobody
+had chosen. `jm apply` now writes jm's house style file when it is absent, and
+`jm status` reports one that is behind jm's current render as `OUTDATED` — a
+file it could never compare before, because the tree it compares against was
+seeded from the project's own copy. It is create-only like the rest: yours to
+edit, and `[project] status_allow` says so once.
+
 Scope: only the wholesale-regenerated `*_ext.c` glue is reformatted. `*_core.c`
 and the splice-patched `native/inc/**` headers are left to the project's own
 formatter — reformatting those breaks `jm apply` convergence.

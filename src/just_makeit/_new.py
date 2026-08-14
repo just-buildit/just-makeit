@@ -74,6 +74,7 @@ def run(
     platforms: list[str] | None = None,
     fragments: bool = False,
     c_style: str = "",
+    c_format_command: list[str] | None = None,
 ) -> None:
     C.require_name(project, "project")
 
@@ -154,16 +155,32 @@ def run(
     # the two that says *which* binary, which is what makes the output the
     # same on two machines. A new project should not be scaffolded into the
     # spelling that leaves that to PATH.
+    #
+    # gh-960: `c_format_command` is how `_apply._replay` carries the real
+    # project's declared command in verbatim. It is a separate argument rather
+    # than a value of `c_style` because the two answer different questions —
+    # *whether* to format and *which binary does it* — and the replay has to
+    # reproduce both, not the defaults for both.
+    if c_format_command is not None:
+        cfg.setdefault("project", {})["c_format_command"] = list(
+            c_format_command
+        )
     if c_style:
         if c_style == "clang-format":
-            cfg.setdefault("project", {})["c_format_command"] = list(
-                C.DEFAULT_C_FORMAT_COMMAND
+            cfg.setdefault("project", {}).setdefault(
+                "c_format_command", list(C.DEFAULT_C_FORMAT_COMMAND)
             )
-            cf = root / ".clang-format"
-            if not cf.exists():
-                _write(cf, T.CLANG_FORMAT)
         else:
             cfg.setdefault("project", {})["c_style"] = c_style
+    # Keyed on what the manifest now says rather than on the arguments: a
+    # project reaches the formatting opt-in through either spelling, and the
+    # scaffold must grow the style file in both cases (gh-960 — without it the
+    # replay `apply` compares against has no `.clang-format` of its own, so an
+    # out-of-date one can never be seen).
+    if C.c_formatting_on(cfg):
+        cf = root / ".clang-format"
+        if not cf.exists():
+            _write(cf, T.CLANG_FORMAT)
     C.save(root, cfg)
     # Opt into the per-component fragment layout up front: with the include
     # globs already in the manifest, every object/module scaffolded below
@@ -231,8 +248,9 @@ def run(
 
     # gh-265: format the freshly scaffolded tree to the project's house style.
     # `new` creates its own subdir (root != cwd), so the CLI's post-command
-    # hook does not cover it — sweep it here. No-op unless c_style is set.
-    if c_style:
+    # hook does not cover it — sweep it here. No-op unless the manifest opts
+    # into C formatting.
+    if C.c_formatting_on(cfg):
         from . import _cfmt
 
         _cfmt.format_project(root, cfg)
