@@ -225,3 +225,94 @@ class TestAConsumerCanActuallyUseIt:
             ),
         )
         assert proc.returncode == 0, proc.stderr
+
+
+class TestItReachesTheProjectOnDisk:
+    """Rendering the header is not shipping it.
+
+    Every assertion above reads `render_bridge_h`'s return value, and all of
+    them pass just as well on a header that is never written and never copied
+    down — which is a *worse* version of the bug this closes, since the
+    prototype would then exist only in jm's imagination. codecov caught the
+    gap: `materialize`'s write and `_apply`'s glue entry were the two lines
+    this file did not reach.
+    """
+
+    def _project(self, root: Path) -> Path:
+        from just_makeit import _config as C
+        from just_makeit._new import run as new_run
+
+        new_run("proj", root, ["clip"], [("gain", "double", "1.0")])
+        cfg = C.load(root)
+        mod = dict(_CFG["module"][_MODULE])
+        mod["package"] = "audio"
+        cfg.setdefault("module", {})[_MODULE] = mod
+        C.save(root, cfg)
+        return root
+
+    def test_materialize_writes_the_header(self, tmp_path):
+        from just_makeit import _config as C
+
+        root = self._project(tmp_path / "proj")
+        _composer.materialize(C.load(root), root, _MODULE)
+        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        assert h.exists(), "the bridge header was rendered but never written"
+        assert "clip_from_source" in h.read_text(encoding="utf-8")
+
+    def test_materialize_writes_no_header_without_a_seam(self, tmp_path):
+        """The control. Without it, an unconditional write passes above."""
+        from just_makeit import _config as C
+        from just_makeit._new import run as new_run
+
+        root = tmp_path / "proj"
+        new_run("proj", root, ["clip"], [("gain", "double", "1.0")])
+        cfg = C.load(root)
+        mod = dict(_bare_cfg()["module"][_MODULE])
+        mod["package"] = "audio"
+        cfg.setdefault("module", {})[_MODULE] = mod
+        C.save(root, cfg)
+        _composer.materialize(C.load(root), root, _MODULE)
+        assert not (
+            root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        ).exists()
+
+    def test_apply_carries_it_into_the_real_tree(self, tmp_path):
+        """`apply` materializes into a TEMP tree and copies a listed subset.
+
+        A file written there but missing from `_apply`'s glue list reaches the
+        project never — the gh-942 shape, and the reason that list is gated on
+        the same predicate rather than hand-maintained beside it.
+        """
+        from just_makeit._apply import run as apply_run
+
+        root = self._project(tmp_path / "proj")
+        apply_run(root)
+        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        assert h.exists(), "apply left the bridge header in the temp tree"
+        text = h.read_text(encoding="utf-8")
+        assert "clip_from_source" in text
+        assert "clip_duration" in text
+        assert "clip_n_frames" in text
+
+    def test_apply_refreshes_a_stale_header(self, tmp_path):
+        """The claim `_apply`'s glue entry actually makes.
+
+        A first `apply` writes the header through the missing-files path, so
+        asserting only that it appears passes with the glue entry deleted —
+        measured, and the reason this test exists beside the one above. What
+        the entry buys is *regeneration*: the header is derived, so a stale or
+        hand-edited copy must be overwritten from the manifest on the next
+        apply, exactly like the `_ext.c` and the `.pyi` beside it.
+        """
+        from just_makeit._apply import run as apply_run
+
+        root = self._project(tmp_path / "proj")
+        apply_run(root)
+        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        h.write_text("/* stale */\n", encoding="utf-8")
+        apply_run(root)
+        text = h.read_text(encoding="utf-8")
+        assert "/* stale */" not in text, (
+            "a derived header survived an apply — it is not in the glue list"
+        )
+        assert "clip_from_source" in text
