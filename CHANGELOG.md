@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
+## [0.61.1] — 2026-08-15
+
 ### Fixed
+
+- **v0.61.0's CHANGELOG heading had been deleted, so this release's notes
+    would have republished it** — caught while preparing 0.61.1, when the
+    extraction came back with four `###` sections and five bullets instead of
+    two and two. `release.yml` builds a release body by reading the
+    `## [x.y.z]` section up to the next `##` heading, so a missing one silently
+    hands that release's bullets to whichever section encloses them. v0.61.0's
+    own notes were already published and correct, so nothing had noticed.
+
+    `tests/test_changelog_has_every_release.py` now compares the `v*` tags
+    against the headings. It found **four more** on its first run: v0.19.12,
+    v0.19.14, and — already shipped with **completely empty release notes** —
+    **v0.15.1 and v0.15.2**. Those four are frozen in a ratchet that can only
+    shrink, and tracked in gh-1007.
 
 - **Three array init-param shapes were accepted and miscompiled** (gh-1002,
     gh-1004, gh-1005). All three are refused now, at manifest-validation time,
@@ -34,6 +50,8 @@
     (array dispatch, one array) and `required` (scalars) and concluded no
     spelling existed. Both pages now say what it does, and say that `optional`
     is a different thing.
+
+## [0.61.0] — 2026-08-15
 
 ### Added
 
