@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A method named after something jm generates was emitted twice, and the
+    scaffold did not compile** (gh-994). An object's Python surface is written
+    down as `[[<obj>.methods]]` entries, and doppler names one of those
+    `reset` in 28 objects; jm answered by putting the built-in's body *and*
+    the method's stub — both `<obj>_reset` — into a create-only `_core.c`.
+    `redefinition of 'bpsk_receiver_reset'` on a brand-new object, at the one
+    moment a contributor is trusting the generator rather than reading it.
+
+    `reset` was the reported name; `create`, `destroy`, `step`, `steps` and
+    the `get_`/`set_` accessor of any state field were all equally broken and
+    duplicated the `_ext.c` wrapper, the `PyMethodDef` row and the `.pyi`
+    entry as well. All seven are now settled the same way, and the set is
+    derived per component — `step` is not a collision on a `--no-step`
+    object, and `get_gain` is one only where `gain` is a scalar field.
+
+    Which side wins depends on what the entry says, not on where it appears.
+    An entry that merely *names* a built-in — no parameters, no output shape,
+    so the prototype it implies is byte-identical — keeps the built-in, whose
+    body actually restores the declared defaults. One that *replaces* it — a
+    `reset(start)`, or a `steps` promoted to a variable-output method, which
+    is doppler's usual idiom — takes the symbol, and the built-in's body is
+    withdrawn to make room. Never a hand-written body: once `_core.c` holds
+    real code jm keeps it, skips the stub, and says which two signatures need
+    reconciling.
+
+    It shipped because every test watching this read the generated text for a
+    substring, which the first of two definitions satisfies as happily as the
+    only one. The new gate hands `_core.c` and `_ext.c` to a C compiler.
+
 ## [0.60.2] — 2026-08-14
 
 ### Fixed

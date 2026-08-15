@@ -15,6 +15,7 @@ from . import _report
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
+from ._builtins import overridden_builtin_slots
 from ._docstring import scaffold_doc_block
 
 # gh-981/gh-984: the combined-C-library wiring — emitter and detector — lives
@@ -1044,6 +1045,18 @@ def run(
             if (_inc_root / h).exists()
         ]
     )
+
+    # gh-994: a declared method may replace a built-in outright — a
+    # `reset(start)`, or a `steps` promoted to a variable-output method. Blank
+    # the built-in's slots so the method's stub is the only definition of the
+    # symbol; leaving them filled put two definitions of `<comp>_reset` in a
+    # create-only `_core.c` and the tree jm had just written did not compile.
+    # gh-131 already blanked four of `reset`'s five; the `_core.c` body was
+    # the one nothing suppressed.
+    for _slot in overridden_builtin_slots(
+        ctx["component"], declared_methods, ctx
+    ):
+        ctx[_slot] = ""
 
     def r(tmpl):
         return R.render(tmpl, ctx)

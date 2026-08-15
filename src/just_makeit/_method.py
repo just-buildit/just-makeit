@@ -29,6 +29,12 @@ from . import _render as R
 from . import _stubs as S
 from . import _types as T
 
+from . import _report
+from ._builtins import (
+    builtin_method_names,
+    is_builtin_symbol,
+    withdraw_overridden_builtin,
+)
 from ._init import (
     _inject_decls_into_core_h,
     standalone_extra_include,
@@ -422,9 +428,133 @@ def _methods_c_stub_fixed(
     return "\n".join(lines) + "\n"
 
 
-def _append_to_core_c(path: Path, stub: str) -> None:
-    """Append a method stub to native/src/{comp}/{comp}_core.c."""
+#: The comment jm stamps above every method stub it writes, and above no
+#: built-in body.
+#:
+#: Anchored to column 0, which is the whole discriminator. The same marker
+#: appears *indented* inside two built-in bodies — `create_assignments` and
+#: `reset_assignments` fall back to `/* <<IMPLEMENT: initialise state >> */`
+#: on a `--no-state` object — so an unanchored match would read those as
+#: method stubs and hand the built-in's symbol to the method.
+#:
+#: Deliberately not matched on the text after the colon: only the fixed-shape
+#: stub spells the method's name there. The variable-output shape writes
+#: `process input and write results into out[...]` and the record shape
+#: `compute and return the record`, so a name comparison recognises one stub
+#: kind out of three and quietly misclassifies the other two.
+_IMPLEMENT_MARKER = re.compile(r"^/\* <<IMPLEMENT:", re.M)
+
+
+def already_provides(
+    root: Path,
+    component: str,
+    c_fn: str,
+    builtins: "frozenset[str]",
+) -> str:
+    """Where a *built-in* already provides *c_fn*, or ``""``.
+
+    gh-994. A method may be named after something jm emits itself —
+    ``reset``, ``destroy``, ``create``, ``step``, ``steps``, or the
+    ``get_``/``set_`` accessor of a state field — and doppler declares
+    ``reset`` that way in 28 objects, because a method entry is how a
+    component's Python surface is written down. ``_core.c`` is create-only, so
+    by the time ``jm method`` runs the built-in body is already in a file jm
+    must not rewrite; appending the stub anyway puts two definitions of one
+    symbol in it and the tree jm just wrote does not compile.
+
+    Two questions have to agree before this returns anything, and getting
+    either alone wrong is a shipped bug:
+
+    - **Is the symbol one jm's own generator owns?** Answered by
+      :mod:`._builtins` from the manifest, not by a reserved-word list —
+      ``step`` is not a collision on a ``--no-step`` object and ``get_gain``
+      is one only where ``gain`` is a scalar field.
+    - **Is the definition in the tree the built-in's, or a method stub?** By
+      the time this is asked a second time — a re-run, or an ``apply`` replay
+      over a tree jm already materialized — the ``<comp>_reset`` in
+      ``_core.c`` may be the *method's* stub. Reading only the symbol name
+      there makes the method conclude it is already provided and skip its own
+      prototype, and the tree fails to build with `implicit declaration of
+      <comp>_<method>`. The ``/* <<IMPLEMENT: ... >> */`` comment jm stamps
+      above a method stub, and above no built-in body, is what tells them
+      apart — see :func:`_is_method_stub`.
+
+    The header is consulted as well as the source: ``step`` is a ``static
+    inline`` in ``_core.h`` and never appears in ``_core.c`` at all, so a
+    source-only check misses exactly the case that fails as *conflicting
+    types* rather than as a redefinition.
+    """
+    if not is_builtin_symbol(component, c_fn, builtins):
+        return ""
+
+    # `rx_reset(` sits at column 0 in a definition (the return type is on the
+    # line above); a header declaration is `void rx_steps(...)`, and `step` is
+    # `static inline float rx_step(...)`. An optional type prefix covers both.
+    # The `^` anchor is what keeps an indented CALL from matching.
+    pat = re.compile(
+        rf"^(?:[A-Za-z_][A-Za-z0-9_ *]*\s+)?{re.escape(c_fn)}\s*\(", re.M
+    )
+    # `_core.c` is asked first and, when it has an answer, is the *only*
+    # answer. A definition there settles ownership outright — the marker says
+    # whose it is — and falling through to the header on a match that turned
+    # out to be this method's own stub would then read the built-in's
+    # *declaration*, which carries no marker and so reads as the built-in's no
+    # matter who actually defines the symbol. The header is the fallback for
+    # the one built-in that has no `_core.c` body at all: `step`, a `static
+    # inline` in the header.
+    src = Path("native") / "src" / component / f"{component}_core.c"
+    inc = Path("native") / "inc" / component / f"{component}_core.h"
+    for rel, what in ((src, "defines"), (inc, "declares")):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        m = pat.search(text)
+        if m is None:
+            continue
+        if _is_method_stub(text, m.start()):
+            return ""
+        return f"{rel.as_posix()} already {what} it"
+    return ""
+
+
+def _is_method_stub(text: str, at: int) -> bool:
+    """Whether the definition beginning at *at* is a generated method stub.
+
+    True when the nearest ``/* <<IMPLEMENT: ... >> */`` marker above it is
+    *this* definition's — nothing but the return type sits between them, so a
+    closing brace in the gap means the marker belongs to an earlier stub and
+    this definition has none of its own.
+
+    Only the nearest preceding marker is considered, for the same reason:
+    every stub in the file carries one, so the first match found by an
+    unanchored search would make every definition below the first stub look
+    like a stub.
+    """
+    prev = None
+    for m in _IMPLEMENT_MARKER.finditer(text, 0, at):
+        prev = m
+    if prev is None:
+        return False
+    return "}" not in text[prev.end() : at]
+
+
+def _append_to_core_c(
+    path: Path, stub: str, c_fn: str = "", provided_by: str = ""
+) -> None:
+    """Append a method stub to native/src/{comp}/{comp}_core.c.
+
+    Skips the append when a built-in already provides *c_fn* (gh-994) — jm
+    must never write two definitions of one symbol into a file it cannot
+    rewrite afterwards. *provided_by* comes from :func:`already_provides`,
+    which reads the header as well as the source: `step` is a `static inline`
+    in the header and never appears in `_core.c` at all, so a source-only
+    check misses it.
+    """
     existing = path.read_text(encoding="utf-8")
+    if c_fn and provided_by:
+        print(f"  skip    {c_fn}() — {provided_by}")
+        return
     path.write_text(existing + "\n" + stub, encoding="utf-8")
     print(f"  update  {path}")
 
@@ -1000,6 +1130,60 @@ def run(
             _norm_params.append(_entry)
     params = _norm_params
 
+    # gh-994: asked ONCE, BEFORE this command writes anything.
+    #
+    # The ordering is the whole correctness argument. Computed lazily at each
+    # use, the header check runs *after* `_append_to_core_c` has written this
+    # method's own stub — so every method sees its own definition, concludes
+    # it is already provided, and skips its prototype. Measured: 78 tests red
+    # with `implicit declaration of nco_steps_ovf`, which is jm emitting a
+    # call to a function it just decided not to declare.
+    _c_fn = fn or f"{object_name}_{method_name}"
+    _provided_by = already_provides(
+        root,
+        object_name,
+        _c_fn,
+        builtin_method_names(
+            C.state_vars(cfg, object_name),
+            no_state=C.is_no_state(cfg, object_name),
+            no_step=C.is_no_step(cfg, object_name),
+            no_reset=C.is_no_reset(cfg, object_name),
+        ),
+    )
+    # A method that *replaces* a built-in — a `reset(start)`, or the
+    # variable-output `steps` doppler declares on most of its objects — takes
+    # the symbol, so the built-in's now-orphaned body comes out of `_core.c`
+    # first. Only while that body is still jm's untouched scaffold; otherwise
+    # this warns and the built-in keeps the symbol.
+    _withdrew_builtin = False
+    if _provided_by and not (manual_stub or codec or varargs):
+        _withdrawn, _warn = withdraw_overridden_builtin(
+            root,
+            cfg,
+            pkg,
+            object_name,
+            {
+                "name": method_name,
+                "arg_type": arg_type,
+                "return_type": return_type,
+                "variable_output": variable_output,
+                "multi_output": multi_output,
+                "params": params,
+                "out_type": out_type,
+                "pass_capacity": pass_capacity,
+                "batch": batch,
+                "result_fields": result_fields,
+                "single": single,
+                "record_dtype": record_dtype,
+                "fn": fn,
+            },
+        )
+        if _withdrawn:
+            _provided_by = ""
+            _withdrew_builtin = True
+        elif _warn:
+            _report.warn(_warn)
+
     # 1. Write C stub: either append to _core.c or write sacred binding file
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
     if manual_stub or codec:
@@ -1085,7 +1269,9 @@ def run(
             if variable_output and not _re.search(r"\breturn\b", body):
                 body = body.rstrip("\n") + "\nreturn n;"
             stub = I.inject_body_into_stub(stub, body)
-        _append_to_core_c(core_c, stub)
+        # gh-994: `fn` overrides the symbol; unset it derives the same way
+        # every stub emitter above does.
+        _append_to_core_c(core_c, stub, _c_fn, _provided_by)
 
     # The method's public prototype, injected surgically into _core.h below
     # (one or two lines; variable-output methods declare a sibling _max_out).
@@ -1127,8 +1313,19 @@ def run(
     # pre-existing decl is jm's own scaffolded default — never preserve it, or
     # a redefinition (e.g. a builtin steps() promoted to a variable_output
     # method) would be skipped instead of replaced (gh-137).
+    #
+    # gh-994 adds the third case the net must stand down for: a built-in whose
+    # body jm has just WITHDRAWN from `_core.c` above. Its declaration is no
+    # longer a signature to preserve — it describes a function that no longer
+    # exists, and leaving it would be the header half of the duplicate-symbol
+    # bug rather than a safeguard against it.
     _vo_skip: frozenset[str] = frozenset()
-    if variable_output and not pass_capacity and not from_apply:
+    if (
+        variable_output
+        and not pass_capacity
+        and not from_apply
+        and not _withdrew_builtin
+    ):
         _vo_fn = f"{object_name}_{method_name}"
         _core_h_check = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
@@ -1153,6 +1350,23 @@ def run(
                     file=_sys.stderr,
                 )
                 _vo_skip = frozenset({_vo_fn})
+    # gh-994, the header half of the same rule: jm must not declare a symbol a
+    # built-in already declares, for the same reason it must not define one
+    # twice. Skipping only the `_core.c` definition fixes `reset` and
+    # `destroy` — whose built-in declaration already matches — and leaves
+    # `step`, `steps`, `create` and the `get_`/`set_` accessors failing as
+    # *conflicting types*, because `_inject_decls_into_core_h` would REPLACE
+    # the built-in's prototype with the method's while the built-in's
+    # definition, which jm just declined to overwrite, keeps the old one.
+    #
+    # Per SYMBOL, not per command: a variable-output method also declares a
+    # sibling `<fn>_max_out`, which no built-in provides and which the
+    # binding calls on every invocation. Suppressing the whole prototype
+    # block took that with it and the extension stopped compiling (gh-607's
+    # `steps` case, which is a collision and a variable-output method at
+    # once).
+    if _provided_by:
+        _vo_skip = _vo_skip | {_c_fn}
 
     # 2. Update config  (was step 3)
     method_entry: dict = {
@@ -1284,7 +1498,7 @@ def run(
         cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
             root, object_name
         )
-        ctx = _glue.component_ctx(cfg, object_name, pkg)
+        ctx = _glue.component_ctx(cfg, object_name, pkg, root)
 
         # The only slot this command needs beyond the shared base:
         # extra_ext_sources is the space-prefixed list of varargs binding .c

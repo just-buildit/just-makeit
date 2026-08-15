@@ -28,6 +28,10 @@ from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
+from ._builtins import (
+    builtin_owned_members,
+    overridden_builtin_slots,
+)
 from ._init import (
     MODULES_SENTINEL,
     _make_component_ctx,
@@ -1154,6 +1158,11 @@ def _make_view_ctx(
         for p in C.properties(cfg, obj)
         if p["name"] not in excluded and p["name"] not in own_prop_names
     ] + own_props
+    # gh-994: read before make_methods_ctx blanks the slots it compares
+    # against, applied after — the same order _glue.component_ctx uses.
+    _override_slots = overridden_builtin_slots(
+        ctx["component"], merged_methods, ctx
+    )
     ctx.update(
         Ctx.make_methods_ctx(
             ctx["component"],
@@ -1165,8 +1174,11 @@ def _make_view_ctx(
             serializable=C.is_serializable(cfg, obj),
             doc_blocks=doc_blocks,
             codecs=C.codecs(cfg),
+            builtin_members=builtin_owned_members(root, cfg, obj),
         )
     )
+    for _slot in _override_slots:
+        ctx[_slot] = ""
     ctx.update(
         Ctx.make_properties_ctx(
             ctx["component"],
@@ -1318,6 +1330,9 @@ def build_component_ctxs(
             block_sizes=C.project_bench_block_sizes(cfg),
             create_fn=C.object_create_fn(cfg, obj),
         )
+        _override_slots = overridden_builtin_slots(
+            ctx["component"], C.methods(cfg, obj), ctx
+        )
         ctx.update(
             Ctx.make_methods_ctx(
                 ctx["component"],
@@ -1329,8 +1344,11 @@ def build_component_ctxs(
                 serializable=C.is_serializable(cfg, obj),
                 doc_blocks=_doc_blocks,
                 codecs=C.codecs(cfg),
+                builtin_members=builtin_owned_members(root, cfg, obj),
             )
         )
+        for _slot in _override_slots:
+            ctx[_slot] = ""
         ctx.update(
             Ctx.make_properties_ctx(
                 ctx["component"],
