@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-08-15
+
 ### Added
 
 - **A composer's project-written straight-C functions now have a public
