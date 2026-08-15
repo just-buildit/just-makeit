@@ -241,6 +241,28 @@ the sacred header. `_record.dtype_c` emits it; `_record.find_dtype` is what
 lets the gh-729 incremental splice carry the cache and its builder along with
 the wrapper that calls them.
 
+### A composer's straight-C seams (gh-998)
+
+A `kind = "composer"` source hands two kinds of work back to the project as
+plain C, with no CPython in it: `[module.X.source.generates] bridge_fn` builds
+the composed generator from the source struct, and each
+`[[module.X.source.computed]] fn` derives a read-only property from it. jm
+generates the binding that calls them; the project writes the bodies.
+
+Their **prototypes are jm's**, and they are published in a generated
+`native/inc/<cname>/<cname>_bridge.h` — self-contained (it pulls in the source
+struct's header and the generator's), include-guarded, and included by
+`<cname>_ext.c` rather than re-declared there. That file is the *only* header a
+composer module emits, and it is emitted only when the source declares at
+least one seam.
+
+Before this they were `extern` lines inside `_ext.c` and nowhere else, so a C
+test or benchmark could reach a signature jm owns only by writing a second copy
+of it. `render_bridge_h` returning `""` is the one predicate deciding whether
+the file exists, and `_apply`'s glue list is gated on the same call — a list
+there that disagreed with what `materialize` wrote is how gh-942's enumerated
+source shapes went missing one at a time.
+
 ### The capsule triangle
 
 A foreign C pointer crosses the Python boundary as a named `PyCapsule`. Every
