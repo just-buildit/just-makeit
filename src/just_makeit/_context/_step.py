@@ -317,7 +317,13 @@ def make_step_ctx(
             "steps_def_entry": "",
             "step_pymethoddef_entry": "",
             "step_c_smoke_test": "    /* no step() generated (--no-step) */",
-            "pyi_step_methods": "",
+            # gh-994: `step` and `steps` are separate slots so a method
+            # named after one can replace it without taking the other
+            # with it. `pyi_step_methods` was the pair concatenated,
+            # and the `.pyi` therefore double-declared `steps` for
+            # every object that overrode it.
+            "pyi_step_method": "",
+            "pyi_steps_method": "",
             "step_pytest_methods": "",
             "lifecycle_pytest_methods": _lifecycle,
             "step_pytest_methods_pure": "",
@@ -645,7 +651,8 @@ def make_step_ctx(
             "steps_def_entry": steps_def_entry_bw,
             "step_pymethoddef_entry": "",
             "step_c_smoke_test": _bw_smoke,
-            "pyi_step_methods": pyi_steps,
+            "pyi_step_method": "",  # blockwise has no step()
+            "pyi_steps_method": pyi_steps,
             "step_pytest_methods": _bw_pytest,
             "lifecycle_pytest_methods": _bw_lifecycle,
             "step_pytest_methods_pure": _bw_pytest_pure,
@@ -1789,9 +1796,8 @@ def make_step_ctx(
         )
     elif _ssb and _ssb.brief and pyi_steps:
         pyi_steps = _swap_pyi_summary(pyi_steps, _ssb.brief)
-    pyi_step_methods = (
-        f"\n    def step({_pyi_step_self}) -> {out_py_hint}:\n"
-        f"{_pyi_step_doc}" + pyi_steps
+    pyi_step_method = (
+        f"\n    def step({_pyi_step_self}) -> {out_py_hint}:\n{_pyi_step_doc}"
     )
 
     py_create_args = ctx.get("py_create_args", "")
@@ -2002,7 +2008,8 @@ def make_step_ctx(
         "steps_def_entry": steps_def_entry,
         "step_pymethoddef_entry": step_pymethoddef_entry,
         "step_c_smoke_test": step_c_smoke_test,
-        "pyi_step_methods": pyi_step_methods,
+        "pyi_step_method": pyi_step_method,
+        "pyi_steps_method": pyi_steps,
         "step_pytest_methods": step_pytest_methods,
         "lifecycle_pytest_methods": lifecycle_pytest_methods,
         "step_pytest_methods_pure": step_pytest_methods_pure,

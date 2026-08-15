@@ -828,6 +828,7 @@ def make_methods_ctx(
     doc_blocks: dict | None = None,
     serializable: bool = False,
     codecs: dict | None = None,
+    builtin_members: "frozenset[str]" = frozenset(),
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -843,6 +844,14 @@ def make_methods_ctx(
     pkg and py_create_args are used in the generated PyMethodDef docstrings
     to produce working doctests; omitting them produces functional but
     package-anonymous examples.
+
+    builtin_members (gh-994) names the members whose C symbol the object's own
+    generated code kept — a method entry that *names* a built-in rather than
+    replacing it. This loop emits no glue for those, so the built-in's wrapper,
+    PyMethodDef row and `.pyi` entry remain the only ones. Derived from the
+    tree by :func:`just_makeit._builtins.builtin_owned_members`; the default
+    empty set is right for every caller with no methods to place, and for a
+    project where no method names a built-in.
     """
 
     _EMPTY: dict = {
@@ -883,10 +892,29 @@ def make_methods_ctx(
     pmd_lines: list[str] = []
     pyi_lines: list[str] = []
     varargs_binding_files: list[str] = []
-    user_has_reset: bool = any(m["name"] == "reset" for m in methods)
+    # gh-994. A method entry may name something the object's own generated
+    # code already provides, and there are two very different reasons to write
+    # one. doppler declares `reset` in 28 objects purely to *describe* the
+    # Python surface the built-in already binds; a `reset(start)` or a `steps`
+    # promoted to a variable-output method *replaces* it. `builtin_members`
+    # names the first kind — the members whose C symbol the built-in kept —
+    # and for those this loop emits nothing at all, because the built-in's own
+    # wrapper, PyMethodDef row and `.pyi` entry are already there and a second
+    # set of each is a redefinition rather than a member.
+    #
+    # It also settles gh-131, which has been reading this question one method
+    # name too coarsely: suppressing the built-in `reset` glue is right for the
+    # entry that replaces it and wrong for the entry that merely names it,
+    # which would otherwise be left with no binding at all.
+    user_has_reset: bool = any(
+        m["name"] == "reset" and m["name"] not in builtin_members
+        for m in methods
+    )
 
     for m in methods:
         name: str = m["name"]
+        if name in builtin_members:
+            continue
         # gh-805 §A2: the C symbol this method binds. Derived from the
         # component by default — `fn` overrides it so existing C with its own
         # established prefix can be adopted without renaming a public API, and

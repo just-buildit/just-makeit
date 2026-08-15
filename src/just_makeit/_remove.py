@@ -735,7 +735,9 @@ def _remove_function(
     print(f"Done!  Function '{name}' removed.{note}")
 
 
-def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
+def _object_ctx(
+    cfg: dict, obj: str, pkg: str, module: str | None, root=None
+) -> dict:
     """Build the full render ctx for regenerating object *obj* (gh-486).
 
     Delegates to the one assembly chain. This used to be an inline copy of it,
@@ -754,7 +756,7 @@ def _object_ctx(cfg: dict, obj: str, pkg: str, module: str | None) -> dict:
       early for a module object, delegating to ``_regenerate_module``, so
       `module` is always None by the time this runs.
     """
-    return _glue.component_ctx(cfg, obj, pkg)
+    return _glue.component_ctx(cfg, obj, pkg, root)
 
 
 def _regenerate_object_bindings(
@@ -792,7 +794,7 @@ def _regenerate_object_bindings(
     from ._object import _load_doc_blocks
 
     cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj)
-    ctx = _object_ctx(cfg, obj, pkg, module)
+    ctx = _object_ctx(cfg, obj, pkg, module, root)
     # gh-543: keep a hand-written extra wired through a removal.
     ctx["extra_include"] = standalone_extra_include(root, obj)
     ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"

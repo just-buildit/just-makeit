@@ -26,6 +26,7 @@ from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
+from ._builtins import builtin_owned_members, overridden_builtin_slots
 from ._init import (
     _make_component_ctx,
     _to_title,
@@ -33,7 +34,9 @@ from ._init import (
 )
 
 
-def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
+def component_ctx(
+    cfg: dict, object_name: str, pkg: str, root: "Path | None" = None
+) -> dict:
     """Assemble the full render context for a component, from the manifest.
 
     Every ``make_*_ctx`` builder that feeds ``COMPONENT_EXT_C`` /
@@ -49,6 +52,14 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
         Component id, e.g. ``acq``.
     pkg : str
         Python package name, from ``[project] name``.
+    root : Path or None
+        Project root, when the caller has one. The single exception to the
+        manifest-only contract above, and it is here because gh-994's question
+        — did the built-in or the declared method end up owning
+        ``<comp>_reset`` — is settled by what was *written* into a create-only
+        file, not by anything the manifest records. Omitted, no member is
+        treated as built-in-owned, which is the behaviour every project
+        without a colliding method name has anyway.
 
     Returns
     -------
@@ -100,6 +111,12 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         )
     )
+    # gh-994: computed BEFORE make_methods_ctx, which blanks some of the very
+    # slots the comparison reads (gh-131's `builtin_reset_decl`). Applied
+    # after, so the built-in's glue goes only once the method's is in place.
+    _override_slots = overridden_builtin_slots(
+        object_name, C.methods(cfg, object_name), ctx
+    )
     ctx.update(
         Ctx.make_methods_ctx(
             object_name,
@@ -115,8 +132,15 @@ def component_ctx(cfg: dict, object_name: str, pkg: str) -> dict:
             # apply); absent -> {} -> the generic name-based stub, unchanged.
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
             codecs=C.codecs(cfg),
+            builtin_members=(
+                builtin_owned_members(root, cfg, object_name)
+                if root is not None
+                else frozenset()
+            ),
         )
     )
+    for _slot in _override_slots:
+        ctx[_slot] = ""
     ctx.update(
         Ctx.make_properties_ctx(
             object_name,
@@ -311,7 +335,7 @@ def regenerate_standalone(
     cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
         root, object_name
     )
-    ctx = component_ctx(cfg, object_name, pkg)
+    ctx = component_ctx(cfg, object_name, pkg, root)
     # gh-543: component_ctx is manifest-only by contract, so the on-disk probe
     # for a hand-written extra belongs here, in the caller that has `root`.
     ctx["extra_include"] = standalone_extra_include(root, object_name)

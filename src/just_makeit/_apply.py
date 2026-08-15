@@ -1648,7 +1648,12 @@ def _sync_aggregates(
             # why its tp_doc read "<Component> component. Wraps <c>_state_t."
             # however the author documented create(), while the .pyi beside it
             # showed the real brief.
-            _ctx = _glue.component_ctx(cfg, comp, pkg)
+            # gh-994: `temp_root`, not `root` — this render's output goes into
+            # the temp tree below, and the question this answers ("did the
+            # built-in or a declared method end up owning `<comp>_reset`") is
+            # settled by the `_core.c` the replay just wrote there. The real
+            # tree's own `_core.c` is not merged until after this loop.
+            _ctx = _glue.component_ctx(cfg, comp, pkg, temp_root)
             _ctx["extra_include"] = _glue.standalone_extra_include(root, comp)
             # gh-744: the `.pyi` renders through `render_component_pyi` (which
             # reflows to 79 cols) on this path too. `status --check` compares
