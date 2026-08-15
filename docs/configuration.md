@@ -749,6 +749,37 @@ gh-515) and `type = "bytes"` (a read-only bytes-like coerced to a borrowed
 `(const void *, size_t)` pair via `y#`, gh-565). The C constructor must copy
 either borrow before returning.
 
+An array init-param is a **required positional** by default. To make one
+omittable, give it `default = "[]"` (gh-611):
+
+```toml
+[[frame.init_params]]
+name    = "preamble"
+type    = "uint8_t[]"
+default = "[]"
+```
+
+Omitted — or passed `None` — it reaches `create()` as `NULL` with length `0`,
+which is the convention C already uses for "no array". Any number of arrays
+compose: they share **one** `create()` call with a `NULL`/`0` pair each, so a
+constructor describing a composite of independently-absent parts is spelled
+directly:
+
+```python
+Frame(sync=sync, crc="crc16")        # preamble and payload absent
+```
+
+`"[]"` is the only accepted default (an array has no other zero jm could
+invent), and it is 1-D only.
+
+**This is not `optional`.** That key is array *dispatch*: the array's presence
+selects a different `create_fn` instead of `<component>_create`. Dispatch
+picks one constructor, so it does not compose — jm refuses `optional` on more
+than one array, and refuses it with no `create_fn`, pointing here in both
+cases (gh-1004 / gh-1005). An init-param may also not be named
+`<array>_len`, which is the length parameter jm derives for the array beside
+it (gh-1002).
+
 ### `[[<object>.methods]]`
 
 One entry per `just-makeit method` call.

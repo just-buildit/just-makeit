@@ -249,6 +249,43 @@ def _build_no_state_init_ctx(
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
             if optional_flag:
+                # gh-1004: `optional` is *dispatch* — the array's presence
+                # selects `create_fn` instead of `<comp>_create`. Without one
+                # there is no second constructor to dispatch to, and the
+                # emitter below interpolated the empty string into the call,
+                # producing `self->handle = (args);` — a comma expression with
+                # no callee, which does not compile. Silently, until someone
+                # built the tree.
+                if not alt_create_fn:
+                    raise ValueError(
+                        f"'{component}': array init-param '{name}' declares"
+                        " optional = true with no create_fn. `optional` is"
+                        " dispatch: it selects a DIFFERENT constructor when"
+                        " the array is supplied, so it needs one to name.\n"
+                        "  To make the array omittable instead, use default"
+                        ' = "[]" — an omitted argument then reaches create()'
+                        " as NULL with length 0."
+                    )
+                # gh-1005: and dispatch does not compose. Each optional array
+                # emits its own if/else assigning `self->handle`, so with two
+                # the second overwrites the first: the caller's array is
+                # discarded and the first allocation leaks. That one COMPILES,
+                # which is why it went unnoticed. N arrays would need 2^N
+                # constructors; the shape that actually scales is one create()
+                # with a NULL/0 pair per absent array, which is what
+                # `default = "[]"` already does.
+                if opt_arr_ip:
+                    raise ValueError(
+                        f"'{component}': array init-params"
+                        f" '{opt_arr_ip[0][0]}' and '{name}' both declare"
+                        " optional = true. Dispatch selects one constructor,"
+                        " so two of them have no combined meaning — the"
+                        " generated tp_init would build with one and then"
+                        " overwrite it with the other.\n"
+                        '  Declare them default = "[]" instead: every absent'
+                        " array reaches create() as NULL with length 0, in a"
+                        " single call, and any number of them compose."
+                    )
                 opt_arr_ip.append(
                     (
                         name,
@@ -297,6 +334,37 @@ def _build_no_state_init_ctx(
             bytes_ip.append(name)
         else:
             scalar_ip.append((name, ct, dflt, dflt_raw, required_flag))
+
+    # gh-1002: every array init-param derives a companion `<name>_len`, and
+    # nothing stopped another param being declared with that exact name. Both
+    # reached the signature, so `create()` was emitted with a parameter listed
+    # twice — `obj_create(const uint8_t *sync, size_t sync_len, size_t
+    # sync_len)`, a redefinition error in a file the author did not write, and
+    # no diagnostic from the command that wrote it.
+    #
+    # The collision is easy to walk into: an array's extent and a generated
+    # field's output length are genuinely different numbers, and `<name>_len`
+    # is the obvious spelling for the second. So the message names the
+    # occupied identifier rather than just refusing.
+    _derived_lens = {
+        f"{n}_len": n
+        for n in [a[0] for a in arr_ip]
+        + [a[0] for a in def_arr_ip]
+        + [a[0] for a in opt_arr_ip]
+    }
+    for _p in params:
+        _n = _p[0]
+        if _n in _derived_lens:
+            raise ValueError(
+                f"'{component}': init-param '{_n}' collides with the length"
+                f" parameter jm derives for the array init-param"
+                f" '{_derived_lens[_n]}'. Both would be emitted into"
+                f" create(), which is not valid C.\n"
+                f"  Rename it — '{_derived_lens[_n]}_nbits',"
+                f" '{_derived_lens[_n]}_count' — or drop it and use the"
+                f" derived one, which already carries the array's element"
+                f" count."
+            )
 
     # gh-515: a path borrow must be released right after the C create() copies
     # it (gh-219). On the dtype-dispatch / optional-array paths create() is
