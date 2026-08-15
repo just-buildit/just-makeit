@@ -33,6 +33,7 @@ from . import _report
 from ._builtins import (
     builtin_method_names,
     is_builtin_symbol,
+    reserved_python_members,
     withdraw_overridden_builtin,
 )
 from ._init import (
@@ -1103,6 +1104,29 @@ def run(
     if method_name in existing:
         print(
             f"error: method '{method_name}' already exists on {target}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # gh-996: the same question one step wider. The check above knows about
+    # other *declared* methods; these are the names the object's own generated
+    # code already puts on the class, where a method entry has no second
+    # reading. Accepting one bound something other than what the manifest
+    # asked for — a shadowed `__enter__`, a `_ext.c` that would not compile,
+    # or in `create`'s case nothing at all — and said nothing.
+    #
+    # Refusal, not absorption, and here rather than at save time: this runs
+    # before the command writes anything, so a refused name leaves no
+    # half-made tree (the gh-910 reasoning, one command over). The six
+    # built-ins gh-994 absorbs are not in this set — an entry naming `reset`
+    # describes a member jm really does emit, which is the supported pattern.
+    _reserved = reserved_python_members(cfg, object_name)
+    if view_entry is None and method_name in _reserved:
+        _holder, _hint = _reserved[method_name]
+        print(
+            f"error: method '{method_name}' is already provided by "
+            f"{_holder} on {target}.\n"
+            f"  Drop the entry or rename the method. {_hint}",
             file=sys.stderr,
         )
         sys.exit(1)

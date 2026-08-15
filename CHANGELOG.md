@@ -33,6 +33,30 @@
     substring, which the first of two definitions satisfies as happily as the
     only one. The new gate hands `_core.c` and `_ext.c` to a C compiler.
 
+- **A method entry could also claim a name with no second reading at all, and
+    jm bound something other than what was asked for** (gh-996). The other
+    half of the same question. `create` was accepted and produced *nothing* —
+    the constructor's Python face is `__init__`, so there was no `create()`
+    member to absorb into. `__enter__` and `__exit__` produced a second
+    `PyMethodDef` row that shadowed jm's, so `with obj:` quietly stopped
+    working. `stream` shadowed the generator on a `--streamable` object. The
+    `state_bytes`/`get_state`/`set_state` triplet did not compile at all. A
+    teardown renamed with `[<obj>.destroy] name` left two rows under one key,
+    and a name shared with a declared property left three `.pyi` entries.
+
+    These are refused now, before the command writes anything, with a message
+    naming what holds the name and what to do about it. Not absorbed: absorbing
+    would keep the silence — the entry still would not produce what it asked
+    for, jm would just stop tripping over it. The six names gh-994 *does*
+    absorb are untouched, and the reserved set is derived, so renaming the
+    teardown moves it: `close` becomes reserved and `destroy` becomes an
+    ordinary method name.
+
+    That last case turned up a live defect in gh-994's own fix, since a symbol
+    jm owns and a member jm binds are not the same set: `<obj>_destroy` exists
+    either way, but with the teardown renamed there is no `destroy()` for an
+    entry to describe, and suppressing the entry's glue left the member unbound.
+
 ## [0.60.2] — 2026-08-14
 
 ### Fixed

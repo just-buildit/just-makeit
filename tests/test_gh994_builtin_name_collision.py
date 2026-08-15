@@ -62,6 +62,11 @@ _STATE = [("gain", "double", "1.0")]
 #: entry, whose implied prototype is byte-identical — and parameterised it
 #: *replaces* it. The two resolve in opposite directions and only one of them
 #: was ever exercised.
+#:
+#: `create` is absent, and its absence is the subject of a sibling gate.
+#: There is no `create()` member for an entry to describe — the constructor's
+#: Python face is `__init__` — so "emit it once" has no meaning there and the
+#: name is refused outright. See `test_gh996_reserved_member_names.py`.
 _CASES = [
     pytest.param("reset", "void", "void", [], False, id="reset"),
     pytest.param(
@@ -72,7 +77,6 @@ _CASES = [
         False,
         id="reset-with-params",
     ),
-    pytest.param("create", "void", "void", [], False, id="create"),
     pytest.param("destroy", "void", "void", [], False, id="destroy"),
     pytest.param("step", "void", "float", [], False, id="step"),
     pytest.param("steps", "void", "float", [], False, id="steps"),
