@@ -568,11 +568,20 @@ class TestSourceComputed:
         # no setter function generated
         assert "Synth_set_n_samples" not in s
 
-    def test_ext_declares_project_fn(self):
-        ext = _composer.render_ext(_computed_cfg(), "wfm_compose")
-        assert (
-            "extern size_t wfm_source_n_samples(const wfm_source_t *);" in ext
-        )
+    def test_project_fn_is_declared_once_in_the_bridge_header(self):
+        """gh-998: the declaration moved OUT of `_ext.c` into a public header.
+
+        It used to be an `extern` inside the binding and nowhere else, so a C
+        test could reach it only by writing a second copy of a signature jm
+        owns. Asserted from both sides — present in the header, absent from
+        the binding — because either half alone passes on a lost declaration.
+        """
+        cfg = _computed_cfg()
+        h = _composer.render_bridge_h(cfg, "wfm_compose")
+        assert "size_t wfm_source_n_samples(const wfm_source_t *);" in h
+        ext = _composer.render_ext(cfg, "wfm_compose")
+        assert "extern " not in ext
+        assert '#include "wfm_compose/wfm_compose_bridge.h"' in ext
 
     def test_pyi_declares_readonly_property(self):
         pyi = _composer.render_pyi(_computed_cfg(), "wfm_compose")
@@ -596,6 +605,9 @@ class TestSourceComputed:
         assert "extern size_t" not in _composer.render_ext(
             _cfg(), "wfm_compose"
         )
+        # gh-998: and no bridge header is produced at all for a source with
+        # neither seam — the file exists only where it has something to say.
+        assert _composer.render_bridge_h(_cfg(), "wfm_compose") == ""
 
     def test_generic_non_wfm_source(self):
         """Proves it is a generic object-of-objects primitive: a clip source
@@ -638,8 +650,11 @@ class TestSourceComputed:
         s = _composer.render_source_type(cfg, "playlist")
         assert "Clip_get_duration(ClipObject *self" in s
         assert "clip_duration(&self->src)" in s
-        ext = _composer.render_ext(cfg, "playlist")
-        assert "extern double clip_duration(const clip_t *);" in ext
+        h = _composer.render_bridge_h(cfg, "playlist")
+        assert "double clip_duration(const clip_t *);" in h
+        assert '#include "playlist/playlist_bridge.h"' in _composer.render_ext(
+            cfg, "playlist"
+        )
 
     def test_name_colliding_with_field_is_rejected(self):
         """A computed name shadowing a stored field (or fs) is a manifest error
@@ -700,12 +715,16 @@ class TestSourceGenerates:
             "self->_gen = NULL; }" in s
         )
 
-    def test_ext_includes_generator_header_and_bridge_decl(self):
+    def test_ext_includes_generator_header_and_the_bridge_header(self):
+        """gh-998: the bridge prototype is published, not re-declared inline."""
         s = _composer.render_ext(_gen_cfg(), "wfm_compose")
         assert '#include "wfm_synth/wfm_synth_core.h"' in s
+        assert '#include "wfm_compose/wfm_compose_bridge.h"' in s
+        assert "extern " not in s
+        h = _composer.render_bridge_h(_gen_cfg(), "wfm_compose")
         assert (
-            "extern wfm_synth_state_t *wfm_source_to_synth("
-            "const wfm_source_t *, double);" in s
+            "wfm_synth_state_t *wfm_source_to_synth("
+            "const wfm_source_t *, double);" in h
         )
 
     def test_absent_without_generates(self):

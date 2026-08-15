@@ -1515,6 +1515,15 @@ def _sync_aggregates(
                 cfg, mod
             ).get("enabled"):
                 glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
+            # gh-998: and its published straight-C seams. Gated on the same
+            # predicate `materialize` writes the file under — a list here that
+            # disagreed with what was written into the temp tree is precisely
+            # how gh-942's enumerated source shapes went missing, one at a
+            # time, with nothing noticing.
+            if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
+                cfg, mod
+            ):
+                glue.append(f"native/inc/{mp.cname}/{mp.cname}_bridge.h")
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,

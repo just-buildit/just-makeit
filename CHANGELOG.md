@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A composer's project-written straight-C functions now have a public
+    prototype** (gh-998). `[module.X.source.generates] bridge_fn` and each
+    `[[module.X.source.computed]] fn` are written by the project in plain C and
+    called by the generated binding — and jm declared them *only* as `extern`
+    lines inside that binding. No other translation unit could see them, so a C
+    test or benchmark could reach a signature jm already owns only by writing a
+    second copy of it, which is the shape the generated declaration exists to
+    prevent.
+
+    They are published now in a generated
+    `native/inc/<cname>/<cname>_bridge.h` — self-contained, include-guarded,
+    and included by `<cname>_ext.c` instead of re-declared there, so there is
+    exactly one of each. The definitions are untouched: they stay the project's
+    hand-written straight C. The file appears only for a source that declares
+    at least one seam.
+
+    Both seams, not just the `bridge_fn` in the report — they are the same
+    defect emitted twenty lines apart.
+
 ### Fixed
 
 - **A method named after something jm generates was emitted twice, and the
