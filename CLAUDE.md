@@ -112,7 +112,7 @@ the user only writes the DSP algorithm.
 | `_codecheck.py`      | Reports authored `@code` lines too wide for their stub                                                                                                                           |
 | `_hollow.py`         | Detects targets that pass without covering anything (gh-806)                                                                                                                     |
 | `_libwiring.py`      | Which component cores reach `lib<pkg>.so` / `.a` — emitter and detector in one file (gh-981/gh-984)                                                                              |
-| `_builtins.py`       | Which member names an object's own generated code already occupies, and when a declared method replaces one rather than naming it (gh-994)                                       |
+| `_builtins.py`       | Which member names an object's own generated code occupies — when a declared method may replace one, describe one, or is refused outright (gh-994/gh-996)                        |
 | `_termynal_fence.py` | Superfences formatter for animated terminal (termynal) docs blocks                                                                                                               |
 
 ### Template rendering
