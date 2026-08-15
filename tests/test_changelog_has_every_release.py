@@ -18,6 +18,22 @@ them rather than against a list here. The `## [` anchor at column 1 is the
 same one `release.yml`'s awk uses (`index($0, "## [" ver "]") == 1`) — a check
 that matched the heading loosely could pass on a file the release step cannot
 read.
+
+This shipped with a `_KNOWN_MISSING` ratchet holding the four tags that had no
+section — 0.15.1, 0.15.2, 0.19.12, 0.19.14. gh-1007 restored all four and the
+ratchet is gone rather than left at zero: an empty exemption list is one more
+place a future missing section can be parked, and the test policing it could
+then only fail by coincidence.
+
+What the archaeology found is worth keeping, because it says what this failure
+mode actually looks like on disk. **None of the four had lost its prose.** The
+bullets were all still in `CHANGELOG.md`, sitting under the next heading down —
+0.19.12's and 0.19.14's under 0.19.13 and 0.19.15, 0.15.1's and 0.15.2's under
+0.15.3, which had carried three `### Added`/`### Fixed` pairs. Restoring them
+meant inserting four heading lines and moving no text. So a deleted heading is
+not a deletion, it is a **reassignment** — which is why nothing looked wrong for
+two months and why comparing against the tags, not against how complete the
+file reads, is the check that works.
 """
 
 from __future__ import annotations
@@ -57,45 +73,18 @@ def _sections() -> "list[str]":
     return _SECTION.findall(_CHANGELOG.read_text(encoding="utf-8"))
 
 
-#: Tagged releases with no CHANGELOG section, frozen as of the day this gate
-#: was written. A ratchet, not an exemption: it may only shrink.
-#:
-#: The first two are not merely untidy — **v0.15.1 and v0.15.2 published
-#: GitHub Releases with empty bodies** (0 chars, checked against the API),
-#: which is precisely what a missing section does to `release.yml`'s awk. The
-#: other two have bodies, so their notes came from somewhere and the sections
-#: were lost afterwards. Restoring all four is archaeology, tracked separately;
-#: what this gate is for is stopping the FIFTH.
-_KNOWN_MISSING = frozenset({"0.15.1", "0.15.2", "0.19.12", "0.19.14"})
-
-
 def test_every_tagged_release_has_a_section():
     tags = _released_versions()
     if not tags:
         pytest.skip("no release tags in this clone")
     have = set(_sections())
-    missing = sorted(set(tags) - have - _KNOWN_MISSING)
+    missing = sorted(set(tags) - have)
     assert not missing, (
         f"CHANGELOG.md has no `## [{missing[0]}]` heading, but v{missing[0]} "
         f"is tagged. release.yml extracts a release's notes by that exact "
         f"heading, so the bullets under it now belong to whichever section "
         f"encloses them — and the next release will publish them as its own. "
         f"Missing: {', '.join(missing)}"
-    )
-
-
-def test_the_ratchet_only_shrinks():
-    """A restored section must leave `_KNOWN_MISSING`.
-
-    Without this the ratchet is write-only: someone fixes 0.15.1, the entry
-    stays, and the gate quietly stops covering a version it now could. The
-    same shape as gh-991's stale `status_allow` entries — an exemption that
-    suppresses nothing still reads as one.
-    """
-    restored = sorted(_KNOWN_MISSING & set(_sections()))
-    assert not restored, (
-        f"{', '.join(restored)} now has a CHANGELOG section — remove it from "
-        f"_KNOWN_MISSING so the gate covers it."
     )
 
 

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Four tagged releases had no CHANGELOG section, so their notes were being
+    read as the next release's (gh-1007)** — v0.15.1, v0.15.2, v0.19.12 and
+    v0.19.14 were tagged and published with no `## [x.y.z]` heading. Their
+    bullets were never lost: each sat under the next heading down (0.19.12's and
+    0.19.14's under 0.19.13 and 0.19.15; 0.15.1's and 0.15.2's under 0.15.3,
+    which had accumulated three `### Added`/`### Fixed` pairs), so the file read
+    as complete while `release.yml`'s awk — which extracts by that exact heading
+    — attributed them to the wrong version. v0.15.1 and v0.15.2 published
+    **empty** GitHub Release bodies as a result. The four headings are restored
+    in place, no prose moved, and the `_KNOWN_MISSING` ratchet added in 0.61.1 is
+    removed rather than left empty: every tag is now covered with no exemption.
+
 ## [0.61.1] — 2026-08-15
 
 ### Fixed
@@ -6174,6 +6188,8 @@ and carries a non-waveform test proving zero domain coupling.
     `.so` link paths. Projects already listing full closures are unaffected
     (the walk dedupes to the same set).
 
+## [0.19.14] — 2026-06-15
+
 ### Added
 
 - **`record_module` for a single-record method's structseq `__module__`
@@ -6206,6 +6222,8 @@ and carries a non-waveform test proving zero domain coupling.
     with `default = "…"`) keeps the param a mandatory positional but seeds the
     smoke/doctest with that value — the supported way to get a runnable example
     for a validated required param. Fully-seedable objects are byte-identical.
+
+## [0.19.12] — 2026-06-15
 
 ### Fixed
 
@@ -6928,6 +6946,8 @@ and carries a non-waveform test proving zero domain coupling.
     and canonicalised to `out` on a manifest re-dump. New
     `tests/test_depends_on_includes.py`.
 
+## [0.15.2] — 2026-06-06
+
 ### Added
 
 - **`nogil` method flag — generate a GIL-released kernel call.** A
@@ -6960,6 +6980,8 @@ and carries a non-waveform test proving zero domain coupling.
     (`_normalize_decl`), so an already-present decl is left untouched
     (idempotent) while a genuine signature change still replaces as before.
     Regression: `tests/test_apply_decl_qualifiers.py`.
+
+## [0.15.1] — 2026-06-05
 
 ### Added
 
