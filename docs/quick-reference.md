@@ -329,12 +329,24 @@ default = "[]"
 </td>
 <td>
 
-*TOML only* — gh-611: takes
-its declared position among
-the other optional params
-instead of being hoisted
-first, unlike a required
-array.
+*TOML only* — **the way to
+make an array omittable.**
+Omit it (or pass `None`) and
+`create()` receives `NULL`
+with length `0`. Any number
+of arrays compose: they
+share ONE `create()` call,
+one `NULL`/`0` pair each.
+gh-611 also gives it its
+declared position among the
+optional params instead of
+hoisting it first, unlike a
+required array.
+
+Not `optional` — that is
+array *dispatch* (a second
+`create_fn`), one array
+only.
 
 </td>
 </tr>

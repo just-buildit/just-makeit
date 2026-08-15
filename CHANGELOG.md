@@ -2,7 +2,38 @@
 
 ## [Unreleased]
 
-## [0.61.0] — 2026-08-15
+### Fixed
+
+- **Three array init-param shapes were accepted and miscompiled** (gh-1002,
+    gh-1004, gh-1005). All three are refused now, at manifest-validation time,
+    before the command writes anything:
+
+    - an init-param named `<array>_len` collided with the length parameter jm
+        derives for that array, and both reached the signature:
+        `obj_create(const uint8_t *sync, size_t sync_len, size_t sync_len)` —
+        a `redefinition of parameter` error in a file the author did not
+        write, from a command that reported success (gh-1002);
+    - `optional = true` with no `create_fn` interpolated the empty string into
+        the constructor call, emitting `self->handle = (args);` — a comma
+        expression with no callee (gh-1004);
+    - two `optional` arrays emitted one `if/else` each, both assigning
+        `self->handle`, so the second overwrote the first: the caller's array
+        was silently discarded and the first allocation leaked. **That one
+        compiled**, which is why nothing caught it (gh-1005).
+
+    Each message names the working spelling rather than only refusing.
+
+### Docs
+
+- **`default = "[]"` is how an array init-param is made omittable, and the
+    reference never said so** (gh-1003). The feature has existed since gh-611:
+    an omitted array — or `None` — reaches `create()` as `NULL` with length
+    `0`, any number of them composing into a *single* `create()` call. The
+    quick-reference described only its argument *ordering*, and nothing
+    documented what it was for, so the obvious search landed on `optional`
+    (array dispatch, one array) and `required` (scalars) and concluded no
+    spelling existed. Both pages now say what it does, and say that `optional`
+    is a different thing.
 
 ### Added
 
