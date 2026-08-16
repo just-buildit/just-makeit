@@ -507,6 +507,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             view=view,
             codec=m.get("codec", ""),
             sink_fn=m.get("sink_fn", ""),
+            # gh-1011: every argument above turned an absent manifest key
+            # into a default, so `run` can no longer see what the entry
+            # actually said. The entry's own keys ARE that fact, and this is
+            # the only place still holding them.
+            declared=frozenset(m),
         )
 
     def _replay_property(comp, mod, p, view=""):
