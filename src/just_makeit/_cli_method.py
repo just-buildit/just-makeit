@@ -17,14 +17,19 @@ def run(args: list[str]) -> None:
     from . import _record
     from . import _types as T
 
+    #: The only flags a doc-only view override needs. Anything else means
+    #: the caller stated a signature, so it gets compared. Kept narrow on
+    #: purpose: a flag missing here causes a refusal, never a silent ignore.
+    _DOC_ONLY_FLAGS = frozenset({"--view", "--module", "--doc"})
+
     object_name = args[0]
     method_name = args[1]
     module = None
     arg_type = "void"
     return_type = "float _Complex"
-    #: Signature flags the caller actually typed, so a view override can tell
-    #: "not given" from "given the default" (gh-1011).
-    seen_sig: set[str] = set()
+    #: Every `--flag` the caller actually typed, captured generically at the
+    #: top of the token loop so no per-flag edit can forget one (gh-1011).
+    seen_flags: set[str] = set()
     variable_output = False
     pass_capacity = False
     exact_max_out = False
@@ -63,6 +68,8 @@ def run(args: list[str]) -> None:
     i = 0
     while i < len(remaining):
         tok = remaining[i]
+        if tok.startswith("--"):
+            seen_flags.add(tok)
         if tok == "--module":
             i += 1
             if i >= len(remaining):
@@ -347,7 +354,6 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             i += 1
         elif tok in ("--arg-type", "--return-type"):
-            seen_sig.add(tok)
             i += 1
             if i >= len(remaining):
                 print(f"error: {tok} requires a type", file=sys.stderr)
@@ -490,38 +496,20 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    # gh-1011: on a view override, a signature flag the caller did NOT pass
-    # must inherit the parent's, never this parser's default. Those defaults
-    # are values, not intent — `--return-type` alone defaults to
-    # `float _Complex`, so `jm method acq configure --view V --doc "..."`
-    # against a parent returning `int` would otherwise look like a deliberate
-    # signature change and be refused. Only the flags actually seen are the
-    # caller's declaration; the rest are the parent's.
-    if view and (
-        "--arg-type" not in seen_sig or "--return-type" not in seen_sig
-    ):
-        from . import _config as _C
-
-        try:
-            _cfg = _C.load(Path.cwd())
-        except SystemExit:
-            raise
-        except Exception:
-            _cfg = None
-        if _cfg is not None:
-            _parent = next(
-                (
-                    m
-                    for m in _C.methods(_cfg, object_name)
-                    if m["name"] == method_name
-                ),
-                None,
-            )
-            if _parent is not None:
-                if "--arg-type" not in seen_sig:
-                    arg_type = _parent.get("arg_type", arg_type)
-                if "--return-type" not in seen_sig:
-                    return_type = _parent.get("return_type", return_type)
+    # gh-1011: this parser's defaults are values, not intent. `--return-type`
+    # alone defaults to `float _Complex`, so
+    # `jm method acq configure --view V --doc "..."` against a parent
+    # returning `int` states no signature and must not read as changing one.
+    #
+    # The test is deliberately "did the caller pass ONLY the flags a doc-only
+    # override needs" rather than a flag-to-key map. A map has to be COMPLETE
+    # to be safe — miss one entry and a genuine `--variable-output` quietly
+    # stops being compared, which is the defect this whole change is about.
+    # Getting this rule wrong instead makes jm compare and refuse: loud, and
+    # recoverable by restating the signature.
+    _declared_sig: "frozenset[str] | None" = None
+    if view and seen_flags <= _DOC_ONLY_FLAGS:
+        _declared_sig = frozenset()
 
     impl_body_m: str | None = None
     if impl_spec_m is not None:
@@ -564,4 +552,5 @@ def run(args: list[str]) -> None:
         error_message=error_message,
         doc=doc,
         view=view,
+        declared=_declared_sig,
     )

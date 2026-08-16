@@ -841,8 +841,20 @@ _SIGNATURE_COERCIONS: dict = {
 }
 
 
-def _signature_differences(parent: dict, **incoming) -> "list[str]":
+def _signature_differences(
+    parent: dict, declared: "frozenset[str] | None" = None, **incoming
+) -> "list[str]":
     """Signature keys where `incoming` disagrees with the `parent` entry.
+
+    *declared* names the keys the caller actually stated. `None` means "all of
+    them", which is right for a direct call where every argument is explicit.
+    It matters because **only the caller knows what it left out**: by the time
+    values reach here, `_apply._replay_method` has already substituted this
+    function's own defaults for keys the manifest never had, so an entry
+    declaring nothing but `doc` arrives indistinguishable from one declaring
+    `arg_type = "void"`. Comparing those manufactured values is what refused a
+    hand-written doc-only override — the same absence-is-not-a-difference trap
+    as below, one layer out, on the path both issues were filed from.
 
     Both sides go through the SAME coercion, which is why this compares
     reliably: the parent arrives as raw TOML (where a bool may be `true` or
@@ -865,6 +877,8 @@ def _signature_differences(parent: dict, **incoming) -> "list[str]":
 
     differing = []
     for key, value in incoming.items():
+        if declared is not None and key not in declared:
+            continue  # never stated, so it inherits — not a difference
         coerce, default = _SIGNATURE_COERCIONS[key]
         # Absence is spelled two different ways and BOTH mean "the default":
         # the parent's TOML simply omits the key, while `run`'s own signature
@@ -920,6 +934,11 @@ def run(
     view: str = "",
     codec: str = "",
     sink_fn: str = "",
+    #: Signature keys the caller actually stated, for a view override.
+    #: `None` means every argument below is explicit — correct for a direct
+    #: call, and wrong for a replay, where absent manifest keys have already
+    #: become this function's defaults. Only the caller can tell them apart.
+    declared: "frozenset[str] | None" = None,
 ) -> None:
     C.require_name(method_name, "method")  # gh-625
     # gh-910: the method's parameters and result fields, before this command
@@ -1203,6 +1222,7 @@ def run(
             else:
                 differing = _signature_differences(
                     parent,
+                    declared,
                     arg_type=arg_type,
                     return_type=return_type,
                     variable_output=variable_output,

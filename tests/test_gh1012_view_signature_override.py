@@ -330,6 +330,147 @@ class TestDocOnlyOverrideStillWorks:
         )
 
 
+# ── the paths the first cut did not cover ───────────────────────────────────
+
+
+class TestHandWrittenManifest:
+    """`jm apply` over a hand-edited manifest — how both issues were filed.
+
+    The first cut of this fix passed every test above and still refused a
+    hand-written doc-only override, because these tests drive `_method.run`
+    directly, where every argument is explicit. `_apply._replay_method`
+    substitutes `run`'s defaults for absent manifest keys BEFORE `run` sees
+    them, so absence had already become `arg_type="void"` by the time anything
+    compared it. A whole class fixed on one path and live on the other.
+    """
+
+    def test_doc_only_override_from_a_hand_written_block(self, tmp_path):
+        dest = _base(tmp_path)
+        cfg_path = dest / "just-makeit.toml"
+        cfg_path.write_text(
+            cfg_path.read_text(encoding="utf-8")
+            + '\n[[rx.views.methods]]\nname = "block"\n'
+            'doc = "Block, on a real IF."\n',
+            encoding="utf-8",
+        )
+        from just_makeit import _apply
+
+        _apply.run(dest)  # must not raise SystemExit
+        _, view = _faces(dest)
+        assert "Block, on a real IF." in view
+        # ...and the signature it never mentioned is the parent's.
+        assert "x: NDArray[np.complex64]" in view
+
+    def test_signature_override_from_a_hand_written_block(self, tmp_path):
+        dest = _base(tmp_path)
+        cfg_path = dest / "just-makeit.toml"
+        cfg_path.write_text(
+            cfg_path.read_text(encoding="utf-8")
+            + '\n[[rx.views.methods]]\nname = "block"\n'
+            'arg_type = "float"\nreturn_type = "float _Complex"\n'
+            'variable_output = true\nfn = "rx_block_real"\n',
+            encoding="utf-8",
+        )
+        from just_makeit import _apply
+
+        _apply.run(dest)
+        _, view = _faces(dest)
+        assert "x: NDArray[np.float32]" in view
+
+    def test_a_differing_signature_without_fn_still_refuses(self, tmp_path):
+        dest = _base(tmp_path)
+        cfg_path = dest / "just-makeit.toml"
+        cfg_path.write_text(
+            cfg_path.read_text(encoding="utf-8")
+            + '\n[[rx.views.methods]]\nname = "block"\n'
+            'arg_type = "float"\n',
+            encoding="utf-8",
+        )
+        from just_makeit import _apply
+
+        with pytest.raises(SystemExit):
+            _apply.run(dest)
+
+
+class TestCliPath:
+    """Driven through `_cli_method.run`, where the DEFAULTS are the hazard.
+
+    This parser fills `arg_type="void"` and `return_type="float _Complex"`
+    whether or not the caller typed them, so a `--doc`-only override arrives
+    looking like a deliberate signature change. Nothing exercised this path in
+    the first cut, and codecov said so.
+    """
+
+    def test_doc_only_override_needs_no_signature_flags(
+        self, tmp_path, monkeypatch
+    ):
+        dest = _base(tmp_path)
+        monkeypatch.chdir(dest)
+        from just_makeit import _cli_method
+
+        _cli_method.run(
+            [
+                "rx",
+                "block",
+                "--module",
+                "dsp",
+                "--view",
+                "RxReal",
+                "--doc",
+                "Block, real IF.",
+            ]
+        )
+        _, view = _faces(dest)
+        assert "Block, real IF." in view
+        assert "x: NDArray[np.complex64]" in view
+
+    def test_a_stated_signature_without_fn_is_still_refused(
+        self, tmp_path, monkeypatch
+    ):
+        dest = _base(tmp_path)
+        monkeypatch.chdir(dest)
+        from just_makeit import _cli_method
+
+        with pytest.raises(SystemExit):
+            _cli_method.run(
+                [
+                    "rx",
+                    "block",
+                    "--module",
+                    "dsp",
+                    "--view",
+                    "RxReal",
+                    "--arg-type",
+                    "float",
+                ]
+            )
+
+    def test_the_override_works_through_the_cli(self, tmp_path, monkeypatch):
+        dest = _base(tmp_path)
+        monkeypatch.chdir(dest)
+        from just_makeit import _cli_method
+
+        _cli_method.run(
+            [
+                "rx",
+                "block",
+                "--module",
+                "dsp",
+                "--view",
+                "RxReal",
+                "--arg-type",
+                "float",
+                "--return-type",
+                "float _Complex",
+                "--variable-output",
+                "--fn",
+                "rx_block_real",
+            ]
+        )
+        _, view = _faces(dest)
+        assert "x: NDArray[np.float32]" in view
+
+
 # ── the gate: a new signature key cannot go uncompared ──────────────────────
 
 
