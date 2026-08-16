@@ -796,6 +796,89 @@ def _build_method_prototype(
     return f"{ret_disp} {c_fn}({c_params});"
 
 
+#: How a manifest method entry becomes the corresponding `run()` argument.
+#:
+#: Every entry is `key -> (coercion, default-when-absent)`, and the pair is the
+#: point: a manifest that omits `nogil` and a caller that passes `nogil=False`
+#: describe the same method, so comparing the raw `entry.get(key)` against the
+#: argument would report a difference that is not one. That false positive is
+#: the failure mode a gh-1011 fix is most likely to introduce — refusing a
+#: doc-only override because the parent's TOML simply did not mention a key.
+#:
+#: `tests/test_gh1012_view_signature_override.py` holds this to
+#: `_keys.METHOD_SIGNATURE_KEYS`, so a new signature key cannot be added
+#: without deciding how it compares.
+_SIGNATURE_COERCIONS: dict = {
+    "arg_type": (str, "void"),
+    "return_type": (str, "float _Complex"),
+    "variable_output": (bool, False),
+    "multi_output": (list, []),
+    "params": (list, []),
+    "out_type": (lambda v: v or "", None),
+    "out_divisor": (int, 1),
+    "batch": (bool, False),
+    "none_on_empty": (bool, False),
+    "result_fields": (list, []),
+    "max_results": (int, 64),
+    "single": (bool, False),
+    "record_name": (str, ""),
+    "record_module": (str, ""),
+    "record_dtype": (str, ""),
+    "py_return_type": (str, ""),
+    "max_out": (int, 0),
+    "varargs": (bool, False),
+    "manual_stub": (bool, False),
+    "pass_capacity": (bool, False),
+    "exact_max_out": (bool, False),
+    "count_default": (str, ""),
+    "nogil": (bool, False),
+    "status_return": (bool, False),
+    "error_negative": (bool, False),
+    "error": (str, ""),
+    "error_message": (str, ""),
+    "codec": (str, ""),
+    "sink_fn": (str, ""),
+}
+
+
+def _signature_differences(parent: dict, **incoming) -> "list[str]":
+    """Signature keys where `incoming` disagrees with the `parent` entry.
+
+    Both sides go through the SAME coercion, which is why this compares
+    reliably: the parent arrives as raw TOML (where a bool may be `true` or
+    `"true"`, and an absent key means "the default"), the caller's values
+    arrive already typed, and normalising only one of them is how a comparison
+    like this reports differences that do not exist.
+
+    `extra_args` has no row of its own because `_apply._replay_method` already
+    funnels it into `params` — comparing both would ask the same question
+    twice and answer it differently when only one is set.
+    """
+
+    def _norm(coerce, raw):
+        if raw is None:
+            return None
+        try:
+            return coerce(raw)
+        except (TypeError, ValueError):
+            return raw
+
+    differing = []
+    for key, value in incoming.items():
+        coerce, default = _SIGNATURE_COERCIONS[key]
+        # Absence is spelled two different ways and BOTH mean "the default":
+        # the parent's TOML simply omits the key, while `run`'s own signature
+        # defaults several of these to None (`params`, `result_fields`,
+        # `out_type`). Collapsing only the first is not enough — it reported
+        # `params` as differing on every doc-only override, because the
+        # manifest had no `params` key and the caller passed None.
+        theirs = _norm(coerce, parent.get(key, default))
+        mine = _norm(coerce, default if value is None else value)
+        if theirs != mine:
+            differing.append(key)
+    return sorted(differing)
+
+
 def run(
     root: Path,
     object_name: str,
@@ -1059,12 +1142,23 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        # A view method whose name matches a PARENT method is a DOC-ONLY
-        # override: the view's wrapper calls the shared <comp>_<method> C
-        # symbol, so the signature must stay the parent's (a change would
-        # mis-call it). Copy the parent entry and swap the doc — no C scaffold,
-        # no signature to validate. A NEW name falls through to the normal add
-        # path (which scaffolds the shared C stub).
+        # A view method whose name matches a PARENT method overrides it, and
+        # there are two kinds (gh-504, then gh-1012):
+        #
+        #   doc-only  — the view's wrapper calls the shared <comp>_<method>
+        #               symbol, so the signature MUST stay the parent's. Copy
+        #               the parent entry and swap the doc; no C to scaffold.
+        #   signature — the view binds a DIFFERENT C symbol under the same
+        #               Python name, so it may take a different `arg_type`.
+        #               That is the ordinary ADD path with a colliding name,
+        #               and it falls through to it below.
+        #
+        # `fn` is what separates them, and not as a convenience: the parent's
+        # symbol has the parent's prototype, so a different signature is only
+        # callable through a different symbol. Declaring one IS declaring the
+        # other. Until gh-1012 the second kind was accepted and silently
+        # discarded — `entry = dict(parent)` kept every signature key of the
+        # parent's, so a declared `arg_type` reached neither face (gh-1011).
         parent_names = {m["name"] for m in C.methods(cfg, object_name)}
         if method_name in parent_names:
             parent = next(
@@ -1079,18 +1173,93 @@ def run(
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            entry = dict(parent)
-            entry["doc"] = doc
-            C.add_view_method(cfg, object_name, view, entry)
-            C.save(root, cfg)
-            print(f"  update  {cfg_path}")
-            _regenerate_module(root, cfg, module, pkg)
-            print()
-            print(
-                f"Done!  View '{view}' overrides the doc of '{method_name}' "
-                f"(shares the parent's {object_name}_{method_name})."
-            )
-            return
+            parent_symbol = C.method_c_symbol(object_name, parent)
+            if fn:
+                # gh-1012: a signature override. Refuse a symbol that is the
+                # parent's — it would compile as a redefinition with a
+                # conflicting prototype, which is the failure the doc-only
+                # rule existed to prevent and is worth naming here rather
+                # than letting the C compiler report it.
+                if fn == parent_symbol:
+                    print(
+                        f"error: view '{view}' overrides method "
+                        f"'{method_name}' with fn '{fn}', which is the "
+                        f"symbol the parent already binds.\n"
+                        f"  A signature override needs its OWN C function — "
+                        f"give --fn a different name, or drop it for a "
+                        f"doc-only override.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                # NB the view's fragment already carries a wrapper for this
+                # name — the one it inherited from the parent. Regenerating it
+                # is handled where every path meets (`_regenerate_module_now`
+                # derives it from the manifest), not threaded from here: this
+                # command is only one of the ways the override arrives, and
+                # `apply` needs the same answer.
+                #
+                # fall through to the ADD path: it scaffolds the stub into the
+                # shared core and binds `fn` under this Python name.
+            else:
+                differing = _signature_differences(
+                    parent,
+                    arg_type=arg_type,
+                    return_type=return_type,
+                    variable_output=variable_output,
+                    multi_output=multi_output,
+                    params=params,
+                    out_type=out_type,
+                    out_divisor=out_divisor,
+                    batch=batch,
+                    none_on_empty=none_on_empty,
+                    result_fields=result_fields,
+                    max_results=max_results,
+                    single=single,
+                    record_name=record_name,
+                    record_module=record_module,
+                    record_dtype=record_dtype,
+                    py_return_type=py_return_type,
+                    max_out=max_out,
+                    varargs=varargs,
+                    manual_stub=manual_stub,
+                    pass_capacity=pass_capacity,
+                    exact_max_out=exact_max_out,
+                    count_default=count_default,
+                    nogil=nogil,
+                    status_return=status_return,
+                    error_negative=error_negative,
+                    error=error,
+                    error_message=error_message,
+                    codec=codec,
+                    sink_fn=sink_fn,
+                )
+                if differing:
+                    # gh-1011: this used to be accepted and ignored.
+                    print(
+                        f"error: view '{view}' redeclares parent method "
+                        f"'{method_name}' with a different "
+                        f"{', '.join(differing)}.\n"
+                        f"  Without --fn the view calls the parent's "
+                        f"{parent_symbol}, which has the parent's signature, "
+                        f"so this could only be ignored.\n"
+                        f"  Pass --fn <symbol> to bind its own C function "
+                        f"(gh-1012), or drop the differing key(s) for a "
+                        f"doc-only override.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                entry = dict(parent)
+                entry["doc"] = doc
+                C.add_view_method(cfg, object_name, view, entry)
+                C.save(root, cfg)
+                print(f"  update  {cfg_path}")
+                _regenerate_module(root, cfg, module, pkg)
+                print()
+                print(
+                    f"Done!  View '{view}' overrides the doc of "
+                    f"'{method_name}' (shares the parent's {parent_symbol})."
+                )
+                return
 
     # Check for duplicate method name. For a view ADD, dup-check against the
     # view's own methods (the object's shared method of the same name would be
@@ -1350,7 +1519,15 @@ def run(
         and not from_apply
         and not _withdrew_builtin
     ):
-        _vo_fn = f"{object_name}_{method_name}"
+        # gh-1012: the symbol this method actually BINDS, which is `fn` when
+        # declared. Deriving it from the name instead was invisible while
+        # every `fn` was a name nothing else used — a signature override makes
+        # `<obj>_<name>` collide by construction (that is what it is for), so
+        # the net fired on the parent's declaration every time and advised
+        # removing a capacity param that was never there.
+        _vo_fn = C.method_c_symbol(
+            object_name, {"name": method_name, "fn": fn}
+        )
         _core_h_check = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
         )

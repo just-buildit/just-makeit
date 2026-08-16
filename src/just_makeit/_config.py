@@ -30,6 +30,7 @@ import sys as _sys
 # `capsule` and `header` came to be accepted by the first and dropped by the
 # second. `_keys` imports only `_report`, so this is not a cycle.
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
+from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 
 try:
     import tomllib
@@ -2845,8 +2846,68 @@ def view_properties(view: dict) -> list[dict]:
 
 def view_methods(view: dict) -> list[dict]:
     """A view's OWN methods (gh-504): ADD a new method (scaffolds a shared C
-    stub) or OVERRIDE a parent method's doc. [] if none."""
+    stub), OVERRIDE a parent method's doc, or — since gh-1012 — override a
+    parent method's SIGNATURE under the same Python name. [] if none."""
     return list(view.get("methods", []))
+
+
+def method_c_symbol(component: str, entry: dict) -> str:
+    """The C function a method entry binds.
+
+    ``fn`` when declared (gh-805 §A2), else the derived ``<comp>_<name>``.
+    One derivation, because a view signature override is defined by having a
+    *different* one and two spellings of "which symbol" would decide that
+    differently.
+    """
+    return entry.get("fn") or f"{component}_{entry['name']}"
+
+
+def view_signature_override_members(
+    cfg: dict, component: str, view: dict
+) -> "list[str]":
+    """Wrapper names on *view* whose body jm owns and must re-render.
+
+    A gh-1012 signature override reuses a Python name the view already has a
+    wrapper for — the one inherited from the parent, converting the parent's
+    dtype and calling the parent's symbol. Regeneration preserves an existing
+    body on the assumption it is hand-written (gh-770), which is correct
+    everywhere else and wrong here: that body is glue jm emitted for a
+    signature the manifest no longer describes, so preserving it silently
+    keeps the very binding gh-1011 was filed about.
+
+    Derived from the manifest rather than passed in by whichever command
+    happened to notice, because `jm method --view`, `jm apply` and any later
+    path must all reach the same answer — the peer split that made the
+    incremental path disagree with `apply` while this was threaded by hand.
+    """
+    parents = {m["name"] for m in methods(cfg, component)}
+    cls = view.get("class_name", "")
+    return [
+        f"{cls}_{m['name']}"
+        for m in view_methods(view)
+        if m["name"] in parents and m.get("fn")
+    ]
+
+
+def view_method_signature_differs(parent: dict, entry: dict) -> "list[str]":
+    """Signature keys on which a view's method entry differs from its parent's.
+
+    Empty means the two describe the same call, so the view entry can only be
+    changing the doc — the gh-504 override that has always worked.
+
+    **An absent key INHERITS.** A view entry naming only ``doc`` therefore
+    differs in nothing, which is what keeps a doc-only override working when
+    the caller does not restate the signature. Reading absence as "declared
+    the default" instead would make every such override look like a signature
+    change, and is the trap gh-1011's fix has to avoid rather than repeat: the
+    CLI defaults (``arg_type='void'``, ``return_type='float _Complex'``) are
+    values, not intent.
+    """
+    return sorted(
+        key
+        for key in _METHOD_SIGNATURE_KEYS
+        if key in entry and entry[key] != parent.get(key)
+    )
 
 
 def view_warnings(view: dict) -> list[dict]:

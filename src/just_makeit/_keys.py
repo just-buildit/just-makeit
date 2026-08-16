@@ -196,6 +196,36 @@ METHOD_KEYS = frozenset(
     }
 )
 
+#: The keys on a method entry that describe its CALL SIGNATURE — everything a
+#: caller or the generated binding can observe, as opposed to how it reads.
+#:
+#: Derived by subtraction so it cannot fall behind ``METHOD_KEYS``: a new key
+#: is a signature key unless it is explicitly listed as prose or provenance
+#: below. Getting that default backwards is what gh-1011 cost — a view method
+#: silently kept its parent's ``arg_type`` because nothing compared the two.
+#:
+#: ``fn`` is deliberately NOT here. It names the C symbol rather than the
+#: signature, and on a view override it is the *declaration* that a separate
+#: symbol exists to carry a separate signature — so treating it as part of the
+#: comparison would make every signature override differ from itself.
+METHOD_NON_SIGNATURE_KEYS = frozenset(
+    {
+        "name",
+        "doc",
+        "fn",
+        # prose about the result, not its shape
+        "record_doc",
+        # provenance: where the body came from, not what it looks like
+        "impl",
+        "impl_file",
+        "replace",
+        "bench",
+    }
+)
+
+#: Keys whose value must match for two method entries to be the same call.
+METHOD_SIGNATURE_KEYS = METHOD_KEYS - METHOD_NON_SIGNATURE_KEYS
+
 #: Keys valid on a ``[[<component>.methods.params]]`` entry.
 PARAM_KEYS = frozenset(
     {
