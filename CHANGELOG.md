@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-08-16
+
 ### Added
 
 - **A view method may override a parent's SIGNATURE, not only its doc
