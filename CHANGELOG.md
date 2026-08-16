@@ -2,7 +2,44 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A view method may override a parent's SIGNATURE, not only its doc
+    (gh-1012)** — `[[<obj>.views.methods]]` restating a parent's name may now
+    declare its own `arg_type`/`return_type` and bind them to its own C symbol
+    via `fn`, so two objects that differ in one method's dtype and nothing else
+    can be one object and one view. The generated view takes its own dtype
+    under the *same* Python name, the parent is untouched, and both prototypes
+    reach the shared header. Previously the only way to express it was a
+    differently-named method (`steps_r`), which gives the two faces an
+    asymmetric public surface — most of the way back to being a second type.
+
+    `fn` is what distinguishes this from the doc-only override, and not as a
+    convenience: the parent's C symbol carries the parent's prototype, so a
+    different signature is only callable through a different symbol. Declaring
+    one is declaring the other. A doc-only override — same name, same
+    signature — is unchanged.
+
 ### Fixed
+
+- **A view method colliding with a parent name silently ignored its declared
+    `arg_type` (gh-1011)** — the entry was accepted, written to the manifest,
+    and then discarded: the replay copied the parent's entry wholesale and kept
+    only `doc`, so a declared dtype reached neither the stub nor the binding and
+    nothing was printed. jm already refused the same collision on the
+    neighbouring path (`exclude_methods` plus a view method of that name errors
+    outright), so the asymmetry was the tell. Such a declaration is now either
+    honoured (with `fn` — gh-1012 above) or refused with a message naming what
+    differs and how to express it. An omitted key still inherits, so a doc-only
+    override that does not restate the signature keeps working.
+
+- **The gh-137 "already declared" guard read the derived symbol instead of
+    `fn`** — it warns when the symbol a `variable_output` method is about to
+    declare is already in the header, deriving it from the method name and
+    ignoring `fn`. Invisible while every `fn` named something nothing else used;
+    a view signature override makes `<obj>_<name>` collide by construction, so
+    it fired on the parent's own declaration every time and advised removing a
+    capacity parameter that was never there.
 
 - **Four tagged releases had no CHANGELOG section, so their notes were being
     read as the next release's (gh-1007)** — v0.15.1, v0.15.2, v0.19.12 and

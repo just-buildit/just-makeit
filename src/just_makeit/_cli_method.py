@@ -22,6 +22,9 @@ def run(args: list[str]) -> None:
     module = None
     arg_type = "void"
     return_type = "float _Complex"
+    #: Signature flags the caller actually typed, so a view override can tell
+    #: "not given" from "given the default" (gh-1011).
+    seen_sig: set[str] = set()
     variable_output = False
     pass_capacity = False
     exact_max_out = False
@@ -344,6 +347,7 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             i += 1
         elif tok in ("--arg-type", "--return-type"):
+            seen_sig.add(tok)
             i += 1
             if i >= len(remaining):
                 print(f"error: {tok} requires a type", file=sys.stderr)
@@ -485,6 +489,39 @@ def run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-1011: on a view override, a signature flag the caller did NOT pass
+    # must inherit the parent's, never this parser's default. Those defaults
+    # are values, not intent — `--return-type` alone defaults to
+    # `float _Complex`, so `jm method acq configure --view V --doc "..."`
+    # against a parent returning `int` would otherwise look like a deliberate
+    # signature change and be refused. Only the flags actually seen are the
+    # caller's declaration; the rest are the parent's.
+    if view and (
+        "--arg-type" not in seen_sig or "--return-type" not in seen_sig
+    ):
+        from . import _config as _C
+
+        try:
+            _cfg = _C.load(Path.cwd())
+        except SystemExit:
+            raise
+        except Exception:
+            _cfg = None
+        if _cfg is not None:
+            _parent = next(
+                (
+                    m
+                    for m in _C.methods(_cfg, object_name)
+                    if m["name"] == method_name
+                ),
+                None,
+            )
+            if _parent is not None:
+                if "--arg-type" not in seen_sig:
+                    arg_type = _parent.get("arg_type", arg_type)
+                if "--return-type" not in seen_sig:
+                    return_type = _parent.get("return_type", return_type)
 
     impl_body_m: str | None = None
     if impl_spec_m is not None:

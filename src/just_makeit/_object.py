@@ -1633,6 +1633,20 @@ def _regenerate_module_now(
                 if C.destroy_spec(cfg, ctx["component"])
                 else ()
             )
+            # gh-1012: same reasoning one feature over — a view's signature
+            # override reuses a wrapper name the fragment already has, and
+            # that existing body is jm's own glue for the OLD signature. The
+            # view is found by frag_id (the lowercased class_name) because
+            # that is the only thing tying a fragment back to its view here.
+            if ctx.get("frag_id") and ctx["frag_id"] != ctx["component"]:
+                _force += tuple(
+                    m
+                    for v in C.views(cfg, ctx["component"])
+                    if v.get("class_name", "").lower() == ctx["frag_id"]
+                    for m in C.view_signature_override_members(
+                        cfg, ctx["component"], v
+                    )
+                )
             frag = _restore_c_function_bodies(
                 frag, preserved, force_regen=_force
             )
