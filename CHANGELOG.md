@@ -28,6 +28,42 @@
 
 ### Fixed
 
+- **A gh-1012 signature override's `.pyi` documented the parent's C symbol, so
+    the two doc faces disagreed (gh-1018).** The runtime face renders from the
+    override's own block; the stub face looked its block up as
+    `<component>_<member>` — a key derived from the member NAME, which for a
+    view resolves through gh-685's re-keying to the *parent's* block. Correct
+    for every inherited member, and wrong for exactly the one gh-1012 exists
+    for: a view whose `block` takes `float` was documented in the stub with the
+    parent's `float _Complex` example, a doctest constructing the parent class
+    and handing it a complex array under the view's own class name.
+
+    No manifest or header configuration could make both faces right. Removing
+    the override's `@code` only swapped the runtime face onto jm's synthesized
+    example while the stub kept the parent's authored one — so a downstream
+    doc-face-parity gate could not be satisfied at all, which is how this was
+    found (doppler, collapsing two M-PSK receivers into one object whose
+    real-input face is a view with `f32` `steps`/`bits`).
+
+    Both the member and its `_max_out` sibling now key on
+    `C.method_c_symbol(component, entry)` — the symbol the member actually
+    binds — falling back to the derived name so an inherited view member and a
+    first scaffold are byte-identical to before. The `_max_out` fallback
+    deliberately does NOT apply when the header declares the bound name: an
+    override's `_max_out` is its own function with its own arity, and the
+    parent's must not answer for it.
+
+    A second, quieter half came with it. jm scaffolds its skeleton `@brief`
+    from the Python member name (`@brief block.`) while `parse_doxygen_block`
+    recognises a scaffold by the name derived from the C *symbol* — the same
+    string for every method until `fn` made them differ, since `rx_block_real`
+    derives `block_real` and `@brief block.` does not match it. An
+    **undocumented** override therefore rendered its own skeleton as prose in
+    the `apply` path and the name-based fallback in the `jm method` path, so
+    the two disagreed about a file neither author had touched and
+    `jm status --check` called it stale. The scaffold sentinel is now judged
+    against the member name at the point of use.
+
 - **The 0.62.0 view-override rule was documented nowhere, and the old rule was
     still stated as complete** — `docs/commands/extend.md` and `jm --help` both
     said a `--view` method "overrides a parent method's doc by reusing its
