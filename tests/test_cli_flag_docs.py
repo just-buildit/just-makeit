@@ -25,9 +25,14 @@ Two properties, at two different layers:
 `test_help_coverage_does_not_regress`
     `jm --help` is documentation too, and it is the copy a user reads first.
     17 parsed flags are absent from it as of 0.62.0 — a real backlog, tracked
-    rather than fixed here, so the number is a **ratchet that may only
-    shrink**. Fixing a flag's help text lowers it; adding a flag without help
-    text cannot raise it.
+    in gh-1015 rather than fixed here, so the number is a **ratchet that may
+    only shrink**. Fixing a flag's help text lowers it; adding a flag without
+    help text cannot raise it.
+
+    That backlog is a recurrence, which is why it is a ratchet and not a note:
+    gh-496 was this exact class on `jm app`, fixed as four hand-added flags in
+    0.30.2 with nothing left behind to check the parsers against the help
+    block. Thirteen more arrived the same way.
 
 **Why the extraction is a scan for string literals rather than an import.**
 `docs-check` runs this suite under `uv run --no-project`, so `just_makeit` is
@@ -60,7 +65,8 @@ _FLAG_LITERAL = re.compile(r'"(--[a-z0-9][a-z0-9-]*)"')
 
 #: Flags absent from `jm --help` on 2026-08-17, counted by this file's own
 #: measurement. A RATCHET: lower it when you document one, never raise it.
-#: See the module docstring for why it exists rather than being fixed here.
+#: The burn-down is gh-1015; see the module docstring for why it is tracked
+#: there rather than fixed here.
 HELP_GAP_RATCHET = 17
 
 
