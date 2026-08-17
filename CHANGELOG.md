@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.62.1] — 2026-08-17
+
 ### Added
 
 - **A gate on flag documentation: every flag the CLI parses must appear in the
