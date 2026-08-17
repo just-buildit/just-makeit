@@ -145,8 +145,12 @@ Commands:
     --impl file::funcname       Lift method body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
     --view ClassName            Attach the method to a VIEW of the object (add a
-                                view-only method, or override a parent method's
-                                doc by reusing its name). Requires --module.
+                                view-only method, or override a parent method by
+                                reusing its name). --fn decides which override:
+                                with it, the view binds its own symbol and may
+                                differ in signature; without it, the signature
+                                must match the parent's and only the doc
+                                changes. Requires --module.
 
   view <obj> <ClassName> [OPTIONS]  Add a second Python class over an object's
                                 same generated C core (module objects only).

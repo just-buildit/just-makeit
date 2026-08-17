@@ -594,27 +594,43 @@ that has to honour it.
 
 ### `[[<component>.methods]]` entries
 
-| TOML field                             | CLI flag                                                | Status       |
-| -------------------------------------- | ------------------------------------------------------- | ------------ |
-| `name`, `arg_type`, `return_type`      | `jm method <obj> <method> --arg-type T --return-type T` | ✅           |
-| `params = [{name, type}]`              | `jm method --param name:type` (repeatable)              | ✅           |
-| `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)  | ✅ (0.14.2)  |
-| `variable_output = true`               | `jm method --variable-output`                           | ✅           |
-| `pass_capacity = true`                 | `jm method --pass-capacity`                             | ✅ (0.14.4)  |
-| `exact_max_out = true`                 | `jm method --exact-max-out`                             | ✅ (0.55.0)  |
-| `count_default = "EXPR"`               | `jm method --count-default EXPR`                        | ✅ (0.34.0)  |
-| `nogil = true`                         | `jm method --nogil`                                     | ✅ (0.15.2)  |
-| `max_out = N` (sibling stub)           | `jm method --max-out N`                                 | ✅ (0.13.23) |
-| `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)               | ✅           |
-| `out_type = "T"`                       | `jm method --out-type T`                                | ✅           |
-| `out_divisor = N`                      | `jm method --out-divisor N`                             | ✅           |
-| `batch = true`                         | `jm method --batch`                                     | ✅           |
-| `bench = false`                        | `jm method --no-bench`                                  | ✅           |
-| `result_fields = [{name, type, doc?}]` | `jm method --result-field name:type[:doc]` (repeatable) | ✅ (0.13.23) |
-| `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)       | ✅ (0.41.0)  |
-| `max_results = N`                      | (TOML only; default 64)                                 | 🟡           |
-| `py_return_type = "..."`               | `jm method --py-return-type STR`                        | ✅           |
-| `impl = "..."` body                    | `jm method --impl file::funcname`                       | ✅           |
+| TOML field                             | CLI flag                                                     | Status       |
+| -------------------------------------- | ------------------------------------------------------------ | ------------ |
+| `name`, `arg_type`, `return_type`      | `jm method <obj> <method> --arg-type T --return-type T`      | ✅           |
+| `doc = "..."`                          | `jm method --doc "text"`                                     | ✅           |
+| `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                      | ✅ (0.49.0)  |
+| `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                   | ✅           |
+| `varargs = true`                       | `jm method --varargs`                                        | ✅           |
+| `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)       | ✅ (0.14.2)  |
+| `variable_output = true`               | `jm method --variable-output`                                | ✅           |
+| `pass_capacity = true`                 | `jm method --pass-capacity`                                  | ✅ (0.14.4)  |
+| `exact_max_out = true`                 | `jm method --exact-max-out`                                  | ✅ (0.55.0)  |
+| `count_default = "EXPR"`               | `jm method --count-default EXPR`                             | ✅ (0.34.0)  |
+| `nogil = true`                         | `jm method --nogil`                                          | ✅ (0.15.2)  |
+| `max_out = N` (sibling stub)           | `jm method --max-out N`                                      | ✅ (0.13.23) |
+| `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                    | ✅           |
+| `out_type = "T"`                       | `jm method --out-type T`                                     | ✅           |
+| `out_divisor = N`                      | `jm method --out-divisor N`                                  | ✅           |
+| `batch = true`                         | `jm method --batch`                                          | ✅           |
+| `bench = false`                        | `jm method --no-bench`                                       | ✅           |
+| `result_fields = [{name, type, doc?}]` | `jm method --result-field name:type[:doc]` (repeatable)      | ✅ (0.13.23) |
+| `single = true`                        | `jm method --single`                                         | ✅ (0.19.6)  |
+| `record_name = "..."`                  | `jm method --record-name NAME` (with `--single`)             | ✅ (0.19.8)  |
+| `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)            | ✅ (0.19.14) |
+| `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)            | ✅ (0.41.0)  |
+| `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`) | ✅ (0.47.0)  |
+| `max_results = N`                      | (TOML only; default 64)                                      | 🟡           |
+| `none_on_empty = true`                 | (TOML only) return `None` rather than an empty result        | 🟡           |
+| `status_return = true`                 | (TOML only) the `int` return carries status only             | 🟡           |
+| `error_negative = true`                | `jm method --error-negative`                                 | ✅ (0.49.0)  |
+| `error = "EXC"`                        | `jm method --error EXC`                                      | ✅ (0.49.0)  |
+| `error_message = "..."`                | `jm method --error-message TEXT`                             | ✅ (0.49.0)  |
+| `py_return_type = "..."`               | `jm method --py-return-type STR`                             | ✅           |
+| `manual_stub = "..."`                  | (TOML only) hand-written `.pyi` signature, kept verbatim     | 🟡           |
+| `codec = "..."`                        | (TOML only) variant codec applied to the result              | 🟡           |
+| `sink_fn = "SYMBOL"`                   | (TOML only) C sink the method feeds instead of returning     | 🟡           |
+| `impl = "..."` body                    | `jm method --impl file::funcname`                            | ✅           |
+| `impl_file`, `replace`                 | `jm method --impl file::funcname` / `--replace old::new`     | ✅           |
 
 ### `[[<component>.properties]]` entries
 
