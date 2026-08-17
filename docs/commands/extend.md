@@ -54,7 +54,14 @@ appended, ready for you to implement.
 | `--replace old::new`          | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                       |
 | `--doc "text"`                | Python docstring for the method.                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `--py-return-type STR`        | Override the `.pyi` return-type annotation (the C `--return-type` still drives the C signature).                                                                                                                                                                                                                                                                                                                                                              |
-| `--view ClassName`            | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or overrides a parent method's doc by reusing its name. Views are a module-object feature, so the object must live in a module.                                                                                                                                                                                                        |
+| `--view ClassName`            | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or **overrides** a parent method by reusing its name. What `--fn` does or does not say decides which override it is; see [Overriding a parent method](#overriding-a-parent-method). Views are a module-object feature, so the object must live in a module.                                                                            |
+| `--fn SYMBOL`                 | C function this method binds, when it is not the derived `<comp>_<name>`. For adopting existing C under its own prefix, or binding a validating variant (`--fn dp_tlm_emit_checked`) under the plain Python name. The Python face is unchanged. On a view it also selects a **signature** override (below). Persists as `fn = "…"` on the method.                                                                                                             |
+| `--error-negative`            | The `int` return is a **value** unless it is negative, in which case it is an error code and the method raises. Distinct from `--status-return`, where the int carries nothing but status. Signed integer return types only. Persists as `error_negative = "true"`.                                                                                                                                                                                           |
+| `--status-return`             | The `int` return carries **only** status (0 = ok): the binding raises on non-zero and the method returns `None`, so no status code reaches Python. Mutually exclusive with `--error-negative`, which is for an int that is both a value and an error channel. Persists as `status_return = "true"`.                                                                                                                                                           |
+| `--manual-stub`               | This method's C binding is already **hand-written** in a sacred `_ext_<obj>_extra.c` fragment. jm declares nothing for it and only preserves its `.pyi` placeholder verbatim across regeneration (gh-428). Persists as `manual_stub = "true"`.                                                                                                                                                                                                                |
+| `--error EXC`                 | Exception `--error-negative` raises (default `ValueError`); one of jm's [error categories](#just-makeit-error). Persists as `error = "…"`.                                                                                                                                                                                                                                                                                                                    |
+| `--error-message TEXT`        | Text for that exception; jm appends `(rc=%d)`. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                                                                                                                                             |
+| `--record-dtype STRUCT`       | With `--variable-output`: return **one** numpy structured array whose dtype is that C struct's own layout, one row per record, and `--result-field` names its columns. The dtype is built at runtime by the generated C from `offsetof`/`sizeof` — jm never sees the struct, so it cannot guess C's padding (gh-788). Contrast `--single`, which returns one record; see [Record shapes](#record-shapes) below.                                               |
 | `--no-bench`                  | Exclude this method from the generated C benchmark.                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ______________________________________________________________________
@@ -291,6 +298,45 @@ guarantee is now structural rather than defended at runtime (gh-604).
 
 ______________________________________________________________________
 
+#### Record shapes
+
+When a method's output is **records** rather than plain samples, three shapes
+are available and `--result-field` names the fields in all three. What you get
+back depends on which of `--single` / `--record-dtype` you pass:
+
+| you pass                | Python gets                                   | the C kernel writes               |
+| ----------------------- | --------------------------------------------- | --------------------------------- |
+| neither                 | a `list[tuple]`                               | `<T> *result, size_t max_results` |
+| `--single`              | **one** record, a named `PyStructSequence`    | the struct by value               |
+| `--record-dtype STRUCT` | **an array** of records, a structured ndarray | `<STRUCT> *out`                   |
+
+The two are mutually exclusive — the CLI rejects them together, because "one
+record" and "an array of records" are different results, not two spellings of
+one.
+
+```sh
+# an array of records: one row per telemetry entry, as a structured ndarray
+just-makeit method tlm read --module link --arg-type void \
+    --variable-output --record-dtype dp_tlm_rec_t \
+    --result-field n:uint64_t --result-field flags:uint8_t
+```
+
+```python
+rows = tlm.read(64)
+rows["n"]              # a column, no per-record Python objects
+rows.dtype.itemsize    # C's itemsize, padding included
+```
+
+**The dtype is built at runtime by the generated C**, from `offsetof` and
+`sizeof` on the author's struct. That is not an optimisation — it is the only
+correct source. jm never sees the struct definition (it lives in the sacred
+header, which is yours), and numpy *packs* a field list where C *pads* it: a
+`{uint8_t; uint64_t}` struct is 16 bytes in C and 9 as a numpy dtype built from
+`[(name, format), ...]`. Deriving the layout from the field list would silently
+mis-read every row after the first.
+
+______________________________________________________________________
+
 #### `--multi-output`
 
 Each `--multi-output TYPE` adds a parallel output array, producing a tuple
@@ -381,6 +427,7 @@ directly into the state struct and auto-implements the getter as
 | `--count-fn FN`     | Entry-count accessor for a container property. Default `<obj>_num_<prop>`.                                                                                                                                                                                                                                                                                                                           |
 | `--key-fn FN`       | Key accessor for a `dict` property. Default `<obj>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                      |
 | `--value-fn FN`     | Value accessor for a container property. Default `<obj>_<prop>_value`.                                                                                                                                                                                                                                                                                                                               |
+| `--capsule NAME`    | With `--type capsule`: publish a **borrowed** pointer as a `PyCapsule` under that name, so a peer extension can consume it by name (gh-788). The capsule does not own the pointer and carries no liveness — the getter checks the object is alive before handing it out, and the capsule's destructor is `NULL` by contract. Persists as `capsule = "NAME"`.                                         |
 | `--view ClassName`  | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Views are a module-object feature, so the object must live in a module.                                                                                                                         |
 
 ### Choosing a property kind — and what each costs your header
@@ -651,6 +698,72 @@ Excluding a method drops only the view's Python wrapper and its `PyMethodDef`
 entry — the shared C function stays in the core, so nothing dangles and the
 parent keeps working.
 
+______________________________________________________________________
+
+### Overriding a parent method
+
+A view method that reuses a parent method's name is an **override**, and there
+are two kinds. **`--fn` decides which** (gh-1012, gh-1011):
+
+| you pass                               | you get                  | the view calls                                      |
+| -------------------------------------- | ------------------------ | --------------------------------------------------- |
+| `--doc` only (or a matching signature) | a **doc-only** override  | the parent's `<obj>_<name>`                         |
+| `--fn <symbol>`                        | a **signature** override | its own `<symbol>`, scaffolded into the shared core |
+
+This is not a flag standing in for a second question. The parent's C symbol
+carries the parent's prototype, so a different signature is only *callable*
+through a different symbol — which is exactly what `--fn` supplies:
+
+```sh
+# doc-only: same signature, the view just words it differently
+just-makeit method acc plain --module bank --view SeededAcc \
+    --doc "seeded plain"
+#   -> View 'SeededAcc' overrides the doc of 'plain' (shares acc_plain)
+
+# signature override: its own arg_type, so its own C function
+just-makeit method acc scaled --module bank --view SeededAcc \
+    --fn acc_scaled_seeded --arg-type float --return-type double \
+    --doc "seeded scale"
+#   -> Implement acc_scaled_seeded() in acc_core.c
+```
+
+Both prototypes then stand side by side in the sacred header, and only the
+view's fragment calls the override:
+
+```c
+double acc_scaled(acc_state_t *state, double x);         /* parent */
+double acc_scaled_seeded(acc_state_t *state, float x);   /* the view's */
+```
+
+**A differing signature without `--fn` is refused**, rather than silently
+ignored as it was before 0.62.0 — the view would have called the parent's
+symbol, so the declaration could only ever have been dropped:
+
+```text
+error: view 'SeededAcc' redeclares parent method 'scaled' with a different arg_type.
+  Without --fn the view calls the parent's acc_scaled, which has the parent's
+  signature, so this could only be ignored.
+  Pass --fn <symbol> to bind its own C function (gh-1012), or drop the
+  differing key(s) for a doc-only override.
+```
+
+Only the keys you actually **state** are compared, so a hand-written manifest
+entry carrying nothing but `doc` is a doc-only override and stays legal. And
+`--fn` naming the parent's own symbol is refused up front, rather than left for
+the C compiler to report as a conflicting redefinition:
+
+```text
+error: view 'SeededAcc' overrides method 'scaled' with fn 'acc_scaled', which is
+the symbol the parent already binds.
+  A signature override needs its OWN C function — give --fn a different name, or
+  drop it for a doc-only override.
+```
+
+Properties and warnings have no second kind: reusing a parent's name overrides
+how it reads, as in the `depth` example above.
+
+______________________________________________________________________
+
 **Limitation:** a view cannot yet sit over a parent whose init-params use
 per-array dtype-dispatch or optional-array forms (`real_type`, `real_create_fn`,
 `create_fn`, `optional`); those paths embed `<obj>_create` directly and would
@@ -690,15 +803,16 @@ must already exist as state (add it with `just-makeit add` if needed).
 
 **Arguments**
 
-| Argument            | Description                                                                                                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                                                                          |
-| `--condition FIELD` | Bool-valued state field that triggers the warning. Required.                                                                                                                     |
-| `--message TEXT`    | Warning text shown to the Python caller. Required.                                                                                                                               |
-| `--category NAME`   | Warning class — a Python built-in warning (`UserWarning`, `DeprecationWarning`, `RuntimeWarning`, …). Default `UserWarning`.                                                     |
-| `--module name`     | Module the object belongs to. Optional — jm reads it from the manifest (gh-963); pass it to be explicit, and it is validated.                                                    |
-| `--stacklevel N`    | `PyErr_WarnEx` stacklevel, so the warning points at the caller's frame. Default `1`.                                                                                             |
-| `--view ClassName`  | Attach the warning to a [view](#just-makeit-view) rather than the object, so a second front door over the shared core gets its own `PyErr_WarnEx`. Requires `--module` (gh-509). |
+| Argument            | Description                                                                                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                 |
+| `--condition FIELD` | Bool-valued state field that triggers the warning. Required.                                                                                                                                            |
+| `--message TEXT`    | Warning text shown to the Python caller. Required.                                                                                                                                                      |
+| `--category NAME`   | Warning class — a Python built-in warning (`UserWarning`, `DeprecationWarning`, `RuntimeWarning`, …). Default `UserWarning`.                                                                            |
+| `--module name`     | Module the object belongs to. Optional — jm reads it from the manifest (gh-963); pass it to be explicit, and it is validated.                                                                           |
+| `--stacklevel N`    | `PyErr_WarnEx` stacklevel, so the warning points at the caller's frame. Default `1`.                                                                                                                    |
+| `--after POINT`     | Where the check runs. Only `__init__` (the default) is supported — anything else is refused rather than accepted and ignored, so the flag is a declared extension point, not a knob with hidden values. |
+| `--view ClassName`  | Attach the warning to a [view](#just-makeit-view) rather than the object, so a second front door over the shared core gets its own `PyErr_WarnEx`. Requires `--module` (gh-509).                        |
 
 An object may carry more than one warning — each `just-makeit warning` call on
 a distinct `--condition` adds another. Re-running with the same condition
@@ -813,22 +927,25 @@ capability is ~free unless keywords are actually used — see
 
 **Arguments**
 
-| Argument                        | Description                                                                                                                                                    |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                          | Snake-case function name.                                                                                                                                      |
-| `--module mod`                  | Module the function belongs to (required).                                                                                                                     |
-| `--param name:type`             | Named typed scalar parameter. Repeatable.                                                                                                                      |
-| `--param name:type=default`     | Optional scalar parameter — omitting it yields `default` (e.g. `gain:double=1.0`). Optional params must come after required ones; plain scalars only (gh-240). |
-| `--param name:type[]`           | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                 |
-| `--param name:path`             | Filesystem path parameter. Python accepts `str \| os.PathLike`; C receives `const char *` via `PyUnicode_FSConverter` (gh-353).                                |
-| `--param name:enum:<ename>[=d]` | String-choice parameter validated against the named `[[enum]]` SSOT; C receives the `int` index; optional default `d` is the string value (gh-353).            |
-| `--return-type TYPE`            | C return type (default: `void`).                                                                                                                               |
-| `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                  |
-| `--inline`                      | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                             |
-| `--doc "text"`                  | Python docstring for the function.                                                                                                                             |
-| `--impl file::funcname`         | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                             |
-| `--impl file::N:M`              | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.                                                               |
-| `--replace old::new`            | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                        |
+| Argument                        | Description                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                          | Snake-case function name.                                                                                                                                                                                                                                                                                                                         |
+| `--module mod`                  | Module the function belongs to (required).                                                                                                                                                                                                                                                                                                        |
+| `--param name:type`             | Named typed scalar parameter. Repeatable.                                                                                                                                                                                                                                                                                                         |
+| `--param name:type=default`     | Optional scalar parameter — omitting it yields `default` (e.g. `gain:double=1.0`). Optional params must come after required ones; plain scalars only (gh-240).                                                                                                                                                                                    |
+| `--param name:type[]`           | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                                                                                                                                                                                                    |
+| `--param name:path`             | Filesystem path parameter. Python accepts `str \| os.PathLike`; C receives `const char *` via `PyUnicode_FSConverter` (gh-353).                                                                                                                                                                                                                   |
+| `--param name:enum:<ename>[=d]` | String-choice parameter validated against the named `[[enum]]` SSOT; C receives the `int` index; optional default `d` is the string value (gh-353).                                                                                                                                                                                               |
+| `--return-type TYPE`            | C return type (default: `void`).                                                                                                                                                                                                                                                                                                                  |
+| `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                                                                                                                                                                                                     |
+| `--out-type TYPE`               | Allocate a 1-D output array of this element type per call and append `out` last to the C call.                                                                                                                                                                                                                                                    |
+| `--variable-output`             | With `--out-type`: the function allocates its own 1-D output rather than returning a scalar — no caller buffer and no cached instance buffer. `out` is appended **last** to the C call, and the binding returns the ndarray (gh-335). A `size_t`-returning function is trimmed to the count it reports; a `void` one returns the full allocation. |
+| `--out-size EXPR`               | Length of that output, as a **verbatim C expression** over the function's own arguments — including each array param's generated `<name>_len` (e.g. `x_len * factor`, or a call like `wfm_rrc_ntaps(sps, span)`). Omit it and the length falls back to the first array parameter's length.                                                        |
+| `--inline`                      | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                                                                                                                                                                                                                |
+| `--doc "text"`                  | Python docstring for the function.                                                                                                                                                                                                                                                                                                                |
+| `--impl file::funcname`         | Lift the function body from `funcname` in `file` instead of emitting a blank `<<IMPLEMENT>>` stub.                                                                                                                                                                                                                                                |
+| `--impl file::N:M`              | Lift lines `N`..`M` (inclusive, 1-based) instead of a named function body. Ranges error cleanly.                                                                                                                                                                                                                                                  |
+| `--replace old::new`            | String substitution applied to the body lifted by `--impl`. Repeatable.                                                                                                                                                                                                                                                                           |
 
 **Example — no parameters:**
 

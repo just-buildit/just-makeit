@@ -397,12 +397,13 @@ generate — a read-only drift report. Must be run from the project root.
 just-makeit status
 ```
 
-| Flag           | Description                                                                                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--allow PATH` | Treat `PATH` (exact path or fnmatch glob) as a known deviation: reported as `ALLOWED`, not counted. Repeatable; combines with `[project] status_allow` in the manifest. |
-| `--json`       | Emit the report as JSON (`{path, state, allowed, dropped_symbols}` per entry) instead of a table.                                                                       |
-| `--diff`       | Print a unified diff per stale file.                                                                                                                                    |
-| `--check`      | One-line summary only — the per-file listing is suppressed, the exit code is unchanged. CI mode.                                                                        |
+| Flag                | Description                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--allow PATH`      | Treat `PATH` (exact path or fnmatch glob) as a known deviation: reported as `ALLOWED`, not counted. Repeatable; combines with `[project] status_allow` in the manifest.                                                                                                                                                       |
+| `--json`            | Emit the report as JSON (`{path, state, allowed, dropped_symbols}` per entry) instead of a table.                                                                                                                                                                                                                             |
+| `--diff`            | Print a unified diff per stale file.                                                                                                                                                                                                                                                                                          |
+| `--check`           | One-line summary only — the per-file listing is suppressed, the exit code is unchanged. CI mode.                                                                                                                                                                                                                              |
+| `--strict-examples` | Promote "an authored `@code` line is too wide for its generated stub" from a reported count to a **failure** (gh-760). This is the one-off form; `[project] strict_examples = "true"` in the manifest is the durable one, so a project that wants the stricter reading does not have to remember the flag at every call site. |
 
 Prints a table of files, each in one of these states:
 

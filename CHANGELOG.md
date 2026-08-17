@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A gate on flag documentation: every flag the CLI parses must appear in the
+    reference docs (`tests/test_cli_flag_docs.py`)** — twelve did not, and one
+    of them was `--fn`, which 0.62.0 had just made the discriminator deciding
+    whether a view method overrides a parent's signature or only its doc. Also
+    undocumented: `--record-dtype`, `--status-return`, `--manual-stub`,
+    `--capsule`, `--opaque-state`, `--out-size`, `--after`,
+    `--strict-examples`, and the `--error` / `--error-negative` /
+    `--error-message` trio. All are now documented and the gate is at zero.
+
+    The gate holds no list of flags — it derives the set from the `_cli*.py`
+    parsers, so a flag added later is covered with no edit to it. That is the
+    point: jm has twice paid for an undocumented capability at issue scale
+    (gh-1003 asked for `default = "[]"` to be *built*; gh-528 made a consumer
+    publish a struct the computed-property path already kept opaque), and a
+    reminder to document a flag is not a check that one is documented.
+
+    A second assertion ratchets `jm --help` coverage, where 17 parsed flags are
+    still absent: it may only shrink, so the known backlog cannot grow while it
+    is worked down.
+
+### Fixed
+
+- **The 0.62.0 view-override rule was documented nowhere, and the old rule was
+    still stated as complete** — `docs/commands/extend.md` and `jm --help` both
+    said a `--view` method "overrides a parent method's doc by reusing its
+    name", describing pre-0.62.0 behaviour. Neither mentioned that `--fn` now
+    selects a *signature* override, nor that a differing signature without
+    `--fn` is refused rather than ignored — a refusal a user can hit with no
+    documented explanation. Both are corrected, and `extend.md` gains an
+    **Overriding a parent method** section covering both kinds and both
+    refusals.
+
+- **`docs/configuration.md`'s method key table listed 21 of 38 recognised
+    keys** — it reads as the manifest's key reference, so the 17 absent ones
+    (`fn`, `single`, `record_name`, `record_module`, `record_dtype`,
+    `status_return`, `none_on_empty`, `manual_stub`, `codec`, `sink_fn`, the
+    `error*` trio, `doc`, `varargs`, `impl_file`, `replace`) read as keys the
+    manifest does not take. `none_on_empty` appeared in no doc page at all. A
+    **Record shapes** section in `extend.md` now covers the `single` /
+    `record_dtype` / neither distinction, including why the dtype has to be
+    built at runtime by the generated C.
+
 ## [0.62.0] — 2026-08-16
 
 ### Added
