@@ -21,8 +21,10 @@
     reminder to document a flag is not a check that one is documented.
 
     A second assertion ratchets `jm --help` coverage, where 17 parsed flags are
-    still absent: it may only shrink, so the known backlog cannot grow while it
-    is worked down.
+    still absent (gh-1015): it may only shrink, so the known backlog cannot grow
+    while it is worked down. That backlog is a recurrence — gh-496 was the same
+    class on `jm app`, fixed in 0.30.2 as four hand-added flags with nothing
+    left behind to check the parsers against the help block.
 
 ### Fixed
 
