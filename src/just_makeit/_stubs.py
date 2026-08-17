@@ -44,6 +44,7 @@ from ._docstring import (
     STUB_TARGET_WIDTH,
     ClassParam,
     class_docstring,
+    is_scaffold_doc,
     max_out_arity_key,
     max_out_is_state_only,
 )
@@ -1725,7 +1726,33 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # extra methods
     for m in obj_methods:
         m_name = m["name"]
-        _blk = doc_blocks.get(f"{obj}_{m_name}")
+        # gh-1018: the block belongs to the symbol this member actually BINDS,
+        # which for a gh-1012 signature override is its `fn` and not the
+        # derived `<component>_<name>`. The runtime face already renders from
+        # the override's own block (`_object._make_view_ctx`), so keying the
+        # stub on the member NAME made the two faces document different C
+        # functions — and the .pyi documented the one it does not call, with
+        # the parent's dtype in its Examples.
+        #
+        # The `<component>_<name>` fallback keeps every other project
+        # byte-identical: an inherited view member resolves under the re-keyed
+        # synthetic name exactly as it did (gh-685), and a method whose `fn`
+        # carries no Doxygen falls back to where it used to look rather than
+        # silently losing its documentation.
+        _blk = doc_blocks.get(C.method_c_symbol(obj, m)) or doc_blocks.get(
+            f"{obj}_{m_name}"
+        )
+        # ...and the scaffold sentinel is judged against the member NAME, not
+        # the symbol. jm writes its skeleton brief from the Python name
+        # (`@brief block.`) while `parse_doxygen_block` recognises a scaffold
+        # by the name it derives from the C symbol — the same string for every
+        # method until gh-1012 made them differ (`rx_block_real` derives
+        # `block_real`, which `@brief block.` does not match). Left alone, an
+        # UNDOCUMENTED override renders its own skeleton as prose here while
+        # `jm method` renders the name-based fallback, and the two paths
+        # disagree about a file neither author touched.
+        if _blk is not None and is_scaffold_doc(_blk, m_name):
+            _blk = None
         if m.get("varargs"):
             _va_doc = (
                 m.get("doc")
@@ -1909,11 +1936,27 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # module-aggregated stub must say so too. Rendering it from the
             # method's own params is what let the stub and the binding
             # disagree on 48 of doppler's surfaces.
-            if max_out_is_state_only(doc_blocks, f"{obj}_{m_name}_max_out"):
+            # gh-1018: keyed on the bound symbol, as the member itself is.
+            # A signature override's `_max_out` is its own function with its
+            # own arity, and the parent's must not answer for it — so the
+            # fallback applies only when the header knows nothing about the
+            # bound name at all (a first scaffold), never to overrule a
+            # declaration that exists.
+            _mo_sym = f"{C.method_c_symbol(obj, m)}_max_out"
+            _mo_fallback = f"{obj}_{m_name}_max_out"
+            _mo_arity = (doc_blocks or {}).get(
+                max_out_arity_key()
+            ) or frozenset()
+            _mo_key = (
+                _mo_sym
+                if (_mo_sym in _mo_arity or (doc_blocks or {}).get(_mo_sym))
+                else _mo_fallback
+            )
+            if max_out_is_state_only(doc_blocks, _mo_key):
                 _stub_moc_name = None
             # gh-684: header block wins; _gluedoc is the fallback. Same
             # lookup the standalone path uses, so the faces cannot drift.
-            _mo_blk = doc_blocks.get(f"{obj}_{m_name}_max_out")
+            _mo_blk = doc_blocks.get(_mo_key) or doc_blocks.get(_mo_fallback)
             _mo_gm = _max_out_method(
                 m_name, _stub_moc_name or "", int(m.get("max_out", 0) or 0)
             )
