@@ -1167,7 +1167,10 @@ def _splice_first_array(
     # `transplant_missing_bindings`. The declaration already in *existing* has
     # been through the project's formatter; the one in *reference* has not.
     _deps: list[str] = []
-    _have = set(_file_scope_decls(existing))
+    # Seed with the wrappers about to be appended: now that `_file_scope_decls`
+    # sees functions, one new wrapper naming another would otherwise carry it
+    # as a dependency AND append it, i.e. define it twice.
+    _have = set(_file_scope_decls(existing)) | set(_new)
     for _n in _new:
         for _name, _decl in _referenced_file_scope_decls(
             reference, ref_funcs[_n]
@@ -1203,6 +1206,27 @@ _IDENT_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 _FILE_SCOPE_RE = re.compile(
     r"^static\s+[^\n;=]*?\b(\w+)\s*(?:\[[^\]]*\])?\s*=", re.M
 )
+# gh-1021 review: a file-scope static FUNCTION, e.g. the enum lookup helper
+#
+#     static int
+#     _enum_index_Frame(const char *const *tab, const char *s)
+#     {
+#
+# `_FILE_SCOPE_RE` matches only `=`-initialised statics — variables — so a
+# wrapper's dependency on a static *function* was never carried. gh-519's enum
+# support declared both a table (a variable, carried) and this helper (not),
+# and gh-1021 gave the pair a second, far more common trigger: adding an enum
+# method to an existing module object and re-applying spliced in a wrapper
+# calling `_enum_index_<Component>` with nothing defining it. Reproduced end
+# to end — the fragment does not compile.
+#
+# Anchored at column 0 (a static local inside a body is always indented) and
+# requiring `{` so a prototype is not claimed as a definition. `[^;={]`
+# excludes the initialised-variable form the regex above owns, so the two
+# cannot both claim one declaration.
+_FILE_SCOPE_FN_RE = re.compile(
+    r"^static\b[^;={]*?\b(\w+)\s*\([^;{]*\)\s*\{", re.M
+)
 
 
 def _file_scope_decls(text: str) -> "dict[str, str]":
@@ -1227,6 +1251,12 @@ def _file_scope_decls(text: str) -> "dict[str, str]":
             i += 1
         if i < len(mask):
             out.setdefault(m.group(1), text[m.start() : i + 1])
+    # A static function's declaration ends at the `}` closing its body, not at
+    # a `;`, so it needs its own brace walk rather than the loop above.
+    for m in _FILE_SCOPE_FN_RE.finditer(mask):
+        end = _match_brace(mask, m.end() - 1)
+        if end != -1:
+            out.setdefault(m.group(1), text[m.start() : end + 1])
     return out
 
 
@@ -1362,7 +1392,14 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         # gh-770 in a new costume, and reachable through the workflow gh-777
         # now prescribes: the gate says "run apply", and apply is what breaks
         # the build.
-        _have = set(_file_scope_decls(out))
+        # Seeded with the wrappers about to be appended, for the reason given
+        # at the peer carry in `_splice_first_array`: `_file_scope_decls` now
+        # sees static FUNCTIONS, and a wrapper's own name occurs inside its own
+        # body — so without this it is carried as its own dependency and then
+        # appended, defining it twice. Both splice paths need it, which is the
+        # gh-779 lesson restated: fixing only the branch the reporter's tree
+        # took is how this class keeps coming back.
+        _have = set(_file_scope_decls(out)) | set(_new_fns)
         _preludes: list[str] = []
         for _n in _new_fns:
             _desc = _record.find_descriptor(reference, _n)

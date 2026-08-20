@@ -102,6 +102,35 @@
 
 ### Fixed
 
+- **Four review follow-ups to gh-1021's method-parameter `enum`.** One shape:
+    the primary renderer learned a new manifest key and the other readers of it
+    did not.
+
+    - **`jm apply` produced a fragment that does not compile.** The incremental
+        splice carried the enum TABLE but not the `_enum_index_<Component>`
+        lookup it is passed to, because `_FILE_SCOPE_RE` matches only
+        `=`-initialised statics — variables, not functions. Adding an enum
+        method to an existing module object and re-applying spliced in a
+        wrapper calling a function nothing defined. `_file_scope_decls` now
+        also carries a file-scope static *function*, which keeps the carry
+        registration-free as its own docstring promises; both splice paths seed
+        their dedupe with the wrappers they are about to append, since a
+        wrapper's own name occurs inside its own body and would otherwise be
+        carried as its own dependency and then defined twice.
+    - **The module/view `.pyi` contradicted itself**, rendering
+        `def add(self, k: str = 'a')` above a `Parameters` block reading
+        `k : int`. The signature was updated by gh-1021; the list feeding the
+        docstring was not.
+    - **`enum` silently outranked `array` and `capsule`** in the emitter while
+        both `.pyi` producers ordered them the other way, so a param carrying
+        two of them emitted mismatched C instead of a diagnostic. Both pairs
+        are refused now, as the property path already refuses `enum` +
+        `buf_field`.
+    - **`jm script` dropped the key**, replaying a `str` parameter as a plain
+        `int`. `jm method --param` has no spelling for it, so the script now
+        says what it cannot rebuild rather than emitting a line that
+        reconstructs a different project.
+
 - **A view's own `create_error` survived `jm apply` (gh-1017).** gh-580 let a
     `[[<obj>.views]]` entry declare its own create()-failure translation,
     inheriting the parent's when it declares none. The accessor and the render
