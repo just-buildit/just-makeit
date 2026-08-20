@@ -374,12 +374,19 @@ def deferred_save() -> "Iterator[None]":
     _DEFERRED = {}
     try:
         yield
-    finally:
-        pending, _DEFERRED = _DEFERRED, prev
-        # Restored first, so these are real writes (or, when nested, fold into
-        # the enclosing deferral rather than escaping it).
-        for pending_root, pending_cfg in pending.items():
-            save(pending_root, pending_cfg)
+    except BaseException:
+        # gh-1037: an aborted body has no final state to write, and this is
+        # the sibling of `_object.deferred_module_regen` -- where flushing
+        # through an abort raised from the flush itself and REPLACED the real
+        # exception with a false one. Nothing reads the scratch manifest after
+        # the abort, so the pending write is dropped rather than performed.
+        _DEFERRED = prev
+        raise
+    pending, _DEFERRED = _DEFERRED, prev
+    # Restored first, so these are real writes (or, when nested, fold into
+    # the enclosing deferral rather than escaping it).
+    for pending_root, pending_cfg in pending.items():
+        save(pending_root, pending_cfg)
 
 
 def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
@@ -2656,6 +2663,165 @@ def _result_field_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+#: Keys whose presence means the ``type`` beside them is NOT jm's to resolve.
+#:
+#: ``header`` / ``capsule`` name a foreign C type the project owns (gh-432,
+#: gh-790) — jm emits the spelling verbatim and never looks it up. ``enum``
+#: means the declared type is the storage type behind a choice table, which
+#: the enum machinery supplies. A table carrying any of these is skipped
+#: rather than rejected: a false rejection of a legitimate declaration is a
+#: worse failure than the traceback this check exists to replace.
+_FOREIGN_TYPE_KEYS = ("header", "capsule", "enum")
+
+
+def _usable_ctype(ctype: str) -> bool:
+    """True when jm can resolve *ctype* through ``_CTYPE_META``.
+
+    ``is_array_param_type`` is purely syntactic -- it asks only whether the
+    spelling ends in ``[]`` -- so it says yes to ``unsigned[]`` as readily as
+    to ``float[]``. Every caller here wants the stronger question, because
+    what the renderer indexes is the ELEMENT type, and that is where the
+    ``KeyError`` comes from.
+
+    Examples
+    --------
+    >>> _usable_ctype("float"), _usable_ctype("float[]")
+    (True, True)
+    >>> _usable_ctype("float[64]"), _usable_ctype("float _Complex[][]")
+    (True, True)
+    >>> _usable_ctype("unsigned"), _usable_ctype("unsigned[]")
+    (False, False)
+    >>> _usable_ctype("path"), _usable_ctype("bytes")
+    (True, True)
+    """
+    if _T.is_array_param_type(ctype):
+        return _T.array_elem_ctype(ctype) in _T.SUPPORTED_TYPES
+    return _T.is_valid_type(ctype) or ctype in _T.PSEUDO_TYPES
+
+
+def _param_type_errors(entry: dict, what: str) -> list[str]:
+    """Validate one table's ``params`` types; [] when they are all usable.
+
+    The sibling of :func:`_result_field_errors`, for the tables it never
+    reached. That function's docstring gives the reason both exist -- "turning
+    a genuine typo into a clear manifest error instead of a ``KeyError``
+    traceback from the renderer" -- and gh-1037 is that same traceback from a
+    table gh-598 did not cover.
+
+    Accepts everything the ``jm method`` / ``jm function`` front-ends accept:
+    a registered scalar, an array (``float[]``), an enum reference
+    (``enum:kind``) or an inline choice list (``string_enum:a,b``). Anything
+    carrying :data:`_FOREIGN_TYPE_KEYS` is skipped.
+
+    Parameters
+    ----------
+    entry : dict
+        A table that may carry a ``params`` list.
+    what : str
+        Human-readable location, used to open each message.
+
+    Returns
+    -------
+    list of str
+        One message per offending param, in declaration order.
+
+    Examples
+    --------
+    >>> _param_type_errors({"params": [{"name": "k", "type": "unsigned"}]},
+    ...                    "'v' method 'run'")[0].splitlines()[0]
+    "'v' method 'run': param 'k' has unknown type 'unsigned'."
+    >>> _param_type_errors({"params": [{"name": "x", "type": "float[]"}]}, "w")
+    []
+    >>> _param_type_errors(
+    ...     {"params": [{"name": "h", "type": "dp_plan_t *",
+    ...                  "header": "dp/plan.h"}]}, "w")
+    []
+    """
+    errors: list[str] = []
+    for pm in entry.get("params", []) or []:
+        err = _declared_type_error(
+            pm, f"{what}: param {pm.get('name', '?')!r}"
+        )
+        if err:
+            errors.append(err)
+    return errors
+
+
+def _declared_type_error(entry: dict, what: str) -> str:
+    """Validate one ``type``-bearing table; "" when it is usable.
+
+    Shared by params and init-params so the two cannot drift into accepting
+    different spellings of the same declaration -- they are the same question
+    asked at two sites, and jm resolves both through ``_CTYPE_META``.
+
+    Parameters
+    ----------
+    entry : dict
+        A table carrying a ``type`` key.
+    what : str
+        Human-readable location, already naming the entry, used to open the
+        message.
+
+    Returns
+    -------
+    str
+        The message, or ``""`` when the type is usable.
+
+    Examples
+    --------
+    >>> _declared_type_error({"type": "size_t"}, "x")
+    ''
+    >>> _declared_type_error({"type": "enum:kind"}, "x")
+    ''
+    >>> _declared_type_error({"type": "nope"}, "x").splitlines()[0]
+    "x has unknown type 'nope'."
+    """
+    if any(entry.get(k) for k in _FOREIGN_TYPE_KEYS):
+        return ""
+    # A codec param's shape comes from its `role` and the `[codec.X]` table,
+    # not from a `type` beside it -- `{"name": "value", "role": "variant"}`
+    # declares no type, and an absent key is not a wrong one.
+    if entry.get("role") or "type" not in entry:
+        return ""
+    ctype = entry.get("type", "")
+    if (
+        _usable_ctype(ctype)
+        or _T.is_enum_ref(ctype)
+        or _T.is_string_enum_type(ctype)
+    ):
+        return ""
+    help_text = _T.unsupported_return_type_help(ctype, allow_void=False)
+    indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+    return f"{what} has unknown type '{ctype}'.\n{indented}"
+
+
+def _arg_type_error(entry: dict, what: str) -> str:
+    """Validate one method's ``arg_type``; "" when it is usable.
+
+    ``void`` is the no-input spelling and always valid. The shapes that make
+    a return type inert make an ``arg_type`` inert too: a ``varargs`` or
+    ``manual_stub`` method has a hand-written binding, and a ``codec`` method
+    takes its input from the codec table.
+
+    Examples
+    --------
+    >>> _arg_type_error({"arg_type": "void"}, "x")
+    ''
+    >>> _arg_type_error({"arg_type": "nope", "varargs": True}, "x")
+    ''
+    >>> _arg_type_error({"arg_type": "nope"}, "x").splitlines()[0]
+    "x has unknown arg_type 'nope'."
+    """
+    if any(entry.get(k) for k in ("varargs", "manual_stub", "codec")):
+        return ""
+    ctype = entry.get("arg_type", "void")
+    if ctype == "void" or _usable_ctype(ctype):
+        return ""
+    help_text = _T.unsupported_return_type_help(ctype, allow_void=True)
+    indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+    return f"{what} has unknown arg_type '{ctype}'.\n{indented}"
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -2705,6 +2871,15 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         if err:
             errors.append(err)
         errors.extend(_result_field_errors(entry, what))
+        # gh-1037: the input side of the same declaration. Left unchecked
+        # these reached `_CTYPE_META[...]` in the renderer and raised a bare
+        # `KeyError: 'unsigned'` -- and under `apply`, whose replay runs
+        # inside deferred-flush scopes, the traceback could be replaced
+        # outright by a false error about an unrelated object.
+        err = _arg_type_error(entry, what)
+        if err:
+            errors.append(err)
+        errors.extend(_param_type_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -2722,6 +2897,14 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 _RETURN_TYPE_EXEMPT_KEYS,
             )
     for comp in components(cfg):
+        # gh-1037: the constructor's own inputs. This is the table the issue
+        # was filed against -- an unknown init-param type crashed the render.
+        for ip in cfg.get(comp, {}).get("init_params", []) or []:
+            err = _declared_type_error(
+                ip, f"{comp!r} init_param {ip.get('name', '?')!r}"
+            )
+            if err:
+                errors.append(err)
         for m in methods(cfg, comp):
             _check(
                 m,
