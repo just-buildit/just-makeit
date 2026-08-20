@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import _config as C
+from . import _hollow
 
 
 # ── build helpers ─────────────────────────────────────────────────────────────
@@ -616,6 +617,41 @@ def _display_table(label: str, data: dict, prev: dict | None) -> None:
 # ── public entry point ────────────────────────────────────────────────────────
 
 
+def runnable_comps(root: Path, cfg: dict) -> tuple[list[str], list[str], bool]:
+    """The benchmarks this tree can run: manifest components, plus what builds.
+
+    gh-1023. `C.components(cfg)` is the manifest's top-level tables — the
+    objects — and it was both the enumeration and the validator's whitelist.
+    A benchmark for anything else was therefore unreachable twice over: never
+    run by a bare `jm bench`, and rejected by name if asked for. The concrete
+    case is a `[project] c_deps` directory, whose `CMakeLists.txt` is
+    hand-written (jm emits only the `add_subdirectory` line), so a bench
+    target inside it genuinely builds and is genuinely undiscoverable.
+
+    Discovery is by scan, reusing `_hollow.built_stems` — the complement of
+    the gh-806 orphan detector, sharing its scanner. A manifest key was the
+    other option and is the worse one here: a benchmark is already not
+    manifest-owned, the Python half of `jm bench` already discovers by pytest
+    collection rather than by declaration, and a list you must remember to
+    append to fails the same silent way the bug does.
+
+    Returns
+    -------
+    tuple
+        ``(runnable, extra, globbed)`` — every runnable name (components
+        first, in manifest order, then the discovered ones sorted); the
+        discovered ones alone, for the caller to name; and whether the scan
+        stood down on a wildcard build file. One helper rather than two, so
+        the set jm RUNS and the set it ACCEPTS cannot come apart — them being
+        one expression is what made this bug two bugs.
+    """
+    all_comps = list(C.components(cfg))
+    built = _hollow.built_stems(root, "bench")
+    globbed = built is None
+    extra = [b for b in sorted(built or set()) if b not in all_comps]
+    return all_comps + extra, extra, globbed
+
+
 def run(
     root: Path,
     components: list[str] | None = None,
@@ -660,9 +696,19 @@ def run(
         print("error: no just-makeit.toml found.", file=sys.stderr)
         sys.exit(1)
 
-    all_comps = C.components(cfg)
+    runnable, extra, globbed = runnable_comps(root, cfg)
+    if globbed:
+        # A wildcard build file: "is this compiled?" is unanswerable by
+        # reading, so the scan stood down and only the manifest is covered.
+        # Said out loud, because running fewer benchmarks than the tree holds
+        # is the failure being fixed.
+        print(
+            "  note       a build file globs its sources, so only manifest"
+            " components are discovered",
+            file=sys.stderr,
+        )
     if components:
-        unknown = [c for c in components if c not in all_comps]
+        unknown = [c for c in components if c not in runnable]
         if unknown:
             print(
                 f"error: unknown component(s): {', '.join(unknown)}",
@@ -671,7 +717,12 @@ def run(
             sys.exit(1)
         target_comps = list(components)
     else:
-        target_comps = list(all_comps)
+        target_comps = list(runnable)
+        if extra:
+            # Name them. A snapshot that silently omits a benchmark looks
+            # exactly like one that includes it, which is how four of
+            # doppler's went unnoticed for the life of the files.
+            print(f"  extra      {', '.join(extra)}", flush=True)
 
     bdir = build_dir or (root / "build")
     tag = tag or _tag()

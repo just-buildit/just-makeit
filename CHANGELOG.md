@@ -4,6 +4,35 @@
 
 ### Added
 
+- **`jm bench` runs what the tree BUILDS, not what the manifest declares
+    (gh-1023).** The C side enumerated `C.components(cfg)` — the manifest's
+    top-level tables, i.e. the objects — and used it as both the run set and
+    the validator's whitelist. A benchmark for anything else was therefore
+    unreachable twice over: never run by a bare `jm bench`, and answered with
+    `unknown component` if asked for by name. The concrete case is a
+    `[project] c_deps` directory, whose `CMakeLists.txt` is hand-written (jm
+    emits only the `add_subdirectory` line), so a bench target inside it
+    genuinely builds and is genuinely undiscoverable — auditing doppler before
+    a release turned up four written, reviewed, compiled by every build since,
+    and executed by nothing.
+
+    Nothing reported it: the file exists, the target builds, `jm status   --check` is clean (a benchmark is not manifest-owned), and a snapshot that
+    silently omits a component looks exactly like one that includes it. The
+    gh-806 `UNBUILT` detector is silent here by construction — it finds
+    sources nothing compiles, which is the opposite population.
+
+    Discovery is by scan, not by a new manifest key: `_hollow.built_stems` is
+    the complement of that same detector and shares its scanner, its `_KINDS`
+    shapes and its stem-substring reference test. A `[project.bench]   extra_components` list was the other option and is the worse one — a list
+    you must remember to append to goes stale in exactly the silent way the
+    bug does, and the Python half of `jm bench` has always discovered by
+    `pytest` collection rather than by declaration.
+
+    Discovered names are listed as `extra` at the top of the run. Where a
+    build file globs its sources, "is this compiled?" is unanswerable by
+    reading, so the scan stands down to manifest components and says so rather
+    than quietly running fewer benchmarks than the tree holds.
+
 - **`enum` on an object method parameter (gh-1021).** A method param
     declaring `type = "int"` plus `enum = "<name>"` now takes the choice
     STRING in Python and hands the `[[enum]]` SSOT int to C, exactly as a
