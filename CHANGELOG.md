@@ -38,6 +38,38 @@
 
 ### Fixed
 
+- **A `single = true` method's runtime docstring is the block its `.pyi`
+    carries (gh-1039).** gh-642 made the runtime `PyMethodDef` doc *be* the
+    stub docstring, dedented and undelimited, and routed four method shapes
+    through the shared renderer. It missed a fifth: a method returning ONE
+    named record kept a canned signature line —
+    `"find(x, max_errors) -> Hit record (found, offset)."` — as its entire
+    runtime doc, while its stub carried the full authored block. So one object
+    could hold two documented methods and `help()` showed the whole block for
+    one and a single line for the other, the only difference being that one
+    returned a record.
+
+    Neither source reached it. A header docblock and a manifest `doc` both
+    stopped at the `.pyi`, so there was no authoring move that fixed it — the
+    literal above never consulted either. Found downstream in doppler#900.
+
+    The synthesized doctest comes with it, from the same builder the
+    fixed-output shape uses rather than a second copy: that builder carries
+    gh-1021's rule that an enum param renders as a real choice, and a private
+    copy here would have re-shipped that bug the day a record method declared
+    one. The signature line keeps its field list — a `PyStructSequence` prints
+    as a bare tuple, so naming its members where the reader's eye lands first
+    is worth the width.
+
+    **What stops a sixth.** gh-642 fixed four shapes as four instances and
+    nothing afterwards asked whether a new one had joined them, which is why
+    this sat until a downstream binding surfaced it. A ratchet now derives the
+    answer from the source on every run: a `PyMethodDef` doc spelled as a
+    literal in the `pmd_lines.append` call cannot carry the header, and the
+    count of such sites may only shrink. One remains — `--varargs`, whose
+    binding is hand-written and whose two faces are canned in agreement rather
+    than in conflict — filed as gh-1040.
+
 - **jm no longer reads build files under `vendor/` (gh-1031).** `_build_texts`
     returned `None` for the whole tree the moment any build file contained
     `file(GLOB ...)`, and its `rglob` walks into `vendor/`. So one vendored
