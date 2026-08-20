@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`enum` on an object method parameter (gh-1021).** A method param
+    declaring `type = "int"` plus `enum = "<name>"` now takes the choice
+    STRING in Python and hands the `[[enum]]` SSOT int to C, exactly as a
+    module-function param already did. Before this the key was *accepted* by
+    the manifest validator and read by nothing: the generated surface said
+    `int`, and a caller following the manifest's own declaration got
+    `TypeError: 'str' object cannot be interpreted as an integer`.
+
+    `_keys.FUNCTION_PARAM_KEYS` already carried the reasoning — "recognising
+    the key on only one side would accept it in the manifest and drop it in
+    the C" — for a different pair of keys, which is what this was an instance
+    of.
+
+    The other spelling, `type = "enum:<name>"` (what an **init_param** takes),
+    raised a bare `KeyError` out of `_CTYPE_META`; it is now a diagnostic that
+    names the form that works here. An enum param's `default` is the choice
+    string, and an int default left over from before the enum was declared is
+    refused at generation time rather than raising `invalid <p> '0'` on the
+    first call that omits the argument.
+
+    The refusal names the choices, matching what the property setter for the
+    same enum already said — a caller who meets both refusals meets one style
+    of it.
+
 ### Fixed
 
 - **A view's own `create_error` survived `jm apply` (gh-1017).** gh-580 let a
@@ -21,6 +47,17 @@
     `create_error = ""` (a deliberate fall back to `MemoryError`). Only a
     verbatim copy carries the third: replaying the *resolved* pair freezes the
     inherit, and a falsy check turns the opt-out back into the parent's text.
+
+- **The `[[enum]]` lookup tables moved above every slot that indexes them.**
+    gh-519 emitted them inside `getset_def`, which is the LAST of the three C
+    slots that can reference them; a method parameter's lookup lands in
+    `extra_methods_c`, one slot earlier, so a table defined there is used
+    before it is defined. They are now emitted once, into an `enum_tables`
+    slot above all three, from the union of both consumers — one table and one
+    helper per enum per type, whether it is indexed by a property, a method
+    parameter, or both. `TestSlotOrder` asserts the ordering against the
+    templates themselves, so moving the slot back fails there rather than in a
+    user's compiler.
 
 ## [0.62.1] — 2026-08-17
 

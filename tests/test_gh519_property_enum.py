@@ -35,7 +35,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
-from just_makeit._context import make_properties_ctx
+from just_makeit._context import (
+    make_enum_tables_ctx,
+    make_properties_ctx,
+)
 from just_makeit._new import run as new_run
 from just_makeit._property import run as property_run
 
@@ -44,6 +47,18 @@ ENUMS = {"ftype": ["raw", "wav", "blue"]}
 
 def _ctx(props, **kw):
     return make_properties_ctx("rdr", "Rdr", props, **kw)
+
+
+def _tables(props, **kw):
+    """The `enum_tables` slot for these properties.
+
+    gh-1021 moved the tables out of `getset_def` and into a slot above every
+    consumer, because a method PARAMETER indexes them from an earlier slot.
+    The emission is therefore asserted here and the ORDERING structurally, in
+    TestSlotOrder — a within-one-string `index()` comparison cannot see a
+    relationship that now spans two slots.
+    """
+    return make_enum_tables_ctx("rdr", "Rdr", None, props, **kw)["enum_tables"]
 
 
 # ── getter decode ────────────────────────────────────────────────────────────
@@ -116,22 +131,11 @@ class TestGetterDecode:
             "_enum_Rdr_ftype[_v]"
         )
 
-    def test_tables_precede_the_getters_that_index_them(self):
-        ctx = _ctx(
-            [{"name": "ft", "type": "int", "field": True, "enum": "ftype"}],
-            enums=ENUMS,
-        )
-        body = ctx["getset_def"]
-        assert body.index(
-            "static const char *const _enum_Rdr_ftype[]"
-        ) < body.index("Rdr_getprop_ft")
-
     def test_table_order_is_the_c_int(self):
-        ctx = _ctx(
+        table = _tables(
             [{"name": "ft", "type": "int", "field": True, "enum": "ftype"}],
             enums=ENUMS,
-        )
-        table = ctx["getset_def"].split("_enum_Rdr_ftype[] = {")[1]
+        ).split("_enum_Rdr_ftype[] = {")[1]
         table = table.split("};")[0]
         assert (
             table.index('"raw"') < table.index('"wav"') < table.index('"blue"')
@@ -140,22 +144,35 @@ class TestGetterDecode:
 
     def test_only_referenced_enums_are_emitted(self):
         registry = {"ftype": ["raw"], "unused": ["a", "b"]}
-        ctx = _ctx(
+        _ctx(
             [{"name": "ft", "type": "int", "field": True, "enum": "ftype"}],
             enums=registry,
         )
-        assert "_enum_Rdr_ftype" in ctx["getset_def"]
-        assert "_enum_Rdr_unused" not in ctx["getset_def"]
+        # Read the tables slot, not `getset_def`: the getter REFERENCES the
+        # symbol, so the old assertion passed on a mention rather than on a
+        # definition and would not have noticed the table going missing.
+        tables = _tables(
+            [{"name": "ft", "type": "int", "field": True, "enum": "ftype"}],
+            enums=registry,
+        )
+        assert "static const char *const _enum_Rdr_ftype[]" in tables
+        assert "_enum_Rdr_unused" not in tables
 
     def test_two_properties_on_one_enum_emit_one_table(self):
-        ctx = _ctx(
+        _ctx(
             [
                 {"name": "a", "type": "int", "field": True, "enum": "ftype"},
                 {"name": "b", "type": "int", "field": True, "enum": "ftype"},
             ],
             enums=ENUMS,
         )
-        body = ctx["getset_def"]
+        body = _tables(
+            [
+                {"name": "a", "type": "int", "field": True, "enum": "ftype"},
+                {"name": "b", "type": "int", "field": True, "enum": "ftype"},
+            ],
+            enums=ENUMS,
+        )
         assert body.count("static const char *const _enum_Rdr_ftype[]") == 1
         assert body.count("_enum_index_Rdr(const char") == 1
 

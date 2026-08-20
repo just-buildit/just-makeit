@@ -137,10 +137,23 @@ def component_ctx(
                 if root is not None
                 else frozenset()
             ),
+            enums=C.enums(cfg),  # gh-1021
         )
     )
     for _slot in _override_slots:
         ctx[_slot] = ""
+    # gh-1021: every [[enum]] this type indexes, emitted ONCE above the three
+    # C slots that reference them (a method parameter's lookup lands in
+    # `extra_methods_c`, a property getter's in `getset_def`).
+    ctx.update(
+        Ctx.make_enum_tables_ctx(
+            object_name,
+            Component,
+            C.methods(cfg, object_name),
+            C.properties(cfg, object_name),
+            enums=C.enums(cfg),
+        )
+    )
     ctx.update(
         Ctx.make_properties_ctx(
             object_name,

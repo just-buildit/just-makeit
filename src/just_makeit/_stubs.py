@@ -1809,10 +1809,17 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             if p.get("capsule"):
                 param_parts.append(f"{p['name']}: object | None")
                 continue
+            # gh-1021: an enum param (type "int" plus an `enum` name) takes
+            # the choice STRING, exactly as a module function's does — see
+            # `fn_py_surface`, which spells the same two rules for the peer
+            # surface. A stub saying `int` here is what let a manifest declare
+            # an enum and hand the caller a TypeError.
+            pann = f"{p['name']}: {'str' if p.get('enum') else _py(p['type'])}"
             # gh-240: a defaulted param renders as an optional kwarg.
-            pann = f"{p['name']}: {_py(p['type'])}"
             if p.get("default"):
-                pann += f" = {p['default']}"
+                # An enum default is a choice string — quote it; scalar
+                # defaults are C literals shown verbatim.
+                pann += f" = {repr(p['default']) if p.get('enum') else p['default']}"
             param_parts.append(pann)
 
         if m_py_return_type:

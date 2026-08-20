@@ -481,13 +481,58 @@ ______________________________________________________________________
 
 Methods on stateful objects (`jm method OBJ METHOD`) accept the same
 set as module-function params (`--param` plus `--out-param` semantics),
-extended with three TOML-only knobs that don't yet have CLI flags:
+extended with four TOML-only knobs that don't yet have CLI flags:
 
 | TOML field                          | Effect                                                                                                                                                                         |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `variable_output = true`            | Method returns up to `max(<comp>_<verb>_max_out(state, n), n)` samples; the binding allocates a NumPy-owned array per call. See [Array memory ownership](memory-ownership.md). |
 | `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                                                |
 | `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist.                   |
+| `enum = "<name>"`                   | The param is `int` in C and the choice **string** in Python, validated against a top-level `[[enum]]` (gh-1021). Same spelling as a module-function param.                     |
+
+### Enum params: which spelling goes where
+
+An enum reaches the generated code by two different spellings, and they are
+not interchangeable — the same declaration in the wrong place is either
+inert or an error:
+
+| Where                 | Spelling                           |
+| --------------------- | ---------------------------------- |
+| method param          | `type = "int"` + `enum = "<name>"` |
+| module-function param | `type = "int"` + `enum = "<name>"` |
+| object property       | `type = "int"` + `enum = "<name>"` |
+| **init_param**        | `type = "enum:<name>"`             |
+
+The `enum` key keeps the enum's **name**, so the generated C indexes the
+`[[enum]]` SSOT table directly. The init_param form flattens to
+`string_enum:a,b,c` at read time and loses the name, which is why it is
+spelled differently and why writing it on a method param is refused with a
+diagnostic naming the form that works.
+
+```toml
+[[enum]]
+name   = "wfm_stage_kind"
+values = ["none", "rs", "conv"]   # order IS the C int
+
+[[frame.methods]]
+name        = "add_stage"
+return_type = "int"
+params = [
+    { name = "depth", type = "int" },
+    { name = "kind", type = "int", enum = "wfm_stage_kind", default = "rs" },
+]
+```
+
+```python
+frame.add_stage(2)                 # kind defaults to "rs"
+frame.add_stage(2, "conv")
+frame.add_stage(2, "nope")         # ValueError: invalid kind 'nope'
+                                   #   (choices: none, rs, conv)
+```
+
+A `default` is the choice **string**, not the C index — an int default is
+refused at generation time rather than failing on the first call that omits
+the argument.
 
 ______________________________________________________________________
 

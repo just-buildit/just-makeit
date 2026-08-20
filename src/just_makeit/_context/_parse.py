@@ -17,6 +17,26 @@ from .._types import (
 )
 
 
+def enum_symbols(Component: str, name: str) -> tuple[str, str]:
+    """C symbol names for one object-scoped enum, namespaced by *Component*.
+
+    gh-519 introduced this for properties; gh-1021 gave method parameters the
+    same feature, and both index the SAME tables in the same translation unit
+    — so the naming lives here, below both consumers, rather than in
+    `_context._methods` where only one of them could reach it.
+
+    A module's ``_ext.c`` ``#include``s every object's fragment into a single
+    TU, and a view (gh-504) adds another type over the same ``component``. Two
+    types in that TU may each reference the same ``[[enum]]``, and module-level
+    ``function`` enums (gh-353) already own the bare ``_enum_index`` /
+    ``_enum_<name>`` symbols. ``Component`` is the one name unique per type
+    section, so it is what namespaces them.
+
+    Returns ``(index_fn, table)``.
+    """
+    return (f"_enum_index_{Component}", f"_enum_{Component}_{name}")
+
+
 def capsule_new_c(
     ptr_expr: str,
     capsule_name: str,
@@ -257,11 +277,17 @@ def _build_ml_doc(lines: list[str]) -> str:
 
 def _build_params_parse(
     params: list[dict],
+    Component: str = "",
+    enums: dict[str, list[str]] | None = None,
 ) -> tuple[str, str, str]:
     """Build parse block + C call args + cleanup for a named multi-param method.
 
     params: list of {"name": str, "type": str}
       Scalar types come from _CTYPE_META.
+      A param carrying ``enum`` is a string-enum (gh-1021): its Python
+      argument is the choice STRING, validated to the ``[[enum]]`` SSOT int
+      before the C call. `Component` namespaces the tables it indexes — see
+      `enum_symbols` — so it is required for those and unused otherwise.
       Array types end with '[]', e.g. "float _Complex[]"; their element type
       must be in _CTYPE_TO_NPY.  Array params expand to two C args:
       (const elem_t *name, size_t name_len).
@@ -285,7 +311,44 @@ def _build_params_parse(
         pname = p["name"]
         ptype = p["type"]
 
-        if is_array_param_type(ptype):
+        if p.get("enum"):
+            # gh-1021: parse the choice string with `s` and validate it to its
+            # SSOT int, mirroring the module-function emitter in
+            # `_render._build_params_parse` — the difference is only the
+            # symbol namespace (`enum_symbols`), because an object's tables
+            # live in a TU that a module's bare `_enum_index` also occupies.
+            #
+            # No cleanup on the failure path: `conv_lines` are emitted BEFORE
+            # `arr_acq`, so no array has been acquired yet when this runs. The
+            # capsule branch below relies on the same ordering.
+            ename = p["enum"]
+            index_fn, table = enum_symbols(Component, ename)
+            # Name the choices, exactly as the PROPERTY setter does for the
+            # same enum on the same object — a caller who hits both should not
+            # meet two styles of the same refusal. Absent registry (the `bind`
+            # path) simply drops the suffix.
+            _choices = ", ".join((enums or {}).get(ename, []))
+            _suffix = f" (choices: {_choices})" if _choices else ""
+            fmt_chars.append("s")
+            # gh-240: a defaulted enum is optional, and its C local seeds to
+            # the default CHOICE STRING so an omitted argument validates to
+            # that choice. A required one seeds to "" — an invalid choice, but
+            # PyArg fills it before the lookup runs.
+            decl_lines.append(
+                f'    const char *{pname} = "{p.get("default") or ""}";'
+            )
+            addr_exprs.append(f"&{pname}")
+            conv_lines.append(
+                f"    int _arg_{pname} = {index_fn}({table}, {pname});\n"
+                f"    if (_arg_{pname} < 0) {{\n"
+                f"        PyErr_Format(PyExc_ValueError,\n"
+                f"            \"invalid {pname} '%s'{_suffix}\","
+                f" {pname});\n"
+                f"        return NULL;\n"
+                f"    }}"
+            )
+            call_args.append(f"_arg_{pname}")
+        elif is_array_param_type(ptype):
             elem_ct = array_elem_ctype(ptype)
             npy_enum = _CTYPE_TO_NPY[elem_ct]
             elem_disp = _ctype_display(elem_ct)
@@ -369,6 +432,23 @@ def _build_params_parse(
             )
             call_args.append(pname)
         else:
+            # gh-1021: `type = "enum:<name>"` is the INIT-PARAM spelling. It
+            # reached `_CTYPE_META[ptype]` and raised a bare `KeyError` naming
+            # only the string, from a stack frame deep inside the renderer —
+            # a traceback where a diagnostic belongs. A method parameter
+            # spells its enum as the `enum` KEY, which keeps the enum's NAME
+            # (the init-param form flattens to `string_enum:a,b,c` and loses
+            # it), so say so rather than crash.
+            if ptype.startswith("enum:"):
+                raise ValueError(
+                    f"param '{pname}': `type = \"{ptype}\"` is the "
+                    f"init_param spelling and is not read on a method "
+                    f"parameter.\n"
+                    f"Declare it as the type it is in C, plus the enum by "
+                    f"name:\n"
+                    f'    {{ name = "{pname}", type = "int", '
+                    f'enum = "{ptype[len("enum:") :]}" }}'
+                )
             meta = _CTYPE_META[ptype]
             disp = _ctype_display(ptype)
             fmt_chars.append(meta["fmt"])
