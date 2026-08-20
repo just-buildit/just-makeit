@@ -82,14 +82,18 @@ build, jm prints `skip` and carries on, where a manifest component's target
 failing to build is still a hard error. The reference match is word-anchored,
 so `bench_fir_core` is not confused with `bench_fir_core_simd`.
 
-A wildcard stands the scan down only where it could **reach** the directory
-being scanned (gh-1031). A vendored dependency that globs its own sources —
-`file(GLOB SOURCES "*.c")` inside `vendor/nats.c/src/` — is relative to its own
-directory and cannot match `native/benchmarks/*.c`, so it says nothing about
-the question and is ignored. A glob in an ancestor directory, one naming the
-scanned path, or one that escapes via `..`, an absolute path or
-`${CMAKE_SOURCE_DIR}` still stands the scan down, because any of those could
-land in it.
+**jm does not read build files under `vendor/`** (gh-1031), any more than it
+reads `build/`. A vendored dependency is somebody else's build system, and
+reading it was actively harmful: one vendored `file(GLOB ...)` stood the scan
+down for the whole tree, which also silenced the `UNBUILT` detector below.
+
+jm deliberately does not try to work out whether a given wildcard could reach
+the directory being scanned. That would mean inferring a foreign build
+system's semantics, and it fails in the expensive direction — a pattern read
+as irrelevant that in fact matches makes jm call a compiled file unbuilt.
+`third_party/` and `external/` are the same situation under a different name
+and are still read; that is a known gap with an obvious fix, not a wrong
+answer.
 
 The one case jm cannot answer at all is a build file that enumerates sources by
 wildcard — `file(GLOB ...)` makes "is this compiled?" unanswerable by reading.
