@@ -130,9 +130,22 @@ class SilentBench:
     rel: str  #: POSIX path relative to the project root
     component: str
     methods: int  #: declared methods, none of which produced a timing block
+    #: gh-1034: free functions, when the source is a MODULE's benchmark rather
+    #: than an object's. jm scaffolds that file and cannot populate it — only
+    #: a human knows what question it asks — so it is silent from the moment
+    #: it is written, and the detector has to be able to say why in the
+    #: module's own vocabulary rather than reporting "no step(), no methods"
+    #: about a thing that never had a step().
+    functions: int = 0
 
     def describe(self) -> str:
         """One warning line naming why the JSON will come out empty."""
+        if self.functions:
+            return (
+                f"{self.rel} — records no measurement; jm scaffolded it for "
+                f"this module's {self.functions} function(s) and only you "
+                f"know what to time"
+            )
         detail = (
             f"no step(), and none of its {self.methods} method(s)\n"
             "  has a benchable shape"
@@ -358,6 +371,32 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
                 rel=src.relative_to(root).as_posix(),
                 component=comp,
                 methods=len(C.methods(cfg, comp)),
+            )
+        )
+    # gh-1034: a module that declares free functions gets a jm-scaffolded
+    # benchmark it cannot populate. The loop above walks `C.components`, which
+    # is objects only — so the detector written to find exactly this shape was
+    # blind to the one file jm creates already in it.
+    for mod in C.modules(cfg):
+        fns = C.module_functions(cfg, mod)
+        if not fns:
+            continue
+        cname = C.module_paths(mod).cname
+        src = root / "native" / "benchmarks" / f"bench_{cname}_core.c"
+        if not src.is_file():
+            continue
+        try:
+            body = src.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _BENCH_ADD_CALL.search(body):
+            continue
+        out.append(
+            SilentBench(
+                rel=src.relative_to(root).as_posix(),
+                component=cname,
+                methods=0,
+                functions=len(fns),
             )
         )
     return out

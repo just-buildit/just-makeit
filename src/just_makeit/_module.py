@@ -143,6 +143,9 @@ def run(
         ),
         "extra_link_libs_block": "",
         "extra_include_dirs_block": "",
+        # gh-1034: a brand-new module declares no functions yet, so this is
+        # empty here and filled by the regeneration that `jm function` runs.
+        "module_targets_block": "",
         # gh-213: Windows runtime-DLL block, off unless the project targets it.
         **Ctx.make_platform_ctx(C.is_windows_target(cfg), module=cname),
     }

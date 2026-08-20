@@ -628,7 +628,17 @@ def test_a_core_in_a_second_library_is_not_unwired(
     _second_library(project, kind, "mpsk_core")
     r = _cli("status", "--check", cwd=project)
     assert "UNWIRED" not in r.stdout, r.stdout
-    assert "mpsk_core" not in r.stdout, r.stdout
+    # gh-1034: `mpsk` is a function-only module, so it now carries a
+    # jm-scaffolded benchmark that records nothing and SILENT names the file.
+    # That is a different finding about a different thing; this test is about
+    # WIRING. Excluding exactly that line keeps the check strong everywhere
+    # else — a bare `"mpsk_core" not in stdout` retires itself the moment any
+    # unrelated report learns to mention a core by name, which is what just
+    # happened.
+    wiring = [
+        ln for ln in r.stdout.splitlines() if "bench_mpsk_core.c" not in ln
+    ]
+    assert not [ln for ln in wiring if "mpsk_core" in ln], r.stdout
 
 
 def test_a_core_only_in_a_python_extension_is_STILL_unwired(project: Path):

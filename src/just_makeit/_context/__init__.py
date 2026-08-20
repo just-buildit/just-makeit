@@ -26,6 +26,7 @@ from ._state import (
     _reset_wrapper_slots,
 )
 from ._methods import (
+    _bench_todo as _bench_todo_impl,
     make_enum_tables_ctx,
     make_methods_ctx,
     make_properties_ctx,
@@ -41,12 +42,25 @@ from ._stream import make_stream_ctx
 from ._platform import make_platform_ctx
 from ._modpath import make_module_ctx
 
+
+def bench_todo_for_functions(component: str, functions: "list[str]") -> str:
+    """gh-1034: the scaffolded-benchmark TODO for a module's free functions.
+
+    A thin alias so `_object` reaches the one block in `_methods` rather than
+    growing a second. The worked ``jm_bench_add`` example inside it is
+    paste-and-run and carries its own ``elapsed_sec`` declarations for that
+    reason; a second copy is a copy that stops running.
+    """
+    return _bench_todo_impl(component, [], functions=functions)
+
+
 __all__ = [
     "make_sample_ctx",
     "resolve_return_type",
     "make_state_ctx",
     "state_accessor_stubs",
     "make_methods_ctx",
+    "bench_todo_for_functions",
     "make_enum_tables_ctx",
     "make_properties_ctx",
     "make_warnings_ctx",

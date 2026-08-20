@@ -1570,6 +1570,64 @@ def _regenerate_module(
     _regenerate_module_now(root, cfg, module, pkg, drop_members)
 
 
+def _write_module_test_and_bench(
+    root: Path, cname: str, fns: list[dict]
+) -> None:
+    """Scaffold a module's C test and benchmark, create-only (gh-1034).
+
+    An object has had both since the beginning; a module whose surface is free
+    functions had neither, nor a target for either, so a consumer that wanted
+    them hand-wrote and hand-registered them. doppler ended up with five such
+    registrations — and two of the component-name defects it later reported
+    (a benchmark writing a JSON filename nothing opens) exist precisely
+    because nothing generated the target, so nothing generated the string.
+    A generated target cannot get its own component name wrong.
+
+    **Create-only.** These are the author's files the moment they exist; a
+    regeneration that stamped over a written benchmark would delete the one
+    thing jm cannot produce. Same contract as the object pair.
+    """
+    smoke, checks = R.module_fn_smoke_calls(fns)
+    ctx = {
+        "module": cname,
+        "scaffold_checks": str(checks),
+        "module_fn_smoke_calls": smoke,
+        "bench_todo": Ctx.bench_todo_for_functions(
+            cname, [f["name"] for f in fns]
+        ),
+    }
+    for sub, stem, tmpl, shared, shared_tmpl in (
+        (
+            "tests",
+            f"test_{cname}_core.c",
+            R.MODULE_TEST_C,
+            "jm_test.h",
+            R.JM_TEST_H,
+        ),
+        (
+            "benchmarks",
+            f"bench_{cname}_core.c",
+            R.MODULE_BENCH_C,
+            "jm_bench.h",
+            R.JM_BENCH_H,
+        ),
+    ):
+        # The shared harness, written once per project. A quoted include
+        # resolves against the including file's own directory, which is how
+        # an object's test finds it — so a module's test in the same
+        # directory needs it present for the identical reason, and a
+        # function-only project had never had anything write it.
+        harness = root / "native" / sub / shared
+        if not harness.exists():
+            harness.parent.mkdir(parents=True, exist_ok=True)
+            _write(harness, shared_tmpl)
+        dest = root / "native" / sub / stem
+        if dest.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _write(dest, R.render(tmpl, ctx))
+
+
 def _regenerate_module_now(
     root: Path,
     cfg: dict,
@@ -1925,11 +1983,22 @@ def _regenerate_module_now(
                 )
                 obj_cmake = obj_cmake.replace(old_lib, new_lib)
             collocated_cmake += obj_cmake
+    # gh-1034: the C test + benchmark targets for a module that declares free
+    # functions. jm generates and owns that module's C; before this it
+    # generated no test and no benchmark for it, and no target for either, so
+    # every consumer hand-registered both in its root CMakeLists.
+    _fns = C.module_functions(cfg, module)
+    cmake_ctx = {
+        **cmake_ctx,
+        "module_targets_block": R.module_targets_block(cname, bool(_fns)),
+    }
     _write(
         root / "native" / "src" / cname / "CMakeLists.txt",
         collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
         "update",
     )
+    if _fns:
+        _write_module_test_and_bench(root, cname, _fns)
     # gh-981: reconcile the module's combined-library wiring against the file
     # just written. This is the self-heal for a project scaffolded before the
     # module path emitted any — `jm function`, `jm method`, `jm object

@@ -15,3 +15,4 @@ add_custom_command(TARGET <<module>> POST_BUILD
     VERBATIM
     COMMENT "Copy <<module>> extension module")
 endif()
+<<module_targets_block>>

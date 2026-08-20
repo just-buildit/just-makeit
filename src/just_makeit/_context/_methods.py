@@ -262,7 +262,53 @@ elapsed_sec(struct timespec *t0, struct timespec *t1)
 _BENCH_TIMER_DECLS = "    struct timespec t0, t1;\n"
 
 
-def _bench_todo(component: str, methods: list[dict]) -> str:
+#: The worked `jm_bench_add` example every unfinished benchmark carries.
+#: One copy: gh-1034 gave it a second caller (a function-only module) and
+#: a second copy of a paste-and-run block is a copy that stops running.
+_BENCH_TODO_TAIL = [
+    "",
+    "The pattern — uncomment and adapt. `jm_bench_add` is what puts a",
+    "measurement into the JSON; without one this target writes an empty",
+    '"benchmarks": [] array.',
+    "",
+    "  static double",
+    "  elapsed_sec(struct timespec *t0, struct timespec *t1)",
+    "  {",
+    "      return (double)(t1->tv_sec - t0->tv_sec)",
+    "             + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;",
+    "  }",
+    "",
+    "  struct timespec t0, t1;",
+    "  double times[ITERATIONS];",
+    "  for (int r = 0; r < ITERATIONS; r++) {",
+    "      clock_gettime(CLOCK_MONOTONIC, &t0);",
+    "      ... call the method BENCH_N times ...",
+    "      clock_gettime(CLOCK_MONOTONIC, &t1);",
+    "      times[r] = elapsed_sec(&t0, &t1);",
+    "  }",
+    '  jm_bench_add(&_bench, "<name>", times, ITERATIONS, BENCH_N);',
+]
+
+
+def _comment_block(body: list[str]) -> str:
+    """Wrap *body* as the C comment a scaffolded benchmark carries.
+
+    The prefix is applied once, here, rather than written into each line:
+    hand-prefixing produced a block whose continuation lines sat at column
+    0 while the rest were indented, and a generated comment is not
+    something clang-format will straighten out.
+    """
+    out = ["    /* TODO: benchmark this component."]
+    out += [("     *" + (f" {ln}" if ln else "")) for ln in body]
+    out.append("     */")
+    return "\n".join(out) + "\n"
+
+
+def _bench_todo(
+    component: str,
+    methods: list[dict],
+    functions: "list[str] | None" = None,
+) -> str:
     """The `TODO:` block for a benchmark jm could not populate (gh-840).
 
     jm's contract is *scaffold, green from day 0, then fill in the TODOs* —
@@ -291,6 +337,20 @@ def _bench_todo(component: str, methods: list[dict]) -> str:
     at column 0 while the rest were indented, and a generated comment is not
     something clang-format will straighten out.
     """
+    # gh-1034: a function-only module has no object and no methods, so the
+    # two branches below would call it "nothing to time" when in fact every
+    # free function it declares is a candidate. Same block, same worked
+    # `jm_bench_add` tail — only the lead and the candidate spelling differ,
+    # because a module function is called without an `obj`.
+    if functions:
+        body = [
+            "jm did not generate a timing loop: only a human knows what",
+            f"question a benchmark asks of these {len(functions)}",
+            "function(s).",
+            "",
+            "Candidates:",
+        ] + [f"  {n}(...)" for n in functions]
+        return _comment_block(body + _BENCH_TODO_TAIL)
     names = [m["name"] for m in methods]
     if names:
         body = [
@@ -307,33 +367,8 @@ def _bench_todo(component: str, methods: list[dict]) -> str:
             "step() and no methods, so there is nothing it could time for",
             "you.",
         ]
-    body += [
-        "",
-        "The pattern — uncomment and adapt. `jm_bench_add` is what puts a",
-        "measurement into the JSON; without one this target writes an empty",
-        '"benchmarks": [] array.',
-        "",
-        "  static double",
-        "  elapsed_sec(struct timespec *t0, struct timespec *t1)",
-        "  {",
-        "      return (double)(t1->tv_sec - t0->tv_sec)",
-        "             + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;",
-        "  }",
-        "",
-        "  struct timespec t0, t1;",
-        "  double times[ITERATIONS];",
-        "  for (int r = 0; r < ITERATIONS; r++) {",
-        "      clock_gettime(CLOCK_MONOTONIC, &t0);",
-        "      ... call the method BENCH_N times ...",
-        "      clock_gettime(CLOCK_MONOTONIC, &t1);",
-        "      times[r] = elapsed_sec(&t0, &t1);",
-        "  }",
-        '  jm_bench_add(&_bench, "<name>", times, ITERATIONS, BENCH_N);',
-    ]
-    out = ["    /* TODO: benchmark this component."]
-    out += [("     *" + (f" {ln}" if ln else "")) for ln in body]
-    out.append("     */")
-    return "\n".join(out) + "\n"
+    body += _BENCH_TODO_TAIL
+    return _comment_block(body)
 
 
 def _bench_method_block(component: str, m: dict) -> str:
