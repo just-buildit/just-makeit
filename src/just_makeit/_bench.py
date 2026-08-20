@@ -92,8 +92,20 @@ def _ensure_built(root: Path, build_dir: Path, python: str) -> None:
         sys.exit(1)
 
 
-def _build_bench_target(root: Path, build_dir: Path, comp: str) -> None:
-    """Build the ``bench_<comp>_core`` target (project already configured)."""
+def _build_bench_target(
+    root: Path, build_dir: Path, comp: str, fatal: bool = True
+) -> bool:
+    """Build the ``bench_<comp>_core`` target (project already configured).
+
+    ``fatal`` is False for a name gh-1023 DISCOVERED rather than read from the
+    manifest. Discovery reads build files as text, so it is a heuristic: a
+    commented-out `add_executable` still names its target. A guess must not be
+    able to abort a run whose declared components are all fine, so a failure
+    there is a skip. A manifest component keeps the hard exit — its target not
+    building is a real breakage.
+
+    Returns True when the target built.
+    """
     cmake = _require("cmake")
     target = f"bench_{comp}_core"
     nproc = os.cpu_count() or 4
@@ -114,9 +126,17 @@ def _build_bench_target(root: Path, build_dir: Path, comp: str) -> None:
         timeout=600,
     )
     if r.returncode != 0:
+        if not fatal:
+            print(
+                f"  skip       bench_{comp}_core (discovered, but the target"
+                " did not build)",
+                file=sys.stderr,
+            )
+            return False
         # Surface the error verbosely so the user knows what went wrong.
         print(r.stderr, file=sys.stderr)
         sys.exit(r.returncode)
+    return True
 
 
 def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
@@ -212,7 +232,12 @@ def _trim(report: dict) -> dict:
 # ── run: C ─────────────────────────────────────────────────────────────────────
 
 
-def _collect_c(root: Path, build_dir: Path, comps: list[str]) -> dict | None:
+def _collect_c(
+    root: Path,
+    build_dir: Path,
+    comps: list[str],
+    optional: "frozenset[str]" = frozenset(),
+) -> dict | None:
     """Build + run each component's bench binary; return one merged report.
 
     Each binary writes ``bench_<comp>_core.json`` to its working
@@ -224,7 +249,10 @@ def _collect_c(root: Path, build_dir: Path, comps: list[str]) -> dict | None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         for comp in comps:
-            _build_bench_target(root, build_dir, comp)
+            if not _build_bench_target(
+                root, build_dir, comp, fatal=comp not in optional
+            ):
+                continue
             binary = _find_bench_binary(build_dir, comp)
             if binary is None:
                 continue
@@ -746,11 +774,14 @@ def run(
             baseline,
             as_json,
             set(allow),
+            frozenset(extra),
         )
         return
 
     if do_c:
-        creport = _collect_c(root, bdir, target_comps)
+        creport = _collect_c(
+            root, bdir, target_comps, optional=frozenset(extra)
+        )
         if creport:
             _trim(creport)
             prev = _prev_snapshot(hdir, tag, is_c=True)
@@ -782,13 +813,14 @@ def _run_check(
     baseline: str | None,
     as_json: bool,
     allow: set[str],
+    optional: "frozenset[str]" = frozenset(),
 ) -> None:
     """Compare current benchmarks against a baseline snapshot and exit
     non-zero on regression. Does not save a snapshot (a gate is not a record).
     """
     sides: list[tuple[str, dict | None, dict | None]] = []
     if do_c:
-        cur = _collect_c(root, bdir, target_comps)
+        cur = _collect_c(root, bdir, target_comps, optional=optional)
         if cur:
             _trim(cur)
             sides.append(("C", cur, _baseline_snapshot(hdir, True, baseline)))

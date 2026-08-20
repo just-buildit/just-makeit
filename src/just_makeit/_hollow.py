@@ -174,6 +174,28 @@ def _build_texts(root: Path) -> list[str] | None:
     return texts
 
 
+def _is_built(stem: str, texts: list[str]) -> bool:
+    """Does any build file name this target?
+
+    Word-anchored, and that matters more than it looks. `orphans` used a bare
+    ``stem in text``, which is lenient in the direction that is safe FOR IT —
+    a false "built" is a missed finding, and a false "orphan" sends someone to
+    delete a file that is compiled. gh-1023 gave the same question a second
+    consumer with the opposite asymmetry: a false "built" makes `jm bench`
+    build a target that does not exist, which is fatal to the whole run.
+
+    ``bench_util_core`` is a substring of ``bench_util_core_simd``, so the
+    bare test conflated them. ``_`` is a word character, so ``\b`` separates
+    the two correctly while still matching the target wherever a build file
+    names it — a CMake source path, a ``C_BENCHES`` list entry, either.
+
+    One helper for both readers, so "jm knows this target exists" cannot come
+    to mean two things.
+    """
+    pattern = re.compile(rf"\b{re.escape(stem)}\b")
+    return any(pattern.search(t) for t in texts)
+
+
 def built_stems(root: Path, kind: str) -> set[str] | None:
     """The ``<X>`` of every ``<kind>_<X>_core.c`` that a build file compiles.
 
@@ -219,7 +241,7 @@ def built_stems(root: Path, kind: str) -> set[str] | None:
             m.group(1)
             for src in sorted(directory.glob("*.c"))
             if (m := pattern.match(src.name))
-            and any(src.name[: -len(".c")] in t for t in texts)
+            and _is_built(src.name[: -len(".c")], texts)
         }
     raise ValueError(f"unknown kind {kind!r}")
 
@@ -268,7 +290,7 @@ def orphans(root: Path, cfg: dict) -> list[Orphan]:
             if not m:
                 continue
             stem = src.name[: -len(".c")]
-            if any(stem in t for t in texts):
+            if _is_built(stem, texts):
                 continue
             try:
                 body = src.read_text(encoding="utf-8")
