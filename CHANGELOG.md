@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wildcard now stands the build-file scan down only where it could REACH
+    (gh-1031).** `_build_texts` returned `None` for the whole tree the moment
+    any build file contained `file(GLOB ...)`, and its `rglob` walks into
+    `vendor/`. So a vendored dependency that globs its own sources disabled
+    the scan for everything.
+
+    That made gh-1023 deliver **nothing** on doppler — the repo it was filed
+    from — since nats.c is vendored and four of its build files glob;
+    `jm bench util` printed the stand-down note and then the same
+    `unknown component` as the version it was meant to fix.
+
+    The worse half is the gh-806 `UNBUILT` detector: `orphans()` returns `[]`
+    when it stands down, which is indistinguishable from a clean tree. It had
+    therefore been reporting clean on any project carrying a vendored glob,
+    for as long as it carried one.
+
+    A `file(GLOB ...)` pattern is relative to the directory of the
+    `CMakeLists.txt` that writes it, so one in `vendor/nats.c/src/` cannot
+    match `native/benchmarks/*.c`. The stand-down now asks whether the
+    wildcard can reach the directory being scanned, which is the question its
+    docstring always claimed to be asking, and it is resolved **per kind** —
+    a glob over `native/tests/` no longer disables benchmark discovery.
+    Every "maybe" still stands down: an ancestor directory (the repo root
+    included, which may hold a `GLOB_RECURSE`), a pattern naming the scanned
+    path, and one escaping via `..`, an absolute path or a project-root
+    variable.
+
+    Excluding `vendor/` by name was the alternative — one line, and a guess
+    about naming that `third_party/` and `external/` walk straight into.
+
 ### Added
 
 - **`jm bench` runs what the tree BUILDS, not what the manifest declares

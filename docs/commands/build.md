@@ -82,6 +82,15 @@ build, jm prints `skip` and carries on, where a manifest component's target
 failing to build is still a hard error. The reference match is word-anchored,
 so `bench_fir_core` is not confused with `bench_fir_core_simd`.
 
+A wildcard stands the scan down only where it could **reach** the directory
+being scanned (gh-1031). A vendored dependency that globs its own sources —
+`file(GLOB SOURCES "*.c")` inside `vendor/nats.c/src/` — is relative to its own
+directory and cannot match `native/benchmarks/*.c`, so it says nothing about
+the question and is ignored. A glob in an ancestor directory, one naming the
+scanned path, or one that escapes via `..`, an absolute path or
+`${CMAKE_SOURCE_DIR}` still stands the scan down, because any of those could
+land in it.
+
 The one case jm cannot answer at all is a build file that enumerates sources by
 wildcard — `file(GLOB ...)` makes "is this compiled?" unanswerable by reading.
 There the scan stands down to manifest components only and **says so**, rather

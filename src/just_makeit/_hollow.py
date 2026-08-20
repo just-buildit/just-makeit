@@ -146,18 +146,19 @@ class SilentBench:
         )
 
 
-def _build_texts(root: Path) -> list[str] | None:
-    """Every file that can name a C target, read once.
+def _build_files(root: Path) -> "list[tuple[Path, str]]":
+    """``(directory relative to root, text)`` for every build file jm reads.
 
-    Returns ``None`` when one of them enumerates sources by wildcard, which
-    makes "is this file compiled?" unanswerable by reading — see `_GLOB_HINT`.
+    The directory is kept because a wildcard's reach depends on where it is
+    written — see :func:`_texts_for`. `build/` is skipped as generated output.
     """
-    texts: list[str] = []
+    out: list[tuple[Path, str]] = []
     for cml in sorted(root.rglob("CMakeLists.txt")):
-        if "build" in cml.relative_to(root).parts:
+        rel = cml.relative_to(root)
+        if "build" in rel.parts:
             continue
         try:
-            texts.append(cml.read_text(encoding="utf-8"))
+            out.append((rel.parent, cml.read_text(encoding="utf-8")))
         except OSError:
             continue
     # `build = "make"` projects name their C tests in the root Makefile's
@@ -166,12 +167,68 @@ def _build_texts(root: Path) -> list[str] | None:
         path = root / extra
         if path.is_file():
             try:
-                texts.append(path.read_text(encoding="utf-8"))
+                out.append((Path("."), path.read_text(encoding="utf-8")))
             except OSError:
                 pass
-    if any(_GLOB_HINT.search(t) for t in texts):
-        return None
-    return texts
+    return out
+
+
+def _glob_reaches(where: Path, pattern_text: str, subdir: Path) -> bool:
+    """Could a wildcard written in *where* pick up sources under *subdir*?
+
+    gh-1031. The stand-down used to be "somewhere in this repo, someone
+    globbed", which is far broader than the thing it protects against. A
+    CMake ``file(GLOB ...)`` pattern is relative to the directory of the
+    ``CMakeLists.txt`` that writes it, so ``file(GLOB SOURCES "*.c")`` inside
+    ``vendor/nats.c/src/`` cannot match ``native/benchmarks/*.c`` — and yet
+    it silently disabled the whole scan, which on doppler meant gh-1023
+    delivered nothing at all and the gh-806 UNBUILT detector had been
+    reporting clean for as long as nats.c had been vendored.
+
+    Excluding ``vendor/`` by name was the other candidate fix. It is one line
+    and it is a guess about naming: ``third_party/`` and ``external/`` walk
+    into the identical wall. Asking whether the wildcard can REACH is the
+    same question the docstring always claimed to be asking.
+
+    Deliberately conservative — every "maybe" answers True:
+
+    - an ancestor directory (the repo root included) may hold a
+      ``GLOB_RECURSE`` that descends into *subdir*;
+    - a pattern naming *subdir* reaches it explicitly;
+    - a pattern that is absolute, walks up with ``..``, or interpolates a
+      project-root variable can land anywhere.
+    """
+    if where == Path(".") or where in subdir.parents or where == subdir:
+        return True
+    if subdir.as_posix() in pattern_text or subdir.name in pattern_text:
+        return True
+    return bool(
+        re.search(
+            r"\.\.|\$\{(?:CMAKE|PROJECT)_[A-Z_]*SOURCE_DIR\}|[\"\']\s*/",
+            pattern_text,
+        )
+    )
+
+
+def _texts_for(
+    subdir: str, files: "list[tuple[Path, str]]"
+) -> list[str] | None:
+    """Build-file texts that can answer "is a source under *subdir* built?".
+
+    ``None`` when a wildcard that could REACH *subdir* makes the question
+    unanswerable by reading — see `_GLOB_HINT` and :func:`_glob_reaches`. A
+    wildcard elsewhere in the tree is simply irrelevant and is not a reason to
+    stand down.
+    """
+    target = Path(subdir)
+    for where, text in files:
+        for m in _GLOB_HINT.finditer(text):
+            # The call's arguments, up to the closing paren — enough to see an
+            # explicit path, a `..`, or a root-relative interpolation.
+            arg = text[m.end() : text.find(")", m.end())]
+            if _glob_reaches(where, arg, target):
+                return None
+    return [t for _, t in files]
 
 
 def _is_built(stem: str, texts: list[str]) -> bool:
@@ -222,18 +279,19 @@ def built_stems(root: Path, kind: str) -> set[str] | None:
     Returns
     -------
     set of str or None
-        ``None`` when a build file enumerates sources by wildcard, which makes
-        "is this compiled?" unanswerable by reading (see `_GLOB_HINT`). That
+        ``None`` when a wildcard that could REACH this kind's directory makes
+        "is this compiled?" unanswerable by reading (see `_texts_for`). That
         is a distinct answer from the empty set: the caller falls back to the
         manifest and should SAY it did, rather than quietly running fewer
         benchmarks than the tree holds.
     """
-    texts = _build_texts(root)
-    if texts is None:
-        return None
+    files = _build_files(root)
     for k, subdir, _fmt, pattern in _KINDS:
         if k != kind:
             continue
+        texts = _texts_for(subdir, files)
+        if texts is None:
+            return None
         directory = root / subdir
         if not directory.is_dir():
             return set()
@@ -254,9 +312,7 @@ def orphans(root: Path, cfg: dict) -> list[Orphan]:
     names the source path, the generated Makefile names the executable in
     ``C_TESTS``. The stem is the substring both contain.
     """
-    texts = _build_texts(root)
-    if texts is None:
-        return []
+    files = _build_files(root)
     # A kind is only worth reporting if the tree builds *any* target of that
     # kind. gh-832 arrived as a backend special case — the make backend had
     # never emitted a bench rule, so every one of its bench sources was
@@ -273,15 +329,21 @@ def orphans(root: Path, cfg: dict) -> list[Orphan]:
     # that builds no benchmarks. Accepted — a false positive here sends
     # someone to delete a file that *is* built, which is worse than a missed
     # finding in the narrowest possible tree.
-    kinds = [
-        k
-        for k in _KINDS
-        if any(re.search(rf"\b{k[0]}_\w+_core\b", t) for t in texts)
-    ]
+    #
+    # gh-1031: the texts are resolved PER KIND now, because whether a wildcard
+    # makes the tree unreadable depends on which directory is being asked
+    # about. A `file(GLOB)` in a vendored dependency stood down the scan for
+    # everything, so this detector reported clean on any tree with one — for
+    # as long as it had one.
     declared = set(C.components(cfg))
 
     found: list[Orphan] = []
-    for kind, subdir, _fmt, pattern in kinds:
+    for kind, subdir, _fmt, pattern in _KINDS:
+        texts = _texts_for(subdir, files)
+        if texts is None:
+            continue
+        if not any(re.search(rf"\b{kind}_\w+_core\b", t) for t in texts):
+            continue
         directory = root / subdir
         if not directory.is_dir():
             continue
