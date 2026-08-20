@@ -1175,10 +1175,23 @@ def _make_view_ctx(
             doc_blocks=doc_blocks,
             codecs=C.codecs(cfg),
             builtin_members=builtin_owned_members(root, cfg, obj),
+            enums=C.enums(cfg),  # gh-1021
         )
     )
     for _slot in _override_slots:
         ctx[_slot] = ""
+    # gh-1021: every [[enum]] this type indexes, emitted ONCE above the three
+    # C slots that reference them (a method parameter's lookup lands in
+    # `extra_methods_c`, a property getter's in `getset_def`).
+    ctx.update(
+        Ctx.make_enum_tables_ctx(
+            ctx["component"],
+            ctx["Component"],
+            merged_methods,
+            merged_props,
+            enums=C.enums(cfg),
+        )
+    )
     ctx.update(
         Ctx.make_properties_ctx(
             ctx["component"],
@@ -1345,10 +1358,21 @@ def build_component_ctxs(
                 doc_blocks=_doc_blocks,
                 codecs=C.codecs(cfg),
                 builtin_members=builtin_owned_members(root, cfg, obj),
+                enums=C.enums(cfg),  # gh-1021
             )
         )
         for _slot in _override_slots:
             ctx[_slot] = ""
+        # gh-1021: see the view path above — one emission for both consumers.
+        ctx.update(
+            Ctx.make_enum_tables_ctx(
+                ctx["component"],
+                ctx["Component"],
+                C.methods(cfg, obj),
+                C.properties(cfg, obj),
+                enums=C.enums(cfg),
+            )
+        )
         ctx.update(
             Ctx.make_properties_ctx(
                 ctx["component"],

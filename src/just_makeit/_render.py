@@ -220,6 +220,7 @@ static int
 
 <<steps_ext_fn>>
 
+<<enum_tables>>
 <<getter_setter_methods_c>>
 <<extra_methods_c>>
 <<getset_def>>

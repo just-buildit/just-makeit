@@ -7,6 +7,7 @@ Public API:
   make_sample_ctx    — step() arg/return type metadata
   make_state_ctx     — struct fields, getters/setters, init parse
   make_methods_ctx   — extra named execute methods
+  make_enum_tables_ctx — the [[enum]] tables a type's methods/properties index
   make_properties_ctx — Python properties backed by C getters/setters
   make_warnings_ctx  — post-construction PyErr_WarnEx (gh-481)
   make_errors_ctx    — create() failure -> Python exception (gh-482)
@@ -24,7 +25,11 @@ from ._state import (
     _unseedable_required,
     _reset_wrapper_slots,
 )
-from ._methods import make_methods_ctx, make_properties_ctx
+from ._methods import (
+    make_enum_tables_ctx,
+    make_methods_ctx,
+    make_properties_ctx,
+)
 from ._diagnostics import make_warnings_ctx, make_errors_ctx
 from ._destroy import (
     make_destroy_ctx,
@@ -42,6 +47,7 @@ __all__ = [
     "make_state_ctx",
     "state_accessor_stubs",
     "make_methods_ctx",
+    "make_enum_tables_ctx",
     "make_properties_ctx",
     "make_warnings_ctx",
     "make_errors_ctx",

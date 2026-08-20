@@ -1942,6 +1942,10 @@ def make_state_ctx(
             "init_parse_args": "",
             "init_parse_block": "    (void)args;\n    (void)kwds;\n",
             "create_call_args": "",
+            # gh-1021: emitted by make_enum_tables_ctx when any method
+            # parameter or property references an [[enum]]; empty here
+            # so a type without one renders exactly as before.
+            "enum_tables": "",
             "getter_setter_methods_c": "",
             "getter_setter_pymethoddef": "",
             "init_params_pyi": "",
@@ -2713,6 +2717,10 @@ def make_state_ctx(
         "create_line": (
             f"    self->handle = {_create}({create_call_args});\n"
         ),
+        # gh-1021: default here as in the no_state branch above —
+        # make_enum_tables_ctx overwrites it on the paths that render a
+        # type whose methods or properties reference an [[enum]].
+        "enum_tables": "",
         "getter_setter_methods_c": getter_setter_methods_c,
         "getter_setter_pymethoddef": getter_setter_pymethoddef,
         "init_params_pyi": init_params_pyi,

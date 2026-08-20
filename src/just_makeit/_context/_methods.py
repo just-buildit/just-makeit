@@ -40,6 +40,7 @@ from ._parse import (
     _build_params_parse,
     _step_parse_block,
     capsule_new_c as _capsule_new_c,
+    enum_symbols as _enum_symbols,
 )
 
 
@@ -110,6 +111,9 @@ def _stub_params(
     >>> _stub_params("void", [{"name": "mu", "type": "double",
     ...                        "default": "0.5"}])
     (['mu: float = 0.5'], [('mu', 'float')])
+    >>> _stub_params("void", [{"name": "kind", "type": "int",
+    ...                        "enum": "stage", "default": "rs"}])
+    (["kind: str = 'rs'"], [('kind', 'str')])
     """
     # (name, annotation, signature-only default suffix)
     fields: list[tuple[str, str, str]] = []
@@ -124,6 +128,20 @@ def _stub_params(
         pt = p["type"]
         if pt.endswith("[]"):
             fields.append((p["name"], _pyi_ndarray(pt[:-2]), ""))
+        elif p.get("enum"):
+            # gh-1021: an enum param is `int` in C and the choice STRING in
+            # Python, so both faces must say `str` — the runtime docstring
+            # said `int` beside a `>>> obj.m(0)` example that the generated
+            # binding now rejects, which is the manifest-contradicts-surface
+            # shape the issue is about. The default is a choice, not a C
+            # literal, so it is quoted.
+            fields.append(
+                (
+                    p["name"],
+                    "str",
+                    f" = {p['default']!r}" if p.get("default") else "",
+                )
+            )
         elif p.get("capsule"):
             # gh-432: a capsule-typed param takes the named PyCapsule, any
             # wrapper exposing `_capsule`, or None (detach).
@@ -829,6 +847,7 @@ def make_methods_ctx(
     serializable: bool = False,
     codecs: dict | None = None,
     builtin_members: "frozenset[str]" = frozenset(),
+    enums: dict[str, list[str]] | None = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -844,6 +863,12 @@ def make_methods_ctx(
     pkg and py_create_args are used in the generated PyMethodDef docstrings
     to produce working doctests; omitting them produces functional but
     package-anonymous examples.
+
+    enums (gh-1021) is the ``[[enum]]`` SSOT, read only to write a REAL choice
+    into a generated doctest for an enum parameter. The C those parameters
+    emit needs no registry — the table symbol is derived from the name — so
+    ``None`` costs the examples their choice and nothing else, which is what
+    the `jm bind` path (no manifest) wants.
 
     builtin_members (gh-994) names the members whose C symbol the object's own
     generated code kept — a method entry that *names* a built-in rather than
@@ -2479,7 +2504,9 @@ def make_methods_ctx(
                 _pp_params = (
                     [{"name": "x", "type": _x_type}] if has_arg else []
                 ) + [dict(_p) for _p in params]
-                _s_parse, _p_call, _p_cleanup = _build_params_parse(_pp_params)
+                _s_parse, _p_call, _p_cleanup = _build_params_parse(
+                    _pp_params, Component, enums
+                )
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
                 _cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
@@ -2683,20 +2710,22 @@ def make_methods_ctx(
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    _combined
+                    _combined, Component, enums
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
                 meth_flags = _kw_flags
             elif has_params:
-                parse_block, _p_call, _p_cleanup = _build_params_parse(params)
+                parse_block, _p_call, _p_cleanup = _build_params_parse(
+                    params, Component, enums
+                )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
                 meth_flags = _kw_flags
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    [_x_param]
+                    [_x_param], Component, enums
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
@@ -2884,7 +2913,19 @@ def make_methods_ctx(
                 _call_parts.append(_in_example if _in_example else "x")
             for _p in params:
                 _pt = _p["type"]
-                if _pt.endswith("[]"):
+                if _p.get("enum"):
+                    # gh-1021: the example is executable prose — a `0` here
+                    # reads as a working call and is exactly the TypeError the
+                    # issue reports. Show a real choice: the declared default
+                    # when there is one, else the enum's first (its C zero).
+                    _choices = (enums or {}).get(_p["enum"]) or []
+                    _call_parts.append(
+                        repr(
+                            _p.get("default")
+                            or (_choices[0] if _choices else "")
+                        )
+                    )
+                elif _pt.endswith("[]"):
                     _pe = _pt[:-2]
                     _pe_str = (
                         _CTYPE_META[_pe]["py_type"]
@@ -3096,23 +3137,113 @@ def make_methods_ctx(
 # ---------------------------------------------------------------------------
 
 
-def _enum_symbols(Component: str, name: str) -> tuple[str, str]:
-    """C symbol names for one property enum, namespaced by *Component*.
+def _enum_name_or_fail(
+    where: str, name: str, enums: dict[str, list[str]] | None
+) -> str:
+    """Validate one ``enum = "<name>"`` reference against the SSOT.
 
-    gh-519: a module's ``_ext.c`` ``#include``s every object's fragment into a
-    *single* translation unit, and a view (gh-504) adds yet another type over
-    the same ``component``. Two types in that TU may each declare a property
-    on the same ``[[enum]]``, and module-level ``function`` enums (gh-353)
-    already own the bare ``_enum_index`` / ``_enum_<name>`` symbols. So the
-    per-property tables are namespaced by ``Component`` — the one name that is
-    unique per type section (it already namespaces every getter/setter there).
+    A ``None`` registry means "enums are unsupported on this path" (the
+    ``jm bind`` reflection path, which has no manifest to read ``[[enum]]``
+    from). Declaring one there is inert rather than fatal, so a bound render
+    stays byte-identical to before gh-519.
 
-    Returns ``(index_fn, table)``.
+    Shared by properties (gh-519) and method parameters (gh-1021) so a typo
+    reads the same whichever declared it — and so the two cannot come to
+    disagree about what a valid reference is.
+
+    Raises
+    ------
+    ValueError
+        If *name* is absent from the registry. Raising here turns a typo into
+        a jm diagnostic instead of an undeclared ``_enum_<typo>`` identifier
+        in the user's compiler.
     """
-    return (f"_enum_index_{Component}", f"_enum_{Component}_{name}")
+    if not name or enums is None:
+        return ""
+    if name not in enums:
+        known = ", ".join(sorted(enums)) or "(none declared)"
+        raise ValueError(
+            f"{where}: unknown enum '{name}'. "
+            f"Declare it as a top-level [[enum]] with that name. "
+            f"Known enums: {known}"
+        )
+    return name
 
 
-def _render_property_enum_tables(
+def method_param_enums(
+    methods: list[dict] | None, enums: dict[str, list[str]] | None
+) -> list[str]:
+    """``[[enum]]`` names referenced by method PARAMETERS (gh-1021).
+
+    First-reference order, deduped — the same shape `make_properties_ctx`
+    collects for properties, so :func:`make_enum_tables_ctx` can concatenate
+    the two.
+
+    Also the home of the default check: an enum parameter's ``default`` is a
+    choice STRING, not the int index, because the generated C seeds the
+    parameter's local with it and hands that to the lookup. A manifest that
+    kept an int default from before the enum was declared would otherwise
+    compile fine and raise ``ValueError: invalid <p> '0'`` on any call that
+    omitted the argument — a runtime failure for a declaration jm can read.
+    """
+    used: list[str] = []
+    for m in methods or []:
+        for prm in m.get("params") or []:
+            where = (
+                f"method '{m.get('name', '?')}' param '{prm.get('name', '?')}'"
+            )
+            name = _enum_name_or_fail(where, prm.get("enum") or "", enums)
+            if not name:
+                continue
+            dflt = prm.get("default")
+            if dflt and enums is not None and dflt not in enums[name]:
+                choices = ", ".join(enums[name])
+                raise ValueError(
+                    f"{where}: default '{dflt}' is not a choice of enum "
+                    f"'{name}'. An enum parameter defaults to its choice "
+                    f"STRING, not the C index. Choices: {choices}"
+                )
+            if name not in used:
+                used.append(name)
+    return used
+
+
+def make_enum_tables_ctx(
+    component: str,
+    Component: str,
+    methods: list[dict] | None = None,
+    properties: list[dict] | None = None,
+    enums: dict[str, list[str]] | None = None,
+) -> dict:
+    """Fill the ``enum_tables`` slot: every ``[[enum]]`` this type indexes.
+
+    Emitted ONCE, for both consumers, into a slot that precedes all three C
+    slots that reference the tables — ``getter_setter_methods_c``,
+    ``extra_methods_c`` (where a method parameter's lookup lands, gh-1021) and
+    ``getset_def`` (where a property's getter lands, gh-519). gh-519 put them
+    inside the last of those, which worked while properties were the only
+    consumer and is a use-before-definition the moment a method parameter
+    references one.
+
+    One emission rather than one per consumer: both index the same
+    ``_enum_<Component>_<name>`` symbols (see :func:`_enum_symbols`), so a
+    second copy would be a duplicate definition in the same TU, not a
+    fallback.
+
+    Returns ``{"enum_tables": ...}``, empty when nothing references an enum —
+    so a type without one renders byte-identically to before.
+    """
+    used = method_param_enums(methods, enums)
+    for prp in properties or []:
+        name = _property_enum(component, Component, prp, enums)
+        if name and name not in used:
+            used.append(name)
+    if not used:
+        return {"enum_tables": ""}
+    return {"enum_tables": _render_enum_tables(Component, used, enums or {})}
+
+
+def _render_enum_tables(
     Component: str, used: list[str], enums: dict[str, list[str]]
 ) -> str:
     """Emit the ``_enum_index_<Component>`` helper + one table per enum in
@@ -3122,6 +3253,11 @@ def _render_property_enum_tables(
     for the lookup body and the same "order is the C int" table layout as
     :func:`_handle.render_enum_tables` — only renaming the symbols into this
     type's namespace (see :func:`_enum_symbols`).
+
+    gh-519 wrote this for properties alone; gh-1021 gave method PARAMETERS
+    the same feature and they land in an earlier slot, so the tables serve
+    both and the name no longer says "property". See
+    :func:`make_enum_tables_ctx` for why they are emitted once, together.
     """
     from .._composer import _ENUM_INDEX_FN
 
@@ -3167,16 +3303,11 @@ def _property_enum(
         meaning). Raising here turns a typo into a jm diagnostic instead of an
         undeclared ``_enum_<typo>`` identifier in the user's compiler.
     """
-    name = p.get("enum") or ""
-    if not name or enums is None:
+    name = _enum_name_or_fail(
+        f"{component}.{p['name']}", p.get("enum") or "", enums
+    )
+    if not name:
         return ""
-    if name not in enums:
-        known = ", ".join(sorted(enums)) or "(none declared)"
-        raise ValueError(
-            f"{component}.{p['name']}: unknown enum '{name}'. "
-            f"Declare it as a top-level [[enum]] with that name. "
-            f"Known enums: {known}"
-        )
     if p.get("buf_field"):
         raise ValueError(
             f"{component}.{p['name']}: `enum` is not supported on a "
@@ -3838,17 +3969,13 @@ def make_properties_ctx(
         pyi_parts.append("\n".join(pyi_block))
 
     getset_body = "\n".join(getter_parts)
-    # gh-519: the enum tables ride along inside getset_def rather than in a
-    # template slot of their own — that keeps every existing render path
-    # (standalone _ext.c, module fragment, view fragment) wired with no
-    # template churn, and guarantees the tables are defined *above* the
-    # getters that index them.
-    if enums_used:
-        getset_body = (
-            _render_property_enum_tables(Component, enums_used, enums or {})
-            + "\n"
-            + getset_body
-        )
+    # gh-1021: the tables used to ride along here, inside getset_def. They
+    # cannot any more. `getset_def` is the LAST of the three C slots
+    # (`getter_setter_methods_c`, `extra_methods_c`, `getset_def`), and a
+    # method parameter's enum is indexed from the middle one — so a table
+    # emitted here is defined below its first use. They now live in the
+    # `enum_tables` slot above all three, filled once by
+    # :func:`make_enum_tables_ctx` from the union of both consumers.
     entries_str = "\n".join(getset_entries)
     getset_def = (
         f"{getset_body}\n\n"
