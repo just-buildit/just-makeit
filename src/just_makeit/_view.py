@@ -40,6 +40,8 @@ def run(
     exclude_properties: list[str] | None = None,
     exclude_methods: list[str] | None = None,
     doc: str = "",
+    create_error: str | None = None,
+    create_error_message: str | None = None,
     from_apply: bool = False,
 ) -> None:
     # gh-625's audit: a view's class name is not just a Python identifier —
@@ -147,6 +149,15 @@ def run(
         view_entry["exclude_properties"] = exclude_properties
     if exclude_methods:
         view_entry["exclude_methods"] = exclude_methods
+    # gh-1017: the view's OWN create()-failure translation (gh-580). `None`
+    # means undeclared, and an undeclared view INHERITS the parent's at render
+    # time — so an explicit "" (the deliberate opt-out back to MemoryError)
+    # must stay distinguishable from absence, which a falsy check would lose.
+    # Only `jm apply`'s replay passes these; the CLI verb is `jm error --view`.
+    if create_error is not None:
+        view_entry["create_error"] = create_error
+    if create_error_message is not None:
+        view_entry["create_error_message"] = create_error_message
 
     state_vars = C.state_vars(cfg, object_name)
     view_ip = C.view_init_params(cfg, object_name, view_entry)

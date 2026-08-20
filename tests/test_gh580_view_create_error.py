@@ -313,6 +313,66 @@ class TestDumpSerializer:
         assert "create_error" not in view["warnings"][0]
 
 
+class TestApplyReplay:
+    """gh-1017: the override must rebuild from the manifest alone.
+
+    `jm apply` renders each fragment in a scratch tree replayed from the
+    manifest, so a key the replay does not forward is simply absent when the
+    fragment is written — and the view then falls back to *inheriting* the
+    parent's translation, which is indistinguishable from a working inherit.
+    gh-509's warnings replay is the peer that already does this.
+
+    Every test here deletes the fragment first. `apply` preserves one that
+    already exists, so an assertion made without deleting it passes on the
+    file the *previous* command wrote and says nothing about the replay.
+    """
+
+    def _reapply(self, project):
+        """Delete the view's fragment and rebuild it from the manifest."""
+        frag = (
+            project
+            / "native"
+            / "src"
+            / "resample"
+            / "resample_ext_matchedrateconverter.c"
+        )
+        frag.unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            from just_makeit._apply import run as apply_run
+
+            apply_run(project)
+        return _joined(frag.read_text(encoding="utf-8"))
+
+    def test_apply_restores_the_view_override(self, project, capsys):
+        _declare_parent(project, capsys)
+        _declare_view(project, capsys)
+        ext = self._reapply(project)
+        assert VIEW_MSG in ext
+        assert PARENT_MSG not in ext
+
+    def test_apply_keeps_an_undeclared_view_inheriting(self, project, capsys):
+        _declare_parent(project, capsys)
+        ext = self._reapply(project)
+        assert PARENT_MSG in ext
+
+    def test_apply_preserves_the_explicit_empty_opt_out(self, project, capsys):
+        """The third state, and the one a falsy check silently loses.
+
+        `create_error = ""` on a view is a deliberate fall back to
+        MemoryError (TestPerKeyResolution documents the accessor honouring
+        it). Absence means "inherit the parent's", so replaying anything but
+        a verbatim copy of the declared keys turns the opt-out back into the
+        parent's translation on the next `jm apply`.
+        """
+        _declare_parent(project, capsys)
+        cfg = C.load(project)
+        C.views(cfg, "rateconv")[0]["create_error"] = ""
+        C.save(project, cfg)
+        ext = self._reapply(project)
+        assert "PyExc_MemoryError" in ext
+        assert PARENT_MSG not in ext
+
+
 class TestScriptRoundTrip:
     def test_declared_override_is_emitted_with_view_flag(
         self, project, capsys

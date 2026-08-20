@@ -589,6 +589,14 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 exclude_properties=list(v.get("exclude_properties", [])),
                 exclude_methods=list(v.get("exclude_methods", [])),
                 doc=v.get("doc", ""),
+                # gh-1017: the view's own create-failure translation (gh-580).
+                # `.get` yields None when the key is absent, which is what
+                # keeps "undeclared, inherit the parent's" distinct from the
+                # explicit `create_error = ""` opt-out. Forwarded here rather
+                # than replayed through `_error.run` afterwards because only a
+                # verbatim copy can carry that third state.
+                create_error=v.get("create_error"),
+                create_error_message=v.get("create_error_message"),
                 from_apply=True,
             )
             # gh-504: the view's OWN added/overriding members, materialized
