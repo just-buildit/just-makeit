@@ -31,6 +31,7 @@ from typing import Sequence
 from . import _codec as _codec
 from . import _coerce
 from . import _config as C
+from . import _gluedoc
 from . import _record
 from . import _context as Ctx
 from . import _types as T
@@ -1230,6 +1231,7 @@ def _method_doc_lines(
     override: str = "",
     raises: "list[tuple[str, str]] | None" = None,
     skeleton_fallback: bool = False,
+    param_defaults: "dict[str, str] | None" = None,
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
 
@@ -1263,6 +1265,7 @@ def _method_doc_lines(
         indent=8,
         raises=raises,
         skeleton_fallback=skeleton_fallback,
+        param_defaults=param_defaults,
     )
 
 
@@ -1916,6 +1919,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else:
                 _ann = _py(p["type"])
             _py_params.append((p["name"], _ann))
+        # gh-1042: the binding's own arguments, in the order the signature
+        # above appends them. The peer in `_context/_methods` does the same,
+        # and this file is the module-aggregated `.pyi` -- so a module object,
+        # which is what doppler's ReedSolomon.generator is, was left with a
+        # two-argument signature above no `Parameters` section when only this
+        # generator had been fixed.
+        #
+        # They also have to be in this list to be documentABLE: it is what
+        # filters the header's `@param` entries, so a name missing from it has
+        # its authored description silently discarded.
+        if _stub_count_arg:
+            _py_params.append(("count", "int"))
+        if _stub_enable_out:
+            _py_params.append(("out", f"{ret_ann} | None"))
         _doc = _method_doc_lines(
             _blk,
             m_name,
@@ -1923,6 +1940,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ret_ann,
             override=m.get("doc", ""),
             raises=_raises_doc(m),
+            param_defaults=_gluedoc.binding_param_docs(),
         )
         header = (
             f"    def {m_name}(self, {sig}) -> {ret_ann}:"

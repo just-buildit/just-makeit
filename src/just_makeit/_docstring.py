@@ -1696,6 +1696,7 @@ def render_numpy_doc(
     indent: int = 8,
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
+    param_defaults: "dict[str, str] | None" = None,
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
@@ -1761,6 +1762,7 @@ def render_numpy_doc(
         override,
         skeleton_fallback=skeleton_fallback,
         param_fallback=param_fallback,
+        param_defaults=param_defaults,
         return_fallback=return_fallback,
         raises=raises,
     )
@@ -2005,6 +2007,7 @@ def _numpy_sections(
     *,
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
+    param_defaults: "dict[str, str] | None" = None,
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> tuple[list[str], list[str]]:
@@ -2089,7 +2092,15 @@ def _numpy_sections(
         out += ["", "Parameters", "----------"]
         for pname, ann in py_params:
             out.append(f"{pname} : {ann}")
-            desc = descs.get(pname) or param_fallback
+            # gh-1042: precedence is header > jm's per-name default >
+            # the generic fallback. The middle rung exists because `count`
+            # and `out=` are jm's own arguments and "Input." is wrong for
+            # both -- but an author who documents them still outranks jm.
+            desc = (
+                descs.get(pname)
+                or (param_defaults or {}).get(pname)
+                or param_fallback
+            )
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
@@ -2139,6 +2150,7 @@ def render_runtime_doc(
     override: str = "",
     *,
     param_fallback: str = "Input.",
+    param_defaults: "dict[str, str] | None" = None,
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
@@ -2207,6 +2219,7 @@ def render_runtime_doc(
         override,
         skeleton_fallback=True,
         param_fallback=param_fallback,
+        param_defaults=param_defaults,
         return_fallback=return_fallback,
         raises=raises,
     )
@@ -2232,8 +2245,15 @@ def render_numpy_method_doc(
     py_params : list of tuple(str, str)
         ``(name, type_annotation)`` for the *Python-facing* arguments only,
         in order. Used to filter the Doxygen ``@param`` list down to real
-        Python args (drops C-only params like ``state``/``x_len``/``out``/
+        Python args (drops C-only params like ``state``/``x_len``/
         ``max_out``) and to align descriptions when names differ.
+
+        Since gh-1042 the caller includes the binding's own ``count`` /
+        ``out=`` here when the shape offers them, so they are documented and
+        — because this list is the filter — documentABLE. ``out`` used to be
+        listed above as C-only, which it is not: it is Python-facing, and
+        treating it as C-only is what silently discarded an authored
+        ``@param out``.
 
     Returns
     -------
