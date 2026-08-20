@@ -4,6 +4,35 @@
 
 ### Fixed
 
+- **A header-derived accessor body is one paragraph, not one per source line
+    (gh-1052).** A `*_max_out` whose header block carried a body paragraph
+    rendered with every SOURCE LINE as its own paragraph, so the stub was
+    double-spaced and the prose visibly broken. A *method* body from the same
+    header file in the same `jm apply` joined and rewrapped correctly, which is
+    what located the fault on the accessor path rather than in the parser.
+
+    `GlueMethod._spaced` blank-separates every entry of `block.body`. That is
+    right for jm's own definitions in `_gluedoc`, which author one paragraph
+    per entry so they stay readable as source, and catastrophic for a parsed
+    header block, whose `body` holds *lines*. gh-684's `_max_out_doc` swapped
+    one for the other with a bare `replace(gm, block=blk)` and left the spacing
+    rule behind.
+
+    It penalised exactly the docs worth writing: a one-line `@brief` renders
+    fine, so an author is quietly pushed toward saying less, and the workaround
+    is to fold the explanation into a `@param` — which files the reasoning
+    under the wrong heading. Live in doppler on `conv_enc_encode_max_out`,
+    `viterbi_decode_max_out` and several `execute_max_out` entries.
+
+    The substitution is now a method, `with_header_block()`, which sets the
+    block and its provenance together so a caller cannot set one and forget the
+    other — that is exactly how this arose. The preservation half is what makes
+    it a fix rather than a different bug: "never space" would satisfy the report
+    and silently merge every jm-authored glue docstring into a blob, so the
+    gate sabotages in that direction too.
+
+### Fixed
+
 - **The `.pyi` default for `count` is the one the binding uses (gh-1051).** A
     `variable_output` method with `arg_type = "void"` seeds its `count` keyword
     from `count_default` — a C expression evaluated before
