@@ -1902,12 +1902,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if m_arg != "void":
             _py_params.append(("x", _x_ann))
         for p in m_params:
-            _py_params.append(
-                (
-                    p["name"],
-                    "object | None" if p.get("capsule") else _py(p["type"]),
-                )
-            )
+            # gh-1021 review: the SIGNATURE above was taught that an enum
+            # param is a `str`; this list feeds the same stub's `Parameters`
+            # block and was not, so one stub read
+            # `def add(self, kind: str = 'rs')` over a doc line saying
+            # `kind : int`. Two faces of one parameter disagreeing is the
+            # defect gh-1021 exists to close, reappearing inside a single
+            # generated file.
+            if p.get("enum"):
+                _ann = "str"
+            elif p.get("capsule"):
+                _ann = "object | None"
+            else:
+                _ann = _py(p["type"])
+            _py_params.append((p["name"], _ann))
         _doc = _method_doc_lines(
             _blk,
             m_name,

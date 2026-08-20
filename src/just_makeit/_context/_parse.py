@@ -321,6 +321,25 @@ def _build_params_parse(
             # No cleanup on the failure path: `conv_lines` are emitted BEFORE
             # `arr_acq`, so no array has been acquired yet when this runs. The
             # capsule branch below relies on the same ordering.
+            # gh-1021 follow-up: `enum` is checked FIRST, so it silently won
+            # over both of these — an array param generated a scalar string
+            # parse against a kernel expecting `(const T *, size_t)`, and a
+            # capsule param dropped its unwrap entirely. The property path
+            # already refuses the same pair (`enum` + `buf_field`) with the
+            # same reasoning: a sequence of enum strings has no decoded form.
+            if is_array_param_type(ptype):
+                raise ValueError(
+                    f"param '{pname}': `enum` is not supported on an array "
+                    f"parameter ({ptype}) — a sequence of enum strings has "
+                    f"no decoded form. Drop `enum`, or make the parameter a "
+                    f"scalar `int`."
+                )
+            if p.get("capsule"):
+                raise ValueError(
+                    f"param '{pname}': `enum` and `capsule` are two different "
+                    f"parameters. One takes a choice string, the other a "
+                    f"foreign pointer. Declare two, or drop one."
+                )
             ename = p["enum"]
             index_fn, table = enum_symbols(Component, ename)
             # Name the choices, exactly as the PROPERTY setter does for the

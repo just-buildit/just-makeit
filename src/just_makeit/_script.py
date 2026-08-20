@@ -284,6 +284,39 @@ def _record_flags(entry: dict) -> list[str]:
     return parts
 
 
+def _method_notes(m: dict) -> list[str]:
+    """Comment lines for manifest keys `jm method` cannot spell (gh-1021).
+
+    `enum` on a param changes the C parse, the call argument, the stub and the
+    docstring — a param carrying it is a `str` in Python, not an `int`. There
+    is no `--param` grammar for it, so the emitted line CANNOT rebuild that
+    param and a bare emission is a script that silently reconstructs a
+    different project. Same class as the capsule-grammar reasoning on
+    `_init_param_spec`: where the CLI cannot express a manifest key, say so
+    rather than replay a lie.
+
+    Returned as WHOLE lines placed before the command, never appended to its
+    flags — `_render_cmd` joins flags with a backslash continuation, so a `#`
+    among them comments out every flag that follows it. The first attempt did
+    exactly that and swallowed `--return-type`, which is a worse bug than the
+    one being fixed: silently lossy became silently wrong.
+    """
+    out: list[str] = []
+    for p in m.get("params", []):
+        if p.get("enum"):
+            # Newline-terminated: the caller's list is joined verbatim, and
+            # `_render_cmd` supplies its own, so a note without one glues
+            # itself to the command it is meant to precede.
+            out.append(
+                f"# NOTE: param '{p['name']}' declares enum ="
+                f' "{p["enum"]}", which `--param` cannot spell.\n'
+            )
+            out.append(
+                "#       Re-add it to just-makeit.toml after replaying.\n"
+            )
+    return out
+
+
 def _method_flags(m: dict, module: str | None) -> list[str]:
     parts: list[str] = []
 
@@ -634,6 +667,7 @@ def run(root: Path) -> None:
         mod = C.component_module(cfg, comp)
         for m in C.methods(cfg, comp):
             flags = _method_flags(m, mod)
+            method_lines.extend(_method_notes(m))
             method_lines.append(
                 _render_cmd(["just-makeit", "method", comp, m["name"]], flags)
             )
@@ -673,6 +707,7 @@ def run(root: Path) -> None:
             # `jm view` line (methods before properties, matching apply replay).
             cls = v["class_name"]
             for m in C.view_methods(v):
+                view_lines.extend(_method_notes(m))
                 view_lines.append(
                     _render_cmd(
                         ["just-makeit", "method", comp, m["name"]],
