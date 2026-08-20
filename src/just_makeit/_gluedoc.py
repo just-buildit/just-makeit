@@ -64,6 +64,33 @@ class GlueMethod:
     py_params: list[tuple[str, str]] = field(default_factory=list)
     ret_ann: str = "None"
     block: DoxyBlock = field(default_factory=DoxyBlock)
+    #: True when ``block.body`` holds one PARAGRAPH per entry (jm's own
+    #: definitions below), False when it holds one LINE per entry (a parsed
+    #: header block). Decides whether :meth:`_spaced` separates them.
+    body_is_paragraphs: bool = True
+
+    def with_header_block(self, block: DoxyBlock) -> "GlueMethod":
+        """This method documented by the PROJECT's header instead of jm's.
+
+        gh-1052. A header block's ``body`` holds *lines* — that is what the
+        parser produces — where jm's own definitions below hold one paragraph
+        per entry. :meth:`_spaced` blank-separates entries, which is right for
+        the second and catastrophic for the first: every source line became
+        its own paragraph, so the longer and better-written the authored block,
+        the worse it read. Live in doppler on ``conv_enc_encode_max_out``,
+        ``viterbi_decode_max_out`` and several ``execute_max_out`` entries.
+
+        The substitution is a method rather than a bare ``replace(gm,
+        block=...)`` so the provenance cannot be set halfway: a caller that
+        swapped the block and forgot the flag would reintroduce this exactly.
+
+        Examples
+        --------
+        >>> gm = GlueMethod("f", block=DoxyBlock(brief="B.", body=["one"]))
+        >>> gm.with_header_block(DoxyBlock(brief="B.", body=["a", "b"]))._spaced().body
+        ['a', 'b']
+        """
+        return replace(self, block=block, body_is_paragraphs=False)
 
     def _spaced(self) -> DoxyBlock:
         """This method's block with its paragraphs blank-line separated.
@@ -74,7 +101,13 @@ class GlueMethod:
         therefore render them merged into a single blob. The blank entries are
         inserted at render time so the definitions above stay readable as
         paragraphs.
+
+        gh-1052: only for jm's OWN prose. A body that came from the project's
+        header is already lines, and blank-separating those turns one
+        paragraph into one paragraph per line — see :meth:`with_header_block`.
         """
+        if not self.body_is_paragraphs:
+            return self.block
         body: list[str] = []
         for para in self.block.body:
             if body:

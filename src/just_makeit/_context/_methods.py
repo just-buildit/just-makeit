@@ -32,7 +32,6 @@ from .._docstring import (
     scaffold_doc_block,
     summary_docstring,
 )
-from dataclasses import replace
 
 from .._gluedoc import glue_methods, max_out_method
 from ._diagnostics import _rc_raise_c, declared_raise, raises_doc
@@ -707,7 +706,9 @@ def _max_out_doc(
     blk = block_of(f"{c_fn or f'{component}_{name}'}_max_out")
     gm = max_out_method(name, count_param or "", int(max_out_const or 0))
     if blk is not None:
-        gm = replace(gm, block=blk)
+        # gh-1052: through the constructor, which also records that this
+        # body is the header's LINES rather than jm's paragraphs.
+        gm = gm.with_header_block(blk)
     return gm
 
 
