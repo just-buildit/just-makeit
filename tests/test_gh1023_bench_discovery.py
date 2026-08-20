@@ -141,6 +141,123 @@ class TestSharesTheScanner:
         assert [o for o in _hollow.orphans(project, C.load(project))] == []
 
 
+class TestDiscoveryIsAHeuristic:
+    """Reading build files as text can say "built" about a target that is not.
+
+    That asymmetry is the whole reason `built_stems` needs care that `orphans`
+    did not. For `orphans` a false "built" is a MISSED finding — silent and
+    harmless. For `jm bench` it means building a target that does not exist,
+    and `_build_bench_target` exits the process, so one bad guess would take
+    down a run whose declared components were all fine.
+    """
+
+    def test_a_similarly_named_target_does_not_count(self, project):
+        """`bench_util_core` is a substring of `bench_util_core_simd`.
+
+        The whole build block is swapped, not just the target name: the
+        reference test deliberately matches the SOURCE PATH too (CMake names
+        the file, a generated Makefile names the executable), so leaving
+        `bench_util_core.c` in an `add_executable` would match either way and
+        the test would prove nothing.
+        """
+        cml = project / "CMakeLists.txt"
+        cml.write_text(
+            cml.read_text(encoding="utf-8").replace(
+                EXTRA_TARGET,
+                "\nadd_executable(bench_util_core_simd\n"
+                "    ${CMAKE_SOURCE_DIR}/native/benchmarks/"
+                "bench_util_core_simd.c)\n",
+            ),
+            encoding="utf-8",
+        )
+        # bench_util_core.c is still on disk; nothing names it as a whole word.
+        assert (project / "native/benchmarks/bench_util_core.c").exists()
+        assert "util" not in _hollow.built_stems(project, "bench")
+
+    def test_a_commented_out_target_still_counts(self, project):
+        """Documented, not asserted as desirable.
+
+        The reference test reads text; a comment naming the target is
+        indistinguishable from a live one without parsing CMake. This is why
+        a DISCOVERED name's build failure is a skip rather than a fatal —
+        the guess is allowed to be wrong, it is just not allowed to be
+        expensive. See TestDiscoveredFailureIsNotFatal.
+        """
+        cml = project / "CMakeLists.txt"
+        cml.write_text(
+            cml.read_text(encoding="utf-8").replace(
+                "add_executable(bench_util_core",
+                "# add_executable(bench_util_core",
+            ),
+            encoding="utf-8",
+        )
+        assert "util" in _hollow.built_stems(project, "bench")
+
+
+class TestDiscoveredFailureIsNotFatal:
+    """A guess may be wrong; it may not abort the run."""
+
+    def test_a_discovered_target_that_fails_to_build_is_skipped(
+        self, project, monkeypatch, capsys
+    ):
+        import just_makeit._bench as B
+
+        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        built = B._build_bench_target(
+            project, project / "build", "util", fatal=False
+        )
+        assert built is False
+        assert "skip" in capsys.readouterr().err
+
+    def test_a_manifest_component_still_exits(self, project, monkeypatch):
+        """Unchanged: a declared component's target not building is a real
+        breakage, not a bad guess."""
+        import just_makeit._bench as B
+
+        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        with pytest.raises(SystemExit):
+            B._build_bench_target(
+                project, project / "build", "frame", fatal=True
+            )
+
+    def test_collect_c_exits_for_a_name_not_in_optional(
+        self, project, monkeypatch
+    ):
+        """The decision under test is `_collect_c`'s, not the builder's.
+
+        Asserting `_build_bench_target(fatal=True)` exits proves the builder
+        honours its flag and says nothing about who passes what — marking
+        EVERY name optional would swallow a component's real breakage and
+        still pass such a test.
+        """
+        import just_makeit._bench as B
+
+        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        with pytest.raises(SystemExit):
+            B._collect_c(project, project / "build", ["frame"])
+
+    def test_collect_c_skips_a_name_in_optional(self, project, monkeypatch):
+        import just_makeit._bench as B
+
+        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        assert (
+            B._collect_c(
+                project,
+                project / "build",
+                ["util"],
+                optional=frozenset({"util"}),
+            )
+            is None
+        )
+
+    def test_run_marks_only_discovered_names_optional(self, project):
+        """The `optional` set must be `extra`, not everything — passing all
+        of `runnable` would silently swallow a component's real breakage."""
+        runnable, extra, _ = runnable_comps(project, C.load(project))
+        assert extra == ["util"]
+        assert "frame" in runnable and "frame" not in extra
+
+
 class TestRunSet:
     """The enumeration and the validator's whitelist are one set."""
 

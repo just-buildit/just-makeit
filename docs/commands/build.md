@@ -75,7 +75,14 @@ collection rather than by declaration, and it is the reason there is no
 (`jm status --check` does not track one), and a list you must remember to
 append to goes stale in exactly the silent way this fixed.
 
-The one case jm cannot answer is a build file that enumerates sources by
+Discovery reads build files as **text**, so it is a heuristic: a target named
+only inside a comment still looks built. A discovered name is therefore
+allowed to be wrong but not allowed to be expensive — if its target does not
+build, jm prints `skip` and carries on, where a manifest component's target
+failing to build is still a hard error. The reference match is word-anchored,
+so `bench_fir_core` is not confused with `bench_fir_core_simd`.
+
+The one case jm cannot answer at all is a build file that enumerates sources by
 wildcard — `file(GLOB ...)` makes "is this compiled?" unanswerable by reading.
 There the scan stands down to manifest components only and **says so**, rather
 than quietly running fewer benchmarks than the tree holds. It is the same

@@ -33,6 +33,17 @@
     reading, so the scan stands down to manifest components and says so rather
     than quietly running fewer benchmarks than the tree holds.
 
+    Because discovery reads build files as text it is a heuristic, and the two
+    readers of that text now have opposite asymmetries: for the `UNBUILT`
+    detector a false "built" is a missed finding, while for `jm bench` it
+    means building a target that does not exist — which used to exit the
+    process and take the whole run with it. So the shared reference match is
+    word-anchored (`bench_fir_core` is no longer confused with
+    `bench_fir_core_simd`), and a *discovered* name whose target fails to
+    build is a visible `skip` rather than a fatal. A manifest component keeps
+    the hard exit: its target not building is a real breakage, not a bad
+    guess.
+
 - **`enum` on an object method parameter (gh-1021).** A method param
     declaring `type = "int"` plus `enum = "<name>"` now takes the choice
     STRING in Python and hands the `[[enum]]` SSOT int to C, exactly as a
