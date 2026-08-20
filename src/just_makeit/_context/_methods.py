@@ -11,6 +11,7 @@ from .. import _codec as _codec
 from .. import _coerce
 from .. import _record
 from .. import _types as T
+from .. import _gluedoc
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -84,9 +85,15 @@ def _stub_params(
     where each method shape emitted its runtime literal, so the runtime face
     had nothing to share and carried the ``@brief`` alone.
 
-    Binding-level arguments (``count``, ``out=``) are deliberately absent:
-    they belong to the signature, which appends them, and not to the
-    ``Parameters`` section, which documents what the algorithm takes.
+    Binding-level arguments (``count``, ``out=``) are **not** returned here:
+    whether they exist depends on the method's shape, which the caller
+    resolves. They are appended to the returned list at that point (gh-1042),
+    not omitted from it — this used to read "deliberately absent... the
+    ``Parameters`` section documents what the algorithm takes", and the cost
+    of that rule was a generator-shaped method rendering a two-argument
+    signature above no ``Parameters`` section at all, plus an authored
+    ``@param count`` being silently discarded, since this list is also what
+    filters the header's ``@param`` entries.
 
     Parameters
     ----------
@@ -1286,6 +1293,7 @@ def make_methods_ctx(
                 _ret_ann,
                 _brief or default_summary,
                 raises=_raises_doc,
+                param_defaults=_gluedoc.binding_param_docs(),
             )
 
         # gh-219 follow-up: a method's primary array input is sometimes
@@ -1300,6 +1308,29 @@ def make_methods_ctx(
             and len(params) == 1
             and is_array_param_type(params[0]["type"])
         )
+
+        # gh-1042: the binding's own arguments, decided ONCE and read by both
+        # faces. They were decided several hundred lines below, where only the
+        # `.pyi` could see them, so the signature listed `count`/`out=` while
+        # the `Parameters` section documented neither -- and a `variable_output`
+        # method with `arg_type = "void"` has no other parameter, so it
+        # rendered a two-argument signature above no section at all.
+        #
+        # Appended to `_doc_params` rather than kept beside it, because that
+        # list is what filters the header's `@param` entries: a name absent
+        # from it is never looked up, so an authored `@param count` was
+        # silently discarded and no authoring move could fix the above.
+        _stub_count_arg = variable_output and arg_type == "void" and not params
+        _stub_enable_out = (
+            variable_output
+            and not multi_output
+            and (not params or _single_array_param)
+        )
+        if _stub_count_arg:
+            _doc_params = _doc_params + [("count", "int")]
+        if _stub_enable_out:
+            _doc_params = _doc_params + [("out", f"{_ret_ann} | None")]
+        _doc_names = [n for n, _ in _doc_params]
         if has_arg:
             _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
             # gh-139: a block method's input is `const <elem> *in`. Use the
@@ -3047,26 +3078,22 @@ def make_methods_ctx(
         method_c_parts.append(wrapper)
 
         # pyi stub for this method
-        m_var = variable_output
-        m_multi = multi_output
         # gh-642: built once, at the top of the loop, and read by both faces.
         # `doc_params` is the args the docstring's Parameters section
-        # documents — the signature also carries binding-level args (`count`,
-        # `out=`) that are deliberately not documented there.
+        # documents, and since gh-1042 that includes the binding-level
+        # `count` / `out=` the signature carries — appended above, where the
+        # decision is made once for both faces.
         param_parts = list(_sig_parts)
         ret_ann = _ret_ann
         # gh-219: single-output variable_output methods take an optional
         # `out=` buffer and expose a <verb>_max_out() sibling. A
         # single-array-param method (params=[{array}], no other params) is
         # eligible too -- see _single_array_param above.
-        _stub_enable_out = (
-            m_var and not m_multi and (not params or _single_array_param)
-            # gh-805 §E: mirrors `_enable_out` above, which now offers the
-            # buffer for a structured result too. Kept adjacent and kept in
-            # step: a stub advertising an out= the binding rejects, or a
-            # binding accepting one the stub hides, is the same defect in
-            # either direction.
-        )
+        # gh-805 §E: mirrors `_enable_out` above, which now offers the
+        # buffer for a structured result too. Kept adjacent and kept in
+        # step: a stub advertising an out= the binding rejects, or a
+        # binding accepting one the stub hides, is the same defect in
+        # either direction. (Hoisted for gh-1042.)
         # gh-527: a variable_output method with no input to size from is the
         # generator shape -- the parse block above seeds a leading `count` for
         # it (kwlist {"count", "out"} when an out= is offered, a positional
@@ -3076,7 +3103,8 @@ def make_methods_ctx(
         # -- failed to type-check while `obj.run(out=...)` passed. `count`
         # precedes `out` to match the kwlist order. The peer generator in
         # _stubs.py (the module-aggregated .pyi) carries the same rule.
-        _stub_count_arg = m_var and arg_type == "void" and not params
+        # gh-1042: hoisted above, so the signature and the documented list
+        # cannot disagree about which binding args exist.
         if _stub_count_arg:
             # A declared default is a C expression, not a Python literal.
             param_parts.append(
@@ -3107,6 +3135,7 @@ def make_methods_ctx(
                     indent=8,
                     skeleton_fallback=True,
                     raises=_raises_doc,
+                    param_defaults=_gluedoc.binding_param_docs(),
                 )
             )
             + "\n"

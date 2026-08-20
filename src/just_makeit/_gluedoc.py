@@ -452,3 +452,58 @@ def max_out_method(
             returns=returns,
         ),
     )
+
+
+# ── binding parameters (gh-1042) ────────────────────────────────────────────
+#
+# `count` and `out=` are jm's, not the algorithm's: the C kernel never sees
+# either. They were therefore excluded from `Parameters` outright — the rule
+# `_stub_params` still states, that the section "documents what the algorithm
+# takes" — while the signature listed them anyway. Two consequences, and the
+# second is the worse one:
+#
+# * a `variable_output` method with `arg_type = "void"` (the generator shape)
+#   has NO parameter but these two, so it rendered a two-parameter signature
+#   above no `Parameters` section at all;
+# * an author who wrote `@param count` on the C declaration had it **silently
+#   discarded**, because the header's params are filtered through the
+#   Python-facing list before being read. So there was no authoring move that
+#   could fix the first point either.
+#
+# Documented on every shape rather than only where the section would otherwise
+# be empty: the same parameter appearing or vanishing depending on whether a
+# sibling exists is the caveat-shaped rule, and "every parameter in the
+# signature has an entry" is the one with no exceptions.
+#
+# Unlike the glue *methods* above, these CAN be documented downstream — there
+# is a declaration to attach `@param count` to. So this text is a default the
+# header outranks, not jm's last word; `_docstring` consults it only where the
+# header said nothing.
+
+#: Default description for the synthesized `count` argument.
+COUNT_PARAM_DOC = (
+    "How many output samples to ask for. The call may return fewer; "
+    "size an `out=` buffer with the matching `_max_out()` when you need "
+    "the worst case."
+)
+
+#: Default description for the optional `out=` buffer.
+OUT_PARAM_DOC = (
+    "Optional pre-allocated output buffer. When given, the result is "
+    "written into it and the returned array is a view of exactly the "
+    "samples produced; when omitted, a fresh array is allocated."
+)
+
+
+def binding_param_docs() -> dict[str, str]:
+    """jm's default description for each synthesized binding argument.
+
+    Keyed by the Python name, for :func:`_docstring.render_numpy_doc`'s
+    ``param_defaults``. A header ``@param`` of the same name outranks these.
+
+    Examples
+    --------
+    >>> sorted(binding_param_docs())
+    ['count', 'out']
+    """
+    return {"count": COUNT_PARAM_DOC, "out": OUT_PARAM_DOC}

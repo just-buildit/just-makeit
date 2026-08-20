@@ -38,6 +38,40 @@
 
 ### Fixed
 
+- **Every parameter in a generated signature now has a `Parameters` entry
+    (gh-1042).** A `variable_output` method with `arg_type = "void"` — the
+    generator shape — takes a synthesized `count` and an optional `out=`, and
+    no entry was rendered for either. With no other parameter, that left a
+    two-argument signature above **no `Parameters` section at all**. Found on
+    doppler's `ReedSolomon.generator`; `LO.steps`, `NCO.steps` and `AWGN.steps`
+    sat the same way.
+
+    The exclusion was deliberate and global, not a path the void-arg case
+    failed to reach: `Parameters` documented "what the algorithm takes", so
+    `out=` was undocumented on *every* method. Measured on doppler — 81
+    signatures take `out=` and 6 documented it; 16 take `count` and 1 did.
+
+    **The half that made it unfixable downstream:** a header's `@param`
+    entries are filtered through the Python-facing argument list before being
+    read, so an authored `@param count` was **silently discarded**. Not a
+    missing default — data loss, with no warning, which is why the reporter
+    found that no authoring move helped. Putting the binding arguments in that
+    list fixes both at once: they are documented by default, and documentABLE.
+    Precedence is header > jm's per-name default > the generic fallback, so an
+    author who has something specific to say about `count` outranks jm.
+
+    Documented on every shape rather than only where the section would
+    otherwise be empty. A parameter that appears or vanishes depending on
+    whether a sibling exists is the caveat-shaped rule; "every parameter in the
+    signature has an entry" is the one with no exceptions.
+
+    The decision is now made **once**, above the shape branches, so the
+    signature and the documented list cannot disagree — it used to be made
+    several hundred lines below, where only the `.pyi` could see it. Both `.pyi`
+    generators are fixed: the standalone one and the module-aggregated peer in
+    `_stubs.py`. doppler's `ReedSolomon` is a module object, so fixing only the
+    first would have left the reported surface untouched.
+
 - **A doc that is only jm's synopsis is jm's to rebuild (gh-1045).** gh-1039
     gave a `single = true` method its full runtime docstring, and no existing
     module object could receive it: `jm apply` left the old canned literal in
