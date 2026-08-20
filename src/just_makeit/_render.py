@@ -61,7 +61,9 @@ MODULE_TEST_C = _load("c/src/module_test.c")
 MODULE_BENCH_C = _load("c/src/module_bench.c")
 
 
-def module_targets_block(cname: str, has_functions: bool) -> str:
+def module_targets_block(
+    cname: str, has_functions: bool, taken: "frozenset[str]" = frozenset()
+) -> str:
     """CMake `test_`/`bench_<cname>_core` targets for a module (gh-1034).
 
     Empty unless the module declares at least one free function, so a module
@@ -75,6 +77,23 @@ def module_targets_block(cname: str, has_functions: bool) -> str:
     """
     if not has_functions:
         return ""
+    # gh-1046: a CMake target name is global, so emitting one the project
+    # already declares in its own CMakeLists is a hard configure error rather
+    # than an override. Every consumer hand-registered this pair *because* jm
+    # did not generate it (the gh-1023 workaround), which means the projects
+    # this feature was written for are exactly the ones it collided with.
+    # Skipped per target, not per pair: a project that hand-registered only
+    # the benchmark still gets the test.
+    blocks = []
+    if f"test_{cname}_core" not in taken:
+        blocks.append(_module_test_target(cname))
+    if f"bench_{cname}_core" not in taken:
+        blocks.append(_module_bench_target(cname))
+    return "".join(blocks)
+
+
+def _module_test_target(cname: str) -> str:
+    """The `test_<cname>_core` CMake target for a module (gh-1034)."""
     return (
         f"\nadd_executable(test_{cname}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
@@ -82,6 +101,12 @@ def module_targets_block(cname: str, has_functions: bool) -> str:
         f"target_include_directories(test_{cname}_core\n"
         f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)\n"
         f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
+    )
+
+
+def _module_bench_target(cname: str) -> str:
+    """The `bench_<cname>_core` CMake target for a module (gh-1034)."""
+    return (
         f"\nadd_executable(bench_{cname}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
         f"target_link_libraries(bench_{cname}_core PRIVATE {cname}_core m)\n"

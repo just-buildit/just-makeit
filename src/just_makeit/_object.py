@@ -26,6 +26,8 @@ from . import _color as Color
 from . import _config as C
 from . import _context as Ctx
 from . import _render as R
+from . import _report
+from . import _targets
 from . import _stubs as S
 from . import _types as T
 from ._builtins import (
@@ -2001,10 +2003,39 @@ def _regenerate_module_now(
     # generated no test and no benchmark for it, and no target for either, so
     # every consumer hand-registered both in its root CMakeLists.
     _fns = C.module_functions(cfg, module)
+    # gh-1046: what the PROJECT declares in its own root CMakeLists, read from
+    # the real tree — under `apply` this runs against a pristine temp scaffold
+    # that has none of the project's hand-written CMake, so asking `root` would
+    # find nothing and re-emit the colliding target on every apply. Same
+    # override, and the same reason, as the sacred-header lookup above.
+    _taken = _targets.declared_in_cmake(_DOC_ROOT_OVERRIDE or root)
+    _skipped = sorted(
+        n for n in (f"test_{cname}_core", f"bench_{cname}_core") if n in _taken
+    )
     cmake_ctx = {
         **cmake_ctx,
-        "module_targets_block": R.module_targets_block(cname, bool(_fns)),
+        "module_targets_block": R.module_targets_block(
+            cname, bool(_fns), _taken
+        ),
     }
+    if _fns and _skipped:
+        # Never silent: "jm generates this now" and "your build still uses
+        # your copy" are otherwise indistinguishable, which is the gh-806 /
+        # gh-1033 shape — a stand-down that reads as a clean result.
+        #
+        # Through `_report` rather than `print`, because `apply` replays into
+        # a temp tree under `redirect_stdout` and a printed line would be
+        # swallowed on the one command most likely to hit this. Advisory, not
+        # gating: the project deliberately owns the target, so `jm status
+        # --check` has nothing to fail on.
+        _them = "them" if len(_skipped) > 1 else "it"
+        _lines = "those lines" if len(_skipped) > 1 else "that line"
+        _report.warn(
+            f"{', '.join(_skipped)} already declared in your "
+            f"CMakeLists.txt, so jm left {_them} to you — a CMake target "
+            f"name is global and a second one does not configure. Delete "
+            f"{_lines} to let jm own the target instead (gh-1034)."
+        )
     _write(
         root / "native" / "src" / cname / "CMakeLists.txt",
         collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),

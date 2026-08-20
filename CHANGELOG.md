@@ -38,6 +38,48 @@
 
 ### Fixed
 
+- **jm no longer emits a CMake target name the project already declares
+    (gh-1046).** A CMake target name is global: two `add_executable` calls with
+    the same name are a hard configure error, not a shadow and not an override.
+    jm emits target names from two places and both asked what the *manifest*
+    claims, never what the project's own `CMakeLists.txt` declares.
+
+    The release blocker was gh-1034's new `test_`/`bench_<cname>_core` pair for
+    a function-only module. Every consumer had hand-registered that pair
+    **because jm did not generate it** — the gh-1023 workaround — so the
+    feature that removes the need for the workaround collided with the
+    workaround instead of replacing it. Projects that had worked around the gap
+    were the only ones broken by closing it, and doppler could not configure at
+    all.
+
+    The same blind spot was already live on a second surface: `jm app --name X`
+    suffixes a colliding target, but from a manifest-derived list, so a
+    hand-written `add_executable(myapp ...)` was invisible and it emitted a
+    second `myapp` beside it. That list had also gone stale on its own terms —
+    it named `test_<comp>_core` and not `bench_<comp>_core`, which jm has
+    emitted beside it all along.
+
+    Both are answered once, in a new `_targets.py`: what jm will emit for a
+    manifest, and what the project declares itself. Three things it is careful
+    about:
+
+    - **The scan reads the root `CMakeLists.txt` only.** jm owns every
+        `native/src/<name>/CMakeLists.txt` and writes these very targets there,
+        so a wider scan would find jm's own emission, read it as someone else's
+        claim, and stop emitting — the target would survive one command and
+        vanish on the next.
+    - **jm's own sentinel-delimited app block is excluded**, because it is
+        jm's to rewrite on every run. Counting it makes the app target
+        *oscillate* — `myapp_app` -> `myapp_app_app` -> `myapp_app` — since each
+        run frees the name the previous one vacated.
+    - **The stand-down is reported, not silent.** "jm generates this now" and
+        "your build still uses your copy" are otherwise indistinguishable, which
+        is the gh-806/gh-1033 shape. It goes through `_report` rather than
+        `print` because `apply` replays under `redirect_stdout`, which would
+        swallow the line on the one command most likely to hit this. Skipping is
+        per target, not per pair: a project that hand-registered only the
+        benchmark still gets the test.
+
 - **An unusable type is reported as itself, not as a false statement about an
     unrelated object (gh-1037).** Declaring `type = "unsigned"` on one object's
     init-param made `jm apply` print

@@ -38,14 +38,17 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _targets
 from . import _render as R
 from . import _report
 from . import _types as T
 from ._init import _to_title
 
 
-_APP_CMAKE_SENTINEL = "# ── App ──"
-_APP_CMAKE_END = "# ── App end ──"
+# gh-1046: one definition, in the module that also has to recognise them
+# when deciding which CMake targets are the PROJECT's rather than jm's.
+from ._targets import APP_CMAKE_END as _APP_CMAKE_END
+from ._targets import APP_CMAKE_SENTINEL as _APP_CMAKE_SENTINEL
 
 _PYTYPE = {
     "float": "float",
@@ -857,24 +860,21 @@ def _app_object_link(cfg: dict, object_: str) -> str:
     return " ".join(libs) + " " + _LIBM
 
 
-def _reserved_targets(cfg: dict) -> set[str]:
+def _reserved_targets(cfg: dict, root: "Path | None" = None) -> frozenset:
     """CMake target names already claimed by the project.
 
-    An ``add_executable`` for an app cannot reuse a name that another target
-    in the same ``CMakeLists.txt`` already owns (CMake errors with "another
-    target with the same name already exists").  The claimants are: every
-    module ext target (its cname), every component's Python ext target plus its
-    ``<comp>_core`` OBJECT lib and ``test_<comp>_core`` smoke test, and the
-    top-level ``<pkg>_lib`` / ``<pkg>_lib_static`` aggregate libs (gh-184)."""
-    pkg = C.project_name(cfg).replace("-", "_")
-    reserved = set(C.module_cnames(cfg))
-    reserved |= {f"{pkg}_lib", f"{pkg}_lib_static"}
-    for comp in C.components(cfg):
-        reserved |= {comp, f"{comp}_core", f"test_{comp}_core"}
-    return reserved
+    Delegates to :func:`_targets.claimed`, which answers both halves: what jm
+    will emit for *cfg*, and what the project declares in its own root
+    ``CMakeLists.txt``. This used to be the first half alone, hand-maintained
+    here — so a `add_executable(myapp ...)` the project wrote was invisible and
+    `jm app --name myapp` emitted a second target beside it, which CMake
+    refuses to configure (gh-1046). The same list had also gone stale in its
+    own half, omitting `bench_<comp>_core` while jm emitted it.
+    """
+    return _targets.claimed(cfg, root)
 
 
-def _exe_target(name: str, cfg: dict) -> str:
+def _exe_target(name: str, cfg: dict, root: "Path | None" = None) -> str:
     """Return a collision-free CMake target id for the app executable.
 
     Normally the target id equals the app ``name`` (so ``cmake --build
@@ -886,7 +886,7 @@ def _exe_target(name: str, cfg: dict) -> str:
     Detection runs on the user-facing ``name`` (not a prior suffixed id), so
     re-running ``jm app`` / ``jm apply`` yields the same id — never
     ``<name>_app_app``."""
-    reserved = _reserved_targets(cfg)
+    reserved = _reserved_targets(cfg, root)
     if name not in reserved:
         return name
     target = f"{name}_app"
@@ -1501,7 +1501,14 @@ def run(
     if target == "c":
         # Only the C target adds an add_executable() that can clash with a
         # module/component CMake target; console/pep723 faces don't (gh-184).
-        _run_c(root, ctx, name, link_target, main_tmpl, _exe_target(name, cfg))
+        _run_c(
+            root,
+            ctx,
+            name,
+            link_target,
+            main_tmpl,
+            _exe_target(name, cfg, root),
+        )
     elif target == "console":
         _run_console(
             root,
