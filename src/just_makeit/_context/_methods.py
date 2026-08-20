@@ -1335,6 +1335,45 @@ def make_methods_ctx(
         _from_line = [f"    >>> from {pkg} import {Component}"] if pkg else []
         _obj_line = f"    >>> obj = {Component}({py_create_args})"
 
+        def _demo_call_args() -> str:
+            """The argument list for this method's synthesized doctest.
+
+            One builder for every shape, because the example is executable
+            prose: a wrong literal here reads as a working call. gh-1021 fixed
+            the enum case (a bare ``0`` is the very TypeError that issue
+            reports) in the fixed-output branch, which was then the only
+            caller — a second copy would have shipped that bug again the day
+            a record method declared an enum param.
+            """
+            parts: list[str] = []
+            if has_arg:
+                parts.append(_in_example if _in_example else "x")
+            for _p in params:
+                _pt = _p["type"]
+                if _p.get("enum"):
+                    # Show a real choice: the declared default when there is
+                    # one, else the enum's first (its C zero).
+                    _choices = (enums or {}).get(_p["enum"]) or []
+                    parts.append(
+                        repr(
+                            _p.get("default")
+                            or (_choices[0] if _choices else "")
+                        )
+                    )
+                elif _pt.endswith("[]"):
+                    _pe = _pt[:-2]
+                    _pe_str = (
+                        _CTYPE_META[_pe]["py_type"]
+                        if _pe in _CTYPE_META
+                        else "np.float32"
+                    )
+                    parts.append(f"np.zeros(4, dtype={_pe_str})")
+                elif _pt in _CTYPE_META:
+                    parts.append(_CTYPE_META[_pt].get("py_zero", "0"))
+                else:
+                    parts.append("0")
+            return ", ".join(parts)
+
         # gh-581: every `out=` branch below requires the exact output dtype
         # before marshaling, so FROM_OTF cannot cast the caller's buffer into a
         # temp that the kernel fills and then discards. Two flavors: with an
@@ -2631,7 +2670,33 @@ def make_methods_ctx(
                 f"}}"
             )
             _s_names = ", ".join(_f["name"] for _f in result_fields)
-            _sig_args = ", ".join((["x"] if has_arg else []) + _sp_kwnames)
+            _s_demo = [""]
+            if has_arg or has_params:
+                _s_demo.append("    >>> import numpy as np")
+            _s_demo += [
+                *_from_line,
+                _obj_line,
+                f"    >>> rec = obj.{name}({_demo_call_args()})",
+                f"    >>> rec.{result_fields[0]['name']} is not None",
+                "    True",
+            ]
+            _s_doc_lines = [
+                # The signature line keeps the field list: a structseq prints
+                # as a bare tuple at a REPL, so naming its members where the
+                # reader's eye lands first is worth the width.
+                f"{name}({', '.join(_doc_names)}) ->"
+                f" {_rec_name} record ({_s_names})",
+                "",
+                # gh-1039: the FIFTH shape, and the last one whose runtime
+                # face ignored the header outright. gh-642 gave the other four
+                # `_runtime_doc`; this branch kept the canned line above as its
+                # entire doc, so a fully documented record method had a full
+                # `.pyi` and a one-line `help()` — with no authoring move that
+                # could fix it, since a manifest `doc` never reached here
+                # either.
+                *_runtime_doc(f"Returns one {_rec_name} record."),
+                *_demo(_s_demo),
+            ]
             _md_cast = "(PyCFunction)(void *)" if _has_kw else "(PyCFunction)"
             _md_flags = (
                 "METH_VARARGS | METH_KEYWORDS" if _has_kw else "METH_VARARGS"
@@ -2639,8 +2704,7 @@ def make_methods_ctx(
             pmd_lines.append(
                 f'    {{"{name}", {_md_cast}{wrapper_prefix}_{name},'
                 f" {_md_flags},\n"
-                f'     "{name}({_sig_args}) ->'
-                f' {_rec_name} record ({_s_names})."}},\n'
+                f"     {_build_ml_doc(_s_doc_lines)}}},\n"
             )
         elif result_fields:
             # gh-598: peer of _render's list-of-records builder — both go
@@ -2943,36 +3007,7 @@ def make_methods_ctx(
             else:
                 _fix_demo.append("")
             _fix_demo += [*_from_line, _obj_line]
-            _call_parts: list[str] = []
-            if has_arg:
-                _call_parts.append(_in_example if _in_example else "x")
-            for _p in params:
-                _pt = _p["type"]
-                if _p.get("enum"):
-                    # gh-1021: the example is executable prose — a `0` here
-                    # reads as a working call and is exactly the TypeError the
-                    # issue reports. Show a real choice: the declared default
-                    # when there is one, else the enum's first (its C zero).
-                    _choices = (enums or {}).get(_p["enum"]) or []
-                    _call_parts.append(
-                        repr(
-                            _p.get("default")
-                            or (_choices[0] if _choices else "")
-                        )
-                    )
-                elif _pt.endswith("[]"):
-                    _pe = _pt[:-2]
-                    _pe_str = (
-                        _CTYPE_META[_pe]["py_type"]
-                        if _pe in _CTYPE_META
-                        else "np.float32"
-                    )
-                    _call_parts.append(f"np.zeros(4, dtype={_pe_str})")
-                elif _pt in _CTYPE_META:
-                    _call_parts.append(_CTYPE_META[_pt].get("py_zero", "0"))
-                else:
-                    _call_parts.append("0")
-            _call_str = ", ".join(_call_parts)
+            _call_str = _demo_call_args()
             if out_type or multi_output:
                 _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
                 _fix_demo.append("    >>> y.ndim")
