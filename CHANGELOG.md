@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.63.1] — 2026-08-20
+
 ### Fixed
 
 - **A header-derived accessor body is one paragraph, not one per source line
@@ -30,8 +32,6 @@
     it a fix rather than a different bug: "never space" would satisfy the report
     and silently merge every jm-authored glue docstring into a blob, so the
     gate sabotages in that direction too.
-
-### Fixed
 
 - **The `.pyi` default for `count` is the one the binding uses (gh-1051).** A
     `variable_output` method with `arg_type = "void"` seeds its `count` keyword
