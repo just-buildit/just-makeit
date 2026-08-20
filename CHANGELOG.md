@@ -38,6 +38,38 @@
 
 ### Fixed
 
+- **A doc that is only jm's synopsis is jm's to rebuild (gh-1045).** gh-1039
+    gave a `single = true` method its full runtime docstring, and no existing
+    module object could receive it: `jm apply` left the old canned literal in
+    place, so the fix was shipped and unreachable for every project that
+    already had the fragment — which is every project that had the feature.
+    doppler measured it, and only the one object whose fragment had been
+    deleted by hand moved.
+
+    `_docsync._is_jm_shaped` decides whether a slot is jm's to rebuild or a
+    human's to preserve, and required **two** lines to agree — the synopsis and
+    the summary. gh-703 added the second because a downstream that hand-writes
+    richer prose keeps jm's synopsis above it. The canned single-record literal
+    has no summary line at all: it is one line, and that is the whole doc. Two
+    independent reasons it could not reclaim, either sufficient — the old
+    synopsis ends in `.` and the new one does not, and a one-element head can
+    never equal a two-element one.
+
+    This is **gh-871's lesson in mirror.** There, a "single logical line" bound
+    on the *glue* path was drawn as a cheap safety margin and instead froze the
+    feature shut for every gh-647 docstring. Here a two-line floor did the same
+    to authored members. A bound on how much text a slot holds is not a proxy
+    for whether a person wrote it — so the rule is now stated as what it
+    actually means: there is no human prose to protect when there is no prose.
+
+    Deliberately general rather than special-cased to the single-record shape,
+    so any slot an older jm wrote as a bare synopsis reclaims for the same
+    reason, with nothing to enumerate. The preservation half is unchanged and
+    is where the tests concentrate: hand-written prose under jm's synopsis
+    still survives (gh-703's case), a one-line sentence that is *not* jm's
+    synopsis still survives, and a binding jm knows nothing about is still
+    passed through untouched.
+
 - **jm no longer emits a CMake target name the project already declares
     (gh-1046).** A CMake target name is global: two `add_executable` calls with
     the same name are a hard configure error, not a shadow and not an override.
