@@ -174,6 +174,56 @@ def _build_texts(root: Path) -> list[str] | None:
     return texts
 
 
+def built_stems(root: Path, kind: str) -> set[str] | None:
+    """The ``<X>`` of every ``<kind>_<X>_core.c`` that a build file compiles.
+
+    The complement of :func:`orphans`, sharing its scanner, its ``_KINDS``
+    shapes and its stem-substring reference test — so "jm knows this target
+    exists" has exactly one definition and the pair cannot come to disagree
+    about what is built.
+
+    gh-1023 is why the complement is wanted. ``jm bench`` enumerated
+    ``C.components(cfg)``, which is the manifest's top-level tables — the
+    objects — and used it as both the run set AND the validator's whitelist.
+    A benchmark for anything else (a ``[project] c_deps`` directory carrying
+    its own hand-written ``CMakeLists.txt``) could therefore be written,
+    reviewed, compiled by every build, and executed by nothing, while
+    ``jm bench <that name>`` answered ``unknown component``. Auditing doppler
+    turned up four in exactly that state.
+
+    Discovery by scan rather than by a manifest key is deliberate: a benchmark
+    is already not manifest-owned (``jm status --check`` does not track one),
+    the Python half of ``jm bench`` already discovers by collection rather
+    than by declaration, and a list you must remember to append to fails the
+    same silent way the bug does.
+
+    Returns
+    -------
+    set of str or None
+        ``None`` when a build file enumerates sources by wildcard, which makes
+        "is this compiled?" unanswerable by reading (see `_GLOB_HINT`). That
+        is a distinct answer from the empty set: the caller falls back to the
+        manifest and should SAY it did, rather than quietly running fewer
+        benchmarks than the tree holds.
+    """
+    texts = _build_texts(root)
+    if texts is None:
+        return None
+    for k, subdir, _fmt, pattern in _KINDS:
+        if k != kind:
+            continue
+        directory = root / subdir
+        if not directory.is_dir():
+            return set()
+        return {
+            m.group(1)
+            for src in sorted(directory.glob("*.c"))
+            if (m := pattern.match(src.name))
+            and any(src.name[: -len(".c")] in t for t in texts)
+        }
+    raise ValueError(f"unknown kind {kind!r}")
+
+
 def orphans(root: Path, cfg: dict) -> list[Orphan]:
     """Every ``test_*_core.c`` / ``bench_*_core.c`` that nothing compiles.
 

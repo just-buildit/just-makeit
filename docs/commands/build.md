@@ -50,8 +50,9 @@ Build the project, run the C and Python benchmarks, and save a dated snapshot
 under `benchmarks/history/` so performance history lives in git.
 
 ```sh
-just-makeit bench              # all components, both sides, saves a snapshot
-just-makeit bench fir biquad   # only these components
+just-makeit bench              # everything runnable, both sides, saves a snapshot
+just-makeit bench fir biquad   # only these
+just-makeit bench util         # ...including a non-component benchmark
 ```
 
 Each run rebuilds via `cmake`, executes every `bench_<comp>_core` C binary and
@@ -59,6 +60,26 @@ the `pytest-benchmark` suite under `src/`, prints a stats table per side with a
 Δ column against the previous snapshot, and writes two immutable files —
 `<tag>.json` (Python) and `<tag>-c.json` (C), where `<tag>` is a UTC timestamp.
 Commit them to keep the history.
+
+**What gets run is what gets built (gh-1023).** The C side is not limited to
+manifest components. jm takes every `native/benchmarks/bench_<X>_core.c` that
+some build file compiles, so a benchmark for a `[project] c_deps` directory —
+whose `CMakeLists.txt` is hand-written, since jm emits only the
+`add_subdirectory` line — is picked up the day it is written, with nothing to
+declare. Discovered names are listed as `extra` at the top of the run, and are
+selectable positionally like any component.
+
+This mirrors the Python side, which has always discovered by `pytest`
+collection rather than by declaration, and it is the reason there is no
+`[project.bench]` key for it: a benchmark is not manifest-owned
+(`jm status --check` does not track one), and a list you must remember to
+append to goes stale in exactly the silent way this fixed.
+
+The one case jm cannot answer is a build file that enumerates sources by
+wildcard — `file(GLOB ...)` makes "is this compiled?" unanswerable by reading.
+There the scan stands down to manifest components only and **says so**, rather
+than quietly running fewer benchmarks than the tree holds. It is the same
+stand-down the `UNBUILT` detector makes, for the same reason.
 
 **Gate mode.** `--check` compares against a baseline instead of saving and
 exits non-zero on a regression, so CI can fail a change that slows a kernel
