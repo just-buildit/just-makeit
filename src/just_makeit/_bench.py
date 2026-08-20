@@ -674,6 +674,18 @@ def runnable_comps(root: Path, cfg: dict) -> tuple[list[str], list[str], bool]:
         one expression is what made this bug two bugs.
     """
     all_comps = list(C.components(cfg))
+    # gh-1034: a module that declares free functions now gets a jm-GENERATED
+    # benchmark and target, so it belongs in the run set by declaration —
+    # not by being rediscovered in the scan below. The scan would find it
+    # (jm wrote the target), and relying on that would couple a thing jm
+    # generates to the discovery of things it does not, which is exactly the
+    # coupling gh-1034 narrows away.
+    for mod in C.modules(cfg):
+        if not C.module_functions(cfg, mod):
+            continue
+        cname = C.module_paths(mod).cname
+        if cname not in all_comps:
+            all_comps.append(cname)
     built = _hollow.built_stems(root, "bench")
     globbed = built is None
     extra = [b for b in sorted(built or set()) if b not in all_comps]

@@ -1145,11 +1145,17 @@ def run(
             "measurement:"
         )
         for s in _silent:
-            detail = (
-                f"{s.methods} method(s), none benchable"
-                if s.methods
-                else "no step(), no methods"
-            )
+            # gh-1034: a module's benchmark never had a step() to miss, so
+            # the object wording is a non sequitur about it. Same order as
+            # `SilentBench.describe`, which is the peer of this string —
+            # they are two renderings of one fact and drift if only one
+            # learns a new case.
+            if s.functions:
+                detail = f"{s.functions} function(s), none timed yet"
+            elif s.methods:
+                detail = f"{s.methods} method(s), none benchable"
+            else:
+                detail = "no step(), no methods"
             print(f"  ~ {s.rel} ({detail})")
         print(
             '  These build, run, exit 0 and write an empty "benchmarks": []. '

@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A function-only module gets the C test and benchmark an object has always
+    had (gh-1034).** jm generates and owns a module whose surface is free
+    functions — its `_ext.c`, its `.pyi`, its `CMakeLists.txt` — and generated
+    no C test for it, no benchmark, and no target for either;
+    `CMakeLists_module.cmake` had zero references to both. So the one
+    component whose C jm writes end to end was the one with nothing checking
+    it, and every consumer hand-registered the pair in its own root
+    `CMakeLists.txt`.
+
+    That hand-registration is where the damage landed rather than in coverage:
+    two of the component-name defects reported downstream — a benchmark
+    writing a JSON filename nothing opens — exist precisely because nothing
+    generated the target, so nothing generated the string either. A generated
+    target cannot get its own component name wrong.
+
+    Scope is scaffold, target, run. jm does **not** invent a timing loop: only
+    a human knows what question a benchmark asks. The generated benchmark is
+    therefore silent from birth — which is why the gh-806 `SILENT` detector
+    had to learn about it in the same change. It walked `C.components(cfg)`,
+    i.e. objects only, so the detector written to find exactly this shape was
+    blind to the one file jm now creates already in it, and reported `OK`.
+
+    The module also joins `jm bench`'s run set **by declaration** rather than
+    through the gh-1023 scan. The scan would find it — jm wrote the target —
+    and leaning on that would couple a thing jm generates to the discovery of
+    things it does not.
+
+    Keyed on "declares a function", not on "declares no objects": a
+    function-only predicate would mean adding an object to a module silently
+    deleted its test and benchmark targets. Both sources are create-only, like
+    an object's.
+
 ### Fixed
 
 - **jm no longer reads build files under `vendor/` (gh-1031).** `_build_texts`

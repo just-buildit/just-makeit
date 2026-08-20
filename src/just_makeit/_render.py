@@ -55,6 +55,78 @@ LIB_STUB_C = _load("c/src/lib_stub.c")
 # ── CMake ────────────────────────────────────────────────────────────────────
 CMAKE_LISTS_TOP = _load("cmake/CMakeLists_top.cmake")
 CMAKE_LISTS_MODULE = _load("cmake/CMakeLists_module.cmake")
+# gh-1034: the C test and benchmark a function-only module now gets, the
+# same pair an object has always had.
+MODULE_TEST_C = _load("c/src/module_test.c")
+MODULE_BENCH_C = _load("c/src/module_bench.c")
+
+
+def module_targets_block(cname: str, has_functions: bool) -> str:
+    """CMake `test_`/`bench_<cname>_core` targets for a module (gh-1034).
+
+    Empty unless the module declares at least one free function, so a module
+    that is purely a container for objects renders byte-identically to before
+    — each of its objects already carries this pair.
+
+    Keyed on "declares a function" rather than on "declares no objects". A
+    function-only predicate would mean adding an object to a module silently
+    DELETED its test and benchmark targets, which is the kind of foot-gun
+    `jm apply` would then dutifully reconcile away.
+    """
+    if not has_functions:
+        return ""
+    return (
+        f"\nadd_executable(test_{cname}_core\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
+        f"target_link_libraries(test_{cname}_core PRIVATE {cname}_core m)\n"
+        f"target_include_directories(test_{cname}_core\n"
+        f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)\n"
+        f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
+        f"\nadd_executable(bench_{cname}_core\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
+        f"target_link_libraries(bench_{cname}_core PRIVATE {cname}_core m)\n"
+        f"target_include_directories(bench_{cname}_core\n"
+        f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
+        f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
+    )
+
+
+def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
+    """Body of a module's C smoke test, and its scaffold-check count.
+
+    Mirrors an object's `step_c_smoke_test`, which is a `(void)`-cast call
+    with the comment "verify it runs without crashing" and no assertion — the
+    scaffold proves the symbol links and the call returns, and gh-806's
+    "no assertions beyond the scaffold" note nags until a human adds a real
+    one.
+
+    A function whose parameters are not all scalars is emitted as a COMMENTED
+    candidate rather than a call: synthesising a buffer for an array or a
+    handle for a capsule is guesswork, and a scaffold that does not compile
+    is worse than one that does not measure.
+    """
+    from ._types import _CTYPE_META
+
+    lines: list[str] = []
+    for fn in functions:
+        params = fn.get("params") or []
+        zeros = [
+            _CTYPE_META.get(p.get("type", ""), {}).get("zero") for p in params
+        ]
+        name = fn["name"]
+        if all(z is not None for z in zeros):
+            lines.append(f"    /* {name}: verify it runs without crashing */")
+            lines.append(f"    (void){name}({', '.join(zeros)});")
+        else:
+            lines.append(
+                f"    /* TODO: {name}(...) takes a non-scalar argument jm"
+                f" cannot synthesise; call it here. */"
+            )
+    if not lines:
+        lines = ["    /* no functions declared yet */"]
+    return "\n".join(lines), 0
+
+
 CMAKE_LISTS_OBJECT_CORE = _load("cmake/CMakeLists_object_core.cmake")
 CMAKE_LISTS_COMPONENT = _load("cmake/CMakeLists_component.cmake")
 CMAKE_PC_IN = _load("cmake/package.pc.in")
