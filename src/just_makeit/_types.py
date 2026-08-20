@@ -177,6 +177,27 @@ _CTYPE_META: dict[str, dict] = {
 
 SUPPORTED_TYPES: frozenset[str] = frozenset(_CTYPE_META)
 
+#: Spellings a binding coerces without a :data:`_CTYPE_META` row.
+#:
+#: These are Python-shaped inputs, not C types, so there is no format char,
+#: zero literal or numpy dtype to register — the generated glue drives them
+#: through a converter instead (``PyUnicode_FSConverter`` for ``path``,
+#: gh-515/gh-623; the opaque-bytes coercion for ``bytes``, gh-565). They are
+#: **manifest-only**: the CLI front-ends reject all four spellings on
+#: ``--init-param``, so a project reaches them by declaring the type in
+#: ``just-makeit.toml``.
+#:
+#: Named here rather than left as scattered ``ctype == "path"`` comparisons
+#: because :func:`_config._usable_ctype` has to answer "would a binding
+#: exist for this?" and a validator that did not know about them would reject
+#: every project gh-515 was written for. Scoped deliberately to the sites that
+#: validator covers — component ``init_params`` and the ``params`` /
+#: ``arg_type`` of methods and module functions. Other surfaces carry their
+#: own vocabulary (``_handle`` accepts ``string`` on a create-arg), and
+#: folding those in here without checking each one is how a registry starts
+#: claiming more than it knows.
+PSEUDO_TYPES: frozenset[str] = frozenset({"path", "bytes"})
+
 # gh-595: natural C spellings that are NOT manifest keys, mapped to the key a
 # user reaching for them almost certainly wants, and why. The width-varying
 # integer spellings are deliberately absent from _CTYPE_META — a generated

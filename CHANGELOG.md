@@ -38,6 +38,59 @@
 
 ### Fixed
 
+- **An unusable type is reported as itself, not as a false statement about an
+    unrelated object (gh-1037).** Declaring `type = "unsigned"` on one object's
+    init-param made `jm apply` print
+
+    ```
+    error: object 'dp_tlm_capture': [dp_tlm_capture.destroy] exit 'close' is
+           not a declared method. Declared: none.
+    ```
+
+    naming an object in a module the change never touched, whose `close` **is**
+    declared forty lines above the block referencing it. It cost the reporter
+    six isolation runs and a wrongly filed issue before they bisected their own
+    manifest. Two independent defects, both fixed:
+
+    **A deferral flushed through an abort.** `apply`'s replay runs inside
+    `_object.deferred_module_regen()`, whose flush renders each module's FINAL
+    state — from a `finally`, so it also ran while the body was unwinding.
+    `_replay` creates every object before replaying any method, so at that
+    moment an object declaring `[X.destroy] exit = "m"` genuinely has no
+    methods, and the render raised `ValueError` from inside the `finally`.
+    An exception raised there **replaces** the one propagating, so the user's
+    real error was discarded and its stand-in reported instead. "Declared:
+    none" was the tell. Both deferrals — `deferred_module_regen` and
+    `deferred_save` — now drop their pending work when the body aborts;
+    everything they write goes to a throwaway temp tree the abort is about to
+    discard. This was never specific to types: *any* mid-replay failure was
+    liable to be replaced by whatever the flush happened to complain about.
+
+    **The manifest type check did not cover the input side.**
+    `manifest_type_errors` (gh-595/gh-598) validated `return_type` and
+    `result_fields` and nothing that feeds a binding, so four tables reached
+    `_CTYPE_META[...]` in the renderer and raised a bare `KeyError`: a
+    component's `init_params`, a method's `arg_type`, a method's `params` and a
+    module function's `params`. All four now produce the message the CLI
+    front-ends have always given, naming the object, the entry and the type —
+    including the "did you mean `uint32_t`?" hint that is the actual answer.
+
+    Two things the check deliberately does *not* do, because a false rejection
+    is worse than the traceback it replaces: a table carrying `header`,
+    `capsule` or `enum` names a type jm never resolves and is skipped, and a
+    codec param declares its shape by `role` with no `type` at all. The
+    manifest-only pseudo-types `path` (gh-515) and `bytes` (gh-565) are now
+    named as `_types.PSEUDO_TYPES` rather than left as scattered
+    `ctype == "path"` comparisons, since the validator has to know a binding
+    exists for them.
+
+    One subtlety worth recording: `is_array_param_type` is purely syntactic —
+    it asks only whether the spelling ends in `[]`, so it says yes to
+    `unsigned[]` as readily as to `float[]`. What the renderer indexes is the
+    *element* type, so the check resolves that instead; a first version that
+    used the suffix test passed `arg_type = "unsigned[]"` straight through to
+    the same crash.
+
 - **A `single = true` method's runtime docstring is the block its `.pyi`
     carries (gh-1039).** gh-642 made the runtime `PyMethodDef` doc *be* the
     stub docstring, dedented and undelimited, and routed four method shapes

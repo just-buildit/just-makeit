@@ -1531,17 +1531,30 @@ def deferred_module_regen() -> "Iterator[None]":
     _DEFERRED_REGEN = {}
     try:
         yield
-    finally:
-        pending, _DEFERRED_REGEN = _DEFERRED_REGEN, prev
-        for root, module, pkg, drop in (pending or {}).values():
-            # Re-read rather than replay a stored cfg. Each command does its
-            # own `C.load(root)`, so a captured cfg is a *snapshot* of the
-            # manifest partway through the replay — and rendering the last
-            # snapshot is not the same as rendering the final state. A method
-            # whose `[codec.X]` is declared by a later step is present in that
-            # snapshot while its codec is not, which the immediate path never
-            # saw because it rendered before the method existed at all.
-            _regenerate_module_now(root, C.load(root), module, pkg, drop)
+    except BaseException:
+        # gh-1037: the flush renders the FINAL state, and an aborted body has
+        # none. Flushing anyway rendered a manifest caught mid-replay --
+        # `_apply._replay` creates every object before replaying any method,
+        # so an object with `[X.destroy] exit = "m"` has no methods yet -- and
+        # the render raised `ValueError: exit 'm' is not a declared method.
+        # Declared: none.` from inside a `finally`, which REPLACES the
+        # exception being propagated. So the user's real error was discarded
+        # and reported as a false statement about an unrelated object, in a
+        # module the change never touched. Everything this writes goes to the
+        # throwaway temp tree that the abort is about to discard, so there is
+        # nothing to salvage by trying.
+        _DEFERRED_REGEN = prev
+        raise
+    pending, _DEFERRED_REGEN = _DEFERRED_REGEN, prev
+    for root, module, pkg, drop in (pending or {}).values():
+        # Re-read rather than replay a stored cfg. Each command does its
+        # own `C.load(root)`, so a captured cfg is a *snapshot* of the
+        # manifest partway through the replay — and rendering the last
+        # snapshot is not the same as rendering the final state. A method
+        # whose `[codec.X]` is declared by a later step is present in that
+        # snapshot while its codec is not, which the immediate path never
+        # saw because it rendered before the method existed at all.
+        _regenerate_module_now(root, C.load(root), module, pkg, drop)
 
 
 def _regenerate_module(
