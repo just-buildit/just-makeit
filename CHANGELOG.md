@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `.pyi` default for `count` is the one the binding uses (gh-1051).** A
+    `variable_output` method with `arg_type = "void"` seeds its `count` keyword
+    from `count_default` — a C expression evaluated before
+    `PyArg_ParseTupleAndKeywords` — so a method declaring one has a zero-arg
+    behaviour that is emphatically not `count=1`. The two `.pyi` generators
+    disagreed about that for the same manifest and the same method: the
+    standalone one rendered `...`, the module-aggregated one hard-coded `1`.
+    doppler's `ReedSolomon.generator` declares `nroots + 1` and is a module
+    object, so its stub advertised a length the kernel refuses — repeated by
+    every type checker, IDE tooltip and `help()`.
+
+    gh-657 fixed the stub *omitting* `count` and did not carry the value
+    through, taking it from "missing" to "present and wrong"; the comment
+    directly above the hard-coded `1` described the behaviour it was not
+    implementing.
+
+    Answered in one place now, because this is the second time these two
+    generators were caught disagreeing about jm's own binding arguments
+    (gh-1042 was the first, over whether they are documented at all). The gate
+    compares the two faces against **each other** rather than asserting the
+    same literal twice — a test that pins each separately is one edit away
+    from pinning two different answers.
+
+    An integer `count_default` now renders as itself, which is truthful and
+    better than the ellipsis both faces previously showed; anything else is a
+    C expression with no Python spelling and renders `...`.
+
 ## [0.63.0] — 2026-08-20
 
 ### Added

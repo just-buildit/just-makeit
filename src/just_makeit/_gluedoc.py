@@ -507,3 +507,58 @@ def binding_param_docs() -> dict[str, str]:
     ['count', 'out']
     """
     return {"count": COUNT_PARAM_DOC, "out": OUT_PARAM_DOC}
+
+
+def count_stub_default(count_default: str) -> str:
+    """The `.pyi` default for the synthesized ``count``, as source text.
+
+    gh-1051. The binding seeds ``count`` from ``count_default`` — a C
+    expression evaluated before ``PyArg_ParseTupleAndKeywords`` — so a method
+    declaring one has a zero-arg behaviour that is *not* ``count=1``. The two
+    stub generators disagreed about this for the same manifest and the same
+    method: the standalone one rendered ``...``, and the module-aggregated one
+    hard-coded ``1``. So doppler's ``ReedSolomon.generator``, whose real
+    default is ``nroots + 1``, advertised a length its own kernel refuses.
+
+    gh-657 fixed the stub *omitting* ``count`` and did not carry the value
+    through, taking it from "missing" to "present and wrong" — which type
+    checkers, IDE tooltips and ``help()`` all repeat.
+
+    Answered here, once, because this is the second time these two generators
+    were found disagreeing about jm's own binding arguments (gh-1042 was the
+    first, over whether they are documented at all).
+
+    An integer literal renders as itself — truthful, and better than the
+    ellipsis both faces would otherwise show. Anything else is a C expression
+    with no Python spelling, so it renders as ``...``: the stub's way of
+    saying "there is a default and it is not written here", which is honest
+    where a literal would be a lie.
+
+    Parameters
+    ----------
+    count_default : str
+        The manifest's ``count_default``. Empty means the historical ``1``,
+        which is genuinely the value the binding uses.
+
+    Returns
+    -------
+    str
+        Source text for the right-hand side of ``count: int = ...``.
+
+    Examples
+    --------
+    >>> count_stub_default("")
+    '1'
+    >>> count_stub_default("4")
+    '4'
+    >>> count_stub_default("  16  ")
+    '16'
+    >>> count_stub_default("state->rs.code.nroots + 1")
+    '...'
+    >>> count_stub_default("NROOTS")
+    '...'
+    """
+    expr = count_default.strip()
+    if not expr:
+        return "1"
+    return expr if expr.isdigit() else "..."

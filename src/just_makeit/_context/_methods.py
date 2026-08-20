@@ -3106,9 +3106,11 @@ def make_methods_ctx(
         # gh-1042: hoisted above, so the signature and the documented list
         # cannot disagree about which binding args exist.
         if _stub_count_arg:
-            # A declared default is a C expression, not a Python literal.
+            # gh-1051: shared with the module-aggregated peer in `_stubs`,
+            # which hard-coded `1` here and so advertised a default the
+            # binding does not use. An integer literal now renders as itself.
             param_parts.append(
-                f"count: int = {'...' if _count_default else '1'}"
+                f"count: int = {_gluedoc.count_stub_default(_count_default)}"
             )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
