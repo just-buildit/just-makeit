@@ -175,7 +175,7 @@ def _build_texts(root: Path) -> list[str] | None:
 
 
 def _is_built(stem: str, texts: list[str]) -> bool:
-    """Does any build file name this target?
+    r"""Does any build file name this target?
 
     Word-anchored, and that matters more than it looks. `orphans` used a bare
     ``stem in text``, which is lenient in the direction that is safe FOR IT —

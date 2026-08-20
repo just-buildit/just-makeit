@@ -744,6 +744,14 @@ def run(
             )
             sys.exit(1)
         target_comps = list(components)
+        # A name the user TYPED is not a guess. `optional` exists so a
+        # heuristic cannot abort a run nobody asked it to affect; it must not
+        # also downgrade a breakage in the thing that was asked for. Left
+        # unconditional, `jm bench --check util` on a `util` whose target
+        # stopped building skipped it, and `_compare_reports` yields one
+        # record per CURRENT benchmark — so the baseline's `util::*` entries
+        # simply vanished from the comparison and the gate exited green.
+        extra = []
     else:
         target_comps = list(runnable)
         if extra:

@@ -250,6 +250,42 @@ class TestDiscoveredFailureIsNotFatal:
             is None
         )
 
+    def test_an_explicitly_named_bench_is_not_optional(self, project):
+        """Review finding: `jm bench --check util` could pass on nothing.
+
+        `optional` exists so a heuristic cannot abort a run nobody asked it to
+        affect. A name the user typed is not a heuristic — and
+        `_compare_reports` yields one record per CURRENT benchmark, so a
+        skipped one does not appear as a failure, it simply vanishes from the
+        comparison and the gate exits green over less than it claims.
+        """
+        import just_makeit._bench as B
+        import just_makeit._config as CC
+
+        seen = {}
+
+        def _fake_collect(root, bdir, comps, optional=frozenset()):
+            seen["optional"] = optional
+            return None
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(B, "_collect_c", _fake_collect)
+        monkey.setattr(B, "_ensure_built", lambda *a, **k: None)
+        monkey.setattr(B, "_project_python", lambda _r: "python3")
+        try:
+            B.run(project, components=["util"], do_python=False, tag="x")
+            assert seen["optional"] == frozenset()
+            seen.clear()
+            B.run(project, do_python=False, tag="y")
+            assert seen["optional"] == frozenset({"util"})
+        finally:
+            monkey.undo()
+        assert CC  # keep the import meaningful for the fixture's manifest
+
+    def test_the_reference_test_docstring_is_raw(self):
+        """`\\b` in a non-raw docstring compiles to a backspace (0x08)."""
+        assert chr(8) not in (_hollow._is_built.__doc__ or "")
+
     def test_run_marks_only_discovered_names_optional(self, project):
         """The `optional` set must be `extra`, not everything — passing all
         of `runnable` would silently swallow a component's real breakage."""
