@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A view's own `create_error` survived `jm apply` (gh-1017).** gh-580 let a
+    `[[<obj>.views]]` entry declare its own create()-failure translation,
+    inheriting the parent's when it declares none. The accessor and the render
+    context both did that correctly, but `jm apply` rebuilds each fragment in a
+    scratch tree replayed from the manifest — and the view replay carried
+    `init_params`, the excludes, `doc`, and the view's own methods, properties
+    and warnings (gh-509), and nothing for the errors. A declared override was
+    therefore absent when the fragment was written, so the view fell back to
+    *inheriting* the parent's: a wrong result indistinguishable from a working
+    inherit, on the C binding and on the `.pyi`'s `Raises` block alike.
+
+    The keys are forwarded through `_view.run` as a verbatim copy rather than
+    replayed afterwards through `_error.run`, because a view has three states
+    and not two — declared, absent (inherit), and an explicit
+    `create_error = ""` (a deliberate fall back to `MemoryError`). Only a
+    verbatim copy carries the third: replaying the *resolved* pair freezes the
+    inherit, and a falsy check turns the opt-out back into the parent's text.
+
 ## [0.62.1] — 2026-08-17
 
 ### Added
