@@ -1895,7 +1895,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # to match the kwlist order.
         _stub_count_arg = m_var and m_arg == "void" and not m_params
         if _stub_count_arg:
-            param_parts.append("count: int = 1")
+            # gh-1051: `1` was hard-coded here while the comment above
+            # described `count_default` and the standalone generator honoured
+            # it — so the same method rendered two different defaults
+            # depending on which .pyi writer produced the file, and the wrong
+            # one was a length the kernel refuses.
+            param_parts.append(
+                f"count: int = "
+                f"{_gluedoc.count_stub_default(m.get('count_default', ''))}"
+            )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
 
