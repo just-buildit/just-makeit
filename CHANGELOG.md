@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.63.0] — 2026-08-20
+
 ### Added
 
 - **A function-only module gets the C test and benchmark an object has always
@@ -35,6 +37,70 @@
     function-only predicate would mean adding an object to a module silently
     deleted its test and benchmark targets. Both sources are create-only, like
     an object's.
+
+- **`jm bench` runs what the tree BUILDS, not what the manifest declares
+    (gh-1023).** The C side enumerated `C.components(cfg)` — the manifest's
+    top-level tables, i.e. the objects — and used it as both the run set and
+    the validator's whitelist. A benchmark for anything else was therefore
+    unreachable twice over: never run by a bare `jm bench`, and answered with
+    `unknown component` if asked for by name. The concrete case is a
+    `[project] c_deps` directory, whose `CMakeLists.txt` is hand-written (jm
+    emits only the `add_subdirectory` line), so a bench target inside it
+    genuinely builds and is genuinely undiscoverable — auditing doppler before
+    a release turned up four written, reviewed, compiled by every build since,
+    and executed by nothing.
+
+    Nothing reported it: the file exists, the target builds, `jm status   --check` is clean (a benchmark is not manifest-owned), and a snapshot that
+    silently omits a component looks exactly like one that includes it. The
+    gh-806 `UNBUILT` detector is silent here by construction — it finds
+    sources nothing compiles, which is the opposite population.
+
+    Discovery is by scan, not by a new manifest key: `_hollow.built_stems` is
+    the complement of that same detector and shares its scanner, its `_KINDS`
+    shapes and its stem-substring reference test. A `[project.bench]   extra_components` list was the other option and is the worse one — a list
+    you must remember to append to goes stale in exactly the silent way the
+    bug does, and the Python half of `jm bench` has always discovered by
+    `pytest` collection rather than by declaration.
+
+    Discovered names are listed as `extra` at the top of the run. Where a
+    build file globs its sources, "is this compiled?" is unanswerable by
+    reading, so the scan stands down to manifest components and says so rather
+    than quietly running fewer benchmarks than the tree holds.
+
+    Because discovery reads build files as text it is a heuristic, and the two
+    readers of that text now have opposite asymmetries: for the `UNBUILT`
+    detector a false "built" is a missed finding, while for `jm bench` it
+    means building a target that does not exist — which used to exit the
+    process and take the whole run with it. So the shared reference match is
+    word-anchored (`bench_fir_core` is no longer confused with
+    `bench_fir_core_simd`), and a *discovered* name whose target fails to
+    build is a visible `skip` rather than a fatal. A manifest component keeps
+    the hard exit: its target not building is a real breakage, not a bad
+    guess.
+
+- **`enum` on an object method parameter (gh-1021).** A method param
+    declaring `type = "int"` plus `enum = "<name>"` now takes the choice
+    STRING in Python and hands the `[[enum]]` SSOT int to C, exactly as a
+    module-function param already did. Before this the key was *accepted* by
+    the manifest validator and read by nothing: the generated surface said
+    `int`, and a caller following the manifest's own declaration got
+    `TypeError: 'str' object cannot be interpreted as an integer`.
+
+    `_keys.FUNCTION_PARAM_KEYS` already carried the reasoning — "recognising
+    the key on only one side would accept it in the manifest and drop it in
+    the C" — for a different pair of keys, which is what this was an instance
+    of.
+
+    The other spelling, `type = "enum:<name>"` (what an **init_param** takes),
+    raised a bare `KeyError` out of `_CTYPE_META`; it is now a diagnostic that
+    names the form that works here. An enum param's `default` is the choice
+    string, and an int default left over from before the enum was declared is
+    refused at generation time rather than raising `invalid <p> '0'` on the
+    first call that omits the argument.
+
+    The refusal names the choices, matching what the property setter for the
+    same enum already said — a caller who meets both refusals meets one style
+    of it.
 
 ### Fixed
 
@@ -253,74 +319,6 @@
     Stated cost, and asserted in the tests so it stays honest: `third_party/`
     and `external/` are the same situation under a different name and are
     still read.
-
-### Added
-
-- **`jm bench` runs what the tree BUILDS, not what the manifest declares
-    (gh-1023).** The C side enumerated `C.components(cfg)` — the manifest's
-    top-level tables, i.e. the objects — and used it as both the run set and
-    the validator's whitelist. A benchmark for anything else was therefore
-    unreachable twice over: never run by a bare `jm bench`, and answered with
-    `unknown component` if asked for by name. The concrete case is a
-    `[project] c_deps` directory, whose `CMakeLists.txt` is hand-written (jm
-    emits only the `add_subdirectory` line), so a bench target inside it
-    genuinely builds and is genuinely undiscoverable — auditing doppler before
-    a release turned up four written, reviewed, compiled by every build since,
-    and executed by nothing.
-
-    Nothing reported it: the file exists, the target builds, `jm status   --check` is clean (a benchmark is not manifest-owned), and a snapshot that
-    silently omits a component looks exactly like one that includes it. The
-    gh-806 `UNBUILT` detector is silent here by construction — it finds
-    sources nothing compiles, which is the opposite population.
-
-    Discovery is by scan, not by a new manifest key: `_hollow.built_stems` is
-    the complement of that same detector and shares its scanner, its `_KINDS`
-    shapes and its stem-substring reference test. A `[project.bench]   extra_components` list was the other option and is the worse one — a list
-    you must remember to append to goes stale in exactly the silent way the
-    bug does, and the Python half of `jm bench` has always discovered by
-    `pytest` collection rather than by declaration.
-
-    Discovered names are listed as `extra` at the top of the run. Where a
-    build file globs its sources, "is this compiled?" is unanswerable by
-    reading, so the scan stands down to manifest components and says so rather
-    than quietly running fewer benchmarks than the tree holds.
-
-    Because discovery reads build files as text it is a heuristic, and the two
-    readers of that text now have opposite asymmetries: for the `UNBUILT`
-    detector a false "built" is a missed finding, while for `jm bench` it
-    means building a target that does not exist — which used to exit the
-    process and take the whole run with it. So the shared reference match is
-    word-anchored (`bench_fir_core` is no longer confused with
-    `bench_fir_core_simd`), and a *discovered* name whose target fails to
-    build is a visible `skip` rather than a fatal. A manifest component keeps
-    the hard exit: its target not building is a real breakage, not a bad
-    guess.
-
-- **`enum` on an object method parameter (gh-1021).** A method param
-    declaring `type = "int"` plus `enum = "<name>"` now takes the choice
-    STRING in Python and hands the `[[enum]]` SSOT int to C, exactly as a
-    module-function param already did. Before this the key was *accepted* by
-    the manifest validator and read by nothing: the generated surface said
-    `int`, and a caller following the manifest's own declaration got
-    `TypeError: 'str' object cannot be interpreted as an integer`.
-
-    `_keys.FUNCTION_PARAM_KEYS` already carried the reasoning — "recognising
-    the key on only one side would accept it in the manifest and drop it in
-    the C" — for a different pair of keys, which is what this was an instance
-    of.
-
-    The other spelling, `type = "enum:<name>"` (what an **init_param** takes),
-    raised a bare `KeyError` out of `_CTYPE_META`; it is now a diagnostic that
-    names the form that works here. An enum param's `default` is the choice
-    string, and an int default left over from before the enum was declared is
-    refused at generation time rather than raising `invalid <p> '0'` on the
-    first call that omits the argument.
-
-    The refusal names the choices, matching what the property setter for the
-    same enum already said — a caller who meets both refusals meets one style
-    of it.
-
-### Fixed
 
 - **Four review follow-ups to gh-1021's method-parameter `enum`.** One shape:
     the primary renderer learned a new manifest key and the other readers of it
