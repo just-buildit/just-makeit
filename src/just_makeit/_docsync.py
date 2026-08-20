@@ -270,6 +270,26 @@ def _head(field_text: str) -> list[str]:
     return lines[:2]
 
 
+def _same_synopsis(cur_line: str, der_line: str) -> bool:
+    """Two synopsis lines that differ by at most a trailing period.
+
+    jm has spelled the line both ways. gh-1039's canned single-record literal
+    was a complete sentence — ``find(x) -> Hit record (found, offset).`` —
+    while the rendered synopsis above a numpy block is not, since a heading
+    follows it. Comparing them literally reads one jm version's output as
+    another author's writing, which is exactly the misclassification that
+    keeps a slot frozen.
+
+    Examples
+    --------
+    >>> _same_synopsis("run(x) -> float.", "run(x) -> float")
+    True
+    >>> _same_synopsis("run(x) -> float", "run(x, gain) -> float")
+    False
+    """
+    return cur_line.rstrip(".") == der_line.rstrip(".")
+
+
 def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     """True when *cur*'s synopsis **and** summary are still jm's own.
 
@@ -309,8 +329,24 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     if not der_head or not _SYNOPSIS_RE.match(der_head[0]):
         return False
     cur_head = _head(cur)
-    if not cur_head or cur_head[0] != der_head[0]:
+    if not cur_head or not _same_synopsis(cur_head[0], der_head[0]):
         return False  # different synopsis -> not this member's generated doc
+    # gh-1045: *cur* is the synopsis and nothing else, so there is no human
+    # prose for the two-line rule below to protect. Requiring a summary froze
+    # every doc jm had ever emitted as a bare one-liner -- gh-1039's
+    # single-record literal among them, which meant that fix could not reach
+    # a single existing fragment and was shipped unreachable.
+    #
+    # This is gh-871's lesson in mirror. There, a "single logical line" bound
+    # on the GLUE path was drawn as a cheap safety margin and instead froze
+    # the feature shut; here a two-line floor did the same to authored
+    # members. A bound on how much text a slot holds is not a proxy for
+    # whether a person wrote it.
+    #
+    # A human who deleted jm's prose and kept only its synopsis gets it
+    # rebuilt. That is the intended reading: they have written nothing.
+    if len(cur_head) == 1:
+        return True
     fb_head = _head(fb) if fb is not None else []
     return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
 
