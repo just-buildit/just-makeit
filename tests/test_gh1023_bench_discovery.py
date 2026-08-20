@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import contextlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -197,12 +198,32 @@ class TestDiscoveryIsAHeuristic:
 class TestDiscoveredFailureIsNotFatal:
     """A guess may be wrong; it may not abort the run."""
 
+    @staticmethod
+    def _failing_build(monkeypatch):
+        """Make the cmake invocation report failure, without running one.
+
+        `subprocess.run` is patched rather than `_require`. An earlier version
+        pointed `_require` at `/bin/false`, which does not exist on macOS
+        (`/usr/bin/false` does) — so four tests that passed on Linux failed
+        the entire CI matrix with `FileNotFoundError`, and fail-fast cancelled
+        every other leg. What is under test is the RETURN-CODE handling;
+        standing up a real process to produce a return code imports the host's
+        filesystem layout into the assertion.
+        """
+        import just_makeit._bench as B
+
+        def _fake_run(*_a, **_k):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="no such target"
+            )
+
+        monkeypatch.setattr(B.subprocess, "run", _fake_run)
+        return B
+
     def test_a_discovered_target_that_fails_to_build_is_skipped(
         self, project, monkeypatch, capsys
     ):
-        import just_makeit._bench as B
-
-        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        B = self._failing_build(monkeypatch)
         built = B._build_bench_target(
             project, project / "build", "util", fatal=False
         )
@@ -212,9 +233,7 @@ class TestDiscoveredFailureIsNotFatal:
     def test_a_manifest_component_still_exits(self, project, monkeypatch):
         """Unchanged: a declared component's target not building is a real
         breakage, not a bad guess."""
-        import just_makeit._bench as B
-
-        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        B = self._failing_build(monkeypatch)
         with pytest.raises(SystemExit):
             B._build_bench_target(
                 project, project / "build", "frame", fatal=True
@@ -230,16 +249,12 @@ class TestDiscoveredFailureIsNotFatal:
         EVERY name optional would swallow a component's real breakage and
         still pass such a test.
         """
-        import just_makeit._bench as B
-
-        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        B = self._failing_build(monkeypatch)
         with pytest.raises(SystemExit):
             B._collect_c(project, project / "build", ["frame"])
 
     def test_collect_c_skips_a_name_in_optional(self, project, monkeypatch):
-        import just_makeit._bench as B
-
-        monkeypatch.setattr(B, "_require", lambda _tool: "/bin/false")
+        B = self._failing_build(monkeypatch)
         assert (
             B._collect_c(
                 project,
