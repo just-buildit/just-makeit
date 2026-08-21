@@ -82,11 +82,25 @@ OBJECT_KEYS = frozenset(
         "methods",
         "properties",
         "init_params",
+        # gh-999: `[[<obj>.init_groups]]` — one row instantiates a `[[group]]`
+        # under a prefix, so a struct member repeated N times costs one row
+        # instead of N copies of its param list.
+        "init_groups",
         "views",
         "warnings",
         "destroy",
     }
 )
+
+#: Keys valid on a ``[[<component>.init_groups]]`` row (gh-999). Two, because
+#: a group instantiation says only WHICH group and under WHAT prefix — every
+#: other property of the params it produces belongs to the group's own field
+#: declarations, where it is written once.
+INIT_GROUP_KEYS = frozenset({"group", "prefix"})
+
+#: Keys valid on a top-level ``[[group]]`` table (gh-999).
+GROUP_KEYS = frozenset({"name", "fields"})
+
 
 #: Keys valid on a ``[[<component>.state]]`` entry. ``opaque`` (struct field
 #: with no generated accessors), ``no_ctor`` (field, but not a constructor
@@ -332,6 +346,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "object": OBJECT_KEYS,
     "state": STATE_KEYS,
     "init_param": INIT_PARAM_KEYS,
+    "init_group": INIT_GROUP_KEYS,
     "method": METHOD_KEYS,
     "param": PARAM_KEYS,
     "property": PROPERTY_KEYS,
@@ -475,6 +490,10 @@ def unknown_keys(cfg: dict) -> list:
         for entry in _entries(section, "init_params"):
             found += _check(
                 "init_param", f"{name}.{entry.get('name', '?')}", entry
+            )
+        for entry in _entries(section, "init_groups"):
+            found += _check(
+                "init_group", f"{name}.{entry.get('group', '?')}", entry
             )
         for entry in _entries(section, "properties"):
             found += _check(

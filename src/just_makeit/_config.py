@@ -149,10 +149,87 @@ def load(root: Path) -> dict:
     # wrong-kind key is worth reporting whichever command surfaced it. The
     # walk is deduplicated per process, so `apply` loading both the real tree
     # and its temp scaffold says each thing once.
+    # gh-999: instantiate every `[[<obj>.init_groups]]` into real
+    # `init_params`, HERE, before anything reads the merged manifest.
+    #
+    # `load` is the one place every reader passes through, which is the whole
+    # reason the expansion lives here rather than in `C.init_params`. Ten
+    # sites read `.get("init_params")` directly — the glue, the stubs, apply's
+    # replay, the handle generator, `jm bind` — and an expansion behind one
+    # accessor would reach some of them and not others. That is the shape this
+    # repo keeps finding a half-wired feature in.
+    _expand_init_groups(cfg)
     from ._keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
     return cfg
+
+
+#: Marks an `init_param` that `_expand_init_groups` created. Private, and never
+#: written back: the manifest keeps the DECLARATION (`[[group]]` plus one
+#: `[[<obj>.init_groups]]` row) and the writer skips anything carrying this, so
+#: a round-trip through `jm apply` cannot silently flatten the group into the
+#: 34 hand-written params it exists to remove.
+GROUP_ORIGIN_KEY = "_group"
+
+
+def groups(cfg: dict) -> dict[str, list[dict]]:
+    """The `[[group]]` registry: name → its ordered field dicts.
+
+    A group is a *declaration of a repeat*, not a type. jm's type vocabulary
+    still has no struct in either direction, and this deliberately does not
+    add one — see gh-999, which asks for the ergonomics without touching the
+    type system.
+    """
+    out: dict[str, list[dict]] = {}
+    for g in cfg.get("group", []) or []:
+        name = g.get("name")
+        if name:
+            out[name] = [dict(f) for f in g.get("fields", []) or []]
+    return out
+
+
+def _expand_init_groups(cfg: dict) -> None:
+    """Turn each `[[<obj>.init_groups]]` row into prefixed `init_params`.
+
+    Mutates *cfg* in place, appending to the object's own `init_params` so a
+    hand-written param and a grouped one can coexist and keep their declared
+    order relative to each other: groups instantiate after the explicit list,
+    which is the order the manifest reads in.
+
+    The expansion is deliberately *exactly* what writing the params out by
+    hand produces. Every downstream face — the C prototype, the kwlist, the
+    `.pyi`, the docstring — sees ordinary `init_params` and needs no change,
+    which is what makes this a declaration feature rather than a type-system
+    one.
+
+    A row naming a group that does not exist is left alone rather than raised
+    on: `_keys` reports an unrecognised declaration in the voice the author
+    already knows, and raising out of `load` would turn a typo into a
+    traceback from every command at once.
+    """
+    registry = groups(cfg)
+    if not registry:
+        return
+    for comp, data in cfg.items():
+        if not isinstance(data, dict):
+            continue
+        rows = data.get("init_groups")
+        if not rows:
+            continue
+        expanded: list[dict] = []
+        for row in rows:
+            fields = registry.get(row.get("group", ""))
+            if fields is None:
+                continue
+            prefix = row.get("prefix", "")
+            for f in fields:
+                p = dict(f)
+                p["name"] = f"{prefix}_{f['name']}" if prefix else f["name"]
+                p[GROUP_ORIGIN_KEY] = row.get("group", "")
+                expanded.append(p)
+        if expanded:
+            data["init_params"] = list(data.get("init_params", [])) + expanded
 
 
 def _toml_string_array(items: list[str]) -> str:
@@ -647,6 +724,11 @@ def save(root: Path, cfg: dict) -> None:
         manifest_content["codec"] = cfg[
             "codec"
         ]  # [codec.X] SSOT, manifest-owned
+    if cfg.get("group"):
+        # gh-999: [[group]] SSOT, manifest-owned — like [[enum]] beside it, a
+        # group is referenced BY NAME from component tables in any fragment,
+        # so it cannot live in one of them.
+        manifest_content["group"] = cfg["group"]
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -676,13 +758,17 @@ def save(root: Path, cfg: dict) -> None:
         _write_doc(fragment_path, sections, None)
 
 
+#: Top-level manifest sections that are NOT components. Named here rather than
+#: spelled inline, because "a component is every top-level key that is not one
+#: of these" is the definition, and a new section missing from the list is
+#: silently treated as an object — which is how `[[group]]` first reached
+#: `manifest_type_errors` as `cfg["group"].get(...)` on a list (gh-999).
+RESERVED_SECTIONS = ("project", "module", "app", "enum", "codec", "group")
+
+
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
-    return [
-        k
-        for k in cfg
-        if k not in ("project", "module", "app", "enum", "codec")
-    ]
+    return [k for k in cfg if k not in RESERVED_SECTIONS]
 
 
 def modules(cfg: dict) -> list[str]:
@@ -4775,6 +4861,18 @@ def _dump(cfg: dict) -> str:
         lines.append(f"values = [{vals_str}]")
         lines.append("")
 
+    # gh-999: the [[group]] SSOT, beside [[enum]] and for the same reason —
+    # it is manifest-owned, referenced by name from component tables, and must
+    # be written before anything that instantiates it so the file reads in
+    # declaration order.
+    for g in cfg.get("group", []) or []:
+        lines.append("[[group]]")
+        lines.append(_str_assign("name", g.get("name", "")))
+        for f in g.get("fields", []) or []:
+            lines.append("[[group.fields]]")
+            lines += _init_param_block_lines(f)
+        lines.append("")
+
     for mod, data in cfg.get("module", {}).items():
         lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
@@ -5077,9 +5175,22 @@ def _dump(cfg: dict) -> str:
             if s.get("controllable"):
                 lines.append("controllable = true")
             lines.append("")
+        # gh-999: the DECLARATION round-trips, not the expansion. A grouped
+        # param carries `GROUP_ORIGIN_KEY` and is skipped here; the
+        # `[[<obj>.init_groups]]` rows below are what persists. Writing the
+        # expansion instead would flatten the group back into the long list it
+        # exists to remove, silently, on the first `jm apply`.
         for p in comp_data.get("init_params", []):
+            if p.get(GROUP_ORIGIN_KEY):
+                continue
             lines.append(f"[[{comp}.init_params]]")
             lines += _init_param_block_lines(p)
+            lines.append("")
+        for row in comp_data.get("init_groups", []) or []:
+            lines.append(f"[[{comp}.init_groups]]")
+            lines.append(_str_assign("group", row.get("group", "")))
+            if row.get("prefix"):
+                lines.append(_str_assign("prefix", row["prefix"]))
             lines.append("")
         if comp_data.get("init_post_parse"):
             ipp = (
