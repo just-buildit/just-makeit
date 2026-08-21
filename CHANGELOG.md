@@ -1,26 +1,6 @@
-# Changelog
-
 ## [Unreleased]
 
-### Fixed
-
-- **An all-scalar `variable_output` method no longer corrupts the heap on a
-    zero bound (gh-1085).** Every `variable_output` binding allocates behind a
-    floor — `if (!_cap || _cap < _need) _cap = _need;` — and that floor is what
-    makes `max_out()` returning `0` safe, since jm documents a zero as
-    "unknown" and sizes from the call instead.
-
-    An all-scalar-params method has **no call length**, so gh-607 made `_need`
-    fall back to `max_out()` itself and the two sides of the floor became the
-    same expression: a guard that cannot fire. Compiled and run, a kernel
-    writing four floats behind the scaffolded `return 0;` got a **zero-length**
-    array, wrote past it, and the caller received `[0. 0. 0. 0.]` — right
-    shape, values lost, no error. At 4096 samples glibc aborts with
-    `realloc(): invalid next size`. No flag combination rescued it.
-
-    jm now refuses a zero bound up front, on both the allocating and the `out=`
-    path, naming the method and the `max_out` to implement. A zero stays legal
-    and rescued for every shape that has a real length to fall back on.
+## [0.64.0] — 2026-08-21
 
 ### Added
 
@@ -40,6 +20,105 @@
     An array among several params (`Farrow.delay(x, mu)`) stays excluded — that
     is gh-412's deliberate carve-out and a different piece of work, named as
     such by `_outbuf.why_not` rather than lumped in.
+
+- **Declarable field groups: `[[group]]` + `[[<obj>.init_groups]]` (gh-999).**
+    jm's type vocabulary has no struct in either direction, so a C descriptor
+    built from N repeats of one small field set had to be flattened into a long
+    name-prefixed constructor list, written out once per repeat. doppler's
+    `wfm_frame_t` is three instances of one 11-field group: ~34 hand-written
+    `init_params`, every `default`, `doc` and `enum` binding written three
+    times — and the three copies free to drift, because jm saw three unrelated
+    params.
+
+    A group is now declared once and instantiated under a prefix. **This is not
+    jm learning structs**: the expansion is *exactly* the hand-written list, so
+    the C prototype, the kwlist, the `.pyi` and the docstrings are identical to
+    writing the params out yourself.
+
+    The expansion runs in `_config.load` — the one place every reader passes
+    through — rather than behind an accessor, because ten sites read
+    `init_params` straight off the merged config and an expansion behind one of
+    them would reach some and miss the rest. `save` folds it back, so the
+    **declaration** round-trips and no mutating command writes the expansion
+    out beside the group rows.
+
+- **`count_name` — the synthesized count kwarg gets a name, not just a
+    default (gh-1074).** A `variable_output` method with `arg_type = "void"`
+    and no params is the *generator* shape, so jm synthesizes a leading count
+    argument. `count_default` (gh-1051) made its **value** settable; its
+    **name** was hard-coded `"count"` in seven places.
+
+    That is sharper than a preference, because jm's own `_max_out_count_param`
+    (gh-607) derives the paired `<m>_max_out(self, n)` from the C signature,
+    explicitly "rather than inventing a fourth name for the same concept" — so
+    the two halves of one generated pair disagreed with each other:
+    `ptr(count=…)` beside `ptr_max_out(n=…)`, for the same number. doppler
+    hand-renamed the kwlist for years, leaving the binding accepting `n=`
+    under a stub publishing `count=`.
+
+    `--count-name NAME` (manifest `count_name`) defaults to `count`, so
+    nothing moves for an existing project. It reaches the binding's `_kwlist`,
+    both `.pyi` generators, the runtime docstring and its worked call example
+    — through one accessor, `_gluedoc.count_kwarg_name`, because that pair of
+    stub generators has now been caught disagreeing about jm's own binding
+    arguments twice (gh-1042, gh-1051). Names that cannot be a keyword
+    argument are refused at declaration, `out` among them: it is the other
+    slot in the same `_kwlist`.
+
+    Declaring the count as a real `param` was the apparent workaround and is
+    not one — it leaves the generator shape, and the `out=` buffer and the
+    default go with it. Asserted, so the argument for the key stays checkable.
+
+- **A `composer_seams` example — `kind = "composer"` and the two places it
+    hands work back to you as plain C (gh-287, gh-998).** `composer` was the
+    last of the three object-of-objects kinds with no example (`handle` has
+    `composites`; `capsule` and `composer` were prose only), and gh-998's
+    generated `native/inc/<mod>/<mod>_bridge.h` had none at all.
+
+    It covers both seams — `[module.X.source.generates] bridge_fn` building
+    the generator from a source config, and `[[module.X.source.computed]] fn`
+    deriving a read-only property — plus the parts around them a composer
+    needs and nothing demonstrated: a `c_deps` directory for the hand-written
+    backing kernel, `depends_on` + `extra_link_libs` putting both OBJECT
+    libraries on the `.so`, and the fact that a composer is **manifest-only**
+    (there is no `jm composer` command).
+
+    The last step is the one gh-998 exists for: it compiles **and runs** a C
+    consumer that includes the generated bridge header and nothing else. That
+    is the claim the issue could not make before — while the seam prototypes
+    lived as `extern` lines inside the CPython `_ext.c`, a C test's only route
+    to them was to write a second copy.
+
+- **A `record_shapes` example — the three results `result_fields` can
+    produce, on one object (gh-646, gh-788).** `single` returns ONE record as
+    a named `PyStructSequence`; `record_dtype` returns an ARRAY of records as
+    a structured `ndarray`; declaring neither returns a `list[tuple]`. All
+    three carry `result_fields` and all three name a struct of the author's as
+    the return type, so seeing them side by side is the only way the key is
+    legible as the variable.
+
+    It fills a measured hole rather than a guessed one. Running all 23
+    existing examples and reading the manifests they actually produce shows
+    **not one** of `single`, `record_dtype`, `record_name`, `record_doc`,
+    `record_module`, `result_fields`, `max_results`, `none_on_empty`,
+    `out_divisor`, `exact_max_out`, `max_out` or `pass_capacity` appearing in
+    any of them — the whole family was undemonstrated.
+
+    The example COMPILES what it declares, which is how writing it turned up
+    gh-1064: three separate ways a record method jm accepts silently generates
+    C that cannot build.
+
+- **An `errors_warnings` example — the four channels a component reports
+    trouble on (gh-481, gh-482).** `create()` refusing (`jm error`),
+    `create()` succeeding with a caveat (`jm warning`), a status-only `int`
+    (`--status-return`), and an `int` that is a value unless negative
+    (`--error-negative`). All four are pure glue over signals the C already
+    emits, and the example asserts that no sacred file is touched by
+    declaring them.
+
+    `jm error` and `jm warning` had no example at all, and neither did any of
+    `create_error`, `create_error_message`, `warnings`, `error`,
+    `error_message`, `error_negative` or `status_return`.
 
 ### Changed
 
@@ -65,31 +144,6 @@
     legally answer `0` ("unknown"), so offering `out=` there is a decision about
     what jm does when it cannot bound the write. Named in code so it stays
     findable rather than looking like an oversight.
-
-### Added
-
-- **Declarable field groups: `[[group]]` + `[[<obj>.init_groups]]` (gh-999).**
-    jm's type vocabulary has no struct in either direction, so a C descriptor
-    built from N repeats of one small field set had to be flattened into a long
-    name-prefixed constructor list, written out once per repeat. doppler's
-    `wfm_frame_t` is three instances of one 11-field group: ~34 hand-written
-    `init_params`, every `default`, `doc` and `enum` binding written three
-    times — and the three copies free to drift, because jm saw three unrelated
-    params.
-
-    A group is now declared once and instantiated under a prefix. **This is not
-    jm learning structs**: the expansion is *exactly* the hand-written list, so
-    the C prototype, the kwlist, the `.pyi` and the docstrings are identical to
-    writing the params out yourself.
-
-    The expansion runs in `_config.load` — the one place every reader passes
-    through — rather than behind an accessor, because ten sites read
-    `init_params` straight off the merged config and an expansion behind one of
-    them would reach some and miss the rest. `save` folds it back, so the
-    **declaration** round-trips and no mutating command writes the expansion
-    out beside the group rows.
-
-### Changed
 
 - **One emitter for the enum-index C, and every refusal names the choices
     (gh-1026).** jm emitted "validate a choice string to its `[[enum]]` int" in
@@ -119,6 +173,24 @@
     in is a feature, not a de-duplication; filed separately.
 
 ### Fixed
+
+- **An all-scalar `variable_output` method no longer corrupts the heap on a
+    zero bound (gh-1085).** Every `variable_output` binding allocates behind a
+    floor — `if (!_cap || _cap < _need) _cap = _need;` — and that floor is what
+    makes `max_out()` returning `0` safe, since jm documents a zero as
+    "unknown" and sizes from the call instead.
+
+    An all-scalar-params method has **no call length**, so gh-607 made `_need`
+    fall back to `max_out()` itself and the two sides of the floor became the
+    same expression: a guard that cannot fire. Compiled and run, a kernel
+    writing four floats behind the scaffolded `return 0;` got a **zero-length**
+    array, wrote past it, and the caller received `[0. 0. 0. 0.]` — right
+    shape, values lost, no error. At 4096 samples glibc aborts with
+    `realloc(): invalid next size`. No flag combination rescued it.
+
+    jm now refuses a zero bound up front, on both the allocating and the `out=`
+    path, naming the method and the `max_out` to implement. A zero stays legal
+    and rescued for every shape that has a real length to fall back on.
 
 - **`jm status --check` now reads the sacred header's `create()` (gh-1076).**
     Every file jm owns renders from the same `init_params` list, so they agree
@@ -193,37 +265,6 @@
     check is zero-tolerance, like its sibling over the reference docs, and both
     derive the flag set from the parsers — so a flag added tomorrow is covered
     with nothing to register.
-
-### Added
-
-- **`count_name` — the synthesized count kwarg gets a name, not just a
-    default (gh-1074).** A `variable_output` method with `arg_type = "void"`
-    and no params is the *generator* shape, so jm synthesizes a leading count
-    argument. `count_default` (gh-1051) made its **value** settable; its
-    **name** was hard-coded `"count"` in seven places.
-
-    That is sharper than a preference, because jm's own `_max_out_count_param`
-    (gh-607) derives the paired `<m>_max_out(self, n)` from the C signature,
-    explicitly "rather than inventing a fourth name for the same concept" — so
-    the two halves of one generated pair disagreed with each other:
-    `ptr(count=…)` beside `ptr_max_out(n=…)`, for the same number. doppler
-    hand-renamed the kwlist for years, leaving the binding accepting `n=`
-    under a stub publishing `count=`.
-
-    `--count-name NAME` (manifest `count_name`) defaults to `count`, so
-    nothing moves for an existing project. It reaches the binding's `_kwlist`,
-    both `.pyi` generators, the runtime docstring and its worked call example
-    — through one accessor, `_gluedoc.count_kwarg_name`, because that pair of
-    stub generators has now been caught disagreeing about jm's own binding
-    arguments twice (gh-1042, gh-1051). Names that cannot be a keyword
-    argument are refused at declaration, `out` among them: it is the other
-    slot in the same `_kwlist`.
-
-    Declaring the count as a real `param` was the apparent workaround and is
-    not one — it leaves the generator shape, and the `out=` buffer and the
-    default go with it. Asserted, so the argument for the key stays checkable.
-
-### Fixed
 
 - **`jm script` now replays `--manual-stub`, `--nogil` and
     `--py-return-type`.** Found by the enumerator gate added with gh-1074
@@ -324,8 +365,6 @@
     compiled, which is exactly how an unbuildable declaration stays in a
     fixture indefinitely.
 
-### Fixed
-
 - **`no_ctor` now reaches the binding as well as the header (gh-1066).**
     `no_ctor = true` narrows `create()`. It reached the sacred header and not
     the CPython binding compiled against it, so a project using it did not
@@ -351,8 +390,6 @@
     the header. A check written against "expect one argument" would pass just
     as happily on a header that was also wrong.
 
-### Fixed
-
 - **A cut example's leftover directory no longer reads as an example missing
     its README (gh-1027).** Removing an example deletes every tracked file,
     but a previous `jm example <name>` run leaves a gitignored `__pycache__`
@@ -373,63 +410,6 @@
     `make clean` also prunes the empty shells now, so the documented remedy
     actually removes them rather than leaving a tree that was already
     reported as broken.
-
-### Added
-
-- **A `composer_seams` example — `kind = "composer"` and the two places it
-    hands work back to you as plain C (gh-287, gh-998).** `composer` was the
-    last of the three object-of-objects kinds with no example (`handle` has
-    `composites`; `capsule` and `composer` were prose only), and gh-998's
-    generated `native/inc/<mod>/<mod>_bridge.h` had none at all.
-
-    It covers both seams — `[module.X.source.generates] bridge_fn` building
-    the generator from a source config, and `[[module.X.source.computed]] fn`
-    deriving a read-only property — plus the parts around them a composer
-    needs and nothing demonstrated: a `c_deps` directory for the hand-written
-    backing kernel, `depends_on` + `extra_link_libs` putting both OBJECT
-    libraries on the `.so`, and the fact that a composer is **manifest-only**
-    (there is no `jm composer` command).
-
-    The last step is the one gh-998 exists for: it compiles **and runs** a C
-    consumer that includes the generated bridge header and nothing else. That
-    is the claim the issue could not make before — while the seam prototypes
-    lived as `extern` lines inside the CPython `_ext.c`, a C test's only route
-    to them was to write a second copy.
-
-### Added
-
-- **A `record_shapes` example — the three results `result_fields` can
-    produce, on one object (gh-646, gh-788).** `single` returns ONE record as
-    a named `PyStructSequence`; `record_dtype` returns an ARRAY of records as
-    a structured `ndarray`; declaring neither returns a `list[tuple]`. All
-    three carry `result_fields` and all three name a struct of the author's as
-    the return type, so seeing them side by side is the only way the key is
-    legible as the variable.
-
-    It fills a measured hole rather than a guessed one. Running all 23
-    existing examples and reading the manifests they actually produce shows
-    **not one** of `single`, `record_dtype`, `record_name`, `record_doc`,
-    `record_module`, `result_fields`, `max_results`, `none_on_empty`,
-    `out_divisor`, `exact_max_out`, `max_out` or `pass_capacity` appearing in
-    any of them — the whole family was undemonstrated.
-
-    The example COMPILES what it declares, which is how writing it turned up
-    gh-1064: three separate ways a record method jm accepts silently generates
-    C that cannot build.
-
-- **An `errors_warnings` example — the four channels a component reports
-    trouble on (gh-481, gh-482).** `create()` refusing (`jm error`),
-    `create()` succeeding with a caveat (`jm warning`), a status-only `int`
-    (`--status-return`), and an `int` that is a value unless negative
-    (`--error-negative`). All four are pure glue over signals the C already
-    emits, and the example asserts that no sacred file is touched by
-    declaring them.
-
-    `jm error` and `jm warning` had no example at all, and neither did any of
-    `create_error`, `create_error_message`, `warnings`, `error`,
-    `error_message`, `error_negative` or `status_return`.
-
-### Fixed
 
 - **A `bool` state field no longer scaffolds a project whose tests fail on
     the first run (gh-1067).** `jm new --state "flag:bool:false"` emitted
