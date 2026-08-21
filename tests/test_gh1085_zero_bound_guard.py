@@ -218,6 +218,77 @@ class TestItActuallyRuns:
         assert "RAISED" in proc.stdout, proc.stdout
         assert "dly_push_max_out" in proc.stdout
 
+    def test_the_out_branch_refuses_a_zero_bound_too(self, tmp_path):
+        """gh-1079 gave this shape an `out=` buffer; the guard has to cover
+        both paths, and it nearly did not.
+
+        The `out=` branch does not allocate, so the allocation-path guard
+        does not reach it — and there `_cap` is the CALLER'S buffer size, not
+        the bound. A guard testing `_cap` asks "did you pass an empty array?"
+        instead of "can jm size this at all?", so a 4096-element buffer
+        sailed through against a zero bound and the kernel ran. Measured by
+        hand, then missed by every test in this file until this one, because
+        sabotaging the bound variable left the suite green.
+        """
+        root = _project(tmp_path, "ob", **ALL_SCALAR)
+        _implement(root, "    return 0;", 100)
+        proc = self._run(
+            root,
+            "import numpy as np\n"
+            "from ob.dly import Dly\n"
+            "buf = np.zeros(4096, dtype=np.float32)\n"
+            "try:\n"
+            "    Dly().push(1.0, out=buf)\n"
+            "    print('NO-ERROR')\n"
+            "except RuntimeError as e:\n"
+            "    print('RAISED', e)\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "RAISED" in proc.stdout, proc.stdout
+        assert "dly_push_max_out" in proc.stdout
+
+    def test_a_real_bound_fills_the_callers_buffer(self, tmp_path):
+        """The other half: with a real bound, `out=` is zero-alloc and the
+        returned array is a VIEW of what the caller passed.
+
+        Checked through the caller's own buffer, not just the return value —
+        a fix that quietly allocated its own array would satisfy a shape
+        assertion and defeat the entire point of the feature.
+        """
+        root = _project(tmp_path, "of", **ALL_SCALAR)
+        _implement(root, "    return 4096;", 100)
+        proc = self._run(
+            root,
+            "import numpy as np\n"
+            "from of.dly import Dly\n"
+            "o = Dly()\n"
+            "buf = np.zeros(o.push_max_out(), dtype=np.float32)\n"
+            "r = o.push(1.0, out=buf)\n"
+            "print(r.shape[0], r[-1], buf[0], buf[99])\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.split() == ["100", "100.0", "1.0", "100.0"], (
+            proc.stdout
+        )
+
+    def test_a_short_buffer_is_refused(self, tmp_path):
+        """The bound is checked, not merely computed."""
+        root = _project(tmp_path, "sb", **ALL_SCALAR)
+        _implement(root, "    return 4096;", 100)
+        proc = self._run(
+            root,
+            "import numpy as np\n"
+            "from sb.dly import Dly\n"
+            "try:\n"
+            "    Dly().push(1.0, out=np.zeros(8, dtype=np.float32))\n"
+            "    print('ACCEPTED')\n"
+            "except ValueError as e:\n"
+            "    print('REFUSED', e)\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "REFUSED" in proc.stdout, proc.stdout
+        assert "need >= 4096" in proc.stdout
+
     def test_a_real_bound_still_returns_the_data(self, tmp_path):
         """The guard against over-refusing, and it checks the VALUES.
 
