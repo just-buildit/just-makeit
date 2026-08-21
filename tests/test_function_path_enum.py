@@ -104,7 +104,11 @@ def test_enum_arg_emits_index_lookup_table_and_helper():
     assert 'const char *kind = "";' in w
     assert "int _arg_kind = _enum_index(_enum_log_kind, kind);" in w
     assert "if (_arg_kind < 0)" in w
-    assert "PyErr_Format(PyExc_ValueError, \"invalid kind '%s'\", kind);" in w
+    # gh-1026: the refusal NAMES the choices, as a method parameter for the
+    # same enum has since gh-1021. This assertion used to demand the shorter
+    # wording, which is how one manifest came to produce two spellings of one
+    # refusal depending on which surface the enum was declared on.
+    assert "\"invalid kind '%s' (choices: raw, json, csv)\", kind);" in w
     assert "open_log(_arg_kind);" in w
     # The SSOT helper + table go into the tables block (emitted before wrappers).
     assert "_enum_index(const char *const *tab, const char *s)" in tables

@@ -357,14 +357,11 @@ def _build_params_parse(
                 f'    const char *{pname} = "{p.get("default") or ""}";'
             )
             addr_exprs.append(f"&{pname}")
+            # gh-1026: through the shared emitter, like every other face.
+            from .. import _enumc
+
             conv_lines.append(
-                f"    int _arg_{pname} = {index_fn}({table}, {pname});\n"
-                f"    if (_arg_{pname} < 0) {{\n"
-                f"        PyErr_Format(PyExc_ValueError,\n"
-                f"            \"invalid {pname} '%s'{_suffix}\","
-                f" {pname});\n"
-                f"        return NULL;\n"
-                f"    }}"
+                _enumc.validate_c(pname, ename, enums, prefix=Component)
             )
             call_args.append(f"_arg_{pname}")
         elif is_array_param_type(ptype):
