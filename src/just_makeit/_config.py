@@ -654,6 +654,43 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     path.write_text(_tk.dumps(doc).rstrip("\n") + "\n", encoding="utf-8")
 
 
+def _without_group_expansion(cfg: dict) -> dict:
+    """*cfg* with every group-instantiated ``init_param`` removed.
+
+    A shallow rebuild rather than a deep copy: only the component dicts that
+    actually carry a grouped param are rewritten, so a manifest with no
+    groups is returned with its own sub-objects untouched and the write path
+    behaves exactly as it did before gh-999.
+
+    The caller's dict is never mutated. `save` is called with the live
+    config, and commands keep using it afterwards — contracting in place
+    would delete params from a manifest the caller is still rendering from.
+    """
+    if not cfg.get("group"):
+        return cfg
+    out = dict(cfg)
+    for key, data in cfg.items():
+        if not isinstance(data, dict):
+            continue
+        params = data.get("init_params")
+        if not params or not any(
+            p.get(GROUP_ORIGIN_KEY) for p in params if isinstance(p, dict)
+        ):
+            continue
+        kept = [
+            p
+            for p in params
+            if not (isinstance(p, dict) and p.get(GROUP_ORIGIN_KEY))
+        ]
+        section = dict(data)
+        if kept:
+            section["init_params"] = kept
+        else:
+            section.pop("init_params", None)
+        out[key] = section
+    return out
+
+
 def save(root: Path, cfg: dict) -> None:
     """Write cfg back to disk, routing each top-level object section to
     the file that owns it on disk. `[project]` / `[module.X]` always
@@ -666,6 +703,20 @@ def save(root: Path, cfg: dict) -> None:
     # deferred mutations later when the scope exits and the author has to work
     # out which one it was.
     require_declared_names(cfg)
+    # gh-999: contract the group expansion, HERE, for the same reason `load`
+    # expands there — this is the one place every manifest write passes
+    # through. `save` and `load` are the symmetric pair: what `load` unfolds,
+    # `save` folds back, and nothing in between has to know.
+    #
+    # Not optional, and not a detail. The tomlkit layout-preserving writer
+    # drops the `_group` marker (underscore keys are transient in-memory
+    # state) and writes the param anyway — so without this, `jm property` on
+    # an object with one group wrote the expansion out BESIDE the group rows,
+    # and the next `load` expanded the group on top of its own output. The
+    # feature corrupts the manifest on the first mutating command. Found by
+    # sabotaging the writer guard and watching the suite stay green, which is
+    # what a test asserting only `jm apply` could never see.
+    cfg = _without_group_expansion(cfg)
     # gh-764: under `deferred_save()` this becomes a cache update; the single
     # real write happens when that scope exits.
     #
