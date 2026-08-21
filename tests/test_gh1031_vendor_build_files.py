@@ -6,10 +6,15 @@ vendored dependency globbing its own sources stood the scan down for
 everything.
 
 The consequence that matters is not the one in the title of gh-1023.
-`orphans()` returns `[]` when it stands down, which is indistinguishable from
+`orphans()` returned `[]` when it stood down, which is indistinguishable from
 a clean tree — so the gh-806 UNBUILT gate had been reporting green on any
 project carrying a vendored glob, for as long as it carried one. A gate green
 on nothing, inside the detector written to find exactly that.
+
+That indistinguishability is gone as of gh-1033: a stand-down is `None` and is
+reported as `UNCHECKED`. This module keeps the *other* half — jm not reading
+`vendor/` at all, so the common cause never arises — and asserts the two agree
+where they overlap.
 
 **jm does not try to decide whether a given wildcard could reach the directory
 being scanned.** That was implemented and reverted. It meant reading a foreign
@@ -114,7 +119,9 @@ class TestEverywhereElseStillStandsDown:
     def test_a_glob_in_a_read_directory(self, project, where):
         _glob_at(project, where)
         assert _hollow.built_stems(project, "bench") is None
-        assert _hollow.orphans(project, C.load(project)) == []
+        # gh-1033: the pair now stand down the same way. `[]` here was the
+        # bug this module's own docstring named and could not yet assert.
+        assert _hollow.orphans(project, C.load(project)) is None
 
     def test_third_party_is_still_read_and_still_stands_down(self, project):
         """The stated cost of naming one directory instead of inferring.

@@ -289,7 +289,10 @@ class TestNoFalsePositives:
             + "\nfile(GLOB EXTRA native/tests/*.c)\n",
             encoding="utf-8",
         )
-        assert _hollow.orphans(root, C.load(root)) == []
+        # gh-1033: `None`, not `[]`. The orphan above is still there; the
+        # scan simply cannot say so any more, and reporting that as an empty
+        # findings list made the gate green over a tree it never read.
+        assert _hollow.orphans(root, C.load(root)) is None
 
     def test_the_make_backend_never_builds_benches_so_none_is_an_orphan(
         self, tmp_path

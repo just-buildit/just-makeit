@@ -490,21 +490,55 @@ def _compare_reports(
 
     Compares each benchmark's mean wall-time against the baseline. A higher
     mean is slower; ``delta_pct`` > ``threshold*100`` is a regression. Returns
-    one record per current benchmark with ``status`` in:
+    one record per benchmark in the **union** of the baseline and the current
+    run, with ``status`` in:
       - ``regressed``    slower than baseline by more than the threshold
       - ``ok``           within threshold
       - ``new``          no baseline entry for this name
+      - ``missing``      in the baseline, absent from this run — gh-1029
       - ``allowed``      name in *allow* — reported, never fails
       - ``below_floor``  baseline mean < ``floor_sec`` — too noisy to gate
+
+    The union is the fix, and the reason is that the old "one record per
+    **current** benchmark" made the gate's coverage a function of whatever
+    this run happened to produce — so shrinking that set always looked like
+    success. A benchmark that vanished could not be ``regressed``, could not
+    be ``new``, and emitted no record at all; it simply stopped being
+    compared. Every path to that is silent by construction: `_collect_c`
+    skips past a binary it cannot find, past one that writes no JSON, and
+    past one whose JSON does not parse; gh-1023 added a deliberate
+    ``skip`` for a discovered target that does not build; and renaming a
+    kernel retires the old name and reports the new one as ``new``, which
+    never fails.
+
+    ``missing`` **fails** the gate, like ``regressed``. That is the decision
+    the issue leaves open, and it is settled the way this repo settles it: a
+    gate that passes on nothing is indistinguishable from a gate passing, and
+    a disappearing kernel is exactly the change `--check` exists to catch. A
+    deliberate deletion is a deliberate act and can carry ``--allow``, which
+    already exists and needs no new flag — the same escape a deliberately
+    slower benchmark uses.
+
+    ``missing`` is not subject to *floor_sec*. The noise floor answers "is
+    this timing trustworthy?", and an absent benchmark has no timing to
+    distrust — a fast kernel disappearing loses exactly as much coverage as a
+    slow one.
     """
     allow = allow or set()
-    base = {
-        _bench_key(b): _bench_metric(b)
-        for b in (baseline or {}).get("benchmarks", [])
-    }
+    # One pass, two maps: the metric to compare against, and the display name
+    # a `missing` record needs to say what vanished. Built together rather
+    # than in two comprehensions so they cannot come to disagree about which
+    # entry a key refers to.
+    base: dict[str, float] = {}
+    base_names: dict[str, str] = {}
+    for b in (baseline or {}).get("benchmarks", []):
+        base[_bench_key(b)] = _bench_metric(b)
+        base_names[_bench_key(b)] = b["name"]
+    seen: set[str] = set()
     out: list[dict] = []
     for b in (current or {}).get("benchmarks", []):
         key = _bench_key(b)
+        seen.add(key)
         name = b["name"]
         cur = _bench_metric(b)
         if key not in base:
@@ -537,6 +571,23 @@ def _compare_reports(
                 "current_ns": cur * 1e9,
                 "delta_pct": delta * 100.0,
                 "status": status,
+            }
+        )
+    # gh-1029: the baseline half of the union. Appended after the current
+    # rows and sorted, so the output is deterministic regardless of the order
+    # either snapshot happens to list its benchmarks in.
+    for key in sorted(set(base) - seen):
+        name = base_names[key]
+        out.append(
+            {
+                "name": name,
+                "id": key,
+                "baseline_ns": base[key] * 1e9,
+                "current_ns": None,
+                "delta_pct": None,
+                "status": (
+                    "allowed" if name in allow or key in allow else "missing"
+                ),
             }
         )
     return out
@@ -760,9 +811,16 @@ def run(
         # heuristic cannot abort a run nobody asked it to affect; it must not
         # also downgrade a breakage in the thing that was asked for. Left
         # unconditional, `jm bench --check util` on a `util` whose target
-        # stopped building skipped it, and `_compare_reports` yields one
+        # stopped building skipped it, and `_compare_reports` yielded one
         # record per CURRENT benchmark — so the baseline's `util::*` entries
         # simply vanished from the comparison and the gate exited green.
+        #
+        # gh-1029 has since made a vanished benchmark a `missing` record that
+        # FAILS, so that second half no longer holds. This line stays: the
+        # two fixes answer different questions and both are wanted. Skipping
+        # what the user typed would now fail loudly instead of silently, and
+        # "the thing you asked about was skipped" is a better message than
+        # "a benchmark went missing".
         extra = []
     else:
         target_comps = list(runnable)
@@ -881,26 +939,46 @@ def _run_check(
                 "and commit it first; skipping gate."
             )
         regressed = [r for r in rows if r["status"] == "regressed"]
+        # gh-1029: a benchmark the baseline has and this run does not.
+        gone = [r for r in rows if r["status"] == "missing"]
         for r in rows:
-            if r["status"] in ("regressed", "new"):
+            if r["status"] in ("regressed", "new", "missing"):
                 d = (
                     f"{r['delta_pct']:+.1f}%"
                     if r["delta_pct"] is not None
-                    else "new"
+                    else r["status"]
                 )
                 label = r.get("id") or r["name"]
                 print(f"  [{r['status']}] {r['side']}:{label}  {d}")
         n = len(rows)
-        if not regressed:
+        if not regressed and not gone:
             print(
                 f"OK — no regression > {threshold * 100:.0f}% "
                 f"({n} benchmark(s) checked)."
             )
         else:
-            print(
-                f"REGRESSION — {len(regressed)} benchmark(s) slower than "
-                f"baseline by > {threshold * 100:.0f}%."
-            )
+            if regressed:
+                print(
+                    f"REGRESSION — {len(regressed)} benchmark(s) slower than "
+                    f"baseline by > {threshold * 100:.0f}%."
+                )
+            if gone:
+                # Said separately from REGRESSION, because it is a different
+                # thing to fix: nothing got slower, the harness got smaller.
+                # The reader needs pointing at the build, not the code.
+                print(
+                    f"MISSING — {len(gone)} benchmark(s) in the baseline did"
+                    " not run. A kernel that\n"
+                    "  disappears from the harness is indistinguishable from"
+                    " one that stayed fast,\n"
+                    "  so this fails. Check the target still builds and still"
+                    " calls jm_bench_add();\n"
+                    "  if the benchmark was deleted on purpose, pass"
+                    " --allow <name>."
+                )
 
-    if any(r["status"] == "regressed" for r in rows):
+    # gh-1029: `missing` fails alongside `regressed`. See `_compare_reports`
+    # for why the gate treats a vanished benchmark as a failure rather than
+    # as a note, and why `--allow` is the whole escape hatch it needs.
+    if any(r["status"] in ("regressed", "missing") for r in rows):
         sys.exit(1)
