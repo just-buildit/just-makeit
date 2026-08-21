@@ -4,6 +4,42 @@
 
 ### Fixed
 
+- **Two gates that could not fail, fixed as one shape (gh-1033, gh-1029).**
+    Both were a function whose "I could not tell" was spelled the same way as
+    its good answer, so a check that never ran was indistinguishable from a
+    check that passed.
+
+    `_hollow.orphans()` returned `[]` both for "no unbuilt sources" and for
+    "a build file globs its sources, so I cannot read whether anything is
+    compiled" — so the gh-806 `UNBUILT` gate reported clean over a tree it had
+    never scanned. It now returns `None` for the stand-down, the shape its
+    sibling `built_stems` has had since gh-1023. `jm status` prints an
+    `UNCHECKED` section, qualifies the `OK — up to date` line with
+    `unbuilt not checked`, and carries `"unbuilt_scanned": false` in `--json`;
+    `jm apply` says the same thing through its own warning channel. It does
+    not gate — no `jm apply` rewrites your wildcard, and gh-767's rule is that
+    a gate must name a fix — but a reader is now told the difference.
+
+    `jm bench --check` compared one record per **current** benchmark, so a
+    benchmark present in the baseline and absent from the run produced no
+    record at all: it could not be `regressed`, could not be `new`, and simply
+    stopped being compared. The gate's coverage was whatever the run happened
+    to produce, and shrinking it always looked like success — reachable
+    through a target that stopped building, a binary that wrote no JSON or
+    unparseable JSON, a gh-1023 `skip`, or a rename. The comparison now walks
+    the **union** of baseline and current keys and emits a `missing` record,
+    which **fails** the gate. A deliberate deletion is a deliberate act and
+    carries the `--allow` flag that already exists; the noise floor does not
+    apply, since an absent benchmark has no timing to distrust.
+
+    Each half is gated registration-free. `_hollow`'s test walks the module
+    for any function that reads `_build_texts` and requires it to be able to
+    return `None`, so a scanner added later is covered with no list to update.
+    `_bench`'s asserts a set identity — the comparison's keys ARE the union —
+    rather than looking for the string `missing`, because the bug was a row
+    that was never emitted and a test that looks for a status cannot see an
+    absence.
+
 - **A record declaration jm accepts is now one it can generate (gh-1064).**
     `result_fields` names the columns of a record, and jm produces three
     different results from it — ONE record (`single`), an ARRAY of records

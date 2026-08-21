@@ -633,7 +633,14 @@ def run(
     # the gate must fire identically for a human and for a CI consumer.
     from . import _hollow
 
-    _orphans = _hollow.orphans(root, cfg)
+    # gh-1033: `None` is "the scan stood down", which is emphatically not
+    # "no orphans" — see `_hollow.orphans`. Kept as a separate flag rather
+    # than folded into the empty list, because every consumer below (the
+    # count, the listing, the JSON, the one-line summary) would otherwise
+    # report an unread tree as a clean one, which is the whole finding.
+    _orphans_raw = _hollow.orphans(root, cfg)
+    _orphans_unchecked = _orphans_raw is None
+    _orphans = _orphans_raw or []
     _orphan_allowed = {
         o.rel: _is_allowed(o.rel, allow_patterns) for o in _orphans
     }
@@ -766,6 +773,12 @@ def run(
                         }
                         for o in _orphans
                     ],
+                    # gh-1033: whether the scan above ran at all. Without it
+                    # an empty `unbuilt_sources` means either "clean" or
+                    # "never looked", and a CI consumer reading this JSON has
+                    # no way to tell — the same silence the gate exists to
+                    # break, one layer out.
+                    "unbuilt_scanned": not _orphans_unchecked,
                     "unparseable_stubs": [
                         {
                             "path": p,
@@ -1109,6 +1122,23 @@ def run(
         )
         print()
 
+    # gh-1033: the stand-down, printed in the UNBUILT block's own place so a
+    # reader meets it where they would have met the finding. `_orphans` is
+    # empty here by construction, so without this the section is simply
+    # absent — indistinguishable from a tree that was scanned and is clean.
+    if _orphans_unchecked:
+        print("UNCHECKED — the unbuilt-source scan did not run:")
+        print(
+            "  A build file enumerates its sources by wildcard, so whether a"
+            " test/bench\n"
+            "  source is compiled cannot be answered by reading. No UNBUILT"
+            " finding above\n"
+            "  means NOT CHECKED, not clean. Name the sources explicitly to"
+            " put this tree\n"
+            "  under the gate. See gh-806, gh-1033."
+        )
+        print()
+
     # gh-806: same "impossible to miss" treatment, and for the sharpest
     # version of the same reason — every other listing here describes
     # something that is visibly wrong somewhere. This one describes a tree
@@ -1334,6 +1364,12 @@ def run(
         # same as in sync. A silent benchmark qualifies the line too: the
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
+        # gh-1033: and the case where there is no count to give because
+        # nothing was counted. gh-767's rule reaches this too — "up to date"
+        # must not be said over a check that did not run, and here the reader
+        # has no other signal at all: the UNBUILT section is absent for the
+        # same reason it is absent over a clean tree.
+        _unch = "; unbuilt not checked" if _orphans_unchecked else ""
         _sil = f"; {len(_silent)} silent bench" if _silent else ""
         # gh-949: a file jm ships a newer version of is not "up to date",
         # even though `apply` cannot fix it. Same qualification as
@@ -1384,7 +1420,8 @@ def run(
         # four glue files, is in it.
         print(
             f"OK — up to date; {ok_count} manifest-owned file(s) match"
-            f"{suffix}{_unrec}{_kw}{_orph}{_sil}{_out}{_anch}{_wire}."
+            f"{suffix}{_unrec}{_kw}{_orph}{_unch}{_sil}{_out}{_anch}"
+            f"{_wire}."
         )
         print(
             "  create-only files: jm's own — the Makefile, .clang-tidy,"
@@ -1430,6 +1467,12 @@ def run(
                 if any(not _orphan_allowed[o.rel] for o in _orphans)
                 else ""
             )
+            # gh-1033: on this line too, and without a count — there is
+            # nothing to count. Not marked `(!)`: a stand-down does not fail
+            # the gate (no `jm apply` clears a wildcard), but a reader
+            # skimming this line must not read the absent "unbuilt" term as
+            # zero unbuilt sources.
+            + (", unbuilt not checked" if _orphans_unchecked else "")
             + (f", {len(_silent)} silent bench" if _silent else "")
             + (
                 f", {len(unparseable_entries)} unparseable (!)"

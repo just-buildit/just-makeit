@@ -91,6 +91,19 @@ _BENCH_ADD_CALL = re.compile(r"^\s*jm_bench_add\s*\(", re.M)
 _GLOB_HINT = re.compile(r"file\s*\(\s*glob", re.I)
 
 
+#: What a reader is told when `orphans` returns ``None``. One string, because
+#: `jm status` and `jm apply` both report the stand-down and a gate that is
+#: described two ways is a gate a reader learns to skim. Phrased as "did not
+#: run", never as a finding: there is nothing to fix, and nothing `jm apply`
+#: could do about it if there were.
+UNCHECKED_NOTE = (
+    "the unbuilt-source scan did not run — a build file enumerates its\n"
+    "  sources by wildcard, so whether a test/bench source is compiled\n"
+    "  cannot be read. This is NOT a clean result; the gh-806 check is\n"
+    "  simply not covering this tree."
+)
+
+
 @dataclass(frozen=True)
 class Orphan:
     """A generated-shape C source that no build file compiles."""
@@ -278,17 +291,38 @@ def built_stems(root: Path, kind: str) -> set[str] | None:
     raise ValueError(f"unknown kind {kind!r}")
 
 
-def orphans(root: Path, cfg: dict) -> list[Orphan]:
+def orphans(root: Path, cfg: dict) -> list[Orphan] | None:
     """Every ``test_*_core.c`` / ``bench_*_core.c`` that nothing compiles.
 
     The reference is looked up by **target stem** (``test_fir_core``) rather
     than by filename, because the two build systems spell it differently: CMake
     names the source path, the generated Makefile names the executable in
     ``C_TESTS``. The stem is the substring both contain.
+
+    Returns
+    -------
+    list of Orphan or None
+        ``None`` when the scan stood down — a build file enumerates its
+        sources by wildcard, so "is this compiled?" is unanswerable by
+        reading (see `_GLOB_HINT`).
+
+        gh-1033: that is a **different answer** from the empty list, and
+        returning the empty list for both is the bug. The gh-806 gate exists
+        because its failure mode is a green CI run, and a stand-down reported
+        as "no orphans" reproduces exactly that silence one layer up — the
+        gate says clean about a tree it never read. `built_stems` has had the
+        right shape since gh-1023, so the pair that already share a scanner
+        now also share what "could not tell" looks like.
+
+        gh-1032 removed the *common* cause (a vendored ``file(GLOB)`` no
+        longer stands the whole tree down), which makes a surviving stand-down
+        mean something sharper: a wildcard that genuinely could compile the
+        scanned sources. That is precisely the tree where a reader most needs
+        telling that the gate did not run.
     """
     texts = _build_texts(root)
     if texts is None:
-        return []
+        return None
     # A kind is only worth reporting if the tree builds *any* target of that
     # kind. gh-832 arrived as a backend special case — the make backend had
     # never emitted a bench rule, so every one of its bench sources was
@@ -421,7 +455,17 @@ def report(root: Path, cfg: dict, *, stream=None, indent: str = "  ") -> None:
     from ._status import _is_allowed
 
     allow = C.status_allow(cfg)
-    for orphan in orphans(root, cfg):
+    found = orphans(root, cfg)
+    if found is None:
+        # gh-1033: say it. `apply` previously printed nothing here, which is
+        # also what it prints for a tree with no orphans — so the one output
+        # a reader could use to tell "checked and clean" from "not checked"
+        # was identical in both cases. Advisory, not gating: `apply` cannot
+        # clear a wildcard, and the gh-767 rule is that a gate must name a
+        # command that clears it.
+        _report.warn(UNCHECKED_NOTE, stream=stream, indent=indent)
+        found = []
+    for orphan in found:
         _report.warn(
             orphan.describe(),
             gates=not _is_allowed(orphan.rel, allow),

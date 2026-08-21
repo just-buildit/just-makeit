@@ -99,7 +99,8 @@ The one case jm cannot answer at all is a build file that enumerates sources by
 wildcard — `file(GLOB ...)` makes "is this compiled?" unanswerable by reading.
 There the scan stands down to manifest components only and **says so**, rather
 than quietly running fewer benchmarks than the tree holds. It is the same
-stand-down the `UNBUILT` detector makes, for the same reason.
+stand-down the `UNBUILT` detector makes, for the same reason — and since
+gh-1033 that one says so too, as `UNCHECKED`.
 
 **Gate mode.** `--check` compares against a baseline instead of saving and
 exits non-zero on a regression, so CI can fail a change that slows a kernel
@@ -108,6 +109,28 @@ down:
 ```sh
 just-makeit bench --check --threshold 0.10   # fail if anything is >10% slower
 ```
+
+`--check` fails on two things, not one. The obvious one is a benchmark that got
+slower. The other is a benchmark that **stopped running** (gh-1029): a name the
+baseline carries and this run did not produce is reported as `missing` and
+fails the gate.
+
+That second half exists because the comparison used to be keyed on the current
+run alone, which made the gate's coverage a function of whatever the run
+happened to produce — so shrinking it always looked like success. A target that
+stopped building, a binary that wrote no JSON, a kernel dropped from `main()`,
+or a benchmark renamed (retiring the old name and reporting the new one as
+`new`, which never fails) all read as "no regression".
+
+A deletion you meant is a deliberate act, so it carries a flag:
+
+```sh
+just-makeit bench --check --allow fir::step_64k   # this one is gone on purpose
+```
+
+`--allow` is the whole escape hatch — the same one a deliberately slower
+benchmark uses. The noise floor does not apply here: it answers "is this timing
+trustworthy?", and an absent benchmark has no timing to distrust.
 
 **Arguments**
 
@@ -448,19 +471,20 @@ just-makeit status
 
 Prints a table of files, each in one of these states:
 
-| Status        | Meaning                                                                                                                                                                                                                                                                                                                                                                              | Gates CI? |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| `OK`          | `apply` would leave the file untouched.                                                                                                                                                                                                                                                                                                                                              | no        |
-| `MISSING`     | `apply` would create it — declared in the manifest, absent on disk.                                                                                                                                                                                                                                                                                                                  | yes       |
-| `STALE`       | `apply` would rewrite it from the manifest (glue regenerated, `_core.h` declarations merged).                                                                                                                                                                                                                                                                                        | yes       |
-| `ALLOWED`     | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                                                                                                                                                                                                | no        |
-| `DROPPED`     | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`.                                                                                                                                                                  | yes       |
-| `DRIFT`       | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                                                                                                                                                                                    | yes       |
-| `UNBUILT`     | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.                                                                                                                                                                       | yes       |
-| `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions.             | no        |
-| `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible.                                                                                                                                                          | yes       |
-| `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                                   | no        |
-| `OUTDATED`    | A **create-only** file whose content is jm's own — the `Makefile`, `.clang-tidy`, `.clang-format`, `jm_test.h`, `jm_bench.h`, `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates — and which differs from what this jm renders (gh-949). `apply` never rewrites a create-only file, so adopting the new version is your call; suppressible with `status_allow`. | no        |
+| Status        | Meaning                                                                                                                                                                                                                                                                                                                                                                                              | Gates CI? |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `OK`          | `apply` would leave the file untouched.                                                                                                                                                                                                                                                                                                                                                              | no        |
+| `MISSING`     | `apply` would create it — declared in the manifest, absent on disk.                                                                                                                                                                                                                                                                                                                                  | yes       |
+| `STALE`       | `apply` would rewrite it from the manifest (glue regenerated, `_core.h` declarations merged).                                                                                                                                                                                                                                                                                                        | yes       |
+| `ALLOWED`     | A `MISSING`/`STALE` file matched `--allow` or `[project] status_allow` — reported, but excluded from the drift count.                                                                                                                                                                                                                                                                                | no        |
+| `DROPPED`     | A stale `.pyi` whose on-disk class/method/function has no manifest trace and would vanish on regen (gh-426). This is content loss, not routine drift, so it is **never** suppressed by `--allow` or `status_allow`.                                                                                                                                                                                  | yes       |
+| `DRIFT`       | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                                                                                                                                                                                                    | yes       |
+| `UNBUILT`     | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.                                                                                                                                                                                       | yes       |
+| `UNCHECKED`   | The `UNBUILT` scan above did not run (gh-1033): a build file enumerates its sources by wildcard, so "is this compiled?" cannot be answered by reading. Reported because the absence of an `UNBUILT` section otherwise means "not checked" and "checked and clean" indistinguishably. Not a gate — no `jm apply` clears a wildcard; name your sources explicitly to put the tree back under the gate. | no        |
+| `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions.                             | no        |
+| `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible.                                                                                                                                                                          | yes       |
+| `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                                                   | no        |
+| `OUTDATED`    | A **create-only** file whose content is jm's own — the `Makefile`, `.clang-tidy`, `.clang-format`, `jm_test.h`, `jm_bench.h`, `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates — and which differs from what this jm renders (gh-949). `apply` never rewrites a create-only file, so adopting the new version is your call; suppressible with `status_allow`.                 | no        |
 
 | `UNANCHORED` | The top `CMakeLists.txt` has lost a sentinel jm splices against — `# ── Components` or `# ── Modules` (gh-975). Every splice treats a missing anchor as nothing to do, so the wiring was never written and a module with no `add_subdirectory()` is not built at all. Put the line back, or keep that wiring yourself and name the file in `status_allow`. | yes |
 
@@ -553,6 +577,27 @@ benchmark. A project that builds none — one predating the `make` backend's
 failing the gate for something no `jm apply` can clear is the thing this
 deliberately does not do. It arms itself the moment the project gains bench
 rules.
+
+### Why a stand-down is `UNCHECKED` and not silence
+
+The scan reads build files as text, and one shape defeats that outright: a
+`file(GLOB ...)` compiles whatever matches, so no amount of reading answers
+"is this source built?". jm stands down rather than guess, because a wrong
+"unbuilt" sends someone to delete a file that *is* compiled.
+
+Standing down used to look exactly like finding nothing — an empty listing and
+an `OK` line (gh-1033). That is the gh-806 failure one layer out: a check whose
+whole purpose is to break a silence, reporting a tree it never read as clean.
+So the stand-down is now printed as `UNCHECKED`, the `OK` line carries
+`unbuilt not checked`, and `--json` carries `"unbuilt_scanned": false`.
+
+It does not gate. There is no command that clears it — `jm apply` cannot
+rewrite your wildcard — and gh-767's rule is that a gate must name a fix. What
+puts the tree back under the gate is naming the sources explicitly in the build
+file.
+
+`jm bench`'s discovery makes the same stand-down and has printed the same kind
+of note since gh-1023; the two now agree.
 
 ### Why `UNPARSEABLE` gates, and why only `status` can catch it
 

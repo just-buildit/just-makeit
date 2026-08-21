@@ -270,9 +270,15 @@ class TestDiscoveredFailureIsNotFatal:
 
         `optional` exists so a heuristic cannot abort a run nobody asked it to
         affect. A name the user typed is not a heuristic — and
-        `_compare_reports` yields one record per CURRENT benchmark, so a
-        skipped one does not appear as a failure, it simply vanishes from the
-        comparison and the gate exits green over less than it claims.
+        `_compare_reports` used to yield one record per CURRENT benchmark, so
+        a skipped one did not appear as a failure, it simply vanished from the
+        comparison and the gate exited green over less than it claims.
+
+        gh-1029 closed that second half (a vanished benchmark is now a
+        `missing` record that fails), which makes this the belt to its
+        braces rather than the only guard. Kept, because the two produce
+        different messages and "the benchmark you named was skipped" is the
+        useful one when the user named it.
         """
         import just_makeit._bench as B
         import just_makeit._config as CC
