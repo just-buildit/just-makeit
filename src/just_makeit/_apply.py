@@ -492,6 +492,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             pass_capacity=bool(m.get("pass_capacity")),
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
+            count_name=m.get("count_name", ""),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a

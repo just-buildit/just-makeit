@@ -528,18 +528,87 @@ OUT_PARAM_DOC = (
 )
 
 
-def binding_param_docs() -> dict[str, str]:
+#: What the synthesized leading count argument is called when the manifest
+#: does not say. Kept as the default rather than derived from the C parameter
+#: name: `count` is the published Python name of every generator jm has ever
+#: emitted, and moving it would rename a working keyword argument in every
+#: existing project for no functional gain. gh-1074 asks for the knob, and
+#: names this as the default it wants.
+COUNT_KWARG_DEFAULT = "count"
+
+
+def count_kwarg_name(count_name: str = "") -> str:
+    """What this method's synthesized leading count argument is called.
+
+    gh-1074. The name was hard-coded ``"count"`` in **seven** places — two
+    `_kwlist` arrays, the runtime doc's parameter list, the doc's worked
+    call example, both `.pyi` generators, and the `param_defaults` map above
+    — which is the shape this repo keeps finding a drifted copy of. One
+    accessor, so "what is the count argument called" cannot come to mean two
+    things in one project.
+
+    Why the knob exists. A ``variable_output`` method with ``arg_type =
+    "void"`` and no params gets a synthesized leading count kwarg, and
+    ``count_default`` (gh-1051) already made its *value* settable. Its
+    **name** was not, so a project whose C API calls that quantity something
+    else could not say so — while jm's own `_max_out_count_param` (gh-607)
+    derives the sibling ``<m>_max_out(self, n)`` **from the C signature**,
+    "rather than inventing a fourth name for the same concept". The method's
+    own kwarg then got a different name from the sibling jm had just aligned:
+    ``ptr(count=...)`` beside ``ptr_max_out(n=...)``, for the same number.
+
+    The declared-param workaround is not one. Declaring ``params = [{name =
+    "n", type = "size_t"}]`` gives both faces the name and leaves the C
+    prototype byte-identical — and silently drops the ``out=`` buffer and the
+    default, because that shape is no longer the generator shape. Measured on
+    0.63.3: ``def ptr2(self, n: int) -> NDArray[...]``.
+
+    Parameters
+    ----------
+    count_name : str
+        The manifest's ``count_name``. Empty (the usual case) means
+        `COUNT_KWARG_DEFAULT`.
+
+    Returns
+    -------
+    str
+        The Python keyword the binding parses and both stubs publish.
+
+    Examples
+    --------
+    >>> count_kwarg_name()
+    'count'
+    >>> count_kwarg_name("")
+    'count'
+    >>> count_kwarg_name("  n  ")
+    'n'
+    """
+    return (count_name or "").strip() or COUNT_KWARG_DEFAULT
+
+
+def binding_param_docs(count_name: str = "") -> dict[str, str]:
     """jm's default description for each synthesized binding argument.
 
     Keyed by the Python name, for :func:`_docstring.render_numpy_doc`'s
     ``param_defaults``. A header ``@param`` of the same name outranks these.
 
+    gh-1074: the count key follows `count_kwarg_name`, because this map is
+    looked up **by the name in the signature**. Left hard-coded, a renamed
+    count would silently lose its description — and gh-1042 established that
+    "every parameter in the signature has an entry" is the rule with no
+    exceptions.
+
     Examples
     --------
     >>> sorted(binding_param_docs())
     ['count', 'out']
+    >>> sorted(binding_param_docs("n"))
+    ['n', 'out']
     """
-    return {"count": COUNT_PARAM_DOC, "out": OUT_PARAM_DOC}
+    return {
+        count_kwarg_name(count_name): COUNT_PARAM_DOC,
+        "out": OUT_PARAM_DOC,
+    }
 
 
 def count_stub_default(count_default: str) -> str:

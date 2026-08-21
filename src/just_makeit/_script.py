@@ -345,6 +345,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_bool_flag("--variable-output"))
     if m.get("count_default"):
         parts.append(_flag("--count-default", str(m["count_default"])))
+    if m.get("count_name"):
+        parts.append(_flag("--count-name", str(m["count_name"])))
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
     if m.get("exact_max_out"):
@@ -373,6 +375,20 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--error", str(m["error"])))
     if m.get("error_message"):
         parts.append(_flag("--error-message", str(m["error_message"])))
+
+    # gh-1074: found by the enumerator gate added with `count_name`, not by
+    # a report — three flags `jm method` accepts that `jm script` never
+    # emitted, so a replayed script rebuilt a method WITHOUT a hand-written
+    # stub, WITHOUT the GIL release, and with jm's derived Python return type
+    # instead of the declared one. The gh-490 silent-divergence trap again,
+    # three more times; the gate now measures every key rather than waiting
+    # for the next one to be noticed.
+    if m.get("manual_stub"):
+        parts.append(_bool_flag("--manual-stub"))
+    if m.get("nogil"):
+        parts.append(_bool_flag("--nogil"))
+    if m.get("py_return_type"):
+        parts.append(_flag("--py-return-type", str(m["py_return_type"])))
 
     if m.get("out_type"):
         parts.append(_flag("--out-type", m["out_type"]))

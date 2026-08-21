@@ -163,6 +163,7 @@ METHOD_KEYS = frozenset(
         # `max(max_out, n)` clamp without changing the kernel signature.
         "exact_max_out",
         "count_default",
+        "count_name",
         "batch",
         "nogil",
         # result shape

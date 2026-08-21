@@ -1142,6 +1142,10 @@ def make_methods_ctx(
         _count_init, _count_alias = _count_default_parts(
             _count_default, component
         )
+        # gh-1074: what that synthesized argument is CALLED. Read once and
+        # used at every site below — the name was spelled seven times, which
+        # is the shape a drifted copy is found in.
+        _count_kw = _gluedoc.count_kwarg_name(m.get("count_name", ""))
         _cap_param = ", size_t max_out" if pass_capacity else ""
         # Placeholder that the three `call_data` builders below drop into the
         # output-argument slot; each emit site then substitutes whatever it
@@ -1294,7 +1298,7 @@ def make_methods_ctx(
                 _ret_ann,
                 _brief or default_summary,
                 raises=_raises_doc,
-                param_defaults=_gluedoc.binding_param_docs(),
+                param_defaults=_gluedoc.binding_param_docs(_count_kw),
             )
 
         # gh-219 follow-up: a method's primary array input is sometimes
@@ -1328,7 +1332,7 @@ def make_methods_ctx(
             and (not params or _single_array_param)
         )
         if _stub_count_arg:
-            _doc_params = _doc_params + [("count", "int")]
+            _doc_params = _doc_params + [(_count_kw, "int")]
         if _stub_enable_out:
             _doc_params = _doc_params + [("out", f"{_ret_ann} | None")]
         _doc_names = [n for n, _ in _doc_params]
@@ -1500,7 +1504,8 @@ def make_methods_ctx(
                     f" PyObject *args, PyObject *kwds)\n"
                     f"{{\n"
                     f"{guard}"
-                    f'    static char *_kwlist[] = {{"count", "out", NULL}};\n'
+                    f"    static char *_kwlist[] ="
+                    f' {{"{_count_kw}", "out", NULL}};\n'
                     f"{_count_alias}"
                     f"    Py_ssize_t n = {_count_init};\n"
                     f"    PyObject *out_obj = NULL;\n"
@@ -1929,7 +1934,7 @@ def make_methods_ctx(
                 if _enable_out:
                     parse_block = (
                         "    static char *_kwlist[] ="
-                        ' {"count", "out", NULL};\n'
+                        f' {{"{_count_kw}", "out", NULL}};\n'
                         f"{_count_alias}"
                         f"    Py_ssize_t n = {_count_init};\n"
                         "    PyObject *out_obj = NULL;\n"
@@ -2382,7 +2387,7 @@ def make_methods_ctx(
                 # that never happened.
                 # A declared default is C, not a Python literal, so the
                 # Python-facing signature shows `...` rather than leaking it.
-                _vo_sig_arg = f"count={'...' if _count_default else 1}"
+                _vo_sig_arg = f"{_count_kw}={'...' if _count_default else 1}"
                 _vo_call_example = f"obj.{name}(4)"
             # gh-788: a numpydoc-shaped block naming each column of the
             # structured result and its Python type. Only the documented
@@ -3111,7 +3116,8 @@ def make_methods_ctx(
             # which hard-coded `1` here and so advertised a default the
             # binding does not use. An integer literal now renders as itself.
             param_parts.append(
-                f"count: int = {_gluedoc.count_stub_default(_count_default)}"
+                f"{_count_kw}: int"
+                f" = {_gluedoc.count_stub_default(_count_default)}"
             )
         if _stub_enable_out:
             param_parts.append(f"out: {ret_ann} | None = None")
@@ -3138,7 +3144,7 @@ def make_methods_ctx(
                     indent=8,
                     skeleton_fallback=True,
                     raises=_raises_doc,
-                    param_defaults=_gluedoc.binding_param_docs(),
+                    param_defaults=_gluedoc.binding_param_docs(_count_kw),
                 )
             )
             + "\n"

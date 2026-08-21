@@ -130,6 +130,14 @@ Commands:
     --error EXC                 Exception --error-negative raises (default
                                 ValueError); one of jm's error categories.
     --error-message TEXT        Text for that exception; jm appends (rc=%d).
+    --count-default EXPR        C expression seeding the synthesized leading count
+                                argument of a void-input --variable-output method,
+                                e.g. "state->num_taps". Its default IS the zero-arg
+                                behaviour, and jm cannot derive it.
+    --count-name NAME           What that synthesized argument is CALLED (default
+                                "count"). Say it when your C API names the quantity
+                                something else -- the paired <comp>_<name>_max_out()
+                                already takes its name from the C signature.
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.

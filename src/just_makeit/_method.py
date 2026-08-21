@@ -121,6 +121,7 @@ def _methods_c_stub_variable(
     max_out: int = 0,
     pass_capacity: bool = False,
     count_default: str = "",
+    count_name: str = "",
     c_fn: str = "",
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
@@ -654,6 +655,7 @@ def _build_method_prototype(
     out_type: str | None = None,
     pass_capacity: bool = False,
     count_default: str = "",
+    count_name: str = "",
     batch: bool = False,
     result_fields: list[dict] | None = None,
     single: bool = False,
@@ -832,6 +834,7 @@ _SIGNATURE_COERCIONS: dict = {
     "pass_capacity": (bool, False),
     "exact_max_out": (bool, False),
     "count_default": (str, ""),
+    "count_name": (str, ""),
     "nogil": (bool, False),
     "status_return": (bool, False),
     "error_negative": (bool, False),
@@ -924,6 +927,7 @@ def run(
     pass_capacity: bool = False,
     exact_max_out: bool = False,
     count_default: str = "",
+    count_name: str = "",
     nogil: bool = False,
     status_return: bool = False,
     fn: str = "",
@@ -1268,6 +1272,7 @@ def run(
                     pass_capacity=pass_capacity,
                     exact_max_out=exact_max_out,
                     count_default=count_default,
+                    count_name=count_name,
                     nogil=nogil,
                     status_return=status_return,
                     error_negative=error_negative,
@@ -1642,6 +1647,11 @@ def run(
         method_entry["exact_max_out"] = True
     if count_default:
         method_entry["count_default"] = count_default
+    # gh-1074: written only when set, like `count_default` beside it, so
+    # an existing manifest gains no key and `jm status --check` sees no
+    # drift on a project that never asked for the rename.
+    if count_name:
+        method_entry["count_name"] = count_name
     if nogil:
         method_entry["nogil"] = True
     if status_return:
