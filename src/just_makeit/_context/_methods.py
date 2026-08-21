@@ -880,6 +880,77 @@ def _capacity_exprs(
     )
 
 
+def _zero_bound_guard(
+    c_fn: str, name: str, fallback: str, cleanup: str = ""
+) -> str:
+    """Refuse a zero allocation bound, for the one shape that has no floor.
+
+    gh-1085. Every ``variable_output`` binding allocates behind a floor::
+
+        size_t _need = <the call's own length>;
+        size_t _cap  = <m>_max_out(...);
+        if (!_cap || _cap < _need) _cap = _need;
+
+    and that floor is what makes ``max_out()`` returning **0** safe — jm's own
+    docs call a zero legal and say the binding then sizes the allocation from
+    the call itself.
+
+    For every shape but one, ``_need`` is an independent quantity: an input
+    array's length, or the synthesized count. **An all-scalar-params method has
+    no call length**, so gh-607 made ``_need`` fall back to ``max_out()``
+    itself — and the two sides of the floor become the same expression, leaving
+    a guard that cannot fire.
+
+    Measured, compiled and run: a kernel writing four floats behind a
+    placeholder ``return 0;`` got a **zero-length** array, wrote past it, and
+    the caller received ``[0. 0. 0. 0.]`` — right shape, lost values, no error,
+    because ``PyArray_Resize`` had reallocated underneath. At 4096 samples
+    glibc aborts with ``realloc(): invalid next size``.
+
+    So this shape's only bound is ``max_out()``, and when it is unknown jm
+    genuinely cannot size the buffer. Saying so is the whole fix: it converts a
+    heap overflow into a message naming the function to implement. No existing
+    flag rescued it — ``exact_max_out`` keeps the same no-op zero-guard, and
+    ``pass_capacity`` drops the floor entirely (a bounds-checking kernel then
+    writes nothing and the caller silently gets an empty array).
+
+    Emitted **only** where the floor is inert, which is exactly where
+    *fallback* is the ``max_out`` call. Anywhere else a zero is already
+    rescued, and refusing there would break the documented "0 means unknown"
+    contract.
+
+    Parameters
+    ----------
+    c_fn : str
+        The C symbol, for the ``max_out`` name in the message.
+    name : str
+        The Python method name, which is what the caller typed.
+    fallback : str
+        The ``_need`` expression. The guard is emitted iff this is the
+        ``max_out`` call — derived, so a future shape that grows a real length
+        is not gated by accident.
+    cleanup : str
+        Statements releasing anything acquired earlier in the wrapper.
+
+    Returns
+    -------
+    str
+        C source, or ``""`` when this shape already has a working floor.
+    """
+    if "_max_out(" not in fallback:
+        return ""
+    return (
+        "    if (!_cap) {\n"
+        "        PyErr_Format(PyExc_RuntimeError,\n"
+        '            "%s() cannot size its output: %s() returned 0, and this '
+        "method has no input length to fall back on. Implement it to return "
+        'the worst-case count.",\n'
+        f'            "{name}", "{c_fn}_max_out");\n'
+        f"        {cleanup}return NULL;\n"
+        "    }\n"
+    )
+
+
 def make_methods_ctx(
     component: str,
     Component: str,
@@ -2250,6 +2321,9 @@ def make_methods_ctx(
                     "_need",
                     _moc_state_only,
                 )[0]
+                + _zero_bound_guard(
+                    c_fn, name, _lazy_fallback, _decref_early_vo
+                )
                 + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(
                     (
