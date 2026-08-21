@@ -4,6 +4,33 @@
 
 ### Fixed
 
+- **A `--varargs` method's `doc` now reaches both faces (gh-1040).** The
+    summary — manifest `doc`, else the header `@brief` — was resolved two lines
+    above the `varargs` branch, and that branch threw it away: the runtime
+    `PyMethodDef` literal and the `.pyi` docstring were both canned from the
+    method's *name*. So `--doc "…"` was computed and dropped, and the two faces
+    agreed with each other and with neither source, which is why it read as
+    working.
+
+    Worth naming as a shape: a `--varargs` method is the one whose binding jm
+    does **not** write, so its purpose is the one jm can least infer from its
+    name — and it was the only shape with no way to say so.
+
+    Both faces now route through `render_runtime_doc` / `render_numpy_doc`,
+    which share a section builder, rather than spelling anything locally —
+    gh-642's invariant that the runtime block *is* the stub block. `Parameters`
+    stays empty on purpose: a varargs method's arguments are unknown to jm by
+    definition, and entries for `*args`/`**kwargs` would document the mechanism
+    rather than the method. The signature line `name(*args, **kwargs)` survives
+    as the runtime block's first line, and the name-derived sentence remains
+    the fallback when nothing is declared.
+
+    **This was the last canned site gh-1039's detector had left**, so that
+    ratchet reaches zero and becomes a plain zero-tolerance property. Its
+    armed-ness no longer depends on a defect surviving in the tree: the
+    detector is aimed at a synthetic sample carrying the exact shape, and at a
+    second one that must *not* match.
+
 - **`jm --help` now lists every flag the CLI accepts (gh-1015).** 17 parsed
     flags were absent from it while the reference docs stood at zero — and
     `jm --help` is the copy a user reads *first*, at the terminal, without a

@@ -235,18 +235,28 @@ class TestNoCannedDocLiterals:
     its doc as a literal in the ``pmd_lines.append`` call is a shape whose
     runtime face cannot carry the header, which is gh-1039 exactly.
 
-    One such site remains, and it is a different feature: ``--varargs``, whose
-    binding body is hand-written and whose *stub* is canned to match, so its
-    two faces agree rather than disagree. It is filed as gh-1040. This count
-    may only shrink.
+    One such site used to remain — ``--varargs``, whose binding body is
+    hand-written and whose *stub* was canned to match, so its two faces agreed
+    with each other and with neither the header nor the manifest. That was
+    filed as gh-1040 and is fixed, which takes the ratchet to **zero**.
+
+    So there is no ratchet any more, only the property. A count that may only
+    shrink is the right shape while a backlog exists and the wrong shape once
+    it does not: "no worse than yesterday" is what lets a class come back
+    (gh-1015 has the same story one file over). Zero canned sites, full stop.
     """
 
-    CANNED_SITES = 1
-
     @staticmethod
-    def _canned_sites() -> list[int]:
-        """Line numbers of ``pmd_lines.append`` calls with a literal doc."""
-        src = _METHODS_PY.read_text(encoding="utf-8")
+    def _canned_sites(src: str | None = None) -> list[int]:
+        """Line numbers of ``pmd_lines.append`` calls with a literal doc.
+
+        Takes the source as a parameter (defaulting to the real module) so
+        the detector can be aimed at a synthetic sample. That is how it
+        proves itself armed now that the tree holds no canned site: a scan
+        whose armed-ness depends on a defect surviving somewhere has to keep
+        one alive to stay honest, which is a strange thing to want.
+        """
+        src = _METHODS_PY.read_text(encoding="utf-8") if src is None else src
         # Locals assigned from _build_ml_doc are derived too -- passing one
         # through a variable is not a canned literal.
         built = set(re.findall(r"^\s*(_\w+)\s*=\s*_build_ml_doc\(", src, re.M))
@@ -268,26 +278,47 @@ class TestNoCannedDocLiterals:
                 out.append(src[: m.start()].count("\n") + 1)
         return out
 
-    def test_ratchet_may_only_shrink(self):
+    def test_no_canned_doc_literals_remain(self):
         sites = self._canned_sites()
-        assert len(sites) <= self.CANNED_SITES, (
-            f"new PyMethodDef doc literal(s) at {_METHODS_PY.name} lines "
+        assert not sites, (
+            f"PyMethodDef doc literal(s) at {_METHODS_PY.name} lines "
             f"{sites}: a doc spelled in the append call cannot carry the "
             f"header or the manifest `doc` -- route it through "
             f"_runtime_doc()/_build_ml_doc like every other shape (gh-1039)."
-        )
-        assert len(sites) == self.CANNED_SITES, (
-            f"only {len(sites)} canned site(s) left, ratchet says "
-            f"{self.CANNED_SITES} -- lower CANNED_SITES to lock the gain in."
         )
 
     def test_the_detector_sees_a_canned_literal(self):
         """The gate is not vacuous.
 
-        A count of zero would pass ``<=`` against a detector that matches
-        nothing, so the surviving site is also what proves the scan is armed.
+        Zero passes against a detector that matches nothing, so the scan is
+        aimed at a sample carrying the exact shape gh-1040 was: a doc string
+        spelled inside the append call.
         """
-        assert self._canned_sites(), (
-            "the detector found no canned site at all -- it has stopped "
-            "matching, and the ratchet above is now green on anything"
+        sample = (
+            "pmd_lines.append(\n"
+            "    f'    {{\"{name}\",'\n"
+            '    f" (PyCFunction)(void *){c_fn},"\n'
+            '    f" METH_VARARGS | METH_KEYWORDS,\\n"\n'
+            "    f'     \"{name}(*args, **kwargs).\"}},\\n'\n"
+            ")\n"
         )
+        assert self._canned_sites(sample), (
+            "the detector no longer matches a canned doc literal, so the "
+            "assertion above is green on anything"
+        )
+
+    def test_the_detector_passes_a_derived_doc(self):
+        """...and is not simply matching everything.
+
+        The guard on the other side: a site that routes through the shared
+        renderer must NOT be reported, or the gate above becomes impossible
+        to satisfy and gets deleted rather than fixed.
+        """
+        sample = (
+            "pmd_lines.append(\n"
+            "    f'    {{\"{name}\", (PyCFunction){wrapper_prefix}_{name},'\n"
+            '    f" METH_VARARGS | METH_KEYWORDS,\\n"\n'
+            '    f"     {_build_ml_doc(_doc_lines)}}},\\n"\n'
+            ")\n"
+        )
+        assert not self._canned_sites(sample)
