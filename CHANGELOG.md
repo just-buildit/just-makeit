@@ -4,6 +4,28 @@
 
 ### Added
 
+- **A `composer_seams` example — `kind = "composer"` and the two places it
+    hands work back to you as plain C (gh-287, gh-998).** `composer` was the
+    last of the three object-of-objects kinds with no example (`handle` has
+    `composites`; `capsule` and `composer` were prose only), and gh-998's
+    generated `native/inc/<mod>/<mod>_bridge.h` had none at all.
+
+    It covers both seams — `[module.X.source.generates] bridge_fn` building
+    the generator from a source config, and `[[module.X.source.computed]] fn`
+    deriving a read-only property — plus the parts around them a composer
+    needs and nothing demonstrated: a `c_deps` directory for the hand-written
+    backing kernel, `depends_on` + `extra_link_libs` putting both OBJECT
+    libraries on the `.so`, and the fact that a composer is **manifest-only**
+    (there is no `jm composer` command).
+
+    The last step is the one gh-998 exists for: it compiles **and runs** a C
+    consumer that includes the generated bridge header and nothing else. That
+    is the claim the issue could not make before — while the seam prototypes
+    lived as `extern` lines inside the CPython `_ext.c`, a C test's only route
+    to them was to write a second copy.
+
+### Added
+
 - **A `record_shapes` example — the three results `result_fields` can
     produce, on one object (gh-646, gh-788).** `single` returns ONE record as
     a named `PyStructSequence`; `record_dtype` returns an ARRAY of records as

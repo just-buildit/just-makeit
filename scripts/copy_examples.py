@@ -63,6 +63,7 @@ GALLERY = {
     "views_module": "Views",
     "record_shapes": "Record shapes",
     "errors_warnings": "Errors and warnings",
+    "composer_seams": "Composer seams",
     "kitchen_sink": "Kitchen sink",
 }
 
