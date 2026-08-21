@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`jm --help` now lists every flag the CLI accepts (gh-1015).** 17 parsed
+    flags were absent from it while the reference docs stood at zero — and
+    `jm --help` is the copy a user reads *first*, at the terminal, without a
+    browser. The 16 remaining after gh-1074 documented `--count-default` are
+    added here: `--array-arg`, `--method-name`, `--streamable`,
+    `--stream-block`, `--async-stream` on `jm object`; `--varargs`,
+    `--extra-arg`, `--manual-stub`, `--status-return`, `--py-return-type`,
+    `--single` and the `--record-name`/`--record-module`/`--record-doc` trio on
+    `jm method`; `--out-size` and `--check-return` on `jm function`.
+
+    **The ratchet is gone with them.** It stood at 17 and could only shrink,
+    which is the right shape for a backlog and the wrong one for an invariant:
+    "no worse than yesterday" is exactly the reading that let this class recur
+    at four times its size after gh-496 fixed four instances and left nothing
+    checking the parsers against the help block. With the backlog at zero the
+    check is zero-tolerance, like its sibling over the reference docs, and both
+    derive the flag set from the parsers — so a flag added tomorrow is covered
+    with nothing to register.
+
 ### Added
 
 - **`count_name` — the synthesized count kwarg gets a name, not just a
