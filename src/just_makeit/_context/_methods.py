@@ -9,6 +9,7 @@ import re
 
 from .. import _codec as _codec
 from .. import _coerce
+from .. import _outbuf
 from .. import _record
 from .. import _types as T
 from .. import _gluedoc
@@ -1334,11 +1335,11 @@ def make_methods_ctx(
         # `has_arg` for the purposes of the optional `out=` buffer feature;
         # only genuine *extra* params (e.g. Farrow.delay(x, mu)) should stay
         # ineligible (gh-412 kept those positional-or-keyword, no `out=`).
-        _single_array_param = (
-            not has_arg
-            and len(params) == 1
-            and is_array_param_type(params[0]["type"])
-        )
+        # gh-1079: one accessor for both halves of the question. Three
+        # copies of this predicate decided whether the binding parses `out=`
+        # and whether either `.pyi` publishes it, and a stub advertising an
+        # `out=` the binding rejects is the same defect as the reverse.
+        _single_array_param = _outbuf.single_array_param(has_arg, params)
 
         # gh-1042: the binding's own arguments, decided ONCE and read by both
         # faces. They were decided several hundred lines below, where only the
@@ -1352,10 +1353,11 @@ def make_methods_ctx(
         # from it is never looked up, so an authored `@param count` was
         # silently discarded and no authoring move could fix the above.
         _stub_count_arg = variable_output and arg_type == "void" and not params
-        _stub_enable_out = (
-            variable_output
-            and not multi_output
-            and (not params or _single_array_param)
+        _stub_enable_out = _outbuf.enabled(
+            variable_output=variable_output,
+            multi_output=bool(multi_output),
+            has_arg=has_arg,
+            params=params,
         )
         if _stub_count_arg:
             _doc_params = _doc_params + [(_count_kw, "int")]
@@ -1767,17 +1769,23 @@ def make_methods_ctx(
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
         # with blockwise steps(x, out=).  Multi-output and multi-param execute
         # keep their positional-only signatures for now.
-        _enable_out = (
-            variable_output
-            and not multi_output
-            and (not has_params or _single_array_param)
-            # gh-805 §E: a structured result gets `out=` too. Three places
-            # in this branch spoke in scalar NPY_ enums -- the guard, the
-            # acquisition, and the trimmed view -- and each has a record form
-            # below. A scalar enum cannot name a record layout (its type num
-            # is NPY_VOID), and coercing to one would silently reinterpret
-            # the caller's buffer, which is why this was carved out until the
-            # descr-based path existed rather than shipped half-working.
+        # gh-805 §E: a structured result gets `out=` too. Three places in
+        # this branch spoke in scalar NPY_ enums -- the guard, the
+        # acquisition, and the trimmed view -- and each has a record form
+        # below. A scalar enum cannot name a record layout (its type num is
+        # NPY_VOID), and coercing to one would silently reinterpret the
+        # caller's buffer, which is why this was carved out until the
+        # descr-based path existed rather than shipped half-working.
+        #
+        # gh-1079: the SAME call as the two `.pyi` builders make. It used to
+        # read `has_params` where they read `params`; the two agree today
+        # (`has_params` is `bool(params)`), and agreeing today is exactly the
+        # guarantee a shared accessor replaces with a structural one.
+        _enable_out = _outbuf.enabled(
+            variable_output=variable_output,
+            multi_output=bool(multi_output),
+            has_arg=has_arg,
+            params=params,
         )
         # gh-412: keyword parsing is independent of the `out=` buffer feature.
         # A variable_output method with named params (e.g. Farrow.delay(x, mu))
