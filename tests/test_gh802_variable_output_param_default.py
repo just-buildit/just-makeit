@@ -42,6 +42,20 @@ def _ext(tmp_path, params):
     )
 
 
+def _parse_fmt(ext: str) -> str:
+    """The method wrapper's PyArg format string, read off the emitted C.
+
+    gh-1079: the tests below check WHERE the `|` sits rather than matching a
+    whole literal, because appending an optional `out=` legitimately extends
+    the string without moving the marker.
+    """
+    import re
+
+    m = re.search(r'kwds,\s*\n?\s*"([^"]*)"', _method_parse(ext))
+    assert m is not None, _method_parse(ext)
+    return m.group(1)
+
+
 def _method_parse(ext):
     """The method wrapper's parse call, as one string.
 
@@ -56,8 +70,16 @@ def _method_parse(ext):
 
 class TestDefaultedParamIsOptional:
     def test_format_string_has_the_optional_marker(self, tmp_path):
+        """The `|` precedes the defaulted param.
+
+        Asserted as a property rather than as the whole literal: gh-1079 gave
+        this shape an `out=` buffer, so the format grew a trailing `O` and
+        every exact-string assertion here pinned a fact about a different
+        feature. What gh-802 is actually about is where the marker sits.
+        """
         ext = _ext(tmp_path, [("n", "size_t", "4")])
-        assert '"|K"' in _method_parse(ext)
+        fmt = _parse_fmt(ext)
+        assert fmt.startswith("|K"), fmt
 
     def test_parse_local_seeds_the_declared_default(self, tmp_path):
         # An omitted optional arg is left untouched by PyArg_*, so the
@@ -66,12 +88,19 @@ class TestDefaultedParamIsOptional:
         assert "unsigned long long n_raw = 4;" in ext
 
     def test_undefaulted_param_stays_required(self, tmp_path):
-        # The control: without a `default` the argument is still mandatory,
-        # so no `|` may appear and the local seeds to the type's zero.
+        """The control: without a `default` the argument stays mandatory.
+
+        So `K` precedes the marker. `out=` is optional and sits after it
+        (gh-1079), which is why this is a position check and not the
+        absence of `|` it used to be.
+        """
         ext = _ext(tmp_path, [("n", "size_t")])
-        assert '"K"' in _method_parse(ext)
+        fmt = _parse_fmt(ext)
+        assert fmt.startswith("K"), fmt
+        assert fmt.index("K") < fmt.index("|"), fmt
         assert "unsigned long long n_raw = 0ULL;" in ext
 
     def test_required_param_may_precede_a_defaulted_one(self, tmp_path):
         ext = _ext(tmp_path, [("lo", "double"), ("n", "size_t", "4")])
-        assert '"d|K"' in _method_parse(ext)
+        fmt = _parse_fmt(ext)
+        assert fmt.startswith("d|K"), fmt

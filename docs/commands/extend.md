@@ -319,13 +319,16 @@ for the same number (gh-1074).
 
 **Declaring the count as a real `--param` is not the same thing**, even though
 it produces a byte-identical C prototype. It leaves the generator shape, and
-with it goes the `out=` buffer and the default:
+the default goes with it:
 
-|                | synthesized count      | declared `--param`        |
-| -------------- | ---------------------- | ------------------------- |
-| name settable  | `--count-name`         | yes, it is the param name |
-| `out=` offered | yes                    | **no**                    |
-| default        | yes, `--count-default` | **no**                    |
+|               | synthesized count      | declared `--param`        |
+| ------------- | ---------------------- | ------------------------- |
+| name settable | `--count-name`         | yes, it is the param name |
+| default       | yes, `--count-default` | **no**                    |
+
+For a generator that is not a small loss: the zero-arg call's behaviour *is*
+its default. (Until gh-1079 the declared form also gave up the `out=` buffer;
+that shape has it back, so this table has one row fewer than it used to.)
 
 The name reaches the binding's `_kwlist`, both `.pyi` generators, the runtime
 docstring and its worked call example — one accessor, so a project cannot end

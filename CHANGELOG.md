@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **An all-scalar `variable_output` method no longer corrupts the heap on a
+    zero bound (gh-1085).** Every `variable_output` binding allocates behind a
+    floor — `if (!_cap || _cap < _need) _cap = _need;` — and that floor is what
+    makes `max_out()` returning `0` safe, since jm documents a zero as
+    "unknown" and sizes from the call instead.
+
+    An all-scalar-params method has **no call length**, so gh-607 made `_need`
+    fall back to `max_out()` itself and the two sides of the floor became the
+    same expression: a guard that cannot fire. Compiled and run, a kernel
+    writing four floats behind the scaffolded `return 0;` got a **zero-length**
+    array, wrote past it, and the caller received `[0. 0. 0. 0.]` — right
+    shape, values lost, no error. At 4096 samples glibc aborts with
+    `realloc(): invalid next size`. No flag combination rescued it.
+
+    jm now refuses a zero bound up front, on both the allocating and the `out=`
+    path, naming the method and the `max_out` to implement. A zero stays legal
+    and rescued for every shape that has a real length to fall back on.
+
+### Added
+
+- **A `variable_output` method with all-scalar params now gets an `out=`
+    buffer (gh-1079).** The shape was carved out of the feature because there
+    is no input length to size the buffer from. There is a bound —
+    `<m>_max_out(state)`, the same expression the internal allocation uses —
+    and since gh-1085 refuses a zero one, it is a bound worth validating
+    against. The caller's buffer is checked against exactly what the binding
+    would have allocated itself, which is `_capacity_exprs`' stated invariant.
+
+    The Python-facing `max_out()` sibling comes with it, because that is what a
+    caller sizes the buffer *with*. doppler hand-writes this binding on two
+    methods today (`DelayCf64.push_ptr`, `Farrow.delay`), so the capability was
+    real and only the declaration was missing.
+
+    An array among several params (`Farrow.delay(x, mu)`) stays excluded — that
+    is gh-412's deliberate carve-out and a different piece of work, named as
+    such by `_outbuf.why_not` rather than lumped in.
+
 ### Changed
 
 - **One predicate deciding who gets an `out=` buffer (gh-1079).** Whether a
