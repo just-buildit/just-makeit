@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Union
 
 from . import _config as C
+from . import _record
 from . import _render as T
 from ._object import _regenerate_module
 
@@ -172,6 +173,20 @@ def run(
     check_return: bool = False,
 ) -> None:
     C.require_name(fn_name, "function")
+    # gh-1064: the same two rules as `jm method`. This face accepts
+    # `result_fields` too and generated the identical non-compiling binding
+    # from the identical bad declaration -- fixing one of a pair is what
+    # gh-1060 looked like a release later.
+    _shape_err = _record.validate_record_shape(
+        "function",
+        fn_name,
+        return_type,
+        result_fields,
+        variable_output=variable_output,
+    )
+    if _shape_err:
+        print(f"error: {_shape_err}", file=sys.stderr)
+        sys.exit(1)
     # gh-910: the function's own name was already checked; its parameters and
     # result fields were not, and this command writes the module's C before it
     # saves the manifest — so `save`'s gate fired only after `gaïn` had reached

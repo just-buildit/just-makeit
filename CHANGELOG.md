@@ -4,6 +4,39 @@
 
 ### Fixed
 
+- **A record declaration jm accepts is now one it can generate (gh-1064).**
+    `result_fields` names the columns of a record, and jm produces three
+    different results from it — ONE record (`single`), an ARRAY of records
+    (`record_dtype`), or a `list[tuple]` (neither). Nothing checked that the
+    declaration described any of them: the binding is built from the shape and
+    the prototype from the return type, the two were never compared, and a
+    declaration outside the three shapes was accepted, exited 0, and emitted C
+    that does not compile — in one case a raw `KeyError` traceback out of the
+    shipped CLI.
+
+    Two rules, both derived from measuring every combination rather than from
+    reading the generator. Without `record_dtype` the return type **is** the
+    author's struct, so a known scalar or `void` there is always wrong; and
+    `variable_output` belongs to the `record_dtype` shape, whose kernel fills
+    a caller-sized `out` — on the plain shape the count is already the return
+    value, so the flag has nothing to size and instead selected half of the
+    other shape's binding. With `record_dtype` the return type is left
+    unconstrained, because a scalar, a struct and `void` were each measured to
+    build.
+
+    Applied to **both** faces. `jm method` and `jm function` each accept
+    `result_fields` and each emitted the identical broken binding from the
+    identical bad declaration; the rules live in `_record.py` beside the other
+    answers every face needs.
+
+    Two test fixtures were declaring the invalid shape — a scalar return type
+    beside `result_fields`, which `docs/commands/extend.md` has always paired
+    with `--return-type <record_struct>`. They inspect strings and never
+    compiled, which is exactly how an unbuildable declaration stays in a
+    fixture indefinitely.
+
+### Fixed
+
 - **`no_ctor` now reaches the binding as well as the header (gh-1066).**
     `no_ctor = true` narrows `create()`. It reached the sacred header and not
     the CPython binding compiled against it, so a project using it did not

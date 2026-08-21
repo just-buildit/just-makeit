@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _record
 from . import _glue
 from . import _render as R
 from . import _stubs as S
@@ -1051,6 +1052,28 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+    # gh-1064: a record declaration jm cannot generate from was accepted
+    # silently and emitted C that does not compile -- the binding built from
+    # the shape, the prototype from the return type, and nothing comparing
+    # them. Still before any file is written.
+    #
+    # Deliberately AFTER the `--error-negative` gate above: that declaration
+    # is refused for a more specific reason (there is no single int for the
+    # negative test to read), and the message a reader gets should be the one
+    # about the flag they passed rather than the one about the shape it
+    # implies.
+    _shape_err = _record.validate_record_shape(
+        "method",
+        method_name,
+        return_type,
+        result_fields,
+        record_dtype=record_dtype,
+        variable_output=variable_output,
+        single=single,
+    )
+    if _shape_err:
+        print(f"error: {_shape_err}", file=sys.stderr)
+        sys.exit(1)
     # gh-823 Ask D: `status_return` raises too, so it may name the exception
     # and carry the message. The key was never the problem — both were already
     # read from the manifest; only `error_negative`'s emitter looked at them.
