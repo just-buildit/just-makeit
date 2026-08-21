@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **One predicate deciding who gets an `out=` buffer (gh-1079).** Whether a
+    `variable_output` method accepts an optional caller-owned output array was
+    spelled in three places — the binding's `_kwlist` and parse block, the
+    standalone `.pyi`, and the module-aggregated `.pyi`. `_context/_methods`
+    already stated the rule they had to hold to ("a stub advertising an `out=`
+    the binding rejects, or a binding accepting one the stub hides, is the same
+    defect in either direction") with nothing behind the sentence, and that pair
+    of stub writers has been caught disagreeing about jm's own binding arguments
+    twice before (gh-1042, gh-1051).
+
+    All three now call `_outbuf.enabled`, and the gate renders all three and
+    compares what they *say* rather than checking that they call it — so the
+    guarantee survives a refactor of how they get the answer. Behaviour is
+    unchanged: the same methods get `out=` as before.
+
+    `_outbuf.why_not` returns the *reason* rather than a bare False, because
+    "this method allocates per call" and "jm cannot size the buffer" are not
+    interchangeable. The second is gh-1079's remaining ask — sizing the
+    all-scalar-params shape means reading `<m>_max_out(state)`, which may
+    legally answer `0` ("unknown"), so offering `out=` there is a decision about
+    what jm does when it cannot bound the write. Named in code so it stays
+    findable rather than looking like an oversight.
+
 ### Added
 
 - **Declarable field groups: `[[group]]` + `[[<obj>.init_groups]]` (gh-999).**
