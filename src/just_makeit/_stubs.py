@@ -751,7 +751,11 @@ def _py_default_stub(ctype: str, default: str) -> str:
         return s
     if kind == "complex":
         return "0j"
-    return default
+    # gh-1043: the integer bucket, the peer of the branch in
+    # `_context/_types._py_default`. Both emitted the C literal unchanged, so
+    # a `uint64_t` state field put `0U` into the .pyi AND the runtime
+    # docstring — one manifest, two faces, the same wrong answer twice.
+    return T.strip_c_literal_suffix(default)
 
 
 def _doctest_out(ctype: str, default: str) -> str | None:

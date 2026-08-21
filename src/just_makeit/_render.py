@@ -9,6 +9,7 @@ the same names callers already use (COMPONENT_CORE_H, CMAKE_LISTS_TOP, etc.).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from ._types import (
@@ -62,7 +63,10 @@ MODULE_BENCH_C = _load("c/src/module_bench.c")
 
 
 def module_targets_block(
-    cname: str, has_functions: bool, taken: "frozenset[str]" = frozenset()
+    cname: str,
+    has_functions: bool,
+    taken: "frozenset[str]" = frozenset(),
+    extra_libs: Sequence[str] = (),
 ) -> str:
     """CMake `test_`/`bench_<cname>_core` targets for a module (gh-1034).
 
@@ -74,6 +78,19 @@ def module_targets_block(
     function-only predicate would mean adding an object to a module silently
     DELETED its test and benchmark targets, which is the kind of foot-gun
     `jm apply` would then dutifully reconcile away.
+
+    gh-1061: `extra_libs` is everything the module's own `.so` links beyond
+    `<cname>_core` and Python — its `extra_link_libs`, each member object's
+    core, and each member's `depends_on ... link = true` closure. The pair
+    used to link `<cname>_core m` and nothing else, built from the name
+    alone, so a declared dependency had no path by which it could reach them
+    and a module function calling a sibling core did not link.
+
+    This is gh-254's lesson one target pair later. That issue made
+    `link = true` ADDITIVE for a collocated object's own test/bench rather
+    than a move onto the `.so`; gh-1034 then introduced this pair without
+    inheriting it. The rule is now one sentence covering both kinds of test
+    target: they link what the `.so` links, minus Python.
     """
     if not has_functions:
         return ""
@@ -84,32 +101,51 @@ def module_targets_block(
     # this feature was written for are exactly the ones it collided with.
     # Skipped per target, not per pair: a project that hand-registered only
     # the benchmark still gets the test.
+    libs = _module_link_libs(cname, extra_libs)
     blocks = []
     if f"test_{cname}_core" not in taken:
-        blocks.append(_module_test_target(cname))
+        blocks.append(_module_test_target(cname, libs))
     if f"bench_{cname}_core" not in taken:
-        blocks.append(_module_bench_target(cname))
+        blocks.append(_module_bench_target(cname, libs))
     return "".join(blocks)
 
 
-def _module_test_target(cname: str) -> str:
+def _module_link_libs(cname: str, extra_libs: Sequence[str]) -> str:
+    """The link-library argument for a module's test/bench pair (gh-1061).
+
+    `<cname>_core` first, then each declared dependency in the order the
+    module's `.so` link line carries it, then `m`. With nothing declared this
+    is the one-line form the pair has always rendered, so a module that
+    depends on nothing stays byte-identical and no project churns for free.
+
+    Returns the text that follows `PRIVATE`, its own leading space included,
+    so the multi-line form does not leave `PRIVATE ` with a trailing space on
+    it — which cmake-lint rejects (C0303) and `make lint` gates on.
+    """
+    parts = [f"{cname}_core", *extra_libs, "m"]
+    if len(parts) == 2:
+        return " " + " ".join(parts)
+    return "\n    " + "\n    ".join(parts)
+
+
+def _module_test_target(cname: str, libs: str) -> str:
     """The `test_<cname>_core` CMake target for a module (gh-1034)."""
     return (
         f"\nadd_executable(test_{cname}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
-        f"target_link_libraries(test_{cname}_core PRIVATE {cname}_core m)\n"
+        f"target_link_libraries(test_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(test_{cname}_core\n"
         f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)\n"
         f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
     )
 
 
-def _module_bench_target(cname: str) -> str:
+def _module_bench_target(cname: str, libs: str) -> str:
     """The `bench_<cname>_core` CMake target for a module (gh-1034)."""
     return (
         f"\nadd_executable(bench_{cname}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
-        f"target_link_libraries(bench_{cname}_core PRIVATE {cname}_core m)\n"
+        f"target_link_libraries(bench_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(bench_{cname}_core\n"
         f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
         f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
@@ -129,6 +165,16 @@ def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
     candidate rather than a call: synthesising a buffer for an array or a
     handle for a capsule is guesswork, and a scaffold that does not compile
     is worse than one that does not measure.
+
+    gh-1060: an ``out_type`` out-parameter gets that same treatment, and for
+    the same reason. jm injects it into the prototype it writes but it never
+    enters ``params``, so it was invisible to both the argument list and the
+    guard above — the scalar check passed and the call was emitted one
+    argument short of the signature jm had just generated. Sizing the buffer
+    is not an option either: ``out_size`` is an expression over the
+    parameters (``"2 * span * sps + 1"``), so with every scalar zeroed it
+    evaluates to 1, or 0, or divides by zero, and a scaffold that allocates
+    from that is worse than one that does not call.
     """
     from ._types import _CTYPE_META
 
@@ -139,7 +185,12 @@ def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
             _CTYPE_META.get(p.get("type", ""), {}).get("zero") for p in params
         ]
         name = fn["name"]
-        if all(z is not None for z in zeros):
+        if fn.get("out_type"):
+            lines.append(
+                f"    /* TODO: {name}(...) writes into a caller-sized output"
+                f" buffer jm cannot synthesise; call it here. */"
+            )
+        elif all(z is not None for z in zeros):
             lines.append(f"    /* {name}: verify it runs without crashing */")
             lines.append(f"    (void){name}({', '.join(zeros)});")
         else:

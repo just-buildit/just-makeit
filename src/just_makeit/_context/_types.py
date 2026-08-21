@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    strip_c_literal_suffix,
 )
 
 # Maps scalar element type → NumPy C-API enum (for fixed-size array state).
@@ -87,7 +88,11 @@ def _py_default(ctype: str, default: str) -> str:
         if default == "NULL":
             return '""'
         return default if default.strip() else "..."
-    return default if default.strip() else "..."
+    # gh-1043: the integer bucket. `0U` is a C literal and a SyntaxError in
+    # Python, and this function ALREADY knew C literals carry suffixes — the
+    # float branch two above strips `fF`. The knowledge was in the function
+    # and simply had not been applied to the other kind.
+    return strip_c_literal_suffix(default) if default.strip() else "..."
 
 
 def _py_sample_val(meta: dict) -> str:

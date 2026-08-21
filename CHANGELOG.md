@@ -2,6 +2,61 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A module's generated C test compiles and links again (gh-1060, gh-1061).**
+    0.63.2 fixed the duplicate-target collision, so gh-1034's
+    `test_`/`bench_<module>_core` pair reached the compiler for the first
+    time. Two defects were waiting there, and they are the same defect twice:
+    jm wrote one artefact from the manifest and a second from the component
+    NAME ALONE, so the two could not agree.
+
+    - A module function declared with `out_type` got a call one argument
+        short of the prototype jm had just generated in the same run —
+        `(void)taps(0.0)` against `void taps(double, float *)`. `out_type`
+        never enters `params`, so it was invisible to both the argument list
+        and the all-scalars guard above it; the zero-parameter case is the
+        sharpest form, since `all([])` is `True` and `void f(uint8_t *out)`
+        got the call `f()`. It now takes the same TODO branch an array
+        parameter already took: a buffer only the author can size is not
+        something a scaffold may invent. Sizing it from `out_size` was
+        rejected — that expression evaluates to 1, or 0, or divides by zero
+        once every scalar is zeroed.
+    - The pair linked `<cname>_core m` and nothing else. Neither emitter took
+        the module config as an argument, so a declared dependency had no path
+        by which it could reach them, and a module function calling a sibling
+        core did not link — through either `[module.X] extra_link_libs` or a
+        member object's `depends_on … link = true`. Both kinds of test target
+        now follow one rule: they link what the `.so` links, minus Python.
+        This is gh-254's lesson, which gh-1034 introduced a second pair
+        without inheriting.
+
+    The new gate compiles rather than inspects, because neither defect is
+    visible in the emitted string on its own: the call reads fine until the
+    prototype is beside it, and the link line reads fine until a symbol needs
+    resolving.
+
+- **A generated constructor example is Python, not C (gh-1043).** Every
+    unsigned-integer state field put the C literal `0U` into the example in
+    both faces — the `.pyi` and the runtime docstring. `0U` is a
+    `SyntaxError`, and for a downstream running
+    `pytest --doctest-glob='*.pyi'` it is a hard collection error rather than
+    a failed comparison.
+
+    "C default literal → Python literal" existed three times over.
+    `_app._py_default` stripped the suffix and was right; the two stub
+    generators returned the integer literal unchanged. That is now one
+    implementation in `_types.strip_c_literal_suffix` with three callers, and
+    it declines to touch a literal that is not numeric — so an enum-constant
+    default no longer risks having a trailing `L` eaten as a suffix.
+
+    The gate that should have caught it asserted the doctest was *shaped*
+    like a doctest and never that it was executable, so it was green on a
+    line Python cannot compile. It now compiles every example, over a fixture
+    carrying every scalar state type and over BOTH object shapes — a
+    standalone object and a module-aggregated one go through different `.pyi`
+    generators, and a gate covering one passes with the other still broken.
+
 ## [0.63.2] — 2026-08-20
 
 ### Fixed

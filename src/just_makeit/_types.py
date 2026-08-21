@@ -230,6 +230,43 @@ _RETURN_TYPE_HINTS: dict[str, tuple[str, str]] = {
 }
 
 
+#: A C numeric literal and its type suffix, split. Anchored at both ends and
+#: requiring the value to be numeric, so an identifier default (an enum
+#: constant such as ``DP_MODE_NORMAL``) does not match and cannot have its
+#: trailing ``L`` eaten as a suffix.
+_C_NUMERIC_LITERAL = _re.compile(
+    r"""^\s*
+        (?P<value>
+            [+-]?
+            (?: 0[xX][0-9a-fA-F]+
+              | (?: \d+\.?\d* | \.\d+ ) (?: [eE][+-]?\d+ )?
+            )
+        )
+        (?P<suffix>[uUlLfF]*)
+        \s*$""",
+    _re.VERBOSE,
+)
+
+
+def strip_c_literal_suffix(default: str) -> str:
+    """A C numeric literal's Python spelling: the value without its suffix.
+
+    ``"0U"`` -> ``"0"``, ``"5ULL"`` -> ``"5"``, ``"1.5f"`` -> ``"1.5"``.
+    Anything that is not a numeric literal is returned untouched, so an
+    identifier default keeps every character of its name.
+
+    gh-1043: this existed three times over — `_app._py_default` got it right
+    while `_context/_types._py_default` and `_stubs._py_default_stub` returned
+    the C literal unchanged for the integer bucket, so every unsigned state
+    field put the C literal ``0U`` into the generated constructor example in
+    both the `.pyi` and the runtime docstring. ``0U`` is not Python, and the
+    `.pyi` copy is a hard *collection* error for a downstream running
+    ``pytest --doctest-glob='*.pyi'``. One implementation, three callers.
+    """
+    m = _C_NUMERIC_LITERAL.match(default)
+    return m.group("value") if m else default.strip()
+
+
 def c_param_parts(params) -> list[str]:
     """Expand a method/function param list into C parameter declarations.
 

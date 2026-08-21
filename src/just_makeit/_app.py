@@ -87,13 +87,14 @@ _C_PARSE = {
 
 
 def _py_default(c_default: str) -> str:
-    """Strip C suffixes from a default literal to get a Python literal."""
-    s = c_default.strip()
-    for suffix in ("ull", "ul", "ll", "u", "l", "f"):
-        if s.lower().endswith(suffix):
-            s = s[: -len(suffix)]
-            break
-    return s
+    """Strip C suffixes from a default literal to get a Python literal.
+
+    gh-1043: delegates to the one implementation in `_types`. This copy was
+    the CORRECT one of three and the other two shipped `0U` into generated
+    Python for months, so it is the copy that moved rather than the answer
+    that changed.
+    """
+    return T.strip_c_literal_suffix(c_default)
 
 
 def _np_dtype(ctype: str) -> str:
