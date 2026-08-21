@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`no_ctor` now reaches the binding as well as the header (gh-1066).**
+    `no_ctor = true` narrows `create()`. It reached the sacred header and not
+    the CPython binding compiled against it, so a project using it did not
+    build — and `jm status --check` reported `OK — up to date`, honestly:
+    it compares each file against its own re-render, and both were
+    self-consistently wrong. A gate that compares a generator against itself
+    cannot see a generator that is wrong.
+
+    Two defects compounded. `_init`'s save — the standalone-object path —
+    passed `controllable_names_` and stopped one line short of
+    `opaque_fields_` and `no_ctor_names_`, so both were rendered from and then
+    never written to the manifest; everything that rebuilds from the manifest,
+    `jm apply`'s replay above all, rebuilt without them. And
+    `_glue.component_ctx` did not forward `no_ctor_names`, `opaque_fields`,
+    `opaque_state`, `create_fn` or `init_post_parse_impl` to
+    `make_state_ctx`, so every command that re-renders glue without re-running
+    the object scaffold — `jm error`, `jm warning`, `jm property`, `jm view` —
+    dropped them. That second one is why a plain scaffold-edit-apply looked
+    correct and the bug needed a *second* declaration to appear at all.
+
+    The gate asserts the property rather than a literal: the arity of the
+    `create()` call in the binding must equal the arity of the prototype in
+    the header. A check written against "expect one argument" would pass just
+    as happily on a header that was also wrong.
+
 ### Added
 
 - **A `record_shapes` example — the three results `result_fields` can

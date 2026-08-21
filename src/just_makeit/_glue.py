@@ -91,6 +91,28 @@ def component_ctx(
             array_args=C.array_args(cfg, object_name),
             no_state=C.is_no_state(cfg, object_name),
             init_params=C.init_params(cfg, object_name),
+            # gh-1066: everything below reaches the SACRED HEADER through
+            # `_object.run` and reached this render through nothing, so a
+            # re-render dropped it. The header kept `create(a)` while the
+            # binding it is compiled against went back to `create(a, derived)`
+            # -- two files jm owns, disagreeing, and `jm status --check`
+            # reporting `OK` because each matches its own re-render.
+            #
+            # Only reachable via a command that re-renders glue without
+            # re-running the object scaffold: `jm error`, `jm warning`,
+            # `jm property`, `jm view`. That is why a plain
+            # scaffold-then-edit-then-apply looked fine and the bug needed a
+            # second declaration to show up.
+            #
+            # Kept as an explicit list rather than a **kwargs splat so that a
+            # key added to `make_state_ctx` fails loudly here instead of
+            # silently defaulting -- which is the failure this comment is
+            # about.
+            init_post_parse_impl=C.init_post_parse(cfg, object_name),
+            opaque_fields=C.opaque_fields(cfg, object_name),
+            opaque_state=C.is_opaque_state(cfg, object_name),
+            no_ctor_names=C.no_ctor_names(cfg, object_name),
+            create_fn=C.object_create_fn(cfg, object_name),
             # gh-542: the glue render is exactly the pass that used to
             # silently reinstate a hand-removed reset() binding.
             no_reset=C.is_no_reset(cfg, object_name),

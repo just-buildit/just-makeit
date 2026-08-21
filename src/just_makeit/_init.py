@@ -1260,6 +1260,21 @@ def run(
         class_name_=class_name,
         create_fn_=create_fn,
         depends_on_=list(depends_on),
+        # gh-1066: both of these were RENDERED from (see the make_state_ctx
+        # call above) and then not persisted, so a standalone object's
+        # `no_ctor` / `opaque` existed in the generated C and nowhere in the
+        # manifest. Everything downstream that rebuilds from the manifest --
+        # `jm apply`'s replay above all -- therefore rebuilt the object
+        # WITHOUT them, and the sacred header (rendered once, from the
+        # arguments) kept the narrowed `create()` while the regenerated
+        # binding went back to the full one. Two files jm owns, disagreeing,
+        # on a project that then does not compile.
+        #
+        # The peer save in `_object.py` passes both. This one passed
+        # `controllable_names_` and stopped one line short of the other two,
+        # which is why `controllable` survived a round-trip and these did not.
+        opaque_fields_=list(opaque_fields),
+        no_ctor_names_=no_ctor_names,
         controllable_names_=controllable_names,
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
