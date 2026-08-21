@@ -755,6 +755,79 @@ Fixed-size array constructor arguments added with `--array-arg`.
 | `name` | string | Argument name                                                                                                                                                 |
 | `type` | string | Stored as NumPy dtype name (`float32`, `float64`, `complex64`, …); C types (`float`, `double`, `float _Complex`, …) are also accepted on input and normalised |
 
+### `[[group]]` and `[[<object>.init_groups]]`
+
+A **field group** is a repeat declared once and instantiated under a prefix
+(gh-999). jm's type vocabulary has no struct in either direction, so a C
+descriptor built from N copies of the same small field set had to be flattened
+into one long name-prefixed constructor list — written out once per repeat,
+with every `default`, `doc` and `enum` binding duplicated N times and free to
+drift, since jm saw N unrelated params.
+
+```toml
+[[group]]
+name = "wfm_seq"
+
+[[group.fields]]
+name    = "kind"
+type    = "int"
+enum    = "wfm_seq_kind"
+default = "literal"
+doc     = "Which sequence family this leg uses."
+
+[[group.fields]]
+name = "len"
+type = "size_t"
+```
+
+```toml
+[[frame.init_groups]]
+group  = "wfm_seq"
+prefix = "preamble"      # -> preamble_kind, preamble_len
+
+[[frame.init_groups]]
+group  = "wfm_seq"
+prefix = "sync"          # -> sync_kind, sync_len
+```
+
+| Key      | Table                   | Notes                                                                                                                                                              |
+| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`   | `[[group]]`             | The group's name, referenced by `init_groups.group`.                                                                                                               |
+| `fields` | `[[group]]`             | `[[group.fields]]` entries. Every key an `init_params` entry accepts is accepted here — `type`, `default`, `doc`, `enum`, `required`, the array and capsule forms. |
+| `group`  | `[[<obj>.init_groups]]` | Which group to instantiate.                                                                                                                                        |
+| `prefix` | `[[<obj>.init_groups]]` | Prepended as `<prefix>_<field>`. Omit it to use the bare field names.                                                                                              |
+
+**This is not jm learning structs**, and the expansion is *exactly* the
+hand-written list. The C prototype, the kwlist, the `.pyi` and the docstrings
+are byte-identical to writing the params out yourself — which is the point: it
+declares the repeat, it does not add a type.
+
+**`[[group]]` is a top-level SSOT table**, like `[[enum]]`. A group is
+referenced by name from component tables in any fragment, so it lives in
+`just-makeit.toml` rather than in one of them.
+
+**The declaration is what round-trips.** The expansion happens when the
+manifest is read and is folded back when it is written, so `jm apply`,
+`jm property` and every other mutating command leave the two `init_groups` rows
+in place and never write the expanded params out beside them.
+
+Groups instantiate **after** the object's explicit `init_params`, which is the
+order the manifest reads in — so a hand-written param and a grouped one coexist
+predictably:
+
+```toml
+[[frame.init_params]]
+name = "crc"
+type = "int"
+# -> crc, preamble_kind, preamble_len, sync_kind, sync_len
+```
+
+A row naming a group that does not exist is left alone rather than raised on:
+`jm` reports the unrecognised declaration the way it reports any other typo,
+instead of turning it into a traceback out of every command at once.
+
+______________________________________________________________________
+
 ### `[[<object>.init_params]]`
 
 Constructor-only parameters added with `--init-param` (no getter/setter, no
