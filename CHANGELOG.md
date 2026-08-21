@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.63.3] — 2026-08-21
+
 ### Fixed
 
 - **A module's generated C test compiles and links again (gh-1060, gh-1061).**
