@@ -119,35 +119,100 @@ def declared_in_cmake(root: Path) -> frozenset[str]:
     return frozenset(_ADD_EXECUTABLE_RE.findall(text))
 
 
-def from_manifest(cfg: dict) -> frozenset[str]:
-    """Target names jm itself will emit for *cfg*.
+def object_pair_names(objects: "list[str]") -> frozenset[str]:
+    """The ``test_``/``bench_<obj>_core`` pair each of *objects* emits.
 
-    Every module ext target (its cname) and, when the module declares free
-    functions, the gh-1034 ``test_``/``bench_<cname>_core`` pair; every
-    component's Python ext target, its ``<comp>_core`` OBJECT lib and the
-    ``test_``/``bench_<comp>_core`` pair beside it; and the top-level
-    ``<pkg>_lib`` / ``<pkg>_lib_static`` aggregates (gh-184).
+    gh-1055. An object carries this pair wherever it lives, and a **collocated
+    module-object** — a module whose ``objects`` list contains its own name —
+    writes it into the very same ``CMakeLists.txt`` the module writes to. So
+    gh-1034's module pair, named for the same string, is a second
+    ``add_executable`` with one name in one file, and ``cmake`` refuses to
+    configure at all. (It breaks ``add_test`` the same way, one line further
+    down.)
 
-    ``bench_<comp>_core`` was absent from this list while jm emitted it, which
-    is the reason the list now lives beside the CMake scan rather than apart
-    from it: a hand-maintained roster of what jm generates goes out of date
-    silently, and the only symptom is a collision nobody predicted.
+    Examples
+    --------
+    >>> sorted(object_pair_names(["agc"]))
+    ['bench_agc_core', 'test_agc_core']
+    >>> sorted(object_pair_names([]))
+    []
+    """
+    return frozenset(
+        n for obj in objects for n in (f"test_{obj}_core", f"bench_{obj}_core")
+    )
+
+
+def emitted(cfg: dict) -> list[str]:
+    """Every target name jm emits for *cfg*, **once per emission**.
+
+    gh-1057. This used to accumulate straight into a ``set``, which made a name
+    produced twice indistinguishable from one produced once — so jm had no way
+    to notice it had collided with itself, by construction. gh-1046 gave it a
+    way to avoid colliding with the *project*; this is the other half.
+
+    A list is the whole fix: :func:`from_manifest` collapses it for the callers
+    that want a membership test, and :func:`collisions` counts it for the gate.
+
+    Two emissions that were being over-counted, and are genuinely one target:
+
+    - a **module object has no ext target of its own** — it shares the module's
+      ``.so``, so only the module emits ``Python3_add_library``;
+    - a module's ``test_``/``bench_`` pair is not emitted when a same-named
+      object already brings it (:func:`object_pair_names`).
+
+    Both were mine, and reading them as duplicates would make the gate below
+    fire on five correct projects.
     """
     pkg = C.project_name(cfg).replace("-", "_")
-    reserved = {f"{pkg}_lib", f"{pkg}_lib_static"}
+    names = [f"{pkg}_lib", f"{pkg}_lib_static"]
+    module_objects: set[str] = set()
     for mod in C.modules(cfg):
         cname = C.module_paths(mod).cname
-        reserved.add(cname)
-        if C.module_functions(cfg, mod):
-            reserved |= {f"test_{cname}_core", f"bench_{cname}_core"}
+        objs = C.module_objects(cfg, mod)
+        module_objects |= set(objs)
+        names.append(cname)
+        # gh-1055: skipped when a same-named object already emits the pair.
+        if C.module_functions(cfg, mod) and cname not in objs:
+            names += [f"test_{cname}_core", f"bench_{cname}_core"]
     for comp in C.components(cfg):
-        reserved |= {
-            comp,
+        names += [
             f"{comp}_core",
             f"test_{comp}_core",
             f"bench_{comp}_core",
-        }
-    return frozenset(reserved)
+        ]
+        # Only a STANDALONE component has its own extension target.
+        if comp not in module_objects:
+            names.append(comp)
+    return names
+
+
+def collisions(cfg: dict) -> "dict[str, int]":
+    """Target names jm emits more than once, and how often.
+
+    Empty is the invariant: jm emits each name exactly once. A non-empty
+    result is a build that will not configure — ``cmake`` rejects a repeated
+    ``add_executable``/``add_library`` outright rather than shadowing it.
+
+    Examples
+    --------
+    >>> collisions({"project": {"name": "d"}, "module": {"m": {"objects": []}}})
+    {}
+    """
+    counts: "dict[str, int]" = {}
+    for name in emitted(cfg):
+        counts[name] = counts.get(name, 0) + 1
+    return {n: c for n, c in counts.items() if c > 1}
+
+
+def from_manifest(cfg: dict) -> frozenset[str]:
+    """Target names jm itself will emit for *cfg*.
+
+    The membership view of :func:`emitted`. Callers choosing a fresh name want
+    this; a caller asking whether jm collided with itself wants
+    :func:`collisions`, because a set cannot answer that — collapsing
+    duplicates is what a set is for.
+    """
+    return frozenset(emitted(cfg))
 
 
 def claimed(cfg: dict, root: Path | None = None) -> frozenset[str]:

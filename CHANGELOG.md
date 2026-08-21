@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **jm no longer emits one CMake target name twice, and can now notice if it
+    does (gh-1055, gh-1057).** gh-1034 gives a module with free functions a
+    `test_`/`bench_<cname>_core` pair. For a **collocated module-object** — a
+    module whose `objects` list contains its own name — the object already
+    emits `test_<obj>_core` into the very same `CMakeLists.txt`, so the
+    module's identically-named pair was a second `add_executable` with one
+    name in one file. `cmake` refuses to configure at all, and it broke
+    `add_test` one line further down too. doppler could not build on 0.63.0.
+
+    gh-1046 gave jm a way to avoid colliding with the **project**; nothing gave
+    it a way to avoid colliding with **itself**, and the data structure made
+    that undetectable by construction. `_targets.from_manifest()` accumulated
+    into a `set`, so a name produced twice was indistinguishable from one
+    produced once — collapsing duplicates is what a set is for. Measured on
+    doppler at filing: a set of 356 against 365 names emitted, **9 produced
+    twice, and the set reported zero**.
+
+    The enumeration is now a list (`_targets.emitted`), with `from_manifest`
+    the membership view over it and `collisions()` the counting view. Two of
+    the nine were also an over-count rather than a defect, and both were
+    mine: a module object has **no extension target of its own** (it shares
+    the module's `.so`), and a module's pair is not emitted when a same-named
+    object already brings it. Reading those as duplicates would have made the
+    gate fire on five correct projects.
+
+    The gate asserts the invariant rather than the instance — **jm emits each
+    target name exactly once** — and the stand-down note stays scoped to the
+    *project's* claims, since jm declining to collide with itself is not news
+    to the author and would fire on every collocated module-object.
+
 ## [0.63.1] — 2026-08-20
 
 ### Fixed
