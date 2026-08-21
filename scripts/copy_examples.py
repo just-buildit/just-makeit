@@ -61,6 +61,7 @@ GALLERY = {
     "full_workflow": "Full workflow",
     "composites": "Composites",
     "views_module": "Views",
+    "record_shapes": "Record shapes",
     "kitchen_sink": "Kitchen sink",
 }
 

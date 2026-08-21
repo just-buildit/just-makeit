@@ -83,6 +83,7 @@ nav:
     - Full workflow: examples/full_workflow.md
     - Composites: examples/composites.md
     - Views: examples/views_module.md
+    - Record shapes: examples/record_shapes.md
     - Kitchen sink: examples/kitchen_sink.md
   - For Developers:
     - Start Here: developers/START_HERE.md

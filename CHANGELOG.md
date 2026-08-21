@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A `record_shapes` example — the three results `result_fields` can
+    produce, on one object (gh-646, gh-788).** `single` returns ONE record as
+    a named `PyStructSequence`; `record_dtype` returns an ARRAY of records as
+    a structured `ndarray`; declaring neither returns a `list[tuple]`. All
+    three carry `result_fields` and all three name a struct of the author's as
+    the return type, so seeing them side by side is the only way the key is
+    legible as the variable.
+
+    It fills a measured hole rather than a guessed one. Running all 23
+    existing examples and reading the manifests they actually produce shows
+    **not one** of `single`, `record_dtype`, `record_name`, `record_doc`,
+    `record_module`, `result_fields`, `max_results`, `none_on_empty`,
+    `out_divisor`, `exact_max_out`, `max_out` or `pass_capacity` appearing in
+    any of them — the whole family was undemonstrated.
+
+    The example COMPILES what it declares, which is how writing it turned up
+    gh-1064: three separate ways a record method jm accepts silently generates
+    C that cannot build.
+
 ## [0.63.3] — 2026-08-21
 
 ### Fixed
