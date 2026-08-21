@@ -384,6 +384,13 @@ CLEAN_PATHS = dist/ site/ .pytest_cache/
 define CLEAN_CMD
 find src -name "*.pyc" -delete
 find src -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; true
+# gh-1027: and then the shells those leave behind. Cutting an example removes
+# every tracked file, but a previous `jm example <name>` run leaves a
+# gitignored __pycache__, so the parent survives holding only that. The line
+# above empties it; without this one it stays, and `clean` -- the documented
+# remedy -- leaves the tree in the state that was already reported as broken.
+# Runs AFTER the __pycache__ sweep, which is what makes them empty.
+find src/just_makeit/examples -mindepth 1 -maxdepth 1 -type d -empty -delete
 $(MAKE) -s examples-clean
 endef
 
