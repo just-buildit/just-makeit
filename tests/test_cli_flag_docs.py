@@ -67,7 +67,7 @@ _FLAG_LITERAL = re.compile(r'"(--[a-z0-9][a-z0-9-]*)"')
 #: measurement. A RATCHET: lower it when you document one, never raise it.
 #: The burn-down is gh-1015; see the module docstring for why it is tracked
 #: there rather than fixed here.
-HELP_GAP_RATCHET = 17
+HELP_GAP_RATCHET = 16
 
 
 def _parsed_flags():

@@ -2,7 +2,46 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`count_name` — the synthesized count kwarg gets a name, not just a
+    default (gh-1074).** A `variable_output` method with `arg_type = "void"`
+    and no params is the *generator* shape, so jm synthesizes a leading count
+    argument. `count_default` (gh-1051) made its **value** settable; its
+    **name** was hard-coded `"count"` in seven places.
+
+    That is sharper than a preference, because jm's own `_max_out_count_param`
+    (gh-607) derives the paired `<m>_max_out(self, n)` from the C signature,
+    explicitly "rather than inventing a fourth name for the same concept" — so
+    the two halves of one generated pair disagreed with each other:
+    `ptr(count=…)` beside `ptr_max_out(n=…)`, for the same number. doppler
+    hand-renamed the kwlist for years, leaving the binding accepting `n=`
+    under a stub publishing `count=`.
+
+    `--count-name NAME` (manifest `count_name`) defaults to `count`, so
+    nothing moves for an existing project. It reaches the binding's `_kwlist`,
+    both `.pyi` generators, the runtime docstring and its worked call example
+    — through one accessor, `_gluedoc.count_kwarg_name`, because that pair of
+    stub generators has now been caught disagreeing about jm's own binding
+    arguments twice (gh-1042, gh-1051). Names that cannot be a keyword
+    argument are refused at declaration, `out` among them: it is the other
+    slot in the same `_kwlist`.
+
+    Declaring the count as a real `param` was the apparent workaround and is
+    not one — it leaves the generator shape, and the `out=` buffer and the
+    default go with it. Asserted, so the argument for the key stays checkable.
+
 ### Fixed
+
+- **`jm script` now replays `--manual-stub`, `--nogil` and
+    `--py-return-type`.** Found by the enumerator gate added with gh-1074
+    rather than by a report: three flags `jm method` accepts that `jm script`
+    never emitted, so a replayed script rebuilt a method without the
+    hand-written stub, without the GIL release, and with jm's derived Python
+    return type instead of the declared one. The gh-490 silent-divergence
+    trap, three more times. The gate now measures **every** manifest key
+    against what each enumerator names, so the next one cannot wait to be
+    noticed.
 
 - **A zero-parameter function that generates parameters no longer emits
     `(void, ...)` (gh-1072).** `void` as a parameter list means "takes

@@ -44,6 +44,8 @@ appended, ready for you to implement.
 | `--varargs`                   | Generate a `*args/**kwargs` Python binding. See below. Mutually exclusive with `--arg-type`, `--param`, and `--variable-output`.                                                                                                                                                                                                                                                                                                                              |
 | `--pass-capacity`             | Emit the 5-arg `(…, out, size_t max_out)` C form for a `--variable-output` method (a bounds-checking C API receives the buffer capacity).                                                                                                                                                                                                                                                                                                                     |
 | `--nogil`                     | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                                                                                                                                              |
+| `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                     |
+| `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                            |
 | `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet. |
 | `--single`                    | With `--result-field`, return **one** named record (a `PyStructSequence`: attribute access + unpacking) instead of a `list[tuple]`. The C kernel returns the `--return-type` record struct by value (gh-244).                                                                                                                                                                                                                                                 |
 | `--record-name NAME`          | With `--single`, the public name of the record type (e.g. `ToneMetrics`), overriding the name derived from the C `--return-type` (gh-257). Also settable per method in the manifest as `record_name = "…"`.                                                                                                                                                                                                                                                   |
@@ -289,6 +291,50 @@ must know the capacity it was actually given, add `pass_capacity = true` —
 which also lets the binding size the allocation from `max_out()` alone, but
 only once `max_out()` takes the count and can answer for *this* call. See
 [Array memory ownership](../memory-ownership.md) for the exact rule.
+
+#### Naming the synthesized count
+
+A `--variable-output` method with `--arg-type void` and **no** `--param` is the
+*generator* shape: there is no input to size the output from, so jm synthesizes
+a leading count argument. Its default value is `--count-default`; its name is
+`--count-name`, and defaults to `count`.
+
+```sh
+just-makeit method delay ptr \
+    --arg-type void --return-type "double _Complex" \
+    --variable-output --count-default "state->n" --count-name n
+```
+
+```python
+delay.ptr(n=64)             # was `count=64`
+delay.ptr_max_out(n=64)     # jm already derived this name from your C
+```
+
+Say it when your C API calls the quantity something else. The paired
+`<comp>_<name>_max_out()` already takes its parameter name **from the C
+signature** — deliberately, "rather than inventing a fourth name for the same
+concept" (gh-607) — so leaving the method's own kwarg hard-coded put the two
+halves of one generated pair at odds: `ptr(count=…)` beside `ptr_max_out(n=…)`,
+for the same number (gh-1074).
+
+**Declaring the count as a real `--param` is not the same thing**, even though
+it produces a byte-identical C prototype. It leaves the generator shape, and
+with it goes the `out=` buffer and the default:
+
+|                | synthesized count      | declared `--param`        |
+| -------------- | ---------------------- | ------------------------- |
+| name settable  | `--count-name`         | yes, it is the param name |
+| `out=` offered | yes                    | **no**                    |
+| default        | yes, `--count-default` | **no**                    |
+
+The name reaches the binding's `_kwlist`, both `.pyi` generators, the runtime
+docstring and its worked call example — one accessor, so a project cannot end
+up with a stub advertising one name and a binding parsing another.
+
+Two names are refused: anything that is not a Python identifier, and `out` —
+which is the other slot in the same `_kwlist`.
+
+______________________________________________________________________
 
 **Accumulating results is safe.** Every call returns an independent
 NumPy-owned array, so holding them in a list, concatenating them, or passing

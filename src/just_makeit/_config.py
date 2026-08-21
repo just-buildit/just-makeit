@@ -4244,6 +4244,7 @@ _KNOWN_METHOD_KEYS = frozenset(
         "pass_capacity",
         "exact_max_out",
         "count_default",
+        "count_name",
         "nogil",
         "none_on_empty",
         "batch",
@@ -4617,6 +4618,8 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         lines.append("exact_max_out = true")
     if m.get("count_default"):
         lines.append(_str_assign("count_default", m["count_default"]))
+    if m.get("count_name"):
+        lines.append(_str_assign("count_name", m["count_name"]))
     if m.get("nogil"):
         lines.append("nogil = true")
     if m.get("none_on_empty"):

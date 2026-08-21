@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import keyword
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ def run(args: list[str]) -> None:
     pass_capacity = False
     exact_max_out = False
     count_default = ""
+    count_name = ""
     nogil = False
     varargs = False
     manual_stub = False
@@ -100,6 +102,37 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             count_default = remaining[i]
+            i += 1
+        elif tok == "--count-name":
+            # gh-1074: what that synthesized kwarg is CALLED. `count_default`
+            # made its value settable; a project whose C API names the
+            # quantity something else had no way to say so, while jm's own
+            # `<m>_max_out(self, n)` derives its name from the C signature —
+            # so the pair jm generates disagreed with itself.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --count-name requires a name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            count_name = remaining[i]
+            if not count_name.isidentifier() or keyword.iskeyword(count_name):
+                print(
+                    f"error: --count-name {count_name!r} is not a usable "
+                    "Python parameter name.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if count_name == "out":
+                # The binding parses `{<count>, "out", NULL}`; two slots of
+                # one name is a kwlist that cannot be satisfied.
+                print(
+                    "error: --count-name out collides with the generated "
+                    "out= buffer.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             i += 1
         elif tok == "--nogil":
             nogil = True
@@ -544,6 +577,7 @@ def run(args: list[str]) -> None:
         pass_capacity=pass_capacity,
         exact_max_out=exact_max_out,
         count_default=count_default,
+        count_name=count_name,
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,

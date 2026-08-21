@@ -1898,6 +1898,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # type-check while `obj.run(out=...)` passed. `count` precedes `out`
         # to match the kwlist order.
         _stub_count_arg = m_var and m_arg == "void" and not m_params
+        # gh-1074: and what it is CALLED, from the same accessor the binding
+        # and the standalone stub use. This file is the module-aggregated
+        # `.pyi`; the pair have already been found disagreeing about jm's own
+        # binding arguments twice (gh-1042, gh-1051), so the name gets the
+        # same treatment as the default did rather than a third local copy.
+        _count_kw = _gluedoc.count_kwarg_name(m.get("count_name", ""))
         if _stub_count_arg:
             # gh-1051: `1` was hard-coded here while the comment above
             # described `count_default` and the standalone generator honoured
@@ -1905,7 +1911,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # depending on which .pyi writer produced the file, and the wrong
             # one was a length the kernel refuses.
             param_parts.append(
-                f"count: int = "
+                f"{_count_kw}: int = "
                 f"{_gluedoc.count_stub_default(m.get('count_default', ''))}"
             )
         if _stub_enable_out:
@@ -1942,7 +1948,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # filters the header's `@param` entries, so a name missing from it has
         # its authored description silently discarded.
         if _stub_count_arg:
-            _py_params.append(("count", "int"))
+            _py_params.append((_count_kw, "int"))
         if _stub_enable_out:
             _py_params.append(("out", f"{ret_ann} | None"))
         _doc = _method_doc_lines(
@@ -1952,7 +1958,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ret_ann,
             override=m.get("doc", ""),
             raises=_raises_doc(m),
-            param_defaults=_gluedoc.binding_param_docs(),
+            param_defaults=_gluedoc.binding_param_docs(_count_kw),
         )
         header = (
             f"    def {m_name}(self, {sig}) -> {ret_ann}:"
