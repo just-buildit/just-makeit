@@ -22,17 +22,19 @@ Two properties, at two different layers:
     to use a flag is not a description of it, and it would let the gate pass on
     a flag whose only appearance is inside somebody's sample command line.
 
-`test_help_coverage_does_not_regress`
-    `jm --help` is documentation too, and it is the copy a user reads first.
-    17 parsed flags are absent from it as of 0.62.0 — a real backlog, tracked
-    in gh-1015 rather than fixed here, so the number is a **ratchet that may
-    only shrink**. Fixing a flag's help text lowers it; adding a flag without
-    help text cannot raise it.
+`test_every_parsed_flag_is_in_jm_help`
+    `jm --help` is documentation too, and it is the copy a user reads first —
+    at the terminal, without a browser. Also strict, as of gh-1015.
 
-    That backlog is a recurrence, which is why it is a ratchet and not a note:
-    gh-496 was this exact class on `jm app`, fixed as four hand-added flags in
-    0.30.2 with nothing left behind to check the parsers against the help
-    block. Thirteen more arrived the same way.
+    It was not always. 17 parsed flags were absent from it at 0.62.0 while the
+    reference docs stood at zero, so this started as a **ratchet** at 17 —
+    the right shape for a real backlog, and the wrong shape for an invariant,
+    since "no worse than yesterday" is precisely the reading that let the
+    class recur. gh-496 was this same class on `jm app`, fixed as four
+    hand-added flags in 0.30.2 with nothing left behind to check the parsers
+    against the help block; thirteen more arrived the same way, silently, one
+    feature at a time. gh-1015 burned the 17 down to zero, so there is no
+    backlog left for a ratchet to hold and both checks now say the same thing.
 
 **Why the extraction is a scan for string literals rather than an import.**
 `docs-check` runs this suite under `uv run --no-project`, so `just_makeit` is
@@ -63,11 +65,15 @@ DOCS = ROOT / "docs"
 #: ("error: --error requires an exception name"), which is not a parse site.
 _FLAG_LITERAL = re.compile(r'"(--[a-z0-9][a-z0-9-]*)"')
 
-#: Flags absent from `jm --help` on 2026-08-17, counted by this file's own
-#: measurement. A RATCHET: lower it when you document one, never raise it.
-#: The burn-down is gh-1015; see the module docstring for why it is tracked
-#: there rather than fixed here.
-HELP_GAP_RATCHET = 16
+#: gh-1015: the burn-down reached ZERO, so the ratchet is gone.
+#:
+#: It was 17, then 16 while gh-1074 documented `--count-default` on its way
+#: past. A ratchet is the right shape for a backlog and the wrong shape for
+#: an invariant — it says "no worse than yesterday", which is exactly the
+#: reading that let this recur at four times its original size after gh-496
+#: fixed the four instances and not the mechanism. There is nothing left to
+#: burn down, so the check below is zero-tolerance, like its sibling over the
+#: reference docs.
 
 
 def _parsed_flags():
@@ -149,24 +155,26 @@ def test_every_parsed_flag_is_documented():
     )
 
 
-def test_help_coverage_does_not_regress():
-    """`jm --help` must not omit more flags than it already does.
+def test_every_parsed_flag_is_in_jm_help():
+    """No flag the CLI accepts may be absent from `jm --help`.
 
-    The ratchet is the whole mechanism: it lets a known backlog stay known
-    without letting it grow. A new flag whose help line was forgotten pushes
-    the count past `HELP_GAP_RATCHET` and fails here.
+    Zero-tolerance, because it reached zero (gh-1015). The reference docs had
+    already been swept to zero; this is the copy a user reads **first**, at
+    the terminal, without a browser — and it stood at 17 while the docs stood
+    at 0, which is the gap this closes.
+
+    gh-496 fixed four such flags by hand and left nothing checking the
+    parsers against the help block, so the next thirteen arrived the same way:
+    silently, one feature at a time. Derived from the parsers rather than
+    listed, so a new flag is under this gate with nothing to register.
     """
     help_text = _help_text()
     missing = sorted(f for f in _parsed_flags() if f not in help_text)
-    assert len(missing) <= HELP_GAP_RATCHET, (
-        f"{len(missing)} flags are absent from `jm --help`, over the "
-        f"{HELP_GAP_RATCHET} already known: {', '.join(missing)}.\n"
-        "Add the flag to the help block in src/just_makeit/_cli.py."
+    assert not missing, (
+        f"these flags are parsed by the CLI but absent from `jm --help`: "
+        f"{', '.join(missing)}.\n"
+        "Add a line for each to the help block in src/just_makeit/_cli.py. "
+        "The reference docs are not a substitute: `jm --help` is what a user "
+        "reads at the terminal, and gh-1015 is what happens when only one of "
+        "the two is kept honest."
     )
-    if len(missing) < HELP_GAP_RATCHET:
-        raise AssertionError(
-            f"good news, and the ratchet has to follow: only {len(missing)} "
-            f"flags are now missing from `jm --help`, not "
-            f"{HELP_GAP_RATCHET}. Lower HELP_GAP_RATCHET in this file to "
-            f"{len(missing)} so the improvement cannot be undone."
-        )

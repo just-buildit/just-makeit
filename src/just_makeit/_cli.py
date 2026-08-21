@@ -87,6 +87,20 @@ Commands:
                                       object exposing it as ._capsule; always required; the
                                       object keeps the owner alive so the pointer cannot
                                       dangle. ctype is your C spelling, not a jm type.
+    --array-arg name:dtype      Fixed-size array constructor argument; repeatable.
+                                dtype is a NumPy name (float32, complex64, …);
+                                C spellings are accepted and normalised.
+    --method-name NAME          Name of the generated --variable-output method
+                                (default: run).
+    --streamable                Generate stream(block, *, count, on_block) and
+                                __iter__, so callers write
+                                `for blk in obj.stream(4096)` instead of a
+                                hand-rolled drain loop.
+    --stream-block N            Default block size for __iter__ and stream().
+                                Implies --streamable.
+    --async-stream              Also generate __aiter__/__anext__ so
+                                `async for blk in obj` works alongside the sync
+                                forms. Implies --streamable.
     --class-name NAME           Override Python class name (e.g. NCO instead of Nco).
     --create-fn fn              C constructor tp_init calls (default <name>_create);
                                 same arg list, different name (e.g. acq_create_continuous).
@@ -138,6 +152,26 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --varargs                   Generate a *args/**kwargs binding. Mutually
+                                exclusive with --arg-type, --param and
+                                --variable-output.
+    --extra-arg name:type       Synonym for --param; repeatable.
+    --manual-stub               This method's binding is hand-written in a sacred
+                                _ext_<obj>_extra.c fragment. jm declares nothing
+                                for it and preserves its .pyi placeholder verbatim.
+    --status-return             The int return carries ONLY status (0 = ok): the
+                                binding raises on non-zero and the method returns
+                                None. Mutually exclusive with --error-negative.
+    --py-return-type STR        Override the .pyi return annotation; --return-type
+                                still drives the C signature.
+    --single                    With --result-field, return ONE named record (a
+                                PyStructSequence) instead of a list[tuple]. The C
+                                kernel returns the --return-type struct by value.
+    --record-name NAME          With --single, the record type's public name,
+                                overriding the one derived from --return-type.
+    --record-module MOD         With --single, the record type's __module__, so
+                                repr() matches the project's import path.
+    --record-doc "text"         With --single, the record type's own docstring.
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
@@ -225,6 +259,13 @@ Commands:
     --return-type TYPE          Return type (default: void).
     --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
                                 param's length, or the first integer scalar param.
+    --out-size EXPR             Length of that output, as a verbatim C expression
+                                over the function's own arguments — each array
+                                param's generated <name>_len included
+                                (e.g. "x_len * factor").
+    --check-return              Treat a non-zero int return as failure: raise
+                                RuntimeError(rc), return None on success.
+                                Requires an integer --return-type.
     --result-field name:type    Append a field to a returned record list; repeatable.
     --doc "text"                Docstring shown in Python help().
     --inline                    Emit static inline body in _core.h (no _core.c entry).
