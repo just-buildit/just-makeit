@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Declarable field groups: `[[group]]` + `[[<obj>.init_groups]]` (gh-999).**
+    jm's type vocabulary has no struct in either direction, so a C descriptor
+    built from N repeats of one small field set had to be flattened into a long
+    name-prefixed constructor list, written out once per repeat. doppler's
+    `wfm_frame_t` is three instances of one 11-field group: ~34 hand-written
+    `init_params`, every `default`, `doc` and `enum` binding written three
+    times — and the three copies free to drift, because jm saw three unrelated
+    params.
+
+    A group is now declared once and instantiated under a prefix. **This is not
+    jm learning structs**: the expansion is *exactly* the hand-written list, so
+    the C prototype, the kwlist, the `.pyi` and the docstrings are identical to
+    writing the params out yourself.
+
+    The expansion runs in `_config.load` — the one place every reader passes
+    through — rather than behind an accessor, because ten sites read
+    `init_params` straight off the merged config and an expansion behind one of
+    them would reach some and miss the rest. `save` folds it back, so the
+    **declaration** round-trips and no mutating command writes the expansion
+    out beside the group rows.
+
 ### Changed
 
 - **One emitter for the enum-index C, and every refusal names the choices
