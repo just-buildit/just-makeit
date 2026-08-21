@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.63.2] — 2026-08-20
+
 ### Fixed
 
 - **jm no longer emits one CMake target name twice, and can now notice if it
