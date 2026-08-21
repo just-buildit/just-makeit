@@ -1870,6 +1870,14 @@ def _regenerate_module_now(
             if _lib not in _seen:
                 _seen.add(_lib)
                 libs_parts.append(_lib)
+    # gh-1061: the module's OWN test/bench targets (gh-1034) need the same
+    # dependencies its .so gets. Derived from `libs_parts` and `extra_libs`
+    # here rather than recomputed at the call site, because a second walk of
+    # `depends_on` closures is exactly the peer implementation that drifts —
+    # and this list IS the .so link line, so the two cannot disagree.
+    _module_dep_libs = [
+        lib for lib in [*libs_parts, *extra_libs] if lib != f"{cname}_core"
+    ]
     object_core_libs = "\n    ".join(libs_parts)
     extra_link_libs_block = (
         "\n    ".join(extra_libs) + "\n    " if extra_libs else ""
@@ -2029,7 +2037,7 @@ def _regenerate_module_now(
     cmake_ctx = {
         **cmake_ctx,
         "module_targets_block": R.module_targets_block(
-            cname, bool(_fns), _taken
+            cname, bool(_fns), _taken, _module_dep_libs
         ),
     }
     if _fns and _skipped:
