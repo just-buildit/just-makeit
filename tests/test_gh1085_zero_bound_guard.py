@@ -48,11 +48,8 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_JM = shutil.which("just-makeit") or shutil.which("jm")
-_NO_TOOLCHAIN = (
-    _JM is None
-    or shutil.which("cmake") is None
-    or (shutil.which("cc") is None and shutil.which("gcc") is None)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or (
+    shutil.which("cc") is None and shutil.which("gcc") is None
 )
 
 
@@ -181,15 +178,47 @@ class TestItActuallyRuns:
 
     @staticmethod
     def _run(root: Path, snippet: str) -> subprocess.CompletedProcess:
-        # The installed console script, not `python -m just_makeit._cli` —
-        # that module has no `__main__` guard, so it exits 0 having built
-        # nothing and the import below fails on a `.so` that never existed.
-        # A green `check=True` over a command that did nothing is exactly the
-        # shape this repo keeps finding.
-        built = subprocess.run(
-            [_JM, "build"], cwd=root, capture_output=True, text=True
+        """Build the extension, then run *snippet* against it.
+
+        cmake directly, not `jm build`, and the difference is the whole
+        reason this is spelled out. `jm build` configures with
+        ``-DPython3_EXECUTABLE=<the uv tool's own interpreter>``, which has
+        no numpy — so CI failed at configure with *Could NOT find Python3
+        (missing: Python3_NumPy_INCLUDE_DIRS)* on every platform while
+        passing locally, where the tool happened to resolve to a venv that
+        had it. The single-platform blind spot: one machine, one environment
+        layout.
+
+        `sys.executable` is the interpreter running this suite, and it has
+        numpy because the suite imports it. Naming it explicitly makes the
+        build depend on the environment the test is already running in
+        rather than on whatever jm's console script resolves to.
+
+        (`python -m just_makeit._cli build` is not an option either: that
+        module has no `__main__` guard, so it exits 0 having built nothing
+        and the import below then fails on a `.so` that never existed.)
+        """
+        build = root / "build"
+        cfg = subprocess.run(
+            [
+                "cmake",
+                "-S",
+                str(root),
+                "-B",
+                str(build),
+                f"-DPython3_EXECUTABLE={sys.executable}",
+                "-DCMAKE_BUILD_TYPE=Release",
+            ],
+            capture_output=True,
+            text=True,
         )
-        assert built.returncode == 0, built.stdout + built.stderr
+        assert cfg.returncode == 0, cfg.stdout + cfg.stderr
+        made = subprocess.run(
+            ["cmake", "--build", str(build)],
+            capture_output=True,
+            text=True,
+        )
+        assert made.returncode == 0, made.stdout + made.stderr
         return subprocess.run(
             [sys.executable, "-c", snippet],
             cwd=root / "src",
