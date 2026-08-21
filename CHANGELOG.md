@@ -23,6 +23,41 @@
     gh-1064: three separate ways a record method jm accepts silently generates
     C that cannot build.
 
+- **An `errors_warnings` example — the four channels a component reports
+    trouble on (gh-481, gh-482).** `create()` refusing (`jm error`),
+    `create()` succeeding with a caveat (`jm warning`), a status-only `int`
+    (`--status-return`), and an `int` that is a value unless negative
+    (`--error-negative`). All four are pure glue over signals the C already
+    emits, and the example asserts that no sacred file is touched by
+    declaring them.
+
+    `jm error` and `jm warning` had no example at all, and neither did any of
+    `create_error`, `create_error_message`, `warnings`, `error`,
+    `error_message`, `error_negative` or `status_return`.
+
+### Fixed
+- **A `bool` state field no longer scaffolds a project whose tests fail on
+    the first run (gh-1067).** `jm new --state "flag:bool:false"` emitted
+    `set(obj, 2)` then `CHECK(get(obj) == 2)` into the generated C test, and
+    the same round-trip into the generated pytest. A C `bool` normalises every
+    non-zero to 1, so both assertions were impossible and a pristine scaffold
+    was red on `ctest` **and** `pytest` with no edits — against the
+    "all green from day one" rule every other state type honours.
+
+    This was gh-610's shape at a third and fourth site: `bool`'s `kind` is
+    `"int"`, so it takes the integer path unless the concrete ctype is
+    special-cased, and that fix reached `_py_default` and `_py_default_stub`
+    but not the two sample-value helpers — which are the ones the generated
+    TESTS read. The two now share one table keyed by ctype, so a fifth copy
+    cannot drift.
+
+    The gate builds and runs **both** suites for every scalar type in the type
+    vocabulary. Two cheaper versions were discarded after sabotage showed they
+    could not fail: a textual "assigns what it expects" check passes on the
+    broken code (`set(2)` and `== 2` are textually identical — the defect is
+    in C's conversion), and running only the C face stays green when the
+    Python half alone is reverted.
+
 ## [0.63.3] — 2026-08-21
 
 ### Fixed

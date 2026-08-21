@@ -29,19 +29,33 @@ _NP_DTYPE_ENUM: dict[str, str] = {
     "long double _Complex": "NPY_CLONGDOUBLE",
 }
 
-# Literal values used in C setter smoke tests.
-_C_SET_VAL: dict[str, str] = {
-    "float": "2.0f",
-    "double": "2.0",
-    "float _Complex": "2.0f + 0.0f * I",
-    "double _Complex": "2.0 + 0.0 * I",
-    "long double _Complex": "2.0L + 0.0L * I",
+#: Smoke-test set-values per ctype, as ``(C literal, Python literal)``.
+#:
+#: ONE table rather than two, because two is how this went wrong. gh-610
+#: established that ``bool``'s ``kind`` is ``"int"`` -- there is no distinct
+#: "bool" kind -- so it silently takes the integer path unless the concrete
+#: ctype is special-cased, and it added that case to :func:`_py_default` and
+#: :func:`just_makeit._stubs._py_default_stub`. The two sample-value helpers
+#: were the peers it did not reach, and they are the ones the generated TESTS
+#: read: a `bool` state field scaffolded ``set(2)`` then ``== 2``, which a C
+#: bool can never satisfy, so `jm new --state "flag:bool:false"` produced a
+#: project whose CTest *and* pytest failed on the first run (gh-1067).
+_SET_VAL: dict[str, tuple[str, str]] = {
+    "bool": ("true", "True"),
+    "float": ("2.0f", "2.0"),
+    "double": ("2.0", "2.0"),
+    "float _Complex": ("2.0f + 0.0f * I", "1.0+0.0j"),
+    "double _Complex": ("2.0 + 0.0 * I", "1.0+0.0j"),
+    "long double _Complex": ("2.0L + 0.0L * I", "1.0+0.0j"),
 }
+
+#: Every integer type. The round-trip only needs a value that survives it.
+_SET_VAL_DEFAULT = ("2", "2")
 
 
 def _c_set_val(ctype: str) -> str:
     """Return a C literal suitable for setter smoke tests."""
-    return _C_SET_VAL.get(ctype, "2")  # all integer types → "2"
+    return _SET_VAL.get(ctype, _SET_VAL_DEFAULT)[0]
 
 
 def _py_default(ctype: str, default: str) -> str:
@@ -95,8 +109,16 @@ def _py_default(ctype: str, default: str) -> str:
     return strip_c_literal_suffix(default) if default.strip() else "..."
 
 
-def _py_sample_val(meta: dict) -> str:
-    """Return a Python test set-value for the given type metadata."""
+def _py_sample_val(meta: dict, ctype: str = "") -> str:
+    """Return a Python test set-value for the given type metadata.
+
+    *ctype* is optional only for callers that genuinely have no concrete type
+    to hand; pass it whenever it is available. ``bool`` cannot be recognised
+    from *meta* alone -- its ``kind`` is ``"int"`` -- and that is exactly the
+    case gh-1067 was about.
+    """
+    if ctype:
+        return _SET_VAL.get(ctype, _SET_VAL_DEFAULT)[1]
     if meta["kind"] == "complex":
         return "1.0+0.0j"
     if meta["kind"] == "float":
