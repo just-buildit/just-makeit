@@ -85,6 +85,7 @@ nav:
     - Views: examples/views_module.md
     - Record shapes: examples/record_shapes.md
     - Errors and warnings: examples/errors_warnings.md
+    - Composer seams: examples/composer_seams.md
     - Kitchen sink: examples/kitchen_sink.md
   - For Developers:
     - Start Here: developers/START_HERE.md

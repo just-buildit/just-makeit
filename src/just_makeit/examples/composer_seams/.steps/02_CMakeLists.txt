@@ -1,0 +1,5 @@
+# Hand-owned. A `c_deps` entry gets an `add_subdirectory()` line from jm and
+# nothing else — this file is never regenerated, which is the whole point of
+# the escape hatch.
+add_library(backing_core OBJECT playlist_core.c playlist_bridge.c)
+target_include_directories(backing_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
