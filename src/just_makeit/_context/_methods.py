@@ -1026,16 +1026,42 @@ def make_methods_ctx(
                 f"(PyObject *, PyObject *, PyObject *);\n"
             )
             method_c_parts.append(extern_decl)
+            # gh-1040: `_brief` is resolved four lines up — manifest `doc`,
+            # else the header `@brief` — and both faces used to throw it away
+            # and can the summary from the method's own name. A method whose
+            # binding jm does not write is exactly the one whose purpose jm
+            # cannot infer, so this is the shape that needs the author's
+            # sentence most.
+            #
+            # Rendered through the same two functions every other shape uses,
+            # not spelled locally: `render_runtime_doc` and `render_numpy_doc`
+            # share their section builder, which is what makes the runtime
+            # `__doc__` and the `.pyi` unable to drift (gh-642, gh-651).
+            #
+            # The params list is empty and the return is `Any` on purpose. A
+            # varargs method's arguments are unknown to jm by definition —
+            # that is what the flag means — so there is nothing to put in a
+            # `Parameters` section, and inventing entries for `*args` /
+            # `**kwargs` would document the mechanism rather than the method.
+            # Everything the header DOES say — extended description, Returns,
+            # Examples — comes through.
+            _va_summary = _brief or f"{name.replace('_', ' ').capitalize()}."
+            _va_runtime = render_runtime_doc(
+                _block, name, [], "Any", _va_summary
+            )
             pmd_lines.append(
                 f'    {{"{name}",'
                 f" (PyCFunction)(void *){c_fn},"
                 f" METH_VARARGS | METH_KEYWORDS,\n"
-                f'     "{name}(*args, **kwargs)."}},\n'
+                f"     {_build_ml_doc([f'{name}(*args, **kwargs)', '', *_va_runtime])}}},\n"
             )
             pyi_lines.append(
                 f"    def {name}(self, *args: Any, **kwargs: Any)"
                 f" -> Any:\n"
-                f'        """{name.replace("_", " ").capitalize()}."""\n'
+                + "\n".join(
+                    render_numpy_doc(_block, name, [], "Any", _va_summary)
+                )
+                + "\n"
             )
             continue
 
