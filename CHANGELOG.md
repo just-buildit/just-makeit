@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **One emitter for the enum-index C, and every refusal names the choices
+    (gh-1026).** jm emitted "validate a choice string to its `[[enum]]` int" in
+    what the issue counted as four places; scanning for the *shape* rather than
+    trusting the list found **ten**. The lookup body was already shared — the
+    tables and the call sites were not, which is the half that drifted.
+
+    The visible cost: gh-1021 gave method parameters the property path's
+    message, `invalid kind 'nope' (choices: none, rs, conv)`, while the
+    module-function path — the same feature on a different surface — still said
+    only `invalid sample_type 'nope'`. One manifest, two wordings of one
+    refusal, decided by nothing a user could see. Every face now names the
+    choices.
+
+    `_enumc` owns the lookup, the namespacing, the tables and the call site.
+    Three knobs, each because two sites genuinely differ: the failure statement
+    (`return NULL` in a wrapper, `return -1` in a `tp_init` where a hard-coded
+    NULL compiles and reports *success*, `goto fail` in the from-dict loop),
+    the source expression (a setter has already pulled the string out, and the
+    message must still name the field), and the result variable. `prefix`
+    carries the namespace: object-scoped faces namespace their symbols, module-
+    scoped ones own the bare names.
+
+    The `init_param` spelling stays out — `type = "enum:<name>"` flattens to
+    `string_enum:a,b,c` before any generator sees it, so the enum's *name* is
+    already gone and it cannot name its choices even in principle. Folding it
+    in is a feature, not a de-duplication; filed separately.
+
 ### Fixed
 
 - **`jm status --check` now reads the sacred header's `create()` (gh-1076).**
