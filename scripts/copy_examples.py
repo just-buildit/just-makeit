@@ -62,6 +62,7 @@ GALLERY = {
     "composites": "Composites",
     "views_module": "Views",
     "record_shapes": "Record shapes",
+    "errors_warnings": "Errors and warnings",
     "kitchen_sink": "Kitchen sink",
 }
 

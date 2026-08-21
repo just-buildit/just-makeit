@@ -84,6 +84,7 @@ nav:
     - Composites: examples/composites.md
     - Views: examples/views_module.md
     - Record shapes: examples/record_shapes.md
+    - Errors and warnings: examples/errors_warnings.md
     - Kitchen sink: examples/kitchen_sink.md
   - For Developers:
     - Start Here: developers/START_HERE.md

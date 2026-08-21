@@ -2584,7 +2584,7 @@ def make_state_ctx(
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         iv = _py_default(ct, dflt)
-        sv = _py_sample_val(meta)
+        sv = _py_sample_val(meta, ct)
         if meta["kind"] == "float":
             gs_lines += [
                 f"        assert obj.get_{name}() == _approx({iv})",
@@ -2616,7 +2616,7 @@ def make_state_ctx(
     rs_lines = [f"        obj = {Component}({py_create_args})"]
     for name, ct, _ in scalar_vars:
         rs_lines.append(
-            f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct])})"
+            f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct], ct)})"
         )
     for name, elem_ct, size in array_info:
         np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
