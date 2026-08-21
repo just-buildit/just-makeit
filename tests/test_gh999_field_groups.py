@@ -318,6 +318,40 @@ class TestTheDeclarationRoundTrips:
         _quiet(_apply.run, grouped)
         assert _status.run(grouped, check=True) == 0
 
+    def test_a_mutating_command_does_not_flatten_the_group(self, grouped):
+        """The case `jm apply` alone could not see, and the real bug.
+
+        `apply` on an unchanged tree may rewrite nothing, so every assertion
+        above passed with the writer guard deleted. A command that actually
+        mutates the manifest goes through the tomlkit layout-preserving
+        writer, which drops the `_group` marker (underscore keys are
+        transient in-memory state) and wrote the expansion out BESIDE the
+        group rows — so the next `load` expanded the group on top of its own
+        output and the params doubled. The feature corrupted the manifest on
+        first use.
+        """
+        from just_makeit._property import run as property_run
+
+        _quiet(property_run, grouped, "frame", "gain", None, "float", False)
+        text = self._manifest_text(grouped)
+        assert "[[frame.init_params]]" not in text, text
+        assert text.count("[[frame.init_groups]]") == 2
+
+    def test_a_mutating_command_does_not_duplicate_the_params(self, grouped):
+        """The symptom, stated as the property that matters.
+
+        Asserted separately from the file contents because THIS is what a
+        user meets: a constructor that grew a second copy of every grouped
+        argument.
+        """
+        from just_makeit._property import run as property_run
+
+        before = [p["name"] for p in C.load(grouped)["frame"]["init_params"]]
+        _quiet(property_run, grouped, "frame", "gain", None, "float", False)
+        assert [
+            p["name"] for p in C.load(grouped)["frame"]["init_params"]
+        ] == before
+
     def test_a_hand_written_param_beside_a_group_still_round_trips(
         self, tmp_path
     ):
