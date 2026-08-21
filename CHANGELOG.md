@@ -4,6 +4,28 @@
 
 ### Fixed
 
+- **A zero-parameter function that generates parameters no longer emits
+    `(void, ...)` (gh-1072).** `void` as a parameter list means "takes
+    nothing", so C forbids it being followed by anything. jm chose the
+    placeholder from the **declared** parameters and appended the generated
+    ones afterwards, so a module function with no `--param` and a
+    `--result-field` list got
+    `size_t peaks(void, row_t *result, size_t max_results);` written into its
+    own sacred header — accepted, exit 0, rejected by the compiler.
+
+    The fix is an ORDER, not a check. `_fn_c_params` returns the parameter
+    parts as a list, and one primitive, `_types.c_param_list`, makes the
+    placeholder decision last from the complete list — so there is nothing
+    left to append to once it has been made. `create()`'s two joins in
+    `_context/_state` go through the same primitive; they were already
+    correct, and the point is that the rule can no longer be re-spelled
+    locally, which is exactly how it went wrong.
+
+    `out_type` is not a second instance, contrary to the issue's guess: its
+    branch appends `<T> *out` into a freshly built list, so the list is never
+    empty while the shape is in play. Measured, and asserted, so the claim
+    cannot quietly stop being true.
+
 - **Two gates that could not fail, fixed as one shape (gh-1033, gh-1029).**
     Both were a function whose "I could not tell" was spelled the same way as
     its good answer, so a check that never ran was indistinguishable from a

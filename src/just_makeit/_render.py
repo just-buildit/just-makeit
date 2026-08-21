@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._types import (
+    c_param_list,
     _CTYPE_META,
     _CTYPE_TO_NPY,
     record_tuple_build,
@@ -456,14 +457,22 @@ PyInit_<<module_leaf>>(void)
 
 def _fn_c_params(
     params: list[tuple],
-) -> tuple[str, str]:
-    """Return (c_param_str, suppress_lines) for a list of param tuples.
+) -> tuple[list[str], str]:
+    """Return (c_parts, suppress_lines) for a list of param tuples.
 
     Each param is either ``(name, type)`` or ``(name, type, out)`` where the
     optional third element is a bool. Array params ("type[]") expand to
     ``(const elem_t *name, size_t name_len)`` by default; when ``out=True``
     the ``const`` is dropped so the function can write through the pointer
     (gh-72).
+
+    Returns the parts as a **list**, deliberately (gh-1072). It used to
+    return them already joined, with `void` substituted for the empty case —
+    and two callers then appended the parameters jm generates, producing
+    ``f(void, row_t *result, size_t max_results)``, which is not C. A list
+    has nothing to append to after the placeholder decision, because the
+    decision has not been made yet: `c_param_list` makes it, last, from the
+    complete list.
     """
     c_parts: list[str] = []
     suppress_parts: list[str] = []
@@ -486,9 +495,8 @@ def _fn_c_params(
         else:
             c_parts.append(f"{_ctype_display(t)} {n}")
             suppress_parts.append(f"(void){n};")
-    c_param_str = ", ".join(c_parts) if c_parts else "void"
     suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
-    return c_param_str, suppress
+    return c_parts, suppress
 
 
 def _scalar_c_param(p: tuple) -> str:
@@ -530,11 +538,14 @@ def fn_c_decl(
     result_fields = result_fields or []
     if result_fields:
         rt_disp = _ctype_display(return_type)
-        c_param_str, _ = _fn_c_params(params)
-        extra = f", {rt_disp} *result"
+        c_parts, _ = _fn_c_params(params)
+        # gh-1072: the result buffer joins the list BEFORE it is joined into
+        # text. Appending it to an already-rendered list is what produced
+        # `f(void, row_t *result, size_t max_results)`.
+        c_parts = list(c_parts) + [f"{rt_disp} *result"]
         if not max_results_param:
-            extra += ", size_t max_results"
-        return f"size_t {fn_name}({c_param_str}{extra});\n"
+            c_parts.append("size_t max_results")
+        return f"size_t {fn_name}({c_param_list(c_parts)});\n"
     if out_type:
         arr_p = [p for p in params if is_array_param_type(p[1])]
         scl_p = [p for p in params if not is_array_param_type(p[1])]
@@ -555,11 +566,10 @@ def fn_c_decl(
             c_parts.append(_scalar_c_param(p))
         if variable_output:
             c_parts.append(f"{out_disp} *out")
-        full_params = ", ".join(c_parts) if c_parts else "void"
-        return f"void {fn_name}({full_params});\n"
+        return f"void {fn_name}({c_param_list(c_parts)});\n"
     ret_disp = _ctype_display(return_type)
-    c_param_str, _ = _fn_c_params(params)
-    return f"{ret_disp} {fn_name}({c_param_str});\n"
+    c_parts, _ = _fn_c_params(params)
+    return f"{ret_disp} {fn_name}({c_param_list(c_parts)});\n"
 
 
 def fn_c_inline_stub(
@@ -602,7 +612,7 @@ def fn_c_inline_stub(
     """
     ret_disp = _ctype_display(return_type)
     ret_meta = _CTYPE_META.get(return_type)
-    c_param_str, suppress = _fn_c_params(params)
+    c_parts, suppress = _fn_c_params(params)
     c_ret_line = (
         f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
         if ret_meta
@@ -611,7 +621,7 @@ def fn_c_inline_stub(
     return (
         f"/* <<IMPLEMENT: {fn_name}>> */\n"
         f"static inline {ret_disp}\n"
-        f"{fn_name}({c_param_str})\n"
+        f"{fn_name}({c_param_list(c_parts)})\n"
         f"{{\n"
         + (suppress + "\n" if suppress else "")
         + (c_ret_line + "\n" if c_ret_line else "")
@@ -636,10 +646,12 @@ def fn_c_stub(
     result_fields = result_fields or []
     if result_fields:
         rt_disp = _ctype_display(return_type)
-        c_param_str, suppress = _fn_c_params(params)
-        extra_params = f", {rt_disp} *result"
+        c_parts, suppress = _fn_c_params(params)
+        # gh-1072: same order as `fn_c_decl` above, and it has to be — the
+        # stub's signature must match the prototype character for character.
+        c_parts = list(c_parts) + [f"{rt_disp} *result"]
         if not max_results_param:
-            extra_params += ", size_t max_results"
+            c_parts.append("size_t max_results")
         suppress_extra = " (void)result;"
         if not max_results_param:
             suppress_extra += " (void)max_results;"
@@ -651,7 +663,7 @@ def fn_c_stub(
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
             f"size_t\n"
-            f"{fn_name}({c_param_str}{extra_params})\n"
+            f"{fn_name}({c_param_list(c_parts)})\n"
             f"{{\n"
             + suppress_line
             + "\n"
@@ -682,17 +694,16 @@ def fn_c_stub(
         if variable_output:
             c_parts.append(f"{out_disp} *out")
             suppress_parts.append("(void)out;")
-        full_params = ", ".join(c_parts) if c_parts else "void"
         suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
             f"void\n"
-            f"{fn_name}({full_params})\n"
+            f"{fn_name}({c_param_list(c_parts)})\n"
             f"{{\n" + (suppress + "\n" if suppress else "") + "}\n"
         )
     ret_disp = _ctype_display(return_type)
     ret_meta = _CTYPE_META.get(return_type)
-    c_param_str, suppress = _fn_c_params(params)
+    c_parts, suppress = _fn_c_params(params)
     c_ret_line = (
         f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
         if ret_meta
@@ -701,7 +712,7 @@ def fn_c_stub(
     return (
         f"/* <<IMPLEMENT: {fn_name}>> */\n"
         f"{ret_disp}\n"
-        f"{fn_name}({c_param_str})\n"
+        f"{fn_name}({c_param_list(c_parts)})\n"
         f"{{\n"
         + (suppress + "\n" if suppress else "")
         + (c_ret_line + "\n" if c_ret_line else "")

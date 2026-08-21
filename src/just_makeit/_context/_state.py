@@ -14,6 +14,7 @@ from .._docstring import (
 )
 from ._parse import _build_ml_doc, capsule_unwrap_c as _capsule_unwrap_c
 from .._types import (
+    c_param_list,
     _CTYPE_META,
     _ARRAY_DTYPE,
     _CTYPE_TO_NPY,
@@ -638,7 +639,11 @@ def _build_no_state_init_ctx(
             call_parts.append(pname)
             c_create_parts_ordered.append(dflt_s or _CTYPE_META[ct_s]["zero"])
 
-    create_params = ", ".join(sig_parts) or "void"
+    # gh-1072: one rule for "an empty C parameter list reads `void`", shared
+    # with every prototype `_render` emits. These two sites already join the
+    # COMPLETE list, so nothing here changes — the point is that the rule
+    # cannot be re-spelled locally, which is how it went wrong there.
+    create_params = c_param_list(sig_parts)
     create_param_docs = (
         "\n".join(doc_parts)
         or " * @param (none)  Caller is responsible for all state management."
@@ -2097,7 +2102,7 @@ def make_state_ctx(
     ]
     scalar_param_parts = [f"{ct} {name}" for name, ct, _ in ctor_scalars]
     all_param_parts = arr_param_parts + scalar_param_parts
-    create_params = ", ".join(all_param_parts) or "void"
+    create_params = c_param_list(all_param_parts)
 
     arr_doc_parts = [
         f" * @param {name}  Input {dt} array (length passed as {name}_len)."
