@@ -309,6 +309,48 @@ def c_param_parts(params) -> list[str]:
     return parts
 
 
+def c_param_list(parts: list[str]) -> str:
+    """Join C parameter declarations into a parameter LIST.
+
+    One rule, in one place: a C parameter list reads ``void`` **iff it is
+    empty**. `void` there means "takes nothing", so the standard forbids it
+    being followed by anything — ``f(void, double *out)`` is not C, and gcc
+    says so with *'void' must be the only parameter and unnamed*.
+
+    That is the whole of gh-1072. The rule itself was never in doubt; what
+    went wrong is that it was applied to the DECLARED parameters and the
+    generated ones were appended afterwards. `fn_c_decl` joined an empty
+    param list to ``"void"``, then appended the result-buffer pair a
+    ``result_fields`` function needs, and emitted
+    ``size_t peaks(void, row_t *result, size_t max_results);`` — accepted by
+    jm, exited 0, rejected by the compiler.
+
+    So the fix is not a check but an ORDER: every builder assembles its
+    complete list of parts and calls this last. Passing a list rather than a
+    joined string is what enforces it — there is nothing to append to
+    afterwards.
+
+    Parameters
+    ----------
+    parts : list of str
+        Every C parameter declaration the function takes, in order —
+        declared and generated alike.
+
+    Returns
+    -------
+    str
+        The text between the parentheses.
+
+    Examples
+    --------
+    >>> c_param_list(["double x", "size_t n"])
+    'double x, size_t n'
+    >>> c_param_list([])
+    'void'
+    """
+    return ", ".join(parts) if parts else "void"
+
+
 def c_param_suppress(params) -> list[str]:
     """``(void)name;`` statements matching :func:`c_param_parts`' expansion.
 
