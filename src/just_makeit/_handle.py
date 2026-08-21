@@ -33,8 +33,8 @@ from typing import TYPE_CHECKING
 
 from . import _capsule
 from . import _coerce
-from . import _composer
 from . import _config as C
+from . import _enumc
 from . import _context as Ctx
 from . import _types as T
 from ._context._parse import capsule_new_c as _capsule_new_c
@@ -84,19 +84,11 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
 def render_enum_tables(cfg: dict, module: str) -> str:
     """Emit the per-enum ``_enum_<name>[]`` tables + the shared ``_enum_index``.
 
-    Reuses the composer's enum SSOT exactly — the same ``_enum_index`` lookup
-    body and the same "order is the C int" table layout — over the handle's own
-    field set (:func:`_enums_used`)."""
-    enums = C.enums(cfg)
-    parts = [_composer._ENUM_INDEX_FN]
-    for name in _enums_used(cfg, module):
-        values = enums.get(name, [])
-        items = "".join(f'    "{v}",\n' for v in values)
-        parts.append(f"static const char *const _enum_{name}[] = {{")
-        parts.append(items + "    NULL,")
-        parts.append("};")
-        parts.append("")
-    return "\n".join(parts)
+    One emitter with every other face (gh-1026) over the handle's own field
+    set (:func:`_enums_used`) — the same lookup body and the same "order is
+    the C int" table layout, which is what makes a choice mean one integer
+    across every surface."""
+    return _enumc.render_tables(_enums_used(cfg, module), C.enums(cfg))
 
 
 # ── stashed init scalars (referenced by decoded-getter exprs) ─────────────────
@@ -236,14 +228,22 @@ def render_tp_init(cfg: dict, module: str) -> str:
 
     # Enum args: validate the parsed string to its SSOT int (reused contract).
     enum_validate = []
+    # gh-1026: `return -1`, not `return NULL` — this is a `tp_init`, where a
+    # hard-coded NULL compiles and reports SUCCESS. The emitter takes the
+    # failure statement for exactly that reason.
+    _henums = C.enums(cfg)
     for a in args:
         if a.get("enum"):
             n, e = a["name"], a["enum"]
-            enum_validate.append(f"""    int _arg_{n} = _enum_index(_enum_{e}, {n});
-    if (_arg_{n} < 0) {{
-        PyErr_Format(PyExc_ValueError, "invalid {n} '%s'", {n});{_init_fsfree(args)}
-        return -1;
-    }}""")
+            enum_validate.append(
+                _enumc.validate_c(
+                    n,
+                    e,
+                    _henums,
+                    fail="return -1;",
+                    cleanup=_init_fsfree(args),
+                )
+            )
     enum_validate_s = "\n".join(enum_validate)
 
     call_args = ", ".join(_create_call_arg(a) for a in args)

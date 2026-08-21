@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from . import _enumc
 from ._docstring import ClassParam, class_docstring
 from ._pyfmt import reflow_pyi
 
@@ -99,39 +100,23 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
     return seen
 
 
-# The shared string-enum → index lookup. A single SSOT constant so the handle
-# generator (gh-306) reuses the identical lookup (and the "order is the C int"
-# contract) rather than re-spelling it.
-_ENUM_INDEX_FN = "\n".join(
-    [
-        "/* String-enum tables — order is the C int (the [[enum]] SSOT). */",
-        "static int",
-        "_enum_index(const char *const *tab, const char *s)",
-        "{",
-        "    for (int i = 0; tab[i]; i++)",
-        "        if (strcmp(tab[i], s) == 0)",
-        "            return i;",
-        "    return -1;",
-        "}",
-        "",
-    ]
-)
+#: gh-1026: the lookup lives in `_enumc` now, with the tables and the call
+#: site it was always meant to travel with. Kept here as a name because this
+#: file references it in a dozen emitted snippets, and because three other
+#: modules imported it from here — the alias is what makes the move a
+#: no-diff change to the generated C.
+_ENUM_INDEX_FN = _enumc.INDEX_FN
 
 
 def render_enum_tables(cfg: dict, module: str) -> str:
-    """Emit one ``static const char *const _enum_<name>[]`` table per enum the
-    module references, plus a shared ``_enum_index`` lookup. Order **is** the C
-    int (the ``[[enum]]`` SSOT contract — append-only), so every face agrees."""
-    enums = C.enums(cfg)
-    parts = [_ENUM_INDEX_FN]
-    for name in _enums_used(cfg, module):
-        values = enums.get(name, [])
-        items = "".join(f'    "{v}",\n' for v in values)
-        parts.append(f"static const char *const _enum_{name}[] = {{")
-        parts.append(items + "    NULL,")
-        parts.append("};")
-        parts.append("")
-    return "\n".join(parts)
+    """The lookup plus one table per enum this module references.
+
+    Order **is** the C int (the ``[[enum]]`` SSOT contract — append-only), so
+    every face agrees about what a choice means. The emitter is shared with
+    every other face (gh-1026); only the SET of enums differs, and that is
+    what `_enums_used` decides.
+    """
+    return _enumc.render_tables(_enums_used(cfg, module), C.enums(cfg))
 
 
 # ── source type (e.g. Synth) ─────────────────────────────────────────────────
@@ -377,15 +362,15 @@ def render_source_type(cfg: dict, module: str) -> str:
         n = f["name"]
         if _field_is_enum(f):
             e = f["enum"]
-            assign.append(f"""    {{
-        int _i = _enum_index(_enum_{e}, {n});
-        if (_i < 0) {{
-            PyErr_Format(PyExc_ValueError,
-                         "invalid {n} '%s'", {n});
-            return -1;
-        }}
-        self->src.{n} = _i;
-    }}""")
+            _v = _enumc.validate_c(
+                n,
+                e,
+                C.enums(cfg),
+                result="_i",
+                fail="return -1;",
+                indent="        ",
+            )
+            assign.append(f"    {{\n{_v}\n        self->src.{n} = _i;\n    }}")
         elif f.get("bytes"):
             # Per-field destination: several bytes fields on one source
             # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
@@ -623,6 +608,16 @@ static int
         n = f["name"]
         if _field_is_enum(f):
             e = f["enum"]
+            # gh-1026: the shared refusal, so a property setter and a
+            # constructor argument for the same enum say the same thing.
+            _enum_set = _enumc.validate_c(
+                n,
+                e,
+                C.enums(cfg),
+                src="s",
+                result="_i",
+                fail="return -1;",
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -635,11 +630,7 @@ static int
     (void)closure;
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
-    int _i = _enum_index(_enum_{e}, s);
-    if (_i < 0) {{
-        PyErr_Format(PyExc_ValueError, "invalid {n} '%s'", s);
-        return -1;
-    }}
+{_enum_set}
     self->src.{n} = _i;
     return 0;
 }}""")
@@ -1078,12 +1069,16 @@ def render_segment_type(cfg: dict, module: str) -> str:
             body = (
                 "            const char *_s = PyUnicode_AsUTF8(_o);\n"
                 "            if (!_s) goto fail;\n"
-                f"            int _i = _enum_index(_enum_{e}, _s);\n"
-                "            if (_i < 0) {\n"
-                "                PyErr_Format(PyExc_ValueError,\n"
-                f"                             \"invalid {n} '%s'\", _s);\n"
-                "                goto fail;\n"
-                "            }\n"
+                + _enumc.validate_c(
+                    n,
+                    e,
+                    C.enums(cfg),
+                    src="_s",
+                    result="_i",
+                    fail="goto fail;",
+                    indent="            ",
+                )
+                + "\n"
                 f"            self->{n} = _i;\n"
             )
         elif f.get("_ranged"):
@@ -1238,6 +1233,16 @@ static int
             continue
         if _field_is_enum(f):
             e = f["enum"]
+            # gh-1026: the shared refusal, so a property setter and a
+            # constructor argument for the same enum say the same thing.
+            _enum_set = _enumc.validate_c(
+                n,
+                e,
+                C.enums(cfg),
+                src="s",
+                result="_i",
+                fail="return -1;",
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -1250,11 +1255,7 @@ static int
     (void)closure;
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
-    int _i = _enum_index(_enum_{e}, s);
-    if (_i < 0) {{
-        PyErr_Format(PyExc_ValueError, "invalid {n} '%s'", s);
-        return -1;
-    }}
+{_enum_set}
     self->{n} = _i;
     return 0;
 }}""")
@@ -1523,12 +1524,12 @@ def render_serializers(
                     f'    const char *{pn} = "{p.get("default", "")}";'
                 )
                 fmt += bar + "s"
+                # gh-1026: the shared emitter, with this face's own result
+                # spelling. Naming the choices here is the point of the
+                # consolidation — it was the only thing separating this
+                # refusal from the method-parameter one.
                 enum_val.append(
-                    f"    int _e_{pn} = _enum_index(_enum_{e}, {pn});\n"
-                    f"    if (_e_{pn} < 0) {{\n"
-                    f"        PyErr_Format(PyExc_ValueError,"
-                    f" \"invalid {pn} '%s'\", {pn});\n"
-                    f"        return NULL;\n    }}"
+                    _enumc.validate_c(pn, e, C.enums(cfg), result=f"_e_{pn}")
                 )
                 call.append(f"_e_{pn}")
             else:

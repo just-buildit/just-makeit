@@ -722,6 +722,7 @@ def fn_c_stub(
 
 def _build_params_parse(
     params: list[dict],
+    enums: "dict[str, list[str]] | None" = None,
 ) -> tuple[str, str, str]:
     """Build parse block + C call args + cleanup for a named multi-param method.
 
@@ -783,13 +784,15 @@ def _build_params_parse(
             prior = "".join(f" Py_DECREF({a});" for a in arr_names) + "".join(
                 f" {_coerce.path_release(n)}" for n in path_names
             )
+            # gh-1026: one emitter, so the refusal a caller meets does not
+            # depend on which surface the enum was declared on. This site is
+            # the one the issue names: it said only `invalid sample_type
+            # '%s'` while a method parameter for the SAME enum in the SAME
+            # manifest named the choices, because gh-1021 fixed one copy.
+            from . import _enumc
+
             conv_lines.append(
-                f"    int _arg_{pname} = _enum_index(_enum_{ename}, {pname});\n"
-                f"    if (_arg_{pname} < 0) {{\n"
-                f'        PyErr_Format(PyExc_ValueError, "invalid {pname}'
-                f" '%s'\", {pname});{prior}\n"
-                f"        return NULL;\n"
-                f"    }}"
+                _enumc.validate_c(pname, ename, enums, cleanup=prior)
             )
             call_args.append(f"_arg_{pname}")
         elif is_array_param_type(ptype):
@@ -977,6 +980,10 @@ def _py_wrapper_for_function(
     variable_output: bool = False,
     out_size: str = "",
     check_return: bool = False,
+    # gh-1026: the `[[enum]]` registry, so a bad choice can be refused by
+    # NAMING the choices — the wording a method parameter for the same enum
+    # has had since gh-1021, and this face had not.
+    enums: "dict[str, list[str]] | None" = None,
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
@@ -997,7 +1004,7 @@ def _py_wrapper_for_function(
     ret_meta = _CTYPE_META.get(return_type)
 
     if params:
-        parse_block, call_args, cleanup = _build_params_parse(params)
+        parse_block, call_args, cleanup = _build_params_parse(params, enums)
         # Positional-or-keyword (gh-238): the binding takes kwds and parses with
         # PyArg_ParseTupleAndKeywords. A no-param function stays METH_NOARGS.
         py_args = "PyObject *args, PyObject *kwds"
@@ -1204,20 +1211,12 @@ def _render_function_enum_tables(
     """Emit the per-enum ``_enum_<name>[]`` tables + the shared ``_enum_index``
     for the enums a module's functions reference (gh-353).
 
-    Reuses the composer's enum SSOT exactly (``_composer._ENUM_INDEX_FN`` and
-    the "order is the C int" table layout) — the same contract the handle
-    generator's :func:`_handle.render_enum_tables` follows."""
-    from ._composer import _ENUM_INDEX_FN
+    One emitter with every other face (gh-1026): the same lookup body and the
+    same "order is the C int" table layout, over the enums this module's
+    functions reference."""
+    from . import _enumc
 
-    parts = [_ENUM_INDEX_FN]
-    for name in _functions_enums_used(functions):
-        values = enums.get(name, [])
-        items = "".join(f'    "{v}",\n' for v in values)
-        parts.append(f"static const char *const _enum_{name}[] = {{")
-        parts.append(items + "    NULL,")
-        parts.append("};")
-        parts.append("")
-    return "\n".join(parts)
+    return _enumc.render_tables(_functions_enums_used(functions), enums)
 
 
 def make_functions_ctx(
@@ -1310,6 +1309,7 @@ def make_functions_ctx(
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
+                enums=enums,
             )
         )
         # `doc` is already a C string literal (escaped, possibly multi-line) —

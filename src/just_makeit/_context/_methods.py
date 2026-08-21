@@ -3972,18 +3972,26 @@ def make_properties_ctx(
                 # setter would have assigned `v`. "s" already raises TypeError
                 # for a non-str, so only the unknown-choice case needs a
                 # hand-written error.
-                _choices = ", ".join(enums[p_enum])
+                # gh-1026: through the shared emitter. This face already
+                # named the choices — it is the one gh-1021 copied FROM — so
+                # the consolidation must not quietly move it onto a shorter
+                # message. Its `Component` prefix is the object-scoped
+                # namespace; see `_enumc.symbols`.
+                from .. import _enumc
+
                 parse_block = (
-                    f"    const char *v_str = NULL;\n"
-                    f'    if (!PyArg_Parse(value, "s", &v_str)) return -1;\n'
-                    f"    int v_idx = {enum_index_fn}"
-                    f"({enum_table}, v_str);\n"
-                    f"    if (v_idx < 0) {{\n"
-                    f"        PyErr_Format(PyExc_ValueError,\n"
-                    f"            \"invalid {pname} '%s'"
-                    f' (choices: {_choices})", v_str);\n'
-                    f"        return -1;\n"
-                    f"    }}\n"
+                    "    const char *v_str = NULL;\n"
+                    '    if (!PyArg_Parse(value, "s", &v_str)) return -1;\n'
+                    + _enumc.validate_c(
+                        pname,
+                        p_enum,
+                        enums,
+                        prefix=Component,
+                        src="v_str",
+                        result="v_idx",
+                        fail="return -1;",
+                    )
+                    + "\n"
                     f"    {disp} v = ({disp})v_idx;\n"
                 )
             elif "parse_type" in meta:
