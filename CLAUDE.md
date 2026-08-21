@@ -111,6 +111,7 @@ the user only writes the DSP algorithm.
 | `_fmtprobe.py`       | Asks whether a formatter command means the same thing from any directory                                                                                                         |
 | `_codecheck.py`      | Reports authored `@code` lines too wide for their stub                                                                                                                           |
 | `_hollow.py`         | Detects targets that pass without covering anything (gh-806)                                                                                                                     |
+| `_ctorsig.py`        | The `create()` the sacred `_core.h` declares against the one the manifest renders — jm verifying what it injected (gh-1076)                                                      |
 | `_libwiring.py`      | Which component cores reach `lib<pkg>.so` / `.a` — emitter and detector in one file (gh-981/gh-984)                                                                              |
 | `_targets.py`        | Which CMake target names are already claimed — what jm will emit, and what the project declares itself (gh-1046)                                                                 |
 | `_builtins.py`       | Which member names an object's own generated code occupies — when a declared method may replace one, describe one, or is refused outright (gh-994/gh-996)                        |

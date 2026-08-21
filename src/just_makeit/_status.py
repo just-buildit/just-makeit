@@ -653,6 +653,13 @@ def run(
     # Alone among the findings here this needs no replay — it compares the
     # project against itself — so it also answers on a tree jm could not
     # re-render, and costs two file reads.
+    # gh-1076: the sacred header's `create()` against the one the manifest
+    # renders. Computed here, above the JSON return, for the reason `_wide`
+    # and `_orphans` are — a gate that fires for a human and not for `--json`
+    # is found the hard way.
+    from . import _ctorsig
+
+    _ctor_drift = _ctorsig.drift(root, cfg)
     from . import _libwiring
 
     _unwired = _libwiring.unwired(root, cfg)
@@ -730,6 +737,12 @@ def run(
         # tree that cannot build is what the author meant.
         + _n_unwired
         + len(_dangling)
+        # gh-1076: gates, and never suppressed — the same rule as the gh-442
+        # default drift it sits beside, for the same reason. jm cannot tell
+        # which side is stale, so there is no version of this that `apply`
+        # quietly resolves; and while the two disagree, `jm regenerate` writes
+        # a create() that does not compile. A project cannot mean that.
+        + len(_ctor_drift)
     )
 
     if as_json:
@@ -779,6 +792,17 @@ def run(
                     # no way to tell — the same silence the gate exists to
                     # break, one layer out.
                     "unbuilt_scanned": not _orphans_unchecked,
+                    # gh-1076: both sides, so a CI consumer can say which
+                    # one moved without re-deriving jm's type renderer.
+                    "ctor_signature_drift": [
+                        {
+                            "component": d.component,
+                            "path": d.rel,
+                            "header": d.declared,
+                            "manifest": d.rendered,
+                        }
+                        for d in _ctor_drift
+                    ],
                     "unparseable_stubs": [
                         {
                             "path": p,
@@ -1122,6 +1146,28 @@ def run(
         )
         print()
 
+    # gh-1076: printed under --check too (it is counted, so the exit code
+    # already carries it, and a reader who sees only the summary line has no
+    # way to learn WHICH side to move).
+    if _ctor_drift:
+        print(
+            f"CTOR ({len(_ctor_drift)}) — create() differs between the "
+            "header and the manifest:"
+        )
+        for d in _ctor_drift:
+            print(f"  ! {d.rel}")
+            print(f"      header:   {d.component}_create({d.declared})")
+            print(f"      manifest: {d.component}_create({d.rendered})")
+        print(
+            "  jm injects that declaration, so this is jm checking what it"
+            " wrote. It cannot\n"
+            "  tell which side is stale — fix one to match. Not suppressible:"
+            " while they\n"
+            "  disagree, `jm regenerate` emits a create() that does not"
+            " compile. See gh-1076."
+        )
+        print()
+
     # gh-1033: the stand-down, printed in the UNBUILT block's own place so a
     # reader meets it where they would have met the finding. `_orphans` is
     # empty here by construction, so without this the section is simply
@@ -1341,6 +1387,10 @@ def run(
         # the other side, by a consumer who could not link.
         and not _n_unwired
         and not _dangling
+        # gh-1076: "up to date" over a tree whose constructor the manifest
+        # disagrees with is the sentence that issue is about — the exit code
+        # alone would be right and unread.
+        and not _ctor_drift
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -1472,6 +1522,7 @@ def run(
             # the gate (no `jm apply` clears a wildcard), but a reader
             # skimming this line must not read the absent "unbuilt" term as
             # zero unbuilt sources.
+            + (f", {len(_ctor_drift)} ctor-drift (!)" if _ctor_drift else "")
             + (", unbuilt not checked" if _orphans_unchecked else "")
             + (f", {len(_silent)} silent bench" if _silent else "")
             + (

@@ -4,6 +4,34 @@
 
 ### Fixed
 
+- **`jm status --check` now reads the sacred header's `create()` (gh-1076).**
+    Every file jm owns renders from the same `init_params` list, so they agree
+    with each other *by construction* — the only file that can disagree is the
+    hand-written one, and `_core.c` is sacred. A manifest declaring one
+    `float[]` param could therefore sit against a C constructor taking
+    `(size_t num_taps, const float *h)` indefinitely; doppler carried exactly
+    that, found by reviewing an unrelated jm change rather than by any gate.
+
+    **The gap was not uniform, which is what let it survive.** Measured:
+    reordering a hand-written `create()` on a *standalone* object is caught —
+    its `_core.h` is manifest-owned, so the whole-file diff reports `STALE` —
+    while the same file with the same edit on a *module* object reported
+    `OK — up to date`. One edit, two answers.
+
+    jm **injects** that declaration, so the new `CTOR` finding is jm verifying
+    what it wrote: one targeted comparison of the injected prototype against
+    the rendered parameter list, which answers the same way in both layouts and
+    does not depend on the whole-file diff. It reads `_core.h`, not `_core.c` —
+    a definition that disagrees with its own header will not compile, so
+    checking the header puts the definition under the compiler's gate for free,
+    with no C parsing and no reading of a sacred file.
+
+    Gates, and never suppressible, on the same rule as the gh-442 `DRIFT` it
+    sits beside: jm cannot know which side is stale, and while the two disagree
+    `jm regenerate <obj>` writes a `create()` that does not compile. Both
+    signatures are printed (under `--check` too) and both reach `--json`, so
+    nobody has to re-derive jm's type renderer to find out which side moved.
+
 - **A `--varargs` method's `doc` now reaches both faces (gh-1040).** The
     summary — manifest `doc`, else the header `@brief` — was resolved two lines
     above the `varargs` branch, and that branch threw it away: the runtime
