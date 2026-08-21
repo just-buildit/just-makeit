@@ -395,3 +395,84 @@ def pyi_classes(methods: list[dict], doc_blocks: dict | None = None) -> str:
         flds = fields(m, doc_blocks)
         out.append(pyi_class(nm, type_doc(m, flds), flds))
     return "\n".join(out)
+
+
+def validate_record_shape(
+    what: str,
+    name: str,
+    return_type: str,
+    result_fields,
+    *,
+    record_dtype: str = "",
+    variable_output: bool = False,
+    single: bool = False,
+) -> str:
+    """Why *name*'s record declaration cannot be generated, or ``""``.
+
+    gh-1064. ``result_fields`` names the columns of a record, and jm produces
+    three different results from it -- ONE record (``single``), an ARRAY of
+    records (``record_dtype``), or a ``list[tuple]`` (neither). What it could
+    not do was say when the declaration it accepted described none of them:
+    the binding is generated from the shape and the prototype from the return
+    type, nothing compared the two, and the project simply did not build.
+
+    Every combination was measured before these rules were written:
+
+    ======================================  ============================
+    declaration                             result before this check
+    ======================================  ============================
+    fields + row struct                     builds
+    fields + ``record_dtype``, any rt       builds
+    fields + ``single`` + record struct     builds
+    fields + a scalar return type           ``results[i].x`` on a scalar
+    fields + ``void`` return                ``array of voids``
+    fields + ``variable_output``,           ``KeyError``, or a call to an
+    without ``record_dtype``                undeclared ``<name>_max_out``
+    ======================================  ============================
+
+    So the two rules are narrow on purpose and fire only where nothing valid
+    lives:
+
+    1. without ``record_dtype`` the return type IS the author's struct, so a
+       known scalar or ``void`` there is always wrong;
+    2. ``variable_output`` belongs to the ``record_dtype`` shape, whose kernel
+       fills a caller-sized ``out`` and needs a ``_max_out()`` companion to
+       size it. On the plain shape the count is already the return value, so
+       the flag has nothing to size and instead selects half of the other
+       shape's binding.
+
+    With ``record_dtype`` the return type is deliberately left unconstrained:
+    a scalar, a struct and ``void`` all build, because the out-parameter
+    carries the shape and the return value is only the count.
+
+    *what* is the noun used in the message (``"method"`` / ``"function"``).
+    It lives in this module rather than one of its own because the reason is
+    the module's own: these answers are needed by every face, and a second
+    home for them is the drift this file exists to prevent.
+    """
+    if not result_fields or record_dtype:
+        return ""
+    if variable_output:
+        return (
+            f"{what} '{name}': --variable-output cannot be combined with "
+            f"--result-field unless --record-dtype is given.\n"
+            f"  A plain result_fields kernel returns its own count alongside "
+            f"a max_results cap, so\n"
+            f"  there is nothing for --variable-output to size. Drop the "
+            f"flag, or declare\n"
+            f"  --record-dtype <struct> to return an array of records instead."
+        )
+    rt = (return_type or "").strip()
+    if rt == "void" or rt in T._CTYPE_META:
+        one = "the --single record" if single else "one row"
+        return (
+            f"{what} '{name}': --return-type must be the C struct that "
+            f"{one} of the result is,\n"
+            f"  not '{rt or 'void'}'. jm writes the prototype from this type "
+            f"and reads the\n"
+            f"  --result-field members off it, so a scalar there generates a "
+            f"binding that\n"
+            f"  cannot compile. Declare the struct in the sacred header and "
+            f"name it here."
+        )
+    return ""

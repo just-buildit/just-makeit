@@ -574,7 +574,11 @@ class TestResultFieldsStub:
             "push",
             "dsp",
             "float _Complex[]",
-            "float",
+            # gh-1064: the record struct, not a scalar. `"float"` here made
+            # the generated binding read `results[i].lag` off a float; the
+            # stub assertions below are unaffected, which is exactly why it
+            # went unnoticed.
+            "det_hit_t",
             False,
             [],
             result_fields=[

@@ -85,6 +85,11 @@ def project(tmp_path):
             "peaks",
             "dsp",
             params=[("x", "float[]")],
+            # gh-1064: `result_fields` pairs with the record struct as the
+            # return type (docs/commands/extend.md). This defaulted to `void`,
+            # which reads fine in the emitted script and generates C that
+            # cannot compile -- a fixture that inspects strings never notices.
+            return_type="peak_t",
             result_fields=[
                 {"name": "idx", "type": "int"},
                 {"name": "val", "type": "double"},

@@ -99,7 +99,7 @@ the user only writes the DSP algorithm.
 | `_capsule.py`        | Code generator for `kind = "capsule"` modules (gh-286)                                                                                                                           |
 | `_composer.py`       | Code generator for `kind = "composer"` modules (gh-287)                                                                                                                          |
 | `_codec.py`          | Declarative variant codecs — SSOT for discriminant-tagged binary values                                                                                                          |
-| `_record.py`         | One shape for a single-record result, shared by every face (gh-646)                                                                                                              |
+| `_record.py`         | One shape for a single-record result, and the rules a record declaration must satisfy before jm generates from it — shared by every face (gh-646, gh-1064)                       |
 | `_coerce.py`         | Shared argument-coercion primitives for generated CPython glue                                                                                                                   |
 | `_keys.py`           | Recognises the keys a manifest table may carry, and says so when it does not                                                                                                     |
 | `_docstring.py`      | **Doc engine**: derives Python docstrings from C header Doxygen; `render_numpy_doc` / `render_runtime_doc` share one section builder                                             |
