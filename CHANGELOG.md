@@ -62,6 +62,29 @@
     the header. A check written against "expect one argument" would pass just
     as happily on a header that was also wrong.
 
+### Fixed
+
+- **A cut example's leftover directory no longer reads as an example missing
+    its README (gh-1027).** Removing an example deletes every tracked file,
+    but a previous `jm example <name>` run leaves a gitignored `__pycache__`
+    behind, so the parent survives holding only that. The reconciler counted
+    any directory not starting with `_` or `.`, so each shell counted as an
+    example and `make test` reported the one thing certainly not wrong with
+    it. Invisible in CI by construction — a fresh clone never had the
+    directories — so it fires only on a long-lived checkout, which is a
+    maintainer's machine and exactly where `make test` is meant to be trusted
+    before pushing.
+
+    A directory is now an example if it holds `test.py` **or** `assemble.py`.
+    Either marker, not just `test.py`: keying on one would make a
+    half-created example invisible instead of flagged, trading a false failure
+    for a false pass — and the reconciler's stated promise is that neither a
+    new example nor a deleted one slips through silently.
+
+    `make clean` also prunes the empty shells now, so the documented remedy
+    actually removes them rather than leaving a tree that was already
+    reported as broken.
+
 ### Added
 
 - **A `composer_seams` example — `kind = "composer"` and the two places it

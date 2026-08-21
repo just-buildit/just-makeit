@@ -78,12 +78,47 @@ UNPUBLISHED = {
 }
 
 
+#: What makes a directory an example rather than debris. Either marker is
+#: enough, deliberately: `test.py` is what `jm example <name>` runs, and
+#: `assemble.py` is what builds the README — so a half-created example is
+#: still seen and still reported, while a directory with neither is not an
+#: example at all.
+_EXAMPLE_MARKERS = ("test.py", "assemble.py")
+
+
+def _is_example(p: Path) -> bool:
+    """Whether *p* is an example directory.
+
+    gh-1027: this used to be "any directory not starting with `_` or `.`",
+    which counted a leftover shell. Git removes every tracked file when an
+    example is cut, but a previous `jm example <name>` run leaves a
+    `__pycache__` behind, and `__pycache__` is gitignored — so the parent
+    directory survives holding nothing else, and the reconciler then reports
+    the one thing certainly not wrong with it: its missing README. Six of
+    those turned `make test` red on any checkout old enough to have run the
+    examples that #575 later cut.
+
+    Invisible in CI by construction: a fresh clone never had the
+    directories, so this only fires on a long-lived checkout — a
+    maintainer's machine, which is exactly where `make test` is meant to be
+    trusted before pushing.
+
+    Requiring a marker rather than requiring `test.py` alone keeps the gate's
+    stated promise that "neither a new example nor a deleted one can slip
+    through silently": a new directory with an `assemble.py` and no README is
+    still flagged, and only a directory with no marker at all is ignored.
+    """
+    if not p.is_dir() or p.name.startswith(("_", ".")):
+        return False
+    return any((p / marker).exists() for marker in _EXAMPLE_MARKERS)
+
+
 def _example_dirs() -> dict[str, bool]:
     """Map every example directory name to whether it has a README.md."""
     return {
         p.name: (p / "README.md").exists()
         for p in SRC.iterdir()
-        if p.is_dir() and not p.name.startswith(("_", "."))
+        if _is_example(p)
     }
 
 
