@@ -2008,9 +2008,23 @@ def _regenerate_module_now(
     # that has none of the project's hand-written CMake, so asking `root` would
     # find nothing and re-emit the colliding target on every apply. Same
     # override, and the same reason, as the sacred-header lookup above.
-    _taken = _targets.declared_in_cmake(_DOC_ROOT_OVERRIDE or root)
+    # gh-1055: what the PROJECT claims, and what this module's OWN objects
+    # already emit. A collocated module-object -- a module whose `objects`
+    # list contains its own name -- writes `test_<obj>_core` into the very
+    # same CMakeLists this module writes to, so gh-1034's identically-named
+    # module pair is a second `add_executable` with one name in one file and
+    # cmake refuses to configure at all.
+    _project_taken = _targets.declared_in_cmake(_DOC_ROOT_OVERRIDE or root)
+    _taken = _project_taken | _targets.object_pair_names(
+        C.module_objects(cfg, module)
+    )
+    # Only the project's claims are worth reporting. jm declining to collide
+    # with itself is not news to the author, and reporting it would fire on
+    # every collocated module-object.
     _skipped = sorted(
-        n for n in (f"test_{cname}_core", f"bench_{cname}_core") if n in _taken
+        n
+        for n in (f"test_{cname}_core", f"bench_{cname}_core")
+        if n in _project_taken
     )
     cmake_ctx = {
         **cmake_ctx,
