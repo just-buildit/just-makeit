@@ -32,6 +32,7 @@ from . import _codec as _codec
 from . import _coerce
 from . import _config as C
 from . import _gluedoc
+from . import _outbuf
 from . import _record
 from . import _context as Ctx
 from . import _types as T
@@ -1880,13 +1881,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # (gh-219) here -- this loop is a separate stub generator for the
         # module-aggregated .pyi and was never taught the out=/_max_out()
         # shape, so it kept emitting the pre-#219 signature after that fix.
-        _m_single_array_param = (
-            m_arg == "void"
-            and len(m_params) == 1
-            and m_params[0]["type"].endswith("[]")
-        )
-        _stub_enable_out = (
-            m_var and not m_multi and (not m_params or _m_single_array_param)
+        # gh-1079: the same accessor the binding and the standalone `.pyi`
+        # call. This file is the module-aggregated stub; the pair have already
+        # been caught disagreeing about jm's own binding arguments twice
+        # (gh-1042, gh-1051), so the predicate gets the same treatment the
+        # count default and the count name did rather than a third copy.
+        _stub_enable_out = _outbuf.enabled(
+            variable_output=bool(m_var),
+            multi_output=bool(m_multi),
+            has_arg=m_arg != "void",
+            params=m_params,
         )
         # gh-527: a variable_output method with no input to size from is the
         # generator shape -- make_methods_ctx seeds a leading `count` for it
