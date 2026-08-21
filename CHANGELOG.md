@@ -36,6 +36,7 @@
     `error_message`, `error_negative` or `status_return`.
 
 ### Fixed
+
 - **A `bool` state field no longer scaffolds a project whose tests fail on
     the first run (gh-1067).** `jm new --state "flag:bool:false"` emitted
     `set(obj, 2)` then `CHECK(get(obj) == 2)` into the generated C test, and
