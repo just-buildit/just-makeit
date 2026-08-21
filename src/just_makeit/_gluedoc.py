@@ -559,9 +559,15 @@ def count_kwarg_name(count_name: str = "") -> str:
 
     The declared-param workaround is not one. Declaring ``params = [{name =
     "n", type = "size_t"}]`` gives both faces the name and leaves the C
-    prototype byte-identical — and silently drops the ``out=`` buffer and the
-    default, because that shape is no longer the generator shape. Measured on
-    0.63.3: ``def ptr2(self, n: int) -> NDArray[...]``.
+    prototype byte-identical — and drops the **default**, because that shape
+    is no longer the generator shape and there is no `count_default` to seed
+    from. Measured on 0.63.3: ``def ptr2(self, n: int) -> NDArray[...]``.
+
+    It used to drop the ``out=`` buffer too, which was half the argument for
+    this key. gh-1079 gave the all-scalar shape its buffer back, so that half
+    is gone and this docstring says so rather than keeping a claim that reads
+    well and is no longer true. The default is still a real cost, and it is
+    the whole of one: a generator's zero-arg behaviour IS its default.
 
     Parameters
     ----------

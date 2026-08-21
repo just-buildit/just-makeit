@@ -60,10 +60,12 @@ SHAPES = [
         dict(arg_type="void", params=[("x", "float[]")]),
         True,
     ),
+    # gh-1079's capability half: sized from `<m>_max_out(state)`, which
+    # gh-1085 now guarantees is non-zero wherever the method runs at all.
     (
         "all-scalar-params",
         dict(arg_type="void", params=[("n", "size_t")]),
-        False,
+        True,
     ),
     (
         "array-plus-scalar",
@@ -121,10 +123,21 @@ class TestThePredicate:
         gap = _outbuf.why_not(
             variable_output=True,
             multi_output=False,
-            has_arg=False,
-            params=[{"name": "n", "type": "size_t"}],
+            has_arg=True,
+            params=[{"name": "mu", "type": "double"}],
         )
-        assert "gh-1079" in gap and "size" in gap
+        assert "gh-1079" in gap
+        # ...and the gh-412 carve-out, which is a THIRD kind of reason: a
+        # deliberate scope decision rather than a gap or a property.
+        assert "gh-412" in _outbuf.why_not(
+            variable_output=True,
+            multi_output=False,
+            has_arg=False,
+            params=[
+                {"name": "x", "type": "float[]"},
+                {"name": "mu", "type": "double"},
+            ],
+        )
 
 
 class TestTheThreeFacesAgree:

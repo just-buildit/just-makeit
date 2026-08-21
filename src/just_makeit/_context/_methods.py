@@ -881,7 +881,11 @@ def _capacity_exprs(
 
 
 def _zero_bound_guard(
-    c_fn: str, name: str, fallback: str, cleanup: str = ""
+    c_fn: str,
+    name: str,
+    fallback: str,
+    cleanup: str = "",
+    bound: str = "_cap",
 ) -> str:
     """Refuse a zero allocation bound, for the one shape that has no floor.
 
@@ -931,6 +935,13 @@ def _zero_bound_guard(
         is not gated by accident.
     cleanup : str
         Statements releasing anything acquired earlier in the wrapper.
+    bound : str
+        The C local holding the BOUND. ``_cap`` on the allocating path, where
+        the two are the same thing — but ``_omax`` in the ``out=`` branch,
+        where ``_cap`` is the *caller's buffer size* and testing it would ask
+        "did you pass an empty array?" instead of "can jm size this at all?".
+        Measured: with the default the `out=` path accepted a 4096-element
+        buffer against a zero bound and ran the kernel.
 
     Returns
     -------
@@ -940,7 +951,7 @@ def _zero_bound_guard(
     if "_max_out(" not in fallback:
         return ""
     return (
-        "    if (!_cap) {\n"
+        f"    if (!{bound}) {{\n"
         "        PyErr_Format(PyExc_RuntimeError,\n"
         '            "%s() cannot size its output: %s() returned 0, and this '
         "method has no input length to fall back on. Implement it to return "
@@ -2255,6 +2266,15 @@ def make_methods_ctx(
                         _lazy_fallback,
                         _moc_state_only,
                     )[1]
+                    + _reindent(
+                        _zero_bound_guard(
+                            c_fn,
+                            name,
+                            _lazy_fallback,
+                            f"Py_DECREF(out_arr); {_decref_early_vo}",
+                            bound="_omax",
+                        )
+                    )
                     + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
                     f'                "out has %zu elements,'

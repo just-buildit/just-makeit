@@ -176,12 +176,13 @@ class TestPythonFacingMaxOut:
         )
         assert "def steps_max_out(self, x_len: int) -> int:" in _pyi(root)
 
-    def test_all_scalar_params_method_exposes_no_out_or_max_out(
-        self, tmp_path
-    ):
-        # Unaffected by gh-607: this shape was never `_enable_out`-eligible
-        # (it isn't a bare-arg or single-array-param method), so it exposes
-        # no Python-facing max_out() at all, before or after this change.
+    def test_all_scalar_params_method_exposes_out_and_max_out(self, tmp_path):
+        # Unaffected by gh-607 itself. The assertion flipped in gh-1079:
+        # jm exposes a Python-facing `max_out()` exactly where it offers an
+        # `out=` buffer, because that is what a caller sizes the buffer WITH
+        # ("size an out= buffer with the matching _max_out()"). This shape
+        # gained the buffer, so it gained the sibling — the two move
+        # together by construction, which is the property worth pinning.
         root = _scaffold(tmp_path)
         method_run(
             root,
@@ -194,7 +195,7 @@ class TestPythonFacingMaxOut:
             [],
             params=[("x", "float")],
         )
-        assert '"push_max_out"' not in _ext_c(root)
+        assert '"push_max_out"' in _ext_c(root)
 
 
 class TestPassCapacityClampBehavior:

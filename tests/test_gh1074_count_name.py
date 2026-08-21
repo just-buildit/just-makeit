@@ -20,9 +20,14 @@ a `TypeError` for a caller following either one.
 
 **Declaring the count as a real `param` is not the workaround it looks like.**
 It gives both faces the name and leaves the injected C prototype byte-identical
-— and silently drops the `out=` buffer and the default, because the method is
-no longer the generator shape. Asserted below, since the whole argument for
-adding a key is that the existing alternative costs two things.
+— and drops the **default**, because the method is no longer the generator
+shape and there is no `count_default` to seed from. Asserted below, since the
+argument for adding a key is that the existing alternative costs something.
+
+It used to cost the `out=` buffer as well, which was half that argument.
+gh-1079 gave the all-scalar shape its buffer back, so this file says so rather
+than keeping the stronger claim. The default is still a real cost, and for a
+generator it is not a small one: the zero-arg call's behaviour IS its default.
 
 Two gates here, and the second is the one that matters:
 
@@ -266,16 +271,17 @@ class TestBothStubGeneratorsAgree:
         assert "count" not in body, body
 
 
-class TestTheDeclaredParamAlternativeStillCostsTwoThings:
+class TestTheDeclaredParamAlternativeStillCostsTheDefault:
     """The reason a key was the right answer rather than "just declare it".
 
     A declared param leaves the injected C prototype byte-identical and gives
-    both faces the name — and drops the `out=` buffer and the default with it,
-    because the method stops being the generator shape. Asserted so the
-    argument for this feature stays checkable rather than remembered.
+    both faces the name — and drops the default with it, because the method
+    stops being the generator shape. Asserted so the argument for this
+    feature stays checkable rather than remembered, and updated when gh-1079
+    removed the other half of it.
     """
 
-    def test_a_declared_param_offers_no_out_and_no_default(self, project):
+    def test_a_declared_param_offers_no_default(self, project):
         _quiet(
             method_run,
             project,
@@ -290,8 +296,14 @@ class TestTheDeclaredParamAlternativeStillCostsTwoThings:
         )
         sig = _sig(_pyi(project), "ptr2")
         assert "n: int" in sig
-        assert "out" not in sig
-        assert "=" not in sig
+        # No default: `n` is a required positional, so a bare `obj.ptr2()`
+        # is a TypeError where the generator shape would have used its
+        # `count_default`.
+        assert "n: int =" not in sig
+        # gh-1079: `out=` IS offered now — the all-scalar shape gained it.
+        # Asserted rather than deleted, so the row that changed is visible
+        # instead of merely absent.
+        assert "out:" in sig
 
     def test_count_name_keeps_both(self, project):
         _generator(project, "ptr", count_name="n", count_default="state->n")

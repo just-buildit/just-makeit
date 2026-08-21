@@ -95,7 +95,10 @@ def why_not(
     ''
     >>> why_not(variable_output=True, multi_output=False, has_arg=False,
     ...         params=[{"name": "n", "type": "size_t"}])
-    'all-scalar params: no length to size the buffer from (gh-1079)'
+    ''
+    >>> why_not(variable_output=True, multi_output=False, has_arg=True,
+    ...         params=[{"name": "mu", "type": "double"}])
+    'extra params beside the array input (gh-1079)'
     """
     if not variable_output:
         return "not variable_output"
@@ -105,12 +108,32 @@ def why_not(
         return "multi_output"
     if not params or single_array_param(has_arg, params):
         return ""
+    if any(str(p.get("type", "")).endswith("[]") for p in params):
+        # An array among several params — `Farrow.delay(x, mu)`, whether the
+        # array arrives through `arg_type` or as a param. There IS a length to
+        # size from, and gh-412 carved the shape out of the `out=` feature
+        # deliberately; widening it is a separate piece of work from gh-1079,
+        # which asks about the ALL-SCALAR shape.
+        return "an array beside other params (gh-412)"
     if has_arg:
-        # An `arg_type` array plus extra params — `Farrow.delay(x, mu)`. There
-        # IS a length to size from; what is missing is the parse block, which
-        # is the same open half as below.
+        # An `arg_type` array plus extra params — `Farrow.delay(x, mu)`. The
+        # `has_arg` branch builds its own kwlist around the array input and
+        # does not thread extra params through it, so this one is still a
+        # parse-block gap rather than a sizing one. Named separately for that
+        # reason: it is a different piece of work from the shape below.
         return "extra params beside the array input (gh-1079)"
-    return "all-scalar params: no length to size the buffer from (gh-1079)"
+    # gh-1079: the all-scalar shape. Sized from `<m>_max_out(state)`, which is
+    # the same expression the internal allocation uses for this shape — so the
+    # caller's buffer is validated against exactly what the binding would have
+    # allocated itself, which is `_capacity_exprs`' stated invariant.
+    #
+    # Safe only because gh-1085 refuses a zero bound. `max_out()` returning 0
+    # is documented as "unknown", and every other shape falls back to the
+    # call's own length; this one has none, so an unknown bound used to mean a
+    # zero-length allocation and a heap overflow. With that refused up front,
+    # `max_out()` is guaranteed non-zero wherever this method runs at all, and
+    # "at least max_out(state)" becomes a bound worth checking against.
+    return ""
 
 
 def enabled(
