@@ -267,6 +267,96 @@ def strip_c_literal_suffix(default: str) -> str:
     return m.group("value") if m else default.strip()
 
 
+def default_type_error(ctype: str, default: str) -> str:
+    """``""`` when *default* is a valid literal for *ctype*, else why not.
+
+    gh-1099. A manifest may carry any string as an init-param ``default``, and
+    nothing checked it against the type declared beside it. The value is
+    emitted **verbatim** into three Python-facing places and one C one, so a
+    default of the wrong type does not fail where it was written:
+
+    * the C local — ``int mode = hann;``, which does not compile;
+    * both ``_py_default`` peers, which seed a ``.pyi`` signature. The integer
+      branch emitted a bare undefined name; the FLOAT branch appended ``.0`` to
+      it, giving ``x: float = hann.0`` — a **SyntaxError** that breaks the
+      entire stub. That is gh-515's failure mode in the one branch gh-515 did
+      not cover;
+    * ``_app``, which seeds an ``argparse`` default and so raises ``NameError``
+      when the generated app starts.
+
+    None of those names the manifest, and the earliest of them is a compiler
+    error one command later. Checking here says it where it was written.
+
+    **A constant is a real use case, and it has its own spelling.** ``INT_MAX``
+    is a macro and ``hann`` is a typo; only the compiler can tell them apart,
+    and jm can render neither as the Python literal the stub, the docstring
+    example and the app flag all need. ``default_raw`` is the key that says
+    "this is C, not a literal" — it puts the text straight into the C and
+    leaves the Python faces with ``...``, which is exactly right for a value
+    jm cannot evaluate. So the constant keeps working and only the typo is
+    refused.
+
+    ``const char *`` accepts anything: its value *is* text, and ``NULL`` is
+    already given a meaning by :func:`~._context._types._py_default`.
+
+    Returns
+    -------
+    str
+        Empty when the default is usable, else a sentence naming the declared
+        type and the offending value, ready to drop into a refusal.
+
+    Examples
+    --------
+    >>> default_type_error("int", "16")
+    ''
+    >>> default_type_error("size_t", "0U")
+    ''
+    >>> default_type_error("double", "1.5f")
+    ''
+    >>> default_type_error("bool", "true")
+    ''
+    >>> default_type_error("const char *", "/dev/null")
+    ''
+    >>> default_type_error("int", "")
+    ''
+    >>> print(default_type_error("int", "hann"))
+    default `hann` is not a valid `int` literal. jm renders a default into C, into the .pyi and into the generated app's flags, and a C identifier can be none of those three.
+      If `hann` is a C constant, declare it as `default_raw = "hann"` — that emits it into the C unchanged and leaves the Python side with no default, which is what jm can honestly say about a value it cannot evaluate.
+      Otherwise spell the value.
+    >>> default_type_error("bool", "yes")
+    'default `yes` is not a bool. Write `true` or `false`.'
+    """
+    if not default.strip():
+        return ""
+    meta = _CTYPE_META.get(ctype)
+    if meta is None:
+        return ""
+    kind = meta["kind"]
+    if kind == "str":
+        return ""
+    if ctype == "bool":
+        # `bool`'s kind is "int", so this must dispatch on the concrete ctype
+        # — the same reason gh-610 gave for the branch in `_py_default`.
+        if default.strip().lower() in ("true", "false", "0", "1"):
+            return ""
+        return f"default `{default}` is not a bool. Write `true` or `false`."
+    if _C_NUMERIC_LITERAL.match(default):
+        return ""
+    return (
+        # "a valid `<ctype>` literal" rather than "an int"/"a double": the
+        # article would have to vary with the type name, and a helper for that
+        # is a lot of machinery for one message.
+        f"default `{default}` is not a valid `{ctype}` literal. jm renders a"
+        " default into C, into the .pyi and into the generated app's flags,"
+        " and a C identifier can be none of those three.\n"
+        f"  If `{default}` is a C constant, declare it as `default_raw ="
+        f' "{default}"` — that emits it into the C unchanged and leaves the'
+        " Python side with no default, which is what jm can honestly say"
+        " about a value it cannot evaluate.\n"
+        "  Otherwise spell the value."
+    )
+
+
 def c_param_parts(params) -> list[str]:
     """Expand a method/function param list into C parameter declarations.
 
