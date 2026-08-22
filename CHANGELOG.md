@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.66.0] — 2026-08-22
+
 ### Added
 
 - **`example_value`: a required init-param jm can construct with (gh-1105).**
