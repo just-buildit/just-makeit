@@ -86,9 +86,20 @@ allocator_peek(allocator_state_t *state, size_t x)
 # the author's file, and a contract change is exactly when it has to move.
 # Covering the refusal there too keeps channel 1 tested at the C layer, where
 # it is implemented, and not only through the binding.
+# gh-273's seeding skip: `capacity`/`slots` are REQUIRED with no default, so
+# jm emits a zero-seeded call it does not trust and bails out if the ctor
+# refuses it — exactly the ctor this example is about. The patch replaces the
+# whole block with a construction that IS valid, which is what the walkthrough
+# demonstrates.
 CTEST_OLD = """\
     allocator_state_t *obj = allocator_create(0, 0);
-    REQUIRE(obj != NULL);
+    if (!obj) {
+        /* capacity, slots: required with no default — a validating
+           allocator_create() may reject the zero-seeded call
+           above. Pass valid arguments to smoke-test further. */
+        printf("test_allocator_core SKIPPED (capacity, slots need seeding)\\n");
+        return 0;
+    }
 
     /* n_slots: getter / setter */
     CHECK(allocator_get_n_slots(obj) == 0);"""
