@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Changed
+
+- **Re-vendored `standard.mk` from canonical.** Two upstream changes:
+
+    - `test`/`test-fast` gain `build` as a prerequisite inside `HAS_C`, so a
+        compiled suite cannot run against stale artefacts. **Inert here** — jm
+        sets no `HAS_C` (it generates C but builds none itself), which is
+        exactly the per-repo variation the flag exists for.
+    - `tag-release` is **idempotent**: an existing tag on the same commit is
+        reused rather than failing, so `make ship` can be re-run after its
+        watch is cut short by a timeout or a dropped connection. A tag on a
+        *different* commit is still refused, because the artifacts were built
+        from wherever it pointed.
+
+    Vendored verbatim, as the drift gate requires — per-repo variation is a
+    variable in `Makefile`, never an edit here.
+
 ### Fixed
 
 - **An init-param `default` must be a literal of its declared type
