@@ -1,21 +1,5 @@
 ## [Unreleased]
 
-### Fixed
-
-- **The `errors_warnings` example's constructor params are declared
-    `required`.** jm seeds an *optional* scalar init-param with the type's
-    zero; that example's constructor validates and refuses `slots == 0`, so
-    every generated smoke test raised the `ValueError` the example itself
-    declares. `_unseedable_required` already covers this case ("a required
-    scalar carrying no default — a validating constructor would reject the
-    type's zero") and suppresses the generated construction once the param is
-    marked; the example never marked it.
-
-    Red in the Docker image build on `main` for 14 consecutive runs, and
-    invisible to every PR gate: `docker/build_examples.py` is the only place
-    that runs a generated project's own pytest, and it is not a required
-    check. Filed as gh-1089.
-
 ## [0.64.0] — 2026-08-21
 
 ### Added
@@ -189,6 +173,20 @@
     in is a feature, not a de-duplication; filed separately.
 
 ### Fixed
+
+- **The `errors_warnings` example's constructor params are declared
+    `required`.** jm seeds an *optional* scalar init-param with the type's
+    zero; that example's constructor validates and refuses `slots == 0`, so
+    every generated smoke test raised the `ValueError` the example itself
+    declares. `_unseedable_required` already covers this case ("a required
+    scalar carrying no default — a validating constructor would reject the
+    type's zero") and suppresses the generated construction once the param is
+    marked; the example never marked it.
+
+    Red in the Docker image build on `main` for 14 consecutive runs, and
+    invisible to every PR gate: `docker/build_examples.py` is the only place
+    that runs a generated project's own pytest, and it is not a required
+    check. Filed as gh-1089.
 
 - **An all-scalar `variable_output` method no longer corrupts the heap on a
     zero bound (gh-1085).** Every `variable_output` binding allocates behind a
