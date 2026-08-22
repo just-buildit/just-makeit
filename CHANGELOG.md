@@ -33,6 +33,32 @@
     suppresses the generated construction example. With a non-literal refused
     up front it cannot reach them, so nothing there needed to change.
 
+- **The `create()` Doxygen is reconciled when the declaration is refreshed
+    (gh-1098).** jm injects the `create()` declaration into the sacred
+    `_core.h` and refreshes it whenever the manifest changes, but never
+    touched the comment above it — so adding an `init_param` to an existing
+    object left the header documenting `@param gain` for a parameter no longer
+    taken, and documenting none of the ones now taken.
+
+    Not cosmetic: that block carries contract prose a reader has no other
+    source for — an array's synthesised length parameter, a required scalar's
+    `(required)`, and gh-805 §H's `May be NULL (Python: None)`, put there
+    precisely so the author reads it where they write the body that must
+    honour it. It is also the one part of the declaration gh-1076's CTOR check
+    cannot see: that compares the parameter *list* and passes while the block
+    above it is wrong.
+
+    **Only the `@param` set is reconciled.** Names that survive keep their
+    descriptions byte-for-byte, new names arrive **bare** for the author to
+    fill (`scaffold_doc_block`'s rule, for its reasons), and names that are
+    gone go. Prose is never rewritten: `_init` already stated that rule — "re-
+    running a command never re-stamps a skeleton over authored prose" — and
+    the header's `@brief` is read back as the Python class docstring, so
+    overwriting it would silently change the generated API's documentation.
+
+    Idempotent, and only a comment butted directly against the declaration is
+    touched, so an unrelated block further up is never claimed.
+
 ## [0.65.0] — 2026-08-22
 
 ### Added
