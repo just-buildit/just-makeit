@@ -76,9 +76,13 @@ jobs:
       # single doppler::doppler_lib SHARED target, removed in 0.13.x).
       - name: Download doppler release
         run: |
+          # `doppler-*` is too loose: the release also carries
+          # `doppler-starter-<ver>-linux-x86_64.tar.gz`, which appeared on
+          # 2026-08-22 and matched. A version always starts with a digit, so
+          # anchoring on that selects the library tarball and nothing else.
           gh release download \
             --repo doppler-dsp/doppler \
-            --pattern "doppler-*-linux-x86_64.tar.gz" \
+            --pattern "doppler-[0-9]*-linux-x86_64.tar.gz" \
             --dir /tmp/doppler-dl
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,12 +90,25 @@ jobs:
       - name: Install doppler
         run: |
           mkdir -p /tmp/doppler
-          tar xzf /tmp/doppler-dl/doppler-*-linux-x86_64.tar.gz \
-              -C /tmp/doppler --strip-components=1
+          # Resolve the glob to ONE file and say so if it is not one. A glob
+          # straight into `tar xzf` is what turned the extra asset into
+          # "tar: doppler-starter-...: Not found in archive": with two
+          # matches, `tar xzf A B` reads B as a MEMBER to extract from A, so
+          # the wrong-number-of-files case cannot be told from a corrupt
+          # archive. The failure mode is not that the glob was loose, it is
+          # that the command had no way to report it.
+          shopt -s nullglob
+          tarballs=(/tmp/doppler-dl/doppler-[0-9]*-linux-x86_64.tar.gz)
+          if [ ${#tarballs[@]} -ne 1 ]; then
+            echo "::error::expected exactly 1 doppler tarball," \
+                 "got ${#tarballs[@]}: ${tarballs[*]}"
+            exit 1
+          fi
+          tar xzf "${tarballs[0]}" -C /tmp/doppler --strip-components=1
           # Which doppler this ran against is the first question a failure
           # raises, and the download above is unpinned — so state it in the log
           # rather than making the next reader infer it from the run date.
-          echo "::notice::built against $(basename /tmp/doppler-dl/doppler-*-linux-x86_64.tar.gz)"
+          echo "::notice::built against $(basename "${tarballs[0]}")"
 
       # ── Run the nco_tone example ────────────────────────────────────────────
       # Pass the install prefix; cmake's find_package searches both
