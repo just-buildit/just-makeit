@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.64.1] — 2026-08-22
+
 ### Fixed
 
 - **`pass_capacity` methods no longer refuse a zero bound (gh-1091).**
