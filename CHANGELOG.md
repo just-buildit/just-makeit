@@ -62,6 +62,7 @@
     skipped, which the gate reports as a pass because pytest exits 0. That is
     `_unseedable_required` working as gh-1088 intended and is filed separately
     as gh-1105 rather than left in a docstring.
+
 - **The accessor and reset tests constructed with no arguments (gh-1105).**
     Both are built in the state half of `make_state_ctx`, from *its*
     `py_create_args` — which is empty whenever init-params are present, since
@@ -85,6 +86,15 @@
     Measured across all 26 examples: **215 passed, 0 skipped, 0 failed** (was
     207 passed, 8 skipped), 21 of 26 carrying at least one real test. No
     example regressed.
+
+- **The synthesised example is no longer headed "Create with defaults:" over a
+    constructor that has none (gh-1105).** That label was true of every object
+    that reached the block before: a required init-param with no default
+    suppressed the whole `Examples` section, so it was never seen above a call
+    with no defaults in it. `example_value` makes exactly that object
+    documentable, which is what exposed it. Derived once in `_docstring` and
+    shared, since the two emit sites held the same literal; unchanged for the
+    all-defaults case, which is both common and accurate.
 
 - **An init-param `default` must be a literal of its declared type
     (gh-1099).** It was rendered **verbatim** into four places, each failing

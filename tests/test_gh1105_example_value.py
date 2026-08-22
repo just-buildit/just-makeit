@@ -150,6 +150,59 @@ class TestExampleValueMakesTheCtorSeedable:
         assert "cap: int = " not in pyi
 
 
+class TestTheExampleLabelIsAccurate:
+    """The heading `example_value` made visible.
+
+    "Create with defaults:" was true of every object that reached this block
+    before — a required init-param with no default suppressed the whole
+    Examples section, so the label was never seen over a call that had no
+    defaults in it. Making that object documentable is what exposed it.
+    """
+
+    def test_a_required_param_is_not_created_with_defaults(self, tmp_path):
+        root = _project(tmp_path, "l1", [_ip("cap", example="1024")])
+        pyi = (root / "src" / "l1" / "obj.pyi").read_text(encoding="utf-8")
+        assert "Create:" in pyi
+        assert "Create with defaults:" not in pyi
+
+    def test_a_defaulted_param_keeps_the_old_label(self, tmp_path):
+        """No churn for the common shape, where the label is accurate."""
+        root = _project(
+            tmp_path,
+            "l2",
+            [
+                (
+                    "cap",
+                    "size_t",
+                    "16",
+                    "",
+                    "",
+                    "",
+                    False,
+                    "",
+                    False,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            ],
+        )
+        pyi = (root / "src" / "l2" / "obj.pyi").read_text(encoding="utf-8")
+        assert "Create with defaults:" in pyi
+
+    def test_both_doc_faces_agree(self, tmp_path):
+        """The runtime docstring is built by the peer generator, and the two
+        held the same literal — a third copy waiting to disagree."""
+        root = _project(tmp_path, "l3", [_ip("cap", example="1024")])
+        ext = (root / "native" / "src" / "obj" / "obj_ext.c").read_text(
+            encoding="utf-8"
+        )
+        assert "Create with defaults:" not in ext
+
+
 class TestItRoundTrips:
     def test_the_manifest_keeps_it(self, tmp_path):
         root = _project(tmp_path, "e", [_ip("cap", example="1024")])

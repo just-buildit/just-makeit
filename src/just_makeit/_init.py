@@ -982,6 +982,7 @@ def run(
             ctx.get("py_create_args", ""),
             ctx["Component"],
             no_reset=no_reset,
+            init_params=init_params,
         )
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""

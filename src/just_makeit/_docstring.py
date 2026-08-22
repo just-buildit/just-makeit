@@ -991,6 +991,42 @@ def scaffold_doc_block(decl: str, member: str, indent: str = "") -> str:
     return "\n".join(lines)
 
 
+def ctor_demo_label(init_params: "list | None" = None) -> str:
+    """The heading above jm's synthesised construction example.
+
+    gh-1105. ``"Create with defaults:"`` is accurate when every constructor
+    argument has one, which was true of every object that reached this block
+    — a required init-param with no default made the ctor unseedable and the
+    whole Examples section was suppressed, so the label was never seen over a
+    call that had no defaults in it.
+
+    ``example_value`` makes exactly that object documentable, so the label
+    started appearing above ``Allocator(capacity=1024, slots=4)`` — a
+    construction with two mandatory arguments and no default anywhere in it.
+
+    Derived rather than passed as a literal at the two emit sites, which held
+    the same string and would have been a third copy waiting to disagree.
+
+    Examples
+    --------
+    >>> ctor_demo_label()
+    'Create with defaults:'
+    >>> ctor_demo_label([("gain", "float", "0.0f")])
+    'Create with defaults:'
+
+    A required param with no default is what changes it:
+
+    >>> ctor_demo_label([("cap", "size_t", "", "", "", "", False, "", True)])
+    'Create:'
+    """
+    for p in init_params or []:
+        required = len(p) > 8 and p[8]
+        has_default = len(p) > 2 and p[2]
+        if required and not has_default:
+            return "Create:"
+    return "Create with defaults:"
+
+
 def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
     """*block* with its ``@param`` set matched to *decl*'s parameters.
 

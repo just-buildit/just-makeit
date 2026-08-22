@@ -266,6 +266,7 @@ def component_ctx(
             ctx.get("py_create_args", ""),
             Component,
             no_reset=C.is_no_reset(cfg, object_name),
+            init_params=init_params,
         )
         if scalar_state and not Ctx._unseedable_required(init_params)
         else ""
