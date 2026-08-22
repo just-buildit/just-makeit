@@ -59,6 +59,12 @@ _DERIVED = (
     "",
     "num_taps",
 )
+#: The same param as it comes back from the MANIFEST, which carries one field
+#: more: gh-1096 appended `c_type`, and it has no CLI syntax (TOML only), so
+#: the flag parser stops one short. The CLI form being a strict PREFIX of the
+#: stored form is the actual invariant — `init_param_tuple_to_dict` reads
+#: every field behind a `len(p) > n` guard for exactly that reason.
+_DERIVED_STORED = _DERIVED + ("",)
 _PLAIN = ("h", "float[]", "")
 
 
@@ -173,7 +179,7 @@ def test_it_round_trips_and_replays(tmp_path):
     author did not change. `jm script` did exactly that until this was wired.
     """
     root = _project(tmp_path, _DERIVED)
-    assert C.init_params(C.load(root), "hbdecim")[0] == _DERIVED
+    assert C.init_params(C.load(root), "hbdecim")[0] == _DERIVED_STORED
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         script_run(root)

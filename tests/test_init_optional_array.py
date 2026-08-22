@@ -246,7 +246,13 @@ class TestOptionalArrayToml:
             "",
             "",
             # gh-900: (derived) — empty unless the array names its own length
-            # parameter, which moves it ahead of the data pointer.
+            # parameter, which moves it ahead of the data pointer. gh-1097
+            # made it list-valued for a 2-D array's two extents; a `float[][]`
+            # that does not name them, as here, still reads back empty and
+            # keeps jm's `<name>_dim0`/`<name>_dim1`.
+            "",
+            # gh-1096: (c_type) — empty unless the parameter is DECLARED with
+            # a C typedef jm has no vocabulary for.
             "",
         )
         assert result[1][:3] == ("rate", "double", "0.0")
@@ -266,7 +272,22 @@ class TestOptionalArrayToml:
         )
         result = init_params(cfg, "gen")
         assert result == [
-            ("n", "int", "16", "", "", "", False, "", False, "", "", "", "")
+            (
+                "n",
+                "int",
+                "16",
+                "",
+                "",
+                "",
+                False,
+                "",
+                False,
+                "",
+                "",
+                "",
+                "",
+                "",
+            )
         ]
 
 

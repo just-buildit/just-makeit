@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._keys import INIT_PARAM_FIELDS
 from just_makeit._config import (
     FILENAME,
     _dump,
@@ -280,10 +281,31 @@ class TestAddComponentFlags:
             init_params_=[("n", "int", "16"), ("order", "int", "4")],
         )
         result = init_params(cfg, "gen")
-        # 12 fields since gh-790 added (capsule, header) — see `init_params`
-        # for the full field list.
+        # The arity is DERIVED, not written down. This comment said "12
+        # fields since gh-790" while the tuples below carried 13, because
+        # gh-900 appended `derived` and the prose stayed put — the same drift
+        # `_keys.INIT_PARAM_FIELDS` exists to prevent for the serializer.
+        # That registry's docstring claims it "mirrors the fields
+        # `_project_init_params` reads back"; this is the mechanism behind
+        # the claim.
+        assert len(result[0]) == len(INIT_PARAM_FIELDS)
         assert result == [
-            ("n", "int", "16", "", "", "", False, "", False, "", "", "", ""),
+            (
+                "n",
+                "int",
+                "16",
+                "",
+                "",
+                "",
+                False,
+                "",
+                False,
+                "",
+                "",
+                "",
+                "",
+                "",
+            ),
             (
                 "order",
                 "int",
@@ -294,6 +316,7 @@ class TestAddComponentFlags:
                 False,
                 "",
                 False,
+                "",
                 "",
                 "",
                 "",

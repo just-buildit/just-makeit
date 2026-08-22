@@ -542,14 +542,78 @@ for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
-| TOML field                                                | CLI flag                                                                | Status                      |
-| --------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
-| `name`, `type`, `default`                                 | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
-| `optional = true`                                         | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
-| `default_raw`, `real_type`, `real_create_fn`, `create_fn` | (TOML only)                                                             | 🟡                          |
-| `capsule = "<name>"`, `header = "path/hdr.h"`             | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
-| `required = false` on a capsule param (nullable handle)   | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
-| compose with `[[state]]`                                  | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+| TOML field                                                 | CLI flag                                                                | Status                      |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
+| `name`, `type`, `default`                                  | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
+| `optional = true`                                          | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
+| `default_raw`, `real_type`, `real_create_fn`, `create_fn`  | (TOML only)                                                             | 🟡                          |
+| `capsule = "<name>"`, `header = "path/hdr.h"`              | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
+| `required = false` on a capsule param (nullable handle)    | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
+| `derived = "<name>"` (name a 1-D array's length parameter) | (TOML only)                                                             | ✅ (gh-900)                 |
+| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)  | (TOML only)                                                             | ✅ (gh-1097)                |
+| `c_type = "<typedef>"` (declare an integer param's C type) | (TOML only)                                                             | ✅ (gh-1096)                |
+| compose with `[[state]]`                                   | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+
+#### Naming what the constructor declares
+
+jm derives the `create()` prototype from `init_params`, and two parts of it
+used to have no spelling. Both keys below change **only the declaration jm
+injects into the sacred `_core.h`** — the Python face, the parse block and the
+call are untouched, which is what makes them safe.
+
+They matter because `jm status --check`'s CTOR comparison (gh-1076) is not
+suppressible. A C signature the manifest could not describe was reported
+forever, and `jm apply` "resolved" it by rewriting the author's header down to
+jm's rendering.
+
+**`c_type` — an enum typedef in the prototype.** A `string_enum:`/`enum:`
+init-param renders `int`, because jm's type vocabulary has no enum typedef.
+When the C really takes one, say so:
+
+```toml
+[[detector.init_params]]
+name    = "noise_mode"
+type    = "string_enum:mean,median,min,max"
+default = "mean"
+c_type  = "det_noise_mode_t"
+```
+
+```c
+detector_state_t *detector_create(det_noise_mode_t noise_mode);
+```
+
+```python
+Detector(noise_mode="median")   # unchanged
+```
+
+The binding still parses the choice string, validates it to an index and
+passes an `int`; C converts at the call. That interchangeability is also the
+limit, so it is enforced: `c_type` is accepted **only** on a parameter jm
+declares as an integer. Over a `double` it would be a silent ABI mismatch that
+still compiles, and jm refuses it by name.
+
+**`derived` — naming an array's extents.** By default a 1-D array init-param
+appends a trailing `<name>_len`, and a 2-D one (`type = "T[][]"`) appends
+`<name>_dim0`, `<name>_dim1`. A string moves the 1-D length *before* the data
+pointer and names it; a list names a 2-D array's extents in place:
+
+```toml
+[[corr2d.init_params]]
+name    = "ref"
+type    = "float _Complex[][]"
+derived = ["ny", "nx"]
+```
+
+```c
+corr2d_state_t *corr2d_create(const float complex *ref,
+                              size_t ny, size_t nx, size_t dwell);
+```
+
+The Python face still takes one 2-D array, the binding still requires
+`ndim == 2`, and it still passes both dimensions — only the declared names
+change. The list must name **every** extent; a shorter one is refused, because
+it would drop an extent from the declaration while the binding kept passing
+it.
 
 #### A capsule-typed init-param: constructing from a foreign handle
 
@@ -790,12 +854,12 @@ group  = "wfm_seq"
 prefix = "sync"          # -> sync_kind, sync_len
 ```
 
-| Key      | Table                   | Notes                                                                                                                                                              |
-| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `name`   | `[[group]]`             | The group's name, referenced by `init_groups.group`.                                                                                                               |
-| `fields` | `[[group]]`             | `[[group.fields]]` entries. Every key an `init_params` entry accepts is accepted here — `type`, `default`, `doc`, `enum`, `required`, the array and capsule forms. |
-| `group`  | `[[<obj>.init_groups]]` | Which group to instantiate.                                                                                                                                        |
-| `prefix` | `[[<obj>.init_groups]]` | Prepended as `<prefix>_<field>`. Omit it to use the bare field names.                                                                                              |
+| Key      | Table                   | Notes                                                                                                                                                                                                                                                                                                                                                               |
+| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`   | `[[group]]`             | The group's name, referenced by `init_groups.group`.                                                                                                                                                                                                                                                                                                                |
+| `fields` | `[[group]]`             | `[[group.fields]]` entries. Every key an `init_params` entry accepts is accepted here — `type`, `default`, `doc`, `required`, `c_type`, `derived`, the array and capsule forms. (`enum` is **not** one of them: it is a method-param, property and function-param key. A constructor parameter spells its enum in `type`, as `enum:<name>` or `string_enum:a,b,c`.) |
+| `group`  | `[[<obj>.init_groups]]` | Which group to instantiate.                                                                                                                                                                                                                                                                                                                                         |
+| `prefix` | `[[<obj>.init_groups]]` | Prepended as `<prefix>_<field>`. Omit it to use the bare field names.                                                                                                                                                                                                                                                                                               |
 
 **This is not jm learning structs**, and the expansion is *exactly* the
 hand-written list. The C prototype, the kwlist, the `.pyi` and the docstrings

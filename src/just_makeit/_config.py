@@ -2657,8 +2657,13 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             p.get("capsule", ""),
             p.get("header", ""),
             # gh-900: the C name of this array's length parameter,
-            # which is emitted BEFORE the data pointer when set.
+            # which is emitted BEFORE the data pointer when set. gh-1097: a
+            # LIST instead names a 2-D array's two extents, which are emitted
+            # AFTER the pointer because that is where jm already puts them.
             p.get("derived", ""),
+            # gh-1096: the C type the parameter is declared with, when that is
+            # a typedef jm has no vocabulary for.
+            p.get("c_type", ""),
         )
         for p in param_dicts
     ]
@@ -2700,7 +2705,13 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
     # round-trips the param back to the default trailing-length shape,
     # silently changing the C prototype on the next apply.
     if len(p) > 12 and p[12]:
-        rec["derived"] = p[12]
+        # gh-1097: a list stays a list. `str()` here would have persisted
+        # `"['ny', 'nx']"` and read back as a one-element name.
+        rec["derived"] = (
+            list(p[12]) if isinstance(p[12], (list, tuple)) else p[12]
+        )
+    if len(p) > 13 and p[13]:
+        rec["c_type"] = p[13]
     return rec
 
 
@@ -4319,6 +4330,12 @@ def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
         if is_bool:
             if val:
                 out.append((key, True, "true"))
+        elif isinstance(val, (list, tuple)):
+            # gh-1097. Carried through as a list so the two emitters below can
+            # each render it as a TOML array; `str()` would have flattened it
+            # to Python repr in both.
+            if val:
+                out.append((key, False, list(val)))
         elif val not in (None, ""):
             out.append((key, False, str(val)))
     return out
@@ -4340,9 +4357,12 @@ def _init_param_block_lines(p: dict) -> list[str]:
         # `default = "a"b"`, which `C.load` then rejects with a
         # TOMLDecodeError. Ordinary values render byte-identically, so this is
         # zero churn for every manifest that was already fine.
-        lines.append(
-            "{} = true".format(key) if is_bool else _str_assign(key, val)
-        )
+        if is_bool:
+            lines.append(f"{key} = true")
+        elif isinstance(val, list):
+            lines.append(f"{key} = {_toml_string_array(val)}")
+        else:
+            lines.append(_str_assign(key, val))
     return lines
 
 
@@ -4359,6 +4379,10 @@ def _init_param_inline(p: dict) -> str:
     for key, is_bool, val in _init_param_pairs(p):
         if is_bool:
             parts.append(f"{key} = true")
+        elif isinstance(val, list):
+            # gh-1097: the peer of the block emitter above. Fixing one and not
+            # the other is the pattern this repo keeps paying for.
+            parts.append(f"{key} = {_toml_string_array(val)}")
         else:
             parts.append(f"{key} = {_toml_inline_string(val)}")
     return "{" + ", ".join(parts) + "}"

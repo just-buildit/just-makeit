@@ -1,5 +1,52 @@
 ## [Unreleased]
 
+### Added
+
+- **`c_type` on an init-param: the enum typedef the constructor really takes
+    (gh-1096).** A `string_enum:`/`enum:` init-param renders `int`, because
+    jm's type vocabulary has no enum typedef. When the C takes one,
+    `c_type = "det_noise_mode_t"` says so, and only the injected `create()`
+    declaration moves — the binding still parses the choice string, validates
+    it to an index and passes an `int`, which C converts at the call.
+    `Detector(noise_mode="median")` is unchanged.
+
+    That interchangeability is also the limit, so it is enforced rather than
+    documented: `c_type` is accepted only on a parameter jm declares as an
+    **integer**. Over a `double` it would be a silent ABI mismatch that still
+    compiles — the class of bug the CTOR check exists to surface, reintroduced
+    by the fix for it.
+
+- **`derived` names a 2-D array init-param's extents (gh-1097).** The issue
+    read as "a 2D `create()` cannot be described"; measured, jm already
+    modelled it completely — it declares `(const T *ref, size_t ref_dim0,   size_t ref_dim1)`, the binding requires `ndim == 2`, and both dimensions
+    are passed. The extents simply could not be *named*, so a C API taking
+    `(ref, ny, nx)` could not be matched.
+
+    `derived = ["ny", "nx"]` names them. It is the 2-D sibling of gh-900's
+    string form and deliberately the same key, which already means "the extent
+    is a named parameter, not the trailing `<name>_len`". Nothing moves — jm
+    already puts a 2-D array's extents after the pointer — so this renames and
+    no more. A list that does not name every extent is refused: it would drop
+    one from the declaration while the binding kept passing it.
+
+### Fixed
+
+- **`jm apply` no longer rewrites a header declaration jm could not express.**
+    The half neither issue named. gh-1076's CTOR check is deliberately not
+    suppressible, on the reasoning that "an unsuppressible finding is right
+    when the alternative is a project that cannot be regenerated" — which
+    assumes the finding is *actionable*. For both shapes above it was not, and
+    `apply` resolved the disagreement by replacing the author's
+    `det_noise_mode_t` with `int` behind a `~` warning, silently weakening a
+    public C API to satisfy a comparison. With the manifest able to state the
+    truth there is nothing left to replace, so this needed no separate change
+    — it is listed because the behaviour was real and is gone.
+
+- **`docs/configuration.md` said an `init_params` entry accepts `enum`.** It
+    does not: `enum` is a method-param, property and function-param key, and
+    the same page's group-fields row had been advertising it on constructor
+    params. `derived` was also undocumented there since gh-900 shipped it.
+
 ## [0.64.1] — 2026-08-22
 
 ### Fixed

@@ -480,6 +480,12 @@ def _build_no_state_init_ctx(
     _str_enum_by_name: dict[str, tuple] = {
         n: (choices, sdflt) for n, choices, sdflt in str_enum_ip
     }
+    # gh-1096: `{param name: the C type it is DECLARED with}`. Present only
+    # for a param carrying `c_type`; `_ctor_c_type` decides whether the
+    # override is legal for the type jm would otherwise render.
+    _ctype_override: dict[str, str] = {
+        p[0]: p[13] for p in params if len(p) > 13 and p[13]
+    }
 
     sig_parts: list[str] = []
     doc_parts: list[str] = []
@@ -507,12 +513,20 @@ def _build_no_state_init_ctx(
             act, andim = _arr_meta[pname]
             adisp = _ctype_display(act)
             if andim == 2:
+                # gh-1097: the extents are already here and already passed;
+                # `derived` only decides what they are CALLED. The C locals
+                # keep jm's names, so nothing downstream of the call changes
+                # — the same split gh-900 made for the 1-D length.
+                _ext = _ctor_extent_names(
+                    pname, _derived_len.get(pname, ""), andim
+                )
                 sig_parts.append(
-                    f"const {adisp} *{pname}, size_t {pname}_dim0, size_t {pname}_dim1"
+                    f"const {adisp} *{pname}, "
+                    + ", ".join(f"size_t {e}" for e in _ext)
                 )
                 doc_parts.append(
                     f" * @param {pname}  Input {adisp} 2-D array"
-                    f" (shape: {pname}_dim0 x {pname}_dim1)."
+                    f" (shape: {_ext[0]} x {_ext[1]})."
                 )
                 call_parts.append(
                     f"(const {adisp} *)PyArray_DATA({pname}_arr),"
@@ -563,7 +577,12 @@ def _build_no_state_init_ctx(
             c_create_parts_ordered.append("NULL, 0")
         elif pname in _str_enum_meta:
             choices, _ = _str_enum_meta[pname]
-            sig_parts.append(f"int {pname}")
+            # gh-1096: the Python face is unchanged — a choice STRING,
+            # validated to this index. Only the declared C type moves.
+            sig_parts.append(
+                f"{_ctor_c_type(pname, _ctype_override.get(pname, ''), 'int')}"
+                f" {pname}"
+            )
             doc_parts.append(
                 f" * @param {pname}  Enum index; 0={choices[0]}"
                 + (
@@ -627,7 +646,10 @@ def _build_no_state_init_ctx(
             c_create_parts_ordered.append("NULL")
         else:
             ct_s, dflt_s = _scalar_meta[pname]
-            sig_parts.append(f"{ct_s} {pname}")
+            sig_parts.append(
+                f"{_ctor_c_type(pname, _ctype_override.get(pname, ''), ct_s)}"
+                f" {pname}"
+            )
             # A required scalar has no default; the @param note says so, and the
             # generated smoke test seeds it with the type's zero (the stub ctor
             # does not validate, so it still builds green) — gh-266.
@@ -1871,6 +1893,125 @@ def _reset_docs(
     pyi = "\n".join(render_numpy_doc(blk, "reset", [], "None")) + "\n"
     rt = _build_ml_doc(render_runtime_doc(blk, "reset", [], "None"))
     return rt, pyi
+
+
+def _ctor_c_type(pname: str, declared: str, rendered: str) -> str:
+    """The C type to DECLARE *pname* with, honouring gh-1096's ``c_type``.
+
+    jm's type vocabulary has no enum typedef. A ``string_enum:``/``enum:``
+    init-param therefore renders ``int`` in the injected ``create()``, and an
+    author whose C really does take ``det_noise_mode_t`` had no way to say so
+    — gh-1076's CTOR check then reported the disagreement forever, and
+    ``jm apply`` *rewrote the header down to ``int``* to match the manifest,
+    silently weakening a public C API to satisfy a comparison.
+
+    This changes the declaration and **nothing else**. The binding still parses
+    a choice string, still validates it to an index, and still passes an
+    ``int``; C converts it to the enum at the call, which is why the two were
+    interchangeable in the first place and why doppler's bindings were correct
+    the whole time.
+
+    That interchangeability is also the limit, so it is enforced rather than
+    documented: the override is accepted only where jm renders an **integer**
+    parameter. Allowing it anywhere would let a manifest declare ``float`` over
+    a parameter jm passes an ``int`` to — a silent ABI mismatch that compiles.
+
+    Parameters
+    ----------
+    pname : str
+        The parameter name, for the refusal message.
+    declared : str
+        The manifest's ``c_type``, or ``""`` when absent.
+    rendered : str
+        The C type jm would emit on its own.
+
+    Returns
+    -------
+    str
+        *declared* when it is set and legal, else *rendered*.
+
+    Raises
+    ------
+    ValueError
+        When ``c_type`` is set on a parameter jm does not render as an integer.
+
+    Examples
+    --------
+    >>> _ctor_c_type("noise_mode", "det_noise_mode_t", "int")
+    'det_noise_mode_t'
+    >>> _ctor_c_type("noise_mode", "", "int")
+    'int'
+    >>> _ctor_c_type("gain", "my_gain_t", "double")
+    Traceback (most recent call last):
+        ...
+    ValueError: init_param 'gain': `c_type` is only for a parameter jm declares as an integer, and this one is `double`. jm passes an int and lets C convert, which is what makes the override safe; over a `double` it would be a silent ABI mismatch that still compiles.
+    """
+    if not declared:
+        return rendered
+    if _CTYPE_META.get(rendered, {}).get("kind") != "int":
+        raise ValueError(
+            f"init_param '{pname}': `c_type` is only for a parameter jm"
+            f" declares as an integer, and this one is `{rendered}`. jm"
+            " passes an int and lets C convert, which is what makes the"
+            " override safe; over a `double` it would be a silent ABI"
+            " mismatch that still compiles."
+        )
+    return declared
+
+
+def _ctor_extent_names(pname: str, derived, ndim: int) -> "list[str]":
+    """The names a 2-D array init-param's two extents are DECLARED with.
+
+    gh-1097. jm already models a 2-D array init-param completely: it declares
+    ``(const T *ref, size_t ref_dim0, size_t ref_dim1)``, the binding requires
+    ``PyArray_NDIM == 2``, and it passes both dimensions. The only thing
+    missing was a way to *name* the extents, so a C API taking ``(ref, ny,
+    nx)`` — doppler's ``corr2d_create`` — could not be described and CTOR
+    reported it forever.
+
+    So this is the 2-D sibling of gh-900's ``derived``, and deliberately the
+    same key: that one already means "the extent is a named parameter, not the
+    trailing ``<name>_len``". A string names one extent, a list names several.
+    Unlike the 1-D case nothing moves — jm already puts a 2-D array's extents
+    after the pointer, which is where the C APIs seen so far put them — so
+    this renames and nothing more.
+
+    Returns
+    -------
+    list of str
+        The declared extent names, defaulting to ``<name>_dim0`` … when
+        *derived* is absent.
+
+    Raises
+    ------
+    ValueError
+        When the list's length does not match the array's rank. A ``derived``
+        naming one extent of a 2-D array would silently drop the other from
+        the declaration while the binding still passed it.
+
+    Examples
+    --------
+    >>> _ctor_extent_names("ref", ["ny", "nx"], 2)
+    ['ny', 'nx']
+    >>> _ctor_extent_names("ref", "", 2)
+    ['ref_dim0', 'ref_dim1']
+    >>> _ctor_extent_names("ref", ["ny"], 2)
+    Traceback (most recent call last):
+        ...
+    ValueError: init_param 'ref': `derived` names 1 extent but the array is 2-D. Name every extent, in the order create() takes them.
+    """
+    if isinstance(derived, str):
+        derived = [derived] if derived else []
+    names = list(derived or [])
+    if not names:
+        return [f"{pname}_dim{i}" for i in range(ndim)]
+    if len(names) != ndim:
+        raise ValueError(
+            f"init_param '{pname}': `derived` names {len(names)} extent"
+            f"{'' if len(names) == 1 else 's'} but the array is {ndim}-D."
+            " Name every extent, in the order create() takes them."
+        )
+    return names
 
 
 def make_state_ctx(
