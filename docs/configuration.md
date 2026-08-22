@@ -542,17 +542,60 @@ for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
-| TOML field                                                 | CLI flag                                                                | Status                      |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
-| `name`, `type`, `default`                                  | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
-| `optional = true`                                          | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
-| `default_raw`, `real_type`, `real_create_fn`, `create_fn`  | (TOML only)                                                             | 🟡                          |
-| `capsule = "<name>"`, `header = "path/hdr.h"`              | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
-| `required = false` on a capsule param (nullable handle)    | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
-| `derived = "<name>"` (name a 1-D array's length parameter) | (TOML only)                                                             | ✅ (gh-900)                 |
-| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)  | (TOML only)                                                             | ✅ (gh-1097)                |
-| `c_type = "<typedef>"` (declare an integer param's C type) | (TOML only)                                                             | ✅ (gh-1096)                |
-| compose with `[[state]]`                                   | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+| TOML field                                                      | CLI flag                                                                | Status                      |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
+| `name`, `type`, `default`                                       | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
+| `optional = true`                                               | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
+| `default_raw = "<C constant>"` (a default jm must not evaluate) | (TOML only)                                                             | ✅ (gh-1099)                |
+| `real_type`, `real_create_fn`, `create_fn`                      | (TOML only)                                                             | 🟡                          |
+| `capsule = "<name>"`, `header = "path/hdr.h"`                   | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
+| `required = false` on a capsule param (nullable handle)         | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
+| `derived = "<name>"` (name a 1-D array's length parameter)      | (TOML only)                                                             | ✅ (gh-900)                 |
+| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)       | (TOML only)                                                             | ✅ (gh-1097)                |
+| `c_type = "<typedef>"` (declare an integer param's C type)      | (TOML only)                                                             | ✅ (gh-1096)                |
+| compose with `[[state]]`                                        | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+
+#### A `default` is a literal; a constant is `default_raw`
+
+`default` is rendered **verbatim** into four places — the C local, both `.pyi`
+writers, and the generated app's `argparse` flags — so it has to be a literal
+of the type declared beside it. jm refuses anything else, naming the type and
+the value:
+
+```toml
+[[det.init_params]]
+name    = "mode"
+type    = "int"
+default = "hann"        # error: not a valid `int` literal
+```
+
+A C **constant** is a real and common case, and it has its own key.
+`default_raw` means "this is C, not a literal": the text goes into the C
+unchanged and the Python side gets `...`, which is the honest answer for a
+value jm cannot evaluate.
+
+```toml
+[[det.init_params]]
+name        = "taps"
+type        = "int"
+default_raw = "DP_MAX_TAPS"
+```
+
+```c
+int taps = DP_MAX_TAPS;
+```
+
+```python
+def __init__(self, taps: int = ...) -> None: ...
+```
+
+The refusal names `default_raw` in its message, so the remedy arrives with the
+error. Before gh-1099 that key was read **only** for types carrying a parse
+intermediate — it worked on a `size_t` and was silently dropped on an `int`,
+which fell back to the type's zero.
+
+`const char *` is exempt: its value *is* text. `bool` accepts `true`/`false`
+(and `0`/`1`) and says so in its own words when it does not.
 
 #### Naming what the constructor declares
 

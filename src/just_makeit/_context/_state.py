@@ -13,6 +13,7 @@ from .._docstring import (
     render_runtime_doc,
 )
 from ._parse import _build_ml_doc, capsule_unwrap_c as _capsule_unwrap_c
+from .._types import default_type_error as _default_type_error
 from .._types import (
     c_param_list,
     _CTYPE_META,
@@ -227,6 +228,14 @@ def _build_no_state_init_ctx(
     for param in params:
         name, ct, dflt = param[:3]
         dflt_raw = param[3] if len(param) > 3 else ""
+        # gh-1099: refuse a `default` that is not a literal of its declared
+        # type, before it is emitted verbatim into four places that each fail
+        # differently and none of which names the manifest. Here rather than
+        # at the four emitters because it is one question asked once, and the
+        # earliest of those failures is a compiler error one command later.
+        _dflt_err = _default_type_error(ct, dflt)
+        if _dflt_err:
+            raise ValueError(f"init_param '{name}': {_dflt_err}")
         real_type = param[4] if len(param) > 4 else ""
         real_create_fn_p = param[5] if len(param) > 5 else ""
         optional_flag = param[6] if len(param) > 6 else False
@@ -704,6 +713,14 @@ def _build_no_state_init_ctx(
         params carry an empty ``dflt`` — the seed value is irrelevant since
         PyArg always overwrites it — so fall back to the type's zero to keep the
         declaration valid C.
+
+        ``dflt_raw`` (gh-1099) is the C-constant spelling: text jm emits
+        unchanged and never tries to render as a Python literal. It was already
+        consulted here, but **only on the ``parse_type`` branch** — so
+        ``default_raw`` worked on a ``size_t`` and was silently dropped on an
+        ``int``, which then fell back to the type's zero. Both branches now
+        read it, which is what lets `_types.default_type_error` point an
+        author at it for any scalar rather than for some of them.
         """
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
@@ -713,7 +730,9 @@ def _build_no_state_init_ctx(
             )
             post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
             return f"&{name}_raw"
-        local_lines.append(f"    {ct} {name} = {dflt or meta['zero']};")
+        local_lines.append(
+            f"    {ct} {name} = {dflt_raw or dflt or meta['zero']};"
+        )
         return f"&{name}"
 
     # Required scalars are parsed before the optional kwargs (str-enum, optional
@@ -1191,8 +1210,12 @@ def _build_no_state_init_ctx(
             pyi_parts.append(f"{name}: npt.ArrayLike = ...")
         else:
             ct, dflt, _dr = _opt_scalar_meta[name]
+            # gh-1099: `default_raw` is C jm cannot evaluate, so the stub says
+            # `...` rather than inventing a literal. `_dr` was already in scope
+            # here and discarded.
             pyi_parts.append(
-                f"{name}: {scalar_py_annotation(ct)} = {_py_default(ct, dflt)}"
+                f"{name}: {scalar_py_annotation(ct)} ="
+                f" {'...' if _dr and not dflt else _py_default(ct, dflt)}"
             )
     init_params_pyi = ", ".join(pyi_parts)
 

@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Fixed
+
+- **An init-param `default` must be a literal of its declared type
+    (gh-1099).** It was rendered **verbatim** into four places, each failing
+    differently and none naming the manifest: the C local (`int mode = hann;`,
+    which does not compile), both `.pyi` writers, and the generated app's
+    `argparse` flags (a `NameError` at start-up). The earliest of those is a
+    compiler error one command later.
+
+    The `.pyi` half was worse than the report. The integer branch emitted a
+    bare undefined name; the **float** branch appended `.0` to it, giving
+    `x: float = hann.0` — a **SyntaxError breaking the entire stub**, which is
+    gh-515's failure mode in the one branch gh-515 did not cover.
+
+- **`default_raw` is honoured on every scalar, not just some (gh-1099).** A C
+    **constant** is a common and legitimate default, and `default_raw` already
+    meant "this is C, not a literal" and already did the right thing — text
+    into the C unchanged, `...` on the Python side. But it was read only for
+    types carrying a parse intermediate, so it worked on a `size_t` and was
+    silently dropped on an `int` or a `double`, which fell back to the type's
+    zero. Both branches read it now, which is what lets the refusal above
+    point an author at it for any scalar rather than for a subset.
+
+    So `INT_MAX` keeps working and only the typo is refused; the error names
+    the key and quotes the value back, so the remedy arrives with the message.
+
+    The fix is deliberately **one** gate at the manifest rather than defensive
+    fallbacks in the renderers. An earlier cut widened `_py_default` to return
+    `...` for a non-literal and broke three gh-515/gh-610 tests: that branch
+    synthesises `.0` for an absent float default *on purpose*, because `...`
+    suppresses the generated construction example. With a non-literal refused
+    up front it cannot reach them, so nothing there needed to change.
+
 ## [0.65.0] — 2026-08-22
 
 ### Added
