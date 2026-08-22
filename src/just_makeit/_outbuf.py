@@ -26,21 +26,26 @@ What the answer is
 length jm can size:
 
 * no params at all — the *generator* shape, sized from the synthesized count;
-* exactly one array param — sized from that array's length.
+* exactly one array param — sized from that array's length;
+* all-scalar params — sized from ``<m>_max_out(state)``, the same expression
+  the internal allocation uses.
 
 and withheld otherwise. :func:`why_not` names which of those it is, so the
 reason is available to a diagnostic instead of being implicit in a boolean.
 
 What it is NOT
 --------------
-The all-scalar-params shape still gets no `out=`, and that is the open half of
-gh-1079 rather than an oversight. Sizing it means reading
-``<m>_max_out(state)``, which is legal for the author's C to answer ``0`` for —
-"unknown", the sizing contract jm already documents. A buffer validated against
-an unknown bound is not validated, so offering `out=` there is a decision about
-what jm does when it cannot bound the write, not a change to this predicate.
-Left to the issue deliberately, and named here so the next reader finds the
-question rather than a gap.
+An array *beside* other params (``Farrow.delay(x, mu)``) stays excluded. There
+is a length to size from, so this is not a sizing gap — gh-412 carved the shape
+out deliberately and widening it is its own piece of work. :func:`why_not` says
+so in those words rather than returning a bare False, because "jm will not"
+and "jm cannot" are different answers and a bool makes them look alike.
+
+This section used to say the all-scalar shape got no `out=` either, and that
+its bound was unusable because ``max_out()`` may legally answer ``0``. gh-1079
+shipped that half and the text outlived it by one release. What the zero
+actually needs is not a refusal but a *bounded* kernel — see :func:`why_not`'s
+closing comment and gh-1091.
 """
 
 from __future__ import annotations
@@ -127,12 +132,25 @@ def why_not(
     # caller's buffer is validated against exactly what the binding would have
     # allocated itself, which is `_capacity_exprs`' stated invariant.
     #
-    # Safe only because gh-1085 refuses a zero bound. `max_out()` returning 0
-    # is documented as "unknown", and every other shape falls back to the
-    # call's own length; this one has none, so an unknown bound used to mean a
-    # zero-length allocation and a heap overflow. With that refused up front,
-    # `max_out()` is guaranteed non-zero wherever this method runs at all, and
-    # "at least max_out(state)" becomes a bound worth checking against.
+    # Safe because the buffer is always validated against a capacity the
+    # kernel is then held to. `max_out()` returning 0 is documented as
+    # "unknown", and every other shape falls back to the call's own length;
+    # this one has none, so an unknown bound used to mean a zero-length
+    # allocation and a heap overflow.
+    #
+    # Two different mechanisms close that, and gh-1091 is why they are named
+    # separately rather than as one:
+    #
+    # * without `pass_capacity` the kernel writes blind, so gh-1085 refuses a
+    #   zero bound outright and `max_out()` is non-zero wherever the method
+    #   runs at all — "at least max_out(state)" is then worth checking;
+    # * with `pass_capacity` the kernel is handed the capacity and must clamp,
+    #   so a zero needs no refusing: it means "write nothing". The `out=` path
+    #   passes the caller's own `PyArray_SIZE`, so the bound the kernel is
+    #   told is true regardless of what `max_out()` said.
+    #
+    # Reading those as one rule is what made a non-blocking drain raise on the
+    # empty case it is designed for.
     return ""
 
 

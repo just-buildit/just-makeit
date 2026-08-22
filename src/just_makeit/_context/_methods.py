@@ -886,6 +886,7 @@ def _zero_bound_guard(
     fallback: str,
     cleanup: str = "",
     bound: str = "_cap",
+    pass_capacity: bool = False,
 ) -> str:
     """Refuse a zero allocation bound, for the one shape that has no floor.
 
@@ -913,15 +914,37 @@ def _zero_bound_guard(
 
     So this shape's only bound is ``max_out()``, and when it is unknown jm
     genuinely cannot size the buffer. Saying so is the whole fix: it converts a
-    heap overflow into a message naming the function to implement. No existing
-    flag rescued it — ``exact_max_out`` keeps the same no-op zero-guard, and
-    ``pass_capacity`` drops the floor entirely (a bounds-checking kernel then
-    writes nothing and the caller silently gets an empty array).
+    heap overflow into a message naming the function to implement.
+    ``exact_max_out`` does not rescue it — it keeps the same no-op zero-guard.
 
     Emitted **only** where the floor is inert, which is exactly where
     *fallback* is the ``max_out`` call. Anywhere else a zero is already
     rescued, and refusing there would break the documented "0 means unknown"
     contract.
+
+    **gh-1091: ``pass_capacity`` is the one flag that does rescue it, and this
+    said the opposite.** The original reading was that ``pass_capacity``
+    "drops the floor entirely (a bounds-checking kernel then writes nothing
+    and the caller silently gets an empty array)" — describing the empty array
+    as the silent failure. It is the correct answer. The whole premise of the
+    guard is that jm cannot bound a write the kernel performs blind; a
+    ``pass_capacity`` kernel is **handed** its capacity and must clamp to it,
+    so ``0`` means "write nothing", the kernel writes nothing, and the binding
+    returns the empty array. There is no unbounded write to refuse.
+
+    doppler's ``Telemetry.read()`` is the shape that proves it: a non-blocking
+    drain of an SPSC ring whose ``max_out(state)`` answers "how many are
+    available right now", and whose steady state — an empty ring polled in a
+    loop — is exactly ``0``. Refusing it turned the *designed* case into a
+    ``RuntimeError``, and the only project-side escape was to redefine
+    ``max_out`` as a worst case, contradicting the C contract and allocating
+    the whole ring on every poll.
+
+    The kernel is handed the capacity on **both** paths, which is what makes
+    this safe to drop rather than merely convenient: the allocating path
+    passes ``_cap``, and the ``out=`` path passes the caller's own
+    ``PyArray_SIZE``. gh-920's "inert" ``pass_capacity`` does not weaken it —
+    that decides how large the buffer is, never what the kernel is told.
 
     Parameters
     ----------
@@ -935,6 +958,10 @@ def _zero_bound_guard(
         is not gated by accident.
     cleanup : str
         Statements releasing anything acquired earlier in the wrapper.
+    pass_capacity : bool
+        The kernel is handed its capacity and clamps to it (gh-138/gh-607).
+        No guard is emitted: a zero is a *value* ("write nothing"), not the
+        absent bound this refuses. See gh-1091 above.
     bound : str
         The C local holding the BOUND. ``_cap`` on the allocating path, where
         the two are the same thing — but ``_omax`` in the ``out=`` branch,
@@ -948,6 +975,8 @@ def _zero_bound_guard(
     str
         C source, or ``""`` when this shape already has a working floor.
     """
+    if pass_capacity:
+        return ""
     if "_max_out(" not in fallback:
         return ""
     return (
@@ -2273,6 +2302,7 @@ def make_methods_ctx(
                             _lazy_fallback,
                             f"Py_DECREF(out_arr); {_decref_early_vo}",
                             bound="_omax",
+                            pass_capacity=bool(pass_capacity),
                         )
                     )
                     + f"        if (_cap < _min_cap) {{\n"
@@ -2342,7 +2372,11 @@ def make_methods_ctx(
                     _moc_state_only,
                 )[0]
                 + _zero_bound_guard(
-                    c_fn, name, _lazy_fallback, _decref_early_vo
+                    c_fn,
+                    name,
+                    _lazy_fallback,
+                    _decref_early_vo,
+                    pass_capacity=bool(pass_capacity),
                 )
                 + "    npy_intp _adim = (npy_intp)_cap;\n"
                 + "".join(

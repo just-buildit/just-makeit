@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`pass_capacity` methods no longer refuse a zero bound (gh-1091).**
+    gh-1085 refuses a zero `<m>_max_out(state)` for the all-scalar
+    `variable_output` shape, which is right where the kernel writes blind and
+    wrong where it does not. A `pass_capacity` kernel is *handed* its capacity
+    and must clamp to it, so a zero means "write nothing", the kernel writes
+    nothing, and the binding returns the empty array. There is no unbounded
+    write to refuse.
+
+    doppler's `Telemetry.read()` is the shape that proves it: a non-blocking
+    drain of an SPSC ring whose `max_out(state)` answers "how many are
+    available right now", and whose steady state — an empty ring polled in a
+    loop — is exactly `0`. On 0.64.0 that raised `RuntimeError` on its most
+    common call. `MemoryCapture.records()` too.
+
+    The kernel is handed the capacity on **both** paths, which is what makes
+    this safe to scope rather than merely convenient: the allocating path
+    passes `_cap`, the `out=` path passes the caller's own `PyArray_SIZE`.
+    gh-920's "inert" `pass_capacity` does not weaken it — that decides how
+    large the buffer is, never what the kernel is told.
+
+    gh-1085's own docstring had named this case and read it backwards, calling
+    the empty array the silent failure when it is the correct answer. Both
+    that text and `_outbuf`'s copy of the premise are corrected, and the
+    blind-write guard is fenced by a test that fails if a fix drops it for
+    both shapes.
+
 ## [0.64.0] — 2026-08-21
 
 ### Added
