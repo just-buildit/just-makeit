@@ -55,8 +55,23 @@ def run(root: Path) -> None:
         "allocator",
         None,
         init_params=[
-            ("capacity", "size_t", ""),
-            ("slots", "size_t", ""),
+            # REQUIRED, and that is what makes the generated smoke tests
+            # correct rather than merely stricter. jm seeds an optional
+            # scalar with the type's ZERO; this constructor validates and
+            # rejects `slots == 0`, so the generated `Allocator(capacity=0,
+            # slots=0)` raised the very ValueError declared below and all
+            # eight generated tests failed — inside the image build, which
+            # runs them and which `make test` does not.
+            #
+            # `required` is jm's existing answer: `_unseedable_required`
+            # names this exact case ("a required scalar carrying no default —
+            # a validating constructor would reject the type's zero") and
+            # suppresses the generated construction instead of emitting one
+            # that cannot work. Declaring it is the fix; giving the params
+            # defaults would have been the other route and is wrong here,
+            # because the point of the example is a ctor that refuses.
+            ("capacity", "size_t", "", "", "", "", False, "", True),
+            ("slots", "size_t", "", "", "", "", False, "", True),
         ],
         state_vars=[
             ("n_slots", "size_t", "0"),
