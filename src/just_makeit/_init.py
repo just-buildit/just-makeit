@@ -16,6 +16,7 @@ from . import _context as Ctx
 from . import _render as R
 from . import _types as T
 from ._builtins import overridden_builtin_slots
+from . import _docstring
 from ._docstring import scaffold_doc_block
 
 # gh-981/gh-984: the combined-C-library wiring — emitter and detector — lives
@@ -351,6 +352,34 @@ def _with_scaffold_doc(decl: str, doc_members: "dict[str, str]") -> str:
     return f"{doc}\n{decl}" if doc else decl
 
 
+def _reconcile_decl_doc(text: str, decl: str) -> str:
+    """*text* with the Doxygen above *decl* matched to *decl*'s parameters.
+
+    gh-1098. A refreshed prototype left the comment above it describing the
+    OLD signature — ``@param gain`` for a parameter no longer taken, and
+    nothing for the ones now taken. jm injects the declaration, so it owns the
+    correspondence between it and the ``@param`` set; it does not own the
+    prose, which is why :func:`~._docstring.reconcile_param_docs` only adds,
+    drops and reorders lines and never rewrites a description.
+
+    Only a block butted directly against the declaration is touched (blank
+    lines between are allowed, anything else is not), so an unrelated comment
+    further up is never claimed.
+    """
+    at = text.find(decl)
+    if at == -1:
+        return text
+    before = text[:at]
+    m = re.search(r"(/\*\*.*?\*/)(\s*)\Z", before, re.DOTALL)
+    if m is None:
+        return text
+    block = m.group(1)
+    fixed = _docstring.reconcile_param_docs(block, decl)
+    if fixed == block:
+        return text
+    return before[: m.start(1)] + fixed + m.group(2) + text[at:]
+
+
 def _inject_decls_into_core_h(
     path: Path,
     comp: str,
@@ -475,7 +504,7 @@ def _inject_decls_into_core_h(
                             # Advisory: apply performs the replacement.
                             gates=False,
                         )
-                    text = new_text
+                    text = _reconcile_decl_doc(new_text, d)
                     continue
         to_insert.append(d)
     if to_insert:

@@ -991,6 +991,116 @@ def scaffold_doc_block(decl: str, member: str, indent: str = "") -> str:
     return "\n".join(lines)
 
 
+def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
+    """*block* with its ``@param`` set matched to *decl*'s parameters.
+
+    gh-1098. jm injects the ``create()`` declaration into the sacred header and
+    refreshes it whenever the manifest changes, but never touched the Doxygen
+    above it — so adding an ``init_param`` to an existing object left the
+    header documenting ``@param gain`` for a parameter no longer in the
+    signature, and documenting none of the three that were.
+
+    **Prose is never rewritten.** ``_init._inject_decls_into_core_h`` documents
+    why ("re-running a command never re-stamps a skeleton over authored
+    prose"), and that reasoning is right: the header is the author's, and its
+    ``@brief`` is read back as the Python class docstring. So this reconciles
+    the *set* and nothing else — a ``@param`` whose name still appears keeps
+    its description exactly, a name with no line gets a **bare** one for the
+    author to fill (:func:`scaffold_doc_block`'s rule, and for its reasons),
+    and a line naming a parameter that is gone is dropped.
+
+    The kept lines are re-emitted in signature order as one contiguous group,
+    positioned where the first ``@param`` already was — so a parameter added
+    in the middle appears in the middle rather than at the end.
+
+    Everything that is not a ``@param`` line — ``@brief``, ``@return``,
+    ``@note``, blank lines, free prose — is left in place untouched.
+
+    Returns
+    -------
+    str
+        The reconciled block, or *block* unchanged when *decl* is not a shape
+        :func:`_decl_signature` can read.
+
+    Examples
+    --------
+    A parameter that is gone goes; the two that are new arrive bare; the one
+    that survives keeps its prose:
+
+    >>> block = '''/**
+    ...  * @brief Create a corr instance.
+    ...  *
+    ...  * @param gain  Initial gain (default: 0.0f).
+    ...  * @param dwell  Dwell time, in samples. AUTHORED.
+    ...  * @return Heap-allocated state, or NULL on allocation failure.
+    ...  */'''
+    >>> print(reconcile_param_docs(
+    ...     block, "corr_state_t *corr_create(const float *ref, size_t ny,"
+    ...            " size_t dwell);"))
+    /**
+     * @brief Create a corr instance.
+     *
+     * @param ref
+     * @param ny
+     * @param dwell  Dwell time, in samples. AUTHORED.
+     * @return Heap-allocated state, or NULL on allocation failure.
+     */
+
+    A block with no ``@param`` at all gains the group before ``@return``:
+
+    >>> print(reconcile_param_docs(
+    ...     '''/**
+    ...  * @brief Make one.
+    ...  * @return state.
+    ...  */''', "s_t *s_create(int n);"))
+    /**
+     * @brief Make one.
+     * @param n
+     * @return state.
+     */
+
+    Already correct is left byte-identical, so this is idempotent and a
+    freshly scaffolded project does not report drift against itself:
+
+    >>> b = "/**\\n * @brief x.\\n *\\n * @param n\\n */"
+    >>> reconcile_param_docs(b, "void x(int n);") == b
+    True
+    """
+    sig = _decl_signature(decl)
+    if sig is None:
+        return block
+    _fn, names, _returns = sig
+    lines = block.splitlines()
+    param_re = re.compile(r"^\s*\*\s*@param\s+(\w+)\b(.*)$")
+
+    existing: dict[str, str] = {}
+    first_idx = None
+    kept: list[str] = []
+    for i, line in enumerate(lines):
+        m = param_re.match(line)
+        if m:
+            if first_idx is None:
+                first_idx = len(kept)
+            existing[m.group(1)] = line
+            continue
+        kept.append(line)
+
+    if first_idx is None:
+        # No `@param` anywhere: put the group just before `@return`, else just
+        # before the closing `*/`. Both keep Doxygen's conventional order.
+        first_idx = next(
+            (
+                j
+                for j, ln in enumerate(kept)
+                if re.match(r"^\s*\*\s*@return\b", ln)
+            ),
+            max(len(kept) - 1, 0),
+        )
+
+    rebuilt = [existing.get(n, f"{indent} * @param {n}") for n in names]
+    return "\n".join(kept[:first_idx] + rebuilt + kept[first_idx:])
+
+
 def authored_class_brief(
     doc_blocks: "dict | None",
     create_fn: str,
