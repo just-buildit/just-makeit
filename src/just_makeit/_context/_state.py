@@ -7,6 +7,7 @@ rendering dict.
 from __future__ import annotations
 
 from .. import _coerce
+from .._docstring import ctor_demo_label as _ctor_demo_label
 from .._docstring import (
     member_doc,
     render_numpy_doc,
@@ -1486,8 +1487,13 @@ def _pyi_examples_block(
     py_create_args: str,
     Component: str,
     no_reset: bool = False,
+    init_params: "list | None" = None,
 ) -> str:
     """Build an indented ``Examples`` section for a .pyi class docstring.
+
+    ``init_params`` (gh-1105) only picks the heading — see
+    :func:`~.._docstring.ctor_demo_label`. Optional so the callers that have
+    no manifest to hand (``jm bind``) keep the historical label.
 
     Returns an empty string when no doctest-safe getter examples exist.
     The returned string ends with a trailing newline and is ready to embed
@@ -1507,7 +1513,7 @@ def _pyi_examples_block(
     lines: list[str] = [
         "    Examples",
         "    --------",
-        "    Create with defaults:",
+        f"    {_ctor_demo_label(init_params)}",
         "",
     ]
     if has_array_args:

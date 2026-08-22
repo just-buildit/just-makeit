@@ -443,6 +443,7 @@ def _make_object_ctx(
             ctx.get("py_create_args", ""),
             ctx["Component"],
             no_reset=no_reset,
+            init_params=init_params,
         )
         if (scalar_state or has_aa)
         else ""

@@ -43,6 +43,7 @@ from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    ctor_demo_label,
     STUB_TARGET_WIDTH,
     ClassParam,
     class_docstring,
@@ -1149,7 +1150,7 @@ def _build_class_docstring(
     ex: list[str] = [
         "    Examples",
         "    --------",
-        "    Create with defaults:",
+        f"    {ctor_demo_label(init_params)}",
         "",
         f"    >>> {import_line}",
         *_ctor_demo_lines(Component, py_create_args),
