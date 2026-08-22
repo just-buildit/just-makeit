@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from just_makeit._build import run_generated_pytest
+
 # Formatting rules are cmake-format's responsibility.
 _CMAKE_LINT_DISABLED = ["C0301", "C0307"]
 
@@ -86,6 +88,30 @@ def test_example(example_dir, tmp_path):
     run = _load_run(example_dir)
     run(tmp_path)
     _cmake_lint_check(tmp_path)
+    _generated_pytest_check(tmp_path)
+
+
+def _generated_pytest_check(root: Path) -> None:
+    """Run each generated project's OWN pytest suite (gh-1089).
+
+    The walkthrough above asserts the steps produced what they should. This
+    asserts the thing a *user* is left holding actually passes its own tests,
+    which is a different question and had exactly one home: the Docker image
+    build, which is not a required check. It was red on `main` for 14
+    consecutive runs, caught nothing, and the release was the first thing to
+    stop.
+
+    `run()` scaffolds into *root*, sometimes more than one project, so every
+    directory holding a `just-makeit.toml` is checked. An unbuilt scaffold has
+    no extension and is skipped by `run_generated_pytest` — see there for why
+    that is a skip and not a failure.
+    """
+    projects = [p.parent for p in root.rglob("just-makeit.toml")]
+    for proj in sorted(projects):
+        assert run_generated_pytest(proj), (
+            f"the generated project at {proj.relative_to(root)} does not pass"
+            " its own pytest suite"
+        )
 
 
 def _cmake_lint_check(root: Path) -> None:

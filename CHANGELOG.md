@@ -19,6 +19,32 @@
 
 ### Fixed
 
+- **A generated project's own pytest suite is now a PR gate (gh-1089).**
+    `docker/build_examples.py` was the only place in the repo that ran one —
+    the artefact a *user* gets, as opposed to the walkthrough steps that
+    produced it — and it is not a required check. It was red on `main` for
+    **14 consecutive runs**, every PR gate stayed green, and the release PR was
+    the first thing to stop, because `release.yml` rebuilds the images on a
+    tag. A gate that cannot fail anything is indistinguishable from no gate;
+    this one produced the evidence fourteen times and discarded it.
+
+    `make test-examples` now runs it, beside the other example gates.
+    `run_generated_pytest` **moved** into `_build` rather than being copied, so
+    there is one implementation and two callers — a second copy is exactly how
+    the two `.pyi` writers and the three `_py_default`s drifted, and a test
+    fails if `docker/build_examples.py` grows its own again.
+
+    Measured by running all 26 examples rather than reading their manifests:
+    **20 of 26** now gate at least one real generated test, **207 assertions**
+    in total. Three shapes stay non-failures and are each tested — no `src/`,
+    an unbuilt scaffold (nothing to import), and pytest's exit 5 (a
+    functions-only module generates no suite).
+
+    `errors_warnings` is the one example whose generated suite is entirely
+    skipped, which the gate reports as a pass because pytest exits 0. That is
+    `_unseedable_required` working as gh-1088 intended and is filed separately
+    as gh-1105 rather than left in a docstring.
+
 - **An init-param `default` must be a literal of its declared type
     (gh-1099).** It was rendered **verbatim** into four places, each failing
     differently and none naming the manifest: the C local (`int mode = hann;`,

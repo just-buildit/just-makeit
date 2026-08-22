@@ -11,8 +11,6 @@ directories so the generated Python test suites are exercised too.
 
 import importlib.util
 import json
-import os
-import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -27,44 +25,11 @@ dest.mkdir(parents=True, exist_ok=True)
 from just_makeit._example import _EXAMPLES, _find
 
 
-def _run_pytest(proj: Path) -> bool:
-    """Run pytest against the generated Python test suite in proj/src/.
-
-    The compiled extension .so/.pyd files land in src/<pkg>/ after the cmake
-    build, so PYTHONPATH=src makes them importable without a pip install step.
-    Returns True if pytest passed or if no compiled extension is present
-    (unbuilt scaffold-only projects are skipped).
-    """
-    src_dir = proj / "src"
-    if not src_dir.is_dir():
-        return True
-    # Only run if the C extension was actually compiled; scaffold-only
-    # examples have no .so/.pyd and can't be imported.
-    extensions = list(proj.rglob("*.so")) + list(proj.rglob("*.pyd"))
-    if not extensions:
-        print(
-            f"    (no compiled extension in {proj.name}, skipping pytest)",
-            flush=True,
-        )
-        return True
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(src_dir)
-    r = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            str(src_dir),
-            "--tb=short",
-            "-q",
-            "--no-header",
-        ],
-        env=env,
-        cwd=proj,
-    )
-    # 0 = passed; 5 = no tests collected (e.g. a functions-only module that
-    # builds an extension but generates no pytest suite) — not a failure.
-    return r.returncode in (0, 5)
+# gh-1089: the implementation moved into the package so `make test-examples`
+# can run the same check. It lived only here, and this script is not a required
+# check — the image build was red on `main` for 14 consecutive runs while every
+# PR gate stayed green. One implementation, two callers.
+from just_makeit._build import run_generated_pytest as _run_pytest  # noqa: E402
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

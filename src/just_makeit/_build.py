@@ -111,6 +111,60 @@ def _run_python_tests(root: Path, extra: list[str]) -> bool:
     return subprocess.run(cmd, cwd=str(root), timeout=600).returncode == 0
 
 
+def run_generated_pytest(proj: Path) -> bool:
+    """Run a generated project's OWN pytest suite. True when it passed.
+
+    gh-1089. This is the check that answers "does the project jm generates
+    actually pass its own tests" — the artefact a *user* gets, as opposed to
+    the walkthrough steps that produced it. It existed in exactly one place,
+    ``docker/build_examples.py``, which is not a required check: the image
+    build was red on ``main`` for **14 consecutive runs** while every PR gate
+    stayed green, and the release was the first thing to stop.
+
+    So the implementation moved here rather than being copied to a second
+    caller. ``tests/test_examples.py`` runs it under ``make test-examples``,
+    where the other example gates live and where a PR can fail on it.
+
+    Distinct from :func:`_run_python_tests`, which is ``jm test``'s, and the
+    three differences are all about being a gate rather than a command:
+
+    * ``PYTHONPATH=src`` — the compiled extension lands in ``src/<pkg>/``, and
+      a gate runs against a tree nobody has installed;
+    * **no extension, no verdict.** A scaffold that was never built cannot
+      import, and failing it would report "the generated tests fail" for a
+      project whose tests were never the question;
+    * exit **5** (no tests collected) passes. A functions-only module builds an
+      extension and generates no pytest suite; that is a shape, not a failure.
+
+    Returns
+    -------
+    bool
+        True when the suite passed, was absent, or had nothing to collect.
+    """
+    src_dir = proj / "src"
+    if not src_dir.is_dir():
+        return True
+    if not (list(proj.rglob("*.so")) + list(proj.rglob("*.pyd"))):
+        return True
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(src_dir)
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(src_dir),
+            "--tb=short",
+            "-q",
+            "--no-header",
+        ],
+        env=env,
+        cwd=str(proj),
+        timeout=600,
+    )
+    return r.returncode in (0, 5)
+
+
 def cmd_test(rest: list[str]) -> None:
     """Build, then run CTest + pytest."""
     root = Path.cwd()
