@@ -146,24 +146,47 @@ class TestOnlyTheShapeWithNoFloor:
         )
 
 
-def _implement(root: Path, max_out_body: str, n_write: int) -> None:
-    """Give the scaffold a kernel that writes, and a chosen `max_out`."""
+def _implement(
+    root: Path,
+    max_out_body: str,
+    n_write: int,
+    pass_capacity: bool = False,
+) -> None:
+    """Give the scaffold a kernel that writes, and a chosen `max_out`.
+
+    *pass_capacity* selects the gh-138/gh-607 signature — a trailing
+    ``size_t max_out`` the kernel is expected to clamp to. The body written
+    for it **does** clamp, because that is the contract the binding relies on
+    when it stops refusing a zero bound (gh-1091). A test kernel that ignored
+    its capacity would be testing a project jm never promised to support.
+    """
     p = root / "native" / "src" / "dly" / "dly_core.c"
     s = p.read_text(encoding="utf-8")
     s = s.replace("    return 0; /* placeholder */", max_out_body, 1)
-    sig = "dly_push(dly_state_t *state, double x, float *out)"
+    cap = ", size_t max_out" if pass_capacity else ""
+    sig = f"dly_push(dly_state_t *state, double x, float *out{cap})"
     tail = s[s.index(sig) :]
     b0 = tail.index("{")
     b1 = tail.index("\n}", b0)
-    s = s.replace(
-        tail[b0:b1],
-        "{\n"
-        "    (void)state; (void)x;\n"
-        f"    for (int i = 0; i < {n_write}; i++)"
-        " out[i] = (float)(i + 1);\n"
-        f"    return {n_write};",
-        1,
-    )
+    if pass_capacity:
+        body = (
+            "{\n"
+            "    (void)state; (void)x;\n"
+            f"    size_t _n = (size_t){n_write} < max_out"
+            f" ? (size_t){n_write} : max_out;\n"
+            "    for (size_t i = 0; i < _n; i++)"
+            " out[i] = (float)(i + 1);\n"
+            "    return _n;"
+        )
+    else:
+        body = (
+            "{\n"
+            "    (void)state; (void)x;\n"
+            f"    for (int i = 0; i < {n_write}; i++)"
+            " out[i] = (float)(i + 1);\n"
+            f"    return {n_write};"
+        )
+    s = s.replace(tail[b0:b1], body, 1)
     p.write_text(s, encoding="utf-8")
 
 
@@ -386,3 +409,130 @@ class TestItActuallyRuns:
         )
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.split() == ["8", "2.0"], proc.stdout
+
+
+CAPACITY = dict(arg_type="void", params=[("x", "double")], pass_capacity=True)
+
+
+class TestPassCapacityIsNotRefused:
+    """gh-1091: a kernel handed its capacity needs no zero-bound refusal.
+
+    The guard's premise is that jm cannot bound a write the kernel performs
+    blind. A `pass_capacity` kernel is *told* its capacity and must clamp to
+    it, so a zero means "write nothing" — a value, not the absent bound this
+    refuses. Refusing it turned doppler's `Telemetry.read()`, a non-blocking
+    drain of an SPSC ring, into a `RuntimeError` on the empty ring that is
+    the steady state of every poll loop.
+
+    The original gh-1085 reasoning had this exactly backwards, in writing:
+    it called `pass_capacity` a shape where "a bounds-checking kernel then
+    writes nothing and the caller silently gets an empty array" — naming the
+    correct answer as the failure.
+    """
+
+    def test_no_guard_on_either_path(self, tmp_path):
+        assert "cannot size its output" not in _ext(
+            _project(tmp_path, "pc", **CAPACITY)
+        )
+
+    def test_the_blind_write_shape_still_gets_it(self, tmp_path):
+        """The regression fence in the other direction.
+
+        The same manifest minus `pass_capacity` is gh-1085's heap overflow,
+        and this file's whole reason to exist. A fix that dropped the guard
+        for both would pass every other test in this class.
+        """
+        text = _ext(_project(tmp_path, "bw", **ALL_SCALAR))
+        assert text.count("cannot size its output") == 2
+
+    def test_the_kernel_is_still_handed_its_capacity(self, tmp_path):
+        """What makes dropping the guard safe, asserted rather than assumed.
+
+        Both paths must pass a capacity the kernel can clamp to: `_cap` on
+        the allocating path, and the caller's own buffer size on the `out=`
+        path. If either passed something else, a zero bound would be an
+        unbounded write again and this class would be licensing the bug.
+        """
+        text = _ext(_project(tmp_path, "pk", **CAPACITY))
+        i = text.index("\nDly_push(")
+        block = text[i : text.index("\n}\n", i)]
+        assert block.count("dly_push(self->handle, x,") == 2
+        assert block.count(", _cap);") == 2
+        assert "size_t _cap = (size_t)PyArray_SIZE(out_arr);" in block
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+class TestTheDrainActuallyRuns:
+    """gh-1091's oracle. Inspecting the C cannot tell you the empty case
+    comes back as an empty array rather than raising; only running it can.
+    """
+
+    _run = staticmethod(TestItActuallyRuns._run)
+
+    def test_an_empty_drain_returns_an_empty_array(self, tmp_path):
+        """The call the feature exists for, and the one that regressed.
+
+        The kernel here *wants* to write 8 while `max_out()` answers 0, so
+        this also proves the clamp does the work the dropped guard used to:
+        the allocating path hands over a capacity of 0 and an over-eager
+        kernel is held to it. Without that, dropping the guard would be
+        licensing gh-1085's overflow rather than scoping it.
+        """
+        root = _project(tmp_path, "dr", **CAPACITY)
+        _implement(root, "    return 0;", 8, pass_capacity=True)
+        proc = self._run(
+            root,
+            "from dr.dly import Dly\n"
+            "r = Dly().push(1.0)\n"
+            "print('OK', r.shape[0], r.dtype)\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.split() == ["OK", "0", "float32"], proc.stdout
+
+    def test_an_empty_drain_through_out_returns_empty_too(self, tmp_path):
+        """The `out=` path has its own guard and its own `_min_cap`, so it
+        regressed independently and has to be proven independently.
+
+        A faithful empty ring here — nothing available, so the kernel writes
+        nothing — because on this path the capacity handed to the kernel is
+        the CALLER'S buffer size, not `max_out()`. A fixture that claimed 8
+        available while `max_out()` said 0 would fill the buffer and return
+        8, which is correct for that (incoherent) kernel and tells you
+        nothing about the drain. That the caller's size is what gets passed
+        is asserted directly in
+        `TestPassCapacityIsNotRefused.test_the_kernel_is_still_handed_its_capacity`.
+        """
+        root = _project(tmp_path, "do", **CAPACITY)
+        _implement(root, "    return 0;", 0, pass_capacity=True)
+        proc = self._run(
+            root,
+            "import numpy as np\n"
+            "from do.dly import Dly\n"
+            "buf = np.zeros(8, dtype=np.float32)\n"
+            "r = Dly().push(1.0, out=buf)\n"
+            "print('OK', r.shape[0], r.base is buf)\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        # `r.base is buf`, not `np.shares_memory` — an empty array shares no
+        # memory with anything, so that would read False for the right
+        # result and make the assertion untestable in exactly this case.
+        assert proc.stdout.split() == ["OK", "0", "True"], proc.stdout
+
+    def test_a_non_empty_drain_still_returns_its_records(self, tmp_path):
+        """The empty case must not have been bought by breaking the full one.
+
+        `max_out` answers 5 and the kernel would write 8; it clamps to the
+        capacity it was handed, which is the contract the dropped guard now
+        rests on. A kernel that overran would corrupt the heap here, and this
+        is the test that would show it.
+        """
+        root = _project(tmp_path, "dn", **CAPACITY)
+        _implement(root, "    return 5;", 8, pass_capacity=True)
+        proc = self._run(
+            root,
+            "from dn.dly import Dly\n"
+            "r = Dly().push(1.0)\n"
+            "print('OK', r.shape[0], r[0], r[-1])\n",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.split() == ["OK", "5", "1.0", "5.0"], proc.stdout
