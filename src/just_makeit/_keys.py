@@ -148,7 +148,19 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # gh-900: pass this array's length as a NAMED scalar argument
     # placed immediately before its data pointer, rather than as the
     # trailing `<name>_len` jm emits by default.
+    #
+    # gh-1097: a LIST names a 2-D array's two extents instead
+    # (`derived = ["ny", "nx"]`), which jm otherwise declares as
+    # `<name>_dim0`/`<name>_dim1`. The value is polymorphic by design and the
+    # writers branch on its type, not on the key — a second key would have
+    # made "which one wins" a question with no good answer.
     ("derived", False),
+    # gh-1096: the C type this parameter is DECLARED with, when that is a
+    # typedef jm has no vocabulary for — an enum typedef, in every case seen
+    # so far. jm still passes an int and C converts at the call, so this
+    # changes the injected declaration and nothing else. Restricted to
+    # integer-rendered params for that reason; see `_state._ctor_c_type`.
+    ("c_type", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
