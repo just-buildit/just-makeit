@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.65.0] — 2026-08-22
+
 ### Added
 
 - **`c_type` on an init-param: the enum typedef the constructor really takes
