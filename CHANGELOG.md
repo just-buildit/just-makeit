@@ -28,6 +28,37 @@
     blind-write guard is fenced by a test that fails if a fix drops it for
     both shapes.
 
+- **A method entry may no longer claim the `<m>_max_out` name jm generates
+    (gh-1092).** gh-1079 gave a sizeable `variable_output` method an `out=`
+    buffer and, with it, the `<m>_max_out()` a caller sizes that buffer *with*
+    — a member jm emits under a name derived from another entry's. Nothing
+    told `_builtins`, whose whole job since gh-994 is knowing which names an
+    object's generated code occupies, so a project that had hand-written
+    `<m>_max_out` under the documented gh-428 `manual_stub` workaround ended
+    up with two sources claiming one member.
+
+    The visible half was a `.pyi` declaring the member twice, the placeholder
+    shadowing the real signature. The expensive half was silent:
+    `_splice_hand_owned` transplants a hand-owned member by replacing
+    `_group_span`, which is `min(starts), max(ends)` over every node of that
+    name. Consecutive definitions — a property's getter and setter, an
+    `@overload` run — are exactly covered by it; definitions that are *not*
+    consecutive drag whatever sits between them into the span, and the
+    replacement deletes it. doppler's `DelayCf64.write` vanished from
+    `delay.pyi` that way on the 0.64.0 bump while staying in the binding, so a
+    type checker rejected a call that works and `jm status --check` saw
+    nothing wrong.
+
+    Both halves are fixed, because either alone leaves a hole. `_builtins`
+    now derives the generated bound — conditionally, from `_outbuf.enabled`,
+    so a gh-412-excluded shape that generates no bound still accepts a
+    hand-written one (doppler's `Farrow.delay_max_out` and
+    `Resampler.execute_ctrl_max_out` are exactly that, and a fix keyed on the
+    name's *shape* would have refused them). And the splice refuses a
+    non-contiguous group outright rather than swallowing what sits inside it
+    — keyed on adjacency, which is the condition that makes the span unsafe
+    whatever route produced it, rather than on `_max_out` in particular.
+
 ## [0.64.0] — 2026-08-21
 
 ### Added
