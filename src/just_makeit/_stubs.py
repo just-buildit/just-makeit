@@ -240,6 +240,93 @@ def _member_groups(text: str) -> dict[tuple[str, str], list[ast.AST]]:
     return groups
 
 
+def noncontiguous_groups(text: str) -> "dict[tuple[str, str], list[str]]":
+    """Same-named members of one class that are NOT written consecutively.
+
+    gh-1092. Empty is the invariant, and every consumer of
+    :func:`_member_groups` depends on it without saying so.
+
+    A group exists because one member name can legitimately carry several
+    definitions — a property's getter and setter, an ``@overload`` run — and
+    those are always written **consecutively**. :func:`_group_span` bakes that
+    in: it returns ``min(starts), max(ends)``, one interval covering the whole
+    group. When the definitions are consecutive that interval is exactly them.
+    When they are not, it also covers whatever sits between, and
+    :func:`_splice_hand_owned` replaces that whole interval — deleting an
+    unrelated member that merely had the bad luck to be written in the middle.
+
+    The only way two definitions of one name end up apart is a **collision**:
+    two different things claiming one member. So this answers both questions at
+    once — it is the condition that makes the span unsafe, and it is the
+    condition that means the stub declares one name twice.
+
+    Returns
+    -------
+    dict
+        ``{(ClassName, member): [names trapped between]}``. The trapped list
+        is what makes the failure legible: it names what would be deleted, not
+        merely that something would be.
+
+    Examples
+    --------
+    A property's getter and setter are consecutive, so not a collision:
+
+    >>> src = '''class A:
+    ...     @property
+    ...     def g(self) -> int: ...
+    ...     @g.setter
+    ...     def g(self, v: int) -> None: ...
+    ... '''
+    >>> noncontiguous_groups(src)
+    {}
+
+    Two claims on one name, with a member between them:
+
+    >>> src = '''class A:
+    ...     def m(self) -> int: ...
+    ...     def other(self) -> None: ...
+    ...     def m(self) -> int: ...
+    ... '''
+    >>> noncontiguous_groups(src)
+    {('A', 'm'): ['other']}
+
+    Unparsable text yields the invariant rather than raising, matching
+    :func:`_member_groups` — a stub that is not valid Python is a different
+    problem, reported elsewhere.
+
+    >>> noncontiguous_groups("class A:\\n  def (")
+    {}
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return {}
+    out: "dict[tuple[str, str], list[str]]" = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        # Index every member definition in body order, then ask whether the
+        # indices for one name form an unbroken run. Positions, not offsets:
+        # a decorator or a docstring between two defs changes offsets without
+        # changing adjacency, and only adjacency is the question.
+        seen: "dict[str, list[int]]" = {}
+        at: "dict[int, str]" = {}
+        for i, item in enumerate(node.body):
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                seen.setdefault(item.name, []).append(i)
+                at[i] = item.name
+        for name, idxs in seen.items():
+            if len(idxs) < 2 or idxs[-1] - idxs[0] == len(idxs) - 1:
+                continue
+            between = [
+                at[i]
+                for i in range(idxs[0] + 1, idxs[-1])
+                if i in at and at[i] != name
+            ]
+            out[(node.name, name)] = between
+    return out
+
+
 def _group_span(text: str, nodes: list[ast.AST]) -> tuple[int, int]:
     """Combined (start, end) offset spanning every node in *nodes* (a
     property's getter + setter), decorators included."""
@@ -584,11 +671,37 @@ def _splice_manual_stub_bodies(
     proceeds. `path` only names the file in that message; the splice does not
     read it.
     """
+    collided = noncontiguous_groups(new_text)
+    if collided:
+        raise ValueError(
+            "refusing to write a stub that declares one member twice:\n"
+            + "".join(
+                f"  {cls}.{name} is declared twice"
+                + (
+                    f", with {', '.join(between)} written between them\n"
+                    if between
+                    else "\n"
+                )
+                for (cls, name), between in collided.items()
+            )
+            + "This is gh-1092. Two different sources claim one member name —\n"
+            "typically a [[<obj>.methods]] entry named after something jm now\n"
+            "generates itself, such as the `<m>_max_out` bound that comes with\n"
+            "a variable_output method's out= buffer (gh-1079). Drop the entry:\n"
+            "jm declares that member, so the manual_stub is describing a\n"
+            "binding it no longer owns.\n"
+            "\n"
+            "Nothing has been written. Left alone this is not cosmetic — the\n"
+            "members listed above as written between are deleted from the\n"
+            "stub while staying in the binding, so a type checker rejects a\n"
+            "call that works.\n"
+        )
     report = describe_unparseable(
         cfg, old_text, where=str(path) if path else "the previous stub"
     )
-    if report:
-        # Its own block rather than a `_report.warn` mark. The two weights
+    if (
+        report
+    ):  # Its own block rather than a `_report.warn` mark. The two weights
         # answer "will `jm status --check` fail on this?", and after this
         # write the answer is no: the stub jm is about to lay down parses, so
         # the condition is gone and a `!` would be a claim the next status run

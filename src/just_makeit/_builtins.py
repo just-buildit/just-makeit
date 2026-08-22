@@ -34,6 +34,7 @@ distinctions between them are all load-bearing:
 
 from __future__ import annotations
 
+from . import _outbuf
 from ._types import _CTYPE_META
 
 __all__ = [
@@ -485,6 +486,33 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
         taken[prop["name"]] = (
             "a declared property",
             "Or rename the property.",
+        )
+    # gh-1092. gh-1079 gave a sizeable `variable_output` method an `out=`
+    # buffer and, with it, the `<m>_max_out()` a caller sizes that buffer
+    # WITH — a member jm now emits under a name derived from another entry's.
+    # Nothing had told this derivation, so a method entry claiming that name
+    # produced two `.pyi` definitions of it (and, through the splice, deleted
+    # whatever was written between them).
+    #
+    # Conditional on `_outbuf.enabled`, like five of the sources above, and
+    # for the same reason a hardcoded list would be wrong in both directions:
+    # a gh-412-excluded shape (an array beside other params) generates no
+    # bound at all, and doppler still carries hand-written
+    # `Farrow.delay_max_out` / `Resampler.execute_ctrl_max_out` entries that
+    # are correct and must keep working. Reserving every `*_max_out` name
+    # would refuse exactly those.
+    for m in C.methods(cfg, component):
+        if not _outbuf.enabled(
+            variable_output=bool(m.get("variable_output")),
+            multi_output=bool(m.get("multi_output")),
+            has_arg=str(m.get("arg_type", "void")) != "void",
+            params=list(m.get("params", []) or []),
+        ):
+            continue
+        taken[f"{m.get('name', '')}_max_out"] = (
+            f"the output bound jm generates for {m.get('name', '')}()",
+            "jm has emitted this since gh-1079, so drop the entry — the"
+            " stub it declared is now jm's own.",
         )
 
     # The absorbable six come out last, so a source above can never
