@@ -495,6 +495,10 @@ def _build_no_state_init_ctx(
     _ctype_override: dict[str, str] = {
         p[0]: p[13] for p in params if len(p) > 13 and p[13]
     }
+    # gh-1105: `{param name: the value generated tests construct it with}`.
+    _example_values: dict[str, str] = {
+        p[0]: p[14] for p in params if len(p) > 14 and p[14]
+    }
 
     sig_parts: list[str] = []
     doc_parts: list[str] = []
@@ -668,7 +672,14 @@ def _build_no_state_init_ctx(
                 + (" (required)." if req_s else f" (default: {dflt_s}).")
             )
             call_parts.append(pname)
-            c_create_parts_ordered.append(dflt_s or _CTYPE_META[ct_s]["zero"])
+            # gh-1105: the C smoke test and bench construct with the same
+            # value the Python tests do, so a constructor that refuses the
+            # type's zero is exercised identically on both faces.
+            c_create_parts_ordered.append(
+                _example_values.get(pname, "")
+                or dflt_s
+                or _CTYPE_META[ct_s]["zero"]
+            )
 
     # gh-1072: one rule for "an empty C parameter list reads `void`", shared
     # with every prototype `_render` emits. These two sites already join the
@@ -1342,8 +1353,13 @@ def _build_no_state_init_ctx(
     for kind, name in required_entries:
         if kind == "scalar":
             ct, dflt, _dr = _req_scalar_meta[name]
+            # gh-1105: an `example_value` outranks the type's zero. That zero
+            # is the value a validating constructor rejects, which is why the
+            # whole suite was skipped rather than run.
+            _ex = _example_values.get(name, "")
             py_create_parts.append(
-                f"{name}={_py_default(ct, dflt or _CTYPE_META[ct]['zero'])}"
+                f"{name}="
+                + (_ex or _py_default(ct, dflt or _CTYPE_META[ct]["zero"]))
             )
         elif kind == "path":
             # gh-515: jm cannot invent a valid filesystem path, so emit the
@@ -1657,14 +1673,20 @@ def _unseedable_required(init_params: list) -> list:
     return [
         p[0]
         for p in init_params
-        if str(p[1]) == "path"
-        or str(p[1]) == "bytes"  # gh-565: opaque blob has no seed value
-        or (len(p) > 10 and p[10])  # gh-790: a foreign capsule handle
-        or (
-            len(p) > 8
-            and p[8]  # required
-            and not (len(p) > 2 and p[2])  # no default
-            and not str(p[1]).endswith("[]")  # scalar
+        # gh-1105: an author-supplied `example_value` is exactly the value jm
+        # could not invent, so the param stops being unseedable. Checked first
+        # because it answers the question this whole predicate asks.
+        if not (len(p) > 14 and p[14])
+        and (
+            str(p[1]) == "path"
+            or str(p[1]) == "bytes"  # gh-565: opaque blob has no seed value
+            or (len(p) > 10 and p[10])  # gh-790: a foreign capsule handle
+            or (
+                len(p) > 8
+                and p[8]  # required
+                and not (len(p) > 2 and p[2])  # no default
+                and not str(p[1]).endswith("[]")  # scalar
+            )
         )
     ]
 
@@ -2750,19 +2772,41 @@ def make_state_ctx(
     # ── PYTEST: getter_setter_test_py ────────────────────────────────────
 
     gs_lines = [f"        obj = {Component}({py_create_args})"]
+    # gh-1105: assert the POST-CONSTRUCTION value only when jm knows it.
+    #
+    # It knows it for the state-var constructor: jm generates that create()
+    # whole, and the assignment being asserted is jm's own. With init_params
+    # the constructor takes the author's arguments, and jm scaffolds a
+    # create() that ignores them — using them is the entire point, and the
+    # moment the author does, any state they DERIVE makes this assertion a
+    # guess about their code. `errors_warnings` computes all three of its
+    # fields from `capacity`/`slots`, so every one of these lines is false
+    # there.
+    #
+    # The round-trip is kept either way. It is what an accessor test is for;
+    # the initial value is `test_create`'s business, and "reset restores the
+    # declared defaults" is still asserted by `test_reset`, where the code
+    # under test really is jm's.
+    _assert_initial = not init_params
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         iv = _py_default(ct, dflt)
         sv = _py_sample_val(meta, ct)
         if meta["kind"] == "float":
-            gs_lines += [
-                f"        assert obj.get_{name}() == _approx({iv})",
+            gs_lines += (
+                [f"        assert obj.get_{name}() == _approx({iv})"]
+                if _assert_initial
+                else []
+            ) + [
                 f"        obj.set_{name}({sv})",
                 f"        assert obj.get_{name}() == _approx({sv})",
             ]
         else:
-            gs_lines += [
-                f"        assert obj.get_{name}() == {iv}",
+            gs_lines += (
+                [f"        assert obj.get_{name}() == {iv}"]
+                if _assert_initial
+                else []
+            ) + [
                 f"        obj.set_{name}({sv})",
                 f"        assert obj.get_{name}() == {sv}",
             ]
@@ -2811,9 +2855,16 @@ def make_state_ctx(
     cgs_lines: list[str] = []
     for name, ct, dflt in scalar_vars:
         sv = _c_set_val(ct)
+        # gh-1105: the C face of the same rule as `gs_lines` above — assert
+        # the post-construction value only where jm generated the constructor
+        # that produces it. Fixing the Python accessor test and leaving this
+        # one is the peer-drift this repo keeps paying for.
+        cgs_lines.append(f"    /* {name}: getter / setter */")
+        if _assert_initial:
+            cgs_lines.append(
+                f"    CHECK({component}_get_{name}(obj) == {dflt});"
+            )
         cgs_lines += [
-            f"    /* {name}: getter / setter */",
-            f"    CHECK({component}_get_{name}(obj) == {dflt});",
             f"    {component}_set_{name}(obj, {sv});",
             f"    CHECK({component}_get_{name}(obj) == {sv});",
             "",
@@ -3011,12 +3062,18 @@ def make_state_ctx(
                 if ct not in _CTYPE_META:
                     continue
                 raw_dflt = p[2] if len(p) > 2 else ""
+                # gh-1105: the THIRD site that builds the constructor seed —
+                # this rebuild fires whenever any init-param lacks a default,
+                # which is exactly the case `example_value` exists for, so
+                # omitting it here left the other two sites correct and the
+                # generated construction still `create(0, 0)`.
+                _ex = p[14] if len(p) > 14 else ""
                 dflt = (
                     raw_dflt or _sv_dflt.get(n, "") or _CTYPE_META[ct]["zero"]
                 )
-                _ip_c.append(dflt)
+                _ip_c.append(_ex or dflt)
                 # gh-610: keyword construction, immune to a kwlist reorder.
-                _ip_py.append(f"{n}={_py_default(ct, dflt)}")
+                _ip_py.append(f"{n}={_ex or _py_default(ct, dflt)}")
             _aa_c = ["NULL, 0" for _ in array_args]
             _aa_py = [
                 f"{aname}=np.zeros(1, dtype="
@@ -3068,6 +3125,31 @@ def make_state_ctx(
         for _k in _CTOR_OVERRIDE_KEYS:
             if _k in _init_ctx:
                 result[_k] = _init_ctx[_k]
+        # gh-1105: the accessor and reset tests are built in the state half,
+        # from ITS `py_create_args` — which is empty whenever init_params are
+        # present, because `ctor_scalars` is cleared then. They embed a
+        # construction and so belong to the ctor, but they are NOT in
+        # `_CTOR_OVERRIDE_KEYS` and cannot be: `_build_no_state_init_ctx`'s
+        # copies are the "no auto-state" placeholders, so overriding would
+        # trade the real assertions for a `pass`.
+        #
+        # So the construction line is re-stamped rather than the slot
+        # replaced. This is the failure mode that list's own comment warns
+        # about — "a slot absent from it is silently dropped" — one step over:
+        # present, kept, and built from the wrong half's data. Every other
+        # generated test used `Obj(cap=0)` while these two used `Obj()`, which
+        # a required init-param turns into a TypeError.
+        _ctor_call = f"{Component}({result.get('py_create_args', '')})"
+        for _k, _ind in (
+            ("getter_setter_test_py", "        "),
+            ("reset_test_py", "        "),
+            ("getter_setter_test_py_pure", "    "),
+            ("reset_test_py_pure", "    "),
+        ):
+            _v = result.get(_k, "")
+            _stale = f"{_ind}obj = {Component}()"
+            if _v.startswith(_stale):
+                result[_k] = f"{_ind}obj = {_ctor_call}" + _v[len(_stale) :]
     result.update(_ctor_seed_slots(component, list(init_params)))
     result.update(_reset_wrapper_slots(component))
     return _apply_no_reset(result, no_reset)

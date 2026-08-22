@@ -305,6 +305,7 @@ class TestAddComponentFlags:
                 "",
                 "",
                 "",
+                "",
             ),
             (
                 "order",
@@ -316,6 +317,7 @@ class TestAddComponentFlags:
                 False,
                 "",
                 False,
+                "",
                 "",
                 "",
                 "",

@@ -2664,6 +2664,9 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # gh-1096: the C type the parameter is declared with, when that is
             # a typedef jm has no vocabulary for.
             p.get("c_type", ""),
+            # gh-1105: a value for generated tests and doctests only. NOT a
+            # default: the parameter stays required.
+            p.get("example_value", ""),
         )
         for p in param_dicts
     ]
@@ -2712,6 +2715,8 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         )
     if len(p) > 13 and p[13]:
         rec["c_type"] = p[13]
+    if len(p) > 14 and p[14]:
+        rec["example_value"] = p[14]
     return rec
 
 

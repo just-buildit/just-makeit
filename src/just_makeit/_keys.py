@@ -161,6 +161,13 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # changes the injected declaration and nothing else. Restricted to
     # integer-rendered params for that reason; see `_state._ctor_c_type`.
     ("c_type", False),
+    # gh-1105: a value jm may use when it needs to CONSTRUCT one of these for
+    # a generated smoke test or doctest. Not a default — the parameter stays
+    # required and the Python signature is unchanged. It exists because a
+    # validating constructor rejects the type's zero, which is the only value
+    # jm can invent, so `_unseedable_required` suppressed the construction and
+    # the whole generated suite skipped.
+    ("example_value", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.

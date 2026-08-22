@@ -254,6 +254,10 @@ class TestOptionalArrayToml:
             # gh-1096: (c_type) — empty unless the parameter is DECLARED with
             # a C typedef jm has no vocabulary for.
             "",
+            # gh-1105: (example_value) — a value generated tests may CONSTRUCT
+            # with. Empty here; the param is optional and seeds from its own
+            # default.
+            "",
         )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
@@ -282,6 +286,7 @@ class TestOptionalArrayToml:
                 False,
                 "",
                 False,
+                "",
                 "",
                 "",
                 "",
