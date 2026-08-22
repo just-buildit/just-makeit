@@ -81,28 +81,22 @@ allocator_peek(allocator_state_t *state, size_t x)
 }"""
 
 
-# The scaffolded C test constructs with `create(0, 0)`, which was valid until
-# create() grew a refusal. Moving it is not incidental tidying: the C test is
-# the author's file, and a contract change is exactly when it has to move.
-# Covering the refusal there too keeps channel 1 tested at the C layer, where
-# it is implemented, and not only through the binding.
-# gh-273's seeding skip: `capacity`/`slots` are REQUIRED with no default, so
-# jm emits a zero-seeded call it does not trust and bails out if the ctor
-# refuses it — exactly the ctor this example is about. The patch replaces the
-# whole block with a construction that IS valid, which is what the walkthrough
-# demonstrates.
+# The C test is the author's file, and a contract change is exactly when it has
+# to move: covering the refusal here keeps channel 1 tested at the C layer,
+# where it is implemented, and not only through the binding.
+#
+# This patch used to do more. Before gh-1105 the params were `required` with no
+# seed, so jm emitted `create(0, 0)` behind a skip-and-bail it did not trust —
+# the zero being precisely what this ctor refuses — and the patch had to
+# replace that whole block plus a `get_remaining(obj) == 0` line that a
+# deriving create() makes false. Declaring `example_value` (see test.py) fixed
+# both at the source: jm now constructs with valid arguments, and the accessor
+# test no longer asserts a post-construction value it cannot know. So all that
+# is left here is ADDING the refusal cases, which is the part that was ever
+# about this example.
 CTEST_OLD = """\
-    allocator_state_t *obj = allocator_create(0, 0);
-    if (!obj) {
-        /* capacity, slots: required with no default — a validating
-           allocator_create() may reject the zero-seeded call
-           above. Pass valid arguments to smoke-test further. */
-        printf("test_allocator_core SKIPPED (capacity, slots need seeding)\\n");
-        return 0;
-    }
-
-    /* n_slots: getter / setter */
-    CHECK(allocator_get_n_slots(obj) == 0);"""
+    allocator_state_t *obj = allocator_create(1024, 4);
+    REQUIRE(obj != NULL);"""
 
 CTEST_NEW = """\
     /* create() refuses what it cannot serve -- 2 units over 3 slots. */
@@ -113,16 +107,7 @@ CTEST_NEW = """\
     REQUIRE(obj != NULL);
     /* An exact fit is not degraded; 10 over 3 would be. */
     CHECK(allocator_get_degraded(obj) == false);
-
-    /* n_slots: getter / setter */
-    CHECK(allocator_get_n_slots(obj) == 3);"""
-
-CTEST_REMAINING_OLD = """\
-    /* remaining: getter / setter */
-    CHECK(allocator_get_remaining(obj) == 0);"""
-
-CTEST_REMAINING_NEW = """\
-    /* remaining: getter / setter */
+    CHECK(allocator_get_n_slots(obj) == 3);
     CHECK(allocator_get_remaining(obj) == 9);"""
 
 
@@ -142,9 +127,6 @@ def main() -> None:
 
     t = CTEST.read_text(encoding="utf-8")
     t = _replace(t, CTEST_OLD, CTEST_NEW, "C test construction")
-    t = _replace(
-        t, CTEST_REMAINING_OLD, CTEST_REMAINING_NEW, "C test remaining"
-    )
     CTEST.write_text(t, encoding="utf-8")
 
 

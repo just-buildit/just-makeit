@@ -64,7 +64,7 @@ _DERIVED = (
 #: the flag parser stops one short. The CLI form being a strict PREFIX of the
 #: stored form is the actual invariant — `init_param_tuple_to_dict` reads
 #: every field behind a `len(p) > n` guard for exactly that reason.
-_DERIVED_STORED = _DERIVED + ("",)
+_DERIVED_STORED = _DERIVED + ("", "")
 _PLAIN = ("h", "float[]", "")
 
 

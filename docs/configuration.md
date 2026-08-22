@@ -542,18 +542,61 @@ for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
-| TOML field                                                      | CLI flag                                                                | Status                      |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
-| `name`, `type`, `default`                                       | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
-| `optional = true`                                               | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
-| `default_raw = "<C constant>"` (a default jm must not evaluate) | (TOML only)                                                             | ✅ (gh-1099)                |
-| `real_type`, `real_create_fn`, `create_fn`                      | (TOML only)                                                             | 🟡                          |
-| `capsule = "<name>"`, `header = "path/hdr.h"`                   | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
-| `required = false` on a capsule param (nullable handle)         | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
-| `derived = "<name>"` (name a 1-D array's length parameter)      | (TOML only)                                                             | ✅ (gh-900)                 |
-| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)       | (TOML only)                                                             | ✅ (gh-1097)                |
-| `c_type = "<typedef>"` (declare an integer param's C type)      | (TOML only)                                                             | ✅ (gh-1096)                |
-| compose with `[[state]]`                                        | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+| TOML field                                                             | CLI flag                                                                | Status                      |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
+| `name`, `type`, `default`                                              | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
+| `optional = true`                                                      | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
+| `default_raw = "<C constant>"` (a default jm must not evaluate)        | (TOML only)                                                             | ✅ (gh-1099)                |
+| `real_type`, `real_create_fn`, `create_fn`                             | (TOML only)                                                             | 🟡                          |
+| `capsule = "<name>"`, `header = "path/hdr.h"`                          | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
+| `required = false` on a capsule param (nullable handle)                | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
+| `derived = "<name>"` (name a 1-D array's length parameter)             | (TOML only)                                                             | ✅ (gh-900)                 |
+| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)              | (TOML only)                                                             | ✅ (gh-1097)                |
+| `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                             | ✅ (gh-1096)                |
+| `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                             | ✅ (gh-1105)                |
+| compose with `[[state]]`                                               | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+
+#### `example_value` — constructing a required param in generated tests
+
+jm seeds a generated smoke test and doctest with the type's **zero**. For a
+constructor that *validates* — rejecting a zero rate, span or size — that is
+the one value it refuses, so jm suppresses the construction entirely and the
+whole generated class skips:
+
+```
+SKIPPED: required constructor parameter(s) capacity, slots have no default;
+         seed valid arguments to enable this smoke test
+```
+
+Skipping is safer than emitting a construction that cannot work, and it is not
+the end state: the project then ships a test suite that asserts nothing.
+`example_value` gives jm something valid to build with:
+
+```toml
+[[allocator.init_params]]
+name          = "capacity"
+type          = "size_t"
+required      = true
+example_value = "1024"
+```
+
+It is **not a default.** The parameter stays required, the Python signature is
+unchanged, and `Allocator()` is still a `TypeError` — which matters, because a
+validating constructor is usually one you *want* to be mandatory. One
+declaration feeds the generated pytest, the generated C smoke test and the
+docstring examples, so both faces exercise the same construction.
+
+**It takes effect when the object is created.** The generated test files are
+create-only — jm writes them once and never rewrites them — so adding
+`example_value` to an existing project changes nothing already on disk.
+
+**One thing changes with it.** For an init-params constructor the generated
+accessor test asserts the set/get **round-trip only**, not the value a field
+holds after construction. jm generates the state-var constructor whole, so
+there it knows the initial value and still asserts it; with init-params the
+constructor is the author's, and any state it *derives* from its arguments
+makes that assertion a guess. "Reset restores the declared defaults" is still
+asserted by the reset test on both faces, where the code under test is jm's.
 
 #### A `default` is a literal; a constant is `default_raw`
 

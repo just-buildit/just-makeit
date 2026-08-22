@@ -70,8 +70,55 @@ def run(root: Path) -> None:
             # that cannot work. Declaring it is the fix; giving the params
             # defaults would have been the other route and is wrong here,
             # because the point of the example is a ctor that refuses.
-            ("capacity", "size_t", "", "", "", "", False, "", True),
-            ("slots", "size_t", "", "", "", "", False, "", True),
+            # ...and gh-1105's `example_value` (the trailing field) is what
+            # lets the generated tests RUN rather than skip. `required`
+            # stopped them constructing `Allocator(capacity=0, slots=0)`,
+            # which this ctor refuses; it did not give jm anything valid to
+            # construct WITH, so all eight tests skipped and the example
+            # shipped a project whose own suite asserted nothing.
+            #
+            # These are seeds for the generated tests and doctests only. The
+            # params stay REQUIRED and the Python signature is unchanged —
+            # a default would have made `Allocator()` legal, which is exactly
+            # what this example exists to refuse.
+            #
+            # 1024 / 4 divides evenly, so `remaining` is the full capacity and
+            # the degraded-warning channel stays quiet for the smoke tests.
+            # The example drives the degraded path explicitly further down.
+            (
+                "capacity",
+                "size_t",
+                "",
+                "",
+                "",
+                "",
+                False,
+                "",
+                True,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "1024",
+            ),
+            (
+                "slots",
+                "size_t",
+                "",
+                "",
+                "",
+                "",
+                False,
+                "",
+                True,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "4",
+            ),
         ],
         state_vars=[
             ("n_slots", "size_t", "0"),

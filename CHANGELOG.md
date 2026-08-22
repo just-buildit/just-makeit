@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### Added
+
+- **`example_value`: a required init-param jm can construct with (gh-1105).**
+    jm seeds a generated smoke test with the type's **zero**, which is the one
+    value a *validating* constructor refuses — so `_unseedable_required`
+    suppressed the construction and the whole generated class skipped.
+    `errors_warnings` was the only example in the fleet whose suite was
+    entirely skipped: 8 of 8, a shipped project asserting nothing.
+
+    It is **not a default.** The parameter stays required and the Python
+    signature is unchanged — `Allocator()` is still a `TypeError`, which is
+    the point, since this exists for constructors that are deliberately
+    mandatory. One declaration feeds the generated pytest, the generated C
+    smoke test and the docstring examples, so both faces construct alike.
+
+    Takes effect at object creation: the generated test files are create-only,
+    so adding the key to an existing project changes nothing on disk.
+
 ### Changed
 
 - **Re-vendored `standard.mk` from canonical.** Two upstream changes:
@@ -44,6 +62,29 @@
     skipped, which the gate reports as a pass because pytest exits 0. That is
     `_unseedable_required` working as gh-1088 intended and is filed separately
     as gh-1105 rather than left in a docstring.
+- **The accessor and reset tests constructed with no arguments (gh-1105).**
+    Both are built in the state half of `make_state_ctx`, from *its*
+    `py_create_args` — which is empty whenever init-params are present, since
+    `ctor_scalars` is cleared then. Every other generated test used
+    `Obj(cap=0)`; these two used `Obj()`, a `TypeError` for any required
+    param. `_CTOR_OVERRIDE_KEYS` is the allow-list that would have caught it,
+    and its own comment warns about exactly this failure — one step over: not
+    dropped, but kept and built from the wrong half's data. Invisible until
+    now because the skip above fired first.
+
+- **The post-construction assertion is emitted only where jm knows the value
+    (gh-1105).** `assert obj.get_n_slots() == 0` is jm's own generated
+    assignment for a state-var constructor and a guess about the author's code
+    for an init-params one — `errors_warnings` derives all three of its fields
+    from `capacity`/`slots`. The set/get round-trip stays in both cases: it is
+    what an accessor test is for, and "reset restores the declared defaults"
+    is still asserted by the reset test, on both faces, where the code under
+    test really is jm's. Applied to the C smoke test too, since fixing one
+    face and leaving the other is this repo's recurring defect.
+
+    Measured across all 26 examples: **215 passed, 0 skipped, 0 failed** (was
+    207 passed, 8 skipped), 21 of 26 carrying at least one real test. No
+    example regressed.
 
 - **An init-param `default` must be a literal of its declared type
     (gh-1099).** It was rendered **verbatim** into four places, each failing
