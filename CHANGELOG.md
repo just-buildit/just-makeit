@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A zero-arg handle method's stub said `-> <type>` while its binding
+    returned `None` (gh-1116).** A `kind = "handle"` method declaring
+    `error = "..."` got `-> None` with an argument and `-> <returns>` without
+    one, from declarations differing only in the argument. Both bindings raise
+    and `Py_RETURN_NONE`, so a caller trusting the zero-arg stub writes
+    `if sink.send_eos() != 0:` and takes the error branch on every success.
+
+    `_emit_method` and `render_pyi` classify a method's shape independently,
+    and only the second ever asked about `error` — in one of its six branches.
+    `_handle.raises_instead_of_returning` is now the one predicate, asked once
+    outside the chain.
+
+    The gate is not a list of expected annotations: it renders each shape's
+    binding, reads out of the generated C what that binding does, and asserts
+    the predicate and the `.pyi` agree with it. A new shape that consumes
+    `error` differently fails the test rather than joining the drift.
+
 ## [0.66.1] — 2026-08-23
 
 ### Fixed
