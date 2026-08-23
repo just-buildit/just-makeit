@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+### Changed
+
+- **A handle method's `error` is now honoured or refused, never ignored
+    (gh-1118).** `error = "<category>"` was read by every method shape and used
+    by three of six: the array-in, array-out and `bytes` bindings reach their
+    own `return` in `_emit_method` before the validation block ever runs.
+
+    Two things followed, both measured. An **unrecognised exception name** was
+    accepted in silence on exactly those three shapes while being refused on
+    the other three. And a recognised one declared an exception that **can
+    never be raised**, since those bindings return their value and check no
+    status — invisible until the C returns a failure code in production and
+    the caller receives it as data.
+
+    The checks now run before any shape branch can return. For those three
+    shapes the C return is the payload *length* — samples written, bytes
+    filled — so there is no separate rc to test and `error` is refused with a
+    message naming what consumes the return and the two ways out. jm was
+    already claiming this contract in its own wording ("error requires an
+    `int` status return"), on the half of the shapes that happened to reach it.
+
+    A project with such a declaration today has an exception that has never
+    fired; the fix is to drop the key, or move the check into a separate
+    status method. doppler was checked before this landed: both of its
+    `error`-declaring handle methods are status-shaped and unaffected.
+
 ### Fixed
 
 - **A zero-arg handle method's stub said `-> <type>` while its binding

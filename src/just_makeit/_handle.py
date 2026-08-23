@@ -500,6 +500,74 @@ def raises_instead_of_returning(m: dict) -> bool:
     return True
 
 
+def _check_error_decl(
+    m: dict, name: str, returns: "str | None", margs: list
+) -> None:
+    """Refuse an ``error`` declaration this method's shape cannot honour.
+
+    Every check here used to live *after* the shape branches, and three of the
+    six shapes reach their own ``return`` before that point — so on an
+    array-in, array-out or ``bytes`` method an ``error`` was read, never
+    validated and never used. Two consequences, both measured (gh-1118):
+
+    - an **unrecognised exception name** was accepted in silence on exactly
+      those three shapes, while being refused on the other three;
+    - a recognised one declared an exception that *can never be raised*, since
+      those bindings return their value and no status is ever checked.
+
+    The second is the quieter defect and the reason this is a refusal rather
+    than an implementation. For those shapes the C return is the payload
+    **length** — samples written, bytes filled — so there is no separate rc to
+    test. Honouring ``error`` there is not a feature jm declined to build; it
+    is not expressible.
+
+    Hoisting the checks is the whole fix for the first consequence. `jm` was
+    already claiming this contract in its own message — "error requires an
+    `int` status return" — on the half of the shapes that happened to reach
+    it.
+
+    Raises
+    ------
+    ValueError
+        Naming what consumes the return, and the two ways out: drop the key,
+        or move the check into a separate status method.
+    """
+    err_cat = m.get("error")
+    if not err_cat:
+        return
+    if err_cat not in C.ERROR_CATEGORIES:
+        supported = ", ".join(sorted(C.ERROR_CATEGORIES))
+        raise ValueError(
+            f"handle method '{name}': error '{err_cat}' is not a recognised"
+            f" exception. Supported: {supported}."
+        )
+    if not returns:
+        raise ValueError(
+            f"handle method '{name}': error requires an `int` status return"
+            ' (declare returns = "int").'
+        )
+    if not raises_instead_of_returning(m):
+        if returns == "bytes":
+            consumed = 'returns = "bytes"'
+            what = "the blob's length"
+        elif str(returns).endswith("[]"):
+            consumed = f'returns = "{returns}"'
+            what = "the output length"
+        else:
+            arr = next(
+                a["name"]
+                for a in margs
+                if str(a.get("type", "")).endswith("[]")
+            )
+            consumed = f"the array argument '{arr}'"
+            what = "a count, not a status"
+        raise ValueError(
+            f"handle method '{name}': `error` needs a status return to check,"
+            f" but with {consumed} the C return is {what}. Drop `error`, or"
+            " move the check into a separate status method."
+        )
+
+
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
     """Emit one handle method calling ``fn(self->h, …)``.
 
@@ -532,6 +600,8 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     }}"""
 
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+
+    _check_error_decl(m, name, returns, margs)
 
     # (e) scalar/string args → HANDLE-length array-out. When a method returns an
     # array, takes no input array, and declares `out_len_fn`, the output length
@@ -823,17 +893,6 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # the handle-method mirror of the object side's `status_return` (gh-432) and
     # of `wfm_writer.destroy`'s fallible close (gh-541).
     err_cat = m.get("error")
-    if err_cat and err_cat not in C.ERROR_CATEGORIES:
-        supported = ", ".join(sorted(C.ERROR_CATEGORIES))
-        raise ValueError(
-            f"handle method '{name}': error '{err_cat}' is not a recognised"
-            f" exception. Supported: {supported}."
-        )
-    if err_cat and not returns:
-        raise ValueError(
-            f"handle method '{name}': error requires an `int` status return"
-            ' (declare returns = "int").'
-        )
     call = ", ".join(["self->h"] + [_create_call_arg(a) for a in margs])
     # path borrows are released only AFTER the C call has copied them (gh-219).
     fs_release = "".join(

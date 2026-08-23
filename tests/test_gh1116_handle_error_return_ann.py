@@ -40,16 +40,28 @@ _BASE = {
     "create_args": [{"name": "path", "type": "path"}],
 }
 
-# One method per shape `_emit_method` distinguishes, each declaring the SAME
-# `error`. The shapes are the axis this bug lives on, so they are enumerated
-# here and nowhere else in the file.
-_SHAPES = {
+# One method per shape `_emit_method` distinguishes. The shapes are the axis
+# this bug lives on, so they are enumerated here and nowhere else in the file.
+#
+# They split by whether an `error` declaration is legal at all. On the three
+# STATUS shapes the C return is an rc, so `error` converts it to a raise. On
+# the three DATA shapes the return is the payload length and there is no rc to
+# check, so gh-1118 refuses the declaration outright — the "accepted and
+# ignored" third state is gone, and its invariant is gated in
+# `test_gh1118_refuse_unhonoured_error.py` rather than duplicated here.
+#
+# Both groups still exercise THIS bug: the question is whether the stub's
+# annotation matches what the binding returns, and that must hold whether or
+# not a method declares an error.
+_STATUS_SHAPES = {
     "zero_arg": {"returns": "int"},
     "scalar_arg": {
         "returns": "int",
         "args": [{"name": "timeout_ms", "type": "int", "default": "0"}],
     },
     "path_arg": {"returns": "int", "args": [{"name": "p", "type": "path"}]},
+}
+_DATA_SHAPES = {
     "array_in": {
         "returns": "int",
         "args": [{"name": "x", "type": "float[]"}],
@@ -60,10 +72,19 @@ _SHAPES = {
     },
     "bytes_out": {"returns": "bytes", "out_len_fn": "sink_len"},
 }
+_SHAPES = {**_STATUS_SHAPES, **_DATA_SHAPES}
 
 
 def _method(extra):
-    return {"name": "op", "fn": "sink_op", "error": "OSError", **extra}
+    """The method under test, carrying `error` only where it is legal."""
+    m = {"name": "op", "fn": "sink_op", **extra}
+    if _is_status_shape(extra):
+        m["error"] = "OSError"
+    return m
+
+
+def _is_status_shape(extra):
+    return any(extra == v for v in _STATUS_SHAPES.values())
 
 
 def _cfg(extra):
