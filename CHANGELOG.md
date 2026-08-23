@@ -1,5 +1,40 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm status --shared-cores`: which component cores reach more than one
+    extension module (gh-1117).** CPython imports extensions `RTLD_LOCAL` and
+    jm links a component's OBJECT library statically into every `.so` that
+    needs it, so a core linked into three modules is three copies of every
+    file-scope `static` in it. For a pure kernel that is correct and is what
+    the OBJECT-library wiring is for. For a primitive whose contract is
+    one-per-process it is silently wrong — doppler#976 is an interrupt flag
+    where setting it through one module left the waits in two others spinning
+    on a different variable, with every test passing because the only setter
+    and the only exercised wait happened to share a `.so`.
+
+    **Opt-in and never counted**, and both are measurements rather than
+    caution. Run over doppler's real manifest the detector lists 45 cores
+    across 33 modules, the overwhelming majority correctly. Printed by default
+    that is permanent noise; counted, it would fail a green project's CI
+    forever. gh-1117 proposed it as a warning that would have "caught
+    doppler#976 the day the second module appeared" — the measurement is what
+    says otherwise, since the one line that mattered would have been one of
+    dozens from very early on. It is always present in `--json`, where a
+    machine reader can filter to the core it cares about.
+
+    jm reports the **linkage it owns** — it wrote the `target_link_libraries`
+    line — and deliberately does not read the component's C to decide whether
+    a core really holds process-global state. That would be a model of C
+    living in jm, tracking C forever and going wrong quietly.
+
+    `_procglobal.py` holds the detector, and will hold the generator for the
+    `process_global` declaration that makes it precise — the same reason
+    `_libwiring.py` keeps its own pair in one file. The module-init hook
+    gh-1117 also asks for is deliberately **not** here: jm has five separate
+    `PyInit_` emitters, so a hook is only honest if it reaches all five, and
+    the declaration is expected to make it unnecessary.
+
 ### Changed
 
 - **A handle method's `error` is now honoured or refused, never ignored

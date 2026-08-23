@@ -343,6 +343,12 @@ Commands:
     --json                      Emit a structured report ({path, state, allowed,
                                 dropped_symbols}).
     --diff                      Print a unified diff per stale file.
+    --shared-cores              List component cores statically linked into more
+                                than one extension module — each .so holds its
+                                own copy of their file-scope state (gh-1117).
+                                Reported, never counted: a shared pure kernel is
+                                correct, and jm does not read your C to tell
+                                which is which. Always present in --json.
     --check                     One-line summary only (exit code still set);
                                 DROPPED entries still print in full.
     --strict-examples           Fail on an authored @code line too wide for its
@@ -1083,6 +1089,9 @@ def main() -> None:
         _check = "--check" in _args
         # gh-760: the one-off form of [project] strict_examples.
         _strict_examples = "--strict-examples" in _args
+        # gh-1117: opt-in, because on a real multi-module project the list is
+        # long and almost entirely correct.
+        _shared_cores = "--shared-cores" in _args
         _i = 0
         while _i < len(_args):
             if _args[_i] == "--allow":
@@ -1101,6 +1110,7 @@ def main() -> None:
                     show_diff=_show_diff,
                     check=_check,
                     strict_examples=_strict_examples,
+                    shared_cores=_shared_cores,
                 ),
                 1,
             )

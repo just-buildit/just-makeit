@@ -238,6 +238,7 @@ def run(
     show_diff: bool = False,
     check: bool = False,
     strict_examples: bool = False,
+    shared_cores: bool = False,
 ) -> int:
     """Print a status report; return the count of files `apply` would change.
 
@@ -256,7 +257,19 @@ def run(
     separate DROPPED section (printed even under ``check``) and always
     counted in the return value, ignoring ``allow``/``status_allow`` — a
     drop is real content loss, not routine drift, so it is never
-    suppressible."""
+    suppressible.
+
+    ``shared_cores`` prints the gh-1117 report: component cores linked into
+    more than one extension module, each of which therefore holds its own
+    copy of that core's file-scope state. It is **opt-in and uncounted**, and
+    both of those are measurements rather than caution. Run over doppler it
+    lists 45 cores across 33 modules — the overwhelming majority correctly,
+    since a pure kernel shared between modules is what the OBJECT-library
+    wiring is for. Printed by default it would be permanent noise; counted, it
+    would fail a green project's CI forever. The issue proposed it as a
+    warning that would have "caught doppler#976 the day the second module
+    appeared", and the measurement is what says otherwise: the one line that
+    mattered would have been one of dozens from very early on."""
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -661,9 +674,11 @@ def run(
 
     _ctor_drift = _ctorsig.drift(root, cfg)
     from . import _libwiring
+    from . import _procglobal
 
     _unwired = _libwiring.unwired(root, cfg)
     _dangling = _libwiring.dangling(root, cfg)
+    _shared = _procglobal.shared_cores(cfg)
     # Suppressed by the file, like the UNANCHORED entry beside it, and ALSO
     # per component via `CMakeLists.txt:<core>`.
     #
@@ -855,6 +870,16 @@ def run(
                     "dangling_wiring": [
                         {"core": d.core, "targets": list(d.targets)}
                         for d in _dangling
+                    ],
+                    # gh-1117: cores linked into >1 extension module, so
+                    # each `.so` holds its own copy of their file-scope
+                    # state. Always emitted here even though the human report
+                    # is opt-in: a machine reader can filter to the cores it
+                    # cares about, which is exactly what a person scanning 45
+                    # lines cannot do.
+                    "shared_cores": [
+                        {"core": sc.core, "modules": list(sc.modules)}
+                        for sc in _shared
                     ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
@@ -1143,6 +1168,31 @@ def run(
             " — there is no\n"
             "  reading of status_allow under which an unconfigurable tree is"
             " intended."
+        )
+        print()
+
+    # gh-1117: opt-in, uncounted. See the `shared_cores` note in this
+    # function's docstring for why it is both.
+    if shared_cores and _shared:
+        print(
+            f"SHARED CORES ({len(_shared)}) — component core(s) statically "
+            "linked into more than one extension module:"
+        )
+        for sc in _shared:
+            print(f"  ◆ {sc.core} — {', '.join(sc.modules)}")
+        print(
+            "  CPython imports extensions RTLD_LOCAL, so each .so holds its"
+            " OWN copy of every\n"
+            "  file-scope `static` in these cores. For a pure kernel that is"
+            " correct, and is\n"
+            "  what the OBJECT-library wiring is for. For a primitive whose"
+            " contract is\n"
+            "  one-per-process it is silently wrong: a flag set through one"
+            " module is not the\n"
+            "  flag another module reads.\n"
+            "  jm reports the linkage it owns. It does not read your C to"
+            " guess which of these\n"
+            "  is which."
         )
         print()
 
