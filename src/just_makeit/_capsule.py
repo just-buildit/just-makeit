@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import _coerce
 from . import _config as C
+from . import _procglobal
 from . import _types as T
 
 # ── small type helpers ───────────────────────────────────────────────────────
@@ -316,10 +317,29 @@ PyMODINIT_FUNC
 PyInit_{module}(void)
 {{
     import_array();
-    return PyModule_Create(&_moduledef);
-}}
+{_capsule_init_body(cfg, module)}}}
 """)
     return "\n".join(parts)
+
+
+def _capsule_init_body(cfg: dict, module: str) -> str:
+    """The tail of a capsule module's ``PyInit_``.
+
+    A capsule module has no types to register, so its init has always been a
+    one-liner and needs no module variable. gh-1117's rendezvous does need
+    one — so the longer form appears ONLY when there is a rendezvous to emit,
+    and every capsule module declaring no process-global core renders
+    byte-identically to before. `jm status --check` compares generated files
+    byte-for-byte, so the alternative would report drift in every existing
+    capsule project in exchange for nothing.
+    """
+    rz = _procglobal.rendezvous_c(cfg, module)
+    if not rz:
+        return "    return PyModule_Create(&_moduledef);\n"
+    return (
+        "    PyObject *m = PyModule_Create(&_moduledef);\n"
+        "    if (!m) return NULL;\n" + rz + "    return m;\n"
+    )
 
 
 def _fn_signature(cfg: dict, module: str, fn: str) -> str:

@@ -34,6 +34,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _procglobal
 from . import _createonly
 from . import _libwiring
 from . import _report
@@ -152,6 +153,13 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # gh-542: replayed like every other shape key — a manifest key that
         # apply drops regenerates the very method it asked to remove.
         "no_reset": C.is_no_reset(cfg, comp),
+        # gh-1117: manifest-only (no CLI flag), so the replay has to carry it
+        # explicitly. Without this the temp scaffold's manifest has no
+        # `process_global` at all, every module's rendezvous renders empty,
+        # and `jm apply` writes a binding with none of it -- while every unit
+        # test passes, because they call the emitters with a cfg that HAS the
+        # key. Same shape as `destroy` below and gh-542's `no_reset`.
+        "process_global": _procglobal.is_process_global(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
@@ -1660,11 +1668,21 @@ def _sync_aggregates(
         from ._object import _load_doc_blocks
 
         _real_blocks = _load_doc_blocks(root, comp)
-        if _real_blocks:
+        # gh-1117: a standalone object's rendezvous is a CROSS-COMPONENT
+        # fact -- which component declared `process_global`, which modules
+        # link its core -- and none of that is known while the replay is
+        # scaffolding components one at a time. The binding rendered during
+        # the replay therefore has an empty block, and this post-replay pass
+        # is the first point where the whole manifest exists. Same reason the
+        # CMake wiring is reconciled here rather than emitted at scaffold
+        # time.
+        _pg = _procglobal.rendezvous_c(cfg, comp)
+        if _real_blocks or _pg:
             from . import _glue
             from . import _render as _R
 
-            cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
+            if _real_blocks:
+                cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
             # gh-676/gh-644: BOTH faces, from the one enriched context. Only
             # the .pyi was re-rendered here, so a standalone object's runtime
             # __doc__ kept the temp scaffold's trivial-header text -- which is
@@ -2112,6 +2130,16 @@ def run(
         print()
 
     cfg = C.load(root)
+    # gh-1117: refuse a `process_global` jm cannot make true, before anything
+    # is written. A declaration that generated nothing and said nothing would
+    # be gh-1118 in a new place -- a key read, accepted, silently doing
+    # nothing -- and the thing it silently fails to do is the one the author
+    # declared it for.
+    try:
+        _procglobal.validate(cfg)
+    except _procglobal.ProcGlobalRefusal as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
     # gh-183: record the generating jm version (monotonic; surgical write).
     _stamped = C.stamp_jm_version(root, cfg)
     if _stamped:
