@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.66.1] — 2026-08-23
+
 ### Fixed
 
 - **`error_message` and the `Raises` doc on a handle-module method
