@@ -208,10 +208,17 @@ def _ringbuf_module() -> dict:
         "methods": [
             {
                 # gh-565: a path method arg + an int->raise status (error).
+                # gh-1111: ...carrying the author's own `error_message`, which
+                # this face accepted and dropped. The `%` is deliberate: the
+                # binding used to splice its subject into the PyErr_Format
+                # FORMAT string, where a `%` in ordinary prose becomes a live
+                # conversion with no vararg behind it. This is the only gate
+                # that COMPILES and RUNS that path.
                 "name": "dump",
                 "fn": "ringbuf_dump",
                 "returns": "int",
                 "error": "OSError",
+                "error_message": "the dump did not reach 100% of the buffer",
                 "args": [{"name": "path", "type": "path"}],
             },
             {
@@ -611,9 +618,14 @@ def test_dump_and_file_factory_roundtrip(tmp_path):
     assert isinstance(r2, Ring)
     assert r2.pop(3).tolist() == [1.0, 2.5, -3.0]
 
-    # A non-zero rc (unwritable path) raises the declared OSError.
-    with pytest.raises(OSError):
+    # A non-zero rc (unwritable path) raises the declared OSError -- with the
+    # declared message and the rc appended (gh-1111), not a canned
+    # "<fn> failed". The `%` survives verbatim because the message crosses as
+    # a PyErr_Format ARGUMENT rather than as its format string.
+    with pytest.raises(OSError) as excinfo:
         r.dump(str(tmp_path / "no-such-dir" / "ring.bin"))
+    assert "the dump did not reach 100% of the buffer" in str(excinfo.value)
+    assert "(rc=1)" in str(excinfo.value)
 
 
 def test_mixed_array_scalar_method_passes_scalars(tmp_path):

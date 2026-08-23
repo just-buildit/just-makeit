@@ -203,6 +203,25 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
     )
 
 
+def _raise_pair(m: dict, subject: str) -> "tuple[str, str]":
+    """``(category, message)`` from the ``error`` / ``error_message`` pair.
+
+    The shared half of `declared_raise` and `handle_declared_raise`: the two
+    faces disagree about *which* keys mean "a failing return raises", and
+    agree completely about what it raises once they have decided. Splitting
+    the agreement out is what stops the undeclared defaults — ``ValueError``,
+    and ``"<subject> failed"`` — from existing twice.
+
+    *subject* names the thing that failed in the derived message. The object
+    face uses the Python method name; a handle method uses its C ``fn``,
+    which is the name a caller reading the traceback can grep for.
+    """
+    return (
+        m.get("error") or "ValueError",
+        m.get("error_message") or f"{subject} failed",
+    )
+
+
 def declared_raise(m: dict) -> "tuple[str, str] | None":
     """``(category, message)`` a declared method raises, or ``None``.
 
@@ -216,6 +235,13 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
     exception. That is not "no exception at all": every wrapper still carries
     the ``RuntimeError "destroyed"`` liveness guard, which is jm's plumbing
     rather than the author's contract and is deliberately undocumented here.
+
+    This is the **object** face's spelling. `handle_declared_raise` is the
+    same question for a ``kind = "handle"`` method, which spells it
+    differently; a bare ``error`` deliberately does not fire here, because
+    the object side rejects that combination at declaration time and a
+    hand-written manifest carrying it must not start advertising an exception
+    its binding does not raise.
 
     Parameters
     ----------
@@ -234,13 +260,44 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
     """
     if not (m.get("status_return") or m.get("error_negative")):
         return None
-    return (
-        m.get("error") or "ValueError",
-        m.get("error_message") or f"{m.get('name', '')} failed",
-    )
+    return _raise_pair(m, str(m.get("name", "")))
 
 
-def raises_doc(m: dict) -> "list[tuple[str, str]]":
+def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
+    """`declared_raise` for a ``kind = "handle"`` module method (gh-1111).
+
+    A handle method declares "a non-zero return is a failure" as ``error =
+    "<category>"`` over an ``int`` ``returns`` — there is no
+    ``status_return`` on this face, and `_handle._emit_method` refuses an
+    ``error`` without a return to check. So the trigger differs and only the
+    trigger: the category and the message come from `_raise_pair`, the same
+    one the object face reads.
+
+    It exists because those keys were accepted on both faces and honoured on
+    one. The binding here spliced the C ``fn`` straight into the
+    ``PyErr_Format`` format string and dropped ``error_message`` entirely,
+    and the stub emitted no ``Raises`` section at all — so the shape most
+    likely to need the documentation (a drain, a flush, a close over a file
+    or a socket) was the shape that did not get it.
+
+    Examples
+    --------
+    >>> handle_declared_raise({"name": "drain", "fn": "sink_drain"}) is None
+    True
+    >>> handle_declared_raise({"name": "drain", "fn": "sink_drain",
+    ...                        "returns": "int", "error": "OSError"})
+    ('OSError', 'sink_drain failed')
+    >>> handle_declared_raise({"name": "drain", "fn": "sink_drain",
+    ...                        "returns": "int", "error": "OSError",
+    ...                        "error_message": "budget ran out"})
+    ('OSError', 'budget ran out')
+    """
+    if not m.get("error"):
+        return None
+    return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
+
+
+def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     """The ``raises=`` argument for a declared method's two doc faces.
 
     Built from `declared_raise`, so the documented class is by construction
@@ -248,6 +305,16 @@ def raises_doc(m: dict) -> "list[tuple[str, str]]":
     message because that is what a caller sees at the REPL, and states which
     return codes fail — the two shapes disagree there, and a reader cannot
     tell them apart from the signature.
+
+    Parameters
+    ----------
+    m : dict
+        One method entry.
+    handle : bool, optional
+        Read *m* with `handle_declared_raise` instead — the ``kind =
+        "handle"`` spelling (gh-1111). The flag answers exactly one question,
+        which declaration vocabulary *m* is written in; everything downstream
+        of the pair is identical, which is the point of routing both here.
 
     Examples
     --------
@@ -259,8 +326,11 @@ def raises_doc(m: dict) -> "list[tuple[str, str]]":
     'ValueError'
     >>> desc.startswith('If the C call returns a non-zero status.')
     True
+    >>> raises_doc({"name": "drain", "fn": "sink_drain", "returns": "int",
+    ...             "error": "OSError"}, handle=True)[0][0]
+    'OSError'
     """
-    pair = declared_raise(m)
+    pair = handle_declared_raise(m) if handle else declared_raise(m)
     if pair is None:
         return []
     category, message = pair

@@ -37,6 +37,7 @@ from . import _config as C
 from . import _enumc
 from . import _context as Ctx
 from . import _types as T
+from ._context import _diagnostics
 from ._context._parse import capsule_new_c as _capsule_new_c
 
 if TYPE_CHECKING:
@@ -796,12 +797,18 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         if a.get("type") == "path"
     )
     if err_cat:
+        # gh-1111: the raise itself is `_context._diagnostics._rc_raise_c`,
+        # the same emitter the object face uses -- so `error_message` is
+        # honoured here too, and the author's prose reaches PyErr_Format as an
+        # ARGUMENT rather than as the format string. This hand-written copy
+        # spliced `fn` into the format directly, which drops the message and
+        # would turn a `%` in ordinary prose into a live conversion with no
+        # vararg behind it the moment the message was read at all.
+        _cat, _msg = _diagnostics.handle_declared_raise(m)
         ret = f"""    {returns} _rc;
 {gil_open}    _rc = {fn}({call});
 {gil_close}{fs_release}    if (_rc != 0) {{
-        PyErr_Format(PyExc_{err_cat}, "{fn} failed (rc=%d)", (int)_rc);
-        return NULL;
-    }}
+{_diagnostics._rc_raise_c(_cat, _msg)}    }}
     Py_RETURN_NONE;"""
     elif returns:
         ret = f"""    {returns} r;
@@ -1824,7 +1831,16 @@ def render_pyi(
         # @code doctest. Python-facing args only: an array arg is NDArray, the
         # rest map through _pyi_arg_ann (gh-374).
         m_block = _method_block(doc_blocks, m.get("fn"), name)
-        if m_block is not None:
+        # gh-1111: an `error = "<category>"` method raises, and said so
+        # nowhere on this face -- `grep -c Raises` on a handle stub returned
+        # 0, so `drain(self, timeout_ms: int = ...) -> None` read as a call
+        # that cannot fail. The section comes from the same pair the binding
+        # raises with, so the documented class cannot drift from the emitted
+        # one. A declared raise is enough on its own to earn the full numpy
+        # form: without it the one-line stub is unchanged byte-for-byte, which
+        # is what keeps `jm status --check` quiet on every existing project.
+        _raises = _diagnostics.raises_doc(m, handle=True)
+        if m_block is not None or _raises:
             from ._docstring import render_numpy_doc
 
             py_params = [
@@ -1837,7 +1853,9 @@ def render_pyi(
                 for a in margs
             ]
             lines.extend(
-                render_numpy_doc(m_block, name, py_params, ann, indent=8)
+                render_numpy_doc(
+                    m_block, name, py_params, ann, indent=8, raises=_raises
+                )
             )
         else:
             lines.append(f'        """{doc_call} -> {ann}."""')
