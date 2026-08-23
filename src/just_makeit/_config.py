@@ -4121,6 +4121,7 @@ def add_component(
     no_state_: bool = False,
     no_step_: bool = False,
     no_reset_: bool = False,
+    process_global_: bool = False,
     opaque_state_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
@@ -4172,6 +4173,8 @@ def add_component(
     # convention and is always written) for the same reason.
     if no_reset_:
         entry["no_reset"] = "true"
+    if process_global_:
+        entry["process_global"] = "true"
     if opaque_state_:
         entry["opaque_state"] = "true"
     if step_delegates_:
@@ -5141,6 +5144,11 @@ def _dump(cfg: dict) -> str:
             # gh-588: same reasoning — dropping it would republish the whole
             # struct in the public header on the next apply.
             "opaque_state",
+            # gh-1117: same reasoning again, and it is what made the feature
+            # emit nothing on a real project while every unit test passed —
+            # the replay round-trips the manifest through `_dump`, so a key
+            # missing here is silently absent by the time anything renders.
+            "process_global",
             "step_delegates_to_steps",
             "serializable",
             "streamable",

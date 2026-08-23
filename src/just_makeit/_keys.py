@@ -47,6 +47,7 @@ OBJECT_KEYS = frozenset(
         "no_step",
         "no_reset",
         "opaque_state",
+        "process_global",
         "serializable",
         "streamable",
         "stream_block_default",

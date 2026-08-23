@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from . import _procglobal
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_class_brief
 from . import _context as Ctx
@@ -348,6 +349,12 @@ def component_ctx(
                 enum_choices=_cls_enums,
             )
         )
+    # gh-1117: a STANDALONE object's own `.so` is its own extension module,
+    # so the rendezvous for any process-global core it links belongs in its
+    # `PyInit_`. An object inside a module contributes a fragment with no
+    # `PyInit_` at all; the aggregator carries the block for those, which is
+    # why this keys on the component name rather than on `module`.
+    ctx["procglobal"] = _procglobal.rendezvous_c(cfg, object_name)
     return ctx
 
 

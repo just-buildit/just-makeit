@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _procglobal
 from . import _report
 from . import _context as Ctx
 from . import _render as R
@@ -105,6 +106,13 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # Seeded here, the one place every component render path passes
         # through, so the five COMPONENT_EXT_C call sites resolve it unchanged.
         "extra_include": "",
+        # gh-1117: the process-global rendezvous. Seeded here for the same
+        # reason `extra_include` is -- the five COMPONENT_EXT_C call sites
+        # each build their own ctx, and an unset slot would leave a literal
+        # `/*<<procglobal>>*/` in the C. That happens to be a valid comment,
+        # so a missed call site would compile, ship, and silently generate no
+        # rendezvous at all; `_glue.component_ctx` computes the real value.
+        "procglobal": "",
         # Windows CMake boilerplate is opt-in (gh-213); default off so the
         # generated CMakeLists has no `if(WIN32 …)` block unless the project
         # lists `windows` in [project] platforms.
@@ -733,6 +741,7 @@ def run(
     no_state: bool = False,
     no_step: bool = False,
     no_reset: bool = False,
+    process_global: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
@@ -1093,6 +1102,19 @@ def run(
 
     comp = ctx["component"]
 
+    # gh-1117: the real rendezvous, set HERE rather than in each caller's ctx
+    # assembly. This function is the one place every component render path
+    # passes through -- the five COMPONENT_EXT_C call sites each build their
+    # own context, and setting it in `_glue.component_ctx` alone made every
+    # unit test pass while `jm apply` on a real project emitted nothing at
+    # all, because the replay does not go through `_glue`. Measured on a
+    # scaffolded project, which is the only thing that could have caught it.
+    #
+    # A standalone object's own `.so` IS its extension module, so the module
+    # id is the component name. An object inside a module contributes a
+    # fragment with no `PyInit_`; its aggregator carries the block instead.
+    ctx["procglobal"] = _procglobal.rendezvous_c(cfg, comp)
+
     # extra_link_on_core: propagates external includes to the OBJECT library
     # so that its header files can #include external library headers directly.
     if extra_link_libs:
@@ -1162,6 +1184,18 @@ def run(
         "update" if core_c_path.exists() else "create",
     )
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
+
+    # gh-1117: the process-global contract header, when the component declares
+    # `process_global`. Generated (never hand-edited) and rewritten on every
+    # apply, unlike the sacred `_core.h` above -- the two accessors it
+    # declares are jm's to name and the author's to implement.
+    #
+    # One call decides whether the file exists, and `_apply`'s glue list is
+    # gated on the SAME call: a list there that disagreed with what this
+    # writes is how gh-942's enumerated shapes went missing one at a time.
+    _pg_h = _procglobal.render_header(cfg, comp, process_global)
+    if _pg_h:
+        _write(root / "native" / "inc" / _procglobal.header_name(comp), _pg_h)
 
     build = C.build_system(cfg)
 
@@ -1279,6 +1313,7 @@ def run(
         no_state_=no_state,
         no_step_=no_step,
         no_reset_=no_reset,
+        process_global_=process_global,
         opaque_state_=opaque_state,
         mutable_=mutable,
         step_delegates_=step_delegates,

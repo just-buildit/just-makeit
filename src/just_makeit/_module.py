@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _procglobal
 from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
@@ -126,7 +127,10 @@ def run(
 
     # Empty module ext.c (no types yet — populated by `just-makeit object`)
     ext_c = T.render_module_ext_c(
-        module, [], module_doc_c=mod_slots["module_doc_c"]
+        module,
+        [],
+        module_doc_c=mod_slots["module_doc_c"],
+        procglobal=_procglobal.rendezvous_c(cfg, module),
     )
     _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
 

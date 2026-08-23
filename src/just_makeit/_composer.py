@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from . import _procglobal
 from . import _enumc
 from ._docstring import ClassParam, class_docstring
 from ._pyfmt import reflow_pyi
@@ -2572,7 +2573,7 @@ PyInit_{leaf}(void)
     PyObject *m = PyModule_Create(&_moduledef);
     if (!m) return NULL;
 {add}
-    return m;
+{_procglobal.rendezvous_c(cfg, module)}    return m;
 }}
 """)
     return "\n".join(parts)

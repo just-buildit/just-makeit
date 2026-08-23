@@ -120,5 +120,5 @@ PyInit_/*<<component>>*/(void)
         Py_DECREF(m);
         return NULL;
     }
-    return m;
+/*<<procglobal>>*/    return m;
 }

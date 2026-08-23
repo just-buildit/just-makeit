@@ -37,6 +37,7 @@ from . import _config as C
 from . import _enumc
 from . import _context as Ctx
 from . import _types as T
+from . import _procglobal
 from ._context import _diagnostics
 from ._context._parse import capsule_new_c as _capsule_new_c
 
@@ -1596,7 +1597,7 @@ PyInit_{leaf}(void)
         Py_DECREF(m);
         return NULL;
     }}
-    return m;
+{_procglobal.rendezvous_c(cfg, module)}    return m;
 }}
 """)
     return "\n".join(parts)

@@ -449,7 +449,7 @@ PyInit_<<module_leaf>>(void)
 <<type_ready_checks>>
     PyObject *m = PyModule_Create(&<<module>>_moduledef);
     if (!m) return NULL;
-<<add_object_calls>>
+<<add_object_calls>><<procglobal>>
     return m;
 }
 """
@@ -1348,6 +1348,7 @@ def render_module_ext_c(
     enums: "dict[str, list[str]] | None" = None,
     module_doc_c: str = "",
     fn_doc_blocks: "dict | None" = None,
+    procglobal: str = "",
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
@@ -1430,6 +1431,9 @@ def render_module_ext_c(
         # <<module_doc_c>> into generated C; the caller passes the manifest
         # string when the module declares one.
         "module_doc_c": module_doc_c or f'"{Module} module."',
+        # gh-1117: empty unless a linked core declares `process_global`, so
+        # every existing project renders byte-identically.
+        "procglobal": procglobal,
         **fn_ctx,
     }
     parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
@@ -1474,6 +1478,7 @@ def render_module_ext_aggregator(
     enums: "dict[str, list[str]] | None" = None,
     module_doc_c: str = "",
     fn_doc_blocks: "dict | None" = None,
+    procglobal: str = "",
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -1601,6 +1606,9 @@ def render_module_ext_aggregator(
         # <<module_doc_c>> into generated C; the caller passes the manifest
         # string when the module declares one.
         "module_doc_c": module_doc_c or f'"{Module} module."',
+        # gh-1117: empty unless a linked core declares `process_global`, so
+        # every existing project renders byte-identically.
+        "procglobal": procglobal,
         **fn_ctx,
     }
     parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))

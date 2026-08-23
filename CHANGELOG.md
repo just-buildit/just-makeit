@@ -2,6 +2,39 @@
 
 ### Added
 
+- **`process_global = true`: one copy of a component's state across every
+    module (gh-1117 phase 2).** jm links a component's OBJECT library
+    statically into every `.so` that needs it and CPython imports extensions
+    `RTLD_LOCAL`, so a core in three modules is three copies of its file-scope
+    state. For a pure kernel that is correct. For a primitive whose contract
+    is one-per-process it is silently wrong — doppler#976 is an interrupt flag
+    where setting it through one module left the waits in two others spinning
+    on a different variable, with every test passing because the only setter
+    and the only exercised wait happened to share a `.so`.
+
+    Declaring it makes jm generate a rendezvous into every linking module's
+    `PyInit_`: the owner publishes a project-qualified `PyCapsule` over its
+    state, everyone else imports the owner and adopts the pointer. Import
+    order does not matter — an adopter imported first pulls its owner in
+    itself.
+
+    **It is not "no project-side C", which gh-1117 hoped for.** The state is
+    the author's, reached by their own code on every access, so nothing
+    generated can allocate it or route reads through a pointer it does not
+    own. The author writes two accessors; jm publishes their prototypes in a
+    generated `<comp>_procglobal.h` and writes the rendezvous — the half that
+    is easy to get subtly wrong and impossible to notice.
+
+    A `no_generate` module linking such a core is refused: jm emits no
+    `PyInit_` there, so that module would keep its own copy while the others
+    share one.
+
+    Verified by compiling jm's emitted block into two real extension modules
+    and importing them, with a control build proving the state is **not**
+    shared without it.
+
+### Added
+
 - **`jm status --shared-cores`: which component cores reach more than one
     extension module (gh-1117).** CPython imports extensions `RTLD_LOCAL` and
     jm links a component's OBJECT library statically into every `.so` that

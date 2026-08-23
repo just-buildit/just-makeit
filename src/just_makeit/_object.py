@@ -24,6 +24,7 @@ from typing import Iterator
 
 from . import _color as Color
 from . import _config as C
+from . import _procglobal
 from . import _context as Ctx
 from . import _render as R
 from . import _report
@@ -1799,6 +1800,7 @@ def _regenerate_module_now(
         # same blocks the .pyi derives from (gh-384), so `help(fn)` and the
         # stub carry the same text.
         fn_doc_blocks=_load_module_doc_blocks(root, module),
+        procglobal=_procglobal.rendezvous_c(cfg, module),
     )
     _write(ext_c_path, aggregator, "update")
 
@@ -2167,6 +2169,7 @@ def run(
     no_state: bool = False,
     no_step: bool = False,
     no_reset: bool = False,
+    process_global: bool = False,
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
@@ -2260,6 +2263,7 @@ def run(
             no_state=no_state,
             no_step=no_step,
             no_reset=no_reset,
+            process_global=process_global,
             mutable=mutable,
             step_delegates=step_delegates,
             serializable=serializable,
@@ -2611,6 +2615,7 @@ def run(
         no_state_=no_state,
         no_step_=no_step,
         no_reset_=no_reset,
+        process_global_=process_global,
         opaque_state_=opaque_state,
         mutable_=mutable,
         step_delegates_=step_delegates,
@@ -2632,6 +2637,18 @@ def run(
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
     )
+
+    # gh-1117: the contract header, on the module-object path too. This
+    # is the PEER of the write in `_init.run`; wiring only that one left
+    # a module object -- which is where doppler's case lives -- with a
+    # published rendezvous and no header telling the author what to
+    # implement.
+    _pg_h = _procglobal.render_header(cfg, comp, process_global)
+    if _pg_h:
+        _write(
+            root / "native" / "inc" / _procglobal.header_name(comp),
+            _pg_h,
+        )
     # gh-541/gh-544: persist the destructor contract BEFORE the aggregate
     # re-render below — _regenerate_module reads it back out of this same
     # in-memory cfg to fill the object's COMPONENT_TYPE_SECTION slots.
