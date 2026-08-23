@@ -416,10 +416,11 @@ class TestStatusMethod:
 
     def test_int_rc_raises_declared_exception(self):
         s = _handle.render_ext(_dump_cfg(), "ringbuf")
-        assert (
-            'PyErr_Format(PyExc_OSError, "ringbuf_dump failed (rc=%d)",'
-            " (int)_rc);" in s
-        )
+        # gh-1111: the shared `_rc_raise_c` spelling. The undeclared default
+        # message is still the C `fn`, so the text a caller sees is unchanged
+        # — only the route it takes to PyErr_Format is.
+        assert 'PyErr_Format(PyExc_OSError, "%s (rc=%lld)",' in s
+        assert '"ringbuf_dump failed",' in s
         body = s[
             s.index("Ring_dump") : s.index("\nstatic ", s.index("Ring_dump"))
         ]

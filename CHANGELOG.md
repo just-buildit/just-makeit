@@ -1,5 +1,29 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`error_message` and the `Raises` doc on a handle-module method
+    (gh-1111).** Two declaration sites accept `error` / `error_message`, and
+    only one honoured them. On a `kind = "handle"` method the binding raised
+    the right exception *class* with a canned `"<fn> failed (rc=%d)"` — the
+    author's message dropped — and the `.pyi` carried no `Raises` section at
+    all, so `def drain(self, timeout_ms: int = ...) -> None` read as a call
+    that cannot fail.
+
+    That is backwards from where the documentation is needed. A handle module
+    is the shape that wraps files, sockets and devices, so a drain, a flush or
+    a close whose failure a caller must handle mostly lives on this face.
+
+    Both faces now read one pair (`_diagnostics.handle_declared_raise`) and the
+    binding renders it through the shared `_rc_raise_c`, so the class the stub
+    advertises is by construction the class the binding raises — and the
+    message reaches `PyErr_Format` as an **argument** rather than as its format
+    string, where a `%` in ordinary prose would have become a live conversion
+    with no vararg behind it.
+
+    A method that declares no `error` is unchanged byte-for-byte, so
+    `jm status --check` stays quiet on existing projects.
+
 ## [0.66.0] — 2026-08-22
 
 ### Added
