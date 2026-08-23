@@ -38,6 +38,7 @@ nav:
     - Porting guide: porting-guide.md
     - Upgrading: upgrading.md
     - Distributing the C library: c-library.md
+    - Shared process state: shared-state.md
     - Troubleshooting: troubleshooting.md
   - Concepts:
     - Stateful vs pure: pure.md

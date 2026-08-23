@@ -33,8 +33,6 @@
     and importing them, with a control build proving the state is **not**
     shared without it.
 
-### Added
-
 - **`jm status --shared-cores`: which component cores reach more than one
     extension module (gh-1117).** CPython imports extensions `RTLD_LOCAL` and
     jm links a component's OBJECT library statically into every `.so` that
@@ -112,6 +110,15 @@
     binding, reads out of the generated C what that binding does, and asserts
     the predicate and the `.pyi` agree with it. A new shape that consumes
     `error` differently fails the test rather than joining the drift.
+
+### Docs
+
+- **[Shared process state](docs/shared-state.md)** — the four-step workflow
+    for gh-1117: find out whether you have the problem
+    (`jm status --shared-cores`), declare the one core that matters, implement
+    the two accessors jm cannot write for you, `jm apply`. Written because the
+    failure is silent: every test can pass while a flag set through one module
+    is not the flag another module reads, and in doppler every test did.
 
 ## [0.66.1] — 2026-08-23
 
