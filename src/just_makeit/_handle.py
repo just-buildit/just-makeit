@@ -455,6 +455,51 @@ def _scalar_string_argparse(margs: list[dict]) -> tuple[str, str, list[str]]:
     return decls, parse, calls
 
 
+def raises_instead_of_returning(m: dict) -> bool:
+    """Whether this handle method's binding returns ``None`` rather than its rc.
+
+    One predicate for the emitter's shape (a) and the ``.pyi``'s return
+    annotation (gh-1116). Those two classify a method's shape independently —
+    `_emit_method` from `array_in` / `out_len_fn` / `returns`, `render_pyi`
+    from its own `arrays` / `ret_arr` / `writable_out` — and only the second
+    ever asked about ``error``. It asked in ONE of its six branches, so the
+    same declaration produced ``-> None`` with an argument and
+    ``-> <returns>`` without one, while both bindings raised and returned
+    ``None``. A caller trusting the zero-arg stub writes
+    ``if sink.send_eos() != 0:`` and takes the error branch on every success.
+
+    An ``error`` declaration only converts the C return into a raise where
+    that return is a **status**. The array and ``bytes`` shapes consume it as
+    DATA — a length, a count — so their rc is not a status, the binding never
+    raises on it, and the declared return is what crosses. (That those shapes
+    accept an ``error`` and silently ignore it is a separate defect; see
+    gh-1118.)
+
+    Examples
+    --------
+    >>> raises_instead_of_returning({"name": "op", "returns": "int"})
+    False
+    >>> raises_instead_of_returning(
+    ...     {"name": "op", "returns": "int", "error": "OSError"})
+    True
+    >>> raises_instead_of_returning(
+    ...     {"name": "op", "returns": "float[]", "error": "OSError"})
+    False
+    >>> raises_instead_of_returning(
+    ...     {"name": "op", "returns": "int", "error": "OSError",
+    ...      "args": [{"name": "x", "type": "float[]"}]})
+    False
+    """
+    if not m.get("error"):
+        return False
+    returns = m.get("returns")
+    if returns == "bytes" or (returns and str(returns).endswith("[]")):
+        return False
+    if any(str(a.get("type", "")).endswith("[]") for a in m.get("args", [])):
+        return False
+    return True
+
+
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
     """Emit one handle method calling ``fn(self->h, …)``.
 
@@ -1809,11 +1854,7 @@ def render_pyi(
                 + (" = ..." if a.get("default") is not None else "")
                 for a in margs
             )
-            ann = (
-                "None"
-                if m.get("error")
-                else (_pyi_scalar(returns) if returns else "None")
-            )
+            ann = _pyi_scalar(returns) if returns else "None"
             arg_doc = [
                 f"{a['name']}={a['default']}"
                 if a.get("default") is not None
@@ -1825,6 +1866,11 @@ def render_pyi(
             sig = "self"
             ann = _pyi_scalar(returns) if returns else "None"
             doc_call = f"{name}()"
+        # gh-1116: asked ONCE, outside the chain. Inside it, this was the
+        # `elif margs:` branch's question alone, and the branch beside it gave
+        # the opposite answer to the same declaration.
+        if raises_instead_of_returning(m):
+            ann = "None"
         lines.append(f"    def {name}({sig}) -> {ann}:")
         # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
         # stub to a full numpy docstring — @param/@return prose plus a runnable
