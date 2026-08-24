@@ -379,3 +379,84 @@ def test_every_vocabulary_key_is_exercised_by_a_fixture():
     project started warning about a key that works.
     """
     assert _msgs(_every_handle_key_module()) == []
+
+
+# ── gh-1137: the keys with a REFUSAL behind them ─────────────────────────────
+
+
+def test_an_expr_getter_field_declares_returns_without_warning():
+    """gh-1137. `returns` was missing from the getter-field vocabulary, so
+    doppler's manifest produced two messages that contradicted each other:
+
+        warning: unknown kind getter field key `returns` ... it has no effect
+        error:   per-field getter 'clipped' has an `expr` but no `returns`
+
+    `_handle` REFUSES an `expr` field without it (gh-333) — `returns` types
+    the `tmp` the expr operates on, and defaulting to the decoded `type`
+    truncates the getter's value before the expr runs. So the warning invited
+    the author to delete the key that makes their project stop compiling, and
+    the deletion's real cost is the silent truncation gh-333 was filed for.
+
+    **Why the "every key is exercised" gate above could not catch this.** That
+    fixture is built from the vocabulary's own keys, so it proves the
+    vocabulary accepts what it contains — it is structurally incapable of
+    discovering a key the vocabulary is MISSING. Only a declaration written
+    without reference to the vocabulary can do that, which is what this is:
+    doppler's, verbatim.
+    """
+    cfg = {
+        "project": {"name": "p"},
+        "module": {
+            "wfm_sink": {
+                "kind": "handle",
+                "backing": "wfm_stream_sink",
+                "header": "wfm/wfm.h",
+                "getters": [
+                    {
+                        "fn": "wfm_stream_sink_peak",
+                        "out": "double",
+                        "fields": [
+                            {
+                                "name": "clipped",
+                                "getter": "wfm_stream_sink_peak",
+                                "type": "bool",
+                                "returns": "double",
+                                "expr": "tmp > 1.0",
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    }
+    assert _msgs(cfg) == []
+
+
+def test_a_nested_table_is_walked_at_all():
+    """The level the original validation never reached.
+
+    The pre-implementation check scanned one level — module keys and each
+    sub-table's ROWS — and never descended into a row's own inline-table
+    arrays. `returns` lives in `getters[].fields[]`, two levels down, so the
+    scan that reported "zero findings over doppler" was not looking where the
+    bug was. This asserts the nested level is reached, so a future
+    simplification of the walker cannot quietly restore that blind spot.
+    """
+    cfg = {
+        "project": {"name": "p"},
+        "module": {
+            "dev": {
+                "kind": "handle",
+                "backing": "b",
+                "header": "b/b.h",
+                "getters": [
+                    {
+                        "fn": "b_s",
+                        "out": "b_t",
+                        "fields": [{"name": "u", "type": "int", "nope": 1}],
+                    }
+                ],
+            }
+        },
+    }
+    assert any("nope" in m for m in _msgs(cfg))

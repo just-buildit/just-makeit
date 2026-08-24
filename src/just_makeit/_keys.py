@@ -491,6 +491,15 @@ KIND_GETTER_FIELD_KEYS = frozenset(
         "writable_fn",
         "writable",
         "doc",
+        # gh-1137. NOT optional decoration: `_handle` REFUSES a field
+        # that has an `expr` and no `returns` (gh-333), because
+        # `returns` types the `tmp` the expr operates on -- defaulting
+        # it to the decoded `type` truncates the getter's value before
+        # the expr runs, silently. Omitting it here produced two
+        # messages from one manifest, each saying the opposite of the
+        # other, and the warning invited the author to delete the key
+        # that makes their project stop compiling.
+        "returns",
     }
 )
 KIND_FACTORY_KEYS = frozenset({"name", "create_fn", "init_params", "doc"})
