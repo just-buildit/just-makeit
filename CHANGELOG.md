@@ -2,6 +2,28 @@
 
 ### Fixed
 
+- **`process_global` imported the package instead of the extension module, so
+    every adopter failed at import (gh-1134).** Shipped in 0.67.0. The publish
+    lands the capsule on the `.so`'s own module object in its `PyInit_`, while
+    the adopt imported `<pkg>.<mod>` — which, in jm's standard
+    `<pkg>/<mod>/<mod>.so` layout, is the generated re-exporting
+    `__init__.py`. It carries the declared class names and not the capsule, so
+    an adopting module raised
+    `AttributeError: module '<pkg>.<mod>' has no attribute '_jm_pg_<comp>'`
+    and the package did not load at all.
+
+    The two names are the same string only when a module's `.so` **is** the
+    package module. gh-1117's compiled test built exactly that flat shape for
+    itself, and the end-to-end test beside it asserted on generated *text* —
+    so the text was self-consistent and wrong about the layout. Both now build
+    the layout `jm apply` produces, and restoring the old import path fails
+    six tests including the compiled ones.
+
+    `import_path` also now honours `[module.X] package`, which moves the `.so`
+    into a sibling package and takes the import path with it.
+
+### Fixed
+
 - **A handle with no `create_args` emitted C that does not compile
     (gh-1131).** `kwlist` and the `PyArg_ParseTupleAndKeywords` argument list
     were both built by joining `create_args` into a fixed template, so an
