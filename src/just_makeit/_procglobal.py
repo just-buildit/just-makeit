@@ -201,11 +201,32 @@ def owner_module(cfg: dict, comp: str) -> "str | None":
 
 
 def import_path(cfg: dict, module: str) -> str:
-    """The dotted name an adopter passes to ``PyImport_ImportModule``."""
+    """The dotted name of the EXTENSION MODULE an adopter must import.
+
+    Not the package (gh-1134). jm's standard layout for an object module is
+    ``<pkg>/<mod>/<mod>.so`` behind a generated re-exporting ``__init__.py``,
+    so ``<pkg>.<mod>`` is that ``__init__.py`` — which re-exports the declared
+    class names and nothing else — while the capsule is published on the
+    ``.so``'s own module object in its ``PyInit_``. Importing the package
+    found no attribute and **every adopting module failed at import**.
+
+    The two are the same string only when a module's ``.so`` *is* the package
+    module, which is exactly the flat shape gh-1117's compiled test built for
+    itself. A project laid out the way `jm apply` lays one out is not that
+    shape, and the end-to-end test beside it asserted on generated TEXT, so
+    the text was self-consistent and wrong about the layout.
+
+    A **standalone** object is genuinely flat: its ``.so`` lands in the
+    package root, so ``<pkg>.<comp>`` already named the extension.
+    """
     pkg = C.project_name(cfg)
-    if module in (cfg.get("module") or {}):
-        return f"{pkg}.{C.module_paths(module).pypath.replace('/', '.')}"
-    return f"{pkg}.{module}"
+    if module not in (cfg.get("module") or {}):
+        return f"{pkg}.{module}"
+    mp = C.module_paths(module)
+    # `[module.X] package` moves the `.so` into a sibling package, and the
+    # CMake output dir follows it -- so the import path has to as well.
+    where = (C.module_package(cfg, module) or mp.pypath).replace("/", ".")
+    return f"{pkg}.{where}.{mp.leaf}"
 
 
 def capsule_name(cfg: dict, comp: str) -> str:

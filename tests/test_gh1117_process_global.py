@@ -161,9 +161,20 @@ class TestEmittedCCompilesAndUnifies:
         cfg = _cfg()
         (tmp_path / "flag_core.h").write_text(_CORE_H)
         (tmp_path / "flag_core.c").write_text(_CORE_C)
+        # gh-1134: jm's REAL layout for an object module is
+        # `<pkg>/<mod>/<mod>.so` behind a generated re-exporting
+        # `__init__.py`, so `pgdemo.own` is that `__init__.py` and
+        # `pgdemo.own.own` is the extension. This fixture used to build a
+        # FLAT `pgdemo/own.so`, where the two collapse to one name -- so it
+        # proved the rendezvous works in a shape jm does not produce, and
+        # every adopting module in a real project failed at import.
         pkg = tmp_path / "pgdemo"
         pkg.mkdir()
         (pkg / "__init__.py").write_text("")
+        (pkg / "own").mkdir()
+        (pkg / "own" / "__init__.py").write_text(
+            "from .own import *  # noqa: F401,F403\n"
+        )
         ext = sysconfig.get_config_var("EXT_SUFFIX")
         inc = sysconfig.get_paths()["include"]
         for leaf in ("own", "hand"):
@@ -185,7 +196,11 @@ class TestEmittedCCompilesAndUnifies:
                     str(src),
                     str(tmp_path / "flag_core.c"),
                     "-o",
-                    str(pkg / f"{leaf}{ext}"),
+                    str(
+                        (pkg / "own" / f"{leaf}{ext}")
+                        if leaf == "own"
+                        else (pkg / f"{leaf}{ext}")
+                    ),
                 ],
                 check=True,
                 capture_output=True,
@@ -487,7 +502,10 @@ class TestApplyActuallyEmitsIt:
     def test_the_adopting_module_adopts(self, project):
         ext = (project / "native/src/other/other_ext.c").read_text()
         assert "flag_state_adopt(_p)" in ext
-        assert 'PyImport_ImportModule("p.own")' in ext
+        # gh-1134: the EXTENSION module, not the package. `p.own` is the
+        # generated re-exporting `__init__.py`, which carries the declared
+        # class names and not the capsule.
+        assert 'PyImport_ImportModule("p.own.own")' in ext
 
     def test_the_contract_header_is_written(self, project):
         h = project / "native/inc/flag/flag_procglobal.h"
@@ -600,14 +618,18 @@ class TestBranchesTheEndToEndDidNotReach:
         )
 
     def test_a_dotted_module_owner_uses_its_python_path(self):
-        """`p.dsp.filters`, not `p.dsp_filters` — the cname is the C
-        identifier, the pypath is what `import` takes."""
+        """`p.dsp.filters.filters` — the pypath is what `import` walks and the
+        LEAF is the extension inside it (gh-1134); `dsp_filters` is the C
+        identifier and is importable as nothing."""
         cfg = {
             "project": {"name": "p"},
             "flag": {"process_global": "true"},
             "module": {"dsp.filters": {"objects": ["flag"]}},
         }
-        assert _procglobal.import_path(cfg, "dsp.filters") == "p.dsp.filters"
+        assert (
+            _procglobal.import_path(cfg, "dsp.filters")
+            == "p.dsp.filters.filters"
+        )
 
     def test_a_non_dict_top_level_section_is_skipped(self):
         """`components()` returns top-level non-reserved keys, which on a real
@@ -701,6 +723,12 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
     pkg = tmp_path / "pgdemo"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
+    # gh-1134: the real layout, so the hand-written adopter has to
+    # resolve the same package/extension distinction a real project does.
+    (pkg / "own").mkdir()
+    (pkg / "own" / "__init__.py").write_text(
+        "from .own import *  # noqa: F401,F403\n"
+    )
     ext = sysconfig.get_config_var("EXT_SUFFIX")
     inc = sysconfig.get_paths()["include"]
     sources = {
@@ -725,7 +753,11 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
                 str(src),
                 str(tmp_path / "flag_core.c"),
                 "-o",
-                str(pkg / f"{leaf}{ext}"),
+                str(
+                    (pkg / "own" / f"{leaf}{ext}")
+                    if leaf == "own"
+                    else (pkg / f"{leaf}{ext}")
+                ),
             ],
             check=True,
             capture_output=True,
@@ -781,7 +813,7 @@ class TestNoGenerateIsSplitByRole:
 
     def test_the_header_carries_the_three_names(self):
         h = _procglobal.render_header(_cfg(), "flag")
-        assert '#define FLAG_PG_OWNER   "pgdemo.own"' in h
+        assert '#define FLAG_PG_OWNER   "pgdemo.own.own"' in h
         assert '#define FLAG_PG_ATTR    "_jm_pg_flag"' in h
         assert '#define FLAG_PG_CAPSULE "pgdemo.flag._jm_procglobal"' in h
 

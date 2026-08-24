@@ -118,6 +118,11 @@ flag_state_adopt(PyCapsule_GetPointer(cap, FLAG_PG_CAPSULE));
 
 (error handling omitted — every pointer there can be `NULL`).
 
+`FLAG_PG_OWNER` names the **extension module**, not the package —
+jm's layout is `<pkg>/<mod>/<mod>.so` behind a re-exporting
+`__init__.py`, and the capsule is published on the `.so`'s own module
+object (gh-1134).
+
 ## What this does not cover
 
 - **Non-CPython consumers.** A C binary linking one archive has one copy and
