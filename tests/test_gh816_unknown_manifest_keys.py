@@ -145,14 +145,68 @@ class TestNoFalsePositives:
 class TestScope:
     """Tables jm cannot characterise are skipped, not guessed at."""
 
-    def test_a_handle_module_is_left_alone(self):
-        """`kind = "handle"` methods have their own vocabulary (`returns`,
-        `out_len_fn`). Warning on them would be a false positive."""
+    def test_a_handle_module_is_checked_against_its_own_vocabulary(self):
+        """gh-1114 replaced this test's original contract.
+
+        It used to assert that a `kind`-bearing module was **left alone** --
+        which was true, and which meant NOTHING was checked there: a key from
+        the wrong face and an outright typo both reported clean and both did
+        nothing. That silence is what made gh-1111 hard to see from outside.
+
+        The false-positive risk it was protecting against is real and is now
+        handled by giving the face a vocabulary rather than by skipping it.
+        `out_len_fn` is a handle METHOD key, so it is still a finding on a
+        module-level free function -- the same reading a plain module gets.
+        """
         cfg = {
             "module": {
                 "dev": {
                     "kind": "handle",
                     "functions": [{"name": "f", "out_len_fn": "n"}],
+                }
+            }
+        }
+        msgs = _msgs(cfg)
+        assert len(msgs) == 1, msgs
+        assert "out_len_fn" in msgs[0]
+
+    def test_a_handle_modules_own_keys_are_not_findings(self):
+        """The other half, and the one that matters more: a correct handle
+        module must stay silent. A vocabulary that warns on real manifests is
+        worse than no check at all."""
+        cfg = {
+            "module": {
+                "dev": {
+                    "kind": "handle",
+                    "backing": "b",
+                    "header": "b/b.h",
+                    "type_name": "Dev",
+                    "close_fn": "b_close",
+                    "create_fn": "b_open",
+                    "context_manager": True,
+                    "depends_on": [{"name": "b", "link": True}],
+                    "create_args": [{"name": "path", "type": "path"}],
+                    "methods": [
+                        {
+                            "name": "drain",
+                            "fn": "b_drain",
+                            "returns": "int",
+                            "error": "OSError",
+                            "error_message": "budget ran out",
+                            "nogil": True,
+                            "args": [{"name": "n", "type": "size_t"}],
+                        }
+                    ],
+                    "getters": [
+                        {
+                            "fn": "b_stats",
+                            "out": "b_stats_t",
+                            "cache": False,
+                            "fields": [
+                                {"name": "used", "from": "n", "type": "size_t"}
+                            ],
+                        }
+                    ],
                 }
             }
         }

@@ -1,5 +1,35 @@
 ## [Unreleased]
 
+### Added
+
+- **A `kind`-bearing module's keys are now checked (gh-1114).**
+    `unknown_keys` skipped a handle / capsule / composer module outright, so
+    **nothing** was checked there: a key from the wrong face and an outright
+    typo both reported clean and both did nothing. That silence is what made
+    gh-1111 hard to see from outside — three keys written on one method, one
+    honoured, no warning, and the manifest read as if it said something it did
+    not.
+
+    Each face gets its own vocabulary, and the split is load-bearing rather
+    than tidy: a capsule or composer method spells its signature `arg_type` /
+    `return_type`, a handle method spells it `args` / `returns`. One shared
+    set would accept all four and miss the likeliest mistake on either face.
+    Where jm can name the right spelling it does — `status_return` on a handle
+    method now points at `error = "<Exception>"`.
+
+    A sub-table jm has **no** vocabulary for is reported too, rather than
+    walked past. An unchecked table is the exact state this fixes, so adding
+    one must not be a way back into it.
+
+    The vocabularies were assembled by **running, not reading**. Code
+    archaeology alone cannot produce them: `error_message` is valid on a
+    handle method and is read in `_context/_diagnostics`, so it escapes any
+    grep of the three generator files, and the docs' own key tables are
+    partial. What makes them trustworthy is that doppler's real manifest,
+    every bundled example and the whole 6314-test suite run through them with
+    zero findings — and a fixture exercising every key keeps a deleted one
+    from going unnoticed.
+
 ## [0.67.0] — 2026-08-24
 
 ### Added
