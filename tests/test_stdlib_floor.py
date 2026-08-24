@@ -31,13 +31,31 @@ _ABOVE_FLOOR = {"tomllib": (3, 11)}
 
 
 def _bare_imports(tree: ast.AST) -> set:
-    """Names imported at MODULE level and not inside a try/except.
+    """Names imported anywhere, other than inside a `try`.
 
-    A guarded import lives in a `Try`, so walking only the top-level body is
-    what separates the two — `ast.walk` would see both and report nothing.
+    A guarded import lives in a `Try`, so excluding those is what separates a
+    guarded import from a bare one. Everything else is walked — module level,
+    inside a function, inside a class body.
+
+    **It used to walk `tree.body` only**, because the instance it was written
+    for was module level and produced a *collection* error. A function-level
+    one is a runtime failure instead, and within the same session one was
+    written into `test_gh1126_composer_settings.py` and the same CI leg went
+    red again — with this gate already in place. A gate written from one
+    instance encodes that instance's SHAPE rather than the rule; the rule here
+    is "this import fails below 3.11", which says nothing about placement.
     """
+    guarded = {
+        id(n)
+        for t in ast.walk(tree)
+        if isinstance(t, ast.Try)
+        for stmt in t.body
+        for n in ast.walk(stmt)
+    }
     out = set()
-    for node in tree.body:
+    for node in ast.walk(tree):
+        if id(node) in guarded:
+            continue
         if isinstance(node, ast.Import):
             out |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
@@ -79,6 +97,29 @@ def test_the_scan_can_actually_see_a_bare_import():
     """A scan that finds nothing must be proven armed, not assumed so."""
     tree = ast.parse("import tomllib\n")
     assert "tomllib" in _bare_imports(tree)
+
+
+def test_the_scan_sees_a_FUNCTION_level_import():
+    """The placement the first version missed (2026-08-24).
+
+    Module level is a collection error and loud; a function-level one is a
+    runtime failure on the older leg only. Both are the same rule.
+    """
+    tree = ast.parse("def t():\n    import tomllib\n")
+    assert "tomllib" in _bare_imports(tree)
+
+
+def test_the_scan_sees_a_CLASS_level_import():
+    tree = ast.parse("class T:\n    import tomllib\n")
+    assert "tomllib" in _bare_imports(tree)
+
+
+def test_a_guarded_import_inside_a_function_is_not_an_offender():
+    tree = ast.parse(
+        "def t():\n    try:\n        import tomllib\n"
+        "    except ModuleNotFoundError:\n        import tomli as tomllib\n"
+    )
+    assert "tomllib" not in _bare_imports(tree)
 
 
 def test_a_guarded_import_is_not_an_offender():
