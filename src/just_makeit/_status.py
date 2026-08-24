@@ -344,6 +344,18 @@ def run(
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj)
     ]
 
+    # gh-1141: the generated copies of `[project] version` that disagree with
+    # it. Same static, manifest-vs-tree shape as gh-442 above and computed the
+    # same way — nothing here is a file `apply` would write, which is the
+    # whole finding.
+    from . import _projversion
+
+    version_entries = [
+        v
+        for v in _projversion.drift(root, cfg)
+        if not _is_allowed(v.rel, allow_patterns)
+    ]
+
     # gh-921: `pass_capacity` methods whose header keeps the pre-gh-607
     # `max_out(state)`. Same static manifest-vs-header shape as gh-442 above,
     # and computed the same way — nothing here is a file `apply` would write.
@@ -703,6 +715,7 @@ def run(
         len(drift)
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
+        + len(version_entries)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
         # published constructor raises when called as documented", which is
@@ -781,6 +794,14 @@ def run(
                             "header_default": h,
                         }
                         for (o, n, m, h) in drift_entries
+                    ],
+                    "version_drift": [
+                        {
+                            "path": v.rel,
+                            "found": v.found,
+                            "expected": v.expected,
+                        }
+                        for v in version_entries
                     ],
                     "kwargs_drift": [
                         {"path": p, "detail": d, "allowed": a}
@@ -1331,6 +1352,26 @@ def run(
         )
         print()
 
+    # gh-1141: the same treatment, for the same reason — a static comparison
+    # against the tree, which no diff of what `apply` would write can show,
+    # because `apply` writes none of these files.
+    if version_entries:
+        print(
+            f"VERSION ({len(version_entries)}) — generated copies of "
+            "`[project] version` disagree with it:"
+        )
+        for v in version_entries:
+            print(f"  ! {v.rel}: {v.found!r} (manifest says {v.expected!r})")
+        print(
+            "  One side is stale — jm can't tell which, so it rewrites "
+            "neither; a release\n  bumps `pyproject.toml` and never the "
+            "manifest, so the manifest is often the\n  stale one. Sync "
+            "whichever is wrong. Note `<pkg>_version()` in\n  "
+            "`native/src/<pkg>_lib.c` is a C API: a linking consumer is "
+            "told this value.\n  See gh-1141."
+        )
+        print()
+
     # gh-921: deliberately NOT the "impossible to miss" treatment the three
     # sections around it get. Nothing here is broken — gh-920 made this seam
     # safe, and the allocation is the historical clamped one, which is correct
@@ -1417,6 +1458,7 @@ def run(
         not drift
         and not dropped_entries
         and not drift_entries
+        and not version_entries
         and not any(not e[2] for e in kwargs_entries)
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
@@ -1551,6 +1593,11 @@ def run(
             + (
                 f", {len(drift_entries)} default-drift (!)"
                 if drift_entries
+                else ""
+            )
+            + (
+                f", {len(version_entries)} version-drift (!)"
+                if version_entries
                 else ""
             )
             + (

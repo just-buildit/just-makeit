@@ -2480,6 +2480,22 @@ def run(
     # hand-written header doc) is the stale one, so it warns rather than
     # failing the apply. `jm status --check` promotes this to a CI-gating
     # DRIFT section for projects that want it enforced.
+    # gh-1141: the same shape, one level up — the generated copies of
+    # `[project] version` that disagree with it. Non-fatal for the same
+    # reason: a release bumps `pyproject.toml` and never the manifest, so jm
+    # has no standing to say which side is stale, and `status --check`
+    # promotes it to a gating VERSION section for projects that want it.
+    from . import _projversion
+
+    for _v in _projversion.drift(root, cfg):
+        _report.warn(
+            f"{_v.rel} says version {_v.found!r}, manifest says "
+            f"{_v.expected!r} — one of these is stale",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
     for obj in C.components(cfg):
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
             # Gating: `init_param_drift` is exactly what fills `status`'s
