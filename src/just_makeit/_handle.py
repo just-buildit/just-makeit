@@ -29,7 +29,7 @@ guard*; everything else calls the reused helpers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING
 
 from . import _capsule
 from . import _coerce
@@ -39,6 +39,7 @@ from . import _context as Ctx
 from . import _types as T
 from . import _procglobal
 from ._context import _diagnostics
+from ._context._parse import _build_ml_doc
 from ._context._parse import capsule_new_c as _capsule_new_c
 
 if TYPE_CHECKING:
@@ -1298,7 +1299,9 @@ def _cache_fetch(cfg: dict, module: str) -> str:
 # ── the whole type (struct + dealloc + close + context-manager) ───────────────
 
 
-def render_type(cfg: dict, module: str) -> str:
+def render_type(
+    cfg: dict, module: str, doc_blocks: "dict[str, str] | None" = None
+) -> str:
     """Emit the handle ``PyTypeObject`` — struct, tp_init, methods, decoded
     getsets, and the RAII protocol (idempotent ``close`` + context-manager +
     ``tp_dealloc``). The close / enter / exit / dealloc shape is reused verbatim
@@ -1403,6 +1406,18 @@ static PyObject *
     )
     getsets, getset_name = render_getsets(cfg, module)
 
+    # gh-1113: every author-declared method used to register with a NULL
+    # `ml_doc`, so `help(Sink.drain)` was empty on EVERY handle module while
+    # the `.pyi` beside it carried the vendored header's full numpy prose --
+    # derived in the same render pass, from the same block. `close` (jm's own
+    # plumbing) was the only member with a docstring.
+    #
+    # The text comes from `render_runtime_doc`, which shares `_numpy_sections`
+    # with the stub face, so the two cannot say different things; the shape it
+    # documents comes from `py_face`, the one chain the `.pyi` also reads.
+    from ._docstring import render_runtime_doc
+
+    _blocks = doc_blocks or {}
     method_rows = []
     for m in C.handle_methods(cfg, module):
         flags = (
@@ -1410,13 +1425,36 @@ static PyObject *
             if _method_kwargs(m)
             else "METH_VARARGS"
         )
+        _face = py_face(m)
+        _block = _method_block(_blocks, m.get("fn"), m["name"])
+        _override = str(m.get("doc", ""))
+        _raises = _diagnostics.raises_doc(m, handle=True)
+        # The SAME condition `render_pyi` uses, deliberately. With nothing
+        # derivable `render_runtime_doc` still returns a skeleton -- summary,
+        # `Parameters` with `Input.`, `Returns` with `Output.` -- while the
+        # stub collapses to its one-line signature. Emitting the skeleton here
+        # would make the two faces say different things for exactly the
+        # methods that have nothing to say, which is the drift this whole
+        # feature exists to close.
+        if _block is not None or _override or _raises:
+            _lines = render_runtime_doc(
+                _block,
+                m["name"],
+                _face.py_params,
+                _face.ann,
+                override=_override,
+                raises=_raises,
+            )
+        else:
+            _lines = [f"{_face.doc_call} -> {_face.ann}"]
+        _ml = _build_ml_doc(_lines)
         method_rows.append(
             f'    {{"{m["name"]}", (PyCFunction){tname}_{m["name"]}, '
-            f"{flags}, NULL}},"
+            f"{flags},\n     {_ml}}},"
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
-        '"close() -> None"},'
+        f'"{CLOSE_DOC}"}},'
     )
 
     # ── serializable: state-blob triplet over the backing handle (gh-403) ─────
@@ -1512,7 +1550,9 @@ static PyTypeObject {type_obj} = {{
 # ── whole-file assembly (mirrors _capsule.render_ext) ─────────────────────────
 
 
-def render_ext(cfg: dict, module: str) -> str:
+def render_ext(
+    cfg: dict, module: str, doc_blocks: "dict[str, str] | None" = None
+) -> str:
     """Render the full ``<module>_ext.c`` for a handle module (gh-306)."""
     backing = C.handle_backing(cfg, module)
     tname = C.handle_type_name(cfg, module)
@@ -1554,7 +1594,7 @@ def render_ext(cfg: dict, module: str) -> str:
 #include "{header}"
 {weak_decl}""",
         render_enum_tables(cfg, module),
-        render_type(cfg, module),
+        render_type(cfg, module, doc_blocks),
     ]
 
     # Module-level factories (alternate constructors, gh-565): their functions
@@ -1757,6 +1797,154 @@ def _pyi_prop_doc(
     return f"{fname} ({ann})."
 
 
+class PyFace(NamedTuple):
+    """A handle method's Python-facing shape, as BOTH doc faces need it.
+
+    `sig` and `ann` build the `.pyi` signature; `doc_call` is the one-line
+    summary's call form; `py_params` is what a numpy `Parameters` block
+    documents.
+
+    Extracted (gh-1113) rather than copied. The runtime `__doc__` needs the
+    same annotation the stub prints, and jm has paid for a second copy of a
+    shape chain twice already in this file: gh-1116 was `_emit_method` and
+    `render_pyi` classifying a method independently and disagreeing about
+    `error`, and gh-1118 was the same split leaving three shapes unvalidated.
+    One reader, one answer.
+    """
+
+    sig: str
+    ann: str
+    doc_call: str
+    py_params: "list[tuple[str, str]]"
+
+
+#: What jm's own `close` says, on BOTH faces. It had two texts —
+#: `"close() -> None"` in the method table and "Release the handle and free
+#: resources." in the stub — which the gh-1113 parity test caught the moment
+#: it started comparing them. Not a big disagreement; it is just the kind
+#: that has no reason to exist once one place owns the answer.
+CLOSE_DOC = "Release the handle and free resources."
+
+
+def py_face(m: dict) -> PyFace:
+    """The Python-facing shape of one handle method."""
+    name = m["name"]
+    margs = list(m.get("args", []))
+    returns = m.get("returns")
+    name = m["name"]
+    margs = list(m.get("args", []))
+    returns = m.get("returns")
+    arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+    writable_out = [a for a in arrays if a.get("writable")]
+    scalars = [a for a in margs if a not in arrays]
+    ret_arr = bool(returns) and str(returns).endswith("[]")
+    if returns == "bytes":
+        # (f) scalar/string args -> bytes (len from handle, gh-565).
+        sig = "self" + "".join(
+            f", {a['name']}: "
+            + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
+            for a in margs
+        )
+        ann = "bytes"
+        doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
+    elif writable_out and ret_arr:
+        # (d) execute(x, out[, scalars...]) -> ndarray.
+        # Declared names, not a hardcoded x/out: gh-582 makes this shape
+        # keyword-capable as soon as it carries scalars, so the stub's
+        # parameter names are what a caller types — they must match the
+        # kwlist. Order matches the binding's: x, out, then the scalars
+        # (see _emit_method's (d) branch for why out precedes them).
+        _d_out = writable_out[0]
+        _d_in = [a for a in arrays if a is not _d_out][0]
+        _d_scalars = [a for a in margs if a not in arrays]
+        sig = (
+            f"self, {_d_in['name']}: NDArray[Any]"
+            f", {_d_out['name']}: NDArray[Any]"
+        )
+        for a in _d_scalars:
+            dflt = a.get("default")
+            sig += f", {a['name']}: {_pyi_scalar(a['type'])}"
+            if dflt is not None:
+                sig += " = ..."
+        ann = "NDArray[Any]"
+        _d_names = [_d_in["name"], _d_out["name"]] + [
+            a["name"] for a in _d_scalars
+        ]
+        doc_call = f"{name}({', '.join(_d_names)})"
+    elif ret_arr and not arrays and m.get("out_len_fn"):
+        # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
+        sig = "self, " + ", ".join(
+            f"{a['name']}: "
+            + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
+            for a in margs
+        )
+        ann = "NDArray[Any]"
+        doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
+    elif ret_arr and not arrays:
+        # (c) read(n) -> ndarray
+        sig = "self, n: int"
+        ann = "NDArray[Any]"
+        doc_call = f"{name}(n)"
+    elif arrays:
+        # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
+        # `= ...` (gh-178 review #6).
+        parts = ["self", "x: NDArray[Any]"] + [
+            f"{s['name']}: {_pyi_scalar(s['type'])}"
+            + (" = ..." if s.get("default") is not None else "")
+            for s in scalars
+        ]
+        sig = ", ".join(parts)
+        ann = _pyi_scalar(returns) if returns else "None"
+        # Inline actual scalar defaults in the docstring summary.
+        scalar_doc = ["x"] + [
+            f"{s['name']}={s['default']}"
+            if s.get("default") is not None
+            else s["name"]
+            for s in scalars
+        ]
+        doc_call = f"{name}({', '.join(scalar_doc)})"
+    elif margs:
+        # (a) scalar / path args -> scalar / None; a `default` shows as
+        # `= ...` (#319). A path arg is `str` (gh-565); an `error` status
+        # method returns None (the int rc is consumed as the raise trigger).
+        sig = "self, " + ", ".join(
+            f"{a['name']}: {_pyi_arg_ann(a)}"
+            + (" = ..." if a.get("default") is not None else "")
+            for a in margs
+        )
+        ann = _pyi_scalar(returns) if returns else "None"
+        arg_doc = [
+            f"{a['name']}={a['default']}"
+            if a.get("default") is not None
+            else a["name"]
+            for a in margs
+        ]
+        doc_call = f"{name}({', '.join(arg_doc)})"
+    else:
+        sig = "self"
+        ann = _pyi_scalar(returns) if returns else "None"
+        doc_call = f"{name}()"
+    # gh-1116: asked ONCE, outside the chain. Inside it, this was the
+    # `elif margs:` branch's question alone, and the branch beside it gave
+    # the opposite answer to the same declaration.
+    if raises_instead_of_returning(m):
+        ann = "None"
+    return PyFace(
+        sig,
+        ann,
+        doc_call,
+        [
+            (
+                a["name"],
+                "NDArray[Any]"
+                if str(a.get("type", "")).endswith("[]")
+                else _pyi_arg_ann(a),
+            )
+            for a in margs
+        ],
+    )
+
+
 def render_pyi(
     cfg: dict, module: str, doc_blocks: dict[str, str] | None = None
 ) -> str:
@@ -1826,111 +2014,8 @@ def render_pyi(
     # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):
         name = m["name"]
-        margs = list(m.get("args", []))
-        returns = m.get("returns")
-        arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
-        writable_out = [a for a in arrays if a.get("writable")]
-        scalars = [a for a in margs if a not in arrays]
-        ret_arr = bool(returns) and str(returns).endswith("[]")
-        if returns == "bytes":
-            # (f) scalar/string args -> bytes (len from handle, gh-565).
-            sig = "self" + "".join(
-                f", {a['name']}: "
-                + (
-                    "str"
-                    if a.get("type") == "string"
-                    else _pyi_scalar(a["type"])
-                )
-                for a in margs
-            )
-            ann = "bytes"
-            doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
-        elif writable_out and ret_arr:
-            # (d) execute(x, out[, scalars...]) -> ndarray.
-            # Declared names, not a hardcoded x/out: gh-582 makes this shape
-            # keyword-capable as soon as it carries scalars, so the stub's
-            # parameter names are what a caller types — they must match the
-            # kwlist. Order matches the binding's: x, out, then the scalars
-            # (see _emit_method's (d) branch for why out precedes them).
-            _d_out = writable_out[0]
-            _d_in = [a for a in arrays if a is not _d_out][0]
-            _d_scalars = [a for a in margs if a not in arrays]
-            sig = (
-                f"self, {_d_in['name']}: NDArray[Any]"
-                f", {_d_out['name']}: NDArray[Any]"
-            )
-            for a in _d_scalars:
-                dflt = a.get("default")
-                sig += f", {a['name']}: {_pyi_scalar(a['type'])}"
-                if dflt is not None:
-                    sig += " = ..."
-            ann = "NDArray[Any]"
-            _d_names = [_d_in["name"], _d_out["name"]] + [
-                a["name"] for a in _d_scalars
-            ]
-            doc_call = f"{name}({', '.join(_d_names)})"
-        elif ret_arr and not arrays and m.get("out_len_fn"):
-            # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
-            sig = "self, " + ", ".join(
-                f"{a['name']}: "
-                + (
-                    "str"
-                    if a.get("type") == "string"
-                    else _pyi_scalar(a["type"])
-                )
-                for a in margs
-            )
-            ann = "NDArray[Any]"
-            doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
-        elif ret_arr and not arrays:
-            # (c) read(n) -> ndarray
-            sig = "self, n: int"
-            ann = "NDArray[Any]"
-            doc_call = f"{name}(n)"
-        elif arrays:
-            # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
-            # `= ...` (gh-178 review #6).
-            parts = ["self", "x: NDArray[Any]"] + [
-                f"{s['name']}: {_pyi_scalar(s['type'])}"
-                + (" = ..." if s.get("default") is not None else "")
-                for s in scalars
-            ]
-            sig = ", ".join(parts)
-            ann = _pyi_scalar(returns) if returns else "None"
-            # Inline actual scalar defaults in the docstring summary.
-            scalar_doc = ["x"] + [
-                f"{s['name']}={s['default']}"
-                if s.get("default") is not None
-                else s["name"]
-                for s in scalars
-            ]
-            doc_call = f"{name}({', '.join(scalar_doc)})"
-        elif margs:
-            # (a) scalar / path args -> scalar / None; a `default` shows as
-            # `= ...` (#319). A path arg is `str` (gh-565); an `error` status
-            # method returns None (the int rc is consumed as the raise trigger).
-            sig = "self, " + ", ".join(
-                f"{a['name']}: {_pyi_arg_ann(a)}"
-                + (" = ..." if a.get("default") is not None else "")
-                for a in margs
-            )
-            ann = _pyi_scalar(returns) if returns else "None"
-            arg_doc = [
-                f"{a['name']}={a['default']}"
-                if a.get("default") is not None
-                else a["name"]
-                for a in margs
-            ]
-            doc_call = f"{name}({', '.join(arg_doc)})"
-        else:
-            sig = "self"
-            ann = _pyi_scalar(returns) if returns else "None"
-            doc_call = f"{name}()"
-        # gh-1116: asked ONCE, outside the chain. Inside it, this was the
-        # `elif margs:` branch's question alone, and the branch beside it gave
-        # the opposite answer to the same declaration.
-        if raises_instead_of_returning(m):
-            ann = "None"
+        _face = py_face(m)
+        sig, ann, doc_call = _face.sig, _face.ann, _face.doc_call
         lines.append(f"    def {name}({sig}) -> {ann}:")
         # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
         # stub to a full numpy docstring — @param/@return prose plus a runnable
@@ -1946,21 +2031,24 @@ def render_pyi(
         # form: without it the one-line stub is unchanged byte-for-byte, which
         # is what keeps `jm status --check` quiet on every existing project.
         _raises = _diagnostics.raises_doc(m, handle=True)
-        if m_block is not None or _raises:
+        # gh-1113: `doc` was read on the runtime face and dropped here, so a
+        # manifest-declared summary reached `help()` and never the stub --
+        # gh-1118's shape (a key honoured on one face) in the documentation
+        # layer. Found by comparing the two faces rather than by reading
+        # either one.
+        _override = str(m.get("doc", ""))
+        if m_block is not None or _raises or _override:
             from ._docstring import render_numpy_doc
 
-            py_params = [
-                (
-                    a["name"],
-                    "NDArray[Any]"
-                    if str(a.get("type", "")).endswith("[]")
-                    else _pyi_arg_ann(a),
-                )
-                for a in margs
-            ]
             lines.extend(
                 render_numpy_doc(
-                    m_block, name, py_params, ann, indent=8, raises=_raises
+                    m_block,
+                    name,
+                    _face.py_params,
+                    ann,
+                    override=_override,
+                    indent=8,
+                    raises=_raises,
                 )
             )
         else:
@@ -2024,7 +2112,7 @@ def render_pyi(
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
-    lines.append('        """Release the handle and free resources."""')
+    lines.append(f'        """{CLOSE_DOC}"""')
     if C.handle_context(cfg, module):
         lines.append(f"    def __enter__(self) -> {tname}:")
         lines.append('        """Enter context; return self."""')
@@ -2102,7 +2190,10 @@ def materialize(
 
     _write(
         root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
-        render_ext(cfg, module),
+        # gh-1113: the SAME blocks the `.pyi` below is rendered from. They
+        # were computed here and handed to one face only, so the header's
+        # prose reached the stub and stopped.
+        render_ext(cfg, module, doc_blocks),
     )
     _write(
         root / "native" / "src" / mp.cname / "CMakeLists.txt",
