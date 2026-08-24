@@ -143,7 +143,11 @@ class TestEveryGeneratedHeaderIsCxxIncludable:
                 text=True,
             )
             if r.returncode != 0:
-                failures.append(f"{rel}: {r.stderr.strip().splitlines()[:2]}")
+                # The WHOLE message. Truncating it to the first two
+                # lines cost a CI round trip: both were "In file
+                # included from ...", which named the symptom and
+                # nothing about the cause.
+                failures.append(f"--- {rel}\n{r.stderr.strip()}")
         assert not failures, "\n".join(failures)
 
 
@@ -232,3 +236,43 @@ class TestTheAbiSurvivesTheCrossing:
         out = subprocess.run([str(exe)], capture_output=True, text=True)
         assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == "3.0 4.0", out.stdout
+
+
+class TestTheUmbrellaDoesNotWrapItsIncludes:
+    """No compiler needed, which is the point.
+
+    The sweep above skips wherever a C++ compiler is absent, and this defect
+    hid on Linux for as long as the umbrella has existed: it opened
+    `extern "C" {` and the component `#include`s landed inside it, dragging
+    `<complex.h>`, `<stdlib.h>` and `<string.h>` in with them. Including a C++
+    standard header inside `extern "C"` is ill-formed; libstdc++ tolerates it,
+    libc++ does not. So it compiled on every machine I had and failed on
+    macOS CI.
+
+    A structural assertion runs everywhere and does not care which standard
+    library is installed. The compiled sweep is the one that proves the whole
+    thing works; this is the one that will still be running when someone
+    reintroduces the wrapper.
+
+    The umbrella declares no function of its own, so it needs no guard at all
+    — every header it includes carries one.
+    """
+
+    def test_the_generated_umbrella_opens_no_extern_c_block(
+        self, project: Path
+    ) -> None:
+        umbrella = (project / "native" / "inc" / "yy.h").read_text("utf-8")
+        assert '#include "cplx/cplx_core.h"' in umbrella, umbrella
+        assert 'extern "C" {' not in umbrella, umbrella
+
+    def test_the_component_headers_still_carry_theirs(
+        self, project: Path
+    ) -> None:
+        """The converse, so "delete the guards" cannot pass this file: the
+        per-component headers are where `extern "C"` belongs, and they open
+        it AFTER including `clib_common.h`, not around it."""
+        h = (project / "native" / "inc" / "cplx" / "cplx_core.h").read_text(
+            "utf-8"
+        )
+        assert 'extern "C" {' in h
+        assert h.index('#include "clib_common.h"') < h.index('extern "C" {')

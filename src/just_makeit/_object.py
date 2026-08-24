@@ -2668,16 +2668,10 @@ def run(
 
     # Umbrella header
     umbrella = root / "native" / "inc" / f"{pkg}.h"
-    include_line = f'#include "{comp}/{comp}_core.h"\n'
-    if umbrella.exists():
-        umbrella_text = umbrella.read_text(encoding="utf-8")
-        if include_line not in umbrella_text:
-            umbrella_text = umbrella_text.replace(
-                "#ifdef __cplusplus\n}\n#endif\n\n#endif",
-                f"{include_line}\n#ifdef __cplusplus\n}}\n#endif\n\n#endif",
-            )
-            umbrella.write_text(umbrella_text, encoding="utf-8")
-            print(f"  update  {umbrella}")
+    from ._init import insert_umbrella_include
+
+    if insert_umbrella_include(umbrella, comp):
+        print(f"  update  {umbrella}")
 
     # Save config
     C.save(root, cfg)

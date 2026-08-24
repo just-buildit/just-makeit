@@ -32,6 +32,16 @@
     `clib_common.h` is create-only, so an existing project keeps its copy and
     `jm status` reports it `OUTDATED`; adopt it to get this.
 
+    Also fixed, and found only by running the new gate on macOS CI: the
+    **umbrella header** opened an `extern "C"` block and the component
+    `#include`s landed inside it, dragging `<complex.h>`, `<stdlib.h>` and
+    `<string.h>` in with them. A C++ standard header inside `extern "C"` is
+    ill-formed — libstdc++ tolerates it, libc++ does not — so this was broken
+    on macOS for as long as the umbrella has existed, and invisible on Linux.
+    The wrapper added nothing anyway: the umbrella declares no function of its
+    own, and every header it includes carries its own guard. `jm apply`
+    reconciles the umbrella, so an existing project gets the fix.
+
     Also corrected: the generated `README.md` listed MSVC as a supported
     compiler while the generated `Makefile` forces the MinGW generator
     *because* MSVC cannot compile C99 `float _Complex`. The README was wrong.
