@@ -1893,6 +1893,28 @@ def composer_json(cfg: dict, module: str) -> bool:
     )
 
 
+def composer_settings(cfg: dict, module: str) -> list[dict]:
+    """Return a composer's ``[[module.X.settings]]`` rows (gh-1126).
+
+    A **post-construction setting**: a scalar the backing exposes through a C
+    setter/getter pair and that is set once, after ``create_fn`` returns and
+    before the first ``execute()``.
+
+    It is deliberately not a ``create_fn`` argument. ``create_fn`` is the
+    backing's own C API, and widening its arity to carry a mode the backing
+    chose to expose as a setter would be jm dictating that API. doppler's
+    ``wfm_compose_set_seed_advance`` is the shape: the scene JSON carries it,
+    the generated ``from_json`` honours it, and before this the object face
+    could not reach it at all — so a caller who wanted the setting had to
+    hand-write the JSON.
+
+    Row keys: ``name``, ``setter_fn``, ``getter_fn``, ``type``, and an
+    optional ``enum`` naming a ``[[enum]]`` SSOT for a string-valued one.
+    """
+    rows = cfg.get("module", {}).get(module, {}).get("settings", [])
+    return [dict(r) for r in rows if isinstance(r, dict)]
+
+
 def composer_serializers(cfg: dict, module: str) -> list[dict]:
     """Return a composer's ``[[module.X.serializers]]`` — additional **delegated**
     serializers (gh-317). Each is ``{name, fn, returns?, params?[]}`` and emits a
@@ -4574,6 +4596,27 @@ def _inline_computed(c: dict) -> str:
     return "{ " + ", ".join(parts) + " }"
 
 
+def _dump_composer_settings(mk: str, data: dict) -> list[str]:
+    """gh-1126 rows, rendered so they survive `load` / `save`.
+
+    Separated out and called from `_dump_composer_subtables` for one reason:
+    a key the dumper does not write is silently absent from anything that
+    re-serialises the manifest, which is how gh-1117's `process_global`
+    reached the generators as False on every real project while every unit
+    test passed.
+    """
+    out: list[str] = []
+    for st in data.get("settings", []) or []:
+        if not isinstance(st, dict):
+            continue
+        out.append(f"[[module.{mk}.settings]]")
+        for k in ("name", "setter_fn", "getter_fn", "type", "enum"):
+            if st.get(k):
+                out.append(f'{k} = "{st[k]}"')
+        out.append("")
+    return out
+
+
 def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     """Render a composer module's source/segment/timeline/oo/json sub-tables
     (gh-287). Each is a single TOML table; field lists are inline-table arrays
@@ -4713,6 +4756,8 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + "]"
             )
         out.append("")
+
+    out += _dump_composer_settings(mk, data)
 
     return out
 
