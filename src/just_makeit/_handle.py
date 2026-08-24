@@ -200,7 +200,16 @@ def render_tp_init(cfg: dict, module: str) -> str:
     args = C.handle_create_args(cfg, module)
     opt_backend = C.handle_optional_backend(cfg, module)
 
+    # gh-1131: joined into `{{{kwlist}, NULL}}`, an EMPTY list produced
+    # `static char *kwlist[] = {, NULL};` -- not valid C, so a handle whose
+    # `create_fn` takes no arguments generated a project that did not build.
+    # A no-argument constructor is an ordinary shape (a clock, a default
+    # device, a singleton session), and nothing caught it: every handle
+    # fixture declared at least one create_arg, and `jm status` does not track
+    # `_ext.c`, so the compiler was the first observer.
     kwlist = ", ".join(f'"{a["name"]}"' for a in args)
+    if kwlist:
+        kwlist += ", "
     # gh-178 review #6: a no-default create-arg is REQUIRED — it goes before the
     # `|`, not after. The old all-optional `|...` let `ZmqSink()` parse with a
     # NULL endpoint and crash. An arg is optional iff it carries a manifest
@@ -216,6 +225,16 @@ def render_tp_init(cfg: dict, module: str) -> str:
     fmt = "".join(fmt_parts)
     decls = "\n".join(_arg_decl(a) for a in args)
     addrs = ", ".join(_arg_addr(a) for a in args)
+    # gh-1131, the other half: with no args the call rendered as
+    # `kwlist,\n            ))`, a dangling comma and an empty argument. The
+    # whole parse is pointless for a no-argument constructor, so it collapses
+    # to the one-line form CPython uses for exactly this case.
+    parse_call = (
+        f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,\n'
+        f"            {addrs})) {{"
+        if args
+        else '    if (!PyArg_ParseTupleAndKeywords(args, kwds, "", kwlist)) {'
+    )
 
     # Weak-symbol backend guard (NEW): raise NotImplementedError when the
     # optional backing isn't linked on this platform.
@@ -343,10 +362,9 @@ def render_tp_init(cfg: dict, module: str) -> str:
     return f"""static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
-{guard}    static char *kwlist[] = {{{kwlist}, NULL}};
+{guard}    static char *kwlist[] = {{{kwlist}NULL}};
 {decls}
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
-            {addrs})) {{
+{parse_call}
 {parse_fail}
     }}
 {enum_validate_s}
@@ -2008,8 +2026,11 @@ def render_pyi(
             init_params.append(f"{a['name']}: {ann} = ...")
         else:
             init_params.append(f"{a['name']}: {ann}")
-    ip = ", ".join(init_params)
-    lines.append(f"    def __init__(self, {ip}) -> None: ...")
+    # gh-1131: `f"(self, {ip})"` with no create_args rendered
+    # `def __init__(self, ) -> None`. Valid Python and plainly wrong, and the
+    # same empty-join shape as the kwlist above -- the `.pyi` face of one bug.
+    ip = ", ".join(["self"] + init_params)
+    lines.append(f"    def __init__({ip}) -> None: ...")
 
     # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):

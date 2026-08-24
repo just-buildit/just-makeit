@@ -2,6 +2,25 @@
 
 ### Fixed
 
+- **A handle with no `create_args` emitted C that does not compile
+    (gh-1131).** `kwlist` and the `PyArg_ParseTupleAndKeywords` argument list
+    were both built by joining `create_args` into a fixed template, so an
+    empty list produced `static char *kwlist[] = {, NULL};` and a dangling
+    `kwlist,\n            ))`. `jm apply` accepted the declaration, wrote the
+    file, and the build failed pointing at generated code the author is told
+    not to edit.
+
+    A no-argument constructor is an ordinary shape — a clock, a default
+    device, a singleton session. Nothing caught it because every handle
+    fixture in the suite declared at least one `create_arg`, and `jm status`
+    does not track `_ext.c`, so the compiler was the first observer. It
+    surfaced only when gh-1113's docstring gate became the first test to
+    *build* this shape.
+
+    The `.pyi` had the same empty-join: `def __init__(self, ) -> None`. Both
+    faces fixed, and a constructor that declares arguments renders
+    byte-identically to before.
+
 - **A handle method now has a runtime `__doc__` (gh-1113).** Every
     author-declared method registered with a `NULL` `ml_doc`, so
     `help(Sink.drain)` was empty on **every** handle module — while the `.pyi`
