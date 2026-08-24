@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.67.3] — 2026-08-24
+
 ### Fixed
 
 - **`jm apply` maintains `<comp>_procglobal.h`, and `jm status` compares it
