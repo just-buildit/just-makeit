@@ -84,7 +84,14 @@ class TestTheManifest:
         """A key the dumper does not write is silently absent from anything
         that re-serialises the manifest — gh-1117's `process_global` reached
         every generator as False that way while its unit tests passed."""
-        import tomllib
+        # tomllib is stdlib only on 3.11+; jm supports 3.9. A FUNCTION-level
+        # bare import is a runtime failure rather than a collection error,
+        # which is how it got past `test_stdlib_floor` -- that gate scanned
+        # module level only (gh-1137's sibling lesson; the gate is widened).
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
 
         dumped = C._dump(_cfg())
         assert C.composer_settings(tomllib.loads(dumped), "wc") == [_SETTING]
