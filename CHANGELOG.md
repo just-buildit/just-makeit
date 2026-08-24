@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.67.0] — 2026-08-24
+
 ### Added
 
 - **`process_global = true`: one copy of a component's state across every
