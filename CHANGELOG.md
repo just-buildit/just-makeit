@@ -2,6 +2,32 @@
 
 ### Fixed
 
+- **gh-1114 warned about a getter field's `returns`, which `_handle` refuses
+    to run without (gh-1137).** `returns` was missing from
+    `KIND_GETTER_FIELD_KEYS`, so every `expr` getter field produced two
+    messages from one manifest, each saying the opposite of the other: a
+    warning that the key "has no effect", and — if the author took that at its
+    word and deleted it — an error refusing the manifest. `returns` types the
+    `tmp` an `expr` operates on (gh-333); without it the getter's value is
+    silently truncated to the decoded type before the expr runs, which is the
+    defect gh-333 exists for.
+
+    0.67.1's claim that the vocabularies were validated against doppler's real
+    manifest with zero findings **was wrong**, and the reason is worth
+    recording: that scan went one level deep — module keys and each
+    sub-table's rows — and never descended into a row's own inline-table
+    arrays. `returns` lives in `getters[].fields[]`, two levels down, so the
+    check was not looking where the bug was. The declaration had been in
+    doppler's manifest since 2026-07-22.
+
+    Also gated: the nested level is now asserted to be walked at all, and the
+    `expr` getter-field shape is a fixture. Note that the "every vocabulary
+    key is exercised" test **structurally cannot** catch a missing key — it is
+    built from the vocabulary's own contents. Only a declaration written
+    without reference to the vocabulary can, which is what the new fixture is.
+
+### Fixed
+
 - **`process_global` imported the package instead of the extension module, so
     every adopter failed at import (gh-1134).** Shipped in 0.67.0. The publish
     lands the capsule on the `.so`'s own module object in its `PyInit_`, while
