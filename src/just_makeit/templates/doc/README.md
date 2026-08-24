@@ -6,7 +6,9 @@ TODO: describe your project.
 
 - Python 3.9+
 - CMake ≥ 3.16
-- A C99 compiler (GCC, Clang, or MSVC)
+- A C99 compiler — GCC or Clang. **Not MSVC**: it does not support C99
+  `float _Complex`, which is why the `Makefile` forces the MinGW generator on
+  Windows.
 - NumPy (installed automatically by `make` if missing)
 
 Install system build dependencies (detects OS/distro automatically):
