@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.67.2] — 2026-08-24
+
 ### Added
 
 - **`[[module.X.settings]]`: a composer's post-construction settings
@@ -51,8 +53,6 @@
     built from the vocabulary's own contents. Only a declaration written
     without reference to the vocabulary can, which is what the new fixture is.
 
-### Fixed
-
 - **`process_global` imported the package instead of the extension module, so
     every adopter failed at import (gh-1134).** Shipped in 0.67.0. The publish
     lands the capsule on the `.so`'s own module object in its `PyInit_`, while
@@ -72,8 +72,6 @@
 
     `import_path` also now honours `[module.X] package`, which moves the `.so`
     into a sibling package and takes the import path with it.
-
-### Fixed
 
 - **A handle with no `create_args` emitted C that does not compile
     (gh-1131).** `kwlist` and the `PyArg_ParseTupleAndKeywords` argument list
