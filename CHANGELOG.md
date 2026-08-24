@@ -30,6 +30,25 @@
     zero findings — and a fixture exercising every key keeps a deleted one
     from going unnoticed.
 
+### Fixed
+
+- **`process_global` refused a `no_generate` adopter, and the escape hatch it
+    named did not exist (gh-1128).** The refusal told the author to "add the
+    rendezvous to its hand-written binding — `<comp>_procglobal.h` declares
+    the two functions it needs", and both halves were wrong: `validate` runs
+    before anything is written, so that header was never generated on a
+    project in this state, and it would not have been enough anyway — a
+    hand-written adopter also needs the owner's import path, the module
+    attribute and the capsule name, all three jm's invention and visible only
+    inside a *different* module's generated C.
+
+    The two roles are now split. A `no_generate` **owner** is still refused:
+    nothing publishes, so no adopter anywhere can work. A `no_generate`
+    **adopter** is reported instead — every other module still shares one
+    state, and that one is fixable in a binding its author already writes.
+    The header carries the three names as `#define`s, and a hand-written
+    binding using only them is compiled and run in the test suite.
+
 ## [0.67.0] — 2026-08-24
 
 ### Added

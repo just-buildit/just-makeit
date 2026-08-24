@@ -217,8 +217,49 @@ def capsule_name(cfg: dict, comp: str) -> str:
     return f"{C.project_name(cfg)}.{comp}._jm_procglobal"
 
 
+def hand_written_adopters(cfg: dict) -> "list[tuple[str, str]]":
+    """``(component, module)`` pairs jm cannot generate an adopt into.
+
+    A `no_generate` module gets an ``add_subdirectory`` line and nothing else
+    — its binding is hand-written, so there is no generated ``PyInit_`` to put
+    a rendezvous in. Every OTHER module still shares one state correctly; this
+    one keeps its own copy until its author adds the adopt themselves, which
+    is a defect they can fix in a file they already own.
+
+    Reported rather than refused (gh-1128). The refusal that used to cover
+    this case named an escape hatch that did not exist: `validate` runs before
+    anything is written, so the ``<comp>_procglobal.h`` it told the author to
+    read was never generated on a project in this state.
+    """
+    out = []
+    linkers = module_cores(cfg)
+    for comp in process_globals(cfg):
+        owner = owner_module(cfg, comp)
+        core = f"{comp}_core"
+        for mod, cores in sorted(linkers.items()):
+            if (
+                core in cores
+                and mod != owner
+                and C.is_no_generate_module(cfg, mod)
+            ):
+                out.append((comp, mod))
+    return out
+
+
 def validate(cfg: dict) -> None:
-    """Refuse a ``process_global`` jm cannot make true.
+    """Refuse a ``process_global`` jm cannot make true **at all**.
+
+    Only the OWNER being ``no_generate`` reaches that bar. jm writes no
+    ``PyInit_`` there, so nothing publishes the capsule and no adopter in the
+    project can work — there is no edit to another module that helps, and
+    generating the rest would produce a project where the feature is declared
+    and inert everywhere.
+
+    An **adopter** being ``no_generate`` is a different situation and is not
+    refused (gh-1128): every other module still shares one state, and the one
+    that does not is fixable in a binding its author already writes.
+    `hand_written_adopters` reports those, and the generated header carries
+    the three names such a binding needs.
 
     Raises
     ------
@@ -230,28 +271,19 @@ def validate(cfg: dict) -> None:
     linkers = module_cores(cfg)
     for comp in process_globals(cfg):
         owner = owner_module(cfg, comp)
-        core = f"{comp}_core"
-        for mod, cores in linkers.items():
-            if core not in cores:
-                continue
-            if not C.is_no_generate_module(cfg, mod):
-                continue
-            # A `no_generate` module gets an `add_subdirectory` line and
-            # nothing else -- its binding is hand-written, so jm emits no
-            # `PyInit_` there to put a rendezvous in. Silence here would be
-            # the exact defect: that module keeps its own copy of the state
-            # while every other module shares one, which is doppler#976 with
-            # fewer participants and no way to notice.
-            role = "publish" if mod == owner else "adopt"
-            raise ProcGlobalRefusal(
-                f"component '{comp}': module '{mod}' links {core} and is"
-                f" `no_generate`, so jm writes no PyInit_ there and cannot"
-                f" {role} the shared state. That module would keep its own"
-                f" copy while the others share one. Drop `no_generate` on"
-                f" '{mod}', or add the rendezvous to its hand-written"
-                f" binding — `{comp}_procglobal.h` declares the two"
-                f" functions it needs."
-            )
+        if owner is None or not C.is_no_generate_module(cfg, owner):
+            continue
+        if f"{comp}_core" not in linkers.get(owner, ()):
+            continue
+        raise ProcGlobalRefusal(
+            f"component '{comp}': its owning module '{owner}' is"
+            f" `no_generate`, so jm writes no PyInit_ there and nothing"
+            f" publishes the shared state — every other module would adopt"
+            f" from a module that never offers it. Drop `no_generate` on"
+            f" '{owner}', move '{comp}' to a module jm generates, or publish"
+            f" the capsule from '{owner}'s hand-written binding:"
+            f" `{comp}_procglobal.h` carries the name to publish it under."
+        )
 
 
 # ── Emitting it ───────────────────────────────────────────────────────────────
@@ -319,6 +351,39 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
     decls = "\n\n".join(
         f"/* {why} */\n{decl.format(comp=comp)}" for decl, why in _CONTRACT
     )
+    # gh-1128: the three names a HAND-WRITTEN binding needs to join the
+    # rendezvous. They are jm's invention and appeared only inside another
+    # module's generated C, so "add the rendezvous to your own binding" was
+    # not actionable -- the author would have had to reverse engineer all
+    # three from a different module's output. A `no_generate` module is
+    # exactly the case that advice is for, so the names ship with the
+    # contract that advice points at.
+    up = comp.upper()
+    owner = owner_module(cfg, comp)
+    names = (
+        "/*\n"
+        " * The rendezvous, for a binding jm does NOT generate (a\n"
+        " * `no_generate` module). To ADOPT, in your PyInit_ once the module\n"
+        " * object exists (error handling omitted -- every pointer here can\n"
+        " * be NULL):\n"
+        " *\n"
+        f" *     PyObject *own = PyImport_ImportModule({up}_PG_OWNER);\n"
+        f" *     PyObject *cap = PyObject_GetAttrString(own, {up}_PG_ATTR);\n"
+        f" *     {comp}_state_adopt(\n"
+        f" *         PyCapsule_GetPointer(cap, {up}_PG_CAPSULE));\n"
+        " *\n"
+        " * To PUBLISH, when this module owns the state:\n"
+        " *\n"
+        f" *     PyModule_AddObject(m, {up}_PG_ATTR,\n"
+        f" *         PyCapsule_New({comp}_state_ptr(), {up}_PG_CAPSULE,\n"
+        " *                       NULL));\n"
+        " */\n"
+        f'#define {up}_PG_OWNER   "'
+        + (import_path(cfg, owner) if owner else "")
+        + '"\n'
+        f'#define {up}_PG_ATTR    "_jm_pg_{comp}"\n'
+        f'#define {up}_PG_CAPSULE "{capsule_name(cfg, comp)}"\n'
+    )
     return f"""/*
  * {comp}_procglobal.h — generated by just-makeit (gh-1117). DO NOT EDIT.
  *
@@ -350,6 +415,8 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
 #define {guard}
 
 {decls}
+
+{names}
 #endif /* {guard} */
 """
 

@@ -84,20 +84,39 @@ module's `PyInit_`:
 Import order does not matter. A module that adopts pulls its owner in itself,
 so a user who never names the owning module still gets one shared state.
 
-## What jm refuses
+## What jm refuses, and what it only warns about
 
-A `no_generate` module that links the core:
+They are different situations, and jm treats them differently.
+
+**Refused: the owning module is `no_generate`.** jm writes no `PyInit_`
+there, so nothing publishes the state and no adopter anywhere in the project
+can work. There is no edit to another module that helps.
+
+**Warned: an *adopting* module is `no_generate`.** Every other module still
+shares one state; that one keeps its own copy until you add the adopt
+yourself:
 
 ```
-component 'dp_interrupt': module 'legacy' links dp_interrupt_core and is
-`no_generate`, so jm writes no PyInit_ there and cannot adopt the shared
-state. That module would keep its own copy while the others share one. Drop
-`no_generate` on 'legacy', or add the rendezvous to its hand-written binding
-— `dp_interrupt_procglobal.h` declares the two functions it needs.
+warning: module 'legacy' links flag_core and is `no_generate`, so jm writes
+no PyInit_ there: it keeps its OWN copy of flag's process-global state while
+every other module shares one. Add the adopt to its hand-written binding —
+native/inc/flag/flag_procglobal.h shows it, with the owner, attribute and
+capsule names as #defines.
 ```
 
-Silence there would be the original bug with fewer participants: one module
-quietly keeping its own copy while the rest share one.
+That is a real instruction, not a gesture. The generated header carries the
+three names you need, so a hand-written binding joins the rendezvous with no
+guessing:
+
+```c
+#include "flag_procglobal.h"
+
+PyObject *own = PyImport_ImportModule(FLAG_PG_OWNER);
+PyObject *cap = PyObject_GetAttrString(own, FLAG_PG_ATTR);
+flag_state_adopt(PyCapsule_GetPointer(cap, FLAG_PG_CAPSULE));
+```
+
+(error handling omitted — every pointer there can be `NULL`).
 
 ## What this does not cover
 

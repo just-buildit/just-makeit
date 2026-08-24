@@ -2140,6 +2140,20 @@ def run(
     except _procglobal.ProcGlobalRefusal as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+    # gh-1128: an ADOPTER jm cannot generate into is reported, not refused.
+    # Every other module still shares one state; this one keeps its own copy
+    # until its author adds the adopt to the binding they already write, and
+    # `<comp>_procglobal.h` now carries the three names that needs.
+    for _comp, _mod in _procglobal.hand_written_adopters(cfg):
+        _report.warn(
+            f"module '{_mod}' links {_comp}_core and is `no_generate`, so jm"
+            f" writes no PyInit_ there: it keeps its OWN copy of {_comp}'s"
+            f" process-global state while every other module shares one."
+            f" Add the adopt to its hand-written binding —"
+            f" native/inc/{_comp}/{_comp}_procglobal.h shows it, with the"
+            f" owner, attribute and capsule names as #defines.",
+            gates=False,
+        )
     # gh-183: record the generating jm version (monotonic; surgical write).
     _stamped = C.stamp_jm_version(root, cfg)
     if _stamped:

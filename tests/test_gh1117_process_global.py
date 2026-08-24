@@ -358,31 +358,24 @@ class TestDeclaration:
         cfg = {"project": {"name": "p"}, "flag": {"process_global": "true"}}
         assert _procglobal.owner_module(cfg, "flag") == "flag"
 
-    @pytest.mark.parametrize("no_gen", ["own", "hand"])
-    def test_a_no_generate_module_is_refused(self, no_gen):
-        """The refusal that can actually fire, found by testing whether the
-        first one could.
+    def test_a_no_generate_owner_is_refused(self):
+        """gh-1128 narrowed this from both roles to the owner alone.
 
-        A `no_generate` module gets an `add_subdirectory` line and nothing
-        else — its binding is hand-written, so jm emits no `PyInit_` there to
-        put a rendezvous in. Silence would be the exact defect: that module
-        keeps its own copy while every other module shares one, which is
-        doppler#976 with fewer participants and no way to notice.
-
-        Parametrized over both roles because they fail differently: the owner
-        cannot publish, an adopter cannot adopt.
+        It used to be parametrized over `own` and `hand`, refusing either.
+        Refusing on an ADOPTER was too strong — every other module still
+        shares one state — and worse, the escape hatch the message named did
+        not exist: `validate` runs before anything is written, so the
+        `<comp>_procglobal.h` it told the author to read was never generated
+        on a project in that state. `TestNoGenerateIsSplitByRole` covers both
+        roles now.
         """
         cfg = _cfg()
-        cfg["module"][no_gen]["no_generate"] = "true"
+        cfg["module"]["own"]["no_generate"] = "true"
         with pytest.raises(
             _procglobal.ProcGlobalRefusal, match="no_generate"
         ) as excinfo:
             _procglobal.validate(cfg)
-        assert ("publish" if no_gen == "own" else "adopt") in str(
-            excinfo.value
-        )
-        # Actionable, not merely unsuppressible: it names the header that
-        # declares what a hand-written binding would need.
+        assert "owning module" in str(excinfo.value)
         assert "flag_procglobal.h" in str(excinfo.value)
 
     def test_an_ordinary_project_is_not_refused(self):
@@ -649,3 +642,153 @@ class TestBranchesTheEndToEndDidNotReach:
             },
         }
         _procglobal.validate(cfg)
+
+
+# ── gh-1128: the escape hatch has to actually work ───────────────────────────
+
+
+_HAND_C = """\
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#include "flag_core.h"
+#include "flag_procglobal.h"
+static PyObject *is_raised(PyObject *s, PyObject *a)
+{{ (void)s; (void)a; return PyBool_FromLong(flag_is_raised()); }}
+static PyMethodDef M[] = {{
+    {{"is_raised", is_raised, METH_NOARGS, NULL}},
+    {{NULL, NULL, 0, NULL}}
+}};
+static struct PyModuleDef D = {{PyModuleDef_HEAD_INIT, "legacy", NULL, -1, M,
+                                NULL, NULL, NULL, NULL}};
+PyMODINIT_FUNC PyInit_legacy(void)
+{{
+    PyObject *m = PyModule_Create(&D);
+    if (!m) return NULL;
+    /* Written from the generated header ALONE -- the three names below are
+       its #defines, and nothing here was copied from another module. */
+    PyObject *own = PyImport_ImportModule(FLAG_PG_OWNER);
+    if (!own) {{ Py_DECREF(m); return NULL; }}
+    PyObject *cap = PyObject_GetAttrString(own, FLAG_PG_ATTR);
+    Py_DECREF(own);
+    if (!cap) {{ Py_DECREF(m); return NULL; }}
+    void *p = PyCapsule_GetPointer(cap, FLAG_PG_CAPSULE);
+    Py_DECREF(cap);
+    if (!p) {{ Py_DECREF(m); return NULL; }}
+    flag_state_adopt(p);
+    return m;
+}}
+"""
+
+
+@pytest.mark.skipif(_CC is None, reason="no C compiler available")
+def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
+    """gh-1128: the refusal used to tell authors to do this, and they could
+    not.
+
+    The header declared the two accessors and nothing else, so a hand-written
+    adopter still needed the owner's import path, the module attribute and
+    the capsule name — all three jm's invention, all three visible only
+    inside a DIFFERENT module's generated C. This compiles a binding that
+    uses the header's `#define`s and nothing else, and proves it lands on the
+    same state as the generated owner.
+    """
+    cfg = _cfg()
+    (tmp_path / "flag_core.h").write_text(_CORE_H)
+    (tmp_path / "flag_core.c").write_text(_CORE_C)
+    (tmp_path / "flag_procglobal.h").write_text(
+        _procglobal.render_header(cfg, "flag")
+    )
+    pkg = tmp_path / "pgdemo"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    ext = sysconfig.get_config_var("EXT_SUFFIX")
+    inc = sysconfig.get_paths()["include"]
+    sources = {
+        "own": _MODULE_C.format(
+            leaf="own", rz=_procglobal.rendezvous_c(cfg, "own")
+        ),
+        "legacy": _HAND_C.format(),
+    }
+    for leaf, text in sources.items():
+        src = tmp_path / f"{leaf}.c"
+        src.write_text(text)
+        subprocess.run(
+            [
+                _CC,
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                *_LINK,
+                "-fPIC",
+                f"-I{tmp_path}",
+                f"-I{inc}",
+                str(src),
+                str(tmp_path / "flag_core.c"),
+                "-o",
+                str(pkg / f"{leaf}{ext}"),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, '.')\n"
+            "from pgdemo import legacy\n"
+            "from pgdemo import own\n"
+            "own.raise_it()\n"
+            "print(legacy.is_raised())",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "True", (
+        "the hand-written binding did not join the rendezvous, so the "
+        "header does not carry what gh-1128 says it does"
+    )
+
+
+class TestNoGenerateIsSplitByRole:
+    """gh-1128: the two roles are not the same problem."""
+
+    def _cfg(self, no_gen):
+        cfg = _cfg()
+        cfg["module"][no_gen]["no_generate"] = "true"
+        return cfg
+
+    def test_a_no_generate_OWNER_is_still_refused(self):
+        """Nothing publishes, so no adopter anywhere can work and there is no
+        edit to another module that helps."""
+        with pytest.raises(
+            _procglobal.ProcGlobalRefusal, match="owning module"
+        ) as e:
+            _procglobal.validate(self._cfg("own"))
+        assert "_procglobal.h` carries the name" in str(e.value)
+
+    def test_a_no_generate_ADOPTER_is_reported_not_refused(self):
+        """Refusing the whole project over one module the author can fix
+        themselves is too strong — and the escape hatch it named did not
+        exist, because `validate` runs before the header is written."""
+        cfg = self._cfg("hand")
+        _procglobal.validate(cfg)  # must not raise
+        assert _procglobal.hand_written_adopters(cfg) == [("flag", "hand")]
+
+    def test_an_ordinary_project_reports_no_adopters(self):
+        assert _procglobal.hand_written_adopters(_cfg()) == []
+
+    def test_the_header_carries_the_three_names(self):
+        h = _procglobal.render_header(_cfg(), "flag")
+        assert '#define FLAG_PG_OWNER   "pgdemo.own"' in h
+        assert '#define FLAG_PG_ATTR    "_jm_pg_flag"' in h
+        assert '#define FLAG_PG_CAPSULE "pgdemo.flag._jm_procglobal"' in h
+
+    def test_the_names_match_what_the_generated_rendezvous_uses(self):
+        """Otherwise a hand-written adopter compiles and silently misses."""
+        cfg = _cfg()
+        block = _procglobal.rendezvous_c(cfg, "hand")
+        assert f'"{_procglobal.import_path(cfg, "own")}"' in block
+        assert '"_jm_pg_flag"' in block
+        assert f'"{_procglobal.capsule_name(cfg, "flag")}"' in block
