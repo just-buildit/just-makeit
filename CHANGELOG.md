@@ -1,5 +1,37 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports generated copies of `[project] version` that
+    disagree with it (gh-1141).** Six generated artefacts carry the project's
+    version. Exactly one — a `--target pep723` app script — is regenerated
+    glue and picks a bump up on the next `apply`. The other five are
+    create-only, and a bump reached **none** of them with `status --check`
+    clean throughout: `pyproject.toml`, the top `CMakeLists.txt`'s
+    `project(... VERSION)`, `bootstrap.toml`, the `Doxyfile`'s
+    `PROJECT_NUMBER`, and `<pkg>_version()` in `native/src/<pkg>_lib.c`.
+
+    The last is the one with teeth. `<pkg>_version()` is a **C API** — a
+    consumer links the library and asks it what version it is, and was told
+    the version the project had on the day it was scaffolded, forever. The
+    others are build metadata a human eventually notices; that one is a wrong
+    answer returned at runtime with nothing on screen.
+
+    jm **reports and rewrites nothing**, which is gh-442's answer to the
+    identical question rather than a new one: a release bumps
+    `pyproject.toml` and never the manifest, so the manifest is often the
+    stale side, and rewriting an author-owned file from it on the next
+    unrelated `apply` would be worse than the drift. Both values are named,
+    the file is named, and picking the side stays the author's. Suppressible
+    per file with `status_allow`; a `VERSION` section under `jm status`, a
+    `!` warning under `jm apply`, and it gates `--check`.
+
+    The issue said four copies. It was written from a survey that filtered by
+    file extension, and `Doxyfile` has none — so the coverage test here is
+    derived from the tree instead: it bumps, asks which files still carry the
+    old string, and demands the reporter name exactly those. A generated file
+    that gains a version copy is covered the day it gains it.
+
 ### Changed
 
 - **The generated pytest attempts the seeded construction instead of assuming
