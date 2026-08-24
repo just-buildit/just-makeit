@@ -25,8 +25,17 @@ every manifest jm itself writes round-trips through them clean.
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
+
+# tomllib is stdlib only on 3.11+; jm supports down to 3.9 and `_config`
+# guards it the same way. A bare `import tomllib` here is a COLLECTION error
+# on every older leg -- the module drops out of the run rather than failing,
+# which is how this was found: green on a 3.12 laptop, broken on
+# ubuntu-24.04-arm/3.10. `test_stdlib_floor.py` is now the control.
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 import pytest
 
