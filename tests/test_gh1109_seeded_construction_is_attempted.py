@@ -27,6 +27,7 @@ assertion can answer it.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,24 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).parent.parent / "src"
+
+
+_SUMMARY = re.compile(r"^=+ (.*?) =+$", re.M)
+_COUNT = re.compile(r"(\d+) (passed|skipped|failed|error|errors)")
+
+
+def _pytest_counts(stdout: str) -> "dict[str, int]":
+    """Counts from pytest's own summary line in a `jm test` run.
+
+    Anchored on that line rather than searched for in the whole output, and
+    the reason is a bug this very test hit: `jm test` runs CTest first, whose
+    output contains ``0 tests failed out of 1``, so a plain
+    ``"failed" not in stdout`` is true of no run that has ever happened.
+    """
+    lines = _SUMMARY.findall(stdout)
+    body = lines[-1] if lines else ""
+    return {kind: int(n) for n, kind in _COUNT.findall(body)}
+
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or (
     shutil.which("cc") is None and shutil.which("gcc") is None
@@ -106,7 +125,7 @@ class TestAgainstARealExtension:
     """The only question a text assertion cannot answer."""
 
     @pytest.fixture
-    def built(self, tmp_path: Path) -> Path:
+    def scaffolded(self, tmp_path: Path) -> Path:
         assert _cli("new", "sd", cwd=tmp_path).returncode == 0
         root = tmp_path / "sd"
         assert (
@@ -119,29 +138,34 @@ class TestAgainstARealExtension:
             ).returncode
             == 0
         )
-        assert _cli("build", cwd=root).returncode == 0
         return root
 
     def _run(self, root: Path) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, "-m", "pytest", "src/sd/tests", "-q"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "NO_COLOR": "1"},
-        )
+        """`jm test` — cmake configure + build, then CTest and pytest.
 
-    def test_the_scaffolded_ctor_lets_the_suite_run(self, built: Path) -> None:
+        Deliberately NOT `jm build`, which goes on to package a wheel: on
+        macOS that ends in `delocate-wheel`, which fails on the runner for
+        reasons that have nothing to do with this test, having compiled the
+        extension cleanly moments earlier. `jm test` stops at the extension —
+        and it is also the interface an author actually uses to ask the
+        question these tests ask.
+        """
+        return _cli("test", cwd=root)
+
+    def test_the_scaffolded_ctor_lets_the_suite_run(
+        self, scaffolded: Path
+    ) -> None:
         """jm's own `create()` ignores the parameter, so the zero seed is
         fine and there is nothing to skip. This is the case the render-time
         suppression got wrong on every project, on day one."""
-        out = self._run(built)
+        out = self._run(scaffolded)
         assert out.returncode == 0, out.stdout
-        assert " passed" in out.stdout
-        assert "skipped" not in out.stdout, out.stdout
+        counts = _pytest_counts(out.stdout)
+        assert counts.get("passed", 0) > 0, out.stdout
+        assert counts.get("skipped", 0) == 0, out.stdout
 
     def test_validation_added_LATER_skips_rather_than_fails(
-        self, built: Path
+        self, scaffolded: Path
     ) -> None:
         """The objection that decided gh-1109 against a render-time
         inference: the test files are create-only, so an answer baked in at
@@ -151,7 +175,7 @@ class TestAgainstARealExtension:
         The probe is not baked in. This file was generated BEFORE the
         validation below existed, and still degrades to a clean skip.
         """
-        core = built / "native" / "src" / "alloc" / "alloc_core.c"
+        core = scaffolded / "native" / "src" / "alloc" / "alloc_core.c"
         body = core.read_text(encoding="utf-8")
         anchor = "    alloc_state_t *obj = calloc(1, sizeof(*obj));"
         assert anchor in body
@@ -162,8 +186,8 @@ class TestAgainstARealExtension:
             ),
             encoding="utf-8",
         )
-        assert _cli("build", cwd=built).returncode == 0
-        out = self._run(built)
+        out = self._run(scaffolded)
         assert out.returncode == 0, out.stdout
-        assert " skipped" in out.stdout, out.stdout
-        assert "failed" not in out.stdout, out.stdout
+        counts = _pytest_counts(out.stdout)
+        assert counts.get("skipped", 0) > 0, out.stdout
+        assert counts.get("failed", 0) == 0, out.stdout
