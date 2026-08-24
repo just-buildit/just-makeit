@@ -2496,6 +2496,22 @@ def run(
             indent="  ",
         )
 
+    # gh-1142: and the contract header left behind by a component that has
+    # stopped declaring `process_global`. Warned HERE, not only in `status`,
+    # because this run is what created the orphan — it stripped the rendezvous
+    # from every generated PyInit_ moments ago, and the moment that happens is
+    # when the author can still remember why.
+    for _orphan in _procglobal.orphan_headers(root, cfg):
+        _report.warn(
+            f"{_orphan} describes a rendezvous that is no longer generated: "
+            f"{_orphan.split('/')[2].removesuffix('_procglobal.h')} does not "
+            "declare `process_global`. jm does not delete files — remove it, "
+            "or re-declare the key",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
     for obj in C.components(cfg):
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
             # Gating: `init_param_drift` is exactly what fills `status`'s

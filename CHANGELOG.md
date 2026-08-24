@@ -2,6 +2,25 @@
 
 ### Added
 
+- **`jm status` reports a process-global contract header left behind by a
+    dropped declaration (gh-1142).** The converse of gh-1140. `apply` now
+    rewrites `<comp>_procglobal.h` for every component that declares
+    `process_global`; a component that *stops* declaring it renders nothing,
+    so the file stays exactly where it was — describing a rendezvous the same
+    `apply` had just stripped out of every generated `PyInit_`, and naming a
+    publisher that no longer publishes.
+
+    It still compiles, so nothing breaks until a hand-written binding follows
+    the instructions in it and adopts a capsule no module exports. What is
+    wrong before then is that a file stamped `DO NOT EDIT` states as fact
+    something the manifest no longer says.
+
+    Reported and never deleted: `apply` deletes nothing anywhere, and growing
+    a delete path is a real policy question that belongs in `jm remove` if
+    anywhere. An `ORPHAN` section under `jm status`, gating `--check`, and a
+    `!` warning under `jm apply` — warned there because that run is what
+    creates the orphan, which is the moment the author still remembers why.
+
 - **`jm status` reports generated copies of `[project] version` that
     disagree with it (gh-1141).** Six generated artefacts carry the project's
     version. Exactly one — a `--target pep723` app script — is regenerated
