@@ -256,3 +256,76 @@ class TestNothingGeneratedIsInvisibleToStatus:
             finally:
                 path.write_bytes(keep)
         assert invisible == YOURS
+
+
+class TestTheOrphanedHeader:
+    """gh-1142 — the converse of everything above.
+
+    gh-1140 made `apply` rewrite `<comp>_procglobal.h` for every component
+    that *declares* `process_global`. A component that **stops** declaring it
+    renders `""`, so there is nothing to write and the file stays exactly
+    where it was — describing a rendezvous that the very same `apply` stripped
+    out of every generated `PyInit_`.
+
+    It still compiles, so nothing breaks until a hand-written binding follows
+    the instructions in it and adopts a capsule no module exports. What is
+    wrong before then is that a file stamped `DO NOT EDIT` states as fact
+    something the manifest no longer says.
+
+    Reported, never deleted. `apply` deletes nothing anywhere, and a delete
+    path is a real policy question that belongs in `jm remove` if anywhere —
+    which is why this is a `status` arm and a warning rather than an `unlink`.
+    """
+
+    @staticmethod
+    def _undeclare(root: Path) -> None:
+        p = root / "objects" / "flag.toml"
+        body = p.read_text(encoding="utf-8")
+        assert "process_global = true\n" in body
+        p.write_text(body.replace("process_global = true\n", ""), "utf-8")
+
+    def test_the_header_survives_the_apply_that_orphans_it(
+        self, project: Path
+    ) -> None:
+        """The premise. Stated as a test because the fix depends on it: if
+        `apply` did clean up, there would be nothing to report."""
+        self._undeclare(project)
+        assert _cli("apply", cwd=project).returncode == 0
+        assert (project / HEADER).is_file()
+        ext = (project / "native/src/other/other_ext.c").read_text("utf-8")
+        assert "PyImport_ImportModule" not in ext, (
+            "the rendezvous should be gone from the generated binding"
+        )
+
+    def test_status_reports_it_and_check_fails(self, project: Path) -> None:
+        self._undeclare(project)
+        assert _cli("apply", cwd=project).returncode == 0
+        out = _cli("status", cwd=project)
+        assert "ORPHAN (1)" in out.stdout, out.stdout
+        assert HEADER in out.stdout, out.stdout
+        assert _cli("status", "--check", cwd=project).returncode == 1
+
+    def test_apply_warns_in_the_run_that_creates_it(
+        self, project: Path
+    ) -> None:
+        """The author can still remember why at that moment, and not later."""
+        self._undeclare(project)
+        out = _cli("apply", cwd=project)
+        assert "no longer generated" in out.stdout, out.stdout
+        assert "flag" in out.stdout
+
+    def test_removing_the_header_clears_the_finding(
+        self, project: Path
+    ) -> None:
+        """A finding no action can clear is the shape this repo has paid for
+        before. The action is the one the message names."""
+        self._undeclare(project)
+        assert _cli("apply", cwd=project).returncode == 0
+        (project / HEADER).unlink()
+        assert _cli("status", "--check", cwd=project).returncode == 0
+
+    def test_a_declared_header_is_not_an_orphan(self, project: Path) -> None:
+        """The fixture declares it, so the arm must stay silent — otherwise
+        gh-1140's own feature would report itself on every run."""
+        out = _cli("status", cwd=project)
+        assert "ORPHAN" not in out.stdout, out.stdout

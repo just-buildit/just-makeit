@@ -356,6 +356,18 @@ def run(
         if not _is_allowed(v.rel, allow_patterns)
     ]
 
+    # gh-1142: `<comp>_procglobal.h` still on disk for a component that no
+    # longer declares `process_global` — the converse of gh-1140, and the same
+    # static shape again. Reported, never deleted: `apply` deletes nothing
+    # anywhere, and a delete path is its own decision.
+    from . import _procglobal as _pg_mod
+
+    _orphan_pg = [
+        rel
+        for rel in _pg_mod.orphan_headers(root, cfg)
+        if not _is_allowed(rel, allow_patterns)
+    ]
+
     # gh-921: `pass_capacity` methods whose header keeps the pre-gh-607
     # `max_out(state)`. Same static manifest-vs-header shape as gh-442 above,
     # and computed the same way — nothing here is a file `apply` would write.
@@ -716,6 +728,7 @@ def run(
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
         + len(version_entries)
+        + len(_orphan_pg)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
         # published constructor raises when called as documented", which is
@@ -795,6 +808,7 @@ def run(
                         }
                         for (o, n, m, h) in drift_entries
                     ],
+                    "orphan_procglobal_headers": list(_orphan_pg),
                     "version_drift": [
                         {
                             "path": v.rel,
@@ -1372,6 +1386,25 @@ def run(
         )
         print()
 
+    # gh-1142: same treatment. A `DO NOT EDIT` file describing a rendezvous
+    # that no longer exists is exactly the kind of thing no diff can show,
+    # because there is nothing for `apply` to compare it against.
+    if _orphan_pg:
+        print(
+            f"ORPHAN ({len(_orphan_pg)}) — process-global contract header(s) "
+            "for a component that no longer declares it:"
+        )
+        for rel in _orphan_pg:
+            print(f"  ! {rel}")
+        print(
+            "  The rendezvous these describe was stripped from every "
+            "generated PyInit_ when\n  `process_global` was removed, so the "
+            "header now names a publisher that does not\n  publish. jm does "
+            "not delete files — remove it yourself, or re-declare\n  "
+            "`process_global` if dropping it was the mistake. See gh-1142."
+        )
+        print()
+
     # gh-921: deliberately NOT the "impossible to miss" treatment the three
     # sections around it get. Nothing here is broken — gh-920 made this seam
     # safe, and the allocation is the historical clamped one, which is correct
@@ -1459,6 +1492,7 @@ def run(
         and not dropped_entries
         and not drift_entries
         and not version_entries
+        and not _orphan_pg
         and not any(not e[2] for e in kwargs_entries)
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
@@ -1600,6 +1634,7 @@ def run(
                 if version_entries
                 else ""
             )
+            + (f", {len(_orphan_pg)} orphan-header (!)" if _orphan_pg else "")
             + (
                 f", {sum(1 for e in kwargs_entries if not e[2])} kwargs-drift (!)"
                 if any(not e[2] for e in kwargs_entries)

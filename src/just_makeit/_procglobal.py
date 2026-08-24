@@ -35,6 +35,7 @@ emitter does not write is not expressible when they share a file.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import NamedTuple
 
 from . import _config as C
@@ -441,6 +442,40 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
 {names}
 #endif /* {guard} */
 """
+
+
+def orphan_headers(root: Path, cfg: dict) -> "list[str]":
+    """Contract headers on disk for components that no longer declare it.
+
+    gh-1142, the converse of gh-1140. `apply` now rewrites
+    ``<comp>_procglobal.h`` from the manifest for every component that
+    declares ``process_global``; a component that **stops** declaring it
+    renders ``""``, so there is nothing to write and the file is left exactly
+    where it was.
+
+    It still compiles — the two prototypes match the accessors the author
+    wrote — so nothing breaks until a hand-written binding follows the
+    instructions in it, at which point it adopts a capsule no module exports.
+    What is wrong before then is that a file stamped ``DO NOT EDIT`` states as
+    fact something the manifest no longer says, and names a publisher that
+    stopped publishing on the same `apply` that left this behind: jm strips
+    the rendezvous from every generated ``PyInit_`` in that run.
+
+    Reported, never deleted. `apply` deletes nothing anywhere, and growing a
+    delete path is a real policy question — which files, on what evidence, and
+    what happens when the author has adopted one — that belongs in `jm remove`
+    if anywhere, not smuggled in as a side effect of a reconcile.
+
+    Read from the tree rather than the manifest for the obvious reason: the
+    manifest is what has stopped mentioning this component's declaration, so
+    it is the one place the answer cannot come from.
+    """
+    return [
+        rel
+        for comp in C.components(cfg)
+        if not is_process_global(cfg, comp)
+        and (root / (rel := f"native/inc/{header_name(comp)}")).is_file()
+    ]
 
 
 def rendezvous_c(cfg: dict, module: str, *, var: str = "m") -> str:
