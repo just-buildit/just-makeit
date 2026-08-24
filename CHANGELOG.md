@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+### Added
+
+- **`[[module.X.settings]]`: a composer's post-construction settings
+    (gh-1126).** A `kind = "composer"` had no way to declare a scalar the
+    backing exposes through a C setter/getter pair and sets once, after
+    `create_fn` returns and before the first `execute()`. So a composer's
+    *object* face could not say what its *JSON* face already could —
+    doppler's scene JSON carries `seed_advance`, the generated `from_json`
+    honours it, and `Composer(...)` could not reach it at all. A caller who
+    wanted the setting had to hand-write the JSON.
+
+    Declaring one generates a constructor kwarg applied via `setter_fn` after
+    `create_fn`, a read/write attribute over the pair, and the `.pyi` entries.
+    A string-valued setting resolves through its `[[enum]]` SSOT and reads
+    back as the name, so you can assign what you just read.
+
+    Deliberately **not** a `create_fn` argument: that is the backing's own C
+    API, and widening its arity to carry a mode the backing chose to expose as
+    a setter would be jm dictating that API.
+
+    Also fixed alongside: with a segments list, **any** unrecognised kwarg was
+    reported as "pass either segments or single-segment kwargs, not both",
+    naming the wrong problem whenever the real one was a misspelling. The
+    message now names the offending keys.
+
 ### Fixed
 
 - **gh-1114 warned about a getter field's `returns`, which `_handle` refuses

@@ -92,6 +92,14 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
             e = f.get("enum")
             if e and e not in seen:
                 seen.append(e)
+    # gh-1126: a string-valued setting resolves through the same tables, and
+    # without this the emitted C referenced `_enum_<cname>_<name>` that
+    # nothing declared -- a compile error in the user's project. Found by
+    # rendering and grepping for the table, not by reading this function.
+    for st in C.composer_settings(cfg, module):
+        e = st.get("enum")
+        if e and e not in seen:
+            seen.append(e)
     # gh-317: delegated serializers' enum params need their SSOT tables too.
     for s in C.composer_serializers(cfg, module):
         for p in s.get("params", []):
@@ -2015,6 +2023,15 @@ fail:
         cfg, module, cname, obj, seg_struct, segments_fn
     )
 
+    # gh-1126: post-construction settings — the ctor kwarg and the setter
+    # call. Both empty for a composer that declares none, so every existing
+    # project renders byte-identically.
+    settings_pop = _settings_pop_c(cfg, module)
+    settings_apply = _settings_apply_c(cfg, module)
+    settings_getset, settings_getset_rows = _settings_getset_c(
+        cfg, module, cname, obj
+    )
+
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
 typedef struct {{
@@ -2148,7 +2165,7 @@ static int
         Py_DECREF(kw);
         return -1;
     }}
-
+{settings_pop}
     PyObject *segments = NULL; /* borrowed */
     if (PyTuple_GET_SIZE(args) >= 1)
         segments = PyTuple_GET_ITEM(args, 0);
@@ -2181,8 +2198,17 @@ static int
         PyList_SET_ITEM(seglist, 0, one); /* steals */
     }} else {{
         if (PyDict_Size(kw) > 0) {{
-            PyErr_SetString(PyExc_TypeError,
-                "pass either segments or single-segment kwargs, not both");
+            /* gh-1126: NAME the keys. With a segments list every leftover
+             * kwarg was reported as a segments-vs-kwargs conflict, which is
+             * the wrong problem whenever the real one is a misspelling or a
+             * composer-level name that does not exist -- including, before
+             * this, every attempt to guess at a setting. */
+            PyObject *_k = PyDict_Keys(kw);
+            PyErr_Format(PyExc_TypeError,
+                "unexpected keyword argument(s) %R alongside a segments list;"
+                " pass either segments or single-segment kwargs, not both",
+                _k);
+            Py_XDECREF(_k);
             Py_DECREF(kw);
             return -1;
         }}
@@ -2232,7 +2258,7 @@ static int
         PyErr_SetString(PyExc_ValueError, "{create_fn} failed");
         return -1;
     }}
-    return 0;
+{settings_apply}    return 0;
 }}
 
 static PyObject *
@@ -2412,11 +2438,11 @@ static PyObject *
     return {cname}_close(self, NULL);
 }}
 {json_fns}
-static PyGetSetDef {cname}_getset[] = {{
+{settings_getset}static PyGetSetDef {cname}_getset[] = {{
     {{"segments", (getter){cname}_get_segments, NULL, NULL, NULL}},
     {{"repeat", (getter){cname}_get_repeat, NULL, NULL, NULL}},
     {{"continuous", (getter){cname}_get_continuous, NULL, NULL, NULL}},
-    {{NULL, NULL, NULL, NULL, NULL}}
+{settings_getset_rows}    {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
 {stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
@@ -2461,6 +2487,181 @@ def _type_names(cfg: dict, module: str) -> list[str]:
         C.composer_oo(cfg, module).get("composer_type_name", "Composer")
     )
     return names
+
+
+def _settings_getset_c(
+    cfg: dict, module: str, cname: str, obj: str
+) -> "tuple[str, str]":
+    """The read/write attribute over a setting's getter/setter pair (gh-1126).
+
+    Returns ``(functions, rows)``, both empty for a composer that declares no
+    settings — so an existing project's `_ext.c` is byte-identical.
+
+    A string-valued setting reads back as its ``[[enum]]`` name rather than
+    the int, because that is what the constructor accepts: an attribute you
+    cannot assign what you just read from is worse than no attribute.
+    """
+    rows = C.composer_settings(cfg, module)
+    if not rows:
+        return "", ""
+    enums = C.enums(cfg)
+    # The BARE convention -- `_enum_index` / `_enum_<name>` -- which is what
+    # module functions, handles and composers all use and what
+    # `render_enum_tables` emits for this module. Passing the cname here
+    # produced `_enum_wc_seed_advance`, referencing a table nothing declared.
+    prefix = ""
+    fns, table = [], []
+    for st in rows:
+        n = st["name"]
+        ctype = st.get("type", "int")
+        ename = st.get("enum")
+        guard = (
+            "    if (self->destroyed) {\n"
+            "        PyErr_SetString(PyExc_RuntimeError,"
+            ' "composer already closed");\n'
+        )
+        if ename:
+            _, tab = _enumc.symbols(prefix, ename)
+            get_body = (
+                f"    int _v = (int){st['getter_fn']}(self->state);\n"
+                f"    if (_v < 0 || (size_t)_v >= "
+                f"(sizeof({tab}) / sizeof({tab}[0])) - 1) {{\n"
+                f"        PyErr_Format(PyExc_ValueError,\n"
+                f'            "{n}: backing returned %d, which names no'
+                f' choice", _v);\n'
+                f"        return NULL;\n"
+                f"    }}\n"
+                f"    return PyUnicode_FromString({tab}[_v]);\n"
+            )
+            set_conv = _enumc.validate_c(
+                n,
+                ename,
+                enums,
+                prefix=prefix,
+                src="_s",
+                result=f"_arg_{n}",
+                fail="return -1;",
+                indent="    ",
+            )
+            set_body = (
+                f"    const char *_s = PyUnicode_AsUTF8(value);\n"
+                f"    if (!_s) return -1;\n"
+                f"{set_conv}"
+                f"    {st['setter_fn']}(self->state, ({ctype})_arg_{n});\n"
+                f"    return 0;\n"
+            )
+        else:
+            get_body = (
+                f"    return PyLong_FromLong("
+                f"(long){st['getter_fn']}(self->state));\n"
+            )
+            set_body = (
+                f"    long _v = PyLong_AsLong(value);\n"
+                f"    if (_v == -1 && PyErr_Occurred()) return -1;\n"
+                f"    {st['setter_fn']}(self->state, ({ctype})_v);\n"
+                f"    return 0;\n"
+            )
+        fns.append(
+            f"static PyObject *\n"
+            f"{cname}_get_{n}({obj} *self, void *closure)\n"
+            f"{{\n    (void)closure;\n{guard}        return NULL;\n"
+            f"    }}\n{get_body}}}\n\n"
+            f"static int\n"
+            f"{cname}_set_{n}({obj} *self, PyObject *value, void *closure)\n"
+            f"{{\n    (void)closure;\n{guard}        return -1;\n"
+            f"    }}\n"
+            f"    if (!value) {{\n"
+            f"        PyErr_SetString(PyExc_AttributeError,"
+            f' "cannot delete {n}");\n'
+            f"        return -1;\n    }}\n{set_body}}}\n\n"
+        )
+        table.append(
+            f'    {{"{n}", (getter){cname}_get_{n},'
+            f" (setter){cname}_set_{n}, NULL, NULL}},\n"
+        )
+    return "".join(fns), "".join(table)
+
+
+def _settings_pop_c(cfg: dict, module: str) -> str:
+    """Pop each gh-1126 setting out of ``kw`` and convert it, before the split.
+
+    Popped **before** the segments-vs-kwargs decision on purpose: anything
+    left in ``kw`` is either a single-segment kwarg or an error, so a setting
+    left in there would be handed to the segment constructor and reported as
+    "pass either segments or single-segment kwargs, not both" — naming the
+    wrong problem, which is the secondary complaint in gh-1126.
+
+    Converted **here** rather than at apply time, so the value lives in a
+    plain C local. Holding a borrowed or owned ``PyObject *`` across the
+    segment building and ``create_fn`` would put a decref on every early
+    return between the two, which is a leak waiting for the next branch added
+    to this function.
+    """
+    rows = C.composer_settings(cfg, module)
+    if not rows:
+        return ""
+    enums = C.enums(cfg)
+    # The BARE convention -- `_enum_index` / `_enum_<name>` -- which is what
+    # module functions, handles and composers all use and what
+    # `render_enum_tables` emits for this module. Passing the cname here
+    # produced `_enum_wc_seed_advance`, referencing a table nothing declared.
+    prefix = ""
+    out = [
+        "    /* gh-1126: post-construction settings. Popped before the\n"
+        "     * segments-vs-kwargs split so they are never mistaken for\n"
+        "     * segment kwargs; applied after create_fn returns. */\n"
+    ]
+    for st in rows:
+        n, ctype = st["name"], st.get("type", "int")
+        out.append(f"    {ctype} _st_{n} = 0;\n    int _st_{n}_set = 0;\n")
+        if st.get("enum"):
+            conv = _enumc.validate_c(
+                n,
+                st["enum"],
+                enums,
+                prefix=prefix,
+                src="_s",
+                result=f"_arg_{n}",
+                fail="Py_DECREF(kw); return -1;",
+                indent="            ",
+            )
+            body = (
+                f"            const char *_s = PyUnicode_AsUTF8(_o);\n"
+                f"            if (!_s) {{ Py_DECREF(kw); return -1; }}\n"
+                f"{conv}"
+                f"            _st_{n} = ({ctype})_arg_{n};\n"
+            )
+        else:
+            body = (
+                f"            long _v = PyLong_AsLong(_o);\n"
+                f"            if (_v == -1 && PyErr_Occurred())"
+                f" {{ Py_DECREF(kw); return -1; }}\n"
+                f"            _st_{n} = ({ctype})_v;\n"
+            )
+        out.append(
+            f"    {{\n"
+            f'        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
+            f"        if (_o) {{\n"
+            f"{body}"
+            f"            _st_{n}_set = 1;\n"
+            f'            if (PyDict_DelItemString(kw, "{n}") < 0)'
+            f" {{ Py_DECREF(kw); return -1; }}\n"
+            f"        }}\n"
+            f"    }}\n"
+        )
+    return "".join(out)
+
+
+def _settings_apply_c(cfg: dict, module: str) -> str:
+    """Call each setting's ``setter_fn`` once ``create_fn`` has returned."""
+    rows = C.composer_settings(cfg, module)
+    if not rows:
+        return ""
+    return "".join(
+        f"    if (_st_{st['name']}_set)\n"
+        f"        {st['setter_fn']}(self->state, _st_{st['name']});\n"
+        for st in rows
+    )
 
 
 def render_ext(cfg: dict, module: str) -> str:
@@ -2855,8 +3056,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",
+        *[
+            # gh-1126: read/write, unlike the three above. A setting is set
+            # once before the first execute(); the pair behind it is the
+            # backing's own setter/getter.
+            f"    {st['name']}: {'str' if st.get('enum') else 'int'}"
+            for st in C.composer_settings(cfg, module)
+        ],
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
-        "repeat: bool = ..., continuous: bool = ..., **segment_kwargs"
+        "repeat: bool = ..., continuous: bool = ..."
+        + "".join(
+            f", {st['name']}: {'str' if st.get('enum') else 'int'} = ..."
+            for st in C.composer_settings(cfg, module)
+        )
+        + ", **segment_kwargs"
         ") -> None: ...",
         "    def execute(self, n: int) -> NDArray[np.complex64]:",
         '        """Execute for *n* samples."""',

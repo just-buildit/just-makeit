@@ -448,6 +448,8 @@ COMPOSER_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "stream",
     "generator",
     "flat_sources",
+    # gh-1126: post-construction settings.
+    "settings",
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.
@@ -514,6 +516,11 @@ KIND_DEPENDS_ON_KEYS = frozenset({"name", "link", "test_only"})
 KIND_PROPERTY_KEYS = frozenset(
     {"name", "type", "writable", "doc", "enum", "getter", "setter", "fn"}
 )
+#: gh-1126. `enum` is optional and names a `[[enum]]` SSOT for a
+#: string-valued setting; the others are validated at render time.
+KIND_SETTING_KEYS = frozenset(
+    {"name", "setter_fn", "getter_fn", "type", "enum", "doc"}
+)
 KIND_SERIALIZER_KEYS = frozenset(
     {"name", "fn", "header", "params", "returns", "doc"}
 )
@@ -542,6 +549,7 @@ KIND_TABLE_VOCAB = {
     ("capsule", "init_params"): "kind init_param",
     ("composer", "init_params"): "kind init_param",
     ("composer", "serializers"): "kind serializer",
+    ("composer", "settings"): "kind setting",
     # A `kind`-bearing module may also carry module-level free functions,
     # and they are the SAME shape as a plain module's -- so they reuse the
     # object face's vocabulary rather than getting a near-copy. Found by
@@ -585,6 +593,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "kind depends_on": KIND_DEPENDS_ON_KEYS,
     "kind property": KIND_PROPERTY_KEYS,
     "kind serializer": KIND_SERIALIZER_KEYS,
+    "kind setting": KIND_SETTING_KEYS,
     "kind init_param": KIND_INIT_PARAM_KEYS,
 }
 
