@@ -1658,46 +1658,67 @@ def _make_gs_decls_impls(
 # ---------------------------------------------------------------------------
 
 
+def _seed_problem(p: "tuple | list") -> str:
+    """Why jm cannot confidently seed init-param *p*, or ``""`` if it can.
+
+    gh-1109 split this out of `_unseedable_required`, which returned one list
+    for two situations that are not the same question:
+
+    * ``"none"`` — there is **no value at all**. A ``path`` (gh-515) jm cannot
+      invent an existing filesystem path for; a ``bytes`` opaque blob (gh-565)
+      whose decode rejects an empty buffer; a ``capsule`` handle (gh-790) that
+      belongs to another module. These render as the ``...`` sentinel, which
+      is not a call anyone could make.
+    * ``"zero"`` — there **is** a seed, the type's zero, and a *validating*
+      constructor is expected to reject it (gh-273). The call is well-formed;
+      whether it succeeds is a fact about C jm has not read.
+
+    A ``path`` is always required regardless of the ``required`` flag, so the
+    flag is not consulted for it, and a capsule is recognised by its KEY, not
+    its type, since the type is the pointer's own spelling. Arrays are
+    excluded — they seed as ``np.zeros`` and are always positional.
+
+    gh-1105: an author-supplied ``example_value`` is exactly the value jm
+    could not invent, so it answers the question outright. Checked first.
+    """
+    if len(p) > 14 and p[14]:
+        return ""
+    if str(p[1]) in ("path", "bytes") or (len(p) > 10 and p[10]):
+        return "none"
+    if (
+        len(p) > 8
+        and p[8]  # required
+        and not (len(p) > 2 and p[2])  # no default
+        and not str(p[1]).endswith("[]")  # scalar
+    ):
+        return "zero"
+    return ""
+
+
 def _unseedable_required(init_params: list) -> list:
     """Names of init-params jm cannot seed a generated construction with.
 
-    Two kinds qualify:
-
-    * a ``required`` scalar carrying no default (gh-273) — a validating
-      constructor would reject the type's zero;
-    * a ``path`` param (gh-515) — jm cannot invent a filesystem path that
-      exists, and a path is always required regardless of the ``required``
-      flag, so the flag is not consulted for it;
-    * a ``capsule`` param (gh-790) — the handle belongs to another module, so
-      there is nothing jm could construct one from. Recognised by the KEY, not
-      the type, since the type is the pointer's own spelling.
-
-    Either way there is no value jm can put in a generated smoke test or
-    doctest. Arrays are excluded (they seed as ``np.zeros`` and are always
-    positional). Returns the names in declaration order (empty when the
-    constructor is fully seedable)."""
-    return [
-        p[0]
-        for p in init_params
-        # gh-1105: an author-supplied `example_value` is exactly the value jm
-        # could not invent, so the param stops being unseedable. Checked first
-        # because it answers the question this whole predicate asks.
-        if not (len(p) > 14 and p[14])
-        and (
-            str(p[1]) == "path"
-            or str(p[1]) == "bytes"  # gh-565: opaque blob has no seed value
-            or (len(p) > 10 and p[10])  # gh-790: a foreign capsule handle
-            or (
-                len(p) > 8
-                and p[8]  # required
-                and not (len(p) > 2 and p[2])  # no default
-                and not str(p[1]).endswith("[]")  # scalar
-            )
-        )
-    ]
+    Both kinds `_seed_problem` distinguishes, in declaration order (empty when
+    the constructor is fully seedable). This is the predicate the *docs* use —
+    the ``Examples`` block and the ``.pyi`` — where the distinction does not
+    help: a doctest is executable prose with nowhere to put a fallback, so a
+    seed that might be rejected is as unusable as no seed at all. Only the
+    generated tests, which can attempt a call and degrade, care which it is.
+    """
+    return [p[0] for p in init_params if _seed_problem(p)]
 
 
-def _ctor_seed_slots(component: str, init_params: list) -> dict:
+def _seedless_required(init_params: list) -> list:
+    """The subset with no seed value at all — `_seed_problem` == ``"none"``."""
+    return [p[0] for p in init_params if _seed_problem(p) == "none"]
+
+
+def _ctor_seed_slots(
+    component: str,
+    init_params: list,
+    Component: str = "",
+    py_create_args: str = "",
+) -> dict:
     """Smoke-test slots that depend on whether the constructor can be seeded.
 
     A ``required`` scalar init-param with no default (gh-266) has no value jm
@@ -1708,14 +1729,41 @@ def _ctor_seed_slots(component: str, init_params: list) -> dict:
     feature is most useful for exactly such params, so jm must not assert a
     construction it cannot validly seed.
 
-    When such a param exists the generated tests *defer* instead of asserting:
+    When such a param exists the generated tests *defer* instead of asserting.
+    gh-1109 is about **when** they decide to, and the two faces disagreed:
 
-    - ``obj_null_check`` — the C smoke treats a NULL return as a skip (prints a
-      note and returns 0) rather than ``CHECK(obj != NULL)``; if the constructor
-      happens to accept the zero seed the rest of the smoke still runs;
-    - ``pytest_class_skip`` / ``pytest_module_skip`` — the pytest case is skipped
-      (a ``setUp`` ``skipTest`` for the unittest-style file, a module
-      ``pytestmark`` for the pure-pytest file) with a note to pass valid args.
+    - ``obj_null_check`` — the C smoke has always been optimistic. It makes the
+      zero-seeded call and treats a NULL return as a skip (prints a note and
+      returns 0) rather than ``CHECK(obj != NULL)``. If the constructor accepts
+      the seed, the rest of the smoke runs and asserts.
+    - ``pytest_class_skip`` / ``pytest_module_skip`` — the Python side skipped
+      **unconditionally**, at render time, without ever attempting the call.
+
+    That asymmetry was the whole of gh-1109. The suppression was justified as
+    jm being conservative about a ``_core.c`` it deliberately never reads — but
+    jm *wrote* that ``_core.c``, and its scaffolded ``create()`` ignores the
+    parameter and never validates, so on day one the construction works and the
+    suite skips anyway. The issue framed the alternative as reading ``_core.c``
+    to find out, and rejected it for three good reasons: jm does not read C,
+    the generated test files are create-only so the answer would be frozen at
+    scaffold time, and an inference that goes stale trades a skip for a red
+    suite (gh-1088, red on ``main`` for 14 runs).
+
+    All three objections are about deciding at RENDER time. None of them apply
+    to the C smoke, which decides at *runtime* — so that was the option the
+    Python side was missing, not one it had considered and rejected. The pytest
+    now attempts the seeded construction once and skips only if it raises,
+    carrying the constructor's own message. Nothing is inferred, nothing is
+    frozen, and an author who adds validation later gets a skip on the next run
+    instead of a failure.
+
+    Only for the ``"zero"`` kind. A ``path``/``bytes``/``capsule`` param has no
+    seed at all — it renders as the ``...`` sentinel, which is not a call worth
+    attempting — so those keep the unconditional skip.
+
+    ``TypeError`` is deliberately NOT caught. A validating constructor raises
+    about a *value*; a ``TypeError`` means jm seeded a call its own generated
+    signature does not accept, which is a generator bug and must stay loud.
 
     Without an unseedable param every slot is its historic value, so existing
     output is byte-identical.
@@ -1748,12 +1796,89 @@ def _ctor_seed_slots(component: str, init_params: list) -> dict:
             "        return 0;\n"
             "    }"
         ),
-        "pytest_class_skip": (
-            f'    def setUp(self):\n        self.skipTest("{msg}")\n\n'
+        **_pytest_skip_slots(
+            msg,
+            names,
+            Component,
+            py_create_args,
+            _seedless_required(init_params),
         ),
-        "pytest_module_skip": (
-            f'pytestmark = pytest.mark.skip(reason="{msg}")\n'
-        ),
+    }
+
+
+#: The unittest-style probe. `setUpClass` runs it once per class and records
+#: the reason; `setUp` is what actually skips, so an author adding a method
+#: gets the same treatment without repeating the try/except.
+_PROBE_CLASS = """\
+    @classmethod
+    def setUpClass(cls):
+{why}        try:
+            {call}
+        except TypeError:
+            raise  # a seeded call the signature rejects is a jm bug
+        except Exception as exc:
+            cls._jm_skip = "{msg}: " + str(exc)
+        else:
+            cls._jm_skip = ""
+
+    def setUp(self):
+        if self._jm_skip:
+            self.skipTest(self._jm_skip)
+
+"""
+
+#: The pure-pytest form. Module scope, because `pytestmark` is read at
+#: collection time and there is no class to hang a fixture on.
+_PROBE_MODULE = """\
+try:
+    {call}
+except TypeError:
+    raise  # a seeded call the signature rejects is a jm bug
+except Exception as _jm_exc:
+    pytestmark = pytest.mark.skip(reason="{msg}: " + str(_jm_exc))
+"""
+
+
+def _pytest_skip_slots(
+    msg: str,
+    names: str,
+    Component: str,
+    py_create_args: str,
+    seedless: list,
+) -> dict:
+    """The two pytest slots, deciding at runtime wherever that is possible.
+
+    See `_ctor_seed_slots` for why. The unconditional form is kept for the
+    cases where there is nothing to attempt: a ``path``/``bytes``/``capsule``
+    param (no seed exists at all), a ``...`` anywhere in the rendered call, or
+    a caller that supplied no class name — a probe built from a blank is a call
+    to nothing, and skipping for the stated reason beats raising a confusing
+    one somewhere else.
+    """
+    if seedless or not Component or "..." in py_create_args:
+        return {
+            "pytest_class_skip": (
+                f'    def setUp(self):\n        self.skipTest("{msg}")\n\n'
+            ),
+            "pytest_module_skip": (
+                f'pytestmark = pytest.mark.skip(reason="{msg}")\n'
+            ),
+        }
+    call = f"{Component}({py_create_args})"
+    why = "".join(
+        f"        # {line}\n"
+        for line in (
+            f"{names}: required with no default, so every call below is",
+            "seeded with the type's zero. Whether your create() accepts it",
+            "is a fact about C, which jm does not read -- so this asks,",
+            "rather than assuming either answer. One probe; the suite skips",
+            "only if it is rejected. The C smoke beside this file has always",
+            "worked this way.",
+        )
+    )
+    return {
+        "pytest_class_skip": _PROBE_CLASS.format(why=why, call=call, msg=msg),
+        "pytest_module_skip": _PROBE_MODULE.format(call=call, msg=msg),
     }
 
 
@@ -2239,7 +2364,14 @@ def make_state_ctx(
         base["state_struct_def"] = _state_struct_def(
             component, base["state_struct_fields"] + "\n", opaque_state
         )
-        base.update(_ctor_seed_slots(component, list(init_params)))
+        base.update(
+            _ctor_seed_slots(
+                component,
+                list(init_params),
+                Component,
+                base.get("py_create_args", ""),
+            )
+        )
         return _apply_no_reset(base, no_reset)
 
     if roles is None:
@@ -3156,6 +3288,13 @@ def make_state_ctx(
             _stale = f"{_ind}obj = {Component}()"
             if _v.startswith(_stale):
                 result[_k] = f"{_ind}obj = {_ctor_call}" + _v[len(_stale) :]
-    result.update(_ctor_seed_slots(component, list(init_params)))
+    result.update(
+        _ctor_seed_slots(
+            component,
+            list(init_params),
+            Component,
+            result.get("py_create_args", ""),
+        )
+    )
     result.update(_reset_wrapper_slots(component))
     return _apply_no_reset(result, no_reset)
