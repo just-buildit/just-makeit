@@ -361,10 +361,11 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
     unchanged: a C test or benchmark that wants to assert the state really is
     shared can only reach a signature jm owns by writing a second copy of it.
 
-    One call decides whether this file exists, and `_apply`'s glue list is
-    gated on the same call — a list there that disagreed with what
-    ``materialize`` wrote is how gh-942's enumerated shapes went missing one
-    at a time.
+    One call decides whether this file exists, and every writer of it is
+    gated on that call: the two scaffold writers here, and — since gh-1140 —
+    `_apply._render_procglobal_headers`, which re-renders it from the whole
+    manifest on every `apply` so that `status` compares it and a stale owner
+    macro cannot outlive the release that fixed it.
     """
     if not (is_process_global(cfg, comp) if declared is None else declared):
         return ""

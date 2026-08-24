@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` maintains `<comp>_procglobal.h`, and `jm status` compares it
+    (gh-1140).** `_procglobal.render_header` had exactly two callers, both on
+    the scaffolding path, so the file was written once and never afterwards —
+    while three separate comments in the source said `apply`'s glue list was
+    gated on the same call. There was no such entry.
+
+    The cost landed one release later. gh-1134 corrected the module path a
+    process-global rendezvous imports; `apply` carried the fix into every
+    generated `_ext.c` and left the copy of that same path in the header
+    naming the package. A `no_generate` module — the case gh-1128 published
+    the header *for*, since a hand-written binding cannot read those names
+    out of another module's generated C — then adopted through the stale
+    macro and failed at import exactly as before. Measured in doppler at
+    0.67.2: the generated modules imported, the two hand-written ones raised
+    `AttributeError` on the capsule attribute, and the suite took 100
+    collection errors under a pin bump whose entire subject was that line.
+
+    The header now reconciles from the manifest like any other glue, so a
+    stale one is rewritten, a clobbered one is restored, and `--check` fails
+    on either. It has no author-owned half — three `#define`s and two
+    prototypes over names jm invents — which is what makes overwriting it
+    safe and its `DO NOT EDIT` banner true.
+
+    The second half of the issue is why the first survived a release: a
+    generated file that `apply` will not restore and `status` will not compare
+    is one no gate is holding, and clobbering it outright reported clean. The
+    new gate is not "is this header compared" — it clobbers **every** file in
+    a scaffolded project and demands `status` notice, with a named exemption
+    for the files whose content is the author's. A file jm learns to generate
+    is covered the day it is generated, with no list to update. It found
+    gh-1141 on its first run.
+
 ## [0.67.2] — 2026-08-24
 
 ### Added
