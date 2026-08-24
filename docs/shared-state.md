@@ -118,6 +118,15 @@ flag_state_adopt(PyCapsule_GetPointer(cap, FLAG_PG_CAPSULE));
 
 (error handling omitted — every pointer there can be `NULL`).
 
+Use the macros rather than the strings they expand to. `jm apply` rewrites
+this header from the manifest on every run and `jm status --check` compares
+it, so the names follow the project: rename the owning module, move it into a
+package, and the adopt above keeps working. gh-1140 is what that sentence is
+worth — the header was written once at scaffold time and never maintained, so
+a correction to `FLAG_PG_OWNER` reached every generated binding and not the
+one file a hand-written binding reads, and the `no_generate` modules this
+section is addressed to failed at import while every generated module loaded.
+
 `FLAG_PG_OWNER` names the **extension module**, not the package —
 jm's layout is `<pkg>/<mod>/<mod>.so` behind a re-exporting
 `__init__.py`, and the capsule is published on the `.so`'s own module

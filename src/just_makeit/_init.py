@@ -1186,13 +1186,16 @@ def run(
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
 
     # gh-1117: the process-global contract header, when the component declares
-    # `process_global`. Generated (never hand-edited) and rewritten on every
-    # apply, unlike the sacred `_core.h` above -- the two accessors it
-    # declares are jm's to name and the author's to implement.
+    # `process_global`. Generated (never hand-edited), unlike the sacred
+    # `_core.h` above -- the two accessors it declares are jm's to name and
+    # the author's to implement.
     #
-    # One call decides whether the file exists, and `_apply`'s glue list is
-    # gated on the SAME call: a list there that disagreed with what this
-    # writes is how gh-942's enumerated shapes went missing one at a time.
+    # gh-1140: this comment used to say the file was "rewritten on every
+    # apply", and that `_apply`'s glue list was gated on the same call. Both
+    # halves were false -- `apply` had no such entry, so the file was written
+    # here once and never maintained, and gh-1134's fix reached the generated
+    # bindings while the copy of that same import path in this header stayed
+    # stale. `_apply._reconcile_procglobal_headers` is what makes it true.
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
         _write(root / "native" / "inc" / _procglobal.header_name(comp), _pg_h)

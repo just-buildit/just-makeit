@@ -1772,6 +1772,84 @@ def _sync_aggregates(
         if _inject_decls_into_core_h(core_h, comp, decls, skip_names=names):
             updated.append(core_h)
 
+    updated += _reconcile_procglobal_headers(
+        temp_root,
+        root,
+        cfg,
+        only_mod=only_mod,
+        only_comp=only_comp,
+        honor_status_allow=honor_status_allow,
+    )
+
+    return updated
+
+
+def _reconcile_procglobal_headers(
+    temp_root: Path,
+    root: Path,
+    cfg: dict,
+    *,
+    only_mod: str | None = None,
+    only_comp: str | None = None,
+    honor_status_allow: bool = True,
+) -> list[Path]:
+    """Rewrite each declared ``<comp>_procglobal.h`` from the manifest.
+
+    gh-1140. `_procglobal.render_header` had exactly two callers, both on the
+    scaffolding path (`_init.run`, `_object.run`), so the file was written
+    once and never maintained. Both of them, and `render_header` itself, said
+    in a comment that `apply`'s glue list was gated on the same call — the
+    list did not exist. The cost was measured in doppler: gh-1134 corrected
+    the import path the rendezvous uses, `apply` carried the fix into every
+    generated ``_ext.c``, and the copy of that same path in this header stayed
+    as it was. A ``no_generate`` module — the case gh-1128 published the
+    header *for* — then adopted through the stale macro and failed at import
+    exactly as before, for 100 collection errors under a pin bump whose whole
+    subject was that line.
+
+    Reconciled from the replayed tree, like the composer's ``_bridge.h``
+    (gh-998) and for the same reason: the two scaffold writers are the one
+    place that decides this file's bytes, so a second renderer here is a peer
+    implementation waiting to drift from them.
+
+    That the replay's render is the *finished* one is an assumption, and it is
+    checked rather than defended against — `TestApplyMaintainsTheHeader`
+    compares what `apply` leaves on disk against `render_header` over the
+    project's own manifest, so a scaffold-time render that turned out to be
+    partial would be named by a failing test instead of quietly papered over
+    by a third writer. Measured before relying on it: over every `apply`,
+    `status` and process-global test in the suite, the replay's bytes and the
+    whole-manifest render were identical every time.
+
+    The file has no hand-owned half to preserve — three ``#define``s and two
+    prototypes over names jm invents — so it is overwritten outright, which is
+    what makes its ``DO NOT EDIT`` banner true. ``status_allow`` is honoured
+    like any other glue: a project that has taken the file over keeps it.
+
+    A component that *stops* declaring ``process_global`` has no header in the
+    replayed tree, so this skips it and the one on disk is left untouched — jm
+    does not delete files on `apply`, and the stale prototypes still compile
+    against the accessors the author wrote. That is gh-1142.
+    """
+    updated: list[Path] = []
+    for comp in C.components(cfg):
+        if only_comp is not None:
+            if comp != only_comp:
+                continue
+        elif only_mod is not None:
+            if comp not in C.module_objects(cfg, only_mod):
+                continue
+        rel = f"native/inc/{_procglobal.header_name(comp)}"
+        if not (temp_root / rel).is_file():
+            continue
+        if _overwrite_if_changed(
+            root / rel,
+            temp_root / rel,
+            cfg,
+            rel=rel,
+            honor_status_allow=honor_status_allow,
+        ):
+            updated.append(root / rel)
     return updated
 
 
