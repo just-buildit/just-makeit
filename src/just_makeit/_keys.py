@@ -362,6 +362,191 @@ FUNCTION_PARAM_KEYS = frozenset(
 
 #: Kind -> its recognised keys. The kind names are what a warning prints, so
 #: they read as the thing the author wrote in the manifest.
+# --- `kind`-bearing module tables (gh-1114) ---------------------------------
+#
+# A handle / capsule / composer module was checked by NOTHING: `unknown_keys`
+# skipped it outright, so a key from the wrong face and an outright typo both
+# reported clean and both did nothing. That silence is what made gh-1111 hard
+# to see from outside -- three keys written, one honoured, no warning.
+#
+# **These vocabularies were validated by running, not by reading.** Assembling
+# them from the code alone is not reliable: `error_message` is valid on a
+# handle method and is read in `_context/_diagnostics`, so it escapes any grep
+# of the three generator files, and the docs' own key tables are partial. What
+# makes them trustworthy is that the checker runs over doppler's real manifest,
+# every bundled example and the whole test suite with zero findings -- a gate
+# keeps that true.
+#
+# The per-KIND split is load-bearing rather than tidy: a capsule or composer
+# method legitimately spells its signature `arg_type` / `return_type`, and a
+# handle method spells it `args` / `returns`. One shared set would have to
+# accept all four and would then miss the most likely mistake on either face.
+
+_SHARED_MODULE_KEYS = frozenset(
+    {
+        "kind",
+        "backing",
+        "package",
+        "header",
+        "depends_on",
+        "extra_link_libs",
+        "extra_include_dirs",
+        "extra_types",
+        "doc",
+        "no_generate",
+        "reexports",
+        "capsule_name",
+        "functions",
+        "functions_in_core",
+        "serializable",
+        "optional_backend",
+        "init_params",
+        "methods",
+        "properties",
+        "enums",
+    }
+)
+
+HANDLE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
+    "handle_type",
+    "type_name",
+    "create_fn",
+    "init_fn",
+    "create_args",
+    "create_post",
+    "create_error",
+    "create_error_message",
+    "close_fn",
+    "close_returns",
+    "context_manager",
+    "getters",
+    "factories",
+    "capsule",
+}
+CAPSULE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
+    "create_fn",
+    "destroy_fn",
+    "create_error",
+    "create_error_message",
+    "type_name",
+    "getters",
+}
+COMPOSER_MODULE_KEYS = _SHARED_MODULE_KEYS | {
+    "composer",
+    "composes",
+    "sample_type",
+    "source",
+    "segment",
+    "timeline",
+    "oo",
+    "json",
+    "cli",
+    "serializers",
+    "getters",
+    "type_name",
+    "create_fn",
+    "stream",
+    "generator",
+    "flat_sources",
+}
+
+#: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.
+HANDLE_METHOD_KEYS = frozenset(
+    {
+        "name",
+        "fn",
+        "returns",
+        "nogil",
+        "args",
+        "error",
+        "error_message",
+        "out_len_fn",
+        "doc",
+    }
+)
+#: A capsule / composer method: the OBJECT spelling of a signature.
+CC_METHOD_KEYS = frozenset(
+    {
+        "name",
+        "fn",
+        "arg_type",
+        "return_type",
+        "caller_out",
+        "nogil",
+        "doc",
+        "args",
+        "returns",
+    }
+)
+KIND_GETTER_KEYS = frozenset({"fn", "out", "cache", "fields", "doc"})
+KIND_GETTER_FIELD_KEYS = frozenset(
+    {
+        "name",
+        "from",
+        "type",
+        "enum",
+        "scale",
+        "expr",
+        "getter",
+        "writable_fn",
+        "writable",
+        "doc",
+    }
+)
+KIND_FACTORY_KEYS = frozenset({"name", "create_fn", "init_params", "doc"})
+KIND_CREATE_ARG_KEYS = frozenset(
+    {"name", "type", "enum", "default", "kwonly", "capsule", "header", "doc"}
+)
+KIND_CREATE_POST_KEYS = frozenset({"fn", "when", "arg"})
+KIND_METHOD_ARG_KEYS = frozenset(
+    {"name", "type", "default", "writable", "enum", "capsule", "kwonly"}
+)
+KIND_DEPENDS_ON_KEYS = frozenset({"name", "link", "test_only"})
+KIND_PROPERTY_KEYS = frozenset(
+    {"name", "type", "writable", "doc", "enum", "getter", "setter", "fn"}
+)
+KIND_SERIALIZER_KEYS = frozenset(
+    {"name", "fn", "header", "params", "returns", "doc"}
+)
+KIND_INIT_PARAM_KEYS = frozenset(
+    {"name", "type", "default", "enum", "capsule", "header", "doc", "kwonly"}
+)
+
+#: (kind, sub-table) -> the `KIND_KEYS` entry that validates its rows. A table
+#: absent from here is not walked, which is why `_kind_tables` reports one it
+#: does not know rather than passing it silently -- an unwalked table is the
+#: state this whole issue is about.
+KIND_TABLE_VOCAB = {
+    ("handle", "methods"): "handle method",
+    ("capsule", "methods"): "capsule method",
+    ("composer", "methods"): "composer method",
+    ("handle", "getters"): "kind getter",
+    ("capsule", "getters"): "kind getter",
+    ("composer", "getters"): "kind getter",
+    ("handle", "factories"): "kind factory",
+    ("handle", "create_args"): "kind create_arg",
+    ("handle", "create_post"): "kind create_post",
+    ("handle", "properties"): "kind property",
+    ("capsule", "properties"): "kind property",
+    ("composer", "properties"): "kind property",
+    ("handle", "init_params"): "kind init_param",
+    ("capsule", "init_params"): "kind init_param",
+    ("composer", "init_params"): "kind init_param",
+    ("composer", "serializers"): "kind serializer",
+    # A `kind`-bearing module may also carry module-level free functions,
+    # and they are the SAME shape as a plain module's -- so they reuse the
+    # object face's vocabulary rather than getting a near-copy. Found by
+    # running the checker over the suite: without this the table had no
+    # vocabulary and was reported as an unknown key on two real projects.
+    ("handle", "functions"): "function",
+    ("capsule", "functions"): "function",
+    ("composer", "functions"): "function",
+    ("handle", "depends_on"): "kind depends_on",
+    ("capsule", "depends_on"): "kind depends_on",
+    ("composer", "depends_on"): "kind depends_on",
+}
+
+
 KIND_KEYS: dict[str, frozenset] = {
     "object": OBJECT_KEYS,
     "state": STATE_KEYS,
@@ -372,6 +557,26 @@ KIND_KEYS: dict[str, frozenset] = {
     "property": PROPERTY_KEYS,
     "function": FUNCTION_KEYS,
     "function param": FUNCTION_PARAM_KEYS,
+    # gh-1114: the `kind`-bearing module faces. Registered here so `_check`
+    # and `Unknown.valid_for` treat them exactly like every other table --
+    # a key written on the wrong face is then named as belonging to the
+    # right one, which is the whole point.
+    "handle module": HANDLE_MODULE_KEYS,
+    "capsule module": CAPSULE_MODULE_KEYS,
+    "composer module": COMPOSER_MODULE_KEYS,
+    "handle method": HANDLE_METHOD_KEYS,
+    "capsule method": CC_METHOD_KEYS,
+    "composer method": CC_METHOD_KEYS,
+    "kind getter": KIND_GETTER_KEYS,
+    "kind getter field": KIND_GETTER_FIELD_KEYS,
+    "kind factory": KIND_FACTORY_KEYS,
+    "kind create_arg": KIND_CREATE_ARG_KEYS,
+    "kind create_post": KIND_CREATE_POST_KEYS,
+    "kind method arg": KIND_METHOD_ARG_KEYS,
+    "kind depends_on": KIND_DEPENDS_ON_KEYS,
+    "kind property": KIND_PROPERTY_KEYS,
+    "kind serializer": KIND_SERIALIZER_KEYS,
+    "kind init_param": KIND_INIT_PARAM_KEYS,
 }
 
 
@@ -394,6 +599,30 @@ HINTS: dict[tuple[str, str], str] = {
     ),
     ("init_param", "create_error_message"): (
         "declare it on the `[<object>]` table, beside `create_error`"
+    ),
+    # gh-1114. The confusions the two faces invite, each naming the spelling
+    # that works here. `status_return` is the one gh-1111 was reported with:
+    # written beside a working `error`, it read as if it did something.
+    ("handle method", "status_return"): (
+        'this face spells it `error = "<Exception>"` over an `int` '
+        "`returns` — a non-zero return then raises"
+    ),
+    ("handle method", "error_negative"): (
+        "a handle method has one status shape: `error` over an `int` "
+        "`returns`, which treats any non-zero return as the failure"
+    ),
+    ("handle method", "arg_type"): (
+        "a handle method declares its arguments as `args = [{ name = ..., "
+        "type = ... }]`"
+    ),
+    ("handle method", "return_type"): ("a handle method spells it `returns`"),
+    ("capsule method", "args"): (
+        "a capsule/composer method declares one `arg_type` / `return_type` "
+        "pair, not an argument list"
+    ),
+    ("composer method", "args"): (
+        "a capsule/composer method declares one `arg_type` / `return_type` "
+        "pair, not an argument list"
     ),
 }
 
@@ -436,6 +665,11 @@ class Unknown:
             head += (
                 f"; jm does not read it on a {self.kind}, so it has no effect"
             )
+        elif self.kind == "unwalked sub-table":
+            head = (
+                f"{self.where}: sub-table `{self.key}` has no key vocabulary,"
+                " so nothing inside it is checked (gh-1114)"
+            )
         else:
             head += " — jm does not read it anywhere, so it has no effect"
         return head
@@ -469,6 +703,56 @@ def _entries(table: dict, key: str) -> list:
     if not isinstance(value, list):
         return []
     return [e for e in value if isinstance(e, dict)]
+
+
+def _check_kind_module(mod: str, data: dict) -> list:
+    """Collect the unrecognised keys of one ``kind``-bearing module (gh-1114).
+
+    Sub-tables are walked only when their rows are TABLES. ``composes`` and
+    ``extra_link_libs`` are arrays of plain strings, and treating any list as
+    a sub-table reported both of doppler's as unknown tables -- found by
+    running this over doppler rather than over a manifest jm wrote itself,
+    which is the same way the guard in `_procglobal` was found.
+
+    A sub-table jm has no vocabulary for is reported rather than skipped. An
+    unwalked table is precisely the state this issue is about, so it must not
+    be reachable by simply adding one.
+    """
+    kind = str(data.get("kind"))
+    if f"{kind} module" not in KIND_KEYS:
+        return []  # not a kind jm generates; nothing to say about it
+    found = _check(f"{kind} module", mod, data)
+    for tbl, rows in data.items():
+        if not isinstance(rows, list) or not any(
+            isinstance(r, dict) for r in rows
+        ):
+            continue
+        vocab = KIND_TABLE_VOCAB.get((kind, tbl))
+        if vocab is None:
+            # NOT "unknown key" -- the key may be perfectly valid; what is
+            # missing is a vocabulary for its ROWS, so everything inside it
+            # is unchecked. That is the state this whole issue is about, so
+            # it is reported rather than skipped: adding a sub-table must not
+            # be a way back into the silence.
+            found.append(Unknown("unwalked sub-table", mod, tbl, ()))
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            where = f"{mod}.{tbl}[{row.get('name', row.get('fn', '?'))}]"
+            found += _check(vocab, where, row)
+            # Nested inline-table arrays: a method's `args`, a getter's
+            # `fields`. They carry the shapes most likely to be typo'd.
+            for nested, nvocab in (
+                ("args", "kind method arg"),
+                ("fields", "kind getter field"),
+                ("init_params", "kind init_param"),
+                ("params", "function param"),
+            ):
+                for item in row.get(nested, []) or []:
+                    if isinstance(item, dict):
+                        found += _check(nvocab, f"{where}.{nested}", item)
+    return found
 
 
 def unknown_keys(cfg: dict) -> list:
@@ -525,8 +809,12 @@ def unknown_keys(cfg: dict) -> list:
             for p in _entries(entry, "params") + _entries(entry, "extra_args"):
                 found += _check("param", f"{where}({p.get('name', '?')})", p)
     for mod, data in (cfg.get("module") or {}).items():
-        if not isinstance(data, dict) or data.get("kind"):
-            # A handle/composer/capsule module has its own vocabulary.
+        if not isinstance(data, dict):
+            continue
+        if data.get("kind"):
+            # gh-1114: it has its own vocabulary -- which is now written down,
+            # so it is checked against that rather than skipped.
+            found += _check_kind_module(mod, data)
             continue
         for entry in _entries(data, "functions"):
             where = f"{mod}.{entry.get('name', '?')}"
