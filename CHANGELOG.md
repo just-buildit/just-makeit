@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.68.0] — 2026-08-24
+
 ### Added
 
 - **`jm status` reports a process-global contract header left behind by a
