@@ -661,6 +661,45 @@ def _core_h_decl_lines(text: str) -> "list[str]":
     ]
 
 
+def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
+    """Add ``#include "<comp>/<comp>_core.h"`` to the umbrella header.
+
+    One inserter for every caller, because there were three and they agreed
+    only by accident. `_init.run` and `_object.run` both anchored on the
+    literal ``#ifdef __cplusplus\n}\n#endif\n\n#endif`` — the umbrella's
+    `extern "C"` close — while `_apply._add_umbrella_include` inserted before
+    the last ``#endif``.
+
+    gh-1148 removed that `extern "C"` block (it wrapped the component
+    includes, which made this the one generated header a C++ TU could not
+    include), and both string anchors stopped matching. A `str.replace` with
+    no match returns the text unchanged and writes it back, so the scaffold
+    reported success and silently emitted an umbrella including nothing —
+    gh-975's failure mode, reproduced exactly by the change that removed the
+    anchor.
+
+    Inserting before the final ``#endif`` is what the third caller already
+    did, and it depends on the include guard rather than on a block that
+    turned out to be removable.
+
+    Returns True when the file was written.
+    """
+    if not umbrella.exists():
+        return False
+    text = umbrella.read_text(encoding="utf-8")
+    include_line = f'#include "{comp}/{comp}_core.h"\n'
+    if include_line in text:
+        return False
+    last_endif = text.rfind("#endif")
+    if last_endif == -1:
+        return False
+    umbrella.write_text(
+        text[:last_endif] + include_line + "\n" + text[last_endif:],
+        encoding="utf-8",
+    )
+    return True
+
+
 def _param_headers_at_create(
     cfg: dict, component: str, init_params: "list[tuple]"
 ) -> "list[str]":
@@ -1263,17 +1302,9 @@ def run(
 
         # Write or update the umbrella header
         umbrella = root / "native" / "inc" / f"{pkg}.h"
-        include_line = f'#include "{comp}/{comp}_core.h"\n'
         if not umbrella.exists():
             _write(umbrella, R.render(R.UMBRELLA_H, ctx))
-        umbrella_text = umbrella.read_text(encoding="utf-8")
-        if include_line not in umbrella_text:
-            # Insert before the closing #endif
-            umbrella_text = umbrella_text.replace(
-                "#ifdef __cplusplus\n}\n#endif\n\n#endif",
-                f"{include_line}\n#ifdef __cplusplus\n}}\n#endif\n\n#endif",
-            )
-            umbrella.write_text(umbrella_text, encoding="utf-8")
+        if insert_umbrella_include(umbrella, comp):
             print(f"  update  {umbrella}")
 
         # Insert add_subdirectory + target_sources into the `# ── Components`
