@@ -1,5 +1,29 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A handle method now has a runtime `__doc__` (gh-1113).** Every
+    author-declared method registered with a `NULL` `ml_doc`, so
+    `help(Sink.drain)` was empty on **every** handle module — while the `.pyi`
+    beside it carried the vendored header's full numpy prose, derived in the
+    same render pass from the same block. `render_ext` did not take
+    `doc_blocks` at all, so the prose never reached the C. jm's own `close`
+    was the only member with a docstring.
+
+    The face that was missing is the one a person reads: a `.pyi` serves the
+    type checker and the IDE hover; `help()` is what someone does with no IDE
+    open, in a notebook, or debugging a wheel.
+
+    The text comes from `render_runtime_doc`, which shares `_numpy_sections`
+    with the stub face, and the shape it documents comes from a new `py_face`
+    — the one shape chain `render_pyi` also reads, extracted rather than
+    copied, because a second copy of that chain has already cost this file two
+    defects (gh-1116, gh-1118).
+
+    Comparing the two faces turned up two more disagreements, both fixed here:
+    a handle method's manifest `doc =` was honoured at runtime and **dropped
+    from the stub**, and jm's own `close` carried different text on each side.
+
 ## [0.67.1] — 2026-08-24
 
 ### Added

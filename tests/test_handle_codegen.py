@@ -778,9 +778,14 @@ class TestWellFormedC:
             assert "}}" not in src, "doubled brace in generated C"
 
     def test_close_row_well_formed(self):
+        # gh-1113 gave `close` ONE text across both faces (`_handle.CLOSE_DOC`)
+        # -- it had said "close() -> None" in the method table and "Release the
+        # handle and free resources." in the stub, which the new parity test
+        # caught the moment it compared them. The shape this test is about
+        # (a flat, well-formed row) is unchanged.
         assert (
             '{"close", (PyCFunction)Ring_close, METH_NOARGS, '
-            '"close() -> None"},'
+            f'"{_handle.CLOSE_DOC}"}},'
         ) in _rsrc()
 
 
@@ -1109,10 +1114,12 @@ class TestMethodKwargs:
         assert 'static char *kwlist[] = {"on", NULL};' in s
         assert "int on = 1;" in s  # default
         assert 'PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist,' in s
-        # the method table registers keywords so on= works.
+        # the method table registers keywords so on= works. gh-1113 replaced
+        # the trailing NULL with a real `ml_doc`, so the assertion stops at
+        # the flags -- which is what this test was ever about.
         assert (
             '{"track_clipping", (PyCFunction)W_track_clipping, '
-            "METH_VARARGS | METH_KEYWORDS, NULL}" in s
+            "METH_VARARGS | METH_KEYWORDS," in s
         )
 
 
@@ -1192,10 +1199,12 @@ class TestStringArgAndLenArray:
         assert "wfm_plan_at(self->h, snr_raw, (uint64_t)seed_raw, _out)" in s
 
     def test_len_out_method_is_positional(self):
-        # shape (e) registers as plain METH_VARARGS (no keywords).
+        # shape (e) registers as plain METH_VARARGS (no keywords). The
+        # trailing NULL is gone since gh-1113 gave every method a real
+        # `ml_doc`; the flags are the claim here.
         s = _handle.render_ext(_plan_cfg(), "wfm_plan")
-        assert '{"render", (PyCFunction)Plan_render, METH_VARARGS, NULL}' in s
-        assert '{"at", (PyCFunction)Plan_at, METH_VARARGS, NULL}' in s
+        assert '{"render", (PyCFunction)Plan_render, METH_VARARGS,' in s
+        assert '{"at", (PyCFunction)Plan_at, METH_VARARGS,' in s
 
     def test_pyi_annotations(self):
         pyi = _handle.render_pyi(_plan_cfg(), "wfm_plan")
