@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.67.1] — 2026-08-24
+
 ### Added
 
 - **A `kind`-bearing module's keys are now checked (gh-1114).**
