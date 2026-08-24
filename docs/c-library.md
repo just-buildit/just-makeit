@@ -159,6 +159,49 @@ cmake --build build
 
 ______________________________________________________________________
 
+## Calling it from C++11
+
+Every generated header carries an `extern "C"` guard, so a C++ translation
+unit can include it and call the C core directly — the mixed case where some
+of your algorithms are C99 and some are C++11:
+
+```cpp
+#include "engine/engine_core.h"      // the same header your C code includes
+#include <vector>
+
+std::vector<float _Complex> xs;      // C99's type, in a C++11 container
+engine_state_t *o = engine_create(2.0);
+float _Complex y = engine_step(o, xs.at(0));
+engine_destroy(o);
+```
+
+Compile the C++ side with `-std=c++11` and link with the C++ driver (`g++` /
+`clang++`), which is what pulls in the C++ runtime. jm's core stays C: nothing
+about your project changes, and jm generates nothing extra.
+
+**The type crosses; C99's complex arithmetic does not.** `I`, `_Complex_I`,
+`creal()` and `cimag()` are C-only spellings — in C++ the same `<complex.h>`
+gives you `std::complex` instead. Build and inspect values with GNU's
+`__real__` / `__imag__`:
+
+```cpp
+float _Complex z;
+__real__ z = 3.0f;
+__imag__ z = 4.0f;
+```
+
+jm deliberately does **not** define `I` for C++: a macro named `I` collides
+with almost everything.
+
+`_Complex` in C++ is a GNU/Clang extension, so this needs GCC or Clang. MSVC
+cannot compile the C99 core either (see Prerequisites), so it is out on both
+sides rather than only this one.
+
+Implementing a component *in* C++ is a different thing and jm does not do it —
+see gh-1149.
+
+______________________________________________________________________
+
 ## Runtime loading (rpath)
 
 The installed `.so` is not automatically on the dynamic linker's search path

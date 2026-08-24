@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The `extern "C"` guards jm already emitted are no longer inert: every
+    generated header now compiles as C++11 (gh-1148).** `component_core.h`,
+    `module_core.h` and `umbrella.h` have always carried the guard. For the
+    default component shape it did not work — `clib_common.h` includes
+    `<complex.h>`, which in C99 defines `complex` as a macro for `_Complex`
+    and in C++ maps to `<complex>`, where `complex` is `std::complex` and the
+    macro does not exist. So `float complex x` in a prototype was a syntax
+    error and every complex-typed component's header was uncompilable from
+    C++ — which is most of them, `float _Complex` being the default
+    `arg_type`. A component with no complex in its surface compiled fine,
+    which is why nothing noticed.
+
+    Four lines in `clib_common.h` restore C99's spelling under `__cplusplus`.
+    What that buys is the mixed-language case: an author with C99 **and**
+    C++11 algorithms can include a jm component's header from their own C++
+    and call it. jm generates nothing new and learns no second language.
+
+    The type crosses the boundary; C99's complex *arithmetic* vocabulary does
+    not — `I`, `_Complex_I`, `creal()`, `cimag()` are C-only, and a C++ caller
+    uses GNU `__real__` / `__imag__`. jm deliberately does not define `I` for
+    C++, where a macro of that name collides with almost everything.
+
+    Gated by compiling every header under `native/inc` from a C++11 TU, and
+    by linking a C++11 caller against a C99-compiled core and running it —
+    compiling is not calling, and a header that parsed while the ABI
+    disagreed would pass the first check and fail the second.
+
+    `clib_common.h` is create-only, so an existing project keeps its copy and
+    `jm status` reports it `OUTDATED`; adopt it to get this.
+
+    Also corrected: the generated `README.md` listed MSVC as a supported
+    compiler while the generated `Makefile` forces the MinGW generator
+    *because* MSVC cannot compile C99 `float _Complex`. The README was wrong.
+
 ## [0.68.0] — 2026-08-24
 
 ### Added
