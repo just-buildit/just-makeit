@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+### Changed
+
+- **The generated pytest attempts the seeded construction instead of assuming
+    it fails (gh-1109).** A `required` init-param with no default has no value
+    jm can invent but the type's zero, and a *validating* constructor rejects
+    that — so jm suppressed the construction outright and the whole generated
+    class skipped, decided at render time from the declaration alone.
+
+    jm never reads `_core.c`, deliberately. But jm *wrote* that `_core.c`, and
+    its scaffolded `create()` ignores the parameter and never validates, so on
+    day one the construction works and the suite skips anyway.
+
+    The issue framed the alternative as reading `_core.c` to find out, and
+    rejected it for three reasons: jm does not read C; the generated test
+    files are create-only, so the answer would be frozen at scaffold time; and
+    an inference that goes stale trades a skip for a red suite. All three are
+    about deciding at **render** time — and the C smoke generated beside these
+    files has always decided at *runtime*, making the zero-seeded call and
+    treating NULL as a skip. That was the option the Python side was missing,
+    not one it had weighed.
+
+    So the pytest now does what the C smoke does: one probe, and it skips only
+    if the constructor rejects the seed, carrying that constructor's own
+    message. Measured on a built project — with jm's scaffolded `create()` the
+    suite runs 8 tests where it used to skip 8, and adding validation
+    afterwards to a file generated before it turns those into clean skips, not
+    failures.
+
+    `TypeError` is deliberately not caught: a validating constructor raises
+    about a value, so a `TypeError` means jm seeded a call its own generated
+    signature does not accept, which is a generator bug and stays loud.
+
+    Unchanged where there is nothing to attempt: a `path`, `bytes` or
+    `capsule` init-param has no seed at all and still skips unconditionally,
+    and the docstring `Examples` block — executable prose with nowhere to put
+    a fallback — still needs `example_value` (gh-1105).
+
 ## [0.67.3] — 2026-08-24
 
 ### Fixed

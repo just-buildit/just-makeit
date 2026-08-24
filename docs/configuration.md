@@ -560,17 +560,27 @@ for the full semantics.
 
 jm seeds a generated smoke test and doctest with the type's **zero**. For a
 constructor that *validates* — rejecting a zero rate, span or size — that is
-the one value it refuses, so jm suppresses the construction entirely and the
-whole generated class skips:
+the one value it refuses.
+
+Whether yours does is a fact about C, and jm does not read your `_core.c`. So
+the generated tests **ask** rather than assume (gh-1109): each makes the
+zero-seeded call once, and skips only if it is rejected, carrying your
+constructor's own message.
 
 ```
 SKIPPED: required constructor parameter(s) capacity, slots have no default;
-         seed valid arguments to enable this smoke test
+         seed valid arguments to enable this smoke test:
+         allocator_create returned NULL
 ```
 
-Skipping is safer than emitting a construction that cannot work, and it is not
-the end state: the project then ships a test suite that asserts nothing.
-`example_value` gives jm something valid to build with:
+The decision is made when the test **runs**, not when it is written, which is
+what makes it safe: adding validation to a `create()` whose tests were
+generated before you did turns them into skips on the next run, never into
+failures. Until you add it, jm's own scaffolded `create()` ignores the
+parameter, so the suite runs and asserts.
+
+A skip is still a suite that asserts nothing, and that is what `example_value`
+is for — it gives jm something valid to build with:
 
 ```toml
 [[allocator.init_params]]
@@ -585,6 +595,13 @@ unchanged, and `Allocator()` is still a `TypeError` — which matters, because a
 validating constructor is usually one you *want* to be mandatory. One
 declaration feeds the generated pytest, the generated C smoke test and the
 docstring examples, so both faces exercise the same construction.
+
+It is also the only answer for the **docstring examples**, which have no
+runtime probe available to them: a doctest is executable prose with nowhere to
+put a fallback, so the `Examples` block stays suppressed until a value jm can
+show is declared. The same is true of an init-param with no seed at all — a
+`path`, a `bytes` blob, a `capsule` handle — where there is no call to attempt
+and the generated tests skip unconditionally.
 
 **It takes effect when the object is created.** The generated test files are
 create-only — jm writes them once and never rewrites them — so adding
