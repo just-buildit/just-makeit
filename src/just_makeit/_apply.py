@@ -2512,6 +2512,20 @@ def run(
             indent="  ",
         )
 
+    # gh-1154: a manifest `doc` carrying more than one paragraph. The
+    # renderer drops the rest for a function and reflows it into prose for a
+    # method, both silently; this says so and names the header path, which
+    # already renders a complete numpy docstring from Doxygen.
+    from . import _docstring as _doc_mod
+
+    for _md in _doc_mod.manifest_docs_with_paragraphs(cfg):
+        _report.warn(
+            _doc_mod.manifest_doc_advice(_md),
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
     for obj in C.components(cfg):
         for name, m_dflt, h_dflt in _obj_mod.init_param_drift(cfg, root, obj):
             # Gating: `init_param_drift` is exactly what fills `status`'s
