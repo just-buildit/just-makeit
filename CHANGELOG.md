@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.69.0] — 2026-08-25
+
 ### Added
 
 - **`jm status` reports a manifest `doc` that is not a summary (gh-1154).**
@@ -62,8 +64,6 @@
     *flattens* it for a method — that is gh-1154, with the measurements. The
     limit is pinned by a passing test here, so the day it changes, the claim
     fails rather than going quietly stale.
-
-### Fixed
 
 - **The `extern "C"` guards jm already emitted are no longer inert: every
     generated header now compiles as C++11 (gh-1148).** `component_core.h`,
