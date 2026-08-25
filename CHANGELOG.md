@@ -2,6 +2,35 @@
 
 ### Fixed
 
+- **A `[[module.X.functions]]` `doc` survives the manifest round-trip
+    (gh-1153).** Giving a module function a multi-paragraph doc made
+    `jm apply` fail on its own re-serialisation:
+
+    ```
+    error: just-makeit generated a manifest it cannot read back:
+           Illegal character '\n'
+    ```
+
+    gh-844 collapsed four hand-rolled TOML escapers into one and wired the
+    object, method and property `doc` paths through it. This dumper was a
+    **fifth** and was missed, so it interpolated the value straight into
+    `doc = "..."` — where a newline is illegal, and so is an unescaped quote.
+    A module function's doc was the one prose value in the manifest that could
+    hold neither.
+
+    Nothing was ever corrupted: `_dump` self-checks with `tomllib` and refuses
+    to write, so this presented as jm rejecting a manifest it had just
+    produced. A good failure, and an unhelpful one.
+
+    **The manifest is all this fixes.** The motivation was carrying a
+    numpy-style `Parameters`/`Returns`/`Examples` block through to the
+    generated surface, and the renderer still drops it for a function and
+    *flattens* it for a method — that is gh-1154, with the measurements. The
+    limit is pinned by a passing test here, so the day it changes, the claim
+    fails rather than going quietly stale.
+
+### Fixed
+
 - **The `extern "C"` guards jm already emitted are no longer inert: every
     generated header now compiles as C++11 (gh-1148).** `component_core.h`,
     `module_core.h` and `umbrella.h` have always carried the guard. For the
