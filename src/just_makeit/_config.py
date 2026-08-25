@@ -5096,20 +5096,35 @@ def _dump(cfg: dict) -> str:
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{_module_key(mod)}.functions]]")
-            lines.append(f'name = "{fn["name"]}"')
+            # gh-1153: through the shared writers, not raw interpolation.
+            # gh-844 collapsed four hand-rolled escapers into one and wired
+            # the object, method and property `doc` paths through it; this
+            # block was a fifth and was missed, so a module function's `doc`
+            # was the one prose value in the manifest that could hold neither
+            # a newline nor a quote. It did not corrupt anything -- `_dump`
+            # self-checks with `tomllib` and refuses to write -- so it
+            # presented as jm rejecting a manifest it had just produced:
+            #
+            #     error: just-makeit generated a manifest it cannot read back:
+            #            Illegal character '\n'
+            #
+            # `_str_assign` also gives the `"""…"""` form, so a
+            # multi-paragraph numpy docstring (Parameters/Returns/Examples)
+            # is now expressible here, which is what the downstream needed.
+            lines.append(_str_assign("name", fn["name"]))
             if fn.get("doc"):
-                lines.append(f'doc = "{fn["doc"]}"')
+                lines.append(_doc_assign(fn["doc"]))
             if fn.get("return_type"):
-                lines.append(f'return_type = "{fn["return_type"]}"')
+                lines.append(_str_assign("return_type", fn["return_type"]))
             if fn.get("out_type"):
-                lines.append(f'out_type = "{fn["out_type"]}"')
+                lines.append(_str_assign("out_type", fn["out_type"]))
             if fn.get("variable_output"):
                 lines.append("variable_output = true")
             if fn.get("out_size"):
-                lines.append(f'out_size = "{fn["out_size"]}"')
+                lines.append(_str_assign("out_size", fn["out_size"]))
             if fn.get("max_results_param"):
                 lines.append(
-                    f'max_results_param = "{fn["max_results_param"]}"'
+                    _str_assign("max_results_param", fn["max_results_param"])
                 )
             if fn.get("result_fields"):
                 rf_parts = ", ".join(
