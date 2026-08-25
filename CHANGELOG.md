@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm status` reports a manifest `doc` that is not a summary (gh-1154).**
+    gh-1153 let a `[[module.X.functions]]` `doc` hold more than one paragraph;
+    the renderer still could not carry one, and failed differently on each
+    face without saying so. A module function's doc was **truncated** to its
+    first paragraph. An object, method or property doc was **flattened** — the
+    paragraphs joined into one, so a numpy heading and its `----------` rule
+    reflowed into prose, with jm's own generated `Parameters`/`Returns`
+    appended after the wreckage. That second one is worse: it renders as
+    nonsense and passed every gate.
+
+    **jm does not learn to accept author-written numpy, deliberately.** jm
+    *generates* those sections from the manifest, so an author block does not
+    merge with them — it duplicates them, which the flattened output already
+    demonstrated. Accepting one would add a second input dialect feeding one
+    renderer, beside the Doxygen dialect that already produces a complete
+    docstring.
+
+    So jm reports and names that path: `@brief`, prose, `@param`, `@return`
+    and `@code` above the declaration in the component's `_core.h` render to
+    summary + extended prose + `Parameters` + `Returns` + `Examples` with the
+    doctest, and survive `apply`. A test asserts that is true, because advice
+    that is not true is worse than none.
+
+    A `DOC` section under `jm status`, a `!` warning under `jm apply`, gating
+    `--check`, suppressible per entry with `status_allow`. A **warning, not a
+    refusal**: object, method and property docs have always accepted a
+    multi-paragraph value, and erroring would break manifests carrying one
+    today over output that is bad rather than wrong.
+
+    The predicate is the paragraph *break*, not a bare newline — a soft wrap
+    inside one paragraph is joined into flowing prose, which is correct.
+
 ### Fixed
 
 - **A `[[module.X.functions]]` `doc` survives the manifest round-trip

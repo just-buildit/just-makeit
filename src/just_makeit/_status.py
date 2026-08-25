@@ -368,6 +368,17 @@ def run(
         if not _is_allowed(rel, allow_patterns)
     ]
 
+    # gh-1154: manifest `doc` values the renderer cannot carry whole. Static,
+    # manifest-only, and nothing `apply` would rewrite — the same shape as
+    # gh-442 and gh-1141 above.
+    from . import _docstring as _doc_mod
+
+    manifest_doc_entries = [
+        d
+        for d in _doc_mod.manifest_docs_with_paragraphs(cfg)
+        if not _is_allowed(d.where, allow_patterns)
+    ]
+
     # gh-921: `pass_capacity` methods whose header keeps the pre-gh-607
     # `max_out(state)`. Same static manifest-vs-header shape as gh-442 above,
     # and computed the same way — nothing here is a file `apply` would write.
@@ -728,6 +739,7 @@ def run(
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
         + len(version_entries)
+        + len(manifest_doc_entries)
         + len(_orphan_pg)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
@@ -809,6 +821,10 @@ def run(
                         for (o, n, m, h) in drift_entries
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
+                    "manifest_doc_overflow": [
+                        {"where": d.where, "summary": d.summary}
+                        for d in manifest_doc_entries
+                    ],
                     "version_drift": [
                         {
                             "path": v.rel,
@@ -1386,6 +1402,26 @@ def run(
         )
         print()
 
+    # gh-1154: same treatment again — a static reading of the manifest that
+    # no diff of what `apply` would write can show.
+    if manifest_doc_entries:
+        print(
+            f"DOC ({len(manifest_doc_entries)}) — manifest `doc` value(s) "
+            "with more than one paragraph:"
+        )
+        for d in manifest_doc_entries:
+            print(f"  ! {d.where}: only {d.summary!r} survives")
+        print(
+            "  A manifest `doc` is a SUMMARY. The rest is dropped for a "
+            "module function and\n  reflowed into prose for a method, which "
+            "also duplicates the Parameters/Returns\n  jm generates. Write "
+            "the full docstring as Doxygen above the declaration in the\n  "
+            "component's `_core.h` — @brief/@param/@return/@code render a "
+            "complete numpy\n  docstring, doctest included, and survive "
+            "`apply`. See gh-1154."
+        )
+        print()
+
     # gh-1142: same treatment. A `DO NOT EDIT` file describing a rendezvous
     # that no longer exists is exactly the kind of thing no diff can show,
     # because there is nothing for `apply` to compare it against.
@@ -1493,6 +1529,7 @@ def run(
         and not drift_entries
         and not version_entries
         and not _orphan_pg
+        and not manifest_doc_entries
         and not any(not e[2] for e in kwargs_entries)
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
@@ -1635,6 +1672,11 @@ def run(
                 else ""
             )
             + (f", {len(_orphan_pg)} orphan-header (!)" if _orphan_pg else "")
+            + (
+                f", {len(manifest_doc_entries)} doc-overflow (!)"
+                if manifest_doc_entries
+                else ""
+            )
             + (
                 f", {sum(1 for e in kwargs_entries if not e[2])} kwargs-drift (!)"
                 if any(not e[2] for e in kwargs_entries)

@@ -2436,3 +2436,113 @@ def render_numpy_method_doc(
         block.returns,
         list(block.examples),
     )
+
+
+class ManifestDoc(NamedTuple):
+    """A manifest ``doc`` the renderer cannot carry whole."""
+
+    #: Dotted path to the entry, as a reader would name it (``eng.methods.exec``).
+    where: str
+    #: The first paragraph — the part that does survive.
+    summary: str
+
+
+def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
+    """Manifest ``doc`` values holding more than one paragraph.
+
+    gh-1154. A manifest ``doc`` is a **summary**, and the renderer treats it
+    as one — but it never said so, and the two faces failed differently and
+    silently:
+
+    - a ``[[module.X.functions]]`` doc is truncated to its first paragraph,
+      so the rest is dropped;
+    - an object, method or property doc is **flattened** — `group_paragraphs`
+      joins it into one paragraph, so a numpy heading and its ``----------``
+      rule are reflowed into prose, and jm then appends its own generated
+      ``Parameters``/``Returns`` after the wreckage. That is worse than
+      truncation: it renders as nonsense and passes every gate.
+
+    Neither is fixable by preserving the value. jm **generates** the numpy
+    sections from the manifest, so an author-written block does not merge with
+    them, it duplicates them — which is what the flattened case already shows
+    happening. The place to write a full docstring is the sacred header, where
+    Doxygen is the input dialect: ``@brief``, prose, ``@param``, ``@return``
+    and ``@code`` render to a complete numpy docstring, doctest included, and
+    survive `apply`. That path already worked when this was reported.
+
+    So this reports rather than repairs, and names that path. Deliberately a
+    **warning** and not a refusal: object, method and property docs have
+    always accepted a multi-paragraph value, and erroring would break
+    manifests that carry one today over output that is merely bad rather than
+    wrong.
+
+    The walk is generic — any key named ``doc``, anywhere — so a table that
+    gains one is covered on the day it does, rather than when someone
+    remembers to add it here. Keys starting with ``_`` are skipped: they are
+    jm's own transients (``_doc_blocks``), not authored manifest values.
+
+    A blank line is the predicate, not a bare newline. A soft line break
+    inside a paragraph is joined into flowing prose, which is correct and is
+    the whole point of `group_paragraphs`; it is the paragraph BREAK that both
+    faces mishandle.
+
+    Examples
+    --------
+    >>> cfg = {"eng": {"doc": "One.\\n\\nTwo."}}
+    >>> [d.where for d in manifest_docs_with_paragraphs(cfg)]
+    ['eng.doc']
+    >>> manifest_docs_with_paragraphs({"eng": {"doc": "One.\\nstill one."}})
+    []
+    """
+    found: "list[ManifestDoc]" = []
+
+    def walk(node: object, path: "tuple[str, ...]") -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key.startswith("_"):
+                    continue
+                if key == "doc" and isinstance(value, str):
+                    if "\n\n" in value.replace("\r\n", "\n").strip("\n"):
+                        found.append(
+                            ManifestDoc(
+                                ".".join(path + ("doc",)),
+                                value.strip().split("\n\n", 1)[0].strip(),
+                            )
+                        )
+                    continue
+                walk(value, path + (str(key),))
+        elif isinstance(node, list):
+            for item in node:
+                # Name the entry by its own `name` where it has one — an
+                # index tells a reader nothing about which method it is.
+                label = (
+                    str(item.get("name"))
+                    if isinstance(item, dict) and item.get("name")
+                    else str(node.index(item))
+                )
+                walk(item, path + (label,))
+
+    walk(cfg, ())
+    return found
+
+
+def manifest_doc_advice(entry: "ManifestDoc") -> str:
+    """The one sentence both reporters print for *entry*.
+
+    Built here rather than at each call site because `apply` and `status` both
+    say it, and a message duplicated across two reporters is a peer pair that
+    drifts — this repo has paid for that shape repeatedly. The advice is the
+    whole point of the finding, so it is the part that must not diverge.
+
+    Kept generic about *which* header on purpose. Deriving the path means
+    knowing a module's cname (a dotted id like ``dsp.filters`` lives under
+    ``native/inc/dsp_filters/``), and a hint that is wrong for the nested case
+    is worse than one that names the file by its shape.
+    """
+    return (
+        f"{entry.where} has more than one paragraph, and a manifest `doc` is "
+        f"a summary — only {entry.summary!r} survives. Write the full "
+        "docstring as Doxygen above the declaration in the component's "
+        "`_core.h` instead: @brief, prose, @param, @return and @code render "
+        "to a complete numpy docstring, doctest included, and survive `apply`"
+    )
