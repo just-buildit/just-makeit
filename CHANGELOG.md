@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.69.1] — 2026-08-28
+
 ### Fixed
 
 - **A composer's `stream(realtime=)` says it is fs, and refuses to hang
