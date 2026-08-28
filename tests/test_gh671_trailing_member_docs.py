@@ -70,9 +70,25 @@ class TestExtractor:
         assert extract_member_docs("    double g;  /* just a note */") == {}
         assert extract_member_docs("    double g;  // just a note") == {}
 
-    def test_a_leading_block_is_not_a_member_doc(self):
+    def test_a_leading_block_IS_a_member_doc_since_gh1167(self):
+        """This asserted `== {}` until gh-1167, and that was gh-671 SCOPING
+        itself rather than ruling the form out: the parser was "deliberately
+        shallow" and read one line, so a block above the member was simply
+        out of range.
+
+        gh-1167 brought it in, because the moment a field needs more than one
+        short sentence a C author writes the block above it — and until then
+        such a field fell through to the name stub on both faces, which is the
+        exact redundancy this issue exists to remove.
+        """
         text = "    /** Leading block. */\n    double g;\n"
-        assert extract_member_docs(text) == {}
+        assert extract_member_docs(text) == {"g": "Leading block."}
+
+    def test_a_trailing_comment_still_wins_over_a_leading_one(self):
+        """gh-671's form stays the more specific one: it is attached to that
+        declaration, so it outranks a block above it."""
+        text = "    /** Above. */\n    double g;  ///< Beside.\n"
+        assert extract_member_docs(text) == {"g": "Beside."}
 
     def test_first_declaration_wins(self):
         text = "    int n;  ///< First.\n    int n;  ///< Second.\n"

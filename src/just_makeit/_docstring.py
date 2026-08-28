@@ -472,6 +472,108 @@ def extract_member_docs(header_text: str) -> dict[str, str]:
         text = _strip_doxy_inline(text).strip()
         if text:
             out.setdefault(m.group("name"), text)
+    # gh-1167: the PRECEDING form, filled in second so a trailing comment on
+    # the same member still wins — it is the more specific of the two, and
+    # gh-671's behaviour must not change.
+    for name, text in _leading_member_docs(header_text).items():
+        out.setdefault(name, text)
+    return out
+
+
+#: A doc-comment block that is NOT the trailing form. `(?!<)` is what keeps
+#: `/**<` out: that is `extract_member_docs`' other half, and matching it here
+#: too would attribute a member's own trailing comment to whatever is declared
+#: on the NEXT line.
+_LEADING_DOC_RE = re.compile(r"/\*[*!](?!<)(?P<block>.*?)\*/", re.DOTALL)
+
+#: One member declared on one line, ending in `;`. Deliberately refuses any
+#: line containing `(` — that excludes function declarations (whose Doxygen is
+#: already parsed as a block, and whose parameter name would otherwise be
+#: recorded as a struct field) and function-pointer members, whose name is not
+#: where this pattern would find it.
+_LEADING_DECL_RE = re.compile(
+    r"^[ \t]*[A-Za-z_][\w \t*]*?\b(?P<name>[A-Za-z_]\w*)\s*"
+    r"(?:\[[^\]]*\])?\s*;[ \t]*$"
+)
+
+
+def _leading_member_docs(header_text: str) -> dict[str, str]:
+    """``{name: summary}`` for ``/** ... */`` blocks ABOVE a struct member.
+
+    gh-671 read the trailing form only:
+
+        int span;   /**< Coalescing window, in samples. */
+
+    which is the natural spelling for one short sentence. The moment a field
+    needs more than that, a C author writes the block above it instead:
+
+        /** Filter width, in taps.
+         *
+         * Extended detail that does not fit on the declaration line.
+         */
+        int width;
+
+    That form was invisible, so a `field = true` property whose documentation
+    already existed in the sacred header still fell through to the name stub
+    ("Width.") on both faces — and the only way to document it was to restate
+    the sentence in a manifest ``doc``, maintained twice and drifting.
+
+    Only the **summary** is taken (the ``@brief``, else the first paragraph).
+    That is not a shortcut: a property docstring is rendered as one flowing
+    paragraph, so a multi-paragraph block cannot be carried whole by either
+    face regardless of where it is written (gh-1154/gh-1164). Taking the
+    summary is the whole of what the format can hold.
+
+    Examples
+    --------
+    >>> _leading_member_docs("/** Tap count. */\\n    int taps;")
+    {'taps': 'Tap count.'}
+    >>> _leading_member_docs("/** @brief Phase, radians. */\\n  double p;")
+    {'p': 'Phase, radians.'}
+    >>> _leading_member_docs("/** Sum.\\n *\\n * More. */\\n  int n;")
+    {'n': 'Sum.'}
+
+    A function is not a member, and its parameter is not a field:
+
+    >>> _leading_member_docs("/** @brief Maps. */\\nint fmap(int b);")
+    {}
+
+    A blank line between the block and its member is ordinary formatting, and
+    does not break the association:
+
+    >>> _leading_member_docs("/** Tap count. */\\n\\n    int taps;")
+    {'taps': 'Tap count.'}
+
+    An empty block documents nothing, and the member keeps its name stub:
+
+    >>> _leading_member_docs("/** */\\n    int taps;")
+    {}
+    """
+    out: dict[str, str] = {}
+    for m in _LEADING_DOC_RE.finditer(header_text):
+        rest = header_text[m.end() :]
+        # The next non-blank line is the thing this block documents.
+        for line in rest.split("\n"):
+            if not line.strip():
+                continue
+            decl = _LEADING_DECL_RE.match(line)
+            if decl and "(" not in line:
+                blk = parse_doxygen_block(m.group("block"))
+                # `parse_doxygen_block` returns None for a block with nothing
+                # in it -- an empty `/** */` is legal C and reaching through
+                # it raised AttributeError. Found by covering this branch
+                # after codecov flagged it as untaken, which is the whole
+                # argument for chasing a coverage signal rather than waiving
+                # it: the untested path was not merely untested.
+                paras = group_paragraphs(blk.body) if blk else []
+                summary = (blk.brief if blk else "") or (
+                    paras[0] if paras else ""
+                )
+                # Nothing documented leaves the member to its name stub,
+                # which is the right answer.
+                if summary:
+                    out.setdefault(decl.group("name"), summary.strip())
+            break
     return out
 
 
