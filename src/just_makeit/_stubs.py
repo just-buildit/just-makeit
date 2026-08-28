@@ -2627,6 +2627,24 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             # declares nothing is unchanged.
             if view.get("doc"):
                 overlay["doc"] = view["doc"]
+            # gh-1160: and its `create_fn`, which was the one key still
+            # missing. `_obj_stub` resolves the constructor through
+            # `C.object_create_fn(cfg_v, synth)`, which reads this key and
+            # otherwise falls back to `<synth>_create` -- a synthetic name no
+            # header declares. So every lookup for the view's CLASS docstring
+            # missed and it fell back to the generic "<Class> component.",
+            # even though `_doc_blocks` above already carried the real block
+            # under the real name.
+            #
+            # Exactly the gh-685 bug one member up: that fixed the same miss
+            # for a view's inherited METHODS and left the constructor, which
+            # is the one member a view does not inherit.
+            # Unguarded, like the four other readers of this key: `_view`
+            # refuses a view without a `create_fn` at declaration, and
+            # `_make_view_ctx` subscripts it directly. A `.get()` here would
+            # be a fifth reader disagreeing about whether it can be absent,
+            # and the branch could never be taken.
+            overlay["create_fn"] = view["create_fn"]
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")

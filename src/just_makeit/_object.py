@@ -1257,8 +1257,54 @@ def _make_view_ctx(
             default_block=C.stream_block_default(cfg, obj),
         )
     )
-    _vdoc = view.get("doc") or f"{ctx['Component']} type."
-    ctx["tp_doc"] = _build_ml_doc([_vdoc])
+    # gh-1160: a view's runtime docstring, derived from its OWN `create_fn`'s
+    # header Doxygen — the same machinery, and the same precedence (manifest
+    # `doc` > header @brief), that `_glue.component_ctx` uses for the parent.
+    #
+    # This used to be `view.get("doc") or "<Component> type."`: the manifest
+    # value if there was one, a five-word placeholder otherwise, and the
+    # header never consulted. The `.pyi` beside it has derived the full block
+    # from `create_fn` since gh-504, so a view whose constructor carried a
+    # `@brief`, `@param`s and a `@code` example got a rich stub docstring and
+    # `.tp_doc = "Deinterleaver type.\n"` at runtime — exactly the two-faces
+    # disagreement gh-642 exists to prevent, one level down.
+    #
+    # `class_runtime_doc` is `class_docstring_block` with the stub-only parts
+    # stripped, so both faces are the same text by construction rather than by
+    # two generators agreeing. Falls back to the old placeholder only when
+    # nothing is authored, so a view that declares neither is byte-unchanged.
+    # Gated on "is anything authored", exactly as `_glue.component_ctx` gates
+    # the parent's. `class_runtime_doc` ALWAYS returns a block -- the generic
+    # summary plus generated Parameters/Examples -- so calling it
+    # unconditionally would replace the bare `"<Component> type."` fallback
+    # for every undocumented view. That is not merely churn: `_docsync`
+    # refreshes a view's `tp_doc` only while `_is_generic_tp_doc` recognises
+    # it, and that predicate knows the bare form. Emitting a full block as the
+    # fallback would make every undocumented view's docstring unreclaimable
+    # from then on -- a worse bug than the one being fixed, and one that only
+    # shows up on a LATER apply.
+    _vtp = authored_class_brief(
+        doc_blocks, view["create_fn"], view.get("doc", "")
+    )
+    if _vtp:
+        _vinit = C.view_init_params(cfg, obj, view)
+        ctx["tp_doc"] = _build_ml_doc(
+            S.class_runtime_doc(
+                obj,
+                ctx["Component"],
+                state_vars,
+                C.is_no_state(cfg, obj),
+                _vinit,
+                f"from {pkg} import {ctx['Component']}",
+                ctx.get("py_create_args", ""),
+                doc_blocks=doc_blocks,
+                manifest_doc=view.get("doc", ""),
+                custom_reset=bool(_vinit) or C.is_no_reset(cfg, obj),
+                create_fn=view["create_fn"],
+            )
+        )
+    else:
+        ctx["tp_doc"] = _build_ml_doc([f"{ctx['Component']} type."])
     ctx.update(
         Ctx.make_module_ctx(
             module,

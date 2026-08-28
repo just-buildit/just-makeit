@@ -41,6 +41,34 @@
     Only a successful resolution is memoised now; the fallback returns without
     caching, so the next reader asks again. gh-764's saving is unaffected.
 
+- **A view's class docstring now derives from its own `create_fn` (gh-1160).**
+    A `[[<obj>.views]]` entry declares a second class over one C core with its
+    own constructor, and gh-624's "an authored `@brief`/`@code` becomes the
+    class docstring and an `Examples` section" did not reach it. Measured on a
+    scaffolded project, **both** faces were generic — a `.pyi` reading
+    `"<Class> component."` and a `tp_doc` reading `"<Class> type."` — so this
+    was two bugs, one per face.
+
+    Runtime: `_make_view_ctx` built `tp_doc` as
+    `view.get("doc") or "<Component> type."`, never consulting the header. It
+    now calls `class_runtime_doc` with the view's `create_fn`, which is the
+    same call `_glue` makes for the parent, so the two faces are one text with
+    the stub-only parts stripped rather than two generators that happen to
+    agree.
+
+    Stub: the view overlay set `class_name` and `doc` but never `create_fn`,
+    so `_obj_stub` resolved `<synth>_create` — a synthetic name no header
+    declares — and every class-docstring lookup missed, though `_doc_blocks`
+    already carried the real block under the real name. Exactly the gh-685 bug
+    one member up: that fixed the same miss for a view's inherited *methods*
+    and left the constructor, the one member a view does not inherit.
+
+    An undocumented view still renders the bare `"<Class> type."` — asserted
+    literally, because `_docsync` refreshes a `tp_doc` only while
+    `_is_generic_tp_doc` recognises it, so emitting a full block as the
+    fallback would freeze every undocumented view's docstring on a later
+    apply.
+
 ## [0.69.2] — 2026-08-28
 
 ### Fixed
