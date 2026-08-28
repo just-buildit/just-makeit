@@ -216,6 +216,10 @@ METHOD_KEYS = frozenset(
         "py_return_type",
         "none_on_empty",
         # error translation
+        # gh-1159: on a `variable_output` method, an empty result is a
+        # REFUSAL rather than an empty answer -- the sibling of
+        # `none_on_empty`, which reads the same zero the opposite way.
+        "error_on_empty",
         "status_return",
         "error_negative",
         "error",

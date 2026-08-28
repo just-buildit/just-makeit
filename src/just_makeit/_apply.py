@@ -479,6 +479,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             batch=bool(m.get("batch")),
             impl_body=m_impl,
             none_on_empty=bool(m.get("none_on_empty")),
+            error_on_empty=bool(m.get("error_on_empty")),
             result_fields=list(m.get("result_fields", [])),
             max_results=int(m.get("max_results", 64)),
             single=bool(m.get("single")),

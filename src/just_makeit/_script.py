@@ -343,6 +343,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))
+    if m.get("error_on_empty"):
+        parts.append(_bool_flag("--error-on-empty"))
     if m.get("count_default"):
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):

@@ -203,6 +203,43 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
     )
 
 
+def empty_raise_c(
+    category: str, message: str, decrefs: str = "", indent: int = 24
+) -> str:
+    """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
+
+    Sibling of `_rc_raise_c`, and here for the reason that one's docstring
+    gives: everything from the raise inwards is one concept, and it has been
+    two implementations before. What differs is only what there is to say.
+    `_rc_raise_c` appends ``(rc=%lld)`` because a status code is the whole
+    finding; here the count is ``0`` by construction, so printing it adds a
+    number the reader already knows and `PyErr_SetString` is the honest form.
+
+    *decrefs* is spliced ahead of the raise. A refusal happens after the
+    output array exists, and the two call paths hold different objects -- the
+    ``out=`` path an ``out_arr`` it borrowed, the allocate path the arrays it
+    just made -- so the caller supplies its own cleanup rather than this
+    guessing. That difference is exactly what made the hand-written version of
+    this a per-path copy: doppler wrote it six times, and the two paths even
+    name the array differently, so copying one into the other is a compile
+    error if you are lucky and a leak if you are not.
+
+    Examples
+    --------
+    >>> print(empty_raise_c("ValueError", "bad length", indent=0))
+            PyErr_SetString(PyExc_ValueError,
+    "bad length");
+            return NULL;
+    <BLANKLINE>
+    """
+    return (
+        f"        {decrefs}"
+        f"PyErr_SetString(PyExc_{category},\n"
+        f"{_c_string_literal(message, indent)});\n"
+        f"        return NULL;\n"
+    )
+
+
 def _raise_pair(m: dict, subject: str) -> "tuple[str, str]":
     """``(category, message)`` from the ``error`` / ``error_message`` pair.
 
@@ -258,7 +295,18 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                 "error": "OSError", "error_message": "bad offset"})
     ('OSError', 'bad offset')
     """
-    if not (m.get("status_return") or m.get("error_negative")):
+    if not (
+        m.get("status_return")
+        or m.get("error_negative")
+        # gh-1159: a `variable_output` method has no status to carry -- its one
+        # return value IS the length -- so `error_on_empty` is how it says a
+        # zero-length result is a REFUSAL rather than an empty answer. It
+        # belongs in this trigger and not beside it, because the whole point of
+        # `declared_raise` is that the emitter and both doc faces decide from
+        # one reading: a binding that raises and a `.pyi` that documents no
+        # exception is the gh-869 split.
+        or m.get("error_on_empty")
+    ):
         return None
     return _raise_pair(m, str(m.get("name", "")))
 
@@ -334,6 +382,22 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     if pair is None:
         return []
     category, message = pair
+    # gh-1159: a refusal is not a status, and saying so matters. This text is
+    # what a caller reads at the REPL and in the `.pyi`, and the
+    # `status_return` sentence -- "returns a non-zero status ... with the
+    # return code appended" -- is wrong twice for an empty result: the value
+    # checked is a LENGTH, and there is no code to append, because it is zero
+    # by construction. A generated docstring that describes a mechanism the
+    # binding does not have is the gh-869 split wearing the other face.
+    if m.get("error_on_empty"):
+        return [
+            (
+                category,
+                f"If the C call writes no output. Its return value is a "
+                f"count, so a zero-length result is a REFUSAL rather than an "
+                f"empty answer. The exception message is ``{message}``.",
+            )
+        ]
     condition = (
         "a negative value" if m.get("error_negative") else "a non-zero status"
     )

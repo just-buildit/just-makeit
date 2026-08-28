@@ -821,6 +821,7 @@ _SIGNATURE_COERCIONS: dict = {
     "out_divisor": (int, 1),
     "batch": (bool, False),
     "none_on_empty": (bool, False),
+    "error_on_empty": (bool, False),
     "result_fields": (list, []),
     "max_results": (int, 64),
     "single": (bool, False),
@@ -913,6 +914,7 @@ def run(
     batch: bool = False,
     no_bench: bool = False,
     none_on_empty: bool = False,
+    error_on_empty: bool = False,
     result_fields: list[dict] | None = None,
     max_results: int = 64,
     single: bool = False,
@@ -999,6 +1001,30 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+    # gh-1159: an empty result read as a refusal. Refused here for the same
+    # reason as the pair below -- both spellings compile, and the wrong one is
+    # silent.
+    if error_on_empty:
+        if not variable_output:
+            print(
+                "error: --error-on-empty describes a variable_output result.\n"
+                "A method that is not variable_output has a status to carry: "
+                "use\n--status-return (non-zero raises) or --error-negative "
+                "(negative raises).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if none_on_empty:
+            print(
+                "error: --none-on-empty and --error-on-empty read the same "
+                "zero two\nopposite ways. --none-on-empty says an empty "
+                "result is a normal answer\nand returns None; "
+                "--error-on-empty says the kernel REFUSED and raises.\n"
+                "Pick one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # gh-805 §B: value-or-negative-error. Checked here rather than left to
     # render, because each of these produces C that COMPILES and is wrong —
     # the failure mode this key exists to remove.
@@ -1082,17 +1108,24 @@ def run(
     # and carry the message. The key was never the problem — both were already
     # read from the manifest; only `error_negative`'s emitter looked at them.
     # This gate is what turned that into a refusal rather than a silent no-op.
-    if error and not (error_negative or status_return):
+    # gh-1159: `error_on_empty` is a THIRD way a method raises, so it
+    # licenses these two exactly as the other triggers do. Left out, the
+    # keys would be refused on the one shape whose whole purpose is to
+    # explain a refusal.
+    _raises_somehow = error_negative or status_return or error_on_empty
+    if error and not _raises_somehow:
         print(
             "error: --error names the exception a failing return raises, so "
-            "it needs\n--error-negative or status_return as well.",
+            "it needs\n--error-negative, status_return or error_on_empty as "
+            "well.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if error_message and not (error_negative or status_return):
+    if error_message and not _raises_somehow:
         print(
             "error: --error-message is the text a failing return raises with, "
-            "so it\nneeds --error-negative or status_return as well.",
+            "so it\nneeds --error-negative, status_return or error_on_empty as "
+            "well.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1259,6 +1292,7 @@ def run(
                     out_divisor=out_divisor,
                     batch=batch,
                     none_on_empty=none_on_empty,
+                    error_on_empty=error_on_empty,
                     result_fields=result_fields,
                     max_results=max_results,
                     single=single,
@@ -1671,6 +1705,8 @@ def run(
         method_entry["error_message"] = error_message
     if none_on_empty:
         method_entry["none_on_empty"] = True
+    if error_on_empty:
+        method_entry["error_on_empty"] = True
     if batch:
         method_entry["batch"] = True
     if multi_output:

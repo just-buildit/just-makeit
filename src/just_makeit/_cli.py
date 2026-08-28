@@ -116,6 +116,10 @@ Commands:
     --arg-type TYPE             Bulk-input array type.
     --return-type TYPE          Return type.
     --variable-output           Output length determined at runtime.
+    --error-on-empty            A zero count is a REFUSAL, not an empty
+                                result: raise instead of returning an
+                                empty array. Pairs with --error /
+                                --error-message.
     --pass-capacity             Append a trailing `size_t max_out` to the C
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).

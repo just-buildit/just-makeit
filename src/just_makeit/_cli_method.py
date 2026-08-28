@@ -53,6 +53,7 @@ def run(args: list[str]) -> None:
     error = ""
     error_message = ""
     batch_method = False
+    error_on_empty = False
     doc = ""
     multi_output: list[str] = []
     method_params: list[tuple[str, str]] = []
@@ -84,6 +85,10 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--variable-output":
             variable_output = True
+            i += 1
+        elif tok == "--error-on-empty":
+            # gh-1159: an empty result is a REFUSAL, not an empty answer.
+            error_on_empty = True
             i += 1
         elif tok == "--pass-capacity":
             pass_capacity = True
@@ -563,6 +568,7 @@ def run(args: list[str]) -> None:
         out_divisor=out_divisor,
         impl_body=impl_body_m,
         batch=batch_method,
+        error_on_empty=error_on_empty,
         no_bench=no_bench,
         py_return_type=py_return_type,
         max_out=max_out,
