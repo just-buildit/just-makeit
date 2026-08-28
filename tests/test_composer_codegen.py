@@ -1250,6 +1250,64 @@ class TestRealtimeStream:
         assert 'static char *kwlist[] = {"block", "realtime", NULL};' in s
         assert 'ParseTupleAndKeywords(args, kwds, "|nd"' in s
 
+    def test_realtime_says_its_unit_and_refuses_to_hang_silently(self):
+        """doppler#1052: `realtime` is fs in Hz, and nothing said so.
+
+        The natural misreadings -- a 0.0-1.0 scale factor, a speed
+        multiplier, a boolean-ish enable -- are all SILENT: realtime=1.0 asks
+        for one sample per second, so the first block blocks for `block`
+        seconds with no error, no warning and nothing to grep for. Measured
+        on doppler: `stream(block=1000, realtime=1.0)` never returned, while
+        `realtime=10e6` returned in under a millisecond.
+
+        The old docstring's "(realtime=fs paces)" reads as prose about what
+        pacing does, not as "the value you pass IS fs", and the .pyi said
+        nothing about the parameter at all.
+        """
+        s = _composer.render_composer_type(self._rt_cfg(), "wfm_compose")
+
+        # The docstring names the unit outright.
+        assert "SAMPLE RATE in Hz" in s
+        assert "not a speed multiplier" in s
+
+        # A negative rate cannot be one, and used to disable pacing silently.
+        assert "realtime must be >= 0" in s
+
+        # The expensive misread is CAUGHT, not documented: block and realtime
+        # are both already in hand, so the wait is a division away.
+        assert "(double)block / realtime > 60.0" in s
+        assert "PyErr_WarnEx(PyExc_RuntimeWarning" in s
+        # PyUnicode_FromFormat has no %g/%f, so PyErr_WarnFormat cannot carry
+        # the numbers that make the message actionable -- and the reason ships
+        # in the generated C, because "why is this one snprintf" is exactly
+        # what the next reader would otherwise simplify away. (Asserted on the
+        # comment, not on `"PyErr_WarnFormat" not in s`: the composer uses it
+        # legitimately elsewhere.)
+        assert "snprintf(_rtmsg" in s
+        assert "PyUnicode_FromFormat has no" in s
+        assert "PyErr_WarnFormat(PyExc_RuntimeWarning, 1,\n" not in s
+
+    def test_realtime_warning_brings_its_own_stdio(self):
+        """The warning uses snprintf, and JSON is what used to include stdio.
+
+        A composer with realtime and WITHOUT the generated JSON path would
+        otherwise call snprintf undeclared -- the two features are unrelated,
+        so the include has to follow the one that needs it.
+        """
+        cfg = self._rt_cfg()
+        cfg["module"]["wfm_compose"]["json"] = {}
+        s = _composer.render_ext(cfg, "wfm_compose")
+        assert "#include <stdio.h>" in s
+        assert s.count("#include <stdio.h>") == 1
+
+    def test_plain_stream_has_no_realtime_check(self):
+        """Off by default: a composer without `realtime` gets none of it."""
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
+        s = _composer.render_composer_type(cfg, "wfm_compose")
+        assert "realtime" not in s
+        assert "snprintf(_rtmsg" not in s
+
     def test_realtime_header_included(self):
         ext = _composer.render_ext(self._rt_cfg(), "wfm_compose")
         assert '#include "timing/timing_core.h"' in ext

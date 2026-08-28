@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A composer's `stream(realtime=)` says it is fs, and refuses to hang
+    silently (doppler#1052).** `realtime` is a SAMPLE RATE in Hz, handed
+    straight to the project's `clock_create`. Nothing said so: the docstring's
+    `(realtime=fs paces)` reads as prose about what pacing does rather than as
+    "the value you pass IS fs", the `.pyi` did not mention the parameter at
+    all, and a default of `0.0` reads like a disabled boolean. So every
+    natural misreading — scale factor, speed multiplier, enable flag — was
+    **silent**: `stream(block=1000, realtime=1.0)` asks for one sample per
+    second, so the first block blocks for 1000 s with no error and nothing to
+    grep for. Measured on doppler, `realtime=10e6` returns the same block in
+    0.2 ms.
+
+    Both faces now name the unit, and — since `block` and `realtime` are both
+    already in hand — a first block over 60 s of wall clock **warns**, naming
+    the rate, the block, the seconds and the unit. A warning rather than an
+    error, because a 1 Hz telemetry stream is legitimate; but a documented
+    footgun is still a footgun. `realtime < 0` is now a `ValueError` instead
+    of silently disabling pacing.
+
+    Two mechanics that are load-bearing: the message uses `snprintf` +
+    `PyErr_WarnEx`, not `PyErr_WarnFormat`, because `PyUnicode_FromFormat` has
+    no floating-point conversion and the numbers *are* the message; and
+    `<stdio.h>` now follows the realtime feature rather than the JSON one,
+    which are independent — a composer with realtime and without generated
+    JSON would have called `snprintf` undeclared. Off by default is unchanged.
+
 ## [0.69.0] — 2026-08-25
 
 ### Added

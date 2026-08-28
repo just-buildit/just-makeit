@@ -1838,8 +1838,49 @@ static PyObject *
             if has_rt
             else ""
         )
+        # The condition is already computed, so expose it rather than
+        # documenting it: a negative rate cannot be a sample rate, and a
+        # first block that would take longer than a minute of wall clock is
+        # the misread (realtime=1.0 on a 4096 block is 68 minutes of silence)
+        # far more often than it is the intent. A warning, not an error --
+        # a 1 Hz telemetry stream is legitimate, and the caller can silence
+        # it -- but it names the number and the unit, which silence cannot.
+        rt_check = (
+            """    if (realtime < 0.0) {
+        PyErr_SetString(PyExc_ValueError,
+            "realtime must be >= 0 (it is the sample rate in Hz to pace "
+            "against; 0 streams as fast as possible)");
+        return NULL;
+    }
+    if (realtime > 0.0 && (double)block / realtime > 60.0) {
+        /* snprintf, not PyErr_WarnFormat: PyUnicode_FromFormat has no
+           floating-point conversion, and these numbers are the message. */
+        char _rtmsg[320];
+        snprintf(_rtmsg, sizeof _rtmsg,
+            "stream(realtime=%g) paces at %g sample(s)/sec, so the first "
+            "block of %lld would take %.0f s. realtime is the SAMPLE RATE "
+            "in Hz -- pass your fs (e.g. realtime=10e6), not a speed "
+            "multiplier; 0 streams as fast as possible.",
+            realtime, realtime, (long long)block, (double)block / realtime);
+        if (PyErr_WarnEx(PyExc_RuntimeWarning, _rtmsg, 1) < 0)
+            return NULL;
+    }
+"""
+            if has_rt
+            else ""
+        )
+        # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
+        # of this line. The previous wording -- "(realtime=fs paces)" -- reads
+        # as prose about what happens when pacing is on rather than as a
+        # statement that the argument's value IS fs, and the natural misread
+        # (a 0.0-1.0 scale factor, or a boolean-ish enable) is silent: passing
+        # 1.0 asks for one sample per second, so the first block blocks for
+        # `block` seconds with no error and nothing to grep for.
         rt_doc = (
-            "stream(block=4096, realtime=0.0) -> iterator (realtime=fs paces)"
+            "stream(block=4096, realtime=0.0) -> iterator\\n\\n"
+            "realtime is the SAMPLE RATE in Hz to pace against -- pass "
+            "your fs (e.g. realtime=10e6), not a speed multiplier. "
+            "0 streams as fast as possible."
             if has_rt
             else "stream(block=4096) -> iterator of complex64 blocks"
         )
@@ -1908,6 +1949,7 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "block must be > 0");
         return NULL;
     }}
+{rt_check}
     {cname}StreamObject *it =
         PyObject_New({cname}StreamObject, &{cname}StreamType);
     if (!it)
@@ -2689,7 +2731,13 @@ def render_ext(cfg: dict, module: str) -> str:
     # project's straight-C bridge declaration (source config -> generator state).
     # gh-317: the realtime stream's clock fns need their header.
     _rt = C.composer_stream(cfg, module).get("realtime") or {}
-    rt_includes = f'#include "{_rt["header"]}"\n' if _rt.get("header") else ""
+    # <stdio.h> for the pacing warning's snprintf. It is emitted here rather
+    # than left to json_includes above, because the two features are
+    # independent: a composer with realtime and without JSON would otherwise
+    # call snprintf undeclared.
+    rt_includes = ("#include <stdio.h>\n" if _rt and not gen_json else "") + (
+        f'#include "{_rt["header"]}"\n' if _rt.get("header") else ""
+    )
 
     # gh-343: a delegated serializer's C fn lives in an arbitrary project header
     # (e.g. wfm/wfm_writer.h), not an auto-included <dep>_core.h — so emit each
@@ -3085,7 +3133,24 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines += [
             f"    def stream(self, block: int = ...{rt_arg})"
             " -> Iterator[NDArray[np.complex64]]:",
-            '        """Iterate the sequence in blocks."""',
+            '        """Iterate the sequence in blocks.',
+            "",
+            *(
+                [
+                    "        Parameters",
+                    "        ----------",
+                    "        block : int",
+                    "            Samples per yielded array.",
+                    "        realtime : float",
+                    "            Sample rate in **Hz** to pace against — pass",
+                    "            your ``fs`` (e.g. ``realtime=10e6``), not a",
+                    "            speed multiplier. ``0`` (the default) streams",
+                    "            as fast as possible.",
+                ]
+                if C.composer_stream(cfg, module).get("realtime")
+                else []
+            ),
+            '        """',
         ]
     if C.composer_stream(cfg, module).get("to_dict"):
         lines += [
