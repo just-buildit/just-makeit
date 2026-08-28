@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.69.2] — 2026-08-28
+
 ### Fixed
 
 - **The gh-1154 `doc` gate now fires only where a face actually mangles the
