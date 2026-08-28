@@ -35,7 +35,17 @@ from .._docstring import (
 )
 
 from .._gluedoc import glue_methods, max_out_method
-from ._diagnostics import _rc_raise_c, declared_raise, raises_doc
+from ._diagnostics import (
+    # gh-1159: the non-optional half of `declared_raise`. `error_on_empty` is
+    # one of that function's triggers, so under it the pair is never None --
+    # and writing `_raise_pair or (<defaults>)` at the emitters restated the
+    # defaults a third time behind a branch that cannot be taken.
+    _raise_pair as raise_pair_of,
+    _rc_raise_c,
+    declared_raise,
+    empty_raise_c,
+    raises_doc,
+)
 from ._parse import (
     _build_ml_doc,
     _build_params_parse,
@@ -1225,6 +1235,15 @@ def make_methods_ctx(
         # both read straight off `m` by `_record`, which the .pyi writers share
         # — see the descriptor emit below.
         none_on_empty: bool = m.get("none_on_empty", False)
+        # gh-1159: the other reading of an empty result. `none_on_empty`
+        # says "nothing to report"; this says "the kernel REFUSED". A
+        # variable_output method has no status to carry -- its one return
+        # value is the length -- so without this a kernel that validates
+        # its input and returns 0 produced a well-formed empty array and
+        # the caller carried on. For a framing object that is the worst
+        # available answer: the frame comes back short, nothing raises,
+        # and it surfaces far away as a bad decode.
+        error_on_empty: bool = m.get("error_on_empty", False)
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
         nogil: bool = m.get("nogil", False)
@@ -2196,12 +2215,26 @@ def make_methods_ctx(
                     )
                 )
                 _out_decref = _reindent(decref_in) if decref_in else ""
-                _out_none = (
-                    "        if (!n_out)"
-                    " { Py_DECREF(out_arr); Py_RETURN_NONE; }\n"
-                    if none_on_empty
-                    else ""
-                )
+                if error_on_empty:
+                    # The second call path, and the reason this is generated
+                    # at all: hand-written, the refusal has to be repeated per
+                    # path per method, and the two paths do not even name the
+                    # output array the same way.
+                    _out_none = (
+                        "        if (!n_out) {\n    "
+                        + empty_raise_c(
+                            *raise_pair_of(m, name),
+                            decrefs="Py_DECREF(out_arr); ",
+                        ).replace("\n", "\n    ")[:-4]
+                        + "        }\n"
+                    )
+                else:
+                    _out_none = (
+                        "        if (!n_out)"
+                        " { Py_DECREF(out_arr); Py_RETURN_NONE; }\n"
+                        if none_on_empty
+                        else ""
+                    )
                 _vo_out_guard = (
                     _coerce.out_buffer_guard_record(
                         "out_obj",
@@ -2432,11 +2465,26 @@ def make_methods_ctx(
                 f"{c_fn}({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
                 nogil,
             )
-            _vo_empty = (
-                f"    if (!n_out) {{ {_decref_arrs} Py_RETURN_NONE; }}\n"
-                if none_on_empty
-                else ""
-            )
+            if error_on_empty:
+                # The same test, the opposite verdict. Rendered from
+                # `declared_raise`, so the `.pyi` and the runtime docstring
+                # document exactly the exception this raises.
+                _vo_empty = (
+                    "    if (!n_out) {\n"
+                    + empty_raise_c(
+                        *raise_pair_of(m, name),
+                        decrefs=_decref_arrs.strip() + " "
+                        if _decref_arrs.strip()
+                        else "",
+                    )
+                    + "    }\n"
+                )
+            else:
+                _vo_empty = (
+                    f"    if (!n_out) {{ {_decref_arrs} Py_RETURN_NONE; }}\n"
+                    if none_on_empty
+                    else ""
+                )
             # n_out <= _cap. Shrink each array in place rather than
             # returning a view pinned to the full allocation: the array is
             # fresh, unshared and refcount-1, so PyArray_Resize reallocs the

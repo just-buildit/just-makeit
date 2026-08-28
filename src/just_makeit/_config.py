@@ -4438,6 +4438,7 @@ _KNOWN_METHOD_KEYS = frozenset(
         "count_name",
         "nogil",
         "none_on_empty",
+        "error_on_empty",
         "batch",
         "multi_output",
         "extra_args",
@@ -4838,6 +4839,8 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         lines.append("nogil = true")
     if m.get("none_on_empty"):
         lines.append("none_on_empty = true")
+    if m.get("error_on_empty"):
+        lines.append("error_on_empty = true")
     if m.get("batch"):
         lines.append("batch = true")
     if m.get("multi_output"):

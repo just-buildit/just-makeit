@@ -103,6 +103,46 @@
     flowing paragraph, so a multi-paragraph block cannot be carried whole by
     either face wherever it is written (gh-1154/gh-1164).
 
+### Added
+
+- **`error_on_empty` — a `variable_output` method can declare that an empty
+    result is a REFUSAL (gh-1159).** Such a method returns `size_t`, the count
+    it wrote, and that one value IS the length — so unlike every other shape
+    it has no status left to carry: `status_return` and `error_negative` both
+    need a code and there is none. A kernel that validated its input and
+    returned 0 therefore produced a well-formed `array([], dtype=…)` and the
+    caller carried on. For a framing object that is the worst available
+    answer: the frame comes back short, nothing raises, and it surfaces far
+    away as a bad decode.
+
+    ```toml
+    [[interleaver.methods]]
+    name = "interleave"
+    variable_output = true
+    error_on_empty = true
+    error = "ValueError"
+    error_message = "length is not a whole number of blocks"
+    ```
+
+    Also `jm method … --error-on-empty`. It is the sibling of `none_on_empty`,
+    which reads the same zero the opposite way, and declaring both is refused
+    — two contradictory readings of one value, both of which compile.
+
+    Generated on **every call path**, which is the reason it is generated at
+    all: a `variable_output` method has two, and they do not even name the
+    output array the same way (`out_arr` in the `out=` path, `arr0` in the
+    allocate path), so a hand-written refusal has to be repeated per path per
+    method and copying one into the other is a compile error if you are lucky
+    and a leak if you are not. Reported downstream as six hand-written
+    insertions.
+
+    The raise renders from `declared_raise`, so both doc faces document
+    exactly the exception the binding raises (gh-869), with prose of its own:
+    `status_return`'s sentence — "returns a non-zero status … with the return
+    code appended" — is wrong twice here, since the value checked is a length
+    and the code is zero by construction. Verified compiled and executed: both
+    paths raise `ValueError` with the author's message.
+
 ## [0.69.2] — 2026-08-28
 
 ### Fixed
