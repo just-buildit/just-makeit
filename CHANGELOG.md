@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The gh-1154 `doc` gate now fires only where a face actually mangles the
+    value, and says which one (gh-1164).** Reported from doppler as 31
+    findings that blocked adoption of 0.69.1 and that **no author could act
+    on**: 28 were `[module.X] doc`, which `_context/_modpath` renders whole to
+    both faces — nothing was being lost — and a module is the one shape with
+    no header to derive from, so "write it in the sacred header" named a place
+    that does not exist. The other 3 were `field = true` properties, whose
+    header field doxygen jm does not read, so trimming them to a summary
+    deleted the only copy of the prose.
+
+    The message was also wrong about the mechanism nearly everywhere. Measured
+    on the artefacts, not the source: an object, method or property doc is
+    **flattened**, so every word survives as reflowed prose; only a module
+    function's `.pyi` truncates. "Only `'…'` survives" was true of one shape
+    out of four.
+
+    So there are now three rules, one per shape. A module doc is never a
+    finding. A module function doc is a finding when it has more than one
+    paragraph, because the stub face genuinely drops the rest. Everything else
+    is a finding when it carries a **section rule** — a `Parameters` heading
+    and its `----------` reflowed into prose beside the real sections jm then
+    generates, which is the wreckage gh-1154's changelog actually described.
+    Plain multi-paragraph prose flattens into readable text and no longer
+    fires.
+
+    Every rule is now backed by a test that builds the tree and reads the
+    generated face, because a claim about output checked only against the
+    detector is how the gate came to describe a loss that was not happening.
+    `jm status --json` gains `kind` per entry. doppler goes 31 → 0 with no
+    waivers, while the gate still fires on all three real shapes.
+
 ## [0.69.1] — 2026-08-28
 
 ### Fixed
