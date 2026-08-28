@@ -21,7 +21,18 @@ def __getattr__(name: str) -> str:
         try:
             resolved = version("just-makeit")
         except PackageNotFoundError:
-            resolved = "unknown"
+            # gh-1166: return the fallback WITHOUT memoising it. The cache is
+            # for the life of the process and has no invalidation, so caching
+            # a failure makes a transient condition permanent -- metadata not
+            # yet installed (an editable install mid-sync, a frozen build), or
+            # a test that patches `importlib.metadata.version` while some
+            # other test happens to take the first look. That last one is not
+            # hypothetical: it made `test_gh764`'s
+            # `__version__ == C.jm_cli_version()` fail under some random
+            # orderings and pass under others, because `jm_cli_version()`
+            # re-imports and gets the real value while this cache still held
+            # "unknown". Only a successful resolution is stable enough to keep.
+            return "unknown"
         globals()["__version__"] = resolved
         return resolved
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

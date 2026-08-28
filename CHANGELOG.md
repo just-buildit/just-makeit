@@ -23,6 +23,24 @@
     alike by both paths and cannot produce that disagreement — checked with
     idempotence and no-churn tests rather than argued.
 
+- **A failed version lookup is no longer memoised (gh-1166).** gh-764 made
+    `just_makeit.__version__` lazy to save ~25.5 ms per CLI invocation, and
+    cached the result into `globals()` on first access — including the
+    `"unknown"` fallback. That cache lives for the whole process with no
+    invalidation, so a transient failure became permanent: metadata not
+    resolvable yet (an editable install mid-sync, a frozen build), or a test
+    patching `importlib.metadata.version` while some other test happens to
+    take the first look.
+
+    The second is how it surfaced — `test_gh764`'s
+    `__version__ == jm_cli_version()` failed under some random test orderings
+    and passed under others, because `jm_cli_version()` re-imports and gets
+    the real value while the poisoned cache still held `"unknown"`. Passing in
+    isolation is what made it read as a flake.
+
+    Only a successful resolution is memoised now; the fallback returns without
+    caching, so the next reader asks again. gh-764's saving is unaffected.
+
 ## [0.69.2] — 2026-08-28
 
 ### Fixed
