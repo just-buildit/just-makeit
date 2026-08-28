@@ -822,7 +822,14 @@ def run(
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
                     "manifest_doc_overflow": [
-                        {"where": d.where, "summary": d.summary}
+                        # gh-1164: `kind` distinguishes the two renderer
+                        # defects — a machine reader could not tell a
+                        # truncated stub from a reflowed heading without it.
+                        {
+                            "where": d.where,
+                            "summary": d.summary,
+                            "kind": d.kind,
+                        }
                         for d in manifest_doc_entries
                     ],
                     "version_drift": [
@@ -1407,18 +1414,18 @@ def run(
     if manifest_doc_entries:
         print(
             f"DOC ({len(manifest_doc_entries)}) — manifest `doc` value(s) "
-            "with more than one paragraph:"
+            "the renderer mangles:"
         )
         for d in manifest_doc_entries:
-            print(f"  ! {d.where}: only {d.summary!r} survives")
+            print(f"  ! {d.where}: {_doc_mod.manifest_doc_reason(d)}")
         print(
-            "  A manifest `doc` is a SUMMARY. The rest is dropped for a "
-            "module function and\n  reflowed into prose for a method, which "
-            "also duplicates the Parameters/Returns\n  jm generates. Write "
-            "the full docstring as Doxygen above the declaration in the\n  "
-            "component's `_core.h` — @brief/@param/@return/@code render a "
-            "complete numpy\n  docstring, doctest included, and survive "
-            "`apply`. See gh-1154."
+            "  jm GENERATES the numpy sections from the manifest, so an "
+            "author-written block\n  does not merge with them — it "
+            "duplicates them. Write the full docstring as\n  Doxygen above "
+            "the declaration in the component's `_core.h` — "
+            "@brief/@param/@return/@code\n  render a complete numpy "
+            "docstring, doctest included, and survive `apply`.\n  See "
+            "gh-1154, and gh-1164 for what each face actually does."
         )
         print()
 

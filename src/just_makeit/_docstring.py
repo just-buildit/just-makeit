@@ -2438,63 +2438,155 @@ def render_numpy_method_doc(
     )
 
 
-class ManifestDoc(NamedTuple):
-    """A manifest ``doc`` the renderer cannot carry whole."""
+#: The reST/numpydoc section underline. A line of three or more dashes under
+#: a non-empty line is what `group_paragraphs` reflows into prose, and it is
+#: the rule rather than the heading word that makes the result nonsense --
+#: so the trigger is the construct, not a list of blessed section names that
+#: would miss `Notes`, `Warnings` or anything numpydoc adds later.
+_SECTION_RULE_RE = re.compile(r"^[ \t]*-{3,}[ \t]*$")
 
-    #: Dotted path to the entry, as a reader would name it (``eng.methods.exec``).
-    where: str
-    #: The first paragraph — the part that does survive.
-    summary: str
 
+def has_section_rule(text: str) -> bool:
+    """True when *text* carries a reST section underline.
 
-def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
-    """Manifest ``doc`` values holding more than one paragraph.
-
-    gh-1154. A manifest ``doc`` is a **summary**, and the renderer treats it
-    as one — but it never said so, and the two faces failed differently and
-    silently:
-
-    - a ``[[module.X.functions]]`` doc is truncated to its first paragraph,
-      so the rest is dropped;
-    - an object, method or property doc is **flattened** — `group_paragraphs`
-      joins it into one paragraph, so a numpy heading and its ``----------``
-      rule are reflowed into prose, and jm then appends its own generated
-      ``Parameters``/``Returns`` after the wreckage. That is worse than
-      truncation: it renders as nonsense and passes every gate.
-
-    Neither is fixable by preserving the value. jm **generates** the numpy
-    sections from the manifest, so an author-written block does not merge with
-    them, it duplicates them — which is what the flattened case already shows
-    happening. The place to write a full docstring is the sacred header, where
-    Doxygen is the input dialect: ``@brief``, prose, ``@param``, ``@return``
-    and ``@code`` render to a complete numpy docstring, doctest included, and
-    survive `apply`. That path already worked when this was reported.
-
-    So this reports rather than repairs, and names that path. Deliberately a
-    **warning** and not a refusal: object, method and property docs have
-    always accepted a multi-paragraph value, and erroring would break
-    manifests that carry one today over output that is merely bad rather than
-    wrong.
-
-    The walk is generic — any key named ``doc``, anywhere — so a table that
-    gains one is covered on the day it does, rather than when someone
-    remembers to add it here. Keys starting with ``_`` are skipped: they are
-    jm's own transients (``_doc_blocks``), not authored manifest values.
-
-    A blank line is the predicate, not a bare newline. A soft line break
-    inside a paragraph is joined into flowing prose, which is correct and is
-    the whole point of `group_paragraphs`; it is the paragraph BREAK that both
-    faces mishandle.
+    A non-empty, non-rule line immediately followed by a line of three or more
+    dashes -- the ``Parameters`` / ``----------`` construct. This is the shape
+    that survives `group_paragraphs` as wreckage rather than as prose.
 
     Examples
     --------
-    >>> cfg = {"eng": {"doc": "One.\\n\\nTwo."}}
-    >>> [d.where for d in manifest_docs_with_paragraphs(cfg)]
+    >>> has_section_rule("Sum.\\n\\nParameters\\n----------\\nb : int\\n    A.")
+    True
+    >>> has_section_rule("Sum.\\n\\nJust two plain paragraphs, no headings.")
+    False
+    >>> has_section_rule("A rule with nothing above it.\\n\\n---")
+    False
+    """
+    lines = text.replace("\r\n", "\n").split("\n")
+    for i in range(1, len(lines)):
+        if not _SECTION_RULE_RE.match(lines[i]):
+            continue
+        above = lines[i - 1].strip()
+        if above and not _SECTION_RULE_RE.match(lines[i - 1]):
+            return True
+    return False
+
+
+class ManifestDoc(NamedTuple):
+    """A manifest ``doc`` the renderer mangles, and how."""
+
+    #: Dotted path to the entry, as a reader would name it (``eng.methods.exec``).
+    where: str
+    #: The first paragraph — for ``truncated``, the only part that survives.
+    summary: str
+    #: ``"truncated"`` or ``"flattened"`` — which renderer defect applies.
+    #: Defaulted so a caller naming an entry by hand needs only the two facts
+    #: that identify it.
+    kind: str = "flattened"
+
+
+#: Per-shape wording, in one table. `status` prints ``line`` under a heading
+#: and one shared closing paragraph; `apply` prints ``advice`` per entry. Two
+#: reporters saying the same thing from two literals is the peer pair this
+#: repo has paid for repeatedly, so both read from here.
+_DOC_KINDS = {
+    "truncated": (
+        "the stub face keeps only {summary!r}; the rest reaches the "
+        "extension but is dropped from the `.pyi`"
+    ),
+    "flattened": (
+        "it carries a numpy section heading, and a manifest `doc` is "
+        "flattened into ONE paragraph — the heading and its `----------` "
+        "rule reflow into prose, and jm appends its own generated "
+        "Parameters/Returns after the wreckage"
+    ),
+}
+
+#: The one remedy, shared by both kinds and both reporters.
+_DOC_REMEDY = (
+    "Write the full docstring as Doxygen above the declaration in the "
+    "component's `_core.h` instead: @brief, prose, @param, @return and @code "
+    "render to a complete numpy docstring, doctest included, and survive "
+    "`apply`"
+)
+
+
+def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
+    """Manifest ``doc`` values the renderer mangles, by shape.
+
+    gh-1154 reported this as one rule — "a manifest ``doc`` is a summary" —
+    and gated on a doc holding more than one paragraph. gh-1164 measured what
+    each face actually writes, and that one rule was wrong in every shape it
+    fired on: it named a loss that does not happen, for shapes whose only
+    remedy does not exist. What the artefacts show:
+
+    ================================ ======================================
+    shape                            what the renderer does
+    ================================ ======================================
+    ``[module.X] doc``               renders WHOLE to both faces
+    ``[[module.X.functions]] doc``   ``.pyi`` truncated to paragraph 1
+    object / method / property       flattened into one paragraph
+    ================================ ======================================
+
+    So there are three rules, not one:
+
+    - A **module** doc is never a finding. `_context/_modpath` passes it
+      through `_py_docstring` / `_c_doc_literal` with no `group_paragraphs`
+      and no truncation, so every paragraph reaches ``__init__.py`` and
+      ``.m_doc`` intact. It is also the one shape with no remedy: a module has
+      no header to derive from, which `_modpath` says itself, so ``doc`` is
+      the only place its prose can live. Reporting it demanded the author
+      delete text to satisfy a loss that was not occurring.
+    - A **module function** doc is a finding when it has more than one
+      paragraph, because the stub face genuinely drops the rest.
+    - Everything else is a finding when it carries a **section rule**. The
+      flattening itself is correct — joining softly wrapped paragraphs into
+      flowing prose is what `group_paragraphs` is for — and multi-paragraph
+      plain prose comes through as readable text. It is a numpy heading with
+      its ``----------`` rule that reflows into nonsense, beside the real
+      sections jm then generates. That is the defect worth gating, and unlike
+      the paragraph count it is fixable by editing the value in place.
+
+    Reporting rather than repairing is unchanged, and so is the remedy: jm
+    **generates** the numpy sections from the manifest, so an author-written
+    block does not merge with them, it duplicates them. The sacred header is
+    where a full docstring goes.
+
+    The walk stays generic — any key named ``doc``, anywhere — so a table that
+    gains one is covered on the day it does. Keys starting with ``_`` are
+    skipped: they are jm's own transients (``_doc_blocks``), not authored
+    values.
+
+    Examples
+    --------
+    >>> mangled = "One.\\n\\nParameters\\n----------\\nb : int\\n    A bin."
+    >>> [d.where for d in manifest_docs_with_paragraphs({"eng": {"doc": mangled}})]
     ['eng.doc']
-    >>> manifest_docs_with_paragraphs({"eng": {"doc": "One.\\nstill one."}})
+    >>> manifest_docs_with_paragraphs({"eng": {"doc": "One.\\n\\nTwo."}})
     []
+    >>> cfg = {"module": {"dsp": {"doc": mangled}}}
+    >>> manifest_docs_with_paragraphs(cfg)
+    []
+    >>> fn = {"module": {"dsp": {"functions": [{"name": "f", "doc": "A.\\n\\nB."}]}}}
+    >>> [(d.where, d.kind) for d in manifest_docs_with_paragraphs(fn)]
+    [('module.dsp.functions.f.doc', 'truncated')]
     """
     found: "list[ManifestDoc]" = []
+
+    def kind_at(path: "tuple[str, ...]") -> str:
+        """Which renderer shape a ``doc`` at *path* belongs to.
+
+        ``""`` means the renderer carries the value whole, so there is
+        nothing to report.
+        """
+        if path[:1] == ("module",):
+            # ("module", <id>) is the module's own doc; anything deeper is a
+            # table inside it, and only `functions` is truncated.
+            if len(path) == 2:
+                return ""
+            if len(path) == 4 and path[2] == "functions":
+                return "truncated"
+        return "flattened"
 
     def walk(node: object, path: "tuple[str, ...]") -> None:
         if isinstance(node, dict):
@@ -2502,11 +2594,19 @@ def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
                 if isinstance(key, str) and key.startswith("_"):
                     continue
                 if key == "doc" and isinstance(value, str):
-                    if "\n\n" in value.replace("\r\n", "\n").strip("\n"):
+                    kind = kind_at(path)
+                    body = value.replace("\r\n", "\n").strip("\n")
+                    hit = (
+                        "\n\n" in body
+                        if kind == "truncated"
+                        else has_section_rule(body)
+                    )
+                    if kind and hit:
                         found.append(
                             ManifestDoc(
                                 ".".join(path + ("doc",)),
-                                value.strip().split("\n\n", 1)[0].strip(),
+                                body.strip().split("\n\n", 1)[0].strip(),
+                                kind,
                             )
                         )
                     continue
@@ -2526,8 +2626,16 @@ def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
     return found
 
 
+def manifest_doc_reason(entry: "ManifestDoc") -> str:
+    """The mechanism clause for *entry* — what the renderer does to it.
+
+    Short, because `status` prints one per entry and a tree can carry dozens.
+    """
+    return _DOC_KINDS[entry.kind].format(summary=entry.summary)
+
+
 def manifest_doc_advice(entry: "ManifestDoc") -> str:
-    """The one sentence both reporters print for *entry*.
+    """The one sentence both reporters build on for *entry*.
 
     Built here rather than at each call site because `apply` and `status` both
     say it, and a message duplicated across two reporters is a peer pair that
@@ -2539,10 +2647,4 @@ def manifest_doc_advice(entry: "ManifestDoc") -> str:
     ``native/inc/dsp_filters/``), and a hint that is wrong for the nested case
     is worse than one that names the file by its shape.
     """
-    return (
-        f"{entry.where} has more than one paragraph, and a manifest `doc` is "
-        f"a summary — only {entry.summary!r} survives. Write the full "
-        "docstring as Doxygen above the declaration in the component's "
-        "`_core.h` instead: @brief, prose, @param, @return and @code render "
-        "to a complete numpy docstring, doctest included, and survive `apply`"
-    )
+    return f"{entry.where}: {manifest_doc_reason(entry)}. {_DOC_REMEDY}"
