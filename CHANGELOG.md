@@ -69,6 +69,40 @@
     fallback would freeze every undocumented view's docstring on a later
     apply.
 
+### Added
+
+- **A struct field documented ABOVE its declaration now documents its property
+    (gh-1167).** gh-671 read the trailing form — `int span; /**< … */` — on
+    both faces. What it did not read was the block a C author writes the
+    moment a field needs more than one short sentence:
+
+    ```c
+    /** Filter width, in taps.
+     *
+     * Extended detail that does not fit on the declaration line.
+     */
+    int width;
+    ```
+
+    Measured before the change, one object with both spellings: the trailing
+    field derived on both faces, the preceding one fell through to the name
+    stub (`"Width."`) on both. So a `field = true` property whose
+    documentation already existed in the sacred header still had to have that
+    sentence restated in a manifest `doc` and maintained twice — the exact
+    redundancy gh-671 exists to remove.
+
+    Extending `extract_member_docs` fixes both faces at once, since the
+    precedence chain (manifest `doc` > getter `@brief` > member doc > name)
+    already runs through one function the `.pyi` and the `PyGetSetDef` both
+    read. A trailing comment still wins over a block above it — it is
+    attached to that declaration specifically — so nothing gh-671 covers
+    changes.
+
+    Only the **summary** is taken (`@brief`, else the first paragraph). That
+    is the ceiling rather than a shortcut: a property docstring renders as one
+    flowing paragraph, so a multi-paragraph block cannot be carried whole by
+    either face wherever it is written (gh-1154/gh-1164).
+
 ## [0.69.2] — 2026-08-28
 
 ### Fixed
