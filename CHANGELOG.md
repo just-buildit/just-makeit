@@ -1,5 +1,79 @@
 ## [Unreleased]
 
+## [0.70.0] — 2026-08-28
+
+### Added
+
+- **A struct field documented ABOVE its declaration now documents its property
+    (gh-1167).** gh-671 read the trailing form — `int span; /**< … */` — on
+    both faces. What it did not read was the block a C author writes the
+    moment a field needs more than one short sentence:
+
+    ```c
+    /** Filter width, in taps.
+     *
+     * Extended detail that does not fit on the declaration line.
+     */
+    int width;
+    ```
+
+    Measured before the change, one object with both spellings: the trailing
+    field derived on both faces, the preceding one fell through to the name
+    stub (`"Width."`) on both. So a `field = true` property whose
+    documentation already existed in the sacred header still had to have that
+    sentence restated in a manifest `doc` and maintained twice — the exact
+    redundancy gh-671 exists to remove.
+
+    Extending `extract_member_docs` fixes both faces at once, since the
+    precedence chain (manifest `doc` > getter `@brief` > member doc > name)
+    already runs through one function the `.pyi` and the `PyGetSetDef` both
+    read. A trailing comment still wins over a block above it — it is
+    attached to that declaration specifically — so nothing gh-671 covers
+    changes.
+
+    Only the **summary** is taken (`@brief`, else the first paragraph). That
+    is the ceiling rather than a shortcut: a property docstring renders as one
+    flowing paragraph, so a multi-paragraph block cannot be carried whole by
+    either face wherever it is written (gh-1154/gh-1164).
+
+- **`error_on_empty` — a `variable_output` method can declare that an empty
+    result is a REFUSAL (gh-1159).** Such a method returns `size_t`, the count
+    it wrote, and that one value IS the length — so unlike every other shape
+    it has no status left to carry: `status_return` and `error_negative` both
+    need a code and there is none. A kernel that validated its input and
+    returned 0 therefore produced a well-formed `array([], dtype=…)` and the
+    caller carried on. For a framing object that is the worst available
+    answer: the frame comes back short, nothing raises, and it surfaces far
+    away as a bad decode.
+
+    ```toml
+    [[interleaver.methods]]
+    name = "interleave"
+    variable_output = true
+    error_on_empty = true
+    error = "ValueError"
+    error_message = "length is not a whole number of blocks"
+    ```
+
+    Also `jm method … --error-on-empty`. It is the sibling of `none_on_empty`,
+    which reads the same zero the opposite way, and declaring both is refused
+    — two contradictory readings of one value, both of which compile.
+
+    Generated on **every call path**, which is the reason it is generated at
+    all: a `variable_output` method has two, and they do not even name the
+    output array the same way (`out_arr` in the `out=` path, `arr0` in the
+    allocate path), so a hand-written refusal has to be repeated per path per
+    method and copying one into the other is a compile error if you are lucky
+    and a leak if you are not. Reported downstream as six hand-written
+    insertions.
+
+    The raise renders from `declared_raise`, so both doc faces document
+    exactly the exception the binding raises (gh-869), with prose of its own:
+    `status_return`'s sentence — "returns a non-zero status … with the return
+    code appended" — is wrong twice here, since the value checked is a length
+    and the code is zero by construction. Verified compiled and executed: both
+    paths raise `ValueError` with the author's message.
+
 ### Fixed
 
 - **An object's manifest `doc` now reaches both faces (gh-1165).** A
@@ -68,80 +142,6 @@
     `_is_generic_tp_doc` recognises it, so emitting a full block as the
     fallback would freeze every undocumented view's docstring on a later
     apply.
-
-### Added
-
-- **A struct field documented ABOVE its declaration now documents its property
-    (gh-1167).** gh-671 read the trailing form — `int span; /**< … */` — on
-    both faces. What it did not read was the block a C author writes the
-    moment a field needs more than one short sentence:
-
-    ```c
-    /** Filter width, in taps.
-     *
-     * Extended detail that does not fit on the declaration line.
-     */
-    int width;
-    ```
-
-    Measured before the change, one object with both spellings: the trailing
-    field derived on both faces, the preceding one fell through to the name
-    stub (`"Width."`) on both. So a `field = true` property whose
-    documentation already existed in the sacred header still had to have that
-    sentence restated in a manifest `doc` and maintained twice — the exact
-    redundancy gh-671 exists to remove.
-
-    Extending `extract_member_docs` fixes both faces at once, since the
-    precedence chain (manifest `doc` > getter `@brief` > member doc > name)
-    already runs through one function the `.pyi` and the `PyGetSetDef` both
-    read. A trailing comment still wins over a block above it — it is
-    attached to that declaration specifically — so nothing gh-671 covers
-    changes.
-
-    Only the **summary** is taken (`@brief`, else the first paragraph). That
-    is the ceiling rather than a shortcut: a property docstring renders as one
-    flowing paragraph, so a multi-paragraph block cannot be carried whole by
-    either face wherever it is written (gh-1154/gh-1164).
-
-### Added
-
-- **`error_on_empty` — a `variable_output` method can declare that an empty
-    result is a REFUSAL (gh-1159).** Such a method returns `size_t`, the count
-    it wrote, and that one value IS the length — so unlike every other shape
-    it has no status left to carry: `status_return` and `error_negative` both
-    need a code and there is none. A kernel that validated its input and
-    returned 0 therefore produced a well-formed `array([], dtype=…)` and the
-    caller carried on. For a framing object that is the worst available
-    answer: the frame comes back short, nothing raises, and it surfaces far
-    away as a bad decode.
-
-    ```toml
-    [[interleaver.methods]]
-    name = "interleave"
-    variable_output = true
-    error_on_empty = true
-    error = "ValueError"
-    error_message = "length is not a whole number of blocks"
-    ```
-
-    Also `jm method … --error-on-empty`. It is the sibling of `none_on_empty`,
-    which reads the same zero the opposite way, and declaring both is refused
-    — two contradictory readings of one value, both of which compile.
-
-    Generated on **every call path**, which is the reason it is generated at
-    all: a `variable_output` method has two, and they do not even name the
-    output array the same way (`out_arr` in the `out=` path, `arr0` in the
-    allocate path), so a hand-written refusal has to be repeated per path per
-    method and copying one into the other is a compile error if you are lucky
-    and a leak if you are not. Reported downstream as six hand-written
-    insertions.
-
-    The raise renders from `declared_raise`, so both doc faces document
-    exactly the exception the binding raises (gh-869), with prose of its own:
-    `status_return`'s sentence — "returns a non-zero status … with the return
-    code appended" — is wrong twice here, since the value checked is a length
-    and the code is zero by construction. Verified compiled and executed: both
-    paths raise `ValueError` with the author's message.
 
 ## [0.69.2] — 2026-08-28
 
