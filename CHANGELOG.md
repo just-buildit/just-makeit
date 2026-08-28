@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Fixed
+
+- **An object's manifest `doc` now reaches both faces (gh-1165).** A
+    standalone object's `[<comp>] doc` reached neither the `.pyi` class
+    docstring nor the runtime `tp_doc` — both kept the scaffold seed, single-
+    or multi-paragraph, and `jm regenerate` did not pick it up either.
+
+    The plumbing was right, which is why it survived: `_glue.component_ctx`
+    feeds the manifest doc to `authored_class_brief`, which documents it as
+    outranking the header's `@brief`. The bug was one line above all of it —
+    `_apply` re-renders both faces only under `if _real_blocks or _pg`, i.e.
+    "did the HEADER enrich anything". A manifest `doc` is neither, so with a
+    plain header the branch was skipped and the temp scaffold's text stood.
+    The trigger asked a narrower question than the render it guarded
+    answered.
+
+    Widening it is safe for the reason gh-805 §F already records: that gate
+    protects against *header* doc blocks, which `jm object` renders without
+    and `jm apply` renders with, so an unconditional re-render would make a
+    fresh scaffold report STALE against itself. A manifest `doc` is read
+    alike by both paths and cannot produce that disagreement — checked with
+    idempotence and no-churn tests rather than argued.
+
 ## [0.69.2] — 2026-08-28
 
 ### Fixed

@@ -1677,7 +1677,24 @@ def _sync_aggregates(
         # CMake wiring is reconciled here rather than emitted at scaffold
         # time.
         _pg = _procglobal.rendezvous_c(cfg, comp)
-        if _real_blocks or _pg:
+        # gh-1165: the manifest's own `[<comp>] doc` is a third reason to
+        # re-render, and it was not one. The trigger above asks whether the
+        # HEADER enriched anything, but the render it guards carries the
+        # MANIFEST doc too -- `_glue.component_ctx` feeds it to
+        # `authored_class_brief`, where it outranks the header's @brief. With
+        # a plain header and a manifest doc there were no `_real_blocks`, so
+        # the branch was skipped and the temp scaffold's trivial text stood:
+        # the value reached NEITHER face, single- or multi-paragraph, and
+        # `jm regenerate` did not pick it up either.
+        #
+        # Safe to widen for exactly the reason gh-805 §F records in `_glue`:
+        # the hazard behind this narrow gate is about *header* doc_blocks,
+        # which `jm object` renders without and `jm apply` renders with -- so
+        # an unconditional re-render would make a fresh scaffold report STALE
+        # against itself. A manifest `doc` comes from the manifest, which both
+        # paths read alike, so it cannot produce that disagreement.
+        _mdoc = (cfg.get(comp) or {}).get("doc", "")
+        if _real_blocks or _pg or _mdoc:
             from . import _glue
             from . import _render as _R
 
