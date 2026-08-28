@@ -52,6 +52,7 @@ from ._docstring import (
     member_doc_key,
     header_default,
     authored_class_brief,
+    inherit_ctor_params,
     is_scaffold_doc,
     max_out_arity_key,
     max_out_is_state_only,
@@ -1283,10 +1284,28 @@ def _make_view_ctx(
     # fallback would make every undocumented view's docstring unreclaimable
     # from then on -- a worse bug than the one being fixed, and one that only
     # shows up on a LATER apply.
+    # gh-1177: the parent's `create()` @params describe this constructor too
+    # (a view takes the same argument list), so they fill in what the view's
+    # own Doxygen does not document. One helper, because the `.pyi` beside
+    # this reads the same merge -- applying it on one face only is how the
+    # first cut of this fix left the two disagreeing again.
+    doc_blocks = inherit_ctor_params(
+        doc_blocks,
+        view["create_fn"],
+        C.object_create_fn(cfg, obj) or f"{obj}_create",
+    )
     _vtp = authored_class_brief(
         doc_blocks, view["create_fn"], view.get("doc", "")
     )
-    if _vtp:
+    # gh-1177: a brief is not the only thing worth rendering. Gating on it
+    # alone meant a view whose constructor carries no `@brief` but whose
+    # PARAMS are documented (its own, or the parent's, inherited just above)
+    # fell back to the bare `"<Class> type."` while the `.pyi` beside it
+    # showed the full Parameters block. The two faces must decide from the
+    # same evidence, so the question is "is anything authored", not "is there
+    # a summary".
+    _vblk = (doc_blocks or {}).get(view["create_fn"])
+    if _vtp or (_vblk is not None and _vblk.params):
         _vinit = C.view_init_params(cfg, obj, view)
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
