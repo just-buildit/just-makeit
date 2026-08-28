@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A view's `Parameters` section no longer loses the parent's `@param` prose
+    (gh-1177).** A 0.70.0 regression, reported from doppler within the hour
+    and measured there as **22 init-param descriptions** replaced by name
+    stubs on a pin bump with no other change.
+
+    gh-1160 gave a view's stub overlay its own `create_fn` so the class
+    summary would stop wrongly inheriting the parent's. That was right, and
+    it took the parameters with it: the lookup had resolved
+    `<synth>_create`, which `_view_doc_blocks` aliases to the parent's block,
+    so a view inherited the parent's `@param`s *and* (wrongly) its summary.
+    Fixing the summary emptied the `Parameters` section of every view whose
+    own constructor carries no Doxygen.
+
+    The rule is asymmetric, and that is the point: **params inherit, the
+    summary does not.** A view and its parent take the same argument list —
+    that is what makes a view a view — so the parent's `@param` prose
+    describes the view's parameters exactly, while what the class *is*
+    differs. `inherit_ctor_params` is one function read by both faces:
+    applying it in `_stubs` alone left the `.pyi` carrying the prose while
+    `tp_doc` still said `<name> constructor parameter.`, which is gh-642's
+    two-faces-disagree bug reintroduced by its own repair.
+
+    The runtime gate also widened from "is there a brief" to "is anything
+    authored" — params alone are worth rendering. A view that documents
+    nothing still gets the bare `"<Class> type."`, so `_docsync` can still
+    reclaim it.
+
 ## [0.70.0] — 2026-08-28
 
 ### Added

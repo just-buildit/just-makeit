@@ -47,6 +47,7 @@ from ._docstring import (
     STUB_TARGET_WIDTH,
     ClassParam,
     class_docstring,
+    inherit_ctor_params,
     is_scaffold_doc,
     max_out_arity_key,
     max_out_is_state_only,
@@ -2645,6 +2646,26 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             # be a fifth reader disagreeing about whether it can be absent,
             # and the branch could never be taken.
             overlay["create_fn"] = view["create_fn"]
+            # gh-1177: a view's PARAMS inherit from the parent's `create()`;
+            # its SUMMARY does not. The asymmetry is the whole rule, and it
+            # is not arbitrary -- the two constructors take the same argument
+            # list (that is what makes a view a view), so the parent's
+            # `@param` prose describes the view's parameters exactly. What
+            # differs is what the class IS, which is why gh-648/gh-1160 make
+            # the summary its own.
+            #
+            # Setting `create_fn` above is what exposed this. Before it, the
+            # lookup resolved `<synth>_create`, which `_view_doc_blocks`
+            # aliases to the parent's block -- so a view inherited the
+            # parent's `@param`s *and* (wrongly) its summary. Fixing the
+            # summary took the parameters with it: doppler measured 22
+            # init-param descriptions replaced by name stubs in 0.70.0, on
+            # views whose own `create_fn` carries no Doxygen.
+            overlay["_doc_blocks"] = inherit_ctor_params(
+                overlay["_doc_blocks"],
+                view["create_fn"],
+                C.object_create_fn(cfg, obj) or f"{obj}_create",
+            )
             cfg_v = {**cfg, synth: overlay}
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")

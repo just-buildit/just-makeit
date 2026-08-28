@@ -25,7 +25,7 @@ block, so type mapping stays in ``_stubs``/``_context`` where it already lives.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from typing import NamedTuple, Sequence
 
 
@@ -583,6 +583,67 @@ def _leading_member_docs(header_text: str) -> dict[str, str]:
 # through several layers; a parallel dict would have to be threaded through all
 # of them, and the two are always loaded from the same header at the same time.
 _MEMBER_KEY_PREFIX = "<member>"
+
+
+def inherit_ctor_params(
+    doc_blocks: "dict | None", view_ctor: str, parent_ctor: str
+) -> dict:
+    """*doc_blocks* with the parent's ``@param``s filled into a view's ctor.
+
+    gh-1177. A view's PARAMS inherit from the parent's ``create()``; its
+    SUMMARY does not. The asymmetry is the rule and it is not arbitrary: the
+    two constructors take the same argument list -- that is what makes a view
+    a view -- so the parent's ``@param`` prose describes the view's parameters
+    exactly. What differs is what the class IS, which is why gh-648/gh-1160
+    give the summary its own source.
+
+    This exists as one function because BOTH faces need it and they are built
+    by different modules: `_stubs` renders the `.pyi` from an overlay cfg,
+    `_object._make_view_ctx` renders `tp_doc` from the raw blocks. Applying
+    the merge in only one of them is how the first cut of this fix left the
+    stub carrying the inherited prose and the runtime still showing
+    ``<name> constructor parameter.`` -- the two-faces-disagree bug gh-642
+    exists to prevent, reintroduced by its own repair.
+
+    A parameter the view's own constructor documents is left alone: the
+    specific block wins, exactly as a trailing member doc beats a leading one.
+    When the view's constructor carries no Doxygen at all, the merged block
+    holds params and NOTHING else, so `authored_class_brief` still finds no
+    brief and the summary does not fall back to the parent's.
+
+    Returns *doc_blocks* unchanged (same object) when there is nothing to
+    inherit, so the common case allocates nothing.
+
+    Examples
+    --------
+    >>> par = DoxyBlock(brief="Parent.", params=[("m", "Order M.")])
+    >>> out = inherit_ctor_params({"o_create": par}, "o_create_r", "o_create")
+    >>> out["o_create_r"].params
+    [('m', 'Order M.')]
+    >>> out["o_create_r"].brief
+    ''
+    >>> own = DoxyBlock(brief="Own.", params=[("m", "Mine.")])
+    >>> out = inherit_ctor_params(
+    ...     {"o_create": par, "o_create_r": own}, "o_create_r", "o_create")
+    >>> out["o_create_r"].params
+    [('m', 'Mine.')]
+    >>> inherit_ctor_params({}, "o_create_r", "o_create")
+    {}
+    """
+    blocks = doc_blocks or {}
+    parent = blocks.get(parent_ctor)
+    if parent is None:
+        return blocks
+    own = blocks.get(view_ctor)
+    have = {n for n, _ in (own.params if own else ())}
+    inherited = [(n, d) for n, d in parent.params if n not in have]
+    if not inherited:
+        return blocks
+    base = own if own is not None else DoxyBlock()
+    return {
+        **blocks,
+        view_ctor: dc_replace(base, params=list(base.params) + inherited),
+    }
 
 
 def member_doc_key(name: str) -> str:
