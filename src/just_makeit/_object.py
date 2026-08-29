@@ -1710,6 +1710,90 @@ def _write_module_test_and_bench(
         _write(dest, R.render(tmpl, ctx))
 
 
+def _module_extra_files(
+    root: Path, cname: str, comp_ctxs: "list[dict]"
+) -> "set[str]":
+    """The hand-written ``*_extra.c`` / ``*_prologue.c`` hooks module *cname*
+    has on disk.
+
+    jm never creates or modifies these — they exist so a hand-written type
+    survives regeneration — but the aggregator has to ``#include`` them, so
+    which ones exist is an input to its render.
+
+    gh-862: the prologue hook goes BEFORE the fragments. Every other
+    hand-written file here is included after the code that would use it, so C
+    shared by two objects' bindings had nowhere to live that both could call —
+    doppler duplicated ~55 lines of ``read_dict()`` verbatim across two sacred
+    fragments rather than pick one to include from the other.
+    """
+    ext_dir = root / "native" / "src" / cname
+    found: set[str] = set()
+    for ctx in comp_ctxs:
+        comp = ctx.get("frag_id", ctx["component"])
+        if (ext_dir / f"{cname}_ext_{comp}_extra.c").exists():
+            found.add(f"{cname}_ext_{comp}_extra.c")
+    for name in (f"{cname}_ext_extra.c", f"{cname}_ext_prologue.c"):
+        if (ext_dir / name).exists():
+            found.add(name)
+    return found
+
+
+def render_module_ext_c(
+    root: Path,
+    cfg: dict,
+    module: str,
+    pkg: str,
+    comp_ctxs: "list[dict] | None" = None,
+    functions: "list[dict] | None" = None,
+    extra_files: "set[str] | None" = None,
+) -> str:
+    """The module aggregator ``<cname>_ext.c``, rendered from *cfg*.
+
+    Extracted from :func:`_regenerate_module_now` (gh-1181) so the writer and
+    the drift oracle call ONE thing. The oracle's whole job is to render a
+    generated file from the real manifest and compare it against what `apply`
+    left on disk, and a second copy of this argument list would drift into
+    disagreeing with the first — at which point the gate reports jm's own
+    divergence rather than the manifest's, which is worse than no gate.
+
+    *comp_ctxs*, *functions* and *extra_files* are the caller's already-built
+    values; omitted, they are derived here. The regenerate path passes its
+    own because it has just built them, and because ``extra_files`` is a fact
+    about the DIRECTORY (which hand-written ``*_extra.c`` hooks exist) rather
+    than about the manifest — deriving it identically on both sides is what
+    keeps the comparison about the manifest.
+    """
+    mp = C.module_paths(module)
+    if comp_ctxs is None:
+        comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
+    if functions is None:
+        functions = C.module_functions(cfg, module)
+    if extra_files is None:
+        extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
+    return R.render_module_ext_aggregator(
+        module,
+        comp_ctxs,
+        functions,
+        extra_files,
+        extra_types=C.extra_types(cfg, module),
+        # gh-353: a module function's enum param needs the SSOT enum tables.
+        enums=C.enums(cfg),
+        # gh-645: `[module.X] doc` -> m_doc, the same string the re-export
+        # __init__.py docstring gets.
+        module_doc_c=Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package(cfg, module),
+            C.module_doc(cfg, module),
+        )["module_doc_c"],
+        # gh-643: the module header's Doxygen for its free functions — the
+        # same blocks the .pyi derives from (gh-384), so `help(fn)` and the
+        # stub carry the same text.
+        fn_doc_blocks=_load_module_doc_blocks(root, module),
+        procglobal=_procglobal.rendezvous_c(cfg, module),
+    )
+
+
 def _regenerate_module_now(
     root: Path,
     cfg: dict,
@@ -1827,47 +1911,16 @@ def _regenerate_module_now(
             )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
-    # Discover *_extra.c files — jm never creates or modifies them, but
-    # includes them in the aggregator so hand-written types survive regen.
-    extra_files: set[str] = set()
-    for ctx in comp_ctxs:
-        comp = ctx.get("frag_id", ctx["component"])
-        if (ext_dir / f"{cname}_ext_{comp}_extra.c").exists():
-            extra_files.add(f"{cname}_ext_{comp}_extra.c")
-    if (ext_dir / f"{cname}_ext_extra.c").exists():
-        extra_files.add(f"{cname}_ext_extra.c")
-    # gh-862: and the one hook that goes BEFORE the fragments. Every other
-    # hand-written file here is included after the code that would use it, so
-    # C shared by two objects' bindings had nowhere to live that both could
-    # call — doppler duplicated ~55 lines of `read_dict()` verbatim across two
-    # sacred fragments rather than pick one to include from the other.
-    if (ext_dir / f"{cname}_ext_prologue.c").exists():
-        extra_files.add(f"{cname}_ext_prologue.c")
+    extra_files = _module_extra_files(root, cname, comp_ctxs)
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
-    aggregator = R.render_module_ext_aggregator(
-        module,
-        comp_ctxs,
-        functions,
-        extra_files,
-        extra_types=C.extra_types(cfg, module),
-        # gh-353: a module function's enum param needs the SSOT enum tables.
-        enums=C.enums(cfg),
-        # gh-645: `[module.X] doc` -> m_doc, the same string the re-export
-        # __init__.py docstring gets.
-        module_doc_c=Ctx.make_module_ctx(
-            module,
-            pkg,
-            C.module_package(cfg, module),
-            C.module_doc(cfg, module),
-        )["module_doc_c"],
-        # gh-643: the module header's Doxygen for its free functions — the
-        # same blocks the .pyi derives from (gh-384), so `help(fn)` and the
-        # stub carry the same text.
-        fn_doc_blocks=_load_module_doc_blocks(root, module),
-        procglobal=_procglobal.rendezvous_c(cfg, module),
+    _write(
+        ext_c_path,
+        render_module_ext_c(
+            root, cfg, module, pkg, comp_ctxs, functions, extra_files
+        ),
+        "update",
     )
-    _write(ext_c_path, aggregator, "update")
 
     # Module CMakeLists
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)

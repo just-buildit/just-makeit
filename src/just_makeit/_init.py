@@ -725,6 +725,85 @@ def _param_headers_at_create(
     return out
 
 
+#: A generated re-export line in a package ``__init__.py``. Anchored to the
+#: start of a line and required to have nothing after the imported name, so a
+#: mention of the same text inside a user's docstring cannot match.
+_PKG_IMPORT_RE = re.compile(r"^from \.\w+ import \w+$", re.MULTILINE)
+
+
+def dll_preamble() -> str:
+    """The Windows DLL-directory preamble, taken from the template that owns it.
+
+    gh-1181. `os.add_dll_directory` is what lets an extension beside this
+    ``__init__.py`` find the MinGW runtime DLLs it links against; without the
+    call the import fails on Windows and nowhere else.
+
+    Sliced out of :data:`_render.PACKAGE_INIT_PY` rather than written again
+    here, because the same six lines already appear in three templates and a
+    fourth copy in Python is the one that would drift silently — the templates
+    at least get rendered and read. If the markers ever move, ``.index``
+    raises where a copy would simply have gone stale.
+    """
+    tmpl = R.PACKAGE_INIT_PY
+    start = tmpl.index("import os as _os")
+    end = tmpl.index("del _os, _sys") + len("del _os, _sys\n")
+    return tmpl[start:end]
+
+
+def ensure_dll_preamble(text: str) -> str:
+    """*text* with the Windows DLL-directory preamble present. Idempotent.
+
+    gh-1181. ``jm new`` writes the MINIMAL package ``__init__.py`` — a
+    docstring and nothing else — and the first standalone object then finds
+    the file already there and *splices* its import into it, so the full
+    template that carries the preamble was never reached. Every project built
+    the ordinary way therefore had a package ``__init__.py`` with no
+    ``add_dll_directory`` call, including one scaffolded with ``--windows``,
+    and ``status --check`` reported it clean: ``apply`` MERGES this file, so
+    the difference was never between the two sides it compares.
+
+    Only a package that actually re-exports an extension gets the preamble —
+    the guard is a ``from .X import Y`` line. An empty package has no ``.so``
+    beside it to find DLLs for, and adding the block there would churn every
+    project that has only module objects for no gain.
+
+    The imports gain ``# noqa: E402`` because they now follow statements, and
+    the generated file has to lint clean in a project that lints it.
+
+    The examples build the docstring line with ``chr(34)`` because a literal
+    triple quote cannot appear inside this one.
+
+    >>> head = chr(34) * 3 + "p package." + chr(34) * 3 + chr(10)
+    >>> ensure_dll_preamble(head) == head          # nothing to guard
+    True
+    >>> out = ensure_dll_preamble(head + "from .a import A" + chr(10))
+    >>> "add_dll_directory" in out
+    True
+    >>> out.endswith("from .a import A  # noqa: E402" + chr(10))
+    True
+    >>> ensure_dll_preamble(out) == out            # idempotent
+    True
+    >>> two = ensure_dll_preamble(out + "from .b import B" + chr(10))
+    >>> two.endswith("from .b import B  # noqa: E402" + chr(10))
+    True
+    """
+    if not _PKG_IMPORT_RE.search(text):
+        return text
+    if "add_dll_directory" not in text:
+        from ._object import _leading_docstring
+
+        doc = _leading_docstring(text)
+        rest = text[len(doc) :].lstrip("\n")
+        text = f"{doc}{dll_preamble()}\n{rest}"
+    # Annotating is a SEPARATE question from inserting: a project that already
+    # had the preamble gains a second re-export the next time an object is
+    # added, and that line follows statements just as much as the first one
+    # did. Returning early on "preamble present" left exactly that line
+    # unannotated. The pattern requires the line to END at the imported name,
+    # so an already-annotated line does not match and this is idempotent.
+    return _PKG_IMPORT_RE.sub(lambda m: m.group(0) + "  # noqa: E402", text)
+
+
 def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     """Add `from .component import Component` and update __all__ in-place.
 
@@ -764,6 +843,12 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
         text = all_re.sub(_splice_all, text)
     else:
         text = text.rstrip("\n") + f'\n\n__all__ = ["{Component}"]\n'
+
+    # gh-1181: this is the path a real project takes — `jm new` wrote the
+    # minimal file, so the full template that carries the preamble is never
+    # rendered here. Ensuring it on the splice is what makes the two ways of
+    # arriving at this file agree.
+    text = ensure_dll_preamble(text)
 
     init_py.write_text(text, encoding="utf-8")
     print(f"  update  {init_py}")
