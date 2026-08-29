@@ -216,6 +216,95 @@ def _doc_slots(text: str, mask: str, array_re: re.Pattern) -> dict[str, tuple]:
     return out
 
 
+def _docless_entries(
+    text: str, mask: str, array_re: re.Pattern
+) -> "dict[str, int]":
+    """Map entry name -> the index of its closing ``}``, for entries that have
+    NO doc field at all.
+
+    gh-1183. :func:`_doc_slots` skips a short entry (``len(fields) <=
+    _DOC_FIELD``) because there is no span to replace — which is right for
+    replacing and is exactly what made the omission permanent. A
+    ``{"reset", (PyCFunction)O_reset, METH_NOARGS}`` row is valid C, gives
+    the method an empty ``__doc__``, and no `apply` would ever put one back.
+
+    Returning the closing brace rather than a span says what the caller may
+    do: INSERT before it. Nothing is overwritten, because an absent slot has
+    no content to overwrite — which is why this does not weaken the
+    preservation guarantee this module is built on.
+    """
+    m = array_re.search(mask)
+    if not m:
+        return {}
+    open_idx = m.end() - 1
+    close_idx = _match_brace(mask, open_idx)
+    if close_idx == -1:
+        return {}
+    out: dict[str, int] = {}
+    for s_, e_ in _entry_spans(mask, open_idx + 1, close_idx):
+        name = _entry_name(text, mask, s_, e_)
+        if name is None:
+            continue
+        if len(_field_spans(mask, s_, e_)) > _DOC_FIELD:
+            continue
+        out[name] = e_
+    return out
+
+
+#: A designated-initializer field, e.g. ``.tp_methods =``. Used only to name
+#: the field that FOLLOWS ``.tp_doc`` in jm's own render, so a re-inserted
+#: slot lands where jm would have put it rather than at the end.
+_DESIGNATOR_RE = re.compile(r"\.(\w+)\s*=")
+
+
+def _insert_tp_doc(
+    existing: str, ex_mask: str, reference: str, ref_mask: str
+) -> "tuple | None":
+    """An ``(at, at, text)`` edit adding a missing ``.tp_doc`` to *existing*.
+
+    gh-1183, the ``PyTypeObject`` half. doppler hand-wrote a view's ``tp_doc``
+    while gh-1160 was open, then deleted the block when the fix shipped — and
+    `apply` never put one back, because the transplant only ever *replaces* a
+    slot and there was none. The class shipped with ``__doc__ == ''``, and
+    `status` called the fragment author-owned, so ``--check`` stayed 0.
+
+    Not view-specific: measured identically on a parent object's own
+    fragment.
+
+    The whole designator is taken from the reference verbatim, and it is
+    anchored on the field that follows it there, so the result reads as if
+    jm had rendered it — which, apart from the anchoring, it did.
+
+    Returns ``None`` when the reference has no ``tp_doc`` either, when the
+    anchor field is absent from *existing* (a binding restructured far enough
+    that guessing a position would be worse than leaving it), or when there
+    is no ``PyTypeObject`` to insert into.
+    """
+    m = _TP_DOC_RE.search(ref_mask)
+    span = _tp_doc_span(reference, ref_mask)
+    if not m or not span or not _norm(span[2]):
+        return None
+    designator = reference[m.start() : span[1] + 1]
+    nxt = _DESIGNATOR_RE.search(ref_mask, span[1] + 1)
+    if not nxt:
+        return None
+    tm = _TYPE_RE.search(ex_mask)
+    if not tm:
+        return None
+    open_idx = tm.end() - 1
+    close_idx = _match_brace(ex_mask, open_idx)
+    if close_idx == -1:
+        return None
+    at_m = re.compile(r"\." + re.escape(nxt.group(1)) + r"\s*=").search(
+        ex_mask, open_idx, close_idx
+    )
+    if at_m is None:
+        return None
+    at = at_m.start()
+    indent = existing[existing.rfind("\n", 0, at) + 1 : at]
+    return (at, at, designator + "\n" + indent)
+
+
 def _tp_doc_span(text: str, mask: str) -> tuple | None:
     """Span and text of the ``.tp_doc`` value, up to its terminating comma."""
     m = _TP_DOC_RE.search(mask)
@@ -529,6 +618,26 @@ def transplant_docs(
                     and _norm(cur)
                 ):
                     reclaimed.append(name)
+        # gh-1183: the entries with no doc field to refresh. Replacing cannot
+        # reach them by construction, so they were frozen without one forever
+        # — a row jm generated, missing a string jm owns, that no `apply`
+        # would restore and `status` reported as the author's doing.
+        for name, entry_end in _docless_entries(
+            existing, ex_mask, array_re
+        ).items():
+            ref = ref_slots.get(name)
+            if ref is None or not _norm(ref[2]):
+                continue
+            # The reference's doc field carries its own leading whitespace, so
+            # reusing it verbatim reproduces jm's layout without this file
+            # holding a second opinion about what that layout is. Back up over
+            # the entry's own trailing padding first — a `PyGetSetDef` row ends
+            # `NULL }`, and inserting at the brace put the comma after that
+            # space (`NULL , "…"}`).
+            at = entry_end
+            while at > 0 and existing[at - 1] in " \t":
+                at -= 1
+            edits.append((at, at, "," + ref[2]))
 
     ex_tp = _tp_doc_span(existing, ex_mask)
     ref_tp = _tp_doc_span(reference, ref_mask)
@@ -558,6 +667,12 @@ def transplant_docs(
                 new_tp = ref_tp[2]
         if new_tp is not None:
             edits.append((ex_tp[0], ex_tp[1], new_tp))
+    else:
+        # gh-1183: no slot to replace. Insert jm's own, rather than ship a
+        # type whose `__doc__` is `''`.
+        ins = _insert_tp_doc(existing, ex_mask, reference, ref_mask)
+        if ins is not None:
+            edits.append(ins)
 
     if not edits:
         return existing

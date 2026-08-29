@@ -2,6 +2,42 @@
 
 ### Fixed
 
+- **A runtime doc slot that was *deleted* is now put back (gh-1183).**
+    Reported from doppler as a view's `tp_doc` still being absent after
+    gh-1160. Measured first, and the title points at the wrong file: a view's
+    `tp_doc` does derive from its own `create_fn`'s Doxygen on 0.70.1, and so
+    does a manifest `[[<obj>.views]] doc`. Both faces agree; gh-1160 is not
+    half-landed.
+
+    One step further back is the defect. `_docsync` refreshes the runtime doc
+    slots by **replacing** the string-literals in the existing fragment,
+    matched by entry name — deliberately, so every hand-written binding in a
+    sacred fragment survives regeneration as a structural guarantee. There is
+    nothing to replace when the slot is *gone*. doppler hand-wrote the block
+    while gh-1160 was open, deleted it when the fix shipped, and got a class
+    with `__doc__ == ''` that no `apply` would ever repair.
+
+    **Not view-specific**: the same hole existed on a parent object's
+    `tp_doc`, on a `PyMethodDef` row and on a `PyGetSetDef` row, because
+    `_doc_slots` skips any entry with fewer than four fields. One insert path
+    now serves all three, and it cannot weaken preservation for the reason
+    that hid the gap: an absent slot has no content to overwrite. The
+    designator is taken from jm's own render and anchored on the field that
+    follows it there, so the result reads as something jm emitted.
+
+    A slot set to `NULL` is left alone, and that asymmetry is deliberate:
+    `NULL` is a decision someone wrote down, and `_refresh_slot` fills it only
+    with real Doxygen. An absent field is not a decision — jm's render always
+    emits one.
+
+    `status` did report the fragment all along, as AUTHOR-OWNED — "these
+    differ because you wrote them that way" — which `--check` does not fail
+    on. Right for a wrapper body, wrong for a slot in jm's own `PyTypeObject`
+    initialiser. The finding now clears, so it stops being one the author can
+    do nothing about.
+
+### Fixed
+
 - **A standalone object's package `__init__.py` never got the Windows
     DLL-directory preamble (gh-1181).** `jm new` writes the *minimal* package
     `__init__.py` — a docstring and nothing else — and the first standalone
