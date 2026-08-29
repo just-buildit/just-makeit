@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.71.0] — 2026-08-29
+
 ### Added
 
 - **A composer source's owned array can name its own C storage —
@@ -27,6 +29,31 @@
     and a compile test against a `const uint8_t *` member is what makes that a
     measurement rather than a claim.
 
+- **The drift oracle now covers every manifest table and both shapes of
+    `_ext.c` (gh-1181).** gh-1172 gated the `[<obj>]` table against the `.pyi`;
+    `_apply` reconstructs five other kinds of row from five other hand-written
+    key lists (`_replay_method`, `_replay_property`, the `_view.run` and
+    `_function.run` calls, and the `[module.X]` copy-down), and a key missing
+    from any of them is invisible to `apply` and to `status` alike.
+
+    `tests/test_gh1181_generated_files_match_the_manifest.py` sweeps all of
+    them, one manifest-only key at a time, against **two** oracles:
+
+    - **direct render** — jm's own renderers called against the real manifest,
+        the one reference that does not go through the replay, now covering the
+        module aggregator and standalone `_ext.c` as well as the stubs;
+    - **rebuild** — the same project built from its manifest alone must be
+        byte-identical, which is what catches `apply`'s incremental path and
+        its materialize path failing to converge. That is the arm that found
+        the `__init__.py` bug above.
+
+    Which files each oracle is entitled to compare comes from
+    `_createonly.classify`, so there is no path list to keep current: a file jm
+    learns to generate is classified — and covered — by the same table `status`
+    already reads. `render_module_ext_c` was extracted from
+    `_regenerate_module_now` so the writer and the oracle call one thing rather
+    than two copies of an argument list.
+
 ### Fixed
 
 - **A composer's `bytes` field name reached four more emitters (gh-1184).**
@@ -44,8 +71,6 @@
 
     All nine now read the pair from `_composer.buffer_members`, so the fix is
     one function rather than nine careful edits.
-
-### Fixed
 
 - **A runtime doc slot that was *deleted* is now put back (gh-1183).**
     Reported from doppler as a view's `tp_doc` still being absent after
@@ -81,8 +106,6 @@
     initialiser. The finding now clears, so it stops being one the author can
     do nothing about.
 
-### Fixed
-
 - **A standalone object's package `__init__.py` never got the Windows
     DLL-directory preamble (gh-1181).** `jm new` writes the *minimal* package
     `__init__.py` — a docstring and nothing else — and the first standalone
@@ -102,35 +125,6 @@
     docstring drops the component name it was picking arbitrarily from
     whichever object happened to be scaffolded first, so the two ways of
     arriving at this file agree.
-
-### Added
-
-- **The drift oracle now covers every manifest table and both shapes of
-    `_ext.c` (gh-1181).** gh-1172 gated the `[<obj>]` table against the `.pyi`;
-    `_apply` reconstructs five other kinds of row from five other hand-written
-    key lists (`_replay_method`, `_replay_property`, the `_view.run` and
-    `_function.run` calls, and the `[module.X]` copy-down), and a key missing
-    from any of them is invisible to `apply` and to `status` alike.
-
-    `tests/test_gh1181_generated_files_match_the_manifest.py` sweeps all of
-    them, one manifest-only key at a time, against **two** oracles:
-
-    - **direct render** — jm's own renderers called against the real manifest,
-        the one reference that does not go through the replay, now covering the
-        module aggregator and standalone `_ext.c` as well as the stubs;
-    - **rebuild** — the same project built from its manifest alone must be
-        byte-identical, which is what catches `apply`'s incremental path and
-        its materialize path failing to converge. That is the arm that found
-        the `__init__.py` bug above.
-
-    Which files each oracle is entitled to compare comes from
-    `_createonly.classify`, so there is no path list to keep current: a file jm
-    learns to generate is classified — and covered — by the same table `status`
-    already reads. `render_module_ext_c` was extracted from
-    `_regenerate_module_now` so the writer and the oracle call one thing rather
-    than two copies of an argument list.
-
-### Fixed
 
 - **A manifest `doc` added after scaffolding now reaches a module object's
     `.pyi` — and `jm status --check` can see when it does not (gh-1172).**
