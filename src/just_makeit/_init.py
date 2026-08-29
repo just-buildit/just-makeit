@@ -804,6 +804,10 @@ def run(
     extra_include_dirs: list[str] = (),
     create_fn: str | None = None,
     destroy: "dict | None" = None,
+    # gh-1172: manifest-only (no `jm object --doc`), forwarded by
+    # `_object.run` so `jm apply`'s replay re-persists it. The peer save in
+    # `_object.py` is the module-object path.
+    doc: str = "",
     # gh-856: `jm apply` replays into a HALF-BUILT temp tree — the object
     # is created before its methods are replayed, so the temp manifest
     # legitimately has none yet. `exit` names one of those methods, so it
@@ -1377,6 +1381,7 @@ def run(
         controllable_names_=controllable_names,
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
+        doc_=doc,
     )
     # gh-541/gh-544: persist the destructor contract so it survives the
     # manifest round-trip. `jm apply` replays through this path, and a key

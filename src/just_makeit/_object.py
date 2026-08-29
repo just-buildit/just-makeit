@@ -2261,6 +2261,10 @@ def run(
     max_out: int = 0,
     create_fn: str | None = None,
     destroy: "dict | None" = None,
+    # gh-1172: the authored class docstring. Manifest-only -- there is no
+    # `jm object --doc` -- so the ONLY caller that passes it is `jm apply`'s
+    # replay, which is exactly why it has to exist. See `_apply._object_kwargs`.
+    doc: str = "",
     _hint: bool = True,
     # gh-860: KEYWORD-ONLY. It was appended-with-a-default because slotting
     # it ahead of `state_vars` rebinds every positional caller (48 tests
@@ -2350,6 +2354,7 @@ def run(
             extra_include_dirs=list(extra_include_dirs),
             create_fn=create_fn,
             destroy=destroy,
+            doc=doc,
             _hint=_hint and not variable_output,
         )
         if variable_output:
@@ -2701,6 +2706,13 @@ def run(
         # cross-module dep to the Python extension and reload/apply lose it.
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
+        # gh-1172: BEFORE `_regenerate_module` below, which reads this same
+        # in-memory cfg to render the module's `.pyi` and aggregator. Without
+        # it the replay's temp manifest has no `doc`, its `.pyi` carries the
+        # generic seed, and `_sync_aggregates` copies that seed over the real
+        # file -- while `_docsync` (which reads the REAL cfg) had already put
+        # the right text in the runtime face beside it.
+        doc_=doc,
     )
 
     # gh-1117: the contract header, on the module-object path too. This

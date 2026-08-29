@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A manifest `doc` added after scaffolding now reaches a module object's
+    `.pyi` — and `jm status --check` can see when it does not (gh-1172).**
+    Peer of gh-1165, on the module path. `[<obj>] doc` reached the runtime
+    `tp_doc` and left the stub showing the generic `<Component> component.`
+    seed.
+
+    `jm apply` replays the project into a throwaway tree rebuilt from
+    reconstructed CLI history, then copies the module's pure-generated files
+    over the real ones. There is no `jm object --doc`, so nothing in that
+    history carried `doc`, the temp manifest had none, and the seed was what
+    got copied. `_stubs` had been rendering it correctly from that same
+    manifest all along.
+
+    The fix is in the replay rather than in a second post-replay re-render:
+    `doc` joins `process_global`, `destroy` and `no_reset` as a manifest-only
+    key `_apply._object_kwargs` carries explicitly, and `add_component`
+    re-persists it. One change, both faces, both object shapes.
+
+    **`status --check` exited 0 on this**, which is the half that let it
+    survive. Status copies the project, runs the *same* replay on the copy,
+    and diffs — so a key the replay drops is dropped identically on both
+    sides, the two agree, and the drift is invisible. The checker cannot see
+    a difference it also makes, and gh-1140's clobber gate could not catch
+    it: that one proves a file is *compared*, and this file was compared all
+    along, against a reference computed with the key missing.
+
+    So the new gate is the missing axis — an **independent oracle**. jm's own
+    renderers, called directly against the real manifest, are the one
+    reference that does not go through the replay, and every generated `.pyi`
+    on disk must now equal what they produce. Driven both over a whole
+    project and one manifest-only object key at a time. The residual — the
+    method, property, view, function and module tables have the same exposure
+    — is gh-1181.
+
 ## [0.70.1] — 2026-08-28
 
 ### Fixed

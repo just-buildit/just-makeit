@@ -189,6 +189,20 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # temp scaffold renders a `void` destructor and the declared
         # name/aliases/error vanish on a fresh checkout.
         "destroy": C.destroy_spec(cfg, comp),
+        # gh-1172: the authored class docstring, manifest-only for the same
+        # reason `process_global` and `destroy` above are — `jm object` has no
+        # `--doc`, so nothing in the reconstructed CLI history carries it and
+        # the temp manifest had none. Every module artefact renders from THAT
+        # manifest, so the module `.pyi` kept the generic seed and
+        # `_sync_aggregates` copied the seed over the real file.
+        #
+        # And the half that made it survive: `status` copies the project,
+        # runs this same replay on the copy, and diffs. A key the replay
+        # drops is dropped identically on both sides, so the two agree and
+        # `status --check` exits 0 — the checker cannot see a difference it
+        # also makes. That is why the fix belongs HERE, in the replay, and
+        # not in a post-replay re-render of the one file that showed it.
+        "doc": (cfg.get(comp) or {}).get("doc", ""),
     }
 
 
@@ -1694,6 +1708,15 @@ def _sync_aggregates(
         # an unconditional re-render would make a fresh scaffold report STALE
         # against itself. A manifest `doc` comes from the manifest, which both
         # paths read alike, so it cannot produce that disagreement.
+        #
+        # gh-1172 fixed the same omission a layer down: `_object_kwargs` now
+        # carries `doc` into the replay, so the temp `.pyi` already has it and
+        # this re-render is an identity for a manifest doc alone. It stays
+        # because the OTHER two triggers are real, and because a standalone
+        # object whose only enrichment is a manifest doc is then covered
+        # twice rather than not at all -- which is the direction to be wrong
+        # in. `TestTheReplayCarriesTheKey` is what holds the layer below, since
+        # every stub assertion stays green while this branch is here.
         _mdoc = (cfg.get(comp) or {}).get("doc", "")
         if _real_blocks or _pg or _mdoc:
             from . import _glue

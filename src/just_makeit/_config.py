@@ -4160,6 +4160,7 @@ def add_component(
     extra_link_libs_: list[str] = (),
     extra_include_dirs_: list[str] = (),
     create_fn_: str | None = None,
+    doc_: str = "",
 ) -> dict:
     rt = (
         return_type_
@@ -4219,6 +4220,12 @@ def add_component(
         ]
     if class_name_:
         entry["class_name"] = class_name_
+    # gh-1172: the authored class docstring. Persisted here so `jm apply`'s
+    # replay can carry it into the temp manifest -- it is a manifest-only key
+    # (no `jm object --doc`), and a key the replay drops is one BOTH `apply`
+    # and `status` are blind to, because status's reference is the replay.
+    if doc_:
+        entry["doc"] = doc_
     if create_fn_:
         entry["create_fn"] = create_fn_
     if depends_on_:
