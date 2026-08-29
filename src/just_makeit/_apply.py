@@ -1125,7 +1125,7 @@ def _splice_cmake_components(
 def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     """Splice every missing `from .X import Y` import from *temp_path* into
     *real_path*, preserving user content. Returns True if modified."""
-    from ._init import _splice_init_py
+    from ._init import _splice_init_py, ensure_dll_preamble
 
     temp_text = temp_path.read_text(encoding="utf-8")
     imports = re.findall(
@@ -1137,6 +1137,19 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
         if f"from .{comp} import {Component}" in cur:
             continue
         _splice_init_py(real_path, comp, Component)
+        changed = True
+    # gh-1181: and UNCONDITIONALLY, not only when an import was added. Every
+    # project built before this had its imports spliced in already, so gating
+    # the preamble on a new one would leave exactly the projects that need it
+    # — the ones with a standalone object — permanently without it. `apply`
+    # merges this file rather than overwriting it, which is why the omission
+    # was invisible to `status`: the difference was never between the two
+    # sides it compares.
+    cur = real_path.read_text(encoding="utf-8")
+    fixed = ensure_dll_preamble(cur)
+    if fixed != cur:
+        real_path.write_text(fixed, encoding="utf-8")
+        print(f"  update  {real_path}")
         changed = True
     return changed
 
