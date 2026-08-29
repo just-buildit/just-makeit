@@ -302,3 +302,103 @@ class TestWhatIsStillPreserved:
         assert _cli("apply", cwd=project).returncode == 0
         after = frag.read_text(encoding="utf-8")
         assert "A binding the manifest does not know about." in after, after
+
+
+# ── The refusals, in-process ────────────────────────────────────────────────
+# Every arm above drives the CLI, which is right for behaviour but reaches
+# `_insert_tp_doc` only down its one happy path. These are the cases where it
+# declines: a fragment restructured far enough that guessing a position would
+# be worse than leaving the slot out. Each is a decision, so each gets a name.
+
+sys.path.insert(0, str(SRC))
+
+from just_makeit import _docsync  # noqa: E402
+
+_TYPE_C = """static PyTypeObject OType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "m.O",
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_methods   = O_methods,
+};
+"""
+
+_REF_C = """static PyTypeObject OType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = "m.O",
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_doc       = "O type.\\n",
+    .tp_methods   = O_methods,
+};
+"""
+
+
+def _insert(existing: str, reference: str):
+    return _docsync._insert_tp_doc(
+        existing,
+        _docsync._code_mask(existing),
+        reference,
+        _docsync._code_mask(reference),
+    )
+
+
+class TestWhenItDeclines:
+    def test_the_happy_path_is_what_the_others_are_measured_against(
+        self,
+    ) -> None:
+        at, end, text = _insert(_TYPE_C, _REF_C)
+        assert at == end, "an insert, never a replace"
+        assert text.startswith('.tp_doc       = "O type.')
+        assert _TYPE_C[at:].startswith(".tp_methods")
+
+    def test_no_tp_doc_in_the_reference(self) -> None:
+        """jm did not render one either, so there is nothing to restore."""
+        assert _insert(_TYPE_C, _TYPE_C) is None
+
+    def test_an_empty_tp_doc_in_the_reference(self) -> None:
+        """`NULL` is not content to copy over."""
+        ref = _REF_C.replace('"O type.\\n"', "NULL")
+        assert _insert(_TYPE_C, ref) is None
+
+    def test_no_field_follows_tp_doc_in_the_reference(self) -> None:
+        """The anchor is the field after it; with none there is nothing to
+        anchor on."""
+        ref = _REF_C.replace("    .tp_methods   = O_methods,\n", "")
+        assert _insert(_TYPE_C, ref) is None
+
+    def test_no_type_object_in_the_existing_fragment(self) -> None:
+        assert _insert("/* nothing here */\n", _REF_C) is None
+
+    def test_the_anchor_field_is_absent_from_the_existing_fragment(
+        self,
+    ) -> None:
+        """A binding restructured this far is one to leave alone: inserting at
+        a guessed position is worse than reporting the difference."""
+        existing = _TYPE_C.replace("    .tp_methods   = O_methods,\n", "")
+        assert _insert(existing, _REF_C) is None
+
+
+class TestDoclessEntries:
+    def test_an_array_that_is_not_there(self) -> None:
+        text = "/* no PyMethodDef in this fragment */\n"
+        assert (
+            _docsync._docless_entries(
+                text, _docsync._code_mask(text), _docsync._METHODS_RE
+            )
+            == {}
+        )
+
+    def test_only_the_short_rows_are_returned(self) -> None:
+        """The rows that already have a doc field belong to `_doc_slots`;
+        returning both from both is how two writers end up on one span."""
+        text = (
+            "static PyMethodDef O_methods[] = {\n"
+            '    {"a", (PyCFunction)A, METH_NOARGS},\n'
+            '    {"b", (PyCFunction)B, METH_NOARGS, "has one"},\n'
+            "    {NULL}\n"
+            "};\n"
+        )
+        got = _docsync._docless_entries(
+            text, _docsync._code_mask(text), _docsync._METHODS_RE
+        )
+        assert set(got) == {"a"}
+        assert text[got["a"]] == "}"
