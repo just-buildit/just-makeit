@@ -339,6 +339,28 @@ struct marshalling, the type's getset slots, the JSON shape, and the CLI flags �
 all from a single declaration. (`type` is the C type; `enum` tags a field as a
 string-enum resolved through the SSOT; `bytes` marks an owned byte buffer.)
 
+A `bytes` field is **owned**: jm generates the coercion from a Python `bytes`,
+the getter, the setter, the `free` in `dealloc`, the deep-copy when a source is
+rebuilt from a resolved segment, and both halves of the JSON codec. By default
+it lives in two flat members of the source struct, `<name>` and `n_<name>`.
+
+`c_ptr` / `c_len` say otherwise, and may name a path into a nested struct
+(gh-1184) — so a project whose C already has a type for the thing can carry
+that type instead of flattening its parameters into the source:
+
+```toml
+# `wfm_seq_t` names a run of bits however it was produced (LITERAL / PN /
+# GOLD, with the generator's poly and seed), so the source carries one
+# instead of ten flat fields per sequence.
+{ name = "sync", type = "uint8_t*", bytes = true,
+  c_ptr = "sync.bits", c_len = "sync.len" },
+```
+
+Naming `c_ptr` also makes the two sites that *own* the buffer cast — the
+attach, which needs a `uint8_t **`, and the `free`. A relocated member is
+commonly `const`-qualified, because the type it belongs to is written for the
+borrowing consumer while the source is the owner.
+
 ### 4.3 The source type
 
 `render_source_type` emits a `PyTypeObject` wrapping the backing C struct

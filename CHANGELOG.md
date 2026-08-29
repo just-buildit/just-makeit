@@ -1,5 +1,50 @@
 ## [Unreleased]
 
+### Added
+
+- **A composer source's owned array can name its own C storage —
+    `c_ptr` / `c_len` (gh-1184).** A `[[module.X.source.fields]]` entry with
+    `bytes = true` had its storage hardcoded to two flat members, `src.<name>`
+    and `src.n_<name>`, so a source field could never live inside a nested
+    struct. A project whose C already has a type for "a run of bits however
+    produced" — doppler's `wfm_seq_t`, carrying LITERAL / PN / GOLD and their
+    generator parameters — had to flatten that type into the source instead:
+    about ten flat fields per sequence, mirrored in the manifest, twice in the
+    JSON codec and again in the schema. There was no escape hatch either: a
+    composer has no sacred fragment, and `_write` overwrites unconditionally.
+
+    ```toml
+    { name = "sync", type = "uint8_t*", bytes = true,
+      c_ptr = "sync.bits", c_len = "sync.len" }
+    ```
+
+    Both keys default to today's spelling, so a manifest that does not use
+    them renders byte-identically. Naming `c_ptr` also makes the two sites
+    that *own* the buffer cast — the attach, which needs a `uint8_t **`, and
+    the `free`. A relocated member is commonly `const`-qualified, because the
+    type it belongs to is written for the borrowing consumer while the source
+    is the owner; the cast rides on the override rather than on a third key,
+    and a compile test against a `const uint8_t *` member is what makes that a
+    measurement rather than a claim.
+
+### Fixed
+
+- **A composer's `bytes` field name reached four more emitters (gh-1184).**
+    The pointer/length pair was written out at nine sites. gh-560 fixed two of
+    them — the Segment deep-copy — and the rest were still hardcoded to
+    `bits` / `n_bits` regardless of the field's name:
+
+    - the JSON serializer, and the deserializer, so a round trip wrote one
+        field's array into another field's members;
+    - the c-face CLI;
+    - the JSON teardown, which freed one hardcoded member: the wrong one for a
+        renamed field, **none** for a source with several, and a member that
+        does not exist at all for a source with no `bytes` field — which did
+        not compile, the same failure gh-560 was filed for, one emitter over.
+
+    All nine now read the pair from `_composer.buffer_members`, so the fix is
+    one function rather than nine careful edits.
+
 ### Fixed
 
 - **A standalone object's package `__init__.py` never got the Windows

@@ -55,9 +55,55 @@ def _field_fmt(field: dict) -> str:
 
 def _field_is_buffer(field: dict) -> bool:
     """An owned heap array crossing as a Python object — a ``bytes`` pattern or
-    a ``complex`` (complex64) stream. Both store ``src-><name>`` /
-    ``src->n_<name>`` and need a free in dealloc."""
+    a ``complex`` (complex64) stream. Both store a pointer and a length in the
+    source struct (see :func:`buffer_members`) and need a free in dealloc."""
     return bool(field.get("bytes") or field.get("complex"))
+
+
+def buffer_members(field: dict) -> "tuple[str, str]":
+    """The two source-struct members an owned array lives in: (pointer, length).
+
+    gh-1184. These were spelled ``<name>`` and ``n_<name>`` inline at every
+    site that touches one — the constructor, the getter, the setter, the
+    dealloc free, the Segment deep-copy and the JSON serializer — so a source
+    field could only ever be a flat pointer/length pair, and a project whose C
+    already has a *type* for "a run of bits however produced" had to flatten
+    that type's parameters into the source instead.
+
+    ``c_ptr`` / ``c_len`` override either half and may name a path into a
+    nested struct::
+
+        [[module.wfm_compose.source.fields]]
+        name  = "sync"
+        bytes = true
+        c_ptr = "sync.bits"    # default: "<name>"
+        c_len = "sync.len"     # default: "n_<name>"
+
+    One function rather than six spellings, because the six had already
+    drifted: the JSON serializer emitted a hardcoded ``src->bits`` /
+    ``src->n_bits`` for a field of ANY name, which is the gh-560 bug the
+    deep-copy was fixed for, still live one emitter over.
+    """
+    n = field["name"]
+    return (field.get("c_ptr") or n, field.get("c_len") or f"n_{n}")
+
+
+def buffer_is_relocated(field: dict) -> bool:
+    """True when the field names its own C storage with ``c_ptr``.
+
+    The two sites that *own* the buffer — ``_attach_bytes``, which takes a
+    ``uint8_t **``, and ``free`` — then cast. A relocated member is commonly
+    ``const``-qualified, because the type it belongs to is written for the
+    *borrowing* consumer while the source is the owner (doppler's
+    ``wfm_seq_t.bits``), and both of those sites need a non-const lvalue.
+
+    The cast rides on the override rather than on a third key: it is part of
+    what "I have taken over the storage location" means, and gating it this
+    way leaves every project that does not use ``c_ptr`` rendering
+    byte-identically — which matters, because these files are overwritten
+    unconditionally and a composer has no sacred fragment to absorb churn.
+    """
+    return bool(field.get("c_ptr"))
 
 
 def _field_is_enum(field: dict) -> bool:
@@ -332,7 +378,10 @@ def render_source_type(cfg: dict, module: str) -> str:
         else ""
     )
     free_bufs = "".join(
-        f"    free(self->src.{f['name']});\n"
+        "    free({}self->src.{});\n".format(
+            "(void *)" if buffer_is_relocated(f) else "",
+            buffer_members(f)[0],
+        )
         for f in fields
         if _field_is_buffer(f)
     )
@@ -384,9 +433,11 @@ def render_source_type(cfg: dict, module: str) -> str:
             # Per-field destination: several bytes fields on one source
             # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
             # each land in their own struct arrays, not all in `bits`.
+            _p, _l = buffer_members(f)
+            _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             assign.append(
-                f"    if (!_attach_bytes(&self->src.{n}, "
-                f"&self->src.n_{n}, {n}))\n        return -1;"
+                f"    if (!_attach_bytes({_cast}&self->src.{_p}, "
+                f"&self->src.{_l}, {n}))\n        return -1;"
             )
         elif f.get("complex"):
             assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
@@ -554,14 +605,26 @@ def render_source_type(cfg: dict, module: str) -> str:
         if not f.get("complex"):
             continue
         cn = f["name"]
+        # gh-1184: a complex stream is the same owned pointer/length pair a
+        # `bytes` field is, so it reads its members from the same helper —
+        # otherwise `c_ptr` would relocate the dealloc free (which is shared)
+        # and not the attach, and the two would free different members.
+        cp, cl = buffer_members(f)
+        # Padded so the two assignments line up as they always have; for the
+        # default members that reproduces the previous output byte for byte,
+        # which matters because a composer's glue is overwritten wholesale and
+        # has no sacred fragment to absorb cosmetic churn.
+        _w = max(len(cp), len(cl))
+        cpp, clp = cp.ljust(_w), cl.ljust(_w)
+        cfree = "(void *)" if buffer_is_relocated(f) else ""
         parts.append(f"""/* Copy a numpy complex64 array (or None) into \
-src->{cn} (owned). */
+src->{cp} (owned). */
 static int
 _attach_{cn}({struct} *src, PyObject *obj)
 {{
-    free(src->{cn});
-    src->{cn}   = NULL;
-    src->n_{cn} = 0;
+    free({cfree}src->{cp});
+    src->{cpp} = NULL;
+    src->{clp} = 0;
     if (!obj || obj == Py_None)
         return 1;
     PyArrayObject *_arr = (PyArrayObject *)PyArray_FROM_OTF(
@@ -575,8 +638,8 @@ _attach_{cn}({struct} *src, PyObject *obj)
     if (!_buf) {{ Py_DECREF(_arr); PyErr_NoMemory(); return 0; }}
     memcpy(_buf, PyArray_DATA(_arr), (size_t)_n * sizeof *_buf);
     Py_DECREF(_arr);
-    src->{cn}   = _buf;
-    src->n_{cn} = (size_t)_n;
+    src->{cpp} = _buf;
+    src->{clp} = (size_t)_n;
     return 1;
 }}
 """)
@@ -648,36 +711,41 @@ static int
                 f"(setter){tname}_set_{n}, NULL, NULL}},"
             )
         elif f.get("bytes"):
+            _p, _l = buffer_members(f)
+            _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    if (self->src.{n} && self->src.n_{n})
+    if (self->src.{_p} && self->src.{_l})
         return PyBytes_FromStringAndSize(
-            (const char *)self->src.{n}, (Py_ssize_t)self->src.n_{n});
+            (const char *)self->src.{_p}, (Py_ssize_t)self->src.{_l});
     Py_RETURN_NONE;
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_bytes(&self->src.{n}, &self->src.n_{n}, value) ? 0 : -1;
+    return _attach_bytes({_cast}&self->src.{_p}, &self->src.{_l}, value)
+               ? 0
+               : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
                 f"(setter){tname}_set_{n}, NULL, NULL}},"
             )
         elif f.get("complex"):
+            _p, _l = buffer_members(f)
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    if (self->src.{n} && self->src.n_{n}) {{
-        npy_intp _d[1] = {{(npy_intp)self->src.n_{n}}};
+    if (self->src.{_p} && self->src.{_l}) {{
+        npy_intp _d[1] = {{(npy_intp)self->src.{_l}}};
         PyObject *_a = PyArray_SimpleNew(1, _d, NPY_COMPLEX64);
         if (!_a) return NULL;
-        memcpy(PyArray_DATA((PyArrayObject *)_a), self->src.{n},
-               self->src.n_{n} * sizeof(float _Complex));
+        memcpy(PyArray_DATA((PyArrayObject *)_a), self->src.{_p},
+               self->src.{_l} * sizeof(float _Complex));
         return _a;
     }}
     Py_RETURN_NONE;
@@ -1631,17 +1699,19 @@ def render_composer_type(cfg: dict, module: str) -> str:
     #     the rebuilt object and the state both freed it.
     # Empty when the source declares no bytes field, which is the common case.
     src_bytes_copy = "".join(
-        f"""            if (syn->src.{n} && syn->src.n_{n}) {{
-                uint8_t *copy = (uint8_t *)malloc(syn->src.n_{n});
+        f"""            if (syn->src.{p} && syn->src.{ln}) {{
+                uint8_t *copy = (uint8_t *)malloc(syn->src.{ln});
                 if (copy)
-                    memcpy(copy, syn->src.{n}, syn->src.n_{n});
-                syn->src.{n} = copy;
+                    memcpy(copy, syn->src.{p}, syn->src.{ln});
+                syn->src.{p} = copy;
             }} else {{
-                syn->src.{n} = NULL;
-                syn->src.n_{n} = 0;
+                syn->src.{p} = NULL;
+                syn->src.{ln} = 0;
             }}
 """
-        for n in (f["name"] for f in src.get("fields", []) if f.get("bytes"))
+        for p, ln in (
+            buffer_members(f) for f in src.get("fields", []) if f.get("bytes")
+        )
     )
     pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
@@ -3418,6 +3488,49 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     segments_fn = f"{backing}_segments"
     destroy_fn = f"{backing}_destroy"
 
+    # gh-1184/gh-560: freeing `[k].bits` freed ONE hardcoded member — the
+    # wrong one for a source whose bytes field is named anything else, and no
+    # member at all for a source with several. Every bytes field, by its own
+    # declared storage, with the cast a relocated (commonly `const`) member
+    # needs.
+    _src_frees = [
+        "free({}segs[j].{}[k].{});".format(
+            "(void *)" if buffer_is_relocated(f) else "",
+            sources_member,
+            buffer_members(f)[0],
+        )
+        for f in src_fields
+        if f.get("bytes")
+    ]
+
+    def _free_src_bytes(indent: str) -> str:
+        """The whole ``if (…) for (…) free(…)`` teardown, or nothing.
+
+        Three shapes rather than one because all three had to be right and
+        only one of them was: a source with NO bytes field emitted a free of a
+        member the struct does not have, a source with a bytes field under
+        another name freed the wrong member, and a source with several freed
+        only the first. The single-statement form is kept for the one-field
+        case so a project that already had exactly that sees no churn.
+        """
+        if not _src_frees:
+            # Not just an empty statement: returning "" here would leave the
+            # template's own indent behind as a whitespace-only line, which a
+            # generated project's C formatter then reports as jm's drift. The
+            # caller interpolates this immediately before `free(segs…)`, so an
+            # empty string collapses the line entirely.
+            return ""
+        head = (
+            f"if (segs[j].{sources_member})\n{indent}    "
+            f"for (size_t k = 0; k < segs[j].{count_member}; k++)"
+        )
+        if len(_src_frees) == 1:
+            out = f"{head}\n{indent}        {_src_frees[0]}"
+        else:
+            body = f"\n{indent}        ".join(_src_frees)
+            out = f"{head} {{\n{indent}        {body}\n{indent}    }}"
+        return f"{out}\n{indent}"
+
     # ── to_json: serialize one source object ──
     src_ser = []
     for f in src_fields:
@@ -3431,10 +3544,16 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 f"_enum_{e}[src->{n}]);"
             )
         elif f.get("bytes"):
-            src_ser.append(f"""        if (src->bits && src->n_bits) {{
+            # gh-1184: `src->bits` / `src->n_bits` were HARDCODED here, so a
+            # bytes field under any other name emitted C referring to members
+            # the struct does not have. That is gh-560's bug, still live in
+            # this emitter after the deep-copy one was fixed — which is the
+            # argument for `buffer_members` existing at all.
+            _p, _l = buffer_members(f)
+            src_ser.append(f"""        if (src->{_p} && src->{_l}) {{
             cJSON *ba = cJSON_AddArrayToObject(so, "{n}");
-            for (size_t bi = 0; bi < src->n_bits; bi++)
-                cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->bits[bi]));
+            for (size_t bi = 0; bi < src->{_l}; bi++)
+                cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->{_p}[bi]));
         }}""")
         elif f.get("_ranged"):
             src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
@@ -3473,6 +3592,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             src->{n} = _v < 0 ? 0 : _v;
         }}""")
         elif f.get("bytes"):
+            # gh-1184: the load half had the same hardcoded `bits`/`n_bits`
+            # the store half did, so a round trip through JSON wrote one
+            # field's array back into another's members.
+            _bp, _bl = buffer_members(f)
             src_parse.append(f"""        {{
             const cJSON *_b = cJSON_GetObjectItemCaseSensitive(so, "{n}");
             if (cJSON_IsArray(_b) && cJSON_GetArraySize(_b) > 0) {{
@@ -3483,8 +3606,8 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 const cJSON *_e = NULL;
                 cJSON_ArrayForEach(_e, _b)
                     _buf[_k++] = (uint8_t)cJSON_GetNumberValue(_e);
-                src->bits = _buf;
-                src->n_bits = _nb;
+                src->{_bp} = _buf;
+                src->{_bl} = _nb;
             }}
         }}""")
         elif f.get("_ranged"):
@@ -3623,20 +3746,14 @@ _{backing}_from_root(cJSON *root)
     {{
         {backing}_state_t *st = {create_fn}(segs, n, repeat, continuous);
         for (size_t j = 0; j < n; j++) {{
-            if (segs[j].{sources_member})
-                for (size_t k = 0; k < segs[j].{count_member}; k++)
-                    free(segs[j].{sources_member}[k].bits);
-            free(segs[j].{sources_member});
+            {_free_src_bytes("            ")}free(segs[j].{sources_member});
         }}
         free(segs);
         return st;
     }}
 fail:
     for (size_t j = 0; j <= i && j < n; j++) {{
-        if (segs[j].{sources_member})
-            for (size_t k = 0; k < segs[j].{count_member}; k++)
-                free(segs[j].{sources_member}[k].bits);
-        free(segs[j].{sources_member});
+        {_free_src_bytes("        ")}free(segs[j].{sources_member});
     }}
     free(segs);
     return NULL;
@@ -3766,6 +3883,8 @@ def render_cli(cfg: dict, module: str) -> str:
         src.{n} = _v;
     }}""")
         elif f.get("bytes"):
+            # gh-1184: and the c-face CLI, the third copy of the same pair.
+            _cp, _cl = buffer_members(f)
             decls.append(f"    const char *{n} = NULL;")
             parse.append(
                 f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
@@ -3776,7 +3895,7 @@ def render_cli(cfg: dict, module: str) -> str:
         size_t _k = 0;
         for (size_t _j = 0; _j < _ln; _j++)
             if ({n}[_j] == '0' || {n}[_j] == '1') _b[_k++] = ({n}[_j] - '0');
-        src.bits = _b; src.n_bits = _k;
+        src.{_cp} = _b; src.{_cl} = _k;
     }}""")
         else:
             ct = f["type"]
