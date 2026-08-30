@@ -1662,6 +1662,64 @@ def render_serializers(
 # ── composer type (e.g. Composer) ────────────────────────────────────────────
 
 
+def extra_methods(cfg: dict, module: str) -> "list[dict]":
+    """The `[[module.X.extra_methods]]` rows a composer declares.
+
+    gh-1190. A composer had no hook for a hand-written method: every other
+    module kind gets a `*_extra.c` that jm includes and never touches, and
+    `_composer.render_ext` builds `<cname>_ext.c` whole and included none. So
+    a project needing one bespoke method on the generated type had three bad
+    options — hand-edit a file `apply` discards, blind a ~3300-line file with
+    `status_allow`, or do without.
+
+    The hook alone would not have been shippable: nothing generated calls into
+    an `_extra.c`, and unlike an object module there is no sacred fragment
+    whose `PyMethodDef` rows survive regeneration, so a function there would
+    be included and unreachable. The row has to be DECLARED, which is what
+    this reads.
+
+    Deliberately not spelled `methods`. On a capsule or a handle that word
+    means "generate the wrapper from this signature"; here it means "a wrapper
+    already exists, give it a row". One key with two meanings is the trap this
+    repo has paid for four times.
+    """
+    return list(
+        cfg.get("module", {}).get(module, {}).get("extra_methods", []) or []
+    )
+
+
+def _extra_method_rows(cfg: dict, module: str, type_name: str) -> str:
+    """`PyMethodDef` rows for the extra methods attached to *type_name*."""
+    rows = []
+    for m in extra_methods(cfg, module):
+        if (m.get("type") or _default_extra_type(cfg, module)) != type_name:
+            continue
+        flags = m.get("flags") or "METH_NOARGS"
+        doc = m.get("doc") or ""
+        _doc_c = _c_string(doc) if doc else "NULL"
+        rows.append(
+            f'    {{"{m["name"]}", (PyCFunction)(void (*)(void)){m["fn"]},\n'
+            f"     {flags}, {_doc_c}}},\n"
+        )
+    return "".join(rows)
+
+
+def _default_extra_type(cfg: dict, module: str) -> str:
+    """Which type an `extra_methods` row attaches to when it does not say.
+
+    The composer type — the one a caller drives, and the one doppler#1086
+    wanted `draws()` on. A composer publishes four types, so the key exists;
+    defaulting it keeps the common case a three-line declaration.
+    """
+    return C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+
+
+def _c_string(text: str) -> str:
+    """*text* as a C string literal, newlines escaped."""
+    body = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    return f'"{body}"'
+
+
 def render_composer_type(cfg: dict, module: str) -> str:
     """Emit the ``Composer`` ``PyTypeObject`` — the type that drives the backing
     ``wfm_compose_*`` kernel.
@@ -2131,6 +2189,9 @@ fail:
         )
 
     # gh-317: additional delegated serializers (to_sigmf, …) over the segments.
+    # gh-1190: rows for the hand-written methods declared in the manifest,
+    # whose bodies live in the `*_extra.c` this module now includes.
+    extra_rows = _extra_method_rows(cfg, module, cname)
     serializer_code, serializer_rows = render_serializers(
         cfg, module, cname, obj, seg_struct, segments_fn
     )
@@ -2565,7 +2626,7 @@ static PyObject *
     {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
-{stream_row}{to_dict_row}{serializer_rows}{json_rows}    {{NULL, NULL, 0, NULL}}
+{stream_row}{to_dict_row}{serializer_rows}{json_rows}{extra_rows}    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyTypeObject {type_obj} = {{
@@ -2776,7 +2837,7 @@ def _settings_apply_c(cfg: dict, module: str) -> str:
     )
 
 
-def render_ext(cfg: dict, module: str) -> str:
+def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     """Assemble the full ``<module>_ext.c`` for a composer module (gh-287).
 
     Concatenates the enum tables and the source / segment / timeline / composer
@@ -2787,6 +2848,20 @@ def render_ext(cfg: dict, module: str) -> str:
     header = C.capsule_header(cfg, module) or f"{backing}/{backing}_core.h"
     mp = C.module_paths(module)
     leaf = mp.leaf
+    # gh-1190: the hand-written hook every other module kind already has.
+    # jm `#include`s it and never touches it, exactly as `_render` does for an
+    # object module's `<mod>_ext_extra.c`. Absent unless the project wrote one,
+    # so a composer that needs none gains nothing. *root* is optional because
+    # several callers render for comparison rather than to write; without it
+    # the include is simply not emitted, which is the same answer as "the file
+    # is not there".
+    _extra_c = f"{mp.cname}_ext_extra.c"
+    _extra_include = (
+        f'\n#include "{_extra_c}"  /* hand-written — jm never modifies */\n'
+        if root is not None
+        and (root / "native" / "src" / mp.cname / _extra_c).exists()
+        else ""
+    )
 
     # The generic generated JSON path pulls in cJSON + stdio (file read); the
     # delegation path (json.to_json_fn) needs neither here.
@@ -2856,6 +2931,13 @@ def render_ext(cfg: dict, module: str) -> str:
     if C.composer_timeline(cfg, module).get("type_name"):
         parts.append(render_timeline_type(cfg, module))
     parts.append(render_composer_type(cfg, module))
+
+    # gh-1190: after the types, so a hand-written method can call anything jm
+    # declared above it — the same ordering `_render` uses for an object
+    # module's per-object extra, and the reason `_ext_prologue.c` had to exist
+    # separately there for the one hook that goes BEFORE.
+    if _extra_include:
+        parts.append(_extra_include)
 
     # module method table — the source factories.
     rows = factory_method_rows(cfg, module)
@@ -3194,6 +3276,21 @@ def render_pyi(cfg: dict, module: str) -> str:
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
         '        """Compose the full sequence into one array."""',
     ]
+    # gh-1190: a declared hand-written method needs a stub too, or a type
+    # checker rejects the call that works. `args` and `returns` are raw Python
+    # — the whole point of the escape hatch is that jm does not know the
+    # shape, so it does not try to derive one.
+    for _em in extra_methods(cfg, module):
+        if (_em.get("type") or cname) != cname:
+            continue
+        _sig = _em.get("args") or ""
+        _sig = f", {_sig}" if _sig else ""
+        lines.append(
+            f"    def {_em['name']}(self{_sig})"
+            f" -> {_em.get('returns') or 'None'}:"
+        )
+        _d = (_em.get("doc") or "").splitlines()
+        lines.append(f'        """{_d[0]}"""' if _d else "        ...")
     if C.composer_stream(cfg, module).get("stream"):
         rt_arg = (
             ", realtime: float = ..."
@@ -3379,7 +3476,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
         )
     _write(
         root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
-        render_ext(cfg, module),
+        render_ext(cfg, module, root),
     )
     _write(
         root / "native" / "src" / mp.cname / "CMakeLists.txt",

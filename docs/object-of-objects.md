@@ -331,7 +331,25 @@ enabled = true                             # generate to_json/from_json/from_fil
 [module.wfm_compose.cli]
 enabled = true                             # opt-in c-face command-line tool
 name    = "wfmgen"
+
+# gh-1190: a method jm cannot express. The body lives in the hand-written
+# native/src/wfm_compose/wfm_compose_ext_extra.c, which jm `#include`s after
+# the generated types and never modifies; this row is what makes it reachable
+# and typed. `type` picks which of the module's types it lands on (default:
+# the composer type).
+[[module.wfm_compose.extra_methods]]
+name    = "draws"
+fn      = "Composer_draws"
+flags   = "METH_NOARGS"                    # default METH_NOARGS
+doc     = "Per-instance draw records."
+returns = "list[dict[str, object]]"        # raw Python, for the .pyi
 ```
+
+`extra_methods` is the composer's escape hatch, and it is deliberately **not**
+spelled `methods`: on a `kind = "handle"` or `kind = "capsule"` module that
+word means "generate the wrapper from this signature", while here the wrapper
+already exists and only needs a row. A composer `methods` table is reported as
+an unknown key naming the two kinds it is valid for.
 
 The **`fields`** list is the keystone: one ordered list of
 `{name, type, enum?, default?, bytes?}` per source/segment determines the C

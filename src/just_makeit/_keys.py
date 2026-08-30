@@ -435,7 +435,14 @@ CAPSULE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "type_name",
     "getters",
 }
-COMPOSER_MODULE_KEYS = _SHARED_MODULE_KEYS | {
+# gh-1190: `methods` comes OUT for a composer. `_composer.py` never reads a
+# methods table — declaring one passed `unknown_keys` in silence and generated
+# nothing, which is the gh-816 shape with this registry supplying the silence.
+# Removing it makes the key report, and `Unknown.valid_for` then names the two
+# kinds it IS valid for. `extra_methods` is the composer's own answer: a row
+# for a hand-written wrapper, not a wrapper generated from a signature.
+COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
+    "extra_methods",
     "composer",
     "composes",
     "sample_type",
@@ -552,6 +559,7 @@ KIND_TABLE_VOCAB = {
     ("handle", "init_params"): "kind init_param",
     ("capsule", "init_params"): "kind init_param",
     ("composer", "init_params"): "kind init_param",
+    ("composer", "extra_methods"): "composer extra_method",
     ("composer", "serializers"): "kind serializer",
     ("composer", "settings"): "kind setting",
     # A `kind`-bearing module may also carry module-level free functions,
@@ -567,6 +575,13 @@ KIND_TABLE_VOCAB = {
     ("composer", "depends_on"): "kind depends_on",
 }
 
+
+#: Keys on a `[[module.X.extra_methods]]` row (gh-1190). `fn` names the C
+#: function the project writes in `<cname>_ext_extra.c`; `type` says which of
+#: the composer's four types it attaches to, defaulting to the composer type.
+COMPOSER_EXTRA_METHOD_KEYS = frozenset(
+    {"name", "fn", "flags", "doc", "args", "returns", "type"}
+)
 
 KIND_KEYS: dict[str, frozenset] = {
     "object": OBJECT_KEYS,
@@ -596,6 +611,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "kind method arg": KIND_METHOD_ARG_KEYS,
     "kind depends_on": KIND_DEPENDS_ON_KEYS,
     "kind property": KIND_PROPERTY_KEYS,
+    "composer extra_method": COMPOSER_EXTRA_METHOD_KEYS,
     "kind serializer": KIND_SERIALIZER_KEYS,
     "kind setting": KIND_SETTING_KEYS,
     "kind init_param": KIND_INIT_PARAM_KEYS,
