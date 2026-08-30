@@ -1,5 +1,57 @@
 ## [Unreleased]
 
+## [0.72.0] — 2026-08-30
+
+### Added
+
+- **A composer can carry a hand-written method — the `*_extra.c` hook plus
+    `[[module.X.extra_methods]]` (gh-1190).** Every other module kind has a
+    `_extra.c` that jm includes and never touches; `kind = "composer"` had
+    none, so a project needing one bespoke method had three bad options:
+    hand-edit a file `apply` discards, blind a ~3300-line generated file with
+    `status_allow`, or do without. doppler#1086 did the third.
+
+    The hook alone would not have been shippable — nothing generated calls
+    into an `_extra.c`, and unlike an object module there is no sacred
+    fragment whose `PyMethodDef` rows survive regeneration, so the function
+    would be included and unreachable. The row is declared instead, which also
+    gets it into the `.pyi`; the composer's stub is generated wholesale, so a
+    hand-written member has nowhere to survive either.
+
+    Deliberately not spelled `methods`: on a handle or a capsule that word
+    means "generate the wrapper from this signature", and here the wrapper
+    already exists.
+
+- **A module function can return a string — `out_type = "str"` (gh-1180).**
+    A module function could *take* one (`const char *` works) and had no way
+    to give one back, so a pair of inverse conversions read asymmetrically:
+    doppler's `hex_to_bin` parses text, while `bin_to_hex` could only return a
+    `uint8` buffer the caller decodes itself.
+
+    ```toml
+    name            = "bin_to_hex"
+    return_type     = "size_t"        # characters written
+    variable_output = true
+    out_type        = "str"
+    out_size        = "bits_len * 2"
+    ```
+
+    jm allocates the buffer, calls `size_t bin_to_hex(…, char *out)`, and
+    builds the `str` — the caller allocates nothing. This is the issue's
+    option 2 rather than its option 1: a `char[]` out-param would make the
+    caller pass a buffer it cannot read as text.
+
+    The integer return is required, and jm refuses without one. A `void`
+    function cannot say how much it wrote, and hunting for a NUL the callee
+    may never have written is a read past the end waiting to happen.
+
+    `char` is deliberately **not** added as a scalar type — that would retire
+    the hint steering it to `int8_t` for its platform-dependent signedness.
+    Instead `char[]` is refused with a message naming `uint8_t[]` for a byte
+    buffer and this key for text (the issue's option 3, kept because `char[]`
+    stays the natural thing to type). The array form of every *other* hinted
+    scalar now gets a suggestion too: `long` had one and `long[]` did not.
+
 ### Fixed
 
 - **A version the build *derives* is no longer reported as drift (gh-1204).**
@@ -42,65 +94,11 @@
     tree it walks** — that fixture now scaffolds one, so the existing test
     covers them and goes red if the macro regresses.
 
-### Added
-
-- **A composer can carry a hand-written method — the `*_extra.c` hook plus
-    `[[module.X.extra_methods]]` (gh-1190).** Every other module kind has a
-    `_extra.c` that jm includes and never touches; `kind = "composer"` had
-    none, so a project needing one bespoke method had three bad options:
-    hand-edit a file `apply` discards, blind a ~3300-line generated file with
-    `status_allow`, or do without. doppler#1086 did the third.
-
-    The hook alone would not have been shippable — nothing generated calls
-    into an `_extra.c`, and unlike an object module there is no sacred
-    fragment whose `PyMethodDef` rows survive regeneration, so the function
-    would be included and unreachable. The row is declared instead, which also
-    gets it into the `.pyi`; the composer's stub is generated wholesale, so a
-    hand-written member has nowhere to survive either.
-
-    Deliberately not spelled `methods`: on a handle or a capsule that word
-    means "generate the wrapper from this signature", and here the wrapper
-    already exists.
-
-### Fixed
-
 - **A composer `methods` table is no longer accepted in silence (gh-1190).**
     `_keys` recognised it and `_composer.py` never read one, so declaring it
     passed `unknown_keys` and generated nothing — the gh-816 shape with the
     registry itself supplying the silence. It now reports, naming the handle
     and capsule faces it *is* valid for.
-
-- **A module function can return a string — `out_type = "str"` (gh-1180).**
-    A module function could *take* one (`const char *` works) and had no way
-    to give one back, so a pair of inverse conversions read asymmetrically:
-    doppler's `hex_to_bin` parses text, while `bin_to_hex` could only return a
-    `uint8` buffer the caller decodes itself.
-
-    ```toml
-    name            = "bin_to_hex"
-    return_type     = "size_t"        # characters written
-    variable_output = true
-    out_type        = "str"
-    out_size        = "bits_len * 2"
-    ```
-
-    jm allocates the buffer, calls `size_t bin_to_hex(…, char *out)`, and
-    builds the `str` — the caller allocates nothing. This is the issue's
-    option 2 rather than its option 1: a `char[]` out-param would make the
-    caller pass a buffer it cannot read as text.
-
-    The integer return is required, and jm refuses without one. A `void`
-    function cannot say how much it wrote, and hunting for a NUL the callee
-    may never have written is a read past the end waiting to happen.
-
-    `char` is deliberately **not** added as a scalar type — that would retire
-    the hint steering it to `int8_t` for its platform-dependent signedness.
-    Instead `char[]` is refused with a message naming `uint8_t[]` for a byte
-    buffer and this key for text (the issue's option 3, kept because `char[]`
-    stays the natural thing to type). The array form of every *other* hinted
-    scalar now gets a suggestion too: `long` had one and `long[]` did not.
-
-### Fixed
 
 - **An `out_type` function that declares an integer return no longer emits C
     that does not compile (gh-1180).** Both C emitters hardcoded `void`, while
@@ -114,8 +112,6 @@
     string output has no length without a return. Gated by compiling the two
     emitters' output together — the render assertions beside it were all
     perfectly happy with the broken pair.
-
-### Fixed
 
 - **`jm status` no longer calls an apply-fixable fragment permanent
     (gh-1192).** UNRECONCILED was split into ACTIONABLE and AUTHOR-OWNED
@@ -179,8 +175,6 @@
     land inside a comment — untidy rather than broken. Counting that form too
     turns the suite red at 92 failures over one product shape, filed as
     gh-1200 with the measurement rather than folded in here.
-
-### Fixed
 
 - **`manual_stub` on a method a view inherits no longer aborts `jm apply`
     (gh-1185).** Declaring `manual_stub = true` on `[[<obj>.methods]]` failed
