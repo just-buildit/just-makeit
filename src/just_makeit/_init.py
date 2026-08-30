@@ -1315,6 +1315,14 @@ def run(
     core_h_tmpl = R.COMPONENT_CORE_H
     core_c_tmpl = R.COMPONENT_CORE_C
     ext_c_tmpl = R.COMPONENT_EXT_C
+    # gh-1216: pick up a hand-written `<comp>_ext_extra.c` that is already on
+    # disk. At object-creation time there can be no such file and this is `""`,
+    # so a fresh scaffold renders byte-identically. It matters when this path
+    # re-materializes a component whose hook survived -- `jm regenerate` now
+    # keeps the hook, and rebuilding the binding without the include would
+    # leave the file present, preserved, and still compiling into nothing,
+    # which is the same silence gh-1202 reports.
+    ctx["extra_include"] = standalone_extra_include(root, comp)
     bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
     pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (

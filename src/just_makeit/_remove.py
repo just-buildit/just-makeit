@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from ._extrahook import HOOK_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _render as R
 from . import _stubs as S
@@ -101,12 +102,56 @@ def _confirm(prompt: str, force: bool) -> bool:
     return answer in ("y", "yes")
 
 
+def _rm_tree_keeping_hooks(path: Path) -> "list[Path]":
+    """Delete *path* recursively, preserving hand-written hooks.
+
+    Returns the hooks kept (empty when the tree is gone entirely). A directory
+    that still holds one is kept too — it has to be, since the file lives in
+    it.
+    """
+    kept: list[Path] = []
+    for child in sorted(path.iterdir()):
+        if child.is_dir():
+            kept += _rm_tree_keeping_hooks(child)
+        elif child.name.endswith(_HOOK_SUFFIXES):
+            kept.append(child)
+        else:
+            child.unlink()
+    if not kept:
+        shutil.rmtree(path, ignore_errors=True)
+    return kept
+
+
 def _rm(path: Path) -> None:
-    """Delete a file or directory tree if it exists, logging what was removed."""
+    """Delete a file or directory tree if it exists, logging what was removed.
+
+    **A hand-written hook is never deleted** (gh-1216). ``*_extra.c`` and
+    ``*_prologue.c`` are the files jm documents as "jm never creates or
+    modifies" — the escape hatch for a hand-written CPython type or a property
+    ``value_fn`` returning ``PyObject *`` (gh-543), i.e. exactly the code that
+    cannot be reproduced from the manifest. Removing the component directory
+    took them with it, so ``jm regenerate`` — the one operation they exist to
+    survive — destroyed them silently.
+
+    jm does not own those files, so it has no basis for deleting them. A
+    directory holding one is emptied of everything jm did write and then kept,
+    rather than removed. On ``regenerate`` the directory is rebuilt around the
+    survivor immediately; on ``remove`` it is left behind holding only the
+    author's file, which is the safe direction — an orphan is recoverable and
+    a deletion is not.
+    """
     if path.is_dir():
-        shutil.rmtree(path)
-        print(f"  remove  {path}/")
+        kept = _rm_tree_keeping_hooks(path)
+        if kept:
+            print(f"  remove  {path}/  (contents; jm-generated files only)")
+            for k in kept:
+                print(f"  keep    {k}  (hand-written; jm never deletes one)")
+        else:
+            print(f"  remove  {path}/")
     elif path.exists():
+        if path.name.endswith(_HOOK_SUFFIXES):
+            print(f"  keep    {path}  (hand-written; jm never deletes one)")
+            return
         path.unlink()
         print(f"  remove  {path}")
 
