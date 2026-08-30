@@ -28,6 +28,35 @@
     was none: the component must exist before a file can sit beside it, and
     `apply` reads the manifest, which the file is not in.
 
+- **The impl provenance marker is wrapped, so a `ColumnLimit` project is no
+    longer STALE forever (gh-1219).** `_impl_marker` emitted the comment as one
+    132-plus-character line, and `_patch_step_impls` writes it into an existing
+    `<comp>_core.h` — a file `native/inc/**` deliberately excludes from
+    `c_format_command`, so the one file jm had just edited was the one its
+    formatter never saw. A project setting a smaller `ColumnLimit` then
+    alternated forever: clang-format wrapped the comment, `jm apply` wrote the
+    long line back. Reproduced as a true 2-cycle, and it landed in the count
+    `--check` gates on, so a correctly-configured project could never reach a
+    clean `jm status`.
+
+    The marker is now wrapped at emit time to 76 columns including the indent
+    `patch_function_body` adds. That is the issue's option 1, and its option 2
+    — run the formatter over headers `_patch_step_impls` touched — is ruled out
+    by the exclusion itself: reformatting a header makes a later `apply`
+    believe a declaration moved (gh-493).
+
+    Wrapping is a fixed point rather than the other end of the same cycle, and
+    that was measured rather than assumed: clang-format never **joins** a
+    wrapped block comment — checked across `ReflowComments` true/Always/false
+    at limits 80/100/120/0. Only the unwrapped form was unstable.
+
+    `_MARKER_LINE_RE` moved with it. It strips the marker before `apply`
+    compares the on-disk body against the manifest, and it needed both
+    `re.DOTALL` and a flexible separator — the wrap can break the line exactly
+    at the literal space it required. Left as it was, jm's own comment would
+    have read as author code that changed, and every project would have got a
+    spurious "someone edited this" warning once.
+
 ### Fixed
 
 - **A scaffolded project's own examples are green before you touch it

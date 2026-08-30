@@ -22,6 +22,7 @@ import fnmatch
 import io
 import os
 import re
+import textwrap
 import shutil
 import sys
 import tempfile
@@ -704,8 +705,14 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             )
 
 
+#: DOTALL because the marker WRAPS now (gh-1219): without it `.` stops at the
+#: newline and a two-line marker is never stripped, so the drift comparison
+#: below would read jm's own comment as author code that changed.
 _MARKER_LINE_RE = re.compile(
-    r"[ \t]*/\* jm: body sourced from \[[^\]]*\] impl/impl_file in .*?\*/\n?"
+    # `in\s` not `in ` -- the wrap can break the line exactly there, and a
+    # literal space then fails to match the very form this must strip.
+    r"[ \t]*/\* jm: body sourced from \[[^\]]*\] impl/impl_file in\s.*?\*/\n?",
+    re.DOTALL,
 )
 
 
@@ -726,6 +733,43 @@ def _impl_owner_rel(comp: str, root: Path) -> Path:
         return owner
 
 
+#: Columns the wrapped marker fits in, INCLUDING the four spaces `_indent4`
+#: adds. 76 clears the common `ColumnLimit` floor of 79/80 with room to spare;
+#: anything above that leaves the comment alone, and clang-format never JOINS a
+#: wrapped block comment (measured across `ReflowComments` true/Always/false at
+#: limits 80/100/120/0), so the wrapped form is a fixed point rather than one
+#: end of a cycle.
+_MARKER_COLS = 76
+
+
+def _wrap_c_comment(text: str, indent: int = 4) -> str:
+    """*text* as a C block comment, pre-wrapped so a formatter leaves it alone.
+
+    gh-1219. The marker used to be emitted as one 132-plus-character line into
+    `<comp>_core.h`, and `native/inc/**` is deliberately excluded from
+    `c_format_command` (splice-patching is whitespace-sensitive, gh-493). So a
+    project whose `.clang-format` sets a `ColumnLimit` below that wrapped the
+    comment, `jm apply` wrote the long line back, and the two alternated
+    forever — a permanently STALE header, in the count `--check` gates on.
+
+    Wrapping here rather than running the formatter over the header is the
+    smaller fix and the only one compatible with that exclusion: the text is a
+    fixed string plus a short relative path, so the result is deterministic and
+    needs no formatter at all.
+    """
+    width = max(_MARKER_COLS - indent, 20)
+    lines = textwrap.wrap(
+        text,
+        width=width - 3,  # "/* " on the first line, " * " on the rest
+        break_long_words=False,
+        break_on_hyphens=False,
+    ) or [""]
+    out = [f"/* {lines[0]}"]
+    out += [f" * {ln}" for ln in lines[1:]]
+    out[-1] += " */"
+    return "\n".join(out)
+
+
 def _impl_marker(comp: str, root: Path) -> str:
     """gh-609: one-line provenance comment for a manifest-``impl``-sourced body.
 
@@ -741,9 +785,9 @@ def _impl_marker(comp: str, root: Path) -> str:
     gh-609 review: naming a hardcoded "the project manifest" was itself the
     discoverability problem the issue was filed over — see `_impl_owner_rel`."""
     rel = _impl_owner_rel(comp, root)
-    return (
-        f"/* jm: body sourced from [{comp}] impl/impl_file in {rel} —"
-        f" edit there, not here; `jm apply` overwrites this. */"
+    return _wrap_c_comment(
+        f"jm: body sourced from [{comp}] impl/impl_file in {rel}"
+        f" — edit there, not here; `jm apply` overwrites this."
     )
 
 

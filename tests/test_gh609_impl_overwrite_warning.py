@@ -32,6 +32,19 @@ from just_makeit import _config as C
 from just_makeit._apply import _impl_marker
 from just_makeit._apply import _MARKER_LINE_RE
 from just_makeit._apply import run as apply_run
+from just_makeit._impl import _indent4
+
+
+def _in_file(marker: str) -> str:
+    """The marker as it lands in the header.
+
+    gh-1219 wrapped it, and `patch_function_body` indents every line of the
+    body it injects — so the string `_impl_marker` returns is no longer a
+    verbatim substring of the file. Comparing against the indented form keeps
+    these assertions about "the marker is present" rather than about how wide
+    it happens to be.
+    """
+    return _indent4(marker)
 
 
 _OBJECT_FRAGMENT = """\
@@ -107,7 +120,7 @@ def _core_h(root: Path) -> Path:
 class TestMarkerComment:
     def test_marker_present_after_first_apply(self, project_with_impl, capsys):
         text = _core_h(project_with_impl).read_text(encoding="utf-8")
-        assert _impl_marker("scaler", project_with_impl) in text
+        assert _in_file(_impl_marker("scaler", project_with_impl)) in text
 
     def test_no_warning_on_first_materialization(
         self, scaler_project_no_impl, capsys
@@ -184,7 +197,7 @@ class TestOverwriteWarning:
         reverted = h_path.read_text(encoding="utf-8")
         assert "oops" not in reverted
         assert "state->gain * x" in reverted
-        assert _impl_marker("scaler", project_with_impl) in reverted
+        assert _in_file(_impl_marker("scaler", project_with_impl)) in reverted
 
     def test_manifest_impl_change_also_warns(self, project_with_impl, capsys):
         # Same heuristic fires for a deliberate impl edit + reapply — the
@@ -219,7 +232,7 @@ class TestOverwriteWarning:
         h_path = _core_h(project_with_impl)
         marker = _impl_marker("scaler", project_with_impl)
         text = h_path.read_text(encoding="utf-8")
-        assert marker in text
+        assert _in_file(marker) in text
         # Simulate "no marker yet, but the code already matches" by
         # stripping the marker line the first apply added, leaving the
         # underlying `return (float _Complex)(state->gain * x);` untouched.
@@ -240,7 +253,7 @@ class TestOverwriteWarning:
         assert "warning" not in captured.err
         # The marker is still (re-)added even though nothing warned.
         after = h_path.read_text(encoding="utf-8")
-        assert marker in after
+        assert _in_file(marker) in after
 
 
 @pytest.fixture()
