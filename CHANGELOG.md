@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Fixed
+
+- **An EDIT to a manifest `doc` now reaches the runtime face, not just the
+    `.pyi` (gh-1191).** The first write landed on both faces; editing it
+    afterwards reached only the stub, and `jm apply` exited 0 saying nothing —
+    so `help(Obj.x)` and a type checker told a reader different things. Found
+    the expensive way in doppler#1085: a property docstring was corrected in
+    the manifest, the header and the `.pyi`, and the fragment kept the text
+    that had just been disproved.
+
+    `_docsync._refresh_slot` overwrites a populated slot only when it can
+    recognise the text as jm's own — the scaffold form, a jm-shaped synopsis,
+    reclaimable glue — so that a hand-written docstring survives regeneration.
+    jm's own *earlier manifest-derived render* matches none of those: the
+    comparison is against the header-derived and scaffold forms, and a
+    manifest-authored doc is neither.
+
+    The fix is not to loosen "did jm write this", which is unanswerable once
+    jm's own output is on disk. It asks a different question — **"did the
+    author declare this text?"** — whose answer is in the manifest. A member
+    with a manifest `doc` is refreshed whatever the slot holds; a member
+    without one is preserved exactly as before, and a hand-added binding still
+    survives. The `.pyi` beside it has always treated the key this way, which
+    is how the two faces came to disagree at all.
+
+    A view's fragment takes its own documented members **and its parent's**,
+    since it inherits every member it does not exclude.
+
+    The deliberate trade: a member with both a manifest `doc` and a
+    hand-edited fragment slot is a contradiction the author wrote, and jm now
+    resolves it toward the declaration. Gated as its own test rather than left
+    to be discovered.
+
 ## [0.71.0] — 2026-08-29
 
 ### Added
