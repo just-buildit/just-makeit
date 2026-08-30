@@ -174,26 +174,30 @@ class TestWhatIsDeliberateOutput:
         _write(target, "    <<MANUAL_STUB>>\n")
         assert target.exists()
 
-    def test_the_c_comment_wrapped_form(self, tmp_path: Path) -> None:
-        """Set aside deliberately, not by oversight: it lands inside a C
-        comment, so it is invisible to the compiler. gh-1200 carries the one
-        product shape that leaves one, with the 92-failure measurement that
-        says what widening this would cost."""
-        target = tmp_path / "a.h"
-        _write(
-            target, "typedef struct {\n/*<<property_struct_fields>>*/\n} t;\n"
-        )
-        assert target.exists()
-
-    def test_the_bare_form_is_still_caught_beside_a_wrapped_one(
+    def test_the_c_comment_wrapped_form_is_refused_too(
         self, tmp_path: Path
     ) -> None:
-        """The exemption is for the shape, not for the file — a real slot in
-        the same file must still be refused."""
+        """gh-1200 removed the carve-out this used to assert.
+
+        gh-1199 exempted `/*<<k>>*/` for two reasons: a leftover there lands
+        inside a C comment, and counting it cost 92 failures. Both are gone.
+        The 92 were a single product shape — a `--no-state` object's header —
+        and gh-1200 fixed it at the source, in `render`. Re-measured after
+        that fix, widening costs nothing but this assertion.
+        """
         with pytest.raises(ValueError) as exc:
-            _write(tmp_path / "a.h", "/*<<ok>>*/ and <<not_ok>>\n")
-        assert "<<not_ok>>" in str(exc.value)
-        assert "<<ok>>" not in str(exc.value)
+            _write(
+                tmp_path / "a.h",
+                "typedef struct {\n/*<<property_struct_fields>>*/\n} t;\n",
+            )
+        assert "property_struct_fields" in str(exc.value)
+
+    def test_both_forms_are_reported_together(self, tmp_path: Path) -> None:
+        """A file carrying one of each names both, not just the bare one."""
+        with pytest.raises(ValueError) as exc:
+            _write(tmp_path / "a.h", "/*<<wrapped>>*/ and <<bare>>\n")
+        assert "<<bare>>" in str(exc.value)
+        assert "<<wrapped>>" in str(exc.value)
 
 
 class TestRenderItselfStaysPermissive:
@@ -225,10 +229,10 @@ class TestTheSlotScanner:
         "text,want",
         [
             ("<<a>>", {"a"}),
-            ("/*<<a>>*/", set()),
+            ("/*<<a>>*/", {"a"}),  # gh-1200: no longer exempt
             ("/* <<IMPLEMENT: x>> */", set()),
             ("<<MANUAL_STUB>>", set()),
-            ("<<a>> /*<<b>>*/ <<c>>", {"a", "c"}),
+            ("<<a>> /*<<b>>*/ <<c>>", {"a", "b", "c"}),  # gh-1200
             ("no slots here", set()),
             ("<< spaced >>", set()),
             ("a << b", set()),

@@ -33,6 +33,32 @@
     project — filed as gh-1212 with the measurement rather than folded in,
     because the right answer there is a design decision.
 
+- **A `--no-state` object's header no longer ships an internal placeholder
+    (gh-1200).** `jm object nos --no-state` wrote a `_core.h` containing
+    `/*<<property_struct_fields>>*/`. An object *with* state was unaffected —
+    by the same function.
+
+    **The cause was not the one filed.** The slot IS set on the no-state path;
+    it was consumed too early. `render` substituted ctx keys sequentially in
+    **insertion order**, and `state_struct_decl`'s value carries the token
+    nested inside it so the properties pass can land fields within the braces.
+    The nested token was therefore filled only when the decl happened to be
+    inserted first — and the two branches of `make_state_ctx` insert them in
+    opposite orders. Dict ordering is not a property anything can see, which is
+    how one function shipped both answers.
+
+    `render` now sweeps to a fixed point, bounded so a value naming its own key
+    stops rather than spins. Measured: across a project exercising every shape,
+    this changes exactly one line of one generated file.
+
+- **`jm` refuses to write a generated file carrying an unfilled slot in
+    EITHER form (gh-1199/gh-1200).** gh-1199 exempted the C-comment-wrapped
+    `/*<<k>>*/` for two reasons — a leftover lands inside a comment, and
+    counting it turned the suite red at 92 failures. Both are now gone: the 92
+    were the one `--no-state` shape above, and re-measuring after that fix
+    leaves **4**, all of them the tests asserting the carve-out. So the
+    exemption now protects nothing but the next regression, and it goes.
+
 ### Docs
 
 - **The `full_workflow` example runs the C header's own `@code` as a

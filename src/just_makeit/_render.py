@@ -278,32 +278,68 @@ def unfilled_slots(text: str) -> "set[str]":
     later. So the question "did anything fill this" is only answerable at the
     moment a string becomes a FILE, which is where this is asked from.
     """
-    # The C-comment-wrapped form `/*<<k>>*/` is set aside first, and stays
-    # set aside. It exists so clang-format can parse a C/H template as valid
-    # C, and a leftover therefore lands INSIDE a comment: untidy, invisible to
-    # the compiler, and not what gh-1199 cost. The bare form is the one that
-    # reaches live code — a cmake source filename, in that case.
+    # BOTH forms count, including the C-comment-wrapped `/*<<k>>*/`.
     #
-    # Measured rather than assumed: with the wrapped form counted, the suite
-    # reported 92 failures, and the product path behind them is one shape —
-    # a `--no-state` object whose header keeps `/*<<property_struct_fields>>*/`
-    # because the deferred pass that fills it never runs. Filed as gh-1200
-    # rather than folded in here, since it is a different question with a
-    # different answer.
-    bare = re.sub(r"/\*<<[^>]*>>\*/", "", text)
+    # gh-1199 set the wrapped form aside, for two reasons. One was that a
+    # leftover there lands inside a comment — untidy rather than broken, since
+    # the bare form is what reached live code (a cmake source filename). The
+    # other was the price: counting it turned the suite red at 92 failures.
+    #
+    # Both reasons are gone. The 92 were one product shape — a `--no-state`
+    # object whose header kept `/*<<property_struct_fields>>*/` — and gh-1200
+    # fixed it at the source by making `render` sweep to a fixed point instead
+    # of depending on ctx insertion order. Re-measured after that fix: 4
+    # failures, all of them this module's own tests asserting the carve-out,
+    # and no product path at all.
+    #
+    # "Untidy" was never a reason to ship an internal placeholder in a header
+    # jm publishes; it was a reason not to fail the build over one while the
+    # cause was unfixed. With the cause fixed, the carve-out only protects the
+    # next regression, so it goes.
     return {
         m.group(1)
-        for m in UNFILLED_SLOT.finditer(DELIBERATE_MARKER.sub("", bare))
+        for m in UNFILLED_SLOT.finditer(DELIBERATE_MARKER.sub("", text))
     }
 
 
+#: How many times :func:`render` may re-sweep its own output. A nested slot
+#: needs one extra sweep per level of nesting, and jm has one level
+#: (`state_struct_decl` carries `/*<<property_struct_fields>>*/`). The bound
+#: exists so a ctx value that contains its own key -- `{"x": "<<x>>"}` -- stops
+#: rather than spins; it is not a limit anything real is near.
+_RENDER_SWEEPS = 8
+
+
 def render(template: str, ctx: dict) -> str:
+    """Substitute every ``<<key>>`` in *template* from *ctx*, to a fixed point.
+
+    Sweeps until the text stops changing rather than once, because a slot's
+    VALUE may itself carry a slot: ``state_struct_decl`` is built with
+    ``/*<<property_struct_fields>>*/`` nested inside it so the later properties
+    pass can land its fields inside the braces.
+
+    A single sweep made that work only when the dict happened to be ordered
+    right. Substitution ran in ctx insertion order, so the nested token was
+    filled if `state_struct_decl` was inserted first and left in the file if
+    it was inserted second -- and those are exactly the two orders
+    `make_state_ctx` uses: stateful objects insert the decl first and rendered
+    correctly, `--no-state` objects insert the slot first and shipped a header
+    reading `/*<<property_struct_fields>>*/` (gh-1200).
+
+    Ordering a dict is not a property anything can see, which is why this went
+    unnoticed through both branches of one function. Sweeping to a fixed point
+    removes the question instead of answering it once.
+    """
     result = template
-    for k, v in ctx.items():
-        if not isinstance(v, str):
-            continue
-        result = result.replace(f"/*<<{k}>>*/", v)
-        result = result.replace(f"<<{k}>>", v)
+    for _ in range(_RENDER_SWEEPS):
+        before = result
+        for k, v in ctx.items():
+            if not isinstance(v, str):
+                continue
+            result = result.replace(f"/*<<{k}>>*/", v)
+            result = result.replace(f"<<{k}>>", v)
+        if result == before:
+            break
     return result
 
 
