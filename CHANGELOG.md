@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`manual_stub` on a method a view inherits no longer aborts `jm apply`
+    (gh-1185).** Declaring `manual_stub = true` on `[[<obj>.methods]]` failed
+    with a **traceback**, whose message blamed gh-765 — "an intermittent
+    failure … re-run the command" — for something that reproduces every time
+    and that no re-run can clear.
+
+    The stub renderer emits the `<<MANUAL_STUB>>` placeholder for a **view**
+    as well as for the declaring object; a view is a second class over the
+    same core, so it inherits the member. `_manual_stub_pairs` — what the
+    splice reads to decide which members to carry across from the old stub —
+    named the declaring object only. Measured on the repro: placeholders at
+    `[('O', 'gain2'), ('Peek', 'gain2')]`, recogniser `{('O', 'gain2')}`. So
+    the view's old text was not carried, the placeholder stood, and the gh-765
+    guard refused the write — correctly, about a loss the caller had just
+    caused. **The guard was right; the two sides disagreeing was the bug.**
+
+    A view's own `methods` entry now decides for the view (gh-1011's
+    override), and an excluded member is not the view's at all.
+
+    Two things beside it, because a wrong diagnosis costs more than the bug:
+
+    - **The refusal is a diagnostic, not a traceback.** `apply` wrapped only
+        the *replay* in a handler, so the reconcile phase's refusals — written
+        carefully for a reader — arrived at the bottom of a stack trace.
+    - **The message stops promising a re-run.** It named the intermittent
+        cause and gave advice that cannot clear the deterministic one. It now
+        names both and says how to tell them apart: the deterministic one
+        repeats.
+
 ## [0.71.1] — 2026-08-30
 
 ### Fixed
