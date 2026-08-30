@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.71.1] — 2026-08-30
+
 ### Fixed
 
 - **An EDIT to a manifest `doc` now reaches the runtime face, not just the
