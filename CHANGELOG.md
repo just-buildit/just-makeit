@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Docs
+
+- **The `full_workflow` example runs the C header's own `@code` as a
+    doctest.** The walkthrough already taught that a `@brief` in the sacred
+    header flows into the generated Python docstring and stopped there — so
+    the one part of that pipeline which is also a *test* was missing from an
+    example whose whole subject is the complete lifecycle.
+
+    `gain` gains a named method, `scale()`. That is structural, not
+    decoration: a class docstring's `Examples` block is always jm's
+    synthesized construction demo and `step()`/`steps()` keep their standard
+    docstrings, so a named method is the only place an author's `@code` block
+    can become a doctest. The block is the one `enriching-stubs.md` already
+    documents, down to the `my_dsp`/`Gain`/`scale` names — so that page's
+    snippet is now something a shipped example builds and executes rather
+    than prose nothing runs.
+
+    The README says the doctests are an explicit
+    `pytest --doctest-glob='*.pyi'` command and shows how to wire it into your
+    own test run, rather than implying `make test` sweeps the stubs — checked
+    against the generated `Makefile` and `just-makeit ci`, neither of which
+    does.
+
 ## [0.72.0] — 2026-08-30
 
 ### Added
