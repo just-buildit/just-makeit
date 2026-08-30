@@ -103,6 +103,19 @@ def project(tmp_path_factory) -> Path:
     )
     assert _cli("module", "dsp", cwd=root).returncode == 0
     assert _cli("object", "filt", "--module", "dsp", cwd=root).returncode == 0
+    # gh-1205: `--perf` is what puts `jm_perf.h` and `jm_simd.h` under
+    # native/inc at all. The sweep below is registration-free over headers and
+    # was passing anyway, because this fixture never generated the two that
+    # were broken — a sweep is only as good as the tree it walks. `JM_RESTRICT`
+    # expanded to the C99 keyword `restrict`, which is not a C++ one, so a
+    # `perf = "true"` project's headers could not be included from the C++ this
+    # whole file exists to invite.
+    assert (
+        _cli(
+            "object", "fast", "--perf", "--state", "g:double:1.0", cwd=root
+        ).returncode
+        == 0
+    )
     return root
 
 

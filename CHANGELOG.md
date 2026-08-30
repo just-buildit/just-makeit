@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`JM_RESTRICT` no longer breaks a C++ include of a `perf = "true"`
+    project's headers (gh-1205).** gh-1148 removed the `extern "C"` wrapper
+    from the umbrella header so a C++ translation unit could include jm's
+    headers; `jm_perf.h` still expanded the macro to the C99 keyword
+    `restrict`, which is not a C++ keyword. So `jm_simd.h`'s prototypes did
+    not parse, and gh-1148 invited C++ callers into headers that could not be
+    included.
+
+    `jm_simd.h`'s own fallback was already correct — it reaches for
+    `__restrict__` when nothing has defined the macro — so the right spelling
+    sat one `#ifndef` away from the broken one. The language question is now
+    settled once, before the per-compiler table, rather than three times
+    inside it.
+
+    gh-1148's header sweep walks every generated header with no exemption
+    list, and passed throughout: its fixture had no `--perf` object, so the
+    two broken headers were never generated. **A sweep is only as good as the
+    tree it walks** — that fixture now scaffolds one, so the existing test
+    covers them and goes red if the macro regresses.
+
 ### Added
 
 - **A composer can carry a hand-written method — the `*_extra.c` hook plus
