@@ -7,6 +7,7 @@ from .._types import (
     _CTYPE_META,
     _KIND_PY_ISINSTANCE,
     _ctype_display,
+    np_dtype_doctest_lines,
 )
 from .._docstring import (
     class_import_line,
@@ -540,8 +541,7 @@ def make_step_ctx(
             "    >>> y = obj.steps(x)",
             "    >>> y.shape",
             "    (4,)",
-            "    >>> y.dtype",
-            f"    dtype('{out_np_dtype.replace('np.', '')}')",
+            *np_dtype_doctest_lines(out_np_dtype),
         ]
         steps_def_entry_bw = (
             f'    {{"steps",    (PyCFunction)(void *){Component}_steps,'
@@ -1551,9 +1551,22 @@ def make_step_ctx(
     _step_call = "obj.step()" if _is_void_arg else f"obj.step({_in_val})"
     _step_demo.append(f"    >>> {_step_call}")
     if not is_void_return and return_type in _CTYPE_META:
-        _step_demo.append(
-            f"    {_CTYPE_META[return_type].get('py_zero', '0')}"
-        )
+        # gh-1212: the example must state what THE SCAFFOLD returns, because
+        # jm wrote both. The scaffolded `step` is a passthrough --
+        # `return (T)x;` -- so for a scalar argument the answer is the input,
+        # cast to the return type. It is zero only when there is no input to
+        # pass through: a `void` argument generates from state, and an array
+        # argument reduces a buffer to a scalar. Both of those already
+        # returned `(T)0` and already said `0`; the scalar case claimed `0`
+        # against a body that returns `x`, so every new project shipped a
+        # failing example.
+        #
+        # The input is "one" in whichever kind (`_KIND_PY_TEST_VAL`), so the
+        # passthrough result is `py_one` -- the same table `py_zero` lives in,
+        # and gated as a pair so a ctype cannot carry one without the other.
+        _passthrough = not (_is_void_arg or _is_arr_arg)
+        _key = "py_one" if _passthrough else "py_zero"
+        _step_demo.append(f"    {_CTYPE_META[return_type].get(_key, '0')}")
     _step_doc_lines += _demo_unless_authored(_sblk, _step_demo)
 
     # Seeded before the branch: the stub section below reads these whether or
@@ -1624,8 +1637,7 @@ def make_step_ctx(
             _steps_demo += [
                 "    >>> y.shape",
                 "    (4,)",
-                "    >>> y.dtype",
-                f"    dtype('{_out_np_str}')",
+                *np_dtype_doctest_lines(ctx.get("out_np_dtype", "")),
             ]
         _steps_doc_lines += _demo_unless_authored(_ssblk, _steps_demo)
         # A keyword-capable steps() (out= shapes, or any controllable shape)
