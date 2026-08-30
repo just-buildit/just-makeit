@@ -2,6 +2,26 @@
 
 ### Fixed
 
+- **A version the build *derives* is no longer reported as drift (gh-1204).**
+    gh-1141's check compares each generated copy of `[project] version` as a
+    literal, so `PROJECT_NUMBER = $(PKG_VERSION)` — with the build exporting
+    it — was reported stale forever. That is a `!` finding which fails
+    `jm status --check`, so a project that took the **strongest** fix for the
+    drift the check exists to catch got a permanently red gate whose only
+    remedy was to go back to a hardcoded number that will drift again.
+
+    A finding nobody can clear inverts the incentive and teaches people to
+    ignore the gate, which is the outcome `_createonly` already warns about
+    for self-healing findings.
+
+    The test is a whitelist rather than a list of expansion syntaxes: PEP 440
+    requires a version to begin with a digit, and every way of writing "no,
+    this is computed" — `$(VAR)`, `@VAR@`, `${VAR}`, `%VAR%` — answers that
+    the same. It also makes three paths deliberate that were not: `_CMAKE_RE`
+    already demanded a leading digit, `_lib_c_re` skipped
+    `return PKG_VERSION;` by accident, and the Doxyfile pattern matched
+    anything and so reported it.
+
 - **`JM_RESTRICT` no longer breaks a C++ include of a `perf = "true"`
     project's headers (gh-1205).** gh-1148 removed the `extern "C"` wrapper
     from the umbrella header so a C++ translation unit could include jm's

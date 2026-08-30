@@ -98,6 +98,28 @@ def _toml_version(path: Path) -> "str | None":
     return got if isinstance(got, str) else None
 
 
+#: A version literal, as PEP 440 requires one to begin. Anything else in a
+#: version slot is a value the build DERIVES — doxygen's `$(VAR)`, CMake's
+#: `@VAR@` or `${VAR}`, a make-style `$(VAR)` — and there is nothing to
+#: compare it against.
+#:
+#: gh-1204. Deriving the version is the strongest fix for the drift this
+#: module exists to catch: it cannot go stale, whereas syncing the number
+#: postpones the next drift to the next release. The check reported it as
+#: drift anyway, and it is a `!` finding, so a project that fixed the bug
+#: properly got a permanently red gate whose only remedy was to go back to a
+#: hardcoded number that will drift again — inverting the incentive the check
+#: exists to create, and teaching the lesson `_createonly` warns about faster
+#: than a self-healing finding would.
+#:
+#: A whitelist rather than a list of expansion syntaxes: the question is "is
+#: this a version", and every way of writing "no, it is computed" answers it
+#: the same. `_CMAKE_RE` already required a leading digit and so was right by
+#: construction, and `_lib_c_re` requires a quoted literal and so skipped
+#: `return PKG_VERSION;` by accident. This makes the three deliberate.
+_VERSION_LITERAL = re.compile(r"^[0-9]")
+
+
 def _match(path: Path, pattern: "re.Pattern[str]") -> "str | None":
     try:
         text = path.read_text(encoding="utf-8")
@@ -115,6 +137,11 @@ def drift(root: Path, cfg: dict) -> "list[VersionCopy]":
     hand-maintained CMakeLists with no ``VERSION`` line, is not drifting, they
     are simply not carrying a copy. A false negative here is fine; a false
     positive is a gate crying wolf on a file it does not understand.
+
+    A copy that is DERIVED rather than written — `PROJECT_NUMBER = $(VAR)` and
+    friends — is skipped for the same reason (gh-1204). It cannot disagree
+    with the manifest, because it does not carry a value of its own; reporting
+    it would fail the gate on the one fix that makes drift impossible.
 
     The PEP 723 app script is deliberately absent from the list it checks:
     `apply` rewrites it from the manifest, so it cannot disagree by the time
@@ -140,6 +167,8 @@ def drift(root: Path, cfg: dict) -> "list[VersionCopy]":
         got = (
             _toml_version(path) if pattern is None else _match(path, pattern)  # type: ignore[arg-type]
         )
-        if got is not None and got != expected:
+        if got is None or not _VERSION_LITERAL.match(got):
+            continue
+        if got != expected:
             found.append(VersionCopy(rel, got, expected))
     return found
