@@ -37,7 +37,6 @@ try:
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -166,9 +165,9 @@ class TestACorrectModuleIsSilent:
     def test_a_fully_populated_handle_module(self):
         assert _msgs(_handle_module()) == []
 
-    @pytest.mark.parametrize("kind", ["capsule", "composer"])
-    def test_the_other_two_faces(self, kind):
-        cfg = {
+    @staticmethod
+    def _kind_module(kind, **extra):
+        return {
             "project": {"name": "p"},
             "module": {
                 "m": {
@@ -176,20 +175,57 @@ class TestACorrectModuleIsSilent:
                     "backing": "b",
                     "header": "b/b.h",
                     "depends_on": [{"name": "b", "link": True}],
-                    # These two spell a signature the way a handle method
-                    # may NOT, which is why the vocabularies are per-kind.
-                    "methods": [
-                        {
-                            "name": "step",
-                            "arg_type": "double",
-                            "return_type": "double",
-                            "nogil": True,
-                        }
-                    ],
+                    **extra,
                 }
             },
         }
+
+    def test_a_capsule_with_methods(self):
+        # `arg_type` / `return_type` spell a signature the way a handle method
+        # may NOT, which is why the vocabularies are per-kind.
+        cfg = self._kind_module(
+            "capsule",
+            methods=[
+                {
+                    "name": "step",
+                    "arg_type": "double",
+                    "return_type": "double",
+                    "nogil": True,
+                }
+            ],
+        )
         assert _msgs(cfg) == []
+
+    def test_a_composer_with_extra_methods(self):
+        """gh-1190. A composer's answer is `extra_methods`, not `methods`.
+
+        This case used to be parametrized alongside the capsule and asserted
+        that a composer `methods` table is silent — which was true and wrong:
+        `_composer.py` never read one, so the table was accepted, preserved,
+        and generated nothing. That is the gh-816 shape with the registry
+        supplying the silence, so `methods` came out of the composer
+        vocabulary and the assertion moved to the key that does something.
+        """
+        cfg = self._kind_module(
+            "composer",
+            extra_methods=[
+                {
+                    "name": "draws",
+                    "fn": "Composer_draws",
+                    "flags": "METH_NOARGS",
+                    "returns": "list[dict[str, object]]",
+                }
+            ],
+        )
+        assert _msgs(cfg) == []
+
+    def test_a_composer_methods_table_is_reported(self):
+        """The other half: it must now say so, and name where it IS valid."""
+        cfg = self._kind_module("composer", methods=[{"name": "step"}])
+        msgs = _msgs(cfg)
+        assert len(msgs) == 1, msgs
+        assert "methods" in msgs[0], msgs[0]
+        assert "capsule module" in msgs[0], msgs[0]
 
     def test_a_kind_jm_does_not_generate_is_left_alone(self):
         """jm should not lecture a project about a face it does not own."""

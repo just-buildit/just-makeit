@@ -2,6 +2,32 @@
 
 ### Added
 
+- **A composer can carry a hand-written method — the `*_extra.c` hook plus
+    `[[module.X.extra_methods]]` (gh-1190).** Every other module kind has a
+    `_extra.c` that jm includes and never touches; `kind = "composer"` had
+    none, so a project needing one bespoke method had three bad options:
+    hand-edit a file `apply` discards, blind a ~3300-line generated file with
+    `status_allow`, or do without. doppler#1086 did the third.
+
+    The hook alone would not have been shippable — nothing generated calls
+    into an `_extra.c`, and unlike an object module there is no sacred
+    fragment whose `PyMethodDef` rows survive regeneration, so the function
+    would be included and unreachable. The row is declared instead, which also
+    gets it into the `.pyi`; the composer's stub is generated wholesale, so a
+    hand-written member has nowhere to survive either.
+
+    Deliberately not spelled `methods`: on a handle or a capsule that word
+    means "generate the wrapper from this signature", and here the wrapper
+    already exists.
+
+### Fixed
+
+- **A composer `methods` table is no longer accepted in silence (gh-1190).**
+    `_keys` recognised it and `_composer.py` never read one, so declaring it
+    passed `unknown_keys` and generated nothing — the gh-816 shape with the
+    registry itself supplying the silence. It now reports, naming the handle
+    and capsule faces it *is* valid for.
+
 - **A module function can return a string — `out_type = "str"` (gh-1180).**
     A module function could *take* one (`const char *` works) and had no way
     to give one back, so a pair of inverse conversions read asymmetrically:
