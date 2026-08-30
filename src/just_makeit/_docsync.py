@@ -539,7 +539,12 @@ def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
 
 
 def _refresh_slot(
-    cur: str, der: str | None, fb: str | None, name: str = ""
+    cur: str,
+    der: str | None,
+    fb: str | None,
+    name: str = "",
+    *,
+    authored: bool = False,
 ) -> str | None:
     """Decide a slot's new doc text, or ``None`` to leave it untouched.
 
@@ -549,12 +554,28 @@ def _refresh_slot(
     the synopsis line jm derives for it (see :func:`_is_jm_shaped`), or when it
     is empty and the derived form carries real Doxygen content. A hand-written
     doc — *cur* matching none of those — is preserved.
+
+    *authored* (gh-1191) says the MANIFEST declares a ``doc`` for this member,
+    and then the slot is refreshed whatever it holds. Not a weakening of the
+    preservation rule but the boundary of it: the four tests above ask "did jm
+    write this", which is unanswerable once jm's own earlier manifest-derived
+    render is on disk — it matches neither the header-derived form nor the
+    scaffold one, so an *edit* to a manifest ``doc`` was classified
+    hand-written and dropped. Asking instead "did the author declare this
+    text" is answerable, and its answer is in the manifest.
+
+    The `.pyi` beside the fragment has always treated a manifest ``doc`` as
+    authoritative and rewritten it, which is what made the two faces disagree
+    — the corrected text on one and the disproved text on the other. A member
+    with no manifest ``doc`` is preserved exactly as before.
     """
     if der is None:
         return None
     ncur, nder = _norm(cur), _norm(der)
     if nder == ncur:
         return None  # already current (or both scaffold) — nothing to do
+    if authored:
+        return der  # the manifest says what this doc is
     nfb = _norm(fb) if fb is not None else None
     if nfb is not None and ncur == nfb:
         return der  # stale scaffold text -> refresh to derived
@@ -572,6 +593,8 @@ def transplant_docs(
     reference: str,
     fallback: str,
     reclaimed: "list[str] | None" = None,
+    authored: "frozenset[str]" = frozenset(),
+    authored_tp_doc: bool = False,
 ) -> str:
     """Return *existing* with refreshable doc slots updated from *reference*.
 
@@ -585,6 +608,11 @@ def transplant_docs(
 
     Parameters
     ----------
+    authored : frozenset of str, optional
+        Member names the MANIFEST declares a ``doc`` for (gh-1191). Their
+        slots are refreshed whatever they hold — see :func:`_refresh_slot`.
+    authored_tp_doc : bool, optional
+        The same for the class docstring, which has no entry name to key on.
     reclaimed : list of str, optional
         Sink for the names of **glue** members whose prose was overwritten
         (gh-871). Since that reclaim became unconditional it can now replace a
@@ -605,7 +633,11 @@ def transplant_docs(
             ref = ref_slots.get(name)
             fb = fb_slots.get(name)
             new_text = _refresh_slot(
-                cur, ref[2] if ref else None, fb[2] if fb else None, name
+                cur,
+                ref[2] if ref else None,
+                fb[2] if fb else None,
+                name,
+                authored=name in authored,
             )
             if new_text is not None:
                 edits.append((fs, fe, new_text))
@@ -647,6 +679,7 @@ def transplant_docs(
             ex_tp[2],
             ref_tp[2] if ref_tp else None,
             fb_tp[2] if fb_tp else None,
+            authored=authored_tp_doc,
         )
         # gh-805 §F: `tp_doc` is one of the prose-only slots `_is_jm_shaped`
         # deliberately leaves on strict scaffold equality — it has no synopsis
@@ -1804,6 +1837,44 @@ def transplant_hand_written(
     return out
 
 
+def manifest_documented(
+    cfg: dict, obj: str, frag_id: str
+) -> "tuple[frozenset[str], bool]":
+    """Which of *frag_id*'s doc slots the manifest declares the text for.
+
+    gh-1191. Returns ``(member names, class doc declared)`` — the two things
+    :func:`transplant_docs` needs to tell a stale slot from a hand-written one.
+
+    A view's fragment takes the **union** of its own members and its parent's,
+    because a view inherits every member it does not exclude: a `doc` declared
+    once on the parent is the text for both faces of both classes, and keying
+    only on the view's own table would leave the inherited copy stale in
+    exactly the fragment a reader is most likely to open.
+
+    Keyed by the Python name, which is what a ``PyMethodDef`` /
+    ``PyGetSetDef`` row carries and therefore what the transplant matches on.
+    """
+    names: set[str] = set()
+    section = cfg.get(obj) or {}
+
+    def _take(entries) -> None:
+        for e in entries or []:
+            if e.get("doc") and e.get("name"):
+                names.add(e["name"])
+
+    _take(C.methods(cfg, obj))
+    _take(C.properties(cfg, obj))
+    if frag_id == obj:
+        return frozenset(names), bool(section.get("doc"))
+    for v in C.views(cfg, obj):
+        if v.get("class_name", "").lower() != frag_id:
+            continue
+        _take(C.view_methods(v))
+        _take(C.view_properties(v))
+        return frozenset(names), bool(v.get("doc"))
+    return frozenset(names), False
+
+
 def refresh_module_fragment_docs(
     root: Path, cfg: dict, *, only_mod: str | None = None
 ) -> list[Path]:
@@ -1844,7 +1915,22 @@ def refresh_module_fragment_docs(
             reference = R.render_module_ext_fragment(ctx)
             fb = R.render_module_ext_fragment(fallback[comp])
             _reclaimed: list[str] = []
-            updated = transplant_docs(existing, reference, fb, _reclaimed)
+            # gh-1191: a manifest `doc` is the author's declaration of what
+            # this text is, so a fragment slot that disagrees is stale rather
+            # than hand-written. Without this an EDIT to one reached the
+            # `.pyi` and stopped — jm had the corrected text and declined to
+            # write it, and `apply` said nothing.
+            _authored, _authored_tp = manifest_documented(
+                cfg, ctx["component"], comp
+            )
+            updated = transplant_docs(
+                existing,
+                reference,
+                fb,
+                _reclaimed,
+                authored=_authored,
+                authored_tp_doc=_authored_tp,
+            )
             # gh-440: a new method/property added to the manifest since this
             # fragment was last generated is missing entirely -- splice it in
             # additively rather than requiring delete-and-recreate.
