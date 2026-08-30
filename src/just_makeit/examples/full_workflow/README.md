@@ -393,8 +393,7 @@ is a real one-sentence class summary (`gain`, `ema`), which `jm apply` also
 flows through into the generated Python docstrings — so the same comment feeds
 both the Doxygen C site and the Zensical Python pages.
 
-The same is true of the `gain_scale()` block from
-[section 4](#4-executable-documentation--code-becomes-a-doctest): one comment
+The same is true of the `gain_scale()` block from section 4 above: one comment
 renders on the Doxygen C site, becomes the Python docstring the Zensical pages
 show, and is *executed* as a doctest. Three artifacts, one place to edit.
 

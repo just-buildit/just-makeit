@@ -2,6 +2,22 @@
 
 ### Docs
 
+- **The `full_workflow` README's cross-reference no longer breaks the docs
+    build.** The link added alongside the example's doctest section pointed at
+    an anchor that does not resolve, so `zensical build --strict` aborted.
+    `docs.yml`'s Build is not a required check, so the PR carrying it merged
+    and `main` went red.
+
+    Replaced with prose rather than a corrected anchor: no other example
+    README links to its own sections, and an anchor derived from a heading's
+    punctuation rots silently the next time the heading is reworded.
+
+    `make lint` does not run the docs build — `docs-check` is the pre-push
+    aggregate and lives in `GATES_DEPS`, not `lint`. `make docs-check` catches
+    it, verified by sabotage.
+
+### Docs
+
 - **The `full_workflow` example runs the C header's own `@code` as a
     doctest.** The walkthrough already taught that a `@brief` in the sacred
     header flows into the generated Python docstring and stopped there — so
