@@ -2,6 +2,34 @@
 
 ### Fixed
 
+- **`jm regenerate` no longer deletes a hand-written `*_extra.c` (gh-1216).**
+    Those are the files jm documents as "jm never creates or modifies" — the
+    escape hatch for a hand-written CPython type or a property `value_fn`
+    returning `PyObject *`, i.e. exactly the code that cannot be reproduced
+    from the manifest. `regenerate` removed the component directory and rebuilt
+    it, so it destroyed them: the one operation they exist to survive. Nothing
+    named them — no prompt, no line in the output. Its existing warning covers
+    `_core.c` / `_core.h` and promises those are lifted and spliced back, which
+    a `*_extra.c` is not and does not get.
+
+    The fix is in `_rm`, not in `regenerate`: jm does not own those files, so
+    it has no basis for deleting them anywhere. `remove` now leaves the
+    directory behind holding only the author's file — an orphan is
+    recoverable, a deletion is not — and both say `keep … (hand-written; jm   never deletes one)` rather than doing it silently.
+
+- **A surviving hook is wired back in (gh-1216).** Preserving it was half the
+    fix: a `*_extra.c` that survives but is not `#include`d is present, intact,
+    and still compiling into nothing. `_init.run` now reads the hook off disk
+    when it re-materializes a binding, which is `""` at object-creation time —
+    a fresh scaffold renders byte-identically, measured across a standalone
+    object, a module object and a `--no-state` one.
+
+    This also gives a standalone object's hook a way to be wired at all. There
+    was none: the component must exist before a file can sit beside it, and
+    `apply` reads the manifest, which the file is not in.
+
+### Fixed
+
 - **A scaffolded project's own examples are green before you touch it
     (gh-1212).** jm writes the kernel body *and* the example beside it, so the
     example is not a prediction — it is a statement about code jm just wrote.
