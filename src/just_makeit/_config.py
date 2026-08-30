@@ -162,6 +162,14 @@ def load(root: Path) -> dict:
     from ._keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
+    # gh-1202: a hand-written `*_extra.c` that nothing includes. Reported from
+    # here for the same reason the key walk is -- `load` is the one place every
+    # command passes through, and the file is invisible to every check that
+    # reads only the manifest, which is what let it compile into nothing in
+    # silence.
+    from ._extrahook import warn_unwired_hooks
+
+    warn_unwired_hooks(root)
     return cfg
 
 

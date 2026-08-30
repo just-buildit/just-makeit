@@ -34,6 +34,39 @@
     Once you implement your own kernel the example is yours; until then it is
     jm's, and jm owns being right about it.
 
+- **A hand-written `*_extra.c` that nothing includes is now reported
+    (gh-1202).** A `*_extra.c` beside a generated `_ext.c` is the escape hatch
+    for code the manifest cannot express — a hand-written CPython type, a
+    property `value_fn` returning `PyObject *`. `kind = "handle"` and
+    `kind = "capsule"` include none, so a file placed there by analogy with an
+    object module compiled into nothing: measured on 0.72.0, `apply` said
+    nothing, `status` said nothing, and no generated C or CMake referenced it.
+
+    **The missing hook is not the bug.** Those kinds lack a feature, and a
+    project without it still builds and passes; that is not what green-from-day-one
+    forbids. What it forbids is jm accepting a reasonable thing and quietly
+    dropping it. So this reports and does not build the hook — the issue is
+    explicit that the shape of that key wants a real use case first.
+
+    The detector asks the **artifact**: for each generated `_ext.c`, does it
+    include the hooks beside it. No table of which kinds support one, because
+    such a table goes stale the first time a kind is added — and asking the
+    artifact turned out to cover a second route to the same symptom, where a
+    kind that *does* support the hook has not re-rendered since the file
+    appeared. That one is not hypothetical: it is how a standalone object's
+    hook behaves today, since whether a hook exists is a fact about the
+    directory and `apply`'s change detection reads only the manifest.
+
+    **Advisory, never gating.** A handle or capsule has no hook to wire, so the
+    reader cannot clear the finding, and a gate whose finding cannot be cleared
+    teaches people to ignore the gate.
+
+    The message deliberately does not suggest `jm regenerate`, which is the
+    command that would re-render the file and wire the hook in — and deletes
+    the hook while doing so. Filed as gh-1216; the advice was measured before
+    it was written, which is the only reason it does not point at the
+    destructive remedy.
+
 ### Fixed
 
 - **A module component's synthesized doctests import the class from where it
