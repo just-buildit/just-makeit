@@ -540,6 +540,13 @@ def _build_ctx(
     # `>>> from <<package>> import <<Component>>` into the regenerated .pyi. That
     # went unnoticed because the placeholder scan covers .py/.c/.h/.toml/.txt but
     # not .pyi — the one file it corrupts.
+    # gh-1208 left these three `from {pkg} import` lines BARE on purpose.
+    # `bind` writes the standalone layout unconditionally --
+    # `native/src/<comp>/<comp>_ext.c` and `src/<pkg>/<comp>.pyi`, see `run()`
+    # below -- so within the files it emits, the bare form is the one that
+    # imports. It does not consult module membership at all, which is a
+    # separate limitation and not something a module segment here would fix:
+    # adding one would name a path whose `.so` bind never wrote.
     scalar_state = (
         [
             (n, ct, dflt)

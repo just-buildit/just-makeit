@@ -8,7 +8,11 @@ from .._types import (
     _KIND_PY_ISINSTANCE,
     _ctype_display,
 )
-from .._docstring import render_numpy_doc, render_runtime_doc
+from .._docstring import (
+    class_import_line,
+    render_numpy_doc,
+    render_runtime_doc,
+)
 from ._parse import _build_ml_doc, _step_parse_block
 
 
@@ -520,7 +524,14 @@ def make_step_ctx(
             "",
             "    >>> import numpy as np",
             *(
-                [f"    >>> from {ctx.get('package', '')} import {Component}"]
+                [
+                    "    >>> "
+                    + class_import_line(
+                        ctx.get("package", ""),
+                        Component,
+                        ctx.get("module", ""),
+                    )
+                ]
                 if ctx.get("package")
                 else []
             ),
@@ -1467,7 +1478,14 @@ def make_step_ctx(
     _in_np_str = ctx.get("in_np_dtype", "np.complex64")
     _is_void_arg = arg_type == "void"
     _is_arr_arg = arg_type.endswith("[]")
-    _from_pkg = [f"    >>> from {_pkg} import {Component}"] if _pkg else []
+    _from_pkg = (
+        [
+            "    >>> "
+            + class_import_line(_pkg, Component, ctx.get("module", ""))
+        ]
+        if _pkg
+        else []
+    )
     _obj_create = f"    >>> obj = {Component}({_create})"
 
     _ret_hint_step = "None" if is_void_return else ret_disp

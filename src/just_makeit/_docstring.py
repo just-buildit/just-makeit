@@ -128,6 +128,53 @@ class DoxyBlock:
 _HEADER_DEFAULT_RE = re.compile(r"\(default:\s*([^)]+?)\)\.?\s*$")
 
 
+def class_import_path(pkg: str, module: str = "") -> str:
+    """The dotted, importable path a generated class lives at.
+
+    A **standalone** object lands at ``<pkg>/<obj>.so`` and imports as
+    ``from <pkg> import <Component>``; a **module** object lands at
+    ``<pkg>/<module>/<module>.so`` and needs the module segment. *module* is
+    the manifest's module **id**, which is already dotted for a nested one
+    (``dsp.filters``), so it concatenates directly.
+
+    This exists because thirteen call sites built the line inline and only
+    one of them asked the question (gh-1208): every synthesized doctest in a
+    module component's ``_ext`` fragment named ``from <pkg> import <C>`` and
+    could not import, while the ``.pyi`` for the same methods was right.
+
+    Examples
+    --------
+    >>> class_import_path("commz")
+    'commz'
+    >>> class_import_path("commz", "dsp")
+    'commz.dsp'
+    >>> class_import_path("commz", "dsp.filters")
+    'commz.dsp.filters'
+    >>> class_import_path("", "dsp")
+    'dsp'
+    """
+    seg = (module or "").strip(".")
+    if pkg and seg:
+        return f"{pkg}.{seg}"
+    return pkg or seg
+
+
+def class_import_line(pkg: str, Component: str, module: str = "") -> str:
+    """``from <path> import <Component>`` — a synthesized doctest's first line.
+
+    The one spelling, so the ``.pyi`` and the runtime ``__doc__`` faces of the
+    same method cannot disagree about where the class is importable from.
+
+    Examples
+    --------
+    >>> class_import_line("commz", "Counter")
+    'from commz import Counter'
+    >>> class_import_line("commz", "Counter", "dsp")
+    'from commz.dsp import Counter'
+    """
+    return f"from {class_import_path(pkg, module)} import {Component}"
+
+
 def header_default(desc: str | None) -> str | None:
     """Extract the trailing ``(default: X)`` value from a ``@param`` description.
 

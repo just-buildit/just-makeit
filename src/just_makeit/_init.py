@@ -16,6 +16,7 @@ from . import _report
 from . import _context as Ctx
 from . import _render as R
 from . import _types as T
+from ._docstring import class_import_line
 from ._builtins import overridden_builtin_slots
 from . import _docstring
 from ._docstring import scaffold_doc_block
@@ -1138,7 +1139,11 @@ def run(
         if not no_state
         else []
     )
-    import_line = f"from {pkg} import {ctx['Component']}"
+    # No module argument: `_init.run` is the standalone-object path (see the
+    # note on `doc` above); `_object.py` renders module objects and passes
+    # the module id there. The helper is still used so the spelling is
+    # shared rather than re-typed (gh-1208).
+    import_line = class_import_line(pkg, ctx["Component"])
     # gh-273: suppress the construction doctest when a required init-param has
     # no default — there is no valid seed and a validating ctor would reject the
     # type's zero under `pytest --doctest-glob='*.pyi'`.

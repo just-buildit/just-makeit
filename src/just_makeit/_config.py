@@ -882,6 +882,21 @@ def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
     return cfg
 
 
+def module_of(cfg: dict, obj: str) -> str:
+    """The module id owning *obj*, or ``""`` when it is a standalone object.
+
+    The manifest records the relationship one way only — ``[module.X] objects``
+    lists its members — so the reverse lookup is a scan. Needed wherever a
+    render has the component but not its module, which is how every
+    synthesized doctest in a module component's binding came to name
+    ``from <pkg> import <Component>`` (gh-1208).
+    """
+    for m in modules(cfg):
+        if obj in module_objects(cfg, m):
+            return m
+    return ""
+
+
 def module_functions(cfg: dict, module: str) -> list[dict]:
     """Return the module-level function entries for module as [{"name":..., "doc":...}, ...]."""
     return list(cfg.get("module", {}).get(module, {}).get("functions", []))

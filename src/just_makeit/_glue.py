@@ -22,7 +22,7 @@ from pathlib import Path
 from . import _config as C
 from . import _procglobal
 from ._context._parse import _build_ml_doc
-from ._docstring import authored_class_brief
+from ._docstring import authored_class_brief, class_import_line
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
@@ -68,6 +68,10 @@ def component_ctx(
         Context ready for ``R.render()``. Every slot the templates reference
         is present, including the ones that resolve empty.
     """
+    # gh-1208: a synthesized doctest must name the module segment when the
+    # component lives in one. The manifest records membership one way, so
+    # ask it here; "" for a standalone object leaves the line unchanged.
+    _module_id = C.module_of(cfg, object_name)
     Component = _to_title(object_name)
     state_vars_list = C.state_vars(cfg, object_name)
     arg_type_ = C.arg_type(cfg, object_name)
@@ -146,6 +150,7 @@ def component_ctx(
             Component,
             C.methods(cfg, object_name),
             pkg=pkg,
+            module=_module_id,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, object_name),
             serializable=C.is_serializable(cfg, object_name),
@@ -263,7 +268,7 @@ def component_ctx(
         Ctx._pyi_examples_block(
             scalar_state,
             bool(C.array_args(cfg, object_name)),
-            f"from {pkg} import {Component}",
+            class_import_line(pkg, Component, _module_id),
             ctx.get("py_create_args", ""),
             Component,
             no_reset=C.is_no_reset(cfg, object_name),
@@ -293,7 +298,7 @@ def component_ctx(
         state_vars_list,
         C.is_no_state(cfg, object_name),
         init_params,
-        f"from {pkg} import {Component}",
+        class_import_line(pkg, Component, _module_id),
         ctx.get("py_create_args", ""),
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
@@ -337,7 +342,7 @@ def component_ctx(
                 state_vars_list,
                 C.is_no_state(cfg, object_name),
                 init_params,
-                f"from {pkg} import {Component}",
+                class_import_line(pkg, Component, _module_id),
                 ctx.get("py_create_args", ""),
                 doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
                 manifest_doc=cfg.get(object_name, {}).get("doc", ""),

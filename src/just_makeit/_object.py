@@ -24,6 +24,7 @@ from typing import Iterator
 
 from . import _color as Color
 from . import _config as C
+from ._docstring import class_import_line
 from . import _procglobal
 from . import _context as Ctx
 from . import _render as R
@@ -436,7 +437,7 @@ def _make_object_ctx(
         else []
     )
     has_aa = bool(array_args)
-    import_line = f"from {pkg} import {ctx['Component']}"
+    import_line = class_import_line(pkg, ctx["Component"], module)
     ctx["pyi_examples"] = (
         Ctx._pyi_examples_block(
             scalar_state,
@@ -1174,6 +1175,7 @@ def _make_view_ctx(
             ctx["Component"],
             merged_methods,
             pkg=pkg,
+            module=module,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
             serializable=C.is_serializable(cfg, obj),
@@ -1314,7 +1316,7 @@ def _make_view_ctx(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 _vinit,
-                f"from {pkg} import {ctx['Component']}",
+                class_import_line(pkg, ctx["Component"], module),
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
                 manifest_doc=view.get("doc", ""),
@@ -1421,6 +1423,7 @@ def build_component_ctxs(
                 ctx["Component"],
                 C.methods(cfg, obj),
                 pkg=pkg,
+                module=module,
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
                 serializable=C.is_serializable(cfg, obj),
@@ -1523,7 +1526,7 @@ def build_component_ctxs(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 C.init_params(cfg, obj),
-                f"from {pkg} import {ctx['Component']}",
+                class_import_line(pkg, ctx["Component"], module),
                 ctx.get("py_create_args", ""),
                 doc_blocks=_doc_blocks,
                 manifest_doc=cfg.get(obj, {}).get("doc", ""),
@@ -2496,6 +2499,7 @@ def run(
             ctx["Component"],
             [],
             pkg=pkg,
+            module=module,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
             serializable=serializable,

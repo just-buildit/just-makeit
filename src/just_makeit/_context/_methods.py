@@ -26,6 +26,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    class_import_line,
     max_out_is_state_only,
     member_doc,
     render_numpy_doc,
@@ -1013,6 +1014,7 @@ def make_methods_ctx(
     codecs: dict | None = None,
     builtin_members: "frozenset[str]" = frozenset(),
     enums: dict[str, list[str]] | None = None,
+    module: str = "",
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1027,7 +1029,10 @@ def make_methods_ctx(
 
     pkg and py_create_args are used in the generated PyMethodDef docstrings
     to produce working doctests; omitting them produces functional but
-    package-anonymous examples.
+    package-anonymous examples. *module* is the manifest module id when the
+    component lives in one — without it the synthesized example says
+    ``from <pkg> import <Component>``, which is right for a standalone object
+    and does not import for a module one (gh-1208).
 
     enums (gh-1021) is the ``[[enum]]`` SSOT, read only to write a REAL choice
     into a generated doctest for an enum parameter. The C those parameters
@@ -1526,7 +1531,11 @@ def make_methods_ctx(
         else:
             _in_dtype_str = "np.float32"
             _in_example = "x"
-        _from_line = [f"    >>> from {pkg} import {Component}"] if pkg else []
+        _from_line = (
+            ["    >>> " + class_import_line(pkg, Component, module)]
+            if pkg
+            else []
+        )
         _obj_line = f"    >>> obj = {Component}({py_create_args})"
 
         def _demo_call_args() -> str:
