@@ -2,6 +2,40 @@
 
 ### Fixed
 
+- **A scaffolded project's own examples are green before you touch it
+    (gh-1212).** jm writes the kernel body *and* the example beside it, so the
+    example is not a prediction — it is a statement about code jm just wrote.
+    Three were false, and nothing executed them, so a wrong one was
+    indistinguishable from a right one:
+
+    | member                                                       | jm claimed            | jm's own scaffold                                                      |
+    | ------------------------------------------------------------ | --------------------- | ---------------------------------------------------------------------- |
+    | `step()`                                                     | `0`                   | `return (T)x;` — the input comes back                                  |
+    | `steps()` on `bool`                                          | `dtype('bool_')`      | numpy names that dtype `bool`                                          |
+    | `steps()` on `size_t` / `ptrdiff_t` / `long double _Complex` | `dtype('uintp')` etc. | a platform-dependent alias — `uint64` here, `uint32` on a 32-bit build |
+
+    `step()` is zero only when there is nothing to pass through — a `void`
+    argument generates from state, an array argument reduces a buffer — and
+    those two were right all along. The alias types now state an identity
+    (`y.dtype == np.uintp` → `True`), which is true on every platform; jm does
+    not depend on numpy and must not bake an answer that belongs to the
+    machine running the example.
+
+    `size_t` is the one that mattered: an ordinary return type, not an exotic
+    one.
+
+    Gated by building a project across ten shapes and **executing** every
+    example — 83 of them. Nothing weaker would do: module traversal cannot
+    reach a C extension type, so `doctest.testmod` reports `attempted=0` while
+    the examples sit in `__doc__` unexecuted, which is how all three survived.
+    The dtype table is checked against numpy itself, and a type cannot be
+    parked in the alias set to silence a name that is simply wrong.
+
+    Once you implement your own kernel the example is yours; until then it is
+    jm's, and jm owns being right about it.
+
+### Fixed
+
 - **A module component's synthesized doctests import the class from where it
     actually lands (gh-1208).** A module object's class is
     `<pkg>.<module>.<Component>`, and every synthesized example in the runtime

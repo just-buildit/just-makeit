@@ -34,6 +34,7 @@ def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
         "fmt": fmt,
         "zero": zero,
         "py_zero": "0",
+        "py_one": "1",
         "py_type": np_type,
         "parse_type": parse_type,
         "parse_zero": parse_zero,
@@ -49,6 +50,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "d",
         "zero": "0.0",
         "py_zero": "0.0",
+        "py_one": "1.0",
         "py_type": "np.float64",
         "to_py": lambda v: f"PyFloat_FromDouble({v})",
     },
@@ -57,6 +59,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "f",
         "zero": "0.0f",
         "py_zero": "0.0",
+        "py_one": "1.0",
         "py_type": "np.float32",
         "to_py": lambda v: f"PyFloat_FromDouble((double){v})",
     },
@@ -66,6 +69,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "i",
         "zero": "0",
         "py_zero": "0",
+        "py_one": "1",
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
     },
@@ -74,6 +78,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "p",
         "zero": "0",
         "py_zero": "False",
+        "py_one": "True",
         "py_type": "np.bool_",
         "parse_type": "int",
         "parse_zero": "0",
@@ -130,6 +135,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "D",
         "zero": "0.0f + 0.0f * I",
         "py_zero": "0j",
+        "py_one": "(1+0j)",
         "py_type": "np.complex64",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -143,6 +149,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "D",
         "zero": "0.0 + 0.0 * I",
         "py_zero": "0j",
+        "py_one": "(1+0j)",
         "py_type": "np.complex128",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -154,6 +161,7 @@ _CTYPE_META: dict[str, dict] = {
         "fmt": "D",
         "zero": "0.0L + 0.0L * I",
         "py_zero": "0j",
+        "py_one": "(1+0j)",
         "py_type": "np.clongdouble",
         "parse_type": "Py_complex",
         "parse_zero": "{0.0, 0.0}",
@@ -647,6 +655,44 @@ _CTYPE_TO_DTYPE: dict[str, str] = {
 }
 
 # Maps kind -> Python isinstance target.
+#: numpy dtype names that are NOT the `np.` suffix. `np.bool_` is the scalar
+#: TYPE; the dtype it makes is named `bool`, and a generated example asserting
+#: `dtype('bool_')` therefore failed against the extension jm had just built.
+_NP_DTYPE_NAME: dict[str, str] = {"np.bool_": "bool"}
+
+#: numpy scalar types whose dtype name is a platform-dependent ALIAS. `np.uintp`
+#: is `uint64` on a 64-bit build and `uint32` on a 32-bit one; `np.clongdouble`
+#: is `complex256`, `complex192` or `complex128` depending on the C long double.
+#: jm does not depend on numpy, so it cannot resolve these at generation time --
+#: and it must not, because the answer belongs to the machine that RUNS the
+#: example, not the one that wrote it. Those get an identity comparison instead
+#: of a name, which is true everywhere (gh-1212).
+_ALIAS_NP_DTYPES: frozenset[str] = frozenset(
+    {"np.uintp", "np.intp", "np.clongdouble"}
+)
+
+
+def np_dtype_name(np_type: str) -> str:
+    """The name ``numpy.dtype(<np_type>).name`` returns.
+
+    Only meaningful for a type outside :data:`_ALIAS_NP_DTYPES`; an alias has
+    no single answer. Gated against numpy itself in
+    ``tests/test_gh1212_scaffold_examples_are_green.py``.
+    """
+    return _NP_DTYPE_NAME.get(np_type, np_type.replace("np.", ""))
+
+
+def np_dtype_doctest_lines(np_type: str, expr: str = "y.dtype") -> list[str]:
+    """The ``>>> y.dtype`` example lines, in a form true on every platform.
+
+    A fixed-width type states its name, which reads as documentation. An alias
+    states an identity instead, because no name jm can bake is portable.
+    """
+    if np_type in _ALIAS_NP_DTYPES:
+        return [f"    >>> {expr} == {np_type}", "    True"]
+    return [f"    >>> {expr}", f"    dtype('{np_dtype_name(np_type)}')"]
+
+
 _KIND_PY_ISINSTANCE: dict[str, str] = {
     "float": "float",
     "int": "int",
