@@ -863,9 +863,44 @@ clobber. Output is single-line, matching the rest of the package.
 | `params … {mutable = true}`      | (synonym for `out` — writable array param)                  | ✅ (0.15.3)  |
 | `inline = true`                  | `jm function --inline`                                      | ✅           |
 | `out_type = "T"`                 | `jm function --out-type T`                                  | ✅ (0.13.23) |
+| `out_type = "str"`               | (TOML only)                                                 | 🟡 (0.71.2)  |
 | `result_fields = [{name, type}]` | `jm function --result-field name:type` (repeatable)         | ✅ (0.13.23) |
 | `max_results_param`              | (TOML only)                                                 | 🟡           |
 | `impl = "..."` body              | `jm function --impl file::funcname`                         | ✅           |
+
+#### A function that returns a string
+
+`out_type = "str"` is the one `out_type` that is not an array of a C scalar
+(gh-1180). On a `variable_output` function it makes jm allocate the buffer,
+call C, and hand back a Python `str` — the caller allocates nothing:
+
+```toml
+[[module.cvt.functions]]
+name           = "bin_to_hex"
+return_type    = "size_t"      # the number of characters written
+variable_output = true
+out_type       = "str"
+out_size       = "bits_len * 2"   # the capacity, as C over the args
+
+[[module.cvt.functions.params]]
+name = "bits"
+type = "uint8_t[]"
+```
+
+```c
+size_t bin_to_hex(const uint8_t *bits, size_t bits_len, char *out);
+```
+
+```python
+bin_to_hex(np.array([0x1a, 0xcf, 0xfc, 0x1d], np.uint8))   # '1acffc1d'
+```
+
+`str` names the **Python** shape; the C you implement takes a `char *`. The
+integer return is required and jm refuses without one — a `void` function
+cannot say how much it wrote, and hunting for a NUL the callee may never have
+written is a read past the end waiting to happen. `char` is deliberately not a
+supported scalar type: `char[]` in a param position is refused with a message
+naming `uint8_t[]` for a byte buffer and this key for text.
 
 ### Counts
 

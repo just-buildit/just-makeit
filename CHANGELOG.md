@@ -1,5 +1,52 @@
 ## [Unreleased]
 
+### Added
+
+- **A module function can return a string — `out_type = "str"` (gh-1180).**
+    A module function could *take* one (`const char *` works) and had no way
+    to give one back, so a pair of inverse conversions read asymmetrically:
+    doppler's `hex_to_bin` parses text, while `bin_to_hex` could only return a
+    `uint8` buffer the caller decodes itself.
+
+    ```toml
+    name            = "bin_to_hex"
+    return_type     = "size_t"        # characters written
+    variable_output = true
+    out_type        = "str"
+    out_size        = "bits_len * 2"
+    ```
+
+    jm allocates the buffer, calls `size_t bin_to_hex(…, char *out)`, and
+    builds the `str` — the caller allocates nothing. This is the issue's
+    option 2 rather than its option 1: a `char[]` out-param would make the
+    caller pass a buffer it cannot read as text.
+
+    The integer return is required, and jm refuses without one. A `void`
+    function cannot say how much it wrote, and hunting for a NUL the callee
+    may never have written is a read past the end waiting to happen.
+
+    `char` is deliberately **not** added as a scalar type — that would retire
+    the hint steering it to `int8_t` for its platform-dependent signedness.
+    Instead `char[]` is refused with a message naming `uint8_t[]` for a byte
+    buffer and this key for text (the issue's option 3, kept because `char[]`
+    stays the natural thing to type). The array form of every *other* hinted
+    scalar now gets a suggestion too: `long` had one and `long[]` did not.
+
+### Fixed
+
+- **An `out_type` function that declares an integer return no longer emits C
+    that does not compile (gh-1180).** Both C emitters hardcoded `void`, while
+    the binding for a `variable_output` function reads an integer return as
+    the written length (`size_t _n = (size_t)fn(…)`). Declaring
+    `return_type = "size_t"` alongside `out_type` therefore produced a header
+    saying `void` and a binding assigning from it.
+
+    Reproduced on 0.71.1 with a plain `out_type = "double"`, so this predates
+    the `str` shape above; that shape only made it unavoidable, because a
+    string output has no length without a return. Gated by compiling the two
+    emitters' output together — the render assertions beside it were all
+    perfectly happy with the broken pair.
+
 ### Fixed
 
 - **A module declared `objects = []` no longer writes a CMakeLists that

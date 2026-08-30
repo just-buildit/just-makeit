@@ -210,6 +210,17 @@ _WIDTH_NOTE = "has a platform-dependent width"
 _SPELLING_NOTE = "is the display form; jm stores the `_Complex` spelling"
 _RETURN_TYPE_HINTS: dict[str, tuple[str, str]] = {
     "char": ("int8_t", _WIDTH_NOTE),
+    # gh-1180: the array form is a different question from the scalar one and
+    # wants a different answer. `char[]` is reached for by someone who wants a
+    # BYTE BUFFER or TEXT, not an array of platform-signedness integers, and
+    # the old message listed the supported set without saying which of them
+    # stood in — "shortened this from an experiment to a read" is the
+    # downstream's own description of what a hint is worth here.
+    "char[]": (
+        "uint8_t[]",
+        'is a byte buffer; for text OUT, declare `out_type = "str"` on a '
+        "`variable_output` function and jm returns a str",
+    ),
     "short": ("int16_t", _WIDTH_NOTE),
     "long": ("int64_t", _WIDTH_NOTE),
     "long long": ("int64_t", _WIDTH_NOTE),
@@ -562,7 +573,17 @@ def unsupported_return_type_help(
     """
     _prefix = "void, " if allow_void else ""
     msg = f"Supported: {_prefix}{', '.join(sorted(_CTYPE_META))}"
-    hinted = _RETURN_TYPE_HINTS.get(return_type.strip())
+    _rt = return_type.strip()
+    hinted = _RETURN_TYPE_HINTS.get(_rt)
+    # gh-1180: the array form of every hinted scalar is as easy to type as the
+    # scalar, and was silently unhinted — `long[]` got the supported list and
+    # no suggestion while `long` got one. Derived rather than enumerated, so a
+    # hint added above reaches both spellings; an explicit `<t>[]` entry (like
+    # `char[]`'s, which wants a different answer from `char`'s) still wins.
+    if hinted is None and _rt.endswith("[]"):
+        _base = _RETURN_TYPE_HINTS.get(_rt[:-2])
+        if _base is not None:
+            hinted = (f"{_base[0]}[]", _base[1])
     if hinted:
         suggestion, why = hinted
         msg += f"\nDid you mean '{suggestion}'? ('{return_type}' {why}.)"
