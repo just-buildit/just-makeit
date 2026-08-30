@@ -2459,20 +2459,33 @@ def run(
         # "unchanged", which is what made the loss silent. Printed after the
         # created/updated lines so it is the last thing on screen.
         unanchored = _createonly.missing_anchors(root, temp_root)
-        created = _sync_missing(temp_root, root)
-        impl_patched = _patch_step_impls(root, cfg)
-        # gh-541: promote an already-scaffolded component's sacred destructor
-        # to `int` when the manifest now declares it fallible. Must run before
-        # _sync_aggregates writes the glue that calls it.
-        impl_patched += _patch_destroy_signatures(root, cfg)
-        updated = _sync_aggregates(
-            temp_root,
-            root,
-            cfg,
-            only_mod=only_mod,
-            only_comp=only_comp,
-            honor_status_allow=honor_status_allow,
-        )
+        # gh-1185: the reconcile phase refuses too, and its refusals are
+        # manifest questions — the stub splice will not write a file that
+        # would lose hand-owned content (gh-765/gh-1092). Only the REPLAY was
+        # inside a handler, so those arrived as a stack trace: a traceback for
+        # something the author can fix by editing a TOML line, with the
+        # diagnostic jm had carefully written buried at the bottom of it.
+        try:
+            created = _sync_missing(temp_root, root)
+            impl_patched = _patch_step_impls(root, cfg)
+            # gh-541: promote an already-scaffolded component's sacred
+            # destructor to `int` when the manifest now declares it fallible.
+            # Must run before _sync_aggregates writes the glue that calls it.
+            impl_patched += _patch_destroy_signatures(root, cfg)
+            updated = _sync_aggregates(
+                temp_root,
+                root,
+                cfg,
+                only_mod=only_mod,
+                only_comp=only_comp,
+                honor_status_allow=honor_status_allow,
+            )
+        except ValueError as e:
+            # Same shape as the replay's handler above: the message is
+            # already written for a reader, so print it and stop rather than
+            # decorating a stack trace with it.
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
 
     bench_updated = _reconcile_bench_cmake(root, cfg)
 

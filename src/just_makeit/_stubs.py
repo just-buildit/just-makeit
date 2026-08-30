@@ -574,14 +574,49 @@ def describe_unparseable(
 
 
 def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
-    """``{(ClassName, method_name)}`` for every ``manual_stub = true`` entry
-    declared anywhere in the manifest (standalone or module object)."""
+    """``{(ClassName, method_name)}`` for every hand-owned stub member.
+
+    Every ``manual_stub = true`` entry in the manifest, **and the classes that
+    inherit it** — which is the half gh-1185 was missing.
+
+    A view is a second class over the same core, so the renderer emits the
+    member for it too, placeholder and all. This set is what the splice reads
+    to decide which members to carry across from the old stub, and it named
+    the declaring object only. The two therefore disagreed by construction:
+    `<<MANUAL_STUB>>` was written for ``Peek.gain2`` and nothing recognised
+    ``Peek.gain2`` as hand-owned, so the old text was not carried, the
+    placeholder stood, and the gh-765 guard refused the write — correctly,
+    about a loss the caller had just caused.
+
+    Measured on the repro: the fresh render placed a placeholder at
+    ``[('O', 'gain2'), ('Peek', 'gain2')]`` while this returned
+    ``{('O', 'gain2')}``. The guard was right; the disagreement was the bug.
+
+    A view's own ``methods`` entry wins over the inherited one (gh-1011's
+    override), and an excluded member is not the view's at all.
+    """
     pairs: set[tuple[str, str]] = set()
     for comp in C.components(cfg):
         Component = C.class_name(cfg, comp) or _title(comp)
-        for m in C.methods(cfg, comp):
-            if m.get("manual_stub"):
-                pairs.add((Component, m["name"]))
+        declared = {
+            m["name"] for m in C.methods(cfg, comp) if m.get("manual_stub")
+        }
+        pairs |= {(Component, name) for name in declared}
+        for v in C.views(cfg, comp):
+            cls = v.get("class_name")
+            if not cls:
+                continue
+            excluded = set(v.get("exclude_methods") or [])
+            own = {m["name"]: m for m in C.view_methods(v)}
+            for name in declared | set(own):
+                if name in excluded:
+                    continue
+                entry = own.get(name)
+                if entry is not None:
+                    if entry.get("manual_stub"):
+                        pairs.add((cls, name))
+                elif name in declared:
+                    pairs.add((cls, name))
     return pairs
 
 
@@ -663,6 +698,14 @@ def _splice_manual_stub_bodies(
     downstream recovery, which is the same reason gh-426's dropped-symbol
     check is non-suppressible.
 
+    gh-1185: the message this raises used to assert the failure was gh-765's
+    *intermittent* one and tell the reader to re-run. That is advice no re-run
+    can act on when the cause is deterministic — a member the renderer marks
+    as a placeholder while :func:`_manual_stub_pairs` does not count it
+    hand-owned — and "expected, just re-run" on a failure is how a papercut
+    survives releases. It now names both causes and says how to tell them
+    apart: the deterministic one repeats.
+
     gh-785 is the sibling case and gets the **opposite** handling. When the
     old stub does not parse there is no member map, so the check above has
     nothing to compare and passes: `_placeholder_members(old_text)` and
@@ -717,10 +760,20 @@ def _splice_manual_stub_bodies(
             "refusing to write a stub that would replace hand-written "
             "content with the <<MANUAL_STUB>> placeholder:\n"
             + "".join(f"  {name}\n" for name in lost)
-            + "This is gh-765 — an intermittent failure of the manual_stub\n"
-            "transplant, not something you did. Nothing has been written.\n"
-            "Re-run the command; if it recurs, the .pyi on disk is still\n"
-            "intact and worth attaching to gh-765."
+            + "Nothing has been written, and the .pyi on disk is intact.\n"
+            "\n"
+            "The splice could not find those members in the existing stub, so\n"
+            "the fresh render's placeholder would have replaced real text.\n"
+            "Two causes, and they want opposite things:\n"
+            "  * a member jm renders a placeholder for but does not count as\n"
+            "    hand-owned — a manifest question, and one to report. gh-1185\n"
+            "    was this: a view inheriting a `manual_stub` method.\n"
+            "  * gh-765, a genuinely intermittent transplant failure, which a\n"
+            "    re-run clears.\n"
+            "\n"
+            "Try the command once more. If it reports the same members again\n"
+            "it is the first kind, and the .pyi is worth attaching to a new\n"
+            "issue rather than to gh-765."
         )
     return out
 
