@@ -2,6 +2,38 @@
 
 ### Fixed
 
+- **A module declared `objects = []` no longer writes a CMakeLists that
+    cannot configure (gh-1199).** `CMAKE_LISTS_MODULE` has two render sites,
+    and the empty-module one supplied neither `extra_ext_sources` nor
+    `module_comment`, so the file was written carrying the literal template
+    text:
+
+    ```cmake
+    # <<module_comment>>
+    Python3_add_library(emptymod MODULE WITH_SOABI emptymod_ext.c<<extra_ext_sources>>)
+    ```
+
+    cmake then failed looking for a source file whose name contains `<<`, with
+    nothing pointing back at a missing context key.
+
+- **jm refuses to write a generated file that still carries an unfilled slot
+    (gh-1199).** The class fix, and it is at the **write** site rather than in
+    `render` where the issue suggested it. Measured: making `render` strict
+    reported **1,557 failures over two slots** that every real path fills a
+    pass later — rendering is layered, so "did anything fill this" is only
+    answerable at the moment a string becomes a file. `_init._write` is that
+    moment and the one every generator goes through, so one check covers them
+    all.
+
+    `<<IMPLEMENT: …>>` and `<<MANUAL_STUB>>` are deliberate output and pass
+    through. So does the C-comment-wrapped `/*<<token>>*/` form, which exists
+    so clang-format can parse a C/H template and whose leftovers therefore
+    land inside a comment — untidy rather than broken. Counting that form too
+    turns the suite red at 92 failures over one product shape, filed as
+    gh-1200 with the measurement rather than folded in here.
+
+### Fixed
+
 - **`manual_stub` on a method a view inherits no longer aborts `jm apply`
     (gh-1185).** Declaring `manual_stub = true` on `[[<obj>.methods]]` failed
     with a **traceback**, whose message blamed gh-765 — "an intermittent

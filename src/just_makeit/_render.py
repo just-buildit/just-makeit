@@ -256,6 +256,47 @@ APP_PEP723_CMD = _load("py/app_pep723_cmd.py")
 TESTS_INIT_PY = ""
 
 
+#: The `<<…>>` forms that are DELIBERATE output, not an unfilled slot.
+#:
+#: `<<IMPLEMENT: name>>` marks where the author writes a body and
+#: `<<MANUAL_STUB>>` a stub member jm does not own. Both survive into the
+#: generated file on purpose. Matched by SHAPE rather than listed, since
+#: `IMPLEMENT` carries the member's name with it.
+DELIBERATE_MARKER = re.compile(r"<<(?:IMPLEMENT\b[^>]*|MANUAL_STUB)>>")
+
+#: Anything still looking like a slot once those are set aside.
+UNFILLED_SLOT = re.compile(r"<<([A-Za-z_][A-Za-z_0-9]*)>>")
+
+
+def unfilled_slots(text: str) -> "set[str]":
+    """The `<<slot>>` names *text* still carries, deliberate markers aside.
+
+    gh-1199. NOT checked inside :func:`render` — rendering is layered, and a
+    slot filled by a later pass is normal there. Measured when it was tried:
+    the suite reported 1,557 failures over just two slots,
+    `<<scaffold_checks>>` and `<<property_struct_fields>>`, both filled a pass
+    later. So the question "did anything fill this" is only answerable at the
+    moment a string becomes a FILE, which is where this is asked from.
+    """
+    # The C-comment-wrapped form `/*<<k>>*/` is set aside first, and stays
+    # set aside. It exists so clang-format can parse a C/H template as valid
+    # C, and a leftover therefore lands INSIDE a comment: untidy, invisible to
+    # the compiler, and not what gh-1199 cost. The bare form is the one that
+    # reaches live code — a cmake source filename, in that case.
+    #
+    # Measured rather than assumed: with the wrapped form counted, the suite
+    # reported 92 failures, and the product path behind them is one shape —
+    # a `--no-state` object whose header keeps `/*<<property_struct_fields>>*/`
+    # because the deferred pass that fills it never runs. Filed as gh-1200
+    # rather than folded in here, since it is a different question with a
+    # different answer.
+    bare = re.sub(r"/\*<<[^>]*>>\*/", "", text)
+    return {
+        m.group(1)
+        for m in UNFILLED_SLOT.finditer(DELIBERATE_MARKER.sub("", bare))
+    }
+
+
 def render(template: str, ctx: dict) -> str:
     result = template
     for k, v in ctx.items():
