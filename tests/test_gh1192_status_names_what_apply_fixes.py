@@ -50,6 +50,7 @@ drift.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import subprocess
@@ -230,6 +231,53 @@ class TestTheGateIsUnchanged:
         _hand_edit_a_body(project)
         out = _cli("status", "--check", cwd=project)
         assert out.returncode == 0, out.stdout
+
+
+class TestTheReportDegradesRatherThanFails:
+    """The comment beside the `except` claims status survives a pass that
+    cannot be produced. A decision with no test is a comment."""
+
+    def test_status_still_reports_when_the_pass_raises(
+        self, project: Path, monkeypatch
+    ) -> None:
+        import contextlib
+
+        from just_makeit import _docsync, _status
+
+        _add_header_doc(project)
+
+        # Only the DRY RUN — `apply` calls the same function for real during
+        # status's scratch replay, and breaking that would be testing a
+        # different (unguarded, pre-existing) call site.
+        _real = _docsync.refresh_module_fragment_docs
+
+        def _boom(*a, dry_run=False, **k):
+            if dry_run:
+                raise RuntimeError("no")
+            return _real(*a, dry_run=dry_run, **k)
+
+        monkeypatch.setattr(_docsync, "refresh_module_fragment_docs", _boom)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with contextlib.suppress(SystemExit):
+                _status.run(project)
+        text = out.getvalue()
+        assert "UNRECONCILED" in text, text
+        # Falls back to where these were before: named, in the other bucket.
+        assert "AUTHOR-OWNED" in text, text
+        assert "native/src/m/m_ext_o.c" in text, text
+
+
+class TestTheDiffIsShown:
+    """`--diff` prints the difference for the new bucket too. Without it the
+    section names a file and says to run apply, with nothing to look at."""
+
+    def test_the_refreshable_diff_is_printed(self, project: Path) -> None:
+        _add_header_doc(project)
+        out = _cli("status", "--diff", cwd=project).stdout
+        section = out[out.index("APPLY FIXES THESE") :]
+        head = section.split("AUTHOR-OWNED")[0]
+        assert "HEADERDOC marker." in head, head
 
 
 class TestTheDryRunIsTheSameCode:
