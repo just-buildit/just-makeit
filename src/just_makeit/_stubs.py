@@ -43,6 +43,7 @@ from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    class_import_line,
     ctor_demo_label,
     STUB_TARGET_WIDTH,
     ClassParam,
@@ -1617,10 +1618,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         )
     )
 
+    # gh-1208: one spelling, shared with every synthesized doctest on the
+    # runtime face, so the two faces of a method cannot disagree about where
+    # the class imports from. `...` stays the no-package fallback.
     import_line = (
-        f"from {pkg}.{module} import {Component}"
-        if pkg and module
-        else f"from {pkg} import {Component}"
+        class_import_line(pkg, Component, module)
         if pkg
         else f"from ... import {Component}"
     )

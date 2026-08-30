@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A module component's synthesized doctests import the class from where it
+    actually lands (gh-1208).** A module object's class is
+    `<pkg>.<module>.<Component>`, and every synthesized example in the runtime
+    binding said `from <pkg> import <Component>` — so each one raised
+    `ImportError` the moment anything executed it, while the `.pyi` for the
+    same methods was right. Reported against `step`/`steps`; a named method
+    carries a third, and the count grows with the object's surface.
+
+    Fourteen call sites build this line and exactly one asked whether the
+    component was in a module. They now share `class_import_line`, so the two
+    faces of a method cannot disagree about where the class comes from.
+
+    **The bare form was not the bug** — it is correct for a standalone object,
+    which is why a global replace would have been wrong. `jm bind` keeps it
+    deliberately, with the reason recorded beside it: bind writes the
+    standalone layout unconditionally, so a module segment there would name a
+    path whose `.so` it never wrote.
+
+    Gated by `tests/test_gh1208_doctest_import_path.py`, which derives the
+    expected path from **where the stub landed on disk** rather than from the
+    renderer — a check that asked the same helper twice would pass against any
+    consistent mistake. It walks every object in the manifest and covers a
+    dotted module id, because `module_paths` splits that into three roles and
+    only one is importable: a fix reaching for the CMake `cname` renders
+    `commz.dsp_filters` and passes a flat-module-only test.
+
+    Fixing the import uncovered a second defect it had been masking — the
+    predicted *value* of a synthesized `step()` example is wrong on every new
+    project — filed as gh-1212 with the measurement rather than folded in,
+    because the right answer there is a design decision.
+
 ### Docs
 
 - **The `full_workflow` example runs the C header's own `@code` as a
