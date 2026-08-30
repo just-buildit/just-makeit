@@ -1,8 +1,9 @@
 # full_workflow example
 
 A complete development lifecycle walkthrough — scaffold two components with
-**both** test and benchmark styles, implement, test, benchmark, measure
-coverage, and publish API docs — all from a single just-makeit project.
+**both** test and benchmark styles, implement, test, run the C header's own
+examples as doctests, benchmark, measure coverage, and publish API docs — all
+from a single just-makeit project.
 
 ## TL;DR — see it work first
 
@@ -19,6 +20,7 @@ just-makeit example full_workflow
 | Build        | CMake + GCC                | `build/`                                |
 | C tests      | CTest                      | pass/fail per test                      |
 | Python tests | unittest **and** pytest    | both styles, side by side               |
+| Doctests     | `@code` in the C header    | executed against the built `.so`        |
 | C benchmarks | `bench_*_core` executables | throughput in MSa/s                     |
 | Python bench | timeit **and** pytest-bm   | both styles, side by side               |
 | C coverage   | gcov + lcov → genhtml      | `docs/coverage/c/index.html`            |
@@ -68,6 +70,12 @@ just-makeit object ema \
     --state prev:float:0.0 \
     --pytest \
     --pytest-benchmark
+
+# A named method on gain. `step()`/`steps()` carry jm's own docstrings, so a
+# named method is the only place your own `@code` example can become a doctest.
+just-makeit method gain scale \
+    --arg-type float \
+    --return-type float
 ```
 
 Along with the usual C and Python files, every project now gets:
@@ -97,6 +105,13 @@ The two components demonstrate the two styles you can mix:
 /* native/src/gain/gain_core.c */
 static inline float
 gain_step(const gain_state_t *state, float x)
+{
+    return x * state->gain;
+}
+
+/* native/src/gain/gain_core.c — the named method */
+float
+gain_scale(gain_state_t *state, float x)
 {
     return x * state->gain;
 }
@@ -141,7 +156,117 @@ src/my_dsp/tests/test_ema.py ........ 8 passed
 
 ---
 
-## 4. Benchmarks — two styles
+## 4. Executable documentation — `@code` becomes a doctest
+
+The sacred `native/inc/<obj>/<obj>_core.h` is the single source of truth for
+documentation. jm reads its Doxygen and renders a numpy-style Python docstring
+into the generated `.pyi` — and a `@code` block becomes a **runnable
+`Examples` doctest**, executed against the compiled extension.
+
+Write the block on the named method scaffolded in step 1:
+
+```c
+/**
+ * @brief Scale one sample by the gain and return it.
+ * @param x  Input sample.
+ * @return The scaled sample.
+ * @code
+ * >>> from my_dsp import Gain
+ * >>> Gain(2.0).scale(1.5)
+ * 3.0
+ * @endcode
+ */
+float gain_scale(gain_state_t *state, float x);
+```
+
+Then regenerate the glue — `apply` re-derives the stubs from the edited
+comments and leaves your `.c` implementations alone:
+
+```sh
+just-makeit apply
+```
+
+`src/my_dsp/gain.pyi` now carries the whole docstring, assembled from the tags:
+
+```python
+    def scale(self, x: float) -> float:
+        """Scale one sample by the gain and return it.
+
+        Parameters
+        ----------
+        x : float
+            Input sample.
+
+        Returns
+        -------
+        float
+            The scaled sample.
+
+        Examples
+        --------
+        >>> from my_dsp import Gain
+        >>> Gain(2.0).scale(1.5)
+        3.0
+
+        """
+```
+
+| Doxygen tag            | Where it lands in the docstring |
+| ---------------------- | ------------------------------- |
+| `@brief`               | Summary line                    |
+| `@param <name> <doc>`  | `Parameters` entry              |
+| `@return` / `@returns` | `Returns` entry                 |
+| `@code` … `@endcode`   | Runnable `Examples` doctest     |
+
+### Run them
+
+The doctests import the **built** `.so` and execute every `>>>`:
+
+```sh
+pytest --doctest-glob='*.pyi' src/my_dsp/gain.pyi
+```
+
+```
+.                                                                        [100%]
+1 passed
+```
+
+This is the part that makes `@code` a test rather than a rendered snippet. If
+`gain_scale()` were changed to return `x * state->gain + 1.0f` while the header
+kept advertising `3.0`, the run fails and names both sides:
+
+```
+Expected:
+    3.0
+Got:
+    4.0
+```
+
+So a kernel cannot quietly drift away from the example that documents it.
+
+### Wiring it into your own test run
+
+`make test` runs CTest plus your unittest/pytest suites; it does **not** sweep
+the stubs, and `just-makeit ci` does not add it either. Point your own test
+command at them to make the examples a gate:
+
+```sh
+pytest --doctest-glob='*.pyi' src/
+```
+
+### Two rules worth knowing
+
+- **`@code` belongs on a named method**, not on `create()` and not on
+    `step()`/`steps()`. A class docstring's `Examples` block is always jm's
+    synthesized construction demo, and the built-in step methods keep their
+    standard docstrings — so a `@code` block on either is silently not rendered.
+- **Write examples with deterministic, printable output.** The doctest compares
+    a repr exactly; whole-number results (`2.0 * 1.5 == 3.0`) avoid
+    floating-point noise that fails for reasons that teach nothing.
+
+---
+
+## 5. Benchmarks — two styles
 
 ```sh
 make bench
@@ -198,7 +323,7 @@ dependencies and simple printout benchmarks.
 
 ---
 
-## 5. Coverage
+## 6. Coverage
 
 ```sh
 make coverage
@@ -239,7 +364,7 @@ Both reports are written under `docs/` and excluded from version control via
 
 ---
 
-## 6. API documentation
+## 7. API documentation
 
 ```sh
 make docs
@@ -267,6 +392,11 @@ that: the `@brief` on each `<obj>_create()` in `native/inc/<obj>/<obj>_core.h`
 is a real one-sentence class summary (`gain`, `ema`), which `jm apply` also
 flows through into the generated Python docstrings — so the same comment feeds
 both the Doxygen C site and the Zensical Python pages.
+
+The same is true of the `gain_scale()` block from
+[section 4](#4-executable-documentation--code-becomes-a-doctest): one comment
+renders on the Doxygen C site, becomes the Python docstring the Zensical pages
+show, and is *executed* as a doctest. Three artifacts, one place to edit.
 
 ### Zensical + mkdocstrings (Python API)
 
@@ -324,6 +454,7 @@ zensical serve
 ```sh
 make              # configure + build (Release)
 make test         # CTest + unittest (gain) + pytest (ema)
+pytest --doctest-glob='*.pyi' src/   # the header's @code examples (see 4)
 make bench        # C benchmarks + timeit (gain) + pytest-bm (ema)
 make coverage     # C (lcov) + Python (pytest-cov) HTML reports
 make docs         # Doxygen (C API) + Zensical (Python API)
