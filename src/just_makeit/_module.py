@@ -147,6 +147,16 @@ def run(
         ),
         "extra_link_libs_block": "",
         "extra_include_dirs_block": "",
+        # gh-1199: CMAKE_LISTS_MODULE has two render sites and this one
+        # supplied neither of these, so a module declared `objects = []` wrote
+        # a CMakeLists carrying the literal slot text —
+        # `Python3_add_library(... emptymod_ext.c<<extra_ext_sources>>)` — and
+        # cmake then failed looking for a source file with `<<` in its name.
+        # `extra_ext_sources` is always empty here by construction: the peer
+        # site builds it by walking the module's objects, and this path is the
+        # one where there are none.
+        "extra_ext_sources": "",
+        "module_comment": f"{module} Python module",
         # gh-1034: a brand-new module declares no functions yet, so this is
         # empty here and filled by the regeneration that `jm function` runs.
         "module_targets_block": "",

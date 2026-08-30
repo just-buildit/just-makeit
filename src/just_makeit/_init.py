@@ -139,6 +139,37 @@ def _make_component_ctx(component: str) -> dict[str, str]:
 
 
 def _write(path: Path, content: str, verb: str = "create") -> None:
+    """Write one generated file, refusing to write an unfilled slot.
+
+    gh-1199. `render` leaves an unmatched `<<key>>` as literal text, which is
+    right for it — rendering is layered and a slot filled a pass later is
+    normal. It is not right for a FILE. `CMAKE_LISTS_MODULE` has two render
+    sites and one supplied neither `extra_ext_sources` nor `module_comment`,
+    so a module declared `objects = []` was written as
+
+        Python3_add_library(mod MODULE WITH_SOABI mod_ext.c<<extra_ext_sources>>)
+
+    and the damage surfaced much later as a cmake error about a source file
+    whose name contains `<<`, with nothing pointing back at a missing context
+    key. This is the moment a string becomes an artefact, so it is the moment
+    the question can be asked at all — and there is no case where emitting the
+    slot text is correct.
+
+    The deliberate markers (`<<IMPLEMENT: …>>`, `<<MANUAL_STUB>>`) are output
+    rather than slots and pass through.
+    """
+    left = R.unfilled_slots(content)
+    if left:
+        raise ValueError(
+            f"refusing to write {path} — it still carries "
+            f"{'a slot' if len(left) == 1 else 'slots'} nothing filled: "
+            + ", ".join(f"<<{k}>>" for k in sorted(left))
+            + "\n  The render context for this file is missing "
+            + ("that key" if len(left) == 1 else "those keys")
+            + ". Writing it would produce a\n"
+            "  file that looks generated and is not — gh-1199, where it "
+            "reached cmake as a\n  source filename."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"  {verb}  {path}")
