@@ -645,13 +645,67 @@ def run(
                 )
             )
 
-    # gh-767: reported, but not part of the gate. These files predate the
-    # current generator and `jm apply` will not fix them, so failing
-    # `--check` on them would turn every existing project's CI red for
-    # something no jm command can clear — the gh-752 precedent (report the
-    # count, let a project opt into strictness separately) is the project's
-    # own answer to exactly this tension.
+    # gh-767: reported, but not part of the gate. Failing `--check` on these
+    # would turn every existing project's CI red — the gh-752 precedent
+    # (report the count, let a project opt into strictness separately) is the
+    # project's own answer to that tension.
+    #
+    # gh-1192: this comment used to add "and `jm apply` will not fix them",
+    # which is false for a large minority of them. Measured on doppler at
+    # 0.71.1: of 87 fragments, **30** are ones `apply` rewrites in place — 24
+    # doc-only and 6 structural. They were being filed under "these differ
+    # because you wrote them that way. Nothing to do; they stay unreconciled
+    # permanently", which is an instruction to stop looking, given about files
+    # one command fixes.
+    #
+    # `refreshable` is the set `apply` would change, asked of the code that
+    # does the changing rather than inferred — see `refresh_module_fragment_
+    # docs(dry_run=True)`. `status` cannot learn it any other way: it deletes
+    # these fragments from its scratch so a fresh render materializes, so the
+    # in-place path is the one thing its own replay never exercises.
+    #
+    # The gate is deliberately NOT widened here. Making 30 files fail
+    # `--check` on a downstream that has been green is a separate decision
+    # with a measured cost, and this change is about the report telling the
+    # truth.
     unreconciled_entries = [e for e in entries if e[1] == "unreconciled"]
+    refreshable: set = set()
+    if unreconciled_entries:
+        # Only the modules that actually have one, and nothing at all in the
+        # common case of none: the pass renders every fragment of every module
+        # it is given, measured at 6.2s over doppler's 87. A report nobody is
+        # reading should not cost that on every `jm status`.
+        _cnames = {
+            C.module_paths(m).cname: m
+            for m in C.modules(cfg)
+            if not C.is_no_generate_module(cfg, m)
+        }
+        _mods = {
+            _cnames[part]
+            for e in unreconciled_entries
+            for part in [Path(e[0]).parent.name]
+            if part in _cnames
+        }
+        _buf = io.StringIO()
+        for _m in sorted(_mods):
+            try:
+                with (
+                    contextlib.redirect_stdout(_buf),
+                    contextlib.redirect_stderr(_buf),
+                ):
+                    refreshable |= {
+                        (
+                            p_.relative_to(root) if p_.is_absolute() else p_
+                        ).as_posix()
+                        for p_ in _docsync.refresh_module_fragment_docs(
+                            root, cfg, only_mod=_m, dry_run=True
+                        )
+                    }
+            except Exception:
+                # A report that cannot be produced must not take the whole
+                # status down with it: the fragments then stay in the
+                # author-owned bucket, which is where they were before.
+                continue
     entries = [e for e in entries if e[1] != "unreconciled"]
     drift = [e for e in entries if not e[2]]
     allowed = [e for e in entries if e[2]]
@@ -985,10 +1039,21 @@ def run(
             _actionable = [
                 e for e in unreconciled_entries if e[0] in unreconciled_reasons
             ]
+            # gh-1192: the third bucket, and the one the other two were
+            # hiding. A signature difference is not the only kind `apply`
+            # answers — it also refreshes doc slots, splices a binding the
+            # manifest gained, and repairs `*_max_out` arity, all in place.
+            # Those were falling to the author-owned default because the
+            # split keyed on signature drift alone.
+            _refreshable = [
+                e
+                for e in unreconciled_entries
+                if e[0] not in unreconciled_reasons and e[0] in refreshable
+            ]
             _authored = [
                 e
                 for e in unreconciled_entries
-                if e[0] not in unreconciled_reasons
+                if e[0] not in unreconciled_reasons and e[0] not in refreshable
             ]
             if _actionable:
                 print(
@@ -1002,6 +1067,25 @@ def run(
                     print(f"    ! {p_}")
                     for _member in sorted(unreconciled_reasons[p_]):
                         print(f"        {unreconciled_reasons[p_][_member]}")
+                    if diff and show_diff:
+                        print(
+                            "".join(
+                                f"      {ln}" for ln in diff.splitlines(True)
+                            )
+                        )
+            if _refreshable:
+                print(
+                    f"  APPLY FIXES THESE ({len(_refreshable)}) — `jm apply` "
+                    "rewrites these in place, member by\n"
+                    "  member: docstrings the manifest or a header moved, a "
+                    "binding the manifest\n"
+                    "  gained, `*_max_out` arity. Run `jm apply`. Nothing "
+                    "hand-written is lost —\n"
+                    "  that is what makes it in-place rather than the delete "
+                    "above."
+                )
+                for p_, _, _, diff, _ in _refreshable:
+                    print(f"    ~ {p_}")
                     if diff and show_diff:
                         print(
                             "".join(
@@ -1029,18 +1113,14 @@ def run(
                             )
                         )
             print(
-                "  apply refreshes these member by member (gh-767): "
-                "docstrings, bindings the\n"
-                "  manifest gained, and `*_max_out` arity. What it will not "
-                "do is re-render a\n"
-                "  wrapper body — those are yours, and gh-770 is what keeps "
-                "a hand-written one\n"
-                "  through a regeneration. So a body that no longer matches "
-                "the manifest is\n"
-                "  reported (see the `warning:` lines above) and left "
-                "alone.\n"
-                "  Not counted as drift: the remaining difference is one "
-                "only you can settle."
+                "  What apply will not do is re-render a wrapper body — those "
+                "are yours, and\n"
+                "  gh-770 is what keeps a hand-written one through a "
+                "regeneration. So a body\n"
+                "  that no longer matches the manifest is reported (see the "
+                "`warning:` lines\n"
+                "  above) and left alone.\n"
+                "  None of this counts as drift for `--check`."
             )
             print()
         if allowed:
@@ -1778,13 +1858,30 @@ def run(
     # "OK — up to date" without this line is the exact sentence that hid 58 of
     # them on doppler.
     if unreconciled_entries and check:
-        print(
-            f"\n{len(unreconciled_entries)} generated binding fragment(s) "
-            f"differ from a full render.\n  `jm apply` reconciles them member "
-            f"by member (gh-767) but never re-renders a\n  wrapper body — "
-            f"that part is yours. Not counted as drift. Run `jm status`\n"
-            f"  without --check to list them."
+        _n_refresh = sum(
+            1
+            for e in unreconciled_entries
+            if e[0] not in unreconciled_reasons and e[0] in refreshable
         )
+        _lead = (
+            f"\n{len(unreconciled_entries)} generated binding fragment(s) "
+            f"differ from a full render."
+        )
+        if _n_refresh:
+            print(
+                f"{_lead}\n  {_n_refresh} of them `jm apply` rewrites in "
+                f"place — run it. The rest differ in a\n  wrapper body, "
+                f"which is yours and which apply never re-renders (gh-767).\n"
+                f"  Not counted as drift. Run `jm status` without --check to "
+                f"list them."
+            )
+        else:
+            print(
+                f"{_lead}\n  `jm apply` reconciles them member by member "
+                f"(gh-767) but never re-renders a\n  wrapper body — that "
+                f"part is yours. Not counted as drift. Run `jm status`\n"
+                f"  without --check to list them."
+            )
 
     # gh-760: strict mode makes the count a gate. Opt-in and off by default,
     # so a project mid-sweep keeps today's behaviour; once it reaches zero,

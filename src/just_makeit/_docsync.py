@@ -1876,7 +1876,11 @@ def manifest_documented(
 
 
 def refresh_module_fragment_docs(
-    root: Path, cfg: dict, *, only_mod: str | None = None
+    root: Path,
+    cfg: dict,
+    *,
+    only_mod: str | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Refresh runtime ``__doc__`` in every module's per-object fragments.
 
@@ -1884,6 +1888,18 @@ def refresh_module_fragment_docs(
     memory and transplant its doc slots into the on-disk
     ``<mod>_ext_<obj>.c``. Hand-written ``*_extra.c`` files are never touched
     (they are only ``#include``d). Returns the fragment paths that changed.
+
+    *dry_run* (gh-1192) computes without writing, so the return value becomes
+    "the fragments `apply` WOULD change in place". `status` needs exactly that
+    question answered and had no way to ask it: it deletes these fragments
+    from its scratch (gh-767) so a fresh render materializes, which makes the
+    in-place path the one thing its replay never exercises. Every difference
+    then landed under "these differ because you wrote them that way" —
+    including the ones the next `apply` silently fixes.
+
+    It means only "do not write". A dry run that also went quiet would be a
+    second question wearing the same flag, and the caller that wants silence
+    (`status`, which prints its own report) already redirects.
     """
     from . import _object as O
 
@@ -1996,6 +2012,7 @@ def refresh_module_fragment_docs(
                 )
                 updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:
-                frag.write_text(updated, encoding="utf-8")
+                if not dry_run:
+                    frag.write_text(updated, encoding="utf-8")
                 changed.append(frag)
     return changed
