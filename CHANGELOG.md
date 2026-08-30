@@ -75,6 +75,39 @@
 
 ### Fixed
 
+- **`jm status` no longer calls an apply-fixable fragment permanent
+    (gh-1192).** UNRECONCILED was split into ACTIONABLE and AUTHOR-OWNED
+    (gh-848), driven by `signature_drift_details` — so only a *signature*
+    difference produced a reason and everything else fell to
+    `"these differ because you wrote them that way. Nothing to do; they stay   unreconciled permanently."` A doc-slot difference is not a signature
+    difference, so it landed there while being exactly the kind `apply`
+    reconciles in place. Both sentences were false for it, and the second is
+    an instruction to stop looking.
+
+    Measured on doppler at 0.71.1: of 87 fragments, **30** are ones `apply`
+    rewrites in place — 24 doc-only, 6 structural. All 30 were reported as
+    permanent.
+
+    There is now a third bucket, `APPLY FIXES THESE`, naming the remedy that
+    works (`jm apply`, in place, losing nothing) rather than ACTIONABLE's
+    delete-and-re-apply, which would cost a hand-written body for no reason.
+    `--check`'s summary says the same on its own terms, where
+    `"that part is yours"` had been the only thing said about a fragment the
+    next `apply` rewrites.
+
+    `status` could not previously ask the question: gh-767 has it *delete*
+    these fragments from its scratch so a fresh render materializes, which
+    makes the in-place path the one thing its own replay never exercises. It
+    now asks the code that does the changing —
+    `refresh_module_fragment_docs(dry_run=True)` — so the report cannot
+    disagree with the behaviour it describes. Skipped entirely when nothing is
+    unreconciled, and scoped to the affected modules otherwise (the pass
+    measures 6.2s over doppler's 87 fragments).
+
+    **The gate is unchanged**: `--check` still ignores unreconciled files.
+    Turning 30 of them red on a downstream that has been green is a separate
+    decision, and this is about the report telling the truth.
+
 - **A module declared `objects = []` no longer writes a CMakeLists that
     cannot configure (gh-1199).** `CMAKE_LISTS_MODULE` has two render sites,
     and the empty-module one supplied neither `extra_ext_sources` nor
