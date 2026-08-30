@@ -2331,6 +2331,9 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
         # surface is "succeeds or raises", i.e. returns None.
         ret = "None"
+    elif out_type == "str":
+        # gh-1180: the one out_type that is not an array of a C scalar.
+        ret = "str"
     elif out_type:
         # Strip optional [param_name] length suffix (e.g. "float64[M]" → "float64")
         _ot_base = _re.sub(r"\[[A-Za-z_][A-Za-z_0-9]*\]$", "", out_type)

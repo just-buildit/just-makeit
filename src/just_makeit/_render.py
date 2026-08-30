@@ -593,8 +593,14 @@ def fn_c_decl(
         # gh-128: out_type may carry a [param_name] size annotation
         # (e.g. "float64[M]").  Resolve to the underlying C type so the
         # declaration emits "double *out", not the invalid "float64[M] *out".
-        _out_ctype, _ = parse_out_type(out_type)
-        out_disp = _ctype_display(_out_ctype)
+        # gh-1180: `str` is a PYTHON-side shape, not a C type — the C the
+        # author writes takes a `char *`, and it is jm that turns the written
+        # bytes into a `str`.
+        if out_type == "str":
+            _out_ctype, out_disp = "char", "char"
+        else:
+            _out_ctype, _ = parse_out_type(out_type)
+            out_disp = _ctype_display(_out_ctype)
         c_parts: list[str] = []
         for p in arr_p:
             n, t = p[0], p[1]
@@ -607,10 +613,33 @@ def fn_c_decl(
             c_parts.append(_scalar_c_param(p))
         if variable_output:
             c_parts.append(f"{out_disp} *out")
-        return f"void {fn_name}({c_param_list(c_parts)});\n"
+        _decl_ret = _out_fn_return_disp(return_type, variable_output)
+        return f"{_decl_ret} {fn_name}({c_param_list(c_parts)});\n"
     ret_disp = _ctype_display(return_type)
     c_parts, _ = _fn_c_params(params)
     return f"{ret_disp} {fn_name}({c_param_list(c_parts)});\n"
+
+
+#: The C return type an `out_type` function is DECLARED with.
+#:
+#: gh-1180. Both emitters hardcoded `void`, while the binding for a
+#: `variable_output` function reads an integer return as the written length
+#: (`size_t _n = (size_t)fn(...)`). A project declaring `return_type =
+#: "size_t"` alongside `out_type` therefore got a header saying `void` and a
+#: binding assigning from it — generated C that does not compile. Reproduced
+#: on main before this change with a plain `out_type = "double"`, so it is not
+#: something the `str` shape introduced; that shape only made it unavoidable,
+#: because a string output has no length without one.
+#:
+#: `void` stays the answer for every function that declares no return, which
+#: is the default and the overwhelming majority.
+def _out_fn_return_disp(return_type: str, variable_output: bool) -> str:
+    if not variable_output:
+        return "void"
+    meta = _CTYPE_META.get(return_type)
+    if meta and meta.get("kind") == "int":
+        return _ctype_display(return_type)
+    return "void"
 
 
 def fn_c_inline_stub(
@@ -715,8 +744,13 @@ def fn_c_stub(
         arr_p = [p for p in params if is_array_param_type(p[1])]
         scl_p = [p for p in params if not is_array_param_type(p[1])]
         # gh-128: resolve numpy dtype + size annotation → C type.
-        _out_ctype, _ = parse_out_type(out_type)
-        out_disp = _ctype_display(_out_ctype)
+        # gh-1180: see fn_c_decl — `str` names the Python shape, and the C
+        # the author implements takes a `char *`.
+        if out_type == "str":
+            _out_ctype, out_disp = "char", "char"
+        else:
+            _out_ctype, _ = parse_out_type(out_type)
+            out_disp = _ctype_display(_out_ctype)
         c_parts: list[str] = []
         suppress_parts: list[str] = []
         for p in arr_p:
@@ -736,11 +770,21 @@ def fn_c_stub(
             c_parts.append(f"{out_disp} *out")
             suppress_parts.append("(void)out;")
         suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
+        _stub_ret = _out_fn_return_disp(return_type, variable_output)
+        _stub_zero = _CTYPE_META.get(return_type, {}).get("zero")
+        _stub_ret_line = (
+            f"    return ({_stub_ret}){_stub_zero}; /* placeholder */"
+            if _stub_ret != "void"
+            else ""
+        )
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
-            f"void\n"
+            f"{_stub_ret}\n"
             f"{fn_name}({c_param_list(c_parts)})\n"
-            f"{{\n" + (suppress + "\n" if suppress else "") + "}\n"
+            f"{{\n"
+            + (suppress + "\n" if suppress else "")
+            + (_stub_ret_line + "\n" if _stub_ret_line else "")
+            + "}\n"
         )
     ret_disp = _ctype_display(return_type)
     ret_meta = _CTYPE_META.get(return_type)
@@ -1091,6 +1135,60 @@ def _py_wrapper_for_function(
             f"    }}\n"
             f"    free(_results);\n"
             f"    return _lst;"
+        )
+    elif variable_output and out_type == "str":
+        # gh-1180: the text sibling of the branch below. A module function
+        # could TAKE a string (`const char *`) and had no way to give one
+        # back, so a pair of inverse conversions read asymmetrically — the
+        # parse direction natural, the render direction handing back a uint8
+        # buffer the caller decodes itself.
+        #
+        # Same allocate-call-trim shape as the ndarray case, and deliberately
+        # so: jm sizes the buffer from `out_size`, the C function writes into
+        # `char *out` and returns the used length, and the wrapper builds the
+        # `str`. The caller allocates nothing, which is what makes this the
+        # issue's option 2 rather than its option 1 — a `char[]` out-param
+        # would have made the caller pass a buffer it cannot read as text.
+        #
+        # `char` is deliberately NOT added to `_CTYPE_META`: that would make
+        # it a legal scalar type everywhere and silently retire the hint that
+        # steers `char` to `int8_t` for its platform-dependent signedness.
+        # This is one output shape, not a new type.
+        if out_size:
+            len_expr = out_size
+        else:
+            first_arr = next(
+                (p["name"] for p in params if is_array_param_type(p["type"])),
+                None,
+            )
+            len_expr = f"{first_arr}_len" if first_arr else "1"
+        _call_with_out = f"{call_args}, _buf" if call_args else "_buf"
+        _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        # A `void` function cannot say how much it wrote, and NUL-hunting a
+        # buffer the callee may not have terminated is a read past the end
+        # waiting to happen. Refuse rather than guess.
+        if not (ret_meta and ret_meta.get("kind") == "int"):
+            raise ValueError(
+                f"function '{fn_name}' declares out_type = \"str\" but "
+                f"returns '{return_type}'.\n"
+                "  A string output needs its LENGTH back, so the function "
+                "must return a size_t\n"
+                "  (or another integer) giving the number of characters "
+                "written. Without it\n"
+                "  jm would have to hunt for a NUL the callee may never have "
+                "written."
+            )
+        ret_line = (
+            f"    size_t _cap = (size_t)({len_expr});\n"
+            f"    char *_buf = (char *)malloc(_cap + 1);\n"
+            f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
+            f"    size_t _n = (size_t){fn_name}({_call_with_out});\n"
+            f"{cleanup}"
+            f"    if (_n > _cap) _n = _cap;\n"
+            f"    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
+            f"(Py_ssize_t)_n);\n"
+            f"    free(_buf);\n"
+            f"    return _s;"
         )
     elif variable_output and out_type:
         # #318: stateless self-sizing output — the function allocates its own
