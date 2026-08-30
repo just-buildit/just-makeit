@@ -229,11 +229,34 @@ TEST_ALL_DEPS = test test-examples
 # be compared to ci.yml's `ci-passed` needs mechanically — which
 # tests/test_lint_ssot.py now does, so it cannot drift back.
 #
-# `docs-check` stays, and is the one entry here that is NOT a required check:
-# docs.yml runs the same strict build, but only `CI passed` is required, so a
-# broken docs build cannot block a merge. Running it locally is the only place
-# that gets caught.
+# `docs-check` stays, and is the one entry here that CI does not run under that
+# name -- so `gates-home-check` (the reverse direction of `gates-check`, added
+# to the standard for just-makeit#1158) reports it, correctly, and it is named
+# in GATES_LOCAL_ONLY below with the reason.
 GATES_DEPS    = lint test test-examples coverage-gate bench docs-check
+
+# `docs-check` is a pre-push AGGREGATE, and every check it performs already
+# gates a merge under another name -- measured rather than assumed:
+#
+#   its `zensical build --strict`   -> docs.yml runs `make docs`, which is the
+#                                      same build with `--clean`, so strictly
+#                                      more than docs-check's own
+#   its `pytest tests/test_docs.py` -> ci.yml runs `make test`, which collects
+#                                      113 tests from that file
+#
+# So the work has a home; only the name does not. That is one of the two
+# reasons GATES_LOCAL_ONLY takes (see its comment in standard.mk) -- the other
+# being a gate that cannot run on a runner, which this one plainly can.
+#
+# The alternatives were both wrong: making `docs-check` a required check would
+# duplicate in CI what CI already runs, and dropping it from GATES_DEPS would
+# lose the one command that runs both halves together before a push.
+#
+# `gates-home-check`'s aggregate rule does not rescue it, and should not:
+# `docs-check` has a recipe of its own (the run-and-report harness that makes a
+# build failure stop hiding what test_docs.py would have said), so running the
+# parts is genuinely not the same as running it.
+GATES_LOCAL_ONLY = docs-check
 
 # Setup, not gates. `gates-check` requires every `make <target>` CI runs to be
 # reachable from `gates`, and it caught both of these the moment ci.yml started
