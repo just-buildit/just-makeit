@@ -215,7 +215,10 @@ def _build_no_state_init_ctx(
     # gh-805 §H: (name, ctype, capsule_name, nullable). `required` on the
     # manifest entry already meant "reject None"; it simply had no
     # contrasting branch, so both sides rejected it.
-    capsule_ip: list[tuple[str, str, str, bool]] = []
+    capsule_ip: list[tuple[str, str, str, bool, str]] = []
+    # gh-1224: `.pyi` import lines for `object`-referenced classes, in
+    # declaration order and de-duplicated at render.
+    object_imports: list[str] = []
     dispatch_meta: dict[str, tuple[str, str, str]] = {}
     opt_arr_ip: list[tuple[str, str, int, str, str]] = []
     # gh-611: a plain array with a declared default is genuinely optional —
@@ -255,7 +258,18 @@ def _build_no_state_init_ctx(
                     " is always a required positional (like 'path' and"
                     " 'bytes')."
                 )
-            capsule_ip.append((name, ct, capsule_flag, not required_flag))
+            # gh-1224: slot 16 is the Python class an `object` reference
+            # resolved to, and "" for a capsule declared the gh-790 way. It
+            # rides along here rather than in a parallel dict because every
+            # consumer below already indexes `_capsule_meta` by name, and a
+            # second dict keyed the same way is the peer that drifts.
+            _obj_cls = param[16] if len(param) > 16 else ""
+            _obj_imp = param[17] if len(param) > 17 else ""
+            if _obj_imp and _obj_imp not in object_imports:
+                object_imports.append(_obj_imp)
+            capsule_ip.append(
+                (name, ct, capsule_flag, not required_flag, _obj_cls)
+            )
         elif is_array_param_type(ct):
             elem_ct = array_elem_ctype(ct)
             ndim = array_param_ndim(ct)
@@ -434,8 +448,8 @@ def _build_no_state_init_ctx(
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
     _path_names: frozenset[str] = frozenset(path_ip)
     _bytes_names: frozenset[str] = frozenset(bytes_ip)
-    _capsule_meta: dict[str, tuple[str, str, bool]] = {
-        n: (ct, cn, nullable) for n, ct, cn, nullable in capsule_ip
+    _capsule_meta: dict[str, tuple[str, str, bool, str]] = {
+        n: (ct, cn, nullable, cls) for n, ct, cn, nullable, cls in capsule_ip
     }
 
     # gh-266: split scalar init-params into required (no default — parsed as a
@@ -471,7 +485,7 @@ def _build_no_state_init_ctx(
         + [("bytes", n) for n in bytes_ip]
         # gh-790: same reasoning again. There is no object to build around a
         # handle that is not there, so a capsule is always required.
-        + [("capsule", n) for n, _, __, ___ in capsule_ip],
+        + [("capsule", n) for n, _, __, ___, ____ in capsule_ip],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
@@ -640,7 +654,7 @@ def _build_no_state_init_ctx(
             # Python-side transport, so the create() signature is what the
             # author would have written by hand and the C smoke test can call
             # it directly.
-            _cap_ct, _cap_name, _cap_nullable = _capsule_meta[pname]
+            _cap_ct, _cap_name, _cap_nullable, _ = _capsule_meta[pname]
             _cap_disp = _ctype_display(_cap_ct)
             if not _cap_disp.endswith("*"):
                 _cap_disp += " "
@@ -783,7 +797,7 @@ def _build_no_state_init_ctx(
             # the same two-step the method path uses, through the same
             # emitter. It must run before any array acquisition so a failed
             # unwrap has nothing to release.
-            _cap_ct, _cap_name, _cap_nullable = _capsule_meta[name]
+            _cap_ct, _cap_name, _cap_nullable, _ = _capsule_meta[name]
             local_lines.append(f"    PyObject *{name}_obj = NULL;")
             parse_args.append(f"&{name}_obj")
             # gh-515/gh-219, same rule the str_enum check above follows: by
@@ -1205,7 +1219,12 @@ def _build_no_state_init_ctx(
             # the separate optionality axis, and advertising a default the
             # binding does not honour is the gh-611 failure this repo already
             # has a checker for.
-            _ann = "object | None" if _capsule_meta[name][2] else "object"
+            # gh-1224: an `object` reference resolves to a real class, so
+            # the stub can name it instead of falling back to `object`. The
+            # nullability rule above is unchanged -- only the base annotation
+            # is better informed.
+            _base = _capsule_meta[name][3] or "object"
+            _ann = f"{_base} | None" if _capsule_meta[name][2] else _base
             pyi_parts.append(f"{name}: {_ann}")
         else:
             ct = _req_scalar_meta[name][0]
@@ -1394,11 +1413,12 @@ def _build_no_state_init_ctx(
         # replaces those wholesale, so an owner field put there would be
         # silently dropped the moment the object also declared a method.
         "capsule_owner_fields": "".join(
-            f"    PyObject *_{n}_owner;\n" for n, _, __, ___ in capsule_ip
+            f"    PyObject *_{n}_owner;\n"
+            for n, _, __, ___, ____ in capsule_ip
         ),
         "capsule_owner_free": "".join(
             f"    Py_XDECREF(self->_{n}_owner);\n"
-            for n, _, __, ___ in capsule_ip
+            for n, _, __, ___, ____ in capsule_ip
         ),
         "create_params": create_params,
         "create_param_docs": create_param_docs,
@@ -1418,6 +1438,16 @@ def _build_no_state_init_ctx(
         # shape cannot forget the import.
         "pyi_os_import": (
             "\nimport os" if _coerce.PATH_PY_TYPE in init_params_pyi else ""
+        ),
+        # gh-1224. Same "derived from the rendered parts" rule as the line
+        # above, and for the same reason: an import kept only because a
+        # parameter was declared would outlive the annotation that needed it
+        # the first time one was refused or renamed. A class that no longer
+        # appears in the signature does not get an import.
+        "pyi_object_imports": "".join(
+            f"\n{imp}"
+            for imp in object_imports
+            if imp.rsplit(" import ", 1)[-1] in init_params_pyi
         ),
         "pyi_param_docs": pyi_param_docs,
         "py_create_args": py_create_args,
@@ -2272,6 +2302,7 @@ def make_state_ctx(
             "getter_setter_pymethoddef": "",
             "init_params_pyi": "",
             "pyi_os_import": "",
+            "pyi_object_imports": "",
             "pyi_param_docs": "    (none)",
             "pyi_examples": "",
             "getter_setter_stubs_pyi": "",
@@ -3086,6 +3117,7 @@ def make_state_ctx(
         # type only), so the default is empty; the init_params branch below
         # overrides it via _CTOR_OVERRIDE_KEYS when one is declared.
         "pyi_os_import": "",
+        "pyi_object_imports": "",
         "pyi_param_docs": pyi_param_docs,
         "pyi_examples": pyi_examples,
         "getter_setter_stubs_pyi": getter_setter_stubs_pyi,
@@ -3248,6 +3280,7 @@ def make_state_ctx(
             # because a path init-param put `os.PathLike` in that signature, so
             # omitting it here would emit the annotation without its import.
             "pyi_os_import",
+            "pyi_object_imports",
             "pyi_param_docs",
             "py_create_args",
             "c_create_args",

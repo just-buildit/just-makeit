@@ -288,7 +288,19 @@ class TestAddComponentFlags:
         # That registry's docstring claims it "mirrors the fields
         # `_project_init_params` reads back"; this is the mechanism behind
         # the claim.
-        assert len(result[0]) == len(INIT_PARAM_FIELDS)
+        #
+        # gh-1224 put a gap in that one-to-one mapping, so the invariant is
+        # stated with the gap NAMED rather than as a looser comparison: the
+        # tuple now carries two slots that are RESOLVED, not authored --
+        # `object_class` and `object_import`, both derived from `object`.
+        # They are not manifest keys and must never become writable ones, or
+        # a save would bake a consumer's resolution of someone else's capsule
+        # back into its own declaration.
+        _DERIVED_SLOTS = 2
+        assert len(result[0]) == len(INIT_PARAM_FIELDS) + _DERIVED_SLOTS
+        # ...and the derived slots really are the trailing ones, so a key
+        # appended later cannot silently land inside the gap.
+        assert result[0][-_DERIVED_SLOTS:] == ("", "")
         assert result == [
             (
                 "n",
@@ -306,6 +318,13 @@ class TestAddComponentFlags:
                 "",
                 "",
                 "",
+                # gh-1224: (object, object_class, object_import) — empty for
+                # every param that does not name another generated class: the
+                # declared reference, the class it resolves to, and the `.pyi`
+                # import line that makes the annotation resolvable.
+                "",
+                "",
+                "",
             ),
             (
                 "order",
@@ -320,6 +339,13 @@ class TestAddComponentFlags:
                 "",
                 "",
                 "",
+                "",
+                "",
+                "",
+                # gh-1224: (object, object_class, object_import) — empty for
+                # every param that does not name another generated class: the
+                # declared reference, the class it resolves to, and the `.pyi`
+                # import line that makes the annotation resolvable.
                 "",
                 "",
                 "",

@@ -49,13 +49,45 @@ def _maximal_param() -> dict:
     """
     previous: dict = {}
     for n in range(3, _MAX_SLOTS):
-        current = C.init_param_tuple_to_dict(tuple(f"v{i}" for i in range(n)))
+        current = C.init_param_tuple_to_dict(_slots(n))
         if n > 3 and set(current) == set(previous):
             return previous
         previous = current
     raise AssertionError(
         f"init_param_tuple_to_dict still growing at {_MAX_SLOTS} slots"
     )
+
+
+def _slots(n: int) -> tuple:
+    """*n* filled slots, minus the ones no single param may hold at once.
+
+    gh-1224 made the key set a union over MUTUALLY EXCLUSIVE shapes rather
+    than one flat list: `object` resolves to `capsule`/`header`, so a param
+    carrying both is refused and the writer strips the resolution. A probe
+    that filled every slot regardless would therefore describe a param that
+    cannot exist, and -- worse -- would have reported `capsule` and `header`
+    as unwritable, which is the exact false negative gh-838 exists to catch.
+    So the object slot is left empty here and covered by
+    :func:`_maximal_object_param`.
+    """
+    return tuple("" if i == 15 else f"v{i}" for i in range(n))
+
+
+def _maximal_object_param() -> dict:
+    """The richest init-param dict of the gh-1224 `object` shape.
+
+    Its resolved slots (`capsule`, `header`) are derived state and are
+    deliberately NOT written back, so this shape's key set is the other half
+    of the union the writer can produce.
+    """
+    return C.init_param_tuple_to_dict(
+        tuple(f"v{i}" for i in range(_OBJECT_SLOTS))
+    )
+
+
+#: Wide enough to reach slot 15 (`object`); the two slots after it are the
+#: resolution, which `init_param_tuple_to_dict` never persists.
+_OBJECT_SLOTS = 16
 
 
 def _roundtrip(tmp_path: Path, cfg: dict) -> dict:
@@ -72,7 +104,12 @@ class TestTheKeySetIsDerived:
         # key can be built but not written, it is lost on the next save —
         # which is the whole defect, stated as an invariant.
         written = {key for key, _is_bool in K.INIT_PARAM_FIELDS}
-        assert set(_maximal_param()) <= written
+        # gh-1224: the union over both shapes, because no ONE param may carry
+        # `object` and `capsule` at once. Checking only one shape would let a
+        # key be buildable-but-unwritable in the other and lose it on save --
+        # gh-838's defect, one shape over.
+        produced = set(_maximal_param()) | set(_maximal_object_param())
+        assert produced <= written
         # And the validator's set is derived from the same list, so a key
         # cannot be legal-to-author while unwritable — which is the state
         # gh-838 was actually in: `INIT_PARAM_KEYS` already listed `capsule`
@@ -85,6 +122,9 @@ class TestTheKeySetIsDerived:
         found = set(_maximal_param())
         assert {"name", "type", "capsule", "header", "doc"} <= found
         assert len(found) >= 12
+        # ...and the object shape's probe is not vacuous either, or the union
+        # above would silently collapse back to one shape.
+        assert "object" in set(_maximal_object_param())
 
 
 class TestTheObjectForm:

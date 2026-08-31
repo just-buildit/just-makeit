@@ -258,6 +258,13 @@ class TestOptionalArrayToml:
             # with. Empty here; the param is optional and seeds from its own
             # default.
             "",
+            # gh-1224: (object, object_class, object_import) — empty for
+            # every param that does not name another generated class: the
+            # declared reference, the class it resolves to, and the `.pyi`
+            # import line that makes the annotation resolvable.
+            "",
+            "",
+            "",
         )
         assert result[1][:3] == ("rate", "double", "0.0")
         assert result[1][6] is False
@@ -289,6 +296,10 @@ class TestOptionalArrayToml:
                 "",
                 "",
                 "",
+                "",
+                "",
+                "",
+                # gh-1224: (object, object_class, object_import).
                 "",
                 "",
                 "",

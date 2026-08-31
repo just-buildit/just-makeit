@@ -146,6 +146,55 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
             parts[3],
         ), i + 1
 
+    # Object syntax: name:object:<comp>[.<Class>][:optional] (gh-1224).
+    #
+    # The marker sits in the TYPE position, unlike the capsule form's slot 3,
+    # because with an `object` reference there IS no type to write: it is
+    # derived from the referenced component, along with the capsule name and
+    # the header. Making the author restate a type jm is about to derive
+    # would re-introduce the duplication the key exists to remove.
+    #
+    # Nothing is resolved here. `parse_init_param_flag` has no manifest --
+    # the referenced component may not even be declared yet at the moment
+    # this flag is parsed -- so the reference is carried verbatim in slot 15
+    # and `_config._project_init_params` resolves it on the read path, the
+    # same way `enum:` references are handled.
+    if len(parts) >= 2 and parts[1].lower() == "object":
+        ref = parts[2] if len(parts) > 2 else ""
+        if not ref:
+            print(
+                f"error: --init-param '{spec}': 'object' needs the class it"
+                " refers to, e.g.\n"
+                "  --init-param 'frame:object:frame.FrameDesc'\n"
+                "Give it as <component> or <component>.<ClassName>; the C"
+                " type, the capsule name and the header are all derived from"
+                " the component you name.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        nullable = any(t.lower() == "optional" for t in parts[3:] if t)
+        return (
+            (
+                name,
+                "",  # derived on the read path from the reference below
+                "",
+                "",
+                "",
+                "",
+                False,
+                "",
+                not nullable,
+                "",
+                "",  # capsule: derived
+                "",  # header: derived
+                "",
+                "",
+                "",
+                ref,
+            ),
+            i + 1,
+        )
+
     # Capsule syntax: name:type:capsule:<capsule-name>[:<header>] (gh-790).
     # Checked before the type validation below, because the type is the
     # foreign pointer's own spelling (`dp_tlm_t *`) — deliberately not a

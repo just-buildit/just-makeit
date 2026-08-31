@@ -549,6 +549,7 @@ for the full semantics.
 | `default_raw = "<C constant>"` (a default jm must not evaluate)        | (TOML only)                                                             | ✅ (gh-1099)                |
 | `real_type`, `real_create_fn`, `create_fn`                             | (TOML only)                                                             | 🟡                          |
 | `capsule = "<name>"`, `header = "path/hdr.h"`                          | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
+| `object = "<comp>[.<Class>]"` (derives `type`/`capsule`/`header`)      | `jm object --init-param 'name:object:<comp>[.<Class>][:optional]'`      | ✅ (gh-1224)                |
 | `required = false` on a capsule param (nullable handle)                | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
 | `derived = "<name>"` (name a 1-D array's length parameter)             | (TOML only)                                                             | ✅ (gh-900)                 |
 | `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)              | (TOML only)                                                             | ✅ (gh-1097)                |
@@ -758,6 +759,56 @@ gh-611 defect this project ships a checker for.
 The generated `create()`'s Doxygen says `May be NULL (Python: None).` on a
 nullable handle, so the contract is visible where the author writes the body
 that has to honour it.
+
+#### `object`: naming another generated class instead of its capsule
+
+When the pointer comes from **another jm-generated object**, say so directly
+rather than restating the capsule string:
+
+```toml
+[[wfm_compose.init_params]]
+name     = "frame"
+object   = "frame.FrameDesc"   # <component>[.<ClassName>]
+required = false
+```
+
+```sh
+jm object seg --init-param 'frame:object:frame.FrameDesc'
+jm object seg --init-param 'frame:object:frame.FrameDesc:optional'
+```
+
+`object` **resolves to the capsule form above** — it derives `type`
+(`<component>_state_t *`), `capsule` (read from the referenced component's own
+capsule property) and `header`, so all three are omitted. The generated C is
+byte-for-byte the capsule path; what changes is the declaration and the stub:
+
+|                  | `capsule = "..."`    | `object = "frame.FrameDesc"`        |
+| ---------------- | -------------------- | ----------------------------------- |
+| the capsule name | written at both ends | read from the producer              |
+| a typo           | fails at runtime     | refused at generation               |
+| the `.pyi`       | `frame: object`      | `frame: FrameDesc`, with its import |
+
+The name is **read, not derived**, because the producer already owns that
+string; deriving a second one from the component id would be a second opinion
+about it, and the two would drift the first time either changed. Declaring
+`object` and `capsule` together is refused for the same reason.
+
+A **view** is a legal target (`frame.FrameDesc` above is one), and resolves to
+the same capsule — it is the same C core. Naming a component that publishes no
+capsule is refused with the `jm property` line that would fix it.
+
+!!! note "This is sugar, not a new mechanism"
+
+    Two generated objects could always be wired constructor-to-constructor:
+    the binding accepts the producing object itself, not just its capsule, and
+    has since gh-790. What was missing was a way to *say so* — and the
+    ergonomics mattered, because nothing checked that the two ends named the
+    same string.
+
+    It resolves *to* a capsule deliberately. Type-checking the object and
+    reading its `handle` straight out of the struct would need the producer's
+    object layout inside a consumer `.so` compiled separately, and possibly by
+    a different jm version — the ABI hazard the capsule exists to avoid.
 
 ### `[[<component>.methods]]` entries
 

@@ -169,6 +169,12 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # jm can invent, so `_unseedable_required` suppressed the construction and
     # the whole generated suite skipped.
     ("example_value", False),
+    # gh-1224: `object = "<comp>"` / `"<comp>.<Class>"` -- this parameter is
+    # an instance of another generated class. It RESOLVES to `type`,
+    # `capsule` and `header` (see `_config.resolve_object_ref`), so it is
+    # sugar over the shipped capsule path rather than a new param kind; what
+    # it adds is a checked declaration and a `.pyi` naming the real class.
+    ("object", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
@@ -536,7 +542,21 @@ KIND_SERIALIZER_KEYS = frozenset(
     {"name", "fn", "header", "params", "returns", "doc"}
 )
 KIND_INIT_PARAM_KEYS = frozenset(
-    {"name", "type", "default", "enum", "capsule", "header", "doc", "kwonly"}
+    {
+        "name",
+        "type",
+        "default",
+        "enum",
+        "capsule",
+        "header",
+        "doc",
+        "kwonly",
+        # gh-1224. A composer source is the motivating consumer -- doppler's
+        # `Segment(frame=FrameDesc(...))` is a composer-module init_param --
+        # so leaving it off here would have registered the key everywhere
+        # except the one table that asked for it.
+        "object",
+    }
 )
 
 #: (kind, sub-table) -> the `KIND_KEYS` entry that validates its rows. A table

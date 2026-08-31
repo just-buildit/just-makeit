@@ -1714,8 +1714,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 # omittable are different axes. Matches the standalone
                 # producer in `_context/_state.py`, which gh-805 §H fixed and
                 # this one was missed by — jm has five `.pyi` producers.
+                # gh-1224: an `object = "<comp>.<Class>"` reference resolves
+                # to a real class (slot 16), so name it. Fixed in BOTH
+                # producers in the same change -- the comment above is the
+                # record of what happens when only one of them learns
+                # something, and doing it again here would have been the
+                # third time.
+                _ocls = param[16] if len(param) > 16 else ""
+                _base = _ocls or "object"
                 req_parts.append(
-                    f"{n}: object | None" if not required else f"{n}: object"
+                    f"{n}: {_base} | None" if not required else f"{n}: {_base}"
                 )
             elif (
                 t == "path"
