@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A local doppler below the `nco_tone` example's floor is skipped instead of
+    compiled against.** `_find_doppler_prefix` searches system and user
+    prefixes *before* the pinned auto-download, so any local install shadows
+    the pin. That has cost real time twice — 2026-07-30 and 2026-08-30 — both
+    times as `too many arguments to function 'nco_steps_u32'`, which reads as a
+    bug in the example rather than a fact about the install.
+
+    This is **gh-434's rule one stage later**: that change rejected a
+    discovered prefix carrying `doppler-config.cmake` without
+    `doppler-targets.cmake` because it "hard-fails at cmake configure instead
+    of falling through to the auto-download". A below-floor install is the same
+    false positive caught at *compile* rather than configure, and now gets the
+    same answer.
+
+    The floor — doppler ≥ 0.39.0, the release that added the `nco_steps_u32`
+    capacity argument — was described in a comment while the code compared
+    nothing. It is a constant now, and the pin is asserted not to fall below
+    it.
+
+    Two deliberate limits. An install whose version cannot be read is
+    **accepted**, not rejected: a source build tree may ship the cmake config
+    without a `.pc`, and "cannot judge" is not "unusable" — rejecting it would
+    break doppler's own developers. And this says nothing about *currency*: a
+    local install newer than the pin is still used and still shadows it, which
+    is the pin's own business.
+
+    The chosen prefix and its version are now printed either way. "Which
+    doppler did this build against" is the first question a failure raises, and
+    a discovered install answered it nowhere — which is how one shadowed the
+    pin for six releases without anyone noticing.
+
 ### Changed
 
 - **The `nco_tone` example's doppler pin tracks the current release, and

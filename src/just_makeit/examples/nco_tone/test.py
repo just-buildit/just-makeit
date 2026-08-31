@@ -51,6 +51,12 @@ from just_makeit._pyfmt import flatten_prose
 # doppler ships roughly weekly. The floor is the part with teeth and is
 # asserted in tests/test_doppler_pin_check.py.
 _DOPPLER_VERSION = "0.45.0"
+#: The oldest doppler whose API this example actually compiles against —
+#: v0.39.0 added the trailing capacity argument to `nco_steps_u32`. It lived
+#: only in the prose above until it was encoded here, which is why a local
+#: install below it produced `too many arguments to nco_steps_u32` twice
+#: (2026-07-30 and 2026-08-30) instead of being rejected as unusable.
+_DOPPLER_FLOOR = "0.39.0"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
@@ -179,6 +185,29 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
     return None
 
 
+def _version_key(v: str) -> tuple:
+    """A comparable version key; unparseable parts sort as 0."""
+    return tuple(int(p) if p.isdigit() else 0 for p in v.split("."))
+
+
+def _prefix_version(prefix: Path) -> str | None:
+    """The doppler version installed at *prefix*, or None if unreadable.
+
+    Read from the pkg-config file, the only place a prebuilt release states
+    its own version. None means "cannot judge" — a source build tree may ship
+    the cmake config without a `.pc` — and the caller accepts such a prefix
+    rather than rejecting one it merely could not measure.
+    """
+    for libdir in ("lib", "lib64"):
+        pc = prefix / libdir / "pkgconfig" / "doppler.pc"
+        if not pc.is_file():
+            continue
+        for line in pc.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Version:"):
+                return line.split(":", 1)[1].strip() or None
+    return None
+
+
 def _find_doppler_prefix() -> str | None:
     """Return the doppler prefix to pass to --doppler-prefix.
 
@@ -211,8 +240,35 @@ def _find_doppler_prefix() -> str | None:
             if (d / "doppler-config.cmake").exists() and (
                 d / "doppler-targets.cmake"
             ).exists():
+                # gh-434 rejected a discovered prefix that would hard-fail at
+                # cmake CONFIGURE and fell through to the download. A doppler
+                # below the floor is the same false positive one stage later:
+                # it configures, then fails to COMPILE with an error about
+                # argument counts that reads as a bug in the example rather
+                # than a fact about the install. Reject it for the same
+                # reason.
+                found = _prefix_version(prefix)
+                if found is not None and _version_key(found) < _version_key(
+                    _DOPPLER_FLOOR
+                ):
+                    print(
+                        f"  [nco_tone] skipping {prefix}: doppler {found} is "
+                        f"below the {_DOPPLER_FLOOR} floor this example needs"
+                    )
+                    break
+                # "Which doppler did this build against" is the first question
+                # a failure raises, and a discovered install answered it
+                # nowhere -- which is how a local one shadowed the pin for six
+                # releases without anyone noticing.
+                print(
+                    f"  [nco_tone] using {prefix} "
+                    f"(doppler {found or 'version unknown'}, local install)"
+                )
                 return str(prefix)
-    # Local search came up empty; fall back to the auto-download.
+    print(
+        "  [nco_tone] no usable local doppler; downloading the pinned "
+        f"{_DOPPLER_VERSION}"
+    )
     return _download_doppler()
 
 
