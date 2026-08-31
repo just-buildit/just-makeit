@@ -9,7 +9,8 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check conflict-check coverage-subprocess-check
+                changelog-check conflict-check coverage-subprocess-check \
+                doppler-pin-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -181,6 +182,17 @@ lint: conflict-check
 
 conflict-check: ## Fail on a merge-conflict marker in a tracked text file
 	@scripts/conflict-check.sh
+
+# ADVISORY, and hung off `lint` so it is seen on every PR without gating one.
+# The pin drifts because doppler published, not because of the change being
+# linted -- measured 2026-08-30, five doppler releases in thirty days -- so a
+# hard gate here would redden this repo weekly over someone else's cadence.
+# That is the `standard-check` shape, and this repo already knows what it
+# costs. What actually protects the example is `test_example[nco_tone]`.
+lint: doppler-pin-check
+
+doppler-pin-check: ## Report when the nco_tone doppler pin lags latest (advisory)
+	@python3 scripts/check_doppler_pin.py
 
 # gh-978: hung off `coverage-gate` rather than `lint`, because that is the
 # target whose environment it is about — and the one CI runs with pytest-cov
