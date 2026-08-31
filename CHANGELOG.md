@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.72.1] — 2026-08-30
+
 ### Fixed
 
 - **`jm regenerate` no longer deletes a hand-written `*_extra.c` (gh-1216).**
@@ -56,8 +58,6 @@
     at the literal space it required. Left as it was, jm's own comment would
     have read as author code that changed, and every project would have got a
     spurious "someone edited this" warning once.
-
-### Fixed
 
 - **A scaffolded project's own examples are green before you touch it
     (gh-1212).** jm writes the kernel body *and* the example beside it, so the
@@ -123,8 +123,6 @@
     the hook while doing so. Filed as gh-1216; the advice was measured before
     it was written, which is the only reason it does not point at the
     destructive remedy.
-
-### Fixed
 
 - **A module component's synthesized doctests import the class from where it
     actually lands (gh-1208).** A module object's class is
@@ -198,8 +196,6 @@
     `make lint` does not run the docs build — `docs-check` is the pre-push
     aggregate and lives in `GATES_DEPS`, not `lint`. `make docs-check` catches
     it, verified by sabotage.
-
-### Docs
 
 - **The `full_workflow` example runs the C header's own `@code` as a
     doctest.** The walkthrough already taught that a `@brief` in the sacred
