@@ -352,3 +352,31 @@ class TestTheCLIAndTheReplay:
         )
         # ...and never as the resolved pointer type.
         assert "frame_state_t *" not in out
+
+    def test_jm_script_replays_a_NULLABLE_object_param(self, tmp_path):
+        """The `:optional` token, which the capsule branch below already has a
+        comment about: dropping it replays a nullable reference as a mandatory
+        one, rebuilding a constructor that rejects the `None` the original
+        accepted. Same silent-divergence class as losing the grammar itself,
+        and it survives a suite that only ever replays the required form --
+        which is what codecov flagged on #1226.
+        """
+        from just_makeit._script import run as script_run
+
+        root = _project(tmp_path)
+        _declare(root, "frame.Frame", required=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            script_run(root)
+        assert "frame:object:frame.Frame:optional" in buf.getvalue(), (
+            f"`jm script` replays a nullable reference as mandatory:"
+            f"\n{buf.getvalue()}"
+        )
+
+    def test_an_unresolvable_reference_yields_no_import(self, tmp_path):
+        """`object_ref_import` is called on the read path for every param, so
+        it must not raise on a manifest the resolver would reject -- the
+        refusal belongs to `resolve_object_ref`, which reports it once with
+        the fix, not to the stub helper."""
+        cfg = C.load(_project(tmp_path))
+        assert C.object_ref_import(cfg, "nope.Thing") == ""
