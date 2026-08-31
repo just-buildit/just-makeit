@@ -44,7 +44,13 @@ from just_makeit._pyfmt import flatten_prose
 # the step() body below passes. CI downloads doppler's latest release rather
 # than this pin, so the two paths only agree while this tracks it — a stale
 # pin here means a local run fails against an API the example no longer uses.
-_DOPPLER_VERSION = "0.39.0"
+#
+# `make lint` reports when this lags doppler's latest
+# (scripts/check_doppler_pin.py), advisory rather than gating: the pin drifts
+# because doppler published, not because of the change being linted, and
+# doppler ships roughly weekly. The floor is the part with teeth and is
+# asserted in tests/test_doppler_pin_check.py.
+_DOPPLER_VERSION = "0.45.0"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}.tar.gz"
