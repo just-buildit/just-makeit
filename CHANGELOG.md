@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+## [0.72.2] — 2026-08-31
+
+### Changed
+
+- **The `nco_tone` example's doppler pin tracks the current release, and
+    `make lint` says when it stops.** `_DOPPLER_VERSION` was `0.39.0` while
+    doppler's latest was `0.45.0` — six minor versions, and the example's own
+    comment already warned that `nco_tone_ci.yml` downloads *latest* rather
+    than the pin, "so the two paths only agree while this tracks it". A comment
+    is not a check. Bumped, and verified by downloading the pinned release
+    rather than trusting the local install that shadows it.
+
+    The new `doppler-pin-check` is **advisory and never fails the build**,
+    which is a deliberate limit rather than a soft option. The pin drifts
+    because doppler published, not because of anything in the change being
+    linted: measured, five doppler releases in thirty days, so a gate here
+    would redden this repo weekly over another repo's cadence — the
+    `standard-check` shape, whose cost is already on record. It reports
+    "behind", "current", and "could not reach the API" as three distinct
+    outcomes, because an unreachable network is not evidence the pin is fine.
+
+    The part with teeth is the **floor**: doppler ≥ 0.39.0 is required for the
+    `nco_steps_u32` capacity argument the example passes, and that is asserted
+    offline in `tests/test_doppler_pin_check.py`.
+
 ### Fixed
 
 - **A local doppler below the `nco_tone` example's floor is skipped instead of
@@ -32,29 +57,6 @@
     doppler did this build against" is the first question a failure raises, and
     a discovered install answered it nowhere — which is how one shadowed the
     pin for six releases without anyone noticing.
-
-### Changed
-
-- **The `nco_tone` example's doppler pin tracks the current release, and
-    `make lint` says when it stops.** `_DOPPLER_VERSION` was `0.39.0` while
-    doppler's latest was `0.45.0` — six minor versions, and the example's own
-    comment already warned that `nco_tone_ci.yml` downloads *latest* rather
-    than the pin, "so the two paths only agree while this tracks it". A comment
-    is not a check. Bumped, and verified by downloading the pinned release
-    rather than trusting the local install that shadows it.
-
-    The new `doppler-pin-check` is **advisory and never fails the build**,
-    which is a deliberate limit rather than a soft option. The pin drifts
-    because doppler published, not because of anything in the change being
-    linted: measured, five doppler releases in thirty days, so a gate here
-    would redden this repo weekly over another repo's cadence — the
-    `standard-check` shape, whose cost is already on record. It reports
-    "behind", "current", and "could not reach the API" as three distinct
-    outcomes, because an unreachable network is not evidence the pin is fine.
-
-    The part with teeth is the **floor**: doppler ≥ 0.39.0 is required for the
-    `nco_steps_u32` capacity argument the example passes, and that is asserted
-    offline in `tests/test_doppler_pin_check.py`.
 
 ## [0.72.1] — 2026-08-30
 
