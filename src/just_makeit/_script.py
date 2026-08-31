@@ -112,7 +112,18 @@ def _init_param_spec(p: dict) -> str:
     and `required` are positional words in slot 3, so a param carrying either
     cannot also spell a default there.
     """
-    name, typ = p["name"], p["type"]
+    name, typ = p["name"], p.get("type", "")
+    # gh-1224. FIRST, because an `object` param's `capsule`/`header` are
+    # stripped by the writer (they are derived), so it would otherwise reach
+    # the scalar branch below and replay as `frame:frame_state_t *:required`
+    # -- a script claiming to rebuild the project as a scalar of a type jm
+    # does not know, which is the exact failure this docstring warns about
+    # for the capsule grammar.
+    if p.get("object"):
+        spec = f"{name}:object:{p['object']}"
+        if not p.get("required"):
+            spec += ":optional"
+        return spec
     if p.get("capsule"):
         spec = f"{name}:{typ}:capsule:{p['capsule']}"
         if p.get("header"):

@@ -2345,6 +2345,119 @@ def resolve_enum_type(cfg: dict, ptype: str) -> str:
     return "string_enum:" + ",".join(registry[name])
 
 
+def object_ref_capsule(cfg: dict, component: str) -> str:
+    """The capsule name *component* publishes, or ``""`` if it publishes none.
+
+    A component publishes a capsule by declaring a property with a ``capsule``
+    key (gh-788 gap 4) -- ``jm property --type capsule --capsule <name>``. That
+    declared string is the SSOT for the name, which is why this reads it rather
+    than deriving one from the component id: an ``object`` reference that
+    derived its own name would be a second opinion about a string the producer
+    already owns, and the two would drift the first time either changed.
+    """
+    for prop in properties(cfg, component):
+        if prop.get("capsule"):
+            return str(prop["capsule"])
+    return ""
+
+
+def object_ref_classes(cfg: dict, component: str) -> list[str]:
+    """Every Python class *component* generates: its own, then its views.
+
+    A view (gh-504) is a second class over the SAME C core, so it is a legal
+    target of an ``object`` reference and resolves to the same capsule. That
+    is not a detail: doppler's motivating case names ``FrameDesc``, which is a
+    view of ``frame`` rather than a component of its own, so a resolver that
+    only knew component class names would reject the one reference the feature
+    was written for.
+    """
+    own = class_name(cfg, component) or default_class_name(component)
+    out = [own]
+    for view in views(cfg, component):
+        cls = view.get("class_name")
+        if cls and cls not in out:
+            out.append(str(cls))
+    return out
+
+
+def object_ref_import(cfg: dict, ref: str) -> str:
+    """The ``.pyi`` import line for an ``object`` reference, or ``""``.
+
+    A stub that names ``FrameDesc`` without importing it names an undefined
+    symbol, so the annotation gh-1224 adds is only half a stub without this.
+
+    Where the class lives depends on how its component was built, which is why
+    this asks the manifest rather than assuming: a **module** object is
+    imported from the module's dotted path (``from .wfm import FrameDesc``,
+    and ``from .dsp.filters import Fir`` for a nested id), while a
+    **standalone** object has its own ``.so`` named for the component
+    (``from .frame import FrameDesc``). Getting that wrong is not a soft
+    failure -- it is an import error in every consumer's type-check.
+    """
+    comp, _, _cls = ref.partition(".")
+    if comp not in components(cfg):
+        return ""
+    cls = resolve_object_ref(cfg, ref)[3]
+    for mod in modules(cfg):
+        if comp in module_objects(cfg, mod):
+            dotted = module_paths(mod).pypath.replace("/", ".")
+            return f"from .{dotted} import {cls}"
+    return f"from .{comp} import {cls}"
+
+
+def resolve_object_ref(cfg: dict, ref: str) -> tuple:
+    """Resolve an init-param ``object = "<comp>"`` / ``"<comp>.<Class>"``.
+
+    Returns ``(ctype, capsule_name, header, class_name)`` -- everything the
+    existing capsule init-param path (gh-790) needs, derived from the
+    referenced component's own declarations.
+
+    This is deliberately **sugar over the capsule triangle**, not a second way
+    to cross a module boundary. Two generated objects could already be wired
+    constructor-to-constructor -- ``tests/test_gh790_capsule_init_param.py``
+    builds a real project and runs ``Capture(t)`` over two separate ``.so``
+    files -- but only by naming the same capsule string at both ends, with a
+    ``.pyi`` that said ``object`` and nothing checking the two agreed. What was
+    missing was the *declaration*, not the capability.
+
+    Reading the pointer out of the referenced object's struct directly, which
+    is the obvious alternative, would require its ``<Ref>Object`` layout in a
+    second ``.so`` that was compiled separately and possibly by a different jm.
+    That is the ABI hazard the capsule exists to avoid, so the sugar resolves
+    *to* the capsule rather than around it.
+
+    Raises ``ValueError`` naming the fix for every way the reference can fail:
+    an unknown component, an unknown class, or a producer publishing no
+    capsule at all.
+    """
+    comp, _, cls = ref.partition(".")
+    known = components(cfg)
+    if comp not in known:
+        names = ", ".join(sorted(known)) or "(none declared)"
+        raise ValueError(
+            f"init_param object = '{ref}' references an undeclared "
+            f"component '{comp}'; declared components: {names}"
+        )
+    classes = object_ref_classes(cfg, comp)
+    if not cls:
+        cls = classes[0]
+    elif cls not in classes:
+        raise ValueError(
+            f"init_param object = '{ref}': component '{comp}' generates no "
+            f"class '{cls}'; it generates: {', '.join(classes)}"
+        )
+    capsule = object_ref_capsule(cfg, comp)
+    if not capsule:
+        raise ValueError(
+            f"init_param object = '{ref}': component '{comp}' publishes no "
+            f"capsule, so there is no ABI-safe way to hand its pointer to "
+            f"another module. Declare one on '{comp}' first:\n"
+            f"    jm property {comp} _capsule --type capsule "
+            f"--capsule <name>"
+        )
+    return (f"{comp}_state_t *", capsule, f"{comp}/{comp}_core.h", cls)
+
+
 def enum_choice_docs(
     cfg: dict, doc_blocks: "dict | None"
 ) -> "dict[str, list[tuple[str, str]]]":
@@ -2676,6 +2789,44 @@ def init_params(cfg: dict, component: str) -> list[tuple]:
     )
 
 
+def _object_ref_slot(cfg: dict, p: dict, idx: int) -> str:
+    """One field of an init-param's resolved ``object`` reference, or ``""``.
+
+    Indexes :func:`resolve_object_ref`'s ``(ctype, capsule, header, class)``
+    tuple. Returns ``""`` for a param carrying no ``object`` key, so it is safe
+    to apply to every parameter the way ``resolve_enum_type`` is.
+    """
+    ref = p.get("object", "")
+    if not ref:
+        return ""
+    if p.get("capsule"):
+        raise ValueError(
+            f"init_param '{p.get('name', '?')}': `object` and `capsule` "
+            f"cannot both be declared -- `object = '{ref}'` derives the "
+            f"capsule name from the referenced component, which is the "
+            f"duplication it exists to remove. Drop the `capsule` key."
+        )
+    return str(resolve_object_ref(cfg, ref)[idx])
+
+
+def _init_param_type(cfg: dict, p: dict) -> str:
+    """The init-param's resolved C type.
+
+    An ``object`` reference derives it (``<comp>_state_t *``), so `type` is
+    not required beside one -- and a `type` given anyway still wins, the same
+    per-key override `_source_generates` allows over its derived symbols.
+    """
+    declared = p.get("type", "")
+    if declared:
+        return resolve_enum_type(cfg, declared)
+    derived = _object_ref_slot(cfg, p, 0)
+    if derived:
+        return derived
+    # No `object` to derive from: restore the original KeyError, which names
+    # the missing key far better than an empty type would fail downstream.
+    return resolve_enum_type(cfg, p["type"])
+
+
 def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
     """Project a list of init-param dicts to the 10-tuple form.
 
@@ -2686,7 +2837,7 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
     return [
         (
             p["name"],
-            resolve_enum_type(cfg, p["type"]),
+            _init_param_type(cfg, p),
             p.get("default", ""),
             p.get("default_raw", ""),
             p.get("real_type", ""),
@@ -2699,8 +2850,8 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # from a pointer another module published. `capsule` is the name
             # the capsule must carry; `header` is the include that declares
             # the pointed-to type, since it is not one jm knows.
-            p.get("capsule", ""),
-            p.get("header", ""),
+            _object_ref_slot(cfg, p, 1) or p.get("capsule", ""),
+            _object_ref_slot(cfg, p, 2) or p.get("header", ""),
             # gh-900: the C name of this array's length parameter,
             # which is emitted BEFORE the data pointer when set. gh-1097: a
             # LIST instead names a 2-D array's two extents, which are emitted
@@ -2712,6 +2863,21 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # gh-1105: a value for generated tests and doctests only. NOT a
             # default: the parameter stays required.
             p.get("example_value", ""),
+            # gh-1224. TWO slots, because the declared form and the resolved
+            # one are different values with different readers, and a single
+            # slot standing in for both is how a key comes back wrong: slot 15
+            # is what the author WROTE (persisted verbatim by
+            # `init_param_tuple_to_dict`), slot 16 is the Python class it
+            # RESOLVES to (read by the two `.pyi` producers). Every C-side
+            # slot above is already filled by the same resolution, so the
+            # generated C path is the shipped capsule one, unchanged.
+            p.get("object", ""),
+            _object_ref_slot(cfg, p, 3),
+            # Slot 17: the `.pyi` import for that class. Resolved HERE, with
+            # the rest, because it is the last point that still has `cfg` --
+            # `make_state_ctx` gets tuples, not the manifest, so a stub
+            # producer could name the class but never find out where it lives.
+            object_ref_import(cfg, p["object"]) if p.get("object") else "",
         )
         for p in param_dicts
     ]
@@ -2725,7 +2891,13 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
     tuples `parse_init_param_flag` and callers produce.
     """
     n, t, d = p[:3]
-    rec: dict = {"name": n, "type": t}
+    rec: dict = {"name": n}
+    # gh-1224: an `object` reference DERIVES the type, so writing one would
+    # persist a resolution beside the declaration that produced it -- and on
+    # the CLI path there is none to write anyway, because nothing has resolved
+    # yet. `type` is omitted for that shape and only that shape.
+    if not (len(p) > 15 and p[15]):
+        rec["type"] = t
     if d:
         rec["default"] = d
     if len(p) > 3 and p[3]:
@@ -2749,6 +2921,16 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["capsule"] = p[10]
     if len(p) > 11 and p[11]:
         rec["header"] = p[11]
+    # gh-1224. `object` is the DECLARED form; `capsule`/`header`/`type` above
+    # are what it resolves to. Persisting the resolution instead would bake
+    # the producer's capsule string back into the consumer -- re-creating by
+    # round-trip exactly the duplication `object` removes.
+    if len(p) > 15 and p[15]:
+        rec["object"] = p[15]
+        # The resolution is derived state; re-persisting it would bake the
+        # producer's capsule string and header back into the consumer.
+        rec.pop("capsule", None)
+        rec.pop("header", None)
     # gh-900. Same reasoning as the pair above: a dropped key here
     # round-trips the param back to the default trailing-length shape,
     # silently changing the C prototype on the next apply.

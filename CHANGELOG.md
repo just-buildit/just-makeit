@@ -1,5 +1,78 @@
 ## [Unreleased]
 
+### Added
+
+- **An `init_param` can name another generated class (gh-1224).**
+    `object = "<component>[.<ClassName>]"` -- or
+    `--init-param 'frame:object:frame.FrameDesc'` -- declares that a
+    constructor argument is an instance of a class jm generates elsewhere.
+
+    The issue was filed as "a composite type must be flattened or
+    hand-written", and **that premise was wrong**. Two generated objects could
+    already be wired constructor-to-constructor across two separate `.so`
+    files: `test_gh790_capsule_init_param.py` builds a real project and runs
+    `Capture(t)`, passing the producing *object* rather than its capsule. The
+    capability shipped in 0.47.0.
+
+    What was missing was a way to **say so**. Declaring it meant writing the
+    same capsule string at both ends, with a `.pyi` that said `object`,
+    nothing checking the two ends agreed, and a typo surfacing at runtime as a
+    capsule-name failure. So `object` **resolves to** the existing capsule
+    path -- it derives `type`, `capsule` and `header`, and the generated C is
+    byte-for-byte what the capsule form already produced:
+
+    |                  | `capsule = "..."`    | `object = "frame.FrameDesc"`        |
+    | ---------------- | -------------------- | ----------------------------------- |
+    | the capsule name | written at both ends | read from the producer              |
+    | a typo           | fails at runtime     | refused at generation               |
+    | the `.pyi`       | `frame: object`      | `frame: FrameDesc`, with its import |
+
+    The name is **read, not derived**. The producer already owns that string,
+    and deriving a second one from the component id would be a second opinion
+    about it that drifts the first time either changes. Declaring `object` and
+    `capsule` together is refused for the same reason.
+
+    That it resolves *to* a capsule is the design, not an implementation
+    detail. Type-checking the object and reading its `handle` straight out of
+    the struct -- the obvious alternative, and what the issue proposed --
+    needs the producer's object layout inside a consumer `.so` compiled
+    separately and possibly by a different jm. That is the ABI hazard the
+    capsule triangle exists to avoid, and it fails as silent corruption rather
+    than an error.
+
+    A **view** is a legal target and resolves to the same capsule, since it is
+    the same C core. That is not a detail either: the motivating reference is
+    doppler's `FrameDesc`, which is a view of `frame` rather than a component,
+    so a resolver that only knew component class names would have rejected the
+    one reference the feature was written for.
+
+    Three refusals, each naming the fix rather than the fault: an undeclared
+    component lists what is declared, an unknown class lists what that
+    component generates, and a producer publishing no capsule prints the
+    `jm property` line that would add one.
+
+    `jm script` grew its own branch **first** in the emitter, because an
+    `object` param's `capsule`/`header` are stripped by the writer as derived
+    state -- without it the param reached the scalar branch and replayed as
+    `frame:frame_state_t *:required`, a script rebuilding the object as a
+    scalar of a type jm does not know. That is the failure `_init_param_spec`
+    already documented for the capsule grammar, one shape over.
+
+### Changed
+
+- **`init_param_tuple_to_dict` no longer writes a `type` for an `object`
+    param, and no longer writes back the resolution.** Both are derived, and
+    persisting either would bake a consumer's copy of someone else's capsule
+    string into its own declaration -- re-creating by round-trip exactly the
+    duplication `object` removes.
+
+    gh-838's probe was split in two as a consequence. Its premise was that one
+    param can carry every key, and that stopped being true the moment `object`
+    and `capsule` became mutually exclusive: a probe filling every slot would
+    have reported `capsule` and `header` as *unwritable*, which is the precise
+    false negative that gate exists to catch. The key set is now the union
+    over both shapes, and each shape's probe is asserted non-vacuous.
+
 ## [0.72.2] — 2026-08-31
 
 ### Changed

@@ -1,4 +1,4 @@
-from typing import Any, final<<pyi_stream_typing>><<pyi_property_typing>><<pyi_os_import>>
+from typing import Any, final<<pyi_stream_typing>><<pyi_property_typing>><<pyi_os_import>><<pyi_object_imports>>
 import numpy as np
 from numpy.typing import NDArray
 <<pyi_records>>
