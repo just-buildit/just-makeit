@@ -37,249 +37,29 @@ ______________________________________________________________________
 From your project root:
 
 ```sh
-just-makeit upgrade
+# 1. adopt jm's new clib_common.h -- take the render as-is; do not
+#    hand-edit it. `status --check` names it as OUTDATED.
+# 2. re-spell the component C. clib_common.h is EXCLUDED on purpose: jm's
+#    render is already right, and its comment quotes the old spelling, so
+#    a blanket pass would rewrite that prose into a false statement.
+files=$(grep -rl 'float complex\|double complex' \
+          native/inc native/src native/tests native/benchmarks \
+        | grep -v '/clib_common\.h$')
+[ -n "$files" ] && perl -pi -e '
+    s/\blong double complex\b/long double _Complex/g;
+    s/\bfloat complex\b/float _Complex/g;
+    s/\bdouble complex\b/double _Complex/g;' $files
 ```
 
-Example output for a schema 1 → 2 migration:
+Then rebuild and run your tests. `complex` typed by **you** is still accepted
+everywhere jm reads a type — in `just-makeit.toml`, on the CLI, and in a header
+`jm bind` parses; it is resolved to `_Complex` before anything is rendered.
 
-```
-migrating schema 1 → 2
-  create  zensical.toml
-  create  docs/index.md
-  create  docs/api.md
-project is now at schema 2
-```
-
-If the project is already current:
-
-```sh
-$ just-makeit upgrade
-already up to date (schema 7)
-```
-
-______________________________________________________________________
-
-## Safety guarantees
-
-- **Existing files are never overwritten.** If `zensical.toml` or `docs/index.md`
-    already exist — whether you created them manually or a previous run wrote them —
-    the upgrade skips those files silently.
-- **`just-makeit.toml` keys are only added, never removed.** If a key the
-    migration would add is already present (even with a different value), it is
-    left untouched.
-- **Idempotent.** Running `just-makeit upgrade` twice is safe — the second run
-    is always a no-op.
-
-______________________________________________________________________
-
-## What each migration adds
-
-| Migration | Adds                                                                                                          |
-| --------- | ------------------------------------------------------------------------------------------------------------- |
-| 1 → 2     | Docs scaffolding: `zensical.toml`, `docs/index.md`, `docs/api.md`.                                            |
-| 2 → 3     | Regenerates bench files so per-method timing blocks appear in older projects.                                 |
-| 3 → 4     | Adds `native/benchmarks/jm_bench.h` (per-round stats + pytest-benchmark JSON); regens benches.                |
-| 4 → 5     | Moves benchmarking under `just-makeit bench`; writes dated snapshots to `benchmarks/history/`.                |
-| 5 → 6     | Gates the `include = [...]` split-manifest key; the version bump alone is the migration.                      |
-| 6 → 7     | Gates the top-level `[[enum]]` SSOT and `type = "enum:<name>"` refs; the version bump alone is the migration. |
-
-The schema 1 → 2 files are starter stubs — edit them freely after the
-upgrade. See [`make docs` and `make coverage`](commands/build.md) for the
-build targets that use them.
-
-______________________________________________________________________
-
-## Behavioral changes (no schema bump required)
-
-These changes affect how the CLI tools behave but do not change
-`just-makeit.toml` or require running `jm upgrade`.
-
-### v0.14 — additive verbs are now splice-free
-
-Before v0.14, `jm method`, `jm property`, and `jm function` re-rendered
-`<comp>_core.c` and `<comp>_core.h` from the manifest and grafted your
-hand-written bodies back using a brace-matching splicer. As of v0.14 they
-are **additive and splice-free**: they inject a declaration into
-`<comp>_core.h` and append a fresh stub to `<comp>_core.c` — the existing
-bodies are never touched.
-
-**What this means for existing projects:**
-
-- Running `jm method`, `jm property`, or `jm function` on a v0.14 project
-    is safer than before — no risk of the splicer mis-merging your code.
-- **`jm add` and structural changes** (adding/removing state fields, changing
-    `arg_type`) now route through `jm regenerate` instead of the old splicer.
-    `jm regenerate` deletes every file the component owns and rebuilds from
-    the manifest — `git stash` your `_core.c` first.
-- The sacred/glue contract (see [Declarative scaffolding](declarative-scaffolding.md#the-sacredglue-contract))
-    is now enforced mechanically, not by a fragile regex pass.
+There is no `jm` command that performs this migration (gh-1248).
 
 No TOML changes, no `jm upgrade` required.
 
-### v0.28.9 — `jm regenerate` preserves hand-written bodies by default
-
-Before v0.28.9, `jm regenerate` always deleted a component's sacred
-`_core.c`/`_core.h` bodies and rebuilt blank stubs. As of v0.28.9 it lifts
-create/destroy/reset/`step()`/getter/setter/method bodies out by function
-name before deleting the files, and splices them back into the freshly
-regenerated ones — the same by-name extract/restore machinery `jm apply`
-uses to preserve hand-patched module `_ext.c` glue. Pass `--discard` for the
-old clean-reset behavior. `jm add` and `jm remove --state` still pass
-`discard=True` explicitly, since a state change means the old body's
-signature is already stale.
-
-The splice is best-effort text matching, not a guarantee — `git stash` (or
-commit) first regardless. See
-[Declarative scaffolding](declarative-scaffolding.md#jm-regenerate-component-the-deliberate-refresh)
-for the full behavior.
-
-No TOML changes, no `jm upgrade` required.
-
-### v0.58 — clang-tidy, a shared test harness, and the compile database
-
-Four related changes. **Every file involved is create-only**, so an existing
-project receives none of them until you migrate it — and the migration is
-three steps with three different mechanics, because `jm apply` reaches some of
-these files and not others.
-
-| what                                     | how it arrives                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------- |
-| `.clang-tidy`                            | `jm apply`                                                                |
-| `native/tests/jm_test.h`                 | `jm apply`                                                                |
-| `make compile-commands` / `make tidy`    | delete `Makefile`, then `jm apply` — **destroys local edits, see step 0** |
-| your existing `test_<comp>_core.c` files | by hand                                                                   |
-
-#### 0. First: these files may be yours
-
-`jm apply` never rewrites a create-only file, which is what makes the
-delete-and-re-apply step below the only way to pick up new content — **and what
-makes it destructive.** `jm_simd.h`, `jm_perf.h`, `jm_test.h`, `jm_bench.h` and
-the Makefile are all files a project is invited to extend, and deleting one
-throws away every local addition with it.
-
-That is not hypothetical. doppler added a `JM_SUMSQ_F32` energy macro to its
-`jm_simd.h` and lost it to this migration, which then failed the build at a
-call site in its AGC — and it was reported as a just-makeit regression before
-the history showed the macro had always been a local extension
-([#954](https://github.com/just-buildit/just-makeit/issues/954)).
-
-So before deleting anything:
-
-```sh
-git diff --stat HEAD -- native/inc/ native/tests/ native/benchmarks/ Makefile
-git status --short          # untracked local headers count too
-```
-
-and after re-applying, diff again and copy your additions back. If a file has
-local content you would rather not re-merge, add the new content by hand
-instead — copy it from a freshly scaffolded project.
-
-#### 1. `jm apply` — the two new files
-
-```sh
-jm apply
-```
-
-Materialises `.clang-tidy` and `native/tests/jm_test.h` because they are
-missing. It will not overwrite either one afterwards, so you can edit both.
-
-#### 2. The Makefile — delete it and re-apply
-
-`jm apply` does **not** rewrite an existing `Makefile`, so the new
-`compile-commands` and `tidy` targets do not arrive on their own:
-
-```sh
-rm Makefile && jm apply
-```
-
-**This discards any local edits to that Makefile.** Diff it first
-(`git diff Makefile`) and re-apply your changes. If you have customised it
-heavily, add the two targets by hand instead — copy them from a freshly
-scaffolded project.
-
-#### 3. Existing C tests — by hand
-
-`test_<comp>_core.c` is yours; `jm` created it once and has never touched it
-since. Each one still carries its own copy of `CHECK`, the counters and the
-epilogue. To adopt the shared harness, replace the machinery at the top with:
-
-```c
-#define JM_TEST_NAME       "test_<comp>_core"
-#define JM_SCAFFOLD_CHECKS 0
-#include "jm_test.h"
-```
-
-and replace the closing block with `JM_TEST_EPILOGUE();`. Keep your
-assertions. `REQUIRE(x)` is available for a precondition whose failure makes
-everything after it meaningless.
-
-Leave `JM_SCAFFOLD_CHECKS` at `0` in a test you have actually written — it is
-the count `jm` generated, and `0` correctly says "none of these are mine".
-
-**Why bother:** copies diverge. One downstream reached 90 definitions of
-`CHECK` in 6 mutually incompatible variants, and in 20 files the failure gate
-had drifted *above* later assertions — 75 assertions that could not affect the
-exit code, which hid a real heap buffer overflow.
-
-#### What `jm status` can and cannot tell you here
-
-`jm status` names the jm-owned files that are behind, in an `OUTDATED` section:
-
-```
-OUTDATED (1) — create-only file(s) behind jm's current version:
-  ↑ Makefile
-```
-
-Use it to drive the steps above and to confirm afterwards that step 2 landed.
-It is **not** a gate — the exit code stays 0, because `jm apply` cannot fix a
-create-only file and failing CI on a finding no command clears would be worse
-than saying nothing. Suppress a file you have deliberately taken over with
-`[project] status_allow`.
-
-Two limits worth knowing before you rely on it:
-
-- **Your own files are still invisible.** `status` re-applies the manifest to a
-    scratch copy and diffs, and `apply` rewrites no create-only file, so both
-    trees carry whatever you already had. jm's own files are compared against its
-    current render instead — but `test_<comp>_core.c`, `_core.c`, `README.md` and
-    `pyproject.toml` differ from their scaffold the moment your project is real,
-    so there is no version for them to be behind and nothing to report. **Step 3
-    above is not something `status` will ever remind you about.**
-- **A clean run means "the files jm owns are current"**, not "your scaffold is
-    current".
-- **Three files are compared only for the anchors jm writes into.** The top
-    `CMakeLists.txt`, `src/<pkg>/__init__.py` and each `<mod>_ext_<obj>.c` are
-    part yours and part jm's, so a whole-file diff would report your own
-    targets and re-exports as jm being behind, forever. What `status` does
-    check is that the sentinels jm splices against are still there — a missing
-    one means a write that never happened, and it gates (gh-975). The prose
-    around them is not compared to anything (gh-959).
-
-Before v0.58 this section warned that `status` would report the project up to
-date throughout the whole migration. That was true, and
-[#949](https://github.com/just-buildit/just-makeit/issues/949) fixed the half
-of it that could be fixed.
-
-#### Then run it
-
-```sh
-make compile-commands   # cmake's compile database, at the project root
-make tidy               # clang-tidy over exactly the TUs cmake compiles
-```
-
-`jm` no longer writes `compile_commands.json` itself — cmake emits it, and
-`make compile-commands` copies it where clangd and clang-tidy look. If your
-project root has one that predates this change, delete it; it was hand-rolled,
-incomplete, and is not refreshed by anything.
-
-The shipped `.clang-tidy` sets `WarningsAsErrors: "*"`, so `make tidy` is a
-gate. A **freshly scaffolded** project reports clean. An existing one very
-likely will not on the first run — that is the point, and the findings are
-about your code, not the scaffold. If a toolchain upgrade later adds a check
-that fires on generated code, comment that line out rather than working around
-the diagnostic: the file is yours, and `jm` will not rewrite it.
-
-No TOML changes, no `jm upgrade` required.
+______________________________________________________________________
 
 ______________________________________________________________________
 
