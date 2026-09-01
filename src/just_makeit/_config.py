@@ -2219,6 +2219,39 @@ def handle_header(cfg: dict, module: str) -> str:
     return capsule_header(cfg, module)
 
 
+def handle_header_resolved(cfg: dict, module: str) -> str:
+    """The header a handle binding includes, WITH the default filled in.
+
+    :func:`handle_header` is the raw reader and answers ``""`` when the key is
+    absent; the default -- ``<backing>/<backing>_core.h`` -- was spelled at the
+    call site instead, as ``C.handle_header(...) or f"{backing}/{backing}_core.h"``.
+    That is fine with one caller and a drift risk with two, and gh-1227 was
+    about to add a second: an `object` reference resolving a handle needs the
+    same header the handle's own binding includes, or the consumer's `_core.h`
+    names a type it never included.
+
+    So the fallback lives here once. :func:`handle_header` stays raw on
+    purpose -- `_handle.enrich_from_header` wants "absent" to mean "no header
+    to read docs from", not "try the default path", and conflating those would
+    make it go looking for a file the project never wrote.
+    """
+    backing = handle_backing(cfg, module)
+    return handle_header(cfg, module) or (
+        f"{backing}/{backing}_core.h" if backing else ""
+    )
+
+
+def handle_package_resolved(cfg: dict, module: str) -> str:
+    """The package path a handle's artifacts land in, with the default filled.
+
+    Same argument as :func:`handle_header_resolved`: three call sites spelled
+    ``C.handle_package(cfg, m) or mp.pypath`` inline, and gh-1227's `.pyi`
+    import needed a fourth. One answer to "where does this class live", read
+    by the handle's own writers and by any consumer naming it.
+    """
+    return handle_package(cfg, module) or module_paths(module).pypath
+
+
 def handle_depends_on(cfg: dict, module: str) -> list:
     """Raw ``depends_on`` entries for a handle module; ``link = true`` cores are
     linked onto the generated ``.so``. See :func:`capsule_depends_on`."""
@@ -2410,6 +2443,14 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     """
     comp, _, _cls = ref.partition(".")
     if comp not in components(cfg):
+        # gh-1227: a handle module's class lives in the module's own package,
+        # which `handle_package` already answers for the handle's own `.pyi`.
+        # Reading it here rather than rebuilding the path keeps one answer to
+        # "where does this class live" for both writers.
+        if module_kind(cfg, comp) == "handle":
+            cls = resolve_handle_object_ref(cfg, ref)[3]
+            dotted = handle_package_resolved(cfg, comp).replace("/", ".")
+            return f"from .{dotted} import {cls}"
         return ""
     cls = resolve_object_ref(cfg, ref)[3]
     for mod in modules(cfg):
@@ -2417,6 +2458,68 @@ def object_ref_import(cfg: dict, ref: str) -> str:
             dotted = module_paths(mod).pypath.replace("/", ".")
             return f"from .{dotted} import {cls}"
     return f"from .{comp} import {cls}"
+
+
+def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
+    """Resolve an ``object`` reference naming a ``kind = "handle"`` module.
+
+    gh-1227. gh-794 exists precisely so a handle can hand its pointer to
+    another module -- its own docstring calls the handle "the shape most likely
+    to be on the giving end" and "the only one that could not give one" before
+    that change. gh-1224 then taught jm to *name* a producer, and named only
+    components, so the one kind built to be borrowed from was the one kind a
+    consumer could not name.
+
+    Returns the same ``(ctype, capsule_name, header, class_name)`` the object
+    resolver does, and every slot is **read** rather than derived, which is
+    what gh-1234 established the hard way:
+
+    ==============  ==========================================================
+    ``ctype``       ``<handle_type> *`` -- the generated struct stores exactly
+                    ``{htype} *h`` and the capsule lends ``self->h``, so the
+                    published pointer's type IS the declared `handle_type`.
+    ``capsule``     :func:`handle_capsule` -- the `capsule` key, or the
+                    `capsule_name` a capsule module already spells it with.
+    ``header``      :func:`handle_header` -- the module's own `header`.
+    ``class_name``  :func:`handle_type_name` -- the generated CPython type.
+    ==============  ==========================================================
+
+    Contrast the object side, where the C type is still inferred from the
+    component id because an object producer has no way to declare one
+    (gh-1235). A handle has carried that declaration since gh-306, so this
+    resolver is the better-founded of the two -- and when gh-1235 lands, the
+    object side becomes this shape rather than the reverse.
+
+    A handle generates exactly one class, so ``<module>.<Class>`` is accepted
+    only when the class matches; there is no view to select between.
+    """
+    mod, _, cls = ref.partition(".")
+    tname = handle_type_name(cfg, mod)
+    if cls and cls != tname:
+        raise ValueError(
+            f"init_param object = '{ref}': handle module '{mod}' generates "
+            f"the class '{tname}', not '{cls}'. A handle generates one type, "
+            f"so the '.{cls}' suffix can only ever name it."
+        )
+    capsule = handle_capsule(cfg, mod)
+    if not capsule:
+        raise ValueError(
+            f"init_param object = '{ref}': handle module '{mod}' publishes "
+            f"no capsule, so there is no ABI-safe way to hand its pointer to "
+            f"another module. Declare one on the module table:\n"
+            f'    [module.{mod}]\n    capsule = "<name>"'
+        )
+    htype = handle_type(cfg, mod)
+    if not htype:
+        # `handle_type` falls back to `<backing>_t`, so an empty answer means
+        # the module declares neither -- and then nothing knows what the
+        # capsule carries. Refusing beats emitting ` *` into a prototype.
+        raise ValueError(
+            f"init_param object = '{ref}': handle module '{mod}' declares "
+            f"neither `handle_type` nor `backing`, so jm cannot name the "
+            f"pointer its capsule lends."
+        )
+    return (f"{htype} *", capsule, handle_header_resolved(cfg, mod), tname)
 
 
 def resolve_object_ref(cfg: dict, ref: str) -> tuple:
@@ -2455,13 +2558,19 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
         # IS before saying what it is not.
         if comp in modules(cfg):
             kind = module_kind(cfg, comp)
+            # gh-1227: a handle IS a valid target now. It publishes its
+            # capsule through gh-794's module-level key rather than a
+            # property, and it declares the pointer's type, so it resolves on
+            # better evidence than the object path does.
+            if kind == "handle":
+                return resolve_handle_object_ref(cfg, ref)
             if kind:
                 raise ValueError(
                     f"init_param object = '{ref}': '{comp}' is a declared "
                     f'kind = "{kind}" module, not a component. An `object` '
-                    f"reference names a component or one of its views; a "
-                    f"kind module is not a valid target yet -- see gh-1227. "
-                    f"A handle publishing a capsule (gh-794) can still be "
+                    f"reference names a component, one of its views, or a "
+                    f'kind = "handle" module; a {kind} module is not a valid '
+                    f"target. A capsule module's own pointer can still be "
                     f"named the gh-790 way, with `capsule` and `header` "
                     f"written out."
                 )

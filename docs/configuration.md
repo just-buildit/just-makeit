@@ -797,6 +797,30 @@ A **view** is a legal target (`frame.FrameDesc` above is one), and resolves to
 the same capsule — it is the same C core. Naming a component that publishes no
 capsule is refused with the `jm property` line that would fix it.
 
+A **`kind = "handle"` module is a legal target too** (gh-1227), and it is the
+better-founded half of the feature. gh-794 exists precisely so a handle can
+hand its pointer to another module, and a handle *declares* what that pointer
+is:
+
+```toml
+[module.wfm_writer]
+kind        = "handle"
+backing     = "wfm_writer"
+handle_type = "wfm_writer_t"        # the capsule lends a `wfm_writer_t *`
+capsule     = "proj.wfm.writer"     # gh-794's module-level key
+type_name   = "Writer"
+
+[[seg.init_params]]
+name   = "w"
+object = "wfm_writer"               # -> wfm_writer_t *, from the declaration
+```
+
+Every slot is **read**: `handle_type` gives the C type (the generated struct
+stores exactly `<handle_type> *h`, and the capsule lends it), `capsule` the
+name, `header` the include, `type_name` the class. A handle generates one
+class, so `wfm_writer.Writer` is accepted and any other suffix is refused. A
+`capsule` or `composer` module is still not a target.
+
 The `type` is the one thing still **derived**, and it is sound only for a
 producer publishing the default `self->handle` — which *is* the object's
 `<component>_state_t *`. A capsule property may instead carry an `expr`
