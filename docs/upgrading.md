@@ -37,25 +37,28 @@ ______________________________________________________________________
 From your project root:
 
 ```sh
-# 1. adopt jm's new clib_common.h -- take the render as-is; do not
-#    hand-edit it. `status --check` names it as OUTDATED.
-# 2. re-spell the component C. clib_common.h is EXCLUDED on purpose: jm's
-#    render is already right, and its comment quotes the old spelling, so
-#    a blanket pass would rewrite that prose into a false statement.
-files=$(grep -rl 'float complex\|double complex' \
-          native/inc native/src native/tests native/benchmarks \
-        | grep -v '/clib_common\.h$')
-[ -n "$files" ] && perl -pi -e '
-    s/\blong double complex\b/long double _Complex/g;
-    s/\bfloat complex\b/float _Complex/g;
-    s/\bdouble complex\b/double _Complex/g;' $files
+# 1. adopt jm's new clib_common.h -- take the render as-is; do not hand-edit
+#    it. `jm status --check` names it as OUTDATED.
+# 2. re-spell your own C.
+jm upgrade
 ```
+
+`jm upgrade` names every file it changed. It is **idempotent** — a second run
+is a silent no-op, and so is every run on a project scaffolded by jm 0.74.0 or
+later.
+
+**Do both steps or neither.** Adopting the new `clib_common.h` without
+re-spelling leaves component headers that no longer parse from C++ at all,
+which is the failure gh-1148 fixed — strictly worse than where you started.
+
+`clib_common.h` itself is skipped by the re-spelling, deliberately: jm's render
+of it is already correct, and its comment *quotes* the old spelling while
+explaining why that spelling was a problem. A blanket pass would rewrite that
+prose into a false statement.
 
 Then rebuild and run your tests. `complex` typed by **you** is still accepted
 everywhere jm reads a type — in `just-makeit.toml`, on the CLI, and in a header
 `jm bind` parses; it is resolved to `_Complex` before anything is rendered.
-
-There is no `jm` command that performs this migration (gh-1248).
 
 No TOML changes, no `jm upgrade` required.
 

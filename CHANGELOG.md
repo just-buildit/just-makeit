@@ -1,5 +1,40 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm upgrade` migrates a project to the `_Complex` spelling (gh-1248).**
+    gh-1246 changed what jm *emits*; it could not change what an existing
+    project already contains, and nothing jm shipped could either. `apply`
+    cannot rewrite the inline `step()` because it lives in the sacred
+    `<comp>_core.h`, and `regenerate` leaves it for the same reason -- measured
+    on 0.74.0, all three of `apply`, `regenerate` and `upgrade` left 8
+    occurrences untouched. The answer in `docs/upgrading.md` was a
+    `perl -pi -e` block the author ran by hand.
+
+    It lives in `upgrade` because gh-887 already made that the home for "your
+    project is current by schema number and still needs work" -- it reports
+    stale manifest keys there rather than claiming "already up to date". This
+    needs no schema bump either, so it runs on **every** exit of `upgrade`,
+    including the already-current one; wiring it only into the migration loop
+    would have meant it never ran for anybody it is for.
+
+    It **rewrites** where gh-887 deliberately only reports, and the line
+    between them is gh-887's own: *"the replacement can alter what your API
+    does, so it is yours to make, not a migration's."* `check_return` ->
+    `status_return` changes whether a non-zero return raises. `complex` ->
+    `_Complex` changes nothing -- `complex` is a `<complex.h>` macro for
+    `_Complex`, so they are identical tokens after preprocessing. A migration
+    may rewrite when the rewrite is provably behaviour-neutral, and must only
+    report when it encodes a decision.
+
+    Idempotent: a second run is silent, and so is every run on a project
+    scaffolded by 0.74.0 or later. `clib_common.h` is skipped -- its comment
+    quotes the old spelling while explaining why that spelling was a problem,
+    so a blanket pass would rewrite that prose into a false statement.
+
+    Gated end-to-end: a pre-gh-1246 project, migrated, compiles from C++11
+    with `std::complex` in **both** include orders.
+
 ## [0.74.0] — 2026-09-01
 
 ### Breaking
