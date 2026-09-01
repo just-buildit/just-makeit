@@ -60,11 +60,11 @@ def run(root: Path) -> None:
     core_h = proj / "native" / "inc" / "clip" / "clip_core.h"
     text = core_h.read_text(encoding="utf-8")
     stub = (
-        "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+        "    (void)state; /* TODO: implement */\n    return (float _Complex)0;"
     )
     assert stub in text, "clip_step stub not found -- did the scaffold change?"
     core_h.write_text(
-        text.replace(stub, "    return (float complex)state->level;", 1),
+        text.replace(stub, "    return (float _Complex)state->level;", 1),
         encoding="utf-8",
     )
 

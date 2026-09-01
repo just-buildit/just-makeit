@@ -19,9 +19,9 @@ main (void)
   printf ("h[1] = %.2f\n", view[1]); /* 0.50 */
 
   /* Feed a unit impulse */
-  float complex in[16]  = { 0 };
-  float complex out[16] = { 0 };
-  in[0]                 = 1.0f + 0.0f * I;
+  float _Complex in[16]  = { 0 };
+  float _Complex out[16] = { 0 };
+  in[0]                  = 1.0f + 0.0f * I;
   fir_filter_steps (f, in, out, 16);
 
   printf ("out[0]=%.2f  out[1]=%.2f  out[2]=%.2f\n", crealf (out[0]),

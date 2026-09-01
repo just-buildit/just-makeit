@@ -338,14 +338,14 @@ _MAX_OUT_IMPL = (
     "    return (size_t)ceil((double)n_in * state->rate) + 2;\n}"
 )
 _EXECUTE_STUB = (
-    "size_t\nrc_execute(rc_state_t *state, const float complex *in,"
-    " size_t n_in, float complex *out, size_t max_out)\n{\n"
+    "size_t\nrc_execute(rc_state_t *state, const float _Complex *in,"
+    " size_t n_in, float _Complex *out, size_t max_out)\n{\n"
     "    (void)state;\n    (void)in; (void)n_in;\n"
     "    (void)out; (void)max_out;\n    return 0; /* placeholder */\n}"
 )
 _EXECUTE_IMPL = (
-    "size_t\nrc_execute(rc_state_t *state, const float complex *in,"
-    " size_t n_in, float complex *out, size_t max_out)\n{\n"
+    "size_t\nrc_execute(rc_state_t *state, const float _Complex *in,"
+    " size_t n_in, float _Complex *out, size_t max_out)\n{\n"
     "    size_t n_out = (size_t)((double)n_in * state->rate);\n"
     "    if (n_out > max_out) n_out = max_out;\n"
     "    for (size_t i = 0; i < n_out; i++) out[i] = in[i];\n"

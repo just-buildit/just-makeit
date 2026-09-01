@@ -86,7 +86,7 @@ class TestStandaloneStub:
         assert it stays injected, with the `*out` output param."""
         h = (project / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
         assert (
-            "rdr_read(rdr_state_t *state, size_t n, float complex *out)" in h
+            "rdr_read(rdr_state_t *state, size_t n, float _Complex *out)" in h
         )
 
 

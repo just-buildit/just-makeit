@@ -61,7 +61,7 @@ _NO_TOOLCHAIN = shutil.which("cmake") is None or (
 #: (object, arg_type, return_type). Every branch the example builder takes:
 #: scalar passthrough, a differing return type, the two shapes with nothing to
 #: pass through (void arg, array arg), a void return, and each dtype-name
-#: hazard (`bool`, and the platform-dependent `size_t` / long double complex).
+#: hazard (`bool`, and the platform-dependent `size_t` / long double _Complex).
 SHAPES = [
     ("c_f", "float", "float"),
     ("c_u64", "uint64_t", "uint64_t"),

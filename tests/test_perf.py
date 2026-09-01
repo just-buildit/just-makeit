@@ -260,7 +260,7 @@ class TestPerfUpgrade:
         core = upgraded / "native" / "inc" / "mycomp" / "mycomp_core.h"
         text = core.read_text(encoding="utf-8")
         text = text.replace(
-            "(void)state; /* TODO: implement using state variables */\n    return (float complex)x;",
+            "(void)state; /* TODO: implement using state variables */\n    return (float _Complex)x;",
             "return x * 2.0f;",
         )
         core.write_text(text, encoding="utf-8")

@@ -121,8 +121,8 @@ def test_decl_stub_binding_agree_out_last(tmp_path):
     # appended after both arrays AND the scalar.
     assert "npy_intp _dim = (npy_intp)(syms_len * sf);" in ext
     assert (
-        "const float complex *syms, size_t syms_len, "
-        "const int8_t *code, size_t code_len, int sf, float complex *out"
+        "const float _Complex *syms, size_t syms_len, "
+        "const int8_t *code, size_t code_len, int sf, float _Complex *out"
         in _core_h(root)
     )
 

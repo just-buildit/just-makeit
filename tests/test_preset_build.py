@@ -73,7 +73,7 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
 def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
     """A ``--variable-output`` method whose return type carries an explicit
     ``[]`` (e.g. ``--return-type "float _Complex[]"``) once rendered the
-    invalid ``float complex[] *out`` into ``_core.h`` / ``_core.c`` / ``_ext.c``
+    invalid ``float _Complex[] *out`` into ``_core.h`` / ``_core.c`` / ``_ext.c``
     and failed to compile (gh-201 follow-up). The output buffer holds elements,
     so the ``[]`` is now stripped to the element type.
     """
@@ -100,8 +100,8 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
     ext_c = (root / "native/src/filt/filt_ext.c").read_text()
     for text in (core_h, core_c, ext_c):
         assert "[] *out" not in text
-        assert "sizeof(float complex[])" not in text
-    assert "float complex *out" in core_h
+        assert "sizeof(float _Complex[])" not in text
+    assert "float _Complex *out" in core_h
     assert (
         "NPY_COMPLEX64" in ext_c
     )  # element NumPy enum, not the NPY_FLOAT fallback

@@ -71,8 +71,9 @@ class TestCoreHeader:
 
     def test_complex_elem_type(self, in_module_void):
         h = (in_module_void / "native/inc/sink/sink_core.h").read_text()
-        # _ctype_display renders "float _Complex" -> "float complex" (C99)
-        assert "float complex" in h
+        # gh-1246: jm emits the `_Complex` spelling, never the
+        # <complex.h> `complex` macro (which does not exist in C++).
+        assert "float _Complex" in h
         assert "x_len" in h
 
 
@@ -365,12 +366,12 @@ class TestVariableOutputArrayArg:
 
     def test_header_decl_is_valid_c(self, proj):
         h = (proj / "native/inc/widget/widget_core.h").read_text()
-        assert "const float complex *in, size_t n_in" in h
+        assert "const float _Complex *in, size_t n_in" in h
         assert "[] *" not in h
 
     def test_ext_cast_is_valid_c(self, proj):
         e = (proj / "native/src/widget/widget_ext.c").read_text()
-        assert "(const float complex *)PyArray_DATA" in e
+        assert "(const float _Complex *)PyArray_DATA" in e
         assert "[] *" not in e
 
     def test_bench_buffer_is_valid_c(self, proj):

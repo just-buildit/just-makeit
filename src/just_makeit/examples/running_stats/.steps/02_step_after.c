@@ -2,8 +2,8 @@
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
 // State:  min_val / max_val track the smallest / largest sample seen so far.
-static inline float complex
-running_stats_step (running_stats_state_t *state, float complex x)
+static inline float _Complex running_stats_step (running_stats_state_t *state,
+                                                 float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;

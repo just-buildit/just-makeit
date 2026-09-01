@@ -19,7 +19,6 @@ from .._types import (
     _CTYPE_TO_NPY,
     _KIND_PY_TEST_VAL,
     record_tuple_build,
-    _ctype_display,
     _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
@@ -452,12 +451,12 @@ def _bench_method_block(component: str, m: dict) -> str:
     if has_arg:
         arg_elem = arg_type[:-2] if is_array_arg else arg_type
         arg_meta = _CTYPE_META[arg_elem]
-        arg_elem_disp = _ctype_display(arg_elem)
+        arg_elem_disp = arg_elem
         arg_zero = arg_meta["zero"]
 
     if has_ret:
         ret_meta = _CTYPE_META.get(return_type)
-        ret_disp = _ctype_display(return_type) if ret_meta else return_type
+        ret_disp = return_type if ret_meta else return_type
 
     param_args = ""
     for p in params:
@@ -476,7 +475,7 @@ def _bench_method_block(component: str, m: dict) -> str:
         # not `return_type` directly — the call signature and sink differ
         # from every other shape below, so this is handled first and skips
         # the generic branches entirely.
-        rf_disp = _ctype_display(return_type)
+        rf_disp = return_type
         lines.append(f"        {rf_disp} {name}_results[{max_results}];")
         if has_arg:
             lines += [
@@ -512,7 +511,7 @@ def _bench_method_block(component: str, m: dict) -> str:
                 f" ({arg_elem_disp} *)calloc(BENCH_N,"
                 f" sizeof({arg_elem_disp}));",
             ]
-        ret_disp_b = _ctype_display(return_type)
+        ret_disp_b = return_type
         lines += [
             f"        {ret_disp_b} *{name}_out ="
             f" ({ret_disp_b} *)malloc("
@@ -1322,7 +1321,7 @@ def make_methods_ctx(
         # and `_docsync`/`_apply` have one shape to look for.
         _sid = f"{wrapper_prefix}_{name}"
 
-        ret_disp = _ctype_display(return_type)
+        ret_disp = return_type
         _ret_elem = (
             return_type[:-2] if return_type.endswith("[]") else return_type
         )
@@ -1348,7 +1347,7 @@ def make_methods_ctx(
         _vo_out_elem = (
             _vo_out_src[:-2] if _vo_out_src.endswith("[]") else _vo_out_src
         )
-        _vo_out_disp = _ctype_display(_vo_out_elem)
+        _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
         _vo_out_np = (
             _NP_ENUM.get(_vo_out_meta["py_type"])
@@ -1507,7 +1506,7 @@ def make_methods_ctx(
             # are their own element type, so this is a no-op for them. (The
             # scalar `arg_disp x` decls below are only reached when arg_type is
             # not an array.)
-            arg_disp = _ctype_display(_arg_elem)
+            arg_disp = _arg_elem
             arg_meta = _CTYPE_META[_arg_elem]
             arg_np = _NP_ENUM[arg_meta["py_type"]]
 
@@ -1786,8 +1785,7 @@ def make_methods_ctx(
                 decl_lines.append(f"size_t {c_fn}({', '.join(_rf_parts)});")
         elif variable_output:
             extra_params = "".join(
-                f", {_ctype_display(rt)} *out{i + 1}"
-                for i, rt in enumerate(multi_output)
+                f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
             )
             _moc_decl, _ = _max_out_count_param_ctx(
                 has_arg, has_params, params
@@ -1811,13 +1809,11 @@ def make_methods_ctx(
                 _vp_parts: list[str] = []
                 for _p in params:
                     if is_array_param_type(_p["type"]):
-                        _e = _ctype_display(array_elem_ctype(_p["type"]))
+                        _e = array_elem_ctype(_p["type"])
                         _vp_parts.append(f"const {_e} *{_p['name']}")
                         _vp_parts.append(f"size_t {_p['name']}_len")
                     else:
-                        _vp_parts.append(
-                            f"{_ctype_display(_p['type'])} {_p['name']}"
-                        )
+                        _vp_parts.append(f"{_p['type']} {_p['name']}")
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({component}_state_t *state{_moc_decl});\n"
@@ -1836,30 +1832,25 @@ def make_methods_ctx(
                 )
         else:
             extra_params = "".join(
-                f", {_ctype_display(rt)} *out{i + 1}"
-                for i, rt in enumerate(multi_output)
+                f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
             )
-            out_type_param = (
-                f", {_ctype_display(out_type)} *out" if out_type else ""
-            )
+            out_type_param = f", {out_type} *out" if out_type else ""
             if has_params:
                 p_parts: list[str] = []
                 if has_arg:
                     if is_array_param_type(arg_type):
-                        _e_disp = _ctype_display(array_elem_ctype(arg_type))
+                        _e_disp = array_elem_ctype(arg_type)
                         p_parts.append(f"const {_e_disp} *x")
                         p_parts.append("size_t x_len")
                     else:
                         p_parts.append(f"{arg_disp} x")
                 for p in params:
                     if is_array_param_type(p["type"]):
-                        e_disp = _ctype_display(array_elem_ctype(p["type"]))
+                        e_disp = array_elem_ctype(p["type"])
                         p_parts.append(f"const {e_disp} *{p['name']}")
                         p_parts.append(f"size_t {p['name']}_len")
                     else:
-                        p_parts.append(
-                            f"{_ctype_display(p['type'])} {p['name']}"
-                        )
+                        p_parts.append(f"{p['type']} {p['name']}")
                 c_param_str = ", ".join(p_parts)
                 decl_lines.append(
                     f"{ret_disp} {c_fn}"
@@ -1868,7 +1859,7 @@ def make_methods_ctx(
                 )
             elif has_arg:
                 if is_array_param_type(arg_type):
-                    _e_disp = _ctype_display(array_elem_ctype(arg_type))
+                    _e_disp = array_elem_ctype(arg_type)
                     decl_lines.append(
                         f"{ret_disp} {c_fn}"
                         f"({component}_state_t *state,"
@@ -1987,7 +1978,7 @@ def make_methods_ctx(
                     if is_array_param_type(_pt):
                         _pe = array_elem_ctype(_pt)
                         _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
-                        _pe_disp = _ctype_display(_pe)
+                        _pe_disp = _pe
                         _pb_lines += [
                             f"    PyObject *{_pn}_obj = NULL;",
                         ]
@@ -2007,9 +1998,7 @@ def make_methods_ctx(
                         _pt_meta = _CTYPE_META.get(_pt, {})
                         _fmt_char = _pt_meta.get("fmt", "d")
                         _has_parse = "parse_type" in _pt_meta
-                        _parse_t = _pt_meta.get(
-                            "parse_type", _ctype_display(_pt)
-                        )
+                        _parse_t = _pt_meta.get("parse_type", _pt)
                         _parse_zero = _pt_meta.get("parse_zero", "0")
                         # gh-802: seed the local with the param's `default`
                         # (falling back to the type's zero), exactly as
@@ -2078,7 +2067,7 @@ def make_methods_ctx(
                         ]
                     elif "parse_type" in _CTYPE_META.get(_pt, {}):
                         _pm = _CTYPE_META[_pt]
-                        _pt_disp = _ctype_display(_pt)
+                        _pt_disp = _pt
                         _conv_lines.append(
                             f"    {_pt_disp} {_pn} = {_pm['to_c'](_pn)};"
                         )
@@ -2459,8 +2448,8 @@ def make_methods_ctx(
                 # call would sit inside Py_BEGIN_ALLOW_THREADS); and the
                 # generated call reads as plain C.
                 + "".join(
-                    f"    {_ctype_display(_all_out_rts[i])} *_d{i} ="
-                    f" ({_ctype_display(_all_out_rts[i])} *)"
+                    f"    {_all_out_rts[i]} *_d{i} ="
+                    f" ({_all_out_rts[i]} *)"
                     f"PyArray_DATA((PyArrayObject *)arr{i});\n"
                     for i in _idx
                 )
@@ -2811,7 +2800,7 @@ def make_methods_ctx(
             # gh-594: method params go through the SAME builder every other
             # method shape uses (`_build_params_parse`), rather than the
             # scalar-only loop that used to live here. That loop emitted
-            # `_ctype_display(type)` as a declaration and `_CTYPE_META.get(
+            # `type` as a declaration and `_CTYPE_META.get(
             # type, {}).get("fmt", "d")` as a format char, so an array param
             # rendered the invalid `float complex[] rx = 0;`, parsed as a
             # scalar double, and passed no length -- three compile errors from
@@ -3140,8 +3129,7 @@ def make_methods_ctx(
                 )
             elif multi_output:
                 extra_decls = "".join(
-                    f"    {_ctype_display(rt)} out{i + 1}"
-                    f" = {_CTYPE_META[rt]['zero']};\n"
+                    f"    {rt} out{i + 1} = {_CTYPE_META[rt]['zero']};\n"
                     for i, rt in enumerate(multi_output)
                 )
                 extra_call = "".join(
@@ -3172,7 +3160,7 @@ def make_methods_ctx(
                     f" {', '.join(pack_parts)});\n"
                 )
             elif out_type:
-                out_disp = _ctype_display(out_type)
+                out_disp = out_type
                 out_npy = _CTYPE_TO_NPY[out_type]
                 first_arr = next(
                     (
@@ -3769,7 +3757,7 @@ def _container_getter(
         _vmeta = _CTYPE_META[vtype]
         # Same pointer-spacing idiom the parse builders use (_render.py:622):
         # `const char *` already ends in the star, so no separating space.
-        _vdisp = _ctype_display(vtype)
+        _vdisp = vtype
         if not _vdisp.endswith("*"):
             _vdisp += " "
         if _vdisp.endswith("*"):
@@ -3947,7 +3935,7 @@ def make_properties_ctx(
         container: bool = T.is_container_type(ctype)
 
         meta = _CTYPE_META.get(ctype, _CTYPE_META["size_t"])
-        disp = _ctype_display(ctype)
+        disp = ctype
 
         # gh-543: validate before anything is rendered, so an incoherent
         # declaration is a jm diagnostic rather than a compiler error in code

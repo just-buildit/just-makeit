@@ -25,7 +25,7 @@ baseline:  106.8 M complex samples/sec
 with SIMD: 154.1 M complex samples/sec   (1.4×)
 ```
 
-The ceiling is the `memmove` of 120 bytes (15 `float complex`) that runs every
+The ceiling is the `memmove` of 120 bytes (15 `float _Complex`) that runs every
 sample.  The vectoriser can auto-vectorise the 16-tap MAC, but it can't overlap
 that store with the accumulate.  Flags alone don't get you there.
 

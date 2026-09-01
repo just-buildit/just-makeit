@@ -162,7 +162,7 @@ class TestRegeneratePreservesHandWrittenBodies:
 
     def test_inline_step_body_in_header_survives(self, project):
         core_h = project / "native" / "inc" / "eng" / "eng_core.h"
-        _plant_body(core_h, "return (float complex)x;", "HAND_STEP")
+        _plant_body(core_h, "return (float _Complex)x;", "HAND_STEP")
         regen_run(project, "eng", force=True)
         text = core_h.read_text(encoding="utf-8")
         assert "HAND_STEP" in text

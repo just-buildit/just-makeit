@@ -21,7 +21,7 @@ impl_name = sys.argv[1] if len(sys.argv) > 1 else "02_base_step.c"
 impl = pathlib.Path(__file__).with_name(impl_name)
 
 stub_re = re.compile(
-    r"static inline float complex\s*\n"
+    r"static inline float _Complex\s*\n"
     r"running_stats_step\((?:const )?running_stats_state_t \*state.*?\n\}",
     re.DOTALL,
 )

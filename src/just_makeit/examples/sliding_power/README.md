@@ -71,7 +71,7 @@ the recursive O(1) update.  The delay line stores `|x|²` for each past sample;
 
 ```c
 JM_FORCEINLINE JM_HOT float
-power_est_step (power_est_state_t *state, float complex x)
+power_est_step (power_est_state_t *state, float _Complex x)
 {
   float re = crealf (x), im = cimagf (x);
   float mag_sq = re * re + im * im;

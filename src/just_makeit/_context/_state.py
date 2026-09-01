@@ -21,7 +21,6 @@ from .._types import (
     _ARRAY_DTYPE,
     _CTYPE_TO_NPY,
     _CTYPE_TO_DTYPE,
-    _ctype_display,
     is_array_param_type,
     array_param_ndim,
     array_elem_ctype,
@@ -521,7 +520,7 @@ def _build_no_state_init_ctx(
     c_create_parts_ordered: list[str] = []
 
     for (name, dt), (ct, __) in zip(_aa, _aa_ctypes):
-        disp = _ctype_display(ct)
+        disp = ct
         sig_parts.append(f"const {disp} *{name}, size_t {name}_len")
         doc_parts.append(
             f" * @param {name}  Input {dt} array (length passed as {name}_len)."
@@ -539,7 +538,7 @@ def _build_no_state_init_ctx(
             continue
         if pname in _arr_meta:
             act, andim = _arr_meta[pname]
-            adisp = _ctype_display(act)
+            adisp = act
             if andim == 2:
                 # gh-1097: the extents are already here and already passed;
                 # `derived` only decides what they are CALLED. The C locals
@@ -592,7 +591,7 @@ def _build_no_state_init_ctx(
             # required array's — the only difference is that `{pname}_arr`
             # may be NULL (omitted), so the data pointer is ternary-guarded.
             act, andim = _def_arr_meta[pname]
-            adisp = _ctype_display(act)
+            adisp = act
             sig_parts.append(f"const {adisp} *{pname}, size_t {pname}_len")
             doc_parts.append(
                 f" * @param {pname}  Input {adisp} array"
@@ -655,7 +654,7 @@ def _build_no_state_init_ctx(
             # author would have written by hand and the C smoke test can call
             # it directly.
             _cap_ct, _cap_name, _cap_nullable, _ = _capsule_meta[pname]
-            _cap_disp = _ctype_display(_cap_ct)
+            _cap_disp = _cap_ct
             if not _cap_disp.endswith("*"):
                 _cap_disp += " "
             sig_parts.append(f"{_cap_disp}{pname}")
@@ -997,8 +996,8 @@ def _build_no_state_init_ctx(
         )
         if aname in dispatch_meta:
             real_ect, real_npy, d_create_fn = dispatch_meta[aname]
-            real_adisp = _ctype_display(real_ect)
-            complex_adisp = _ctype_display(act)
+            real_adisp = real_ect
+            complex_adisp = act
             complex_cast = (
                 f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
             )
@@ -1096,7 +1095,7 @@ def _build_no_state_init_ctx(
 
     scalar_call_str = create_call_args
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
-        odisp = _ctype_display(oact)
+        odisp = oact
         if ondim == 2:
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
@@ -1263,7 +1262,7 @@ def _build_no_state_init_ctx(
             "\n".join(
                 f"    {aname} : array-like"
                 f"{', shape (rows, cols)' if andim == 2 else ''}\n"
-                f"        {_ctype_display(act)}"
+                f"        {act}"
                 f" {'matrix' if andim == 2 else 'array'}."
                 for aname, act, andim, _ in arr_ip
             )
@@ -1281,7 +1280,7 @@ def _build_no_state_init_ctx(
             "\n".join(
                 f"    {oname} : array-like or None, optional"
                 f"{', shape (rows, cols)' if ondim == 2 else ''}\n"
-                f"        {_ctype_display(oact)} array; when supplied"
+                f"        {oact} array; when supplied"
                 f" {oalt_fn} is called instead of the default constructor."
                 for oname, oact, ondim, _, oalt_fn in opt_arr_ip
             )

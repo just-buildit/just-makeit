@@ -211,9 +211,9 @@ PSEUDO_TYPES: frozenset[str] = frozenset({"path", "bytes"})
 # integer spellings are deliberately absent from _CTYPE_META — a generated
 # binding's PyArg format char has to match an exact width — so the hint steers
 # to the fixed-width equivalent rather than registering an ambiguous type. The
-# `complex` entries catch the display form (`_ctype_display` renders
-# `float _Complex` as `float complex`), which reads as the obvious spelling but
-# is not the key jm stores.
+# `complex` entries catch the spelling an author reaches for first. jm emits
+# and stores `_Complex` everywhere (gh-1246); `complex` is a <complex.h> macro
+# that does not exist in C++, so it must never reach generated code.
 _WIDTH_NOTE = "has a platform-dependent width"
 _SPELLING_NOTE = "is the display form; jm stores the `_Complex` spelling"
 _RETURN_TYPE_HINTS: dict[str, tuple[str, str]] = {
@@ -397,12 +397,12 @@ def c_param_parts(params) -> list[str]:
     -------
     list of str
         C parameter declarations, e.g.
-        ``["const float complex *rx", "size_t rx_len", "size_t t0"]``.
+        ``["const float _Complex *rx", "size_t rx_len", "size_t t0"]``.
 
     Examples
     --------
     >>> c_param_parts([("rx", "float _Complex[]"), ("t0", "size_t")])
-    ['const float complex *rx', 'size_t rx_len', 'size_t t0']
+    ['const float _Complex *rx', 'size_t rx_len', 'size_t t0']
     >>> c_param_parts([{"name": "n", "type": "int", "default": "4"}])
     ['int n']
     """
@@ -410,11 +410,11 @@ def c_param_parts(params) -> list[str]:
     for p in params:
         pname, ptype = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
         if is_array_param_type(ptype):
-            elem_disp = _ctype_display(array_elem_ctype(ptype))
+            elem_disp = array_elem_ctype(ptype)
             parts.append(f"const {elem_disp} *{pname}")
             parts.append(f"size_t {pname}_len")
         else:
-            parts.append(f"{_ctype_display(ptype)} {pname}")
+            parts.append(f"{ptype} {pname}")
     return parts
 
 
@@ -982,8 +982,3 @@ def scalar_py_annotation(ctype: str) -> str:
         return "bool"
     meta = _CTYPE_META.get(ctype)
     return _KIND_TO_PY.get(meta["kind"], "Any") if meta else "Any"
-
-
-def _ctype_display(ct: str) -> str:
-    """Internal key -> C display form: 'float _Complex' -> 'float complex'."""
-    return ct.replace("_Complex", "complex")

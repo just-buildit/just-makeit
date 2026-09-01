@@ -157,8 +157,8 @@ class TestExtractDocBlocks:
     def test_maps_function_names_to_blocks(self):
         header = (
             _EXECUTE_BLOCK.replace("/**", "  /**")
-            + "\nsize_t ddc_execute(ddc_state_t *state, const float complex "
-            "*x, size_t x_len, float complex *out, size_t max_out);\n"
+            + "\nsize_t ddc_execute(ddc_state_t *state, const float _Complex "
+            "*x, size_t x_len, float _Complex *out, size_t max_out);\n"
             "\n/** Return the rate. */\n"
             "double ddc_get_rate(const ddc_state_t *state);\n"
         )
@@ -183,8 +183,8 @@ class TestExtractDocBlocks:
             " * @param state The state.\n"
             " */\n"
             "JM_FORCEINLINE JM_HOT size_t\n"
-            "cic_decimate(cic_state_t *state, const float complex *in,\n"
-            "             size_t n_in, float complex *out)\n"
+            "cic_decimate(cic_state_t *state, const float _Complex *in,\n"
+            "             size_t n_in, float _Complex *out)\n"
             "{\n"
             "    return 0;\n"
             "}\n"

@@ -68,7 +68,7 @@ ENRICHMENTS = {
         "create_brief": "Create a complex128 accumulator (running sum), zeroed.",
         "blocks": [
             (
-                "double complex acc_cf64_get(",
+                "double _Complex acc_cf64_get(",
                 "/**\n"
                 " * @brief Return the current accumulated complex sum.\n"
                 " * @return The running sum of every sample added so far.\n"
@@ -82,7 +82,7 @@ ENRICHMENTS = {
                 " */\n",
             ),
             (
-                "double complex acc_cf64_dump(",
+                "double _Complex acc_cf64_dump(",
                 "/**\n"
                 " * @brief Return the accumulated sum and reset it to zero.\n"
                 " * @return The sum accumulated since the last reset or dump.\n"

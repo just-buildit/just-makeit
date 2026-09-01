@@ -12,7 +12,7 @@ algorithm.
 | Type     | C type          | Python dtype        | Precision  |
 | -------- | --------------- | ------------------- | ---------- |
 | `AccF32` | `float`         | `np.float32`        | 32-bit     |
-| `AccCf64`| `double complex`| `np.complex128`     | 128-bit    |
+| `AccCf64`| `double _Complex`| `np.complex128`     | 128-bit    |
 
 Both live in a shared `accumulator` subpackage:
 

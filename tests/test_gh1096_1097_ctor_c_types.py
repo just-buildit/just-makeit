@@ -185,14 +185,14 @@ class TestA2DArraysExtentsCanBeNamed:
         root = _project(tmp_path, "e", ARR2D_IP)
         assert (
             _create_params(root)
-            == "const float complex *ref, size_t ny, size_t nx"
+            == "const float _Complex *ref, size_t ny, size_t nx"
         )
 
     def test_without_it_nothing_changes(self, tmp_path):
         root = _project(tmp_path, "f", ARR2D_IP_PLAIN)
         assert (
             _create_params(root)
-            == "const float complex *ref, size_t ref_dim0, size_t ref_dim1"
+            == "const float _Complex *ref, size_t ref_dim0, size_t ref_dim1"
         )
 
     def test_the_binding_keeps_jms_own_locals(self, tmp_path):
@@ -306,8 +306,8 @@ class TestTheGateGoesQuiet:
         _quiet(__import__("just_makeit._apply", fromlist=["run"]).run, root)
         self._typedef_header(
             root,
-            "obj_create(const float complex *ref, size_t ny, size_t nx)",
-            "obj_create(const float complex *ref, size_t ny, size_t nx)",
+            "obj_create(const float _Complex *ref, size_t ny, size_t nx)",
+            "obj_create(const float _Complex *ref, size_t ny, size_t nx)",
         )
         assert _ctorsig.drift(root, C.load(root)) == []
 
@@ -318,8 +318,8 @@ class TestTheGateGoesQuiet:
         _quiet(__import__("just_makeit._apply", fromlist=["run"]).run, root)
         self._typedef_header(
             root,
-            "obj_create(const float complex *ref, size_t ny, size_t nx)",
-            "obj_create(const float complex *ref, size_t rows, size_t cols)",
+            "obj_create(const float _Complex *ref, size_t ny, size_t nx)",
+            "obj_create(const float _Complex *ref, size_t rows, size_t cols)",
         )
         found = _ctorsig.drift(root, C.load(root))
         assert len(found) == 1

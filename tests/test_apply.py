@@ -675,15 +675,15 @@ class TestMethodReplayArgType:
         ).read_text(encoding="utf-8")
 
     def test_variable_output_params_used_not_float_complex(self, tmp_path):
-        """drain() should use uint32_t n, not const float complex *in."""
+        """drain() should use uint32_t n, not const float _Complex *in."""
         header = self._apply_fragment(
             tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT
         )
         assert "uint32_t n" in header
-        assert "float complex" not in header
+        assert "float _Complex" not in header
 
     def test_variable_output_correct_return_type(self, tmp_path):
-        """drain() output array is uint64_t *, not float complex *."""
+        """drain() output array is uint64_t *, not float _Complex *."""
         header = self._apply_fragment(
             tmp_path / "proj", _VOID_ARG_METHODS_FRAGMENT
         )
@@ -736,10 +736,10 @@ class TestVariableOutputOutType:
         return header, core_c
 
     def test_header_uses_out_type_not_return_type(self, tmp_path):
-        """Header buffer param should be uint8_t *, not float complex *."""
+        """Header buffer param should be uint8_t *, not float _Complex *."""
         header, _ = self._apply(tmp_path / "proj")
         assert "uint8_t *out" in header
-        assert "float complex" not in header
+        assert "float _Complex" not in header
 
     def test_header_params_used(self, tmp_path):
         """Header should carry the declared uint32_t n param."""
@@ -750,7 +750,7 @@ class TestVariableOutputOutType:
         """_core.c stub signature should use uint8_t *out."""
         _, core_c = self._apply(tmp_path / "proj")
         assert "uint8_t *out" in core_c
-        assert "float complex" not in core_c
+        assert "float _Complex" not in core_c
 
 
 _CREATE_RESET_IMPL_FRAGMENT = """\

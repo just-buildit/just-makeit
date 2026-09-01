@@ -8,7 +8,6 @@ from __future__ import annotations
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
-    _ctype_display,
     _KIND_PY_ISINSTANCE,
     _KIND_PY_TEST_VAL,
     is_supported_return_type,
@@ -83,7 +82,7 @@ def _bench_in_init(sample_type: str, samp: dict) -> str:
         base = sample_type.replace(" _Complex", "")
         suffix = samp["zero"][samp["zero"].index("+") :]
         return f"({base})(i){suffix}"
-    return f"({_ctype_display(sample_type)})(i)"
+    return f"({sample_type})(i)"
 
 
 def _bench_out_decl(disp: str, cleanup: str = "") -> str:
@@ -377,8 +376,8 @@ def make_sample_ctx(
             )
         in_samp = _CTYPE_META[in_elem]
         out_samp = _CTYPE_META[out_elem]
-        in_disp = _ctype_display(in_elem)
-        out_disp = _ctype_display(out_elem)
+        in_disp = in_elem
+        out_disp = out_elem
         in_np_dtype = in_samp["py_type"]
         out_np_dtype = out_samp["py_type"]
         in_np_enum = _NP_ENUM[in_np_dtype]
@@ -484,7 +483,7 @@ def make_sample_ctx(
         out_np_dtype = "np.complex64"  # unused for void return; safe fallback
     else:
         ret = _CTYPE_META[return_type]
-        ret_disp = _ctype_display(return_type)
+        ret_disp = return_type
         out_np_dtype = ret["py_type"]
 
     # Bench keys that depend on the return type.
@@ -602,7 +601,7 @@ def make_sample_ctx(
                 f" Supported element types: void, {supported}"
             )
         samp = _CTYPE_META[elem_type]
-        elem_disp = _ctype_display(elem_type)
+        elem_disp = elem_type
         in_np_dtype = samp["py_type"]
         in_np_enum = _NP_ENUM[in_np_dtype]
         return {
@@ -693,7 +692,7 @@ def make_sample_ctx(
     in_np_dtype = samp["py_type"]
 
     # pure_x_* keys: used inside pure-scalar fn() to parse the x argument.
-    samp_disp = _ctype_display(arg_type)
+    samp_disp = arg_type
     if "parse_type" in samp:
         pure_x_local = (
             f"    {samp['parse_type']} x_raw = {samp['parse_zero']};"
@@ -706,7 +705,7 @@ def make_sample_ctx(
         pure_x_to_c = ""
 
     return {
-        "arg_ctype": _ctype_display(arg_type),
+        "arg_ctype": arg_type,
         "return_ctype": ret_disp,
         "arg_zero": samp["zero"],
         "step_example_suffix": f", {samp['zero']}",

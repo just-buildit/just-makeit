@@ -12,8 +12,8 @@ Generated stubs appended to `hbdecim_core.c`:
 ```c
 size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);
 size_t hbdecim_execute_ovf(hbdecim_state_t    *state,
-                           const float complex *in, size_t n_in,
-                           float complex       *out,
+                           const float _Complex *in, size_t n_in,
+                           float _Complex       *out,
                            uint8_t             *ovf);
 ```
 
@@ -40,7 +40,7 @@ samples, flags = d.execute_ovf(block)   # tuple of two zero-copy views
 ```
 d = Hbdecim()
 │
-└─ ext mallocs float complex[512]  → d._out_buf
+└─ ext mallocs float _Complex[512]  → d._out_buf
    ext mallocs uint8_t[512]        → d._ovf_buf
    both stored in the object
 

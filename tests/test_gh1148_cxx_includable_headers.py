@@ -5,21 +5,33 @@ jm has always emitted `extern "C"` guards — in `component_core.h`,
 work, and the guard was inert:
 
     native/inc/eng/eng_core.h:61:1: error: expected initializer before 'eng_step'
-       61 | eng_step(const eng_state_t *state, float complex x)
+       61 | eng_step(const eng_state_t *state, float _Complex x)
 
 `clib_common.h` includes `<complex.h>`. In C99 that defines `complex` as a
 macro for `_Complex`; in C++ the same include maps to `<complex>`, where
-`complex` is `std::complex` and the macro does not exist. So `float complex`
+`complex` is `std::complex` and the macro does not exist. So `float _Complex`
 in a prototype is a syntax error, and every complex-typed component's header
 was uncompilable from C++ — which is most of them, `float _Complex` being the
 default `arg_type`. A component with no complex in its surface compiled fine,
 which is why nothing noticed.
 
-The fix restores C99's spelling under `__cplusplus`. What that buys is the
-mixed-language case and nothing more: an author with C99 *and* C++11
-algorithms can include a jm component's header from their own C++ and call it.
-jm generates nothing new and learns no second language — implementing a
-component *in* C++ is gh-1149, and tabled.
+The fix RESTORED C99's spelling under `__cplusplus`, with `#undef complex` /
+`#define complex _Complex` in `clib_common.h`. **That mechanism is gone —
+gh-1246 replaced it, and it must not come back.** A macro cannot be scoped, so
+it did not stop at jm's headers: it leaked into the whole consuming
+translation unit and made `std::complex` unusable in it, in either include
+order. The headers parsed and the callers broke.
+
+The spelling is fixed at the source instead. jm stores `_Complex` (it is what
+`_CTYPE_META` is keyed on) and now emits `_Complex` everywhere, so there is
+nothing to rewrite and no macro to leak. `complex` typed by an author is still
+accepted as an input alias, resolved before anything renders. Everything below
+still holds; only the mechanism changed.
+
+What this buys is the mixed-language case and nothing more: an author with C99
+*and* C++11 algorithms can include a jm component's header from their own C++
+and call it. jm generates nothing new and learns no second language —
+implementing a component *in* C++ is gh-1149, and tabled.
 
 The type crosses the boundary; C99's complex *arithmetic* vocabulary does not.
 `I`, `_Complex_I`, `creal()`, `cimag()` are C-only, and a C++ caller uses GNU
@@ -30,6 +42,15 @@ Both halves are tested, because compiling is not calling: the sweep proves
 every header parses, and the linked test proves a value actually survives the
 crossing. A header that compiles while the ABI disagrees would pass the first
 and fail the second.
+
+Neither half can see gh-1246, and that is worth stating so the pair is not
+mistaken for full coverage. The sweep compiles each header ALONE, and the
+leaked macro only did damage in a TU that also used `std::complex`. The linked
+caller below is written in `float _Complex` with `__real__`/`__imag__` and
+never compiles a `std::complex` (the name appears in this docstring, not in
+any compiled source), and it hand-compiles one `_core.c` rather than linking
+the built `lib<pkg>.so`. `tests/test_gh1246_cxx_std_complex.py` covers all
+three.
 """
 
 from __future__ import annotations

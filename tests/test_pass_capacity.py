@@ -51,13 +51,13 @@ class TestPassCapacity:
         h = (proj / "native/inc/ddc/ddc_core.h").read_text()
         assert (
             "size_t ddc_execute(ddc_state_t *state,"
-            " const float complex *x, size_t x_len,"
-            " float complex *out, size_t max_out);" in h
+            " const float _Complex *x, size_t x_len,"
+            " float _Complex *out, size_t max_out);" in h
         )
 
     def test_core_c_stub_has_capacity(self, proj):
         c = (proj / "native/src/ddc/ddc_core.c").read_text()
-        assert "float complex *out, size_t max_out)" in c
+        assert "float _Complex *out, size_t max_out)" in c
         assert "(void)max_out;" in c
 
     def test_ext_call_passes_capacity(self, proj):

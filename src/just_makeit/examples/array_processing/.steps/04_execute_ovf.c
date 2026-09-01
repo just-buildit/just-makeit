@@ -11,16 +11,16 @@ hbdecim_execute_ovf_max_out (hbdecim_state_t *state)
 }
 
 size_t
-hbdecim_execute_ovf (hbdecim_state_t *state, const float complex *in,
-                     size_t n_in, float complex *out, /* primary */
-                     uint8_t *ovf)                    /* secondary */
+hbdecim_execute_ovf (hbdecim_state_t *state, const float _Complex *in,
+                     size_t n_in, float _Complex *out, /* primary */
+                     uint8_t *ovf)                     /* secondary */
 {
   size_t n_out = 0;
   for (size_t i = 0; i + 1 < n_in; i += 2)
     {
-      float complex y = (in[i] + in[i + 1]) * 0.5f;
-      out[n_out]      = y;
-      ovf[n_out]      = (cabsf (y) > 1.0f) ? 1 : 0;
+      float _Complex y = (in[i] + in[i + 1]) * 0.5f;
+      out[n_out]       = y;
+      ovf[n_out]       = (cabsf (y) > 1.0f) ? 1 : 0;
       n_out++;
     }
   return n_out;

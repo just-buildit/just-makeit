@@ -1,8 +1,8 @@
 // base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
-static inline float complex
-running_stats_step (running_stats_state_t *state, float complex x)
+static inline float _Complex running_stats_step (running_stats_state_t *state,
+                                                 float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;

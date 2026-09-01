@@ -427,7 +427,7 @@ class TestArrayParamCLI:
             cwd=dest,
         )
         text = (dest / "native/src/nco/nco_core.c").read_text(encoding="utf-8")
-        assert "const float complex *ctrl" in text
+        assert "const float _Complex *ctrl" in text
         assert "size_t ctrl_len" in text
 
     def test_method_bad_array_elem_type_exits_1(self, tmp_path):
@@ -2197,7 +2197,7 @@ class TestImplCLI:
     def test_impl_object(self, tmp_path):
         src_file = tmp_path / "algo.c"
         src_file.write_text(
-            "float complex my_step(void) { return 0.0f; }\n",
+            "float _Complex my_step(void) { return 0.0f; }\n",
             encoding="utf-8",
         )
         dest = tmp_path / "proj"

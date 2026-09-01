@@ -41,7 +41,7 @@ HEADER = """\
 extern "C" {
 #endif
 
-float complex gain_scale(gain_state_t *state, float complex x);
+float _Complex gain_scale(gain_state_t *state, float _Complex x);
 
 #ifdef __cplusplus
 }
@@ -62,12 +62,12 @@ class TestTheRewriteIsAnnounced:
         changed = _inject_decls_into_core_h(
             path,
             "gain",
-            ["float complex gain_scale(gain_state_t *state, double x);"],
+            ["float _Complex gain_scale(gain_state_t *state, double x);"],
         )
         assert changed
         err = capsys.readouterr().err
         assert "replacing the declaration of gain_scale()" in err
-        assert "float complex x);" in err, "the old prototype must be shown"
+        assert "float _Complex x);" in err, "the old prototype must be shown"
         assert "double x);" in err, "and the new one"
 
     def test_the_warning_says_where_the_build_will_break(
@@ -79,7 +79,7 @@ class TestTheRewriteIsAnnounced:
         _inject_decls_into_core_h(
             path,
             "gain",
-            ["float complex gain_scale(gain_state_t *state, double x);"],
+            ["float _Complex gain_scale(gain_state_t *state, double x);"],
         )
         err = capsys.readouterr().err
         assert "_core.c" in err
@@ -92,11 +92,11 @@ class TestTheRewriteIsAnnounced:
         _inject_decls_into_core_h(
             path,
             "gain",
-            ["float complex gain_scale(gain_state_t *state, double x);"],
+            ["float _Complex gain_scale(gain_state_t *state, double x);"],
         )
         text = path.read_text()
         assert "double x);" in text
-        assert "float complex x);" not in text
+        assert "float _Complex x);" not in text
         assert text.count("gain_scale") == 1, "must not duplicate"
 
 
@@ -104,7 +104,7 @@ class TestItStaysQuietWhenNothingChanged:
     def test_an_identical_decl_is_silent(self, tmp_path, capsys):
         path = _header(tmp_path)
         decl = (
-            "float complex gain_scale(gain_state_t *state, float complex x);"
+            "float _Complex gain_scale(gain_state_t *state, float _Complex x);"
         )
         assert _inject_decls_into_core_h(path, "gain", [decl]) is False
         assert capsys.readouterr().err == ""
@@ -117,10 +117,10 @@ class TestItStaysQuietWhenNothingChanged:
         path = _header(
             tmp_path,
             HEADER.replace(
-                "float complex gain_scale(gain_state_t *state, "
-                "float complex x);",
-                "float complex gain_scale(gain_state_t *const state, "
-                "float complex x);",
+                "float _Complex gain_scale(gain_state_t *state, "
+                "float _Complex x);",
+                "float _Complex gain_scale(gain_state_t *const state, "
+                "float _Complex x);",
             ),
         )
         before = path.read_text()
@@ -128,8 +128,8 @@ class TestItStaysQuietWhenNothingChanged:
             path,
             "gain",
             [
-                "float complex gain_scale(gain_state_t *state, "
-                "float complex x);"
+                "float _Complex gain_scale(gain_state_t *state, "
+                "float _Complex x);"
             ],
         )
         assert path.read_text() == before
@@ -151,7 +151,7 @@ class TestItStaysQuietWhenNothingChanged:
         _inject_decls_into_core_h(
             path,
             "gain",
-            ["float complex gain_scale(gain_state_t *state, double x);"],
+            ["float _Complex gain_scale(gain_state_t *state, double x);"],
             skip_names=frozenset({"gain_scale"}),
         )
         assert path.read_text() == before
@@ -190,7 +190,7 @@ class TestTheReportedReproduction:
             for ln in original.splitlines()
             if "gain_scale" in ln and ln.rstrip().endswith(");")
         )
-        hand = proto.replace("float complex x)", "const float complex x_in)")
+        hand = proto.replace("float _Complex x)", "const float _Complex x_in)")
         assert hand != proto, "the hand edit must change the prototype"
         header.write_text(original.replace(proto, hand, 1))
 

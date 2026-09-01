@@ -694,7 +694,7 @@ class TestVoidReturn:
         c = (sink / "native/src/sink/sink_core.c").read_text(encoding="utf-8")
         assert "void *output" not in c
         assert "sink_steps(state, input, n)" in c or (
-            "const float complex    *input" in c
+            "const float _Complex    *input" in c
             and "size_t               n)" in c
         )
 
@@ -764,13 +764,13 @@ class TestArrayArgType:
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
             encoding="utf-8"
         )
-        assert "const float complex *x, size_t x_len" in h
+        assert "const float _Complex *x, size_t x_len" in h
 
     def test_core_h_step_returns_correct_type(self, arr_obj):
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
             encoding="utf-8"
         )
-        assert "static inline float complex" in h
+        assert "static inline float _Complex" in h
 
     def test_core_h_no_steps(self, arr_obj):
         h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
