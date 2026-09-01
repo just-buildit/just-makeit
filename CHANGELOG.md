@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+### Added
+
+- **A `kind = "handle"` module is a valid `object` target (gh-1227).**
+    gh-794 exists precisely so a handle can hand its pointer to another module
+    -- its own docstring calls the handle "the shape most likely to be on the
+    giving end" and "the only one that could not give one" before that change.
+    gh-1224 then taught jm to *name* a producer, and named only components. So
+    the one kind built to be borrowed from was the one kind a consumer could
+    not name.
+
+    0.73.1 shipped the message half; this is the capability half, which was
+    blocked on gh-1229 -- there was no point resolving `object = "<handle>"`
+    against a `capsule` key that did not survive the next save.
+
+    Every slot is **read**, not derived, which is the lesson gh-1234 charged
+    for: `handle_type` gives the C type (the generated struct stores exactly
+    `<handle_type> *h`, and the capsule lends it), `capsule` the name, `header`
+    the include, `type_name` the class. A handle generates one class, so
+    `<module>.<Class>` is accepted only when the class matches. A `capsule` or
+    `composer` module is still not a target, and the refusal no longer promises
+    gh-1227 as pending or describes a capsule module as the kind that is one.
+
+    `handle_package_resolved` / `handle_header_resolved` came out of it: the
+    two fallbacks were spelled inline at four call sites and this needed a
+    fifth. A consumer disagreeing with the producer about either path is a
+    broken include or a broken import, not a warning.
+
 ## [0.73.1] — 2026-09-01
 
 ### Fixed
