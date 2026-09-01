@@ -43,13 +43,85 @@ _FMT = {
 }
 
 
+#: Keys a composer field row legitimately carries, used only to say which of
+#: the author's keys jm did NOT read when the row has no `type`. Deliberately
+#: not a validator -- see gh-1236 for why that needs measuring rather than a
+#: hand-written set, and note this one is allowed to be generous: naming one
+#: key too few in a message costs nothing, refusing one costs a manifest.
+_FIELD_KEYS = frozenset(
+    {
+        "name",
+        "type",
+        "enum",
+        "default",
+        "bytes",
+        "complex",
+        "doc",
+        "c_ptr",
+        "c_len",
+        "coerce",
+        "aliases",
+    }
+)
+
+
 def _field_fmt(field: dict) -> str:
+    """The ``PyArg_ParseTupleAndKeywords`` format char for one source field.
+
+    Raises
+    ------
+    ValueError
+        When the field declares no ``type`` and none of the shapes that stand
+        in for one. gh-1234: this indexed ``field["type"]`` unconditionally,
+        so a field carrying a key jm does not read on this table -- the report
+        wrote `object`, which is an init_param key -- reached here and came out
+        as a bare ``KeyError: 'type'`` from inside the renderer. That sends a
+        reader looking for a malformed field when the answer is "that key is
+        not supported here", and gh-1227 already settled the principle for the
+        neighbouring case: say what the name IS before saying what it is not.
+
+        Nothing validates a composer sub-table row, which is why the key got
+        this far in silence; that is gh-1236 and is deliberately not fixed by
+        this refusal, because a key set derived wrong turns working manifests
+        red and deserves to be measured rather than guessed.
+    """
     if field.get("_ranged"):
         return "O"  # scalar or (lo, hi) — decoded post-parse
     if field.get("enum"):
         return "s"
     if field.get("bytes") or field.get("complex"):
         return "O"  # opaque: a bytes buffer / a numpy complex64 array
+    if "type" not in field:
+        name = field.get("name", "<unnamed>")
+        extra = ", ".join(
+            sorted(k for k in field if k not in _FIELD_KEYS and k[0] != "_")
+        )
+        why = (
+            f" It declares {extra}, which jm does not read on a composer "
+            f"field."
+            if extra
+            else ""
+        )
+        hint = (
+            "\n`object` is an init_param key (gh-1224). A composer field is a "
+            "member of the source struct, not a constructor argument, and the "
+            "capsule path does not reach one yet -- see gh-1235."
+            if "object" in field
+            else ""
+        )
+        raise ValueError(
+            f"composer source field '{name}': no `type`.{why} A field crosses "
+            f"as a C scalar, so it needs `type` -- one of "
+            f"{', '.join(sorted(_FMT))} -- or one of the shapes that stands in "
+            f"for one: `enum`, `bytes = true`, `complex = true`.{hint}"
+        )
+    if field["type"] not in _FMT:
+        raise ValueError(
+            f"composer source field '{field.get('name', '<unnamed>')}': "
+            f'`type = "{field["type"]}"` is not a type a field can cross '
+            f"as; jm marshals {', '.join(sorted(_FMT))}, or use `enum`, "
+            f"`bytes = true` or `complex = true`."
+        )
     return _FMT[field["type"]]
 
 

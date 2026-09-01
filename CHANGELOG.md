@@ -2,6 +2,37 @@
 
 ### Fixed
 
+- **jm refuses two `object` references it was answering wrongly (gh-1234).**
+    Reported against 0.73.0 by a downstream that adopted the pin the same day.
+    Both halves are one defect in different clothes -- a confident answer for a
+    case jm has no information about.
+
+    `resolve_object_ref` read the capsule *name* from the producer and then
+    **derived** the C type it points at, from the component id. That holds for
+    the default producer and only for it: a `type = "capsule"` property
+    publishes `expr or "self->handle"`, and `self->handle` is the object's
+    `<comp>_state_t *`. Declare an `expr` reaching a member and the capsule
+    carried one pointer while the consumer's `create()` was generated taking
+    another -- a silent type confusion across exactly the ABI boundary the
+    capsule triangle exists to protect, and the worst possible failure for a
+    feature whose argument was "the name is read, not derived". Such a
+    reference is now refused, quoting the `expr` and the still-working gh-790
+    spelling with the capsule name filled in. The default producer is
+    unaffected, and so is an author who writes `expr = "self->handle"` out.
+
+    `object` on a composer `source.fields` row came out of the renderer as
+    `KeyError: 'type'`. A composer field is a member of the source struct, not
+    a constructor argument, so `object` is a real key one table over -- and
+    gh-1227 settled that jm says what a name IS before saying what it is not.
+    The refusal names the field, names `object` as an init_param key, and lists
+    every shape that stands in for a `type`. A `type` jm cannot marshal is
+    refused in the same voice instead of `KeyError`-ing one line later.
+
+    Filed rather than fixed here: gh-1235 (a producer cannot declare what its
+    pointer *is*, which is what both halves actually want) and gh-1236
+    (composer sub-table rows are validated by nothing, which is why the key
+    reached the renderer in silence).
+
 - **Every key a `[module.X]` face accepts now survives the next save
     (gh-1229).** `_keys` decided which keys a kind module accepts and `_dump`
     decided which it wrote back. Those are two answers to one question, and for

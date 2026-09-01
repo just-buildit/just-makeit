@@ -797,6 +797,20 @@ A **view** is a legal target (`frame.FrameDesc` above is one), and resolves to
 the same capsule — it is the same C core. Naming a component that publishes no
 capsule is refused with the `jm property` line that would fix it.
 
+The `type` is the one thing still **derived**, and it is sound only for a
+producer publishing the default `self->handle` — which *is* the object's
+`<component>_state_t *`. A capsule property may instead carry an `expr`
+reaching a member, and then the published pointer is something jm has no way
+to name: a producer cannot declare what its pointer *is* yet
+([gh-1235](https://github.com/just-buildit/just-makeit/issues/1235)). So an
+`object` reference to such a producer is **refused** rather than resolved to a
+type the capsule does not carry. Write that one out the long way, naming the
+type yourself:
+
+```sh
+jm object seg --init-param 'frame:const wfm_frame_desc_t *:capsule:p.frame.desc:wfm/frame.h'
+```
+
 !!! note "This is sugar, not a new mechanism"
 
     Two generated objects could always be wired constructor-to-constructor:
