@@ -127,6 +127,39 @@ class TestItRefusesWithTheFix:
         assert "publishes no capsule" in str(e.value)
         assert "jm property seg _capsule --type capsule" in str(e.value)
 
+    def test_a_declared_MODULE_is_not_reported_as_undeclared(self, tmp_path):
+        """gh-1227. `plain` IS declared -- as a module. Calling it an
+        undeclared component sends the reader to check a spelling that is
+        already right, against a list that cannot contain the answer no
+        matter what they type. A confidently wrong diagnosis costs more than
+        the missing feature standing behind it."""
+        root = _project(tmp_path, module="m")
+        cfg = C.load(root)
+        with pytest.raises(ValueError) as e:
+            C.resolve_object_ref(cfg, "m")
+        msg = str(e.value)
+        assert "undeclared" not in msg
+        assert "is a declared module, not a component" in msg
+        # ...and it names what CAN be referenced instead.
+        assert "frame" in msg and "seg" in msg
+
+    def test_a_kind_module_says_so_and_names_the_working_spelling(
+        self, tmp_path
+    ):
+        """A `kind` module is the shape most likely to be wanted here (gh-794
+        exists so a handle can give a capsule), so the refusal names the open
+        issue and the spelling that works TODAY rather than only refusing."""
+        root = _project(tmp_path)
+        cfg = C.load(root)
+        cfg.setdefault("module", {})["ring"] = {"kind": "handle"}
+        with pytest.raises(ValueError) as e:
+            C.resolve_object_ref(cfg, "ring")
+        msg = str(e.value)
+        assert 'kind = "handle" module' in msg
+        assert "gh-1227" in msg
+        assert "gh-790" in msg  # the spelling that works today
+        assert "undeclared" not in msg
+
     def test_object_and_capsule_together_are_refused(self, tmp_path):
         """Allowing both would re-create the duplication `object` removes,
         with no answer to which one wins."""
