@@ -35,6 +35,27 @@
     Gated end-to-end: a pre-gh-1246 project, migrated, compiles from C++11
     with `std::complex` in **both** include orders.
 
+### Fixed
+
+- **`make ship` no longer watches the wrong release run.** Re-vendored from
+    canonical (just-buildit.github.io#36). `release-watch` selected the run on
+    `headBranch == <tag>` alone, which is not enough once a tag has been
+    deleted and re-pushed: a run from the previous push still carries that
+    name, and a tag push returns *before* GitHub creates the new run -- so the
+    "wait for the run to appear" loop was satisfied on its first iteration by a
+    run that had finished hours earlier.
+
+    Measured here on v0.74.0: the first attempt failed its pre-publish smoke,
+    the tag was deleted, the defect fixed and the tag re-pushed;
+    `release-watch` then reported the **first** run's failure -- twelve red
+    smoke jobs, `publish: skipped` -- while the real run was still in progress
+    and went on to publish cleanly. The ordering was never wrong (`gh run list`
+    is newest-first and `[0]` is correct); the existence check was.
+
+    It matches on the tag's commit now, resolved from the remote with `^{}`
+    peeling, falling back to name-only with a warning when a tag resolves to
+    nothing.
+
 ## [0.74.0] — 2026-09-01
 
 ### Breaking
