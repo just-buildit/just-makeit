@@ -84,6 +84,31 @@
     `_composer._FIELD_KEYS` -- the list gh-1234's refusal names -- **is** the
     registry's `composer field` vocabulary now rather than a second copy of it.
 
+- **`jm split-objects` / `migrate` no longer destroy a property's `capsule`
+    (gh-1242).** `_property_dump_lines` emitted a hand-written chain of keys
+    and had fallen ten behind: `capsule`, `codec`, `entry_fn`, `entry_type`,
+    `type_field`, `value_field`, `count_field`, `default`, `out`, `mutable`.
+
+    It survives an ordinary save because `_write_doc` round-trips an existing
+    file through tomlkit, which preserves unknown keys generically -- so the
+    loss only appears when one of those two commands rewrites a section from
+    the parsed dict. Splitting a project left a property still typed `capsule`
+    that **published nothing**, and after gh-1224 every `object` reference to
+    that component stopped resolving against a name that used to be right. A
+    codec property (gh-554) lost its decoder the same way.
+
+    The dumper derives the remainder from `PROPERTY_KEYS` now instead of
+    listing it, keeping the hand-ordered head (`enum` reads best under `type`).
+
+    The guard written to prevent exactly this -- `test_gh549_property_dump_keys`
+    -- could not see it. Its docstring promised "any key the dumper forgets
+    fails it, including one that does not exist yet", and that was true of the
+    assertion and false of the **fixture**: "fully-populated" meant four
+    hand-written dicts, so it covered the keys someone had remembered to add to
+    a sample. It now asserts that its shapes' union covers `PROPERTY_KEYS`, so
+    a key added with no representative fails there rather than going quietly
+    uncovered.
+
 ## [0.73.1] — 2026-09-01
 
 ### Fixed
