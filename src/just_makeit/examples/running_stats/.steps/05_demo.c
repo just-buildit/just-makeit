@@ -8,8 +8,8 @@ main (void)
 {
   running_stats_state_t *s = running_stats_create (0, 0.0, 0.0);
 
-  float         data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
-  float complex y;
+  float data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
+  float _Complex y;
   for (int i = 0; i < 8; i++)
     y = running_stats_step (s, data[i] + 0.0f * I);
 

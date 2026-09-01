@@ -13,7 +13,6 @@ from .._types import (
     _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
-    _ctype_display,
 )
 
 
@@ -154,7 +153,7 @@ def capsule_unwrap_c(
         ``'int' object has no attribute '_capsule'`` names an implementation
         detail instead of the requirement. Two questions, two parameters.
     """
-    disp = _ctype_display(ctype)
+    disp = ctype
     if not disp.endswith("*"):
         disp += " "
     cap = f"{name}_cap"
@@ -367,7 +366,7 @@ def _build_params_parse(
         elif is_array_param_type(ptype):
             elem_ct = array_elem_ctype(ptype)
             npy_enum = _CTYPE_TO_NPY[elem_ct]
-            elem_disp = _ctype_display(elem_ct)
+            elem_disp = elem_ct
             obj_var = f"{pname}_obj"
             arr_var = f"{pname}_arr"
 
@@ -466,7 +465,7 @@ def _build_params_parse(
                     f'enum = "{ptype[len("enum:") :]}" }}'
                 )
             meta = _CTYPE_META[ptype]
-            disp = _ctype_display(ptype)
+            disp = ptype
             fmt_chars.append(meta["fmt"])
 
             if "parse_type" in meta:
@@ -532,7 +531,7 @@ def _step_parse_block(
     field, so omitting it is free and the override is non-persistent. Empty
     ``ctrl`` reproduces the original byte-for-byte (the ``|`` is absent).
     """
-    disp = _ctype_display(sample_type)
+    disp = sample_type
     ctrl_locals = "".join(
         f"    {cdisp} {name} = self->handle->{name};\n"
         for name, cdisp, _ in ctrl

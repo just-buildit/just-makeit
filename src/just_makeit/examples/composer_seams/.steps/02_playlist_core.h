@@ -32,7 +32,7 @@ typedef struct playlist_state playlist_state_t;
 
 playlist_state_t *playlist_create (const track_t *tracks, size_t n, int repeat,
                                    int continuous);
-size_t playlist_execute (playlist_state_t *state, float complex *out,
+size_t playlist_execute (playlist_state_t *state, float _Complex *out,
                          size_t max);
 /* Reflects the RESOLVED spec back, so `Mix.segments` can rebuild OO objects
  * from what the kernel actually holds rather than from what was passed in. */

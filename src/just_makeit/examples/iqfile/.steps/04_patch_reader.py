@@ -19,7 +19,7 @@ if "<unistd.h>" not in text:
 # ── step() in _core.h ──────────────────────────────────────────────────────
 OLD = """\
     (void)state; /* TODO: implement */
-    return (float complex)0;"""
+    return (float _Complex)0;"""
 
 NEW = """\
     int16_t pair[2] = {0, 0};

@@ -17,7 +17,6 @@ from ._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
     record_tuple_build,
-    _ctype_display,
     _join_fmt_with_optional,
     array_elem_ctype,
     is_array_param_type,
@@ -563,14 +562,14 @@ def _fn_c_params(
             c_parts.append(f"{_coerce.PATH_C_TYPE}{n}")
             suppress_parts.append(f"(void){n};")
         elif is_array_param_type(t):
-            elem_disp = _ctype_display(array_elem_ctype(t))
+            elem_disp = array_elem_ctype(t)
             qual = "" if is_out else "const "
             c_parts.append(f"{qual}{elem_disp} *{n}")
             c_parts.append(f"size_t {n}_len")
             suppress_parts.append(f"(void){n};")
             suppress_parts.append(f"(void){n}_len;")
         else:
-            c_parts.append(f"{_ctype_display(t)} {n}")
+            c_parts.append(f"{t} {n}")
             suppress_parts.append(f"(void){n};")
     suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
     return c_parts, suppress
@@ -586,7 +585,7 @@ def _scalar_c_param(p: tuple) -> str:
     n, t = p[0], p[1]
     if t == "path":
         return f"{_coerce.PATH_C_TYPE}{n}"
-    return f"{_ctype_display(t)} {n}"
+    return f"{t} {n}"
 
 
 def fn_c_decl(
@@ -614,7 +613,7 @@ def fn_c_decl(
     """
     result_fields = result_fields or []
     if result_fields:
-        rt_disp = _ctype_display(return_type)
+        rt_disp = return_type
         c_parts, _ = _fn_c_params(params)
         # gh-1072: the result buffer joins the list BEFORE it is joined into
         # text. Appending it to an already-rendered list is what produced
@@ -636,12 +635,12 @@ def fn_c_decl(
             _out_ctype, out_disp = "char", "char"
         else:
             _out_ctype, _ = parse_out_type(out_type)
-            out_disp = _ctype_display(_out_ctype)
+            out_disp = _out_ctype
         c_parts: list[str] = []
         for p in arr_p:
             n, t = p[0], p[1]
             qual = "" if (len(p) > 2 and p[2]) else "const "
-            c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
+            c_parts.append(f"{qual}{array_elem_ctype(t)} *{n}")
             c_parts.append(f"size_t {n}_len")
         if not variable_output:
             c_parts.append(f"{out_disp} *out")
@@ -651,7 +650,7 @@ def fn_c_decl(
             c_parts.append(f"{out_disp} *out")
         _decl_ret = _out_fn_return_disp(return_type, variable_output)
         return f"{_decl_ret} {fn_name}({c_param_list(c_parts)});\n"
-    ret_disp = _ctype_display(return_type)
+    ret_disp = return_type
     c_parts, _ = _fn_c_params(params)
     return f"{ret_disp} {fn_name}({c_param_list(c_parts)});\n"
 
@@ -674,7 +673,7 @@ def _out_fn_return_disp(return_type: str, variable_output: bool) -> str:
         return "void"
     meta = _CTYPE_META.get(return_type)
     if meta and meta.get("kind") == "int":
-        return _ctype_display(return_type)
+        return return_type
     return "void"
 
 
@@ -716,7 +715,7 @@ def fn_c_inline_stub(
     }
     <BLANKLINE>
     """
-    ret_disp = _ctype_display(return_type)
+    ret_disp = return_type
     ret_meta = _CTYPE_META.get(return_type)
     c_parts, suppress = _fn_c_params(params)
     c_ret_line = (
@@ -751,7 +750,7 @@ def fn_c_stub(
     """
     result_fields = result_fields or []
     if result_fields:
-        rt_disp = _ctype_display(return_type)
+        rt_disp = return_type
         c_parts, suppress = _fn_c_params(params)
         # gh-1072: same order as `fn_c_decl` above, and it has to be — the
         # stub's signature must match the prototype character for character.
@@ -786,13 +785,13 @@ def fn_c_stub(
             _out_ctype, out_disp = "char", "char"
         else:
             _out_ctype, _ = parse_out_type(out_type)
-            out_disp = _ctype_display(_out_ctype)
+            out_disp = _out_ctype
         c_parts: list[str] = []
         suppress_parts: list[str] = []
         for p in arr_p:
             n, t = p[0], p[1]
             qual = "" if (len(p) > 2 and p[2]) else "const "
-            c_parts.append(f"{qual}{_ctype_display(array_elem_ctype(t))} *{n}")
+            c_parts.append(f"{qual}{array_elem_ctype(t)} *{n}")
             c_parts.append(f"size_t {n}_len")
             suppress_parts += [f"(void){n};", f"(void){n}_len;"]
         if not variable_output:
@@ -822,7 +821,7 @@ def fn_c_stub(
             + (_stub_ret_line + "\n" if _stub_ret_line else "")
             + "}\n"
         )
-    ret_disp = _ctype_display(return_type)
+    ret_disp = return_type
     ret_meta = _CTYPE_META.get(return_type)
     c_parts, suppress = _fn_c_params(params)
     c_ret_line = (
@@ -919,7 +918,7 @@ def _build_params_parse(
         elif is_array_param_type(ptype):
             elem_ct = array_elem_ctype(ptype)
             npy_enum = _CTYPE_TO_NPY[elem_ct]
-            elem_disp = _ctype_display(elem_ct)
+            elem_disp = elem_ct
             obj_var = f"{pname}_obj"
             arr_var = f"{pname}_arr"
 
@@ -987,7 +986,7 @@ def _build_params_parse(
             # in conv_lines, before any array/path acquisition, so the
             # early returns need no cleanup.
             cname = p["capsule"]
-            disp = _ctype_display(ptype)
+            disp = ptype
             if not disp.endswith("*"):
                 disp += " "
             obj_var = f"{pname}_obj"
@@ -1019,7 +1018,7 @@ def _build_params_parse(
             call_args.append(pname)
         else:
             meta = _CTYPE_META[ptype]
-            disp = _ctype_display(ptype)
+            disp = ptype
             fmt_chars.append(meta["fmt"])
 
             if "parse_type" in meta:
@@ -1140,7 +1139,7 @@ def _py_wrapper_for_function(
         # through _CTYPE_META's to_py (the shared record_tuple_build), not a
         # second format-char table that fell back to a cast-less "i".
         _bv = record_tuple_build(result_fields, "_results[_i]")
-        _rt_disp = _ctype_display(return_type)
+        _rt_disp = return_type
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
         # max_results_param names an existing param already in call_args (the
         # C signature has no extra trailing param for it); otherwise fn_c_decl
@@ -1237,7 +1236,7 @@ def _py_wrapper_for_function(
         # zero-Python (the helper used to allocate internally in hand-Python).
         _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
-        out_disp = _ctype_display(_base_ctype)
+        out_disp = _base_ctype
         if out_size:
             len_expr = out_size
         else:
@@ -1278,7 +1277,7 @@ def _py_wrapper_for_function(
         # holds the output length (e.g. "float64[M]").
         _base_ctype, _scalar_len_param = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
-        out_disp = _ctype_display(_base_ctype)
+        out_disp = _base_ctype
         if _scalar_len_param:
             len_expr = _scalar_len_param
         else:
@@ -1319,7 +1318,7 @@ def _py_wrapper_for_function(
         # generator's `close_returns`. Covers both a failed primitive and a
         # NULL/neg sentinel the C fn returns on an open/alloc failure. Capture
         # the rc first, run any array/path cleanup, then check + raise.
-        _rt_disp = _ctype_display(return_type)
+        _rt_disp = return_type
         ret_line = (
             f"    {_rt_disp} _rc = {fn_name}({call_args});\n"
             f"{cleanup}"
@@ -1338,7 +1337,7 @@ def _py_wrapper_for_function(
         # one-line form is kept so enum-free output is byte-identical.)
         _has_path = any(p["type"] == "path" for p in params)
         if _has_path and cleanup:
-            _rt_disp = _ctype_display(return_type)
+            _rt_disp = return_type
             ret_line = (
                 f"    {_rt_disp} _r = {fn_name}({call_args});\n"
                 f"{cleanup}"

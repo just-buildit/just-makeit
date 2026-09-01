@@ -35,8 +35,8 @@ extern "C" {
 
 # jm's generated form: single line, canonical param names, same 5-arg arity.
 _GEN = (
-    "size_t x_execute(x_state_t *state, const float complex *in, "
-    "size_t n_in, float complex *out, size_t max_out);"
+    "size_t x_execute(x_state_t *state, const float _Complex *in, "
+    "size_t n_in, float _Complex *out, size_t max_out);"
 )
 
 
@@ -53,8 +53,14 @@ def test_multiline_decl_replaced_in_place(tmp_path):
     # Replaced, not duplicated: exactly one declaration of x_execute.
     assert _ndecls(text) == 1
     assert _GEN in text
-    # The old multi-line form is gone.
-    assert "const float _Complex *in, size_t n_in," not in text
+    # The old multi-line form is gone. Its hallmarks are the wrap after
+    # `n_in,` and the space before the paren -- NOT the spelling of the
+    # complex type. That spelling used to be the only thing this assertion
+    # actually distinguished (the fixture said `_Complex`, the generated
+    # form said `complex`), so it passed without ever checking the wrap.
+    # gh-1246 made both spellings `_Complex` and exposed it.
+    assert "size_t n_in,\n" not in text
+    assert "x_execute (" not in text
 
 
 def test_idempotent_second_inject(tmp_path):
@@ -71,8 +77,8 @@ def test_skip_names_preserves_multiline_decl(tmp_path):
     h = tmp_path / "x_core.h"
     h.write_text(_HEADER, encoding="utf-8")
     four_arg = (
-        "size_t x_execute(x_state_t *state, const float complex *in, "
-        "size_t n_in, float complex *out);"
+        "size_t x_execute(x_state_t *state, const float _Complex *in, "
+        "size_t n_in, float _Complex *out);"
     )
     changed = _inject_decls_into_core_h(
         h, "x", [four_arg], skip_names=frozenset({"x_execute"})

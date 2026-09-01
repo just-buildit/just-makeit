@@ -307,7 +307,7 @@ opaque = true
 
 # step() body: advance NCO one sample, map phase → complex exponential.
 _STEP_OLD = (
-    "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+    "    (void)state; /* TODO: implement */\n    return (float _Complex)0;"
 )
 _STEP_NEW = """\
     uint32_t phase;

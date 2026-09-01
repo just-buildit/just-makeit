@@ -568,7 +568,7 @@ class TestVariableOutputComplexParam:
 
     def test_complex_param_uses_raw_and_to_c(self):
         # A variable_output method with a double _Complex param must declare
-        # Py_complex x_raw, parse into it, then convert to double complex x.
+        # Py_complex x_raw, parse into it, then convert to double _Complex x.
         methods = [
             {
                 "name": "push_ptr",
@@ -581,7 +581,7 @@ class TestVariableOutputComplexParam:
         ctx = make_methods_ctx("delay", "Delay", methods)
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
-        assert "double complex x = x_raw.real + x_raw.imag * I" in c
+        assert "double _Complex x = x_raw.real + x_raw.imag * I" in c
         assert "= 0;" not in c or "x_raw = {0.0, 0.0}" in c
 
     def test_float_complex_param_uses_raw_and_to_c(self):
@@ -598,7 +598,7 @@ class TestVariableOutputComplexParam:
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
         assert (
-            "float complex x = (float)x_raw.real + (float)x_raw.imag * I" in c
+            "float _Complex x = (float)x_raw.real + (float)x_raw.imag * I" in c
         )
 
 
@@ -798,8 +798,8 @@ class TestInjectDeclsStaticInline:
         header = (
             "#ifndef UTIL_H\n#define UTIL_H\n"
             "#define JM_FORCEINLINE __attribute__((always_inline)) inline\n"
-            "JM_FORCEINLINE float complex\n"
-            "square_clip(float complex y, float lin)\n"
+            "JM_FORCEINLINE float _Complex\n"
+            "square_clip(float _Complex y, float lin)\n"
             "{\n    return y;\n}\n"
             "#endif /* UTIL_CORE_H */\n"
         )
@@ -808,7 +808,7 @@ class TestInjectDeclsStaticInline:
         changed = _inject_decls_into_core_h(
             path,
             "util",
-            ["float complex square_clip(float complex y, float lin);"],
+            ["float _Complex square_clip(float _Complex y, float lin);"],
         )
         assert not changed
         assert path.read_text().count("square_clip") == 1

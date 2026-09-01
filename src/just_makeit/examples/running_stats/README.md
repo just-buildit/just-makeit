@@ -66,8 +66,8 @@ the real part and sample variance into the imaginary part:
 
 ```c
 // before
-static inline float complex
-running_stats_step (const running_stats_state_t *state, float complex x)
+static inline float _Complex running_stats_step (
+    const running_stats_state_t *state, float _Complex x)
 {
   (void)state; /* TODO: implement using state variables */
   return x;
@@ -78,8 +78,8 @@ running_stats_step (const running_stats_state_t *state, float complex x)
 // base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
-static inline float complex
-running_stats_step (running_stats_state_t *state, float complex x)
+static inline float _Complex running_stats_step (running_stats_state_t *state,
+                                                 float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;
@@ -149,8 +149,8 @@ main (void)
 {
   running_stats_state_t *s = running_stats_create (0, 0.0, 0.0);
 
-  float         data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
-  float complex y;
+  float data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
+  float _Complex y;
   for (int i = 0; i < 8; i++)
     y = running_stats_step (s, data[i] + 0.0f * I);
 
@@ -195,8 +195,8 @@ restore the algorithm — now on top of the new `min_val` / `max_val` fields:
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
 // State:  min_val / max_val track the smallest / largest sample seen so far.
-static inline float complex
-running_stats_step (running_stats_state_t *state, float complex x)
+static inline float _Complex running_stats_step (running_stats_state_t *state,
+                                                 float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;

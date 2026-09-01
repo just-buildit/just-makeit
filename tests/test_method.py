@@ -194,8 +194,8 @@ class TestMethodCreatesStubs:
             encoding="utf-8"
         )
         assert "nco_process(" in text
-        # _ctype_display("float _Complex") → "float complex"
-        assert "float complex x" in text
+        # gh-1246: the canonical `_Complex` spelling reaches the stub.
+        assert "float _Complex x" in text
 
 
 class TestMethodDoesNotModifyCMake:
@@ -1217,7 +1217,7 @@ class TestModuleInfraRegenOnMethod:
         )
         frag = _nco_frag(module_project)
         assert "_execute_iq_buf_1" not in frag
-        assert "malloc(_max * sizeof(float complex))" not in frag
+        assert "malloc(_max * sizeof(float _Complex))" not in frag
         assert "if (!_cap || _cap < _need) _cap = _need;" in frag
 
 
@@ -1454,7 +1454,7 @@ class TestMethodWithArrayParam:
         text = (arr_method / "native/src/nco/nco_core.c").read_text(
             encoding="utf-8"
         )
-        assert "const float complex *ctrl" in text
+        assert "const float _Complex *ctrl" in text
 
     def test_c_stub_has_len_param(self, arr_method):
         text = (arr_method / "native/src/nco/nco_core.c").read_text(
@@ -2092,7 +2092,9 @@ class TestMethodSingleRecord:
             self._scaffold(tmp_path) / "native/src/tm/tm_core.c"
         ).read_text("utf-8")
         assert "tone_metrics_t" in core
-        assert "tm_analyze(tm_state_t *state, const float complex *in," in core
+        assert (
+            "tm_analyze(tm_state_t *state, const float _Complex *in," in core
+        )
         assert "return _r;" in core
 
     def test_pyi_returns_the_named_record(self, tmp_path):
@@ -2401,7 +2403,7 @@ class TestMethodSingleRecord:
         )
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
         assert (
-            "(const float complex *)PyArray_DATA(in_arr);" in ext
+            "(const float _Complex *)PyArray_DATA(in_arr);" in ext
         )  # hoisted above the block
         assert "tone_metrics_t _r;" in ext  # declared outside the block
         assert "Py_BEGIN_ALLOW_THREADS" in ext

@@ -16,7 +16,7 @@ def patch_step(text):
     stub_re = re.compile(
         r"static inline void\s*\n"
         r"acc_cf64_step\("
-        r"acc_cf64_state_t \*state, double complex x\)\s*\{"
+        r"acc_cf64_state_t \*state, double _Complex x\)\s*\{"
         r"[^}]*\}",
         re.DOTALL,
     )
@@ -29,7 +29,7 @@ def patch_step(text):
         sys.exit(1)
     impl = (
         "static inline void\n"
-        "acc_cf64_step(acc_cf64_state_t *state, double complex x)\n"
+        "acc_cf64_step(acc_cf64_state_t *state, double _Complex x)\n"
         "{\n"
         "    state->acc += x;\n"
         "}"
@@ -71,7 +71,7 @@ text = patch_fn(text, "get", "    return state->acc;")
 text = patch_fn(
     text,
     "dump",
-    "    double complex v = state->acc;\n"
+    "    double _Complex v = state->acc;\n"
     "    state->acc = 0.0 + 0.0 * I;\n"
     "    return v;",
 )

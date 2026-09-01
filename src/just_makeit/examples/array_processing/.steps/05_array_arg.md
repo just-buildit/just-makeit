@@ -12,7 +12,7 @@ The generated `step()` takes a numpy array and a length:
 
 ```c
 int buf_proc_step(buf_proc_state_t *state,
-                  const float complex *x, size_t x_len)
+                  const float _Complex *x, size_t x_len)
 {
     (void)x;
     (void)x_len;

@@ -135,13 +135,13 @@ def test_nogil_manifest_roundtrip(tmp_path):
 def test_hoist_lifts_only_numpy_accessors():
     call = (
         "dec_execute(self->handle,"
-        " (const float complex *)PyArray_DATA(x_arr),"
+        " (const float _Complex *)PyArray_DATA(x_arr),"
         " (size_t)PyArray_SIZE(x_arr), self->_execute_buf,"
         " self->_execute_buf_cap)"
     )
     decls, rewritten = _hoist_for_nogil(call)
     # two accessors hoisted, with their casts preserved as the local types
-    assert "const float complex * _ng0 = (const float complex *)" in decls
+    assert "const float _Complex * _ng0 = (const float _Complex *)" in decls
     assert "size_t _ng1 = (size_t)PyArray_SIZE(x_arr);" in decls
     assert "PyArray_" not in rewritten  # all accessors replaced
     # plain memory operands are left untouched

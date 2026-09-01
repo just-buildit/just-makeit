@@ -6,17 +6,17 @@ Open `native/inc/fir/fir_core.h` and replace `fir_step`.  The delay line
 is mutated, so the signature drops `const`:
 
 ```c
-static inline float complex
-fir_step(fir_state_t *state, float complex x)
+static inline float _Complex
+fir_step(fir_state_t *state, float _Complex x)
 {
     memmove(&state->delay[1], &state->delay[0],
-            (16 - 1) * sizeof(float complex));
+            (16 - 1) * sizeof(float _Complex));
     state->delay[0] = x;
 
-    float complex y = 0.0f;
+    float _Complex y = 0.0f;
     for (int k = 0; k < 16; k++)
         y += state->coeffs[k] * state->delay[k];
-    return (float complex)state->gain * y;
+    return (float _Complex)state->gain * y;
 }
 ```
 

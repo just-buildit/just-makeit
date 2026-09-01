@@ -276,7 +276,7 @@ opaque = true
 '''
 
 _TONE_STEP_OLD = (
-    "    (void)state; /* TODO: implement */\n    return (float complex)0;"
+    "    (void)state; /* TODO: implement */\n    return (float _Complex)0;"
 )
 _TONE_STEP_NEW = """\
     uint32_t phase;
@@ -341,7 +341,7 @@ def _implement_c_bodies(proj: Path):
     )
     _patch(
         inc / "lfo" / "lfo_core.h",
-        "    (void)state; /* TODO: implement */\n    return (float complex)0;",
+        "    (void)state; /* TODO: implement */\n    return (float _Complex)0;",
         "    state->phase += state->inc;\n"
         "    float a = (float)state->phase\n"
         "              * (float)(2.0 * 3.14159265358979323846\n"
@@ -364,7 +364,7 @@ def _implement_c_bodies(proj: Path):
     _patch(
         inc / "mixer" / "mixer_core.h",
         "    (void)state; /* TODO: implement using state variables */\n"
-        "    return (float complex)x;",
+        "    return (float _Complex)x;",
         "    return x * lfo_step(state->osc);",
     )
     # resamp — variable_output + pass_capacity + nogil (decimate by 2)

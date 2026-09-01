@@ -58,7 +58,7 @@ def run(root: Path) -> None:
     assert stub_re.search(text), "step stub not found in header"
     impl = (
         "JM_FORCEINLINE JM_HOT float\n"
-        "power_est_step(power_est_state_t *state, float complex x)\n"
+        "power_est_step(power_est_state_t *state, float _Complex x)\n"
         "{\n"
         "    float re = crealf(x), im = cimagf(x);\n"
         "    float mag_sq = re * re + im * im;\n"

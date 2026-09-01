@@ -120,7 +120,7 @@ class TestMachineryIsGone:
         body = src[src.index("Py_BEGIN_ALLOW_THREADS") :]
         body = body[: body.index("Py_END_ALLOW_THREADS")]
         assert "PyArray_" not in body
-        assert "float complex *_d0 = (float complex *)PyArray_DATA(" in src
+        assert "float _Complex *_d0 = (float _Complex *)PyArray_DATA(" in src
 
 
 def _skip_reason() -> str | None:

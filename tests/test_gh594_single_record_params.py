@@ -2,7 +2,7 @@
 
 Reported as "`single = true` + an array param generates malformed C":
 
-    float complex[] rx = 0;                    /* not valid C */
+    float _Complex[] rx = 0;                    /* not valid C */
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "d|K", ...))
     ber_align_t _r = meter_align(self->handle, rx, t0);
 
@@ -64,7 +64,7 @@ class TestParamExpansionHelper:
 
     def test_array_param_expands_to_pointer_and_length(self):
         assert c_param_parts(ARRAY_PARAMS) == [
-            "const float complex *rx",
+            "const float _Complex *rx",
             "size_t rx_len",
             "size_t t0",
         ]
@@ -102,7 +102,7 @@ class TestPrototype:
         )
         assert proto == (
             "ber_align_t meter_align(meter_state_t *state,"
-            " const float complex *rx, size_t rx_len, size_t t0);"
+            " const float _Complex *rx, size_t rx_len, size_t t0);"
         )
 
     def test_single_record_with_scalar_params_only(self):
@@ -137,7 +137,7 @@ class TestPrototype:
         )
         assert proto == (
             "size_t meter_scan(meter_state_t *state,"
-            " const float complex *rx, size_t rx_len, size_t t0,"
+            " const float _Complex *rx, size_t rx_len, size_t t0,"
             " ber_hit_t *result, size_t max_results);"
         )
 
@@ -155,7 +155,7 @@ class TestPrototype:
         )
         assert proto == (
             "tone_metrics_t tm_analyze(tm_state_t *state,"
-            " const float complex *in, size_t n_in, double lo);"
+            " const float _Complex *in, size_t n_in, double lo);"
         )
 
 
@@ -310,9 +310,12 @@ class TestGeneratedBinding:
         )
 
     def test_no_malformed_array_declaration(self, ext):
-        """The headline symptom: `float complex[] rx = 0;`."""
-        assert "float complex[] rx" not in ext
-        assert "complex[]" not in ext
+        """The headline symptom: `float _Complex[] rx = 0;`."""
+        assert "float _Complex[] rx" not in ext
+        # Case-folded so it stays armed against either spelling. As a
+        # lowercase-only check it went vacuous the moment jm started
+        # emitting `_Complex` (gh-1246): nothing could match it again.
+        assert "complex[]" not in ext.lower()
 
     def test_array_param_is_parsed_as_an_object_not_a_double(self, ext):
         # was: "d|K" -- the array param parsed as a scalar double.
@@ -331,7 +334,7 @@ class TestGeneratedBinding:
     def test_array_param_is_converted_and_sized(self, ext):
         assert "PyArray_FROM_OTF(" in ext
         assert (
-            "const float complex *rx = (const float complex *)PyArray_DATA(rx_arr);"
+            "const float _Complex *rx = (const float _Complex *)PyArray_DATA(rx_arr);"
             in ext
         )
         assert "size_t rx_len = (size_t)PyArray_SIZE(rx_arr);" in ext
@@ -352,7 +355,7 @@ class TestGeneratedBinding:
         header = (dest / "native/inc/meter/meter_core.h").read_text("utf-8")
         assert (
             "ber_align_t meter_align(meter_state_t *state,"
-            " const float complex *rx, size_t rx_len, size_t t0);" in header
+            " const float _Complex *rx, size_t rx_len, size_t t0);" in header
         )
 
     def test_scalar_only_params_also_agree(self, tmp_path):

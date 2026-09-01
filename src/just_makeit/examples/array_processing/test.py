@@ -202,7 +202,7 @@ def run(root: Path) -> None:
     core_h = (
         proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
     ).read_text()
-    assert "const float complex *x, size_t x_len" in core_h, (
+    assert "const float _Complex *x, size_t x_len" in core_h, (
         "array arg not in step signature"
     )
     assert "buf_proc_steps" not in core_h, (
@@ -283,7 +283,7 @@ def run(root: Path) -> None:
 
     # Verify C stub has the *out parameter
     src = (proj_conv / "native/src/ci8_conv/ci8_conv_core.c").read_text()
-    assert "float complex *out" in src, "*out param missing from stub"
+    assert "float _Complex *out" in src, "*out param missing from stub"
     assert "const int8_t *raw" in src, "raw array param missing from stub"
 
     # my_conv was created only for structural verification; remove it so it

@@ -56,7 +56,7 @@ class TestDtypeDispatch:
         # complex64 path: default create with the declared complex dtype.
         assert "NPY_COMPLEX64" in block
         assert (
-            "fir_create((const float complex *)PyArray_DATA(taps_arr), "
+            "fir_create((const float _Complex *)PyArray_DATA(taps_arr), "
             "taps_len)" in block
         )
 

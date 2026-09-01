@@ -45,7 +45,7 @@ def plain_accessor_decls(
     same prototypes when a property arrives by manifest rather than by CLI, and
     two copies of a signature rule is how they drift.
     """
-    disp = T._ctype_display(ctype)
+    disp = ctype
     decls = [
         f"{disp} {object_name}_get_{prop_name}"
         f"(const {object_name}_state_t *state);"
@@ -349,7 +349,7 @@ def run(
         else:
             vtype = value_type or T.OBJECT_VALUE_TYPE
             if vtype != T.OBJECT_VALUE_TYPE:
-                vdisp = T._ctype_display(vtype)
+                vdisp = vtype
                 if not vdisp.endswith("*"):
                     vdisp += " "
                 decls.append(
@@ -358,7 +358,7 @@ def run(
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")
     elif field:
-        disp = T._ctype_display(ctype)
+        disp = ctype
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
     elif not buf_field and not expr and not capsule:

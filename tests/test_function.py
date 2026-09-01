@@ -238,7 +238,7 @@ class TestFunctionOutParamRoundTrip:
         c = _fn_c(root, "dsp", "envelope_power")
         assert "float *output" in c
         assert "const float *output" not in c
-        assert "const float complex *input" in c
+        assert "const float _Complex *input" in c
 
 
 class TestModuleScaffold:
@@ -746,7 +746,7 @@ class TestFunctionWithArrayParam:
 
     def test_core_c_has_const_ptr_param(self, arr_fn):
         text = _fn_c(arr_fn, "fft", "apply_window")
-        assert "const float complex *data" in text
+        assert "const float _Complex *data" in text
 
     def test_core_c_has_len_param(self, arr_fn):
         text = _fn_c(arr_fn, "fft", "apply_window")
@@ -762,7 +762,7 @@ class TestFunctionWithArrayParam:
             encoding="utf-8"
         )
         assert "apply_window" in text
-        assert "const float complex *data" in text
+        assert "const float _Complex *data" in text
 
     def test_ext_c_has_pyarray_from_otf(self, arr_fn):
         text = (arr_fn / "native/src/fft/fft_ext.c").read_text(

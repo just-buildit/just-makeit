@@ -1,5 +1,5 @@
 static inline int32_t
-cf32_to_q15_step (const cf32_to_q15_state_t *state, float complex x)
+cf32_to_q15_step (const cf32_to_q15_state_t *state, float _Complex x)
 {
   float   scale   = state->scale;
   int16_t i       = (int16_t)(crealf (x) * scale);

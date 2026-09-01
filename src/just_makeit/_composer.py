@@ -330,7 +330,7 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     Defaults (overridable): ``state_type = <generator>_state_t``,
     ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
     destroy}``, ``header = <generator>/<generator>_core.h``,
-    ``output_type = "float complex"`` (NumPy ``complex64``). Returns ``None`` when
+    ``output_type = "float _Complex"`` (NumPy ``complex64``). Returns ``None`` when
     the source declares no generation."""
     g = C.composer_source(cfg, module).get("generates")
     if not g:
@@ -345,7 +345,7 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "reset_fn": g.get("reset_fn", f"{gen}_reset"),
         "destroy_fn": g.get("destroy_fn", f"{gen}_destroy"),
         "header": g.get("header", f"{gen}/{gen}_core.h"),
-        "output_type": g.get("output_type", "float complex"),
+        "output_type": g.get("output_type", "float _Complex"),
     }
 
 

@@ -50,7 +50,7 @@ playlist_create (const track_t *tracks, size_t n, int repeat, int continuous)
 }
 
 size_t
-playlist_execute (playlist_state_t *state, float complex *out, size_t max)
+playlist_execute (playlist_state_t *state, float _Complex *out, size_t max)
 {
   size_t n = 0;
 
@@ -70,7 +70,7 @@ playlist_execute (playlist_state_t *state, float complex *out, size_t max)
       tr = &state->tracks[state->track_i];
       for (size_t k = 0; k < tr->n_sources; k++)
         sum += tr->sources[k].gain;
-      out[n++] = (float complex)sum;
+      out[n++] = (float _Complex)sum;
       if (++state->pos >= tr->dur)
         {
           state->pos = 0;

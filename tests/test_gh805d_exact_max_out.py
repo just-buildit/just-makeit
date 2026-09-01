@@ -182,14 +182,14 @@ _MAX_OUT_IMPL = (
     "    (void)state;\n    return n_in / 4;\n}"
 )
 _DECIMATE_STUB = (
-    "size_t\ncic_decimate(cic_state_t *state, const float complex *in,"
-    " size_t n_in, float complex *out)\n{\n"
+    "size_t\ncic_decimate(cic_state_t *state, const float _Complex *in,"
+    " size_t n_in, float _Complex *out)\n{\n"
     "    (void)state;\n    (void)in; (void)n_in;\n"
     "    (void)out;\n    return 0; /* placeholder */\n}"
 )
 _DECIMATE_IMPL = (
-    "size_t\ncic_decimate(cic_state_t *state, const float complex *in,"
-    " size_t n_in, float complex *out)\n{\n"
+    "size_t\ncic_decimate(cic_state_t *state, const float _Complex *in,"
+    " size_t n_in, float _Complex *out)\n{\n"
     "    (void)state;\n"
     "    size_t n_out = n_in / 4;\n"
     "    for (size_t i = 0; i < n_out; i++) out[i] = in[i * 4];\n"

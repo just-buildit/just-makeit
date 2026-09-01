@@ -7,8 +7,8 @@
 
 #if JM_SIMD_WIDTH_F32 > 1
 JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch (fir_filter_state_t *state, const float complex *window,
-                       float complex *out)
+fir_filter_step_batch (fir_filter_state_t *state, const float _Complex *window,
+                       float _Complex *out)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   for (int k = 0; k < FIR_TAPS; k++)

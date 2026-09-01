@@ -6,7 +6,6 @@ from .. import _coerce
 from .._types import (
     _CTYPE_META,
     _KIND_PY_ISINSTANCE,
-    _ctype_display,
     np_dtype_doctest_lines,
 )
 from .._docstring import (
@@ -261,10 +260,7 @@ def make_step_ctx(
     # Shared control-param plumbing, woven into every shape below. Each tuple is
     # (name, c_display_type, pyarg_fmt). All suffixes collapse to "" when no
     # field is controllable, so the default scaffold stays byte-identical.
-    _ctrl = [
-        (n, _ctype_display(ct), _CTYPE_META[ct]["fmt"])
-        for n, ct in controllable
-    ]
+    _ctrl = [(n, ct, _CTYPE_META[ct]["fmt"]) for n, ct in controllable]
     # C signature suffix on comp_step()/comp_steps() and forward decls.
     ctrl_c_sig = "".join(f", {disp} {n}" for n, disp, _ in _ctrl)
     # Pass-through of the in-scope locals at an internal/forwarding call site.
@@ -345,8 +341,8 @@ def make_step_ctx(
     if arg_type.endswith("[]") and return_type.endswith("[]"):
         in_elem = arg_type[:-2]
         out_elem = return_type[:-2]
-        in_disp = _ctype_display(in_elem)
-        out_disp = _ctype_display(out_elem)
+        in_disp = in_elem
+        out_disp = out_elem
         in_np_enum = ctx.get("in_np_enum", "NPY_COMPLEX64")
         out_np_enum_bw = ctx.get("out_np_enum", "NPY_COMPLEX64")
         in_zero = _CTYPE_META[in_elem]["zero"]
@@ -938,7 +934,7 @@ def make_step_ctx(
             step_py_flags = _gen_step_flags
     elif arg_type.endswith("[]"):
         elem_type = arg_type[:-2]
-        elem_disp = _ctype_display(elem_type)
+        elem_disp = elem_type
         in_np_enum = ctx.get("in_np_enum", "NPY_COMPLEX64")
         step_return = ctx.get("step_return_expr", "Py_RETURN_NONE")
         # array-input step() has no steps(); control overrides are positional

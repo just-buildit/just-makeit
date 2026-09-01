@@ -61,8 +61,8 @@ The filter must update the delay line, so the signature changes from `const` to 
 
 ```c
 // before
-static inline float complex
-fir_filter_step (const fir_filter_state_t *state, float complex x)
+static inline float _Complex fir_filter_step (const fir_filter_state_t *state,
+                                              float _Complex x)
 {
   (void)state; /* TODO: implement DSP using state variables */
   return x;
@@ -71,20 +71,20 @@ fir_filter_step (const fir_filter_state_t *state, float complex x)
 
 ```c
 // after
-static inline float complex
-fir_filter_step (fir_filter_state_t *state, float complex x)
+static inline float _Complex fir_filter_step (fir_filter_state_t *state,
+                                              float _Complex x)
 {
   /* Shift delay line — oldest sample falls off the end */
   memmove (&state->delay[1], &state->delay[0],
-           (16 - 1) * sizeof (float complex));
+           (16 - 1) * sizeof (float _Complex));
   state->delay[0] = x;
 
   /* Convolve: y = sum_k( coeffs[k] * delay[k] ) */
-  float complex y = 0.0f + 0.0f * I;
+  float _Complex y = 0.0f + 0.0f * I;
   for (int k = 0; k < 16; k++)
     y += state->coeffs[k] * state->delay[k];
 
-  return (float complex)state->gain * y;
+  return (float _Complex)state->gain * y;
 }
 ```
 
@@ -172,9 +172,9 @@ main (void)
   printf ("h[1] = %.2f\n", view[1]); /* 0.50 */
 
   /* Feed a unit impulse */
-  float complex in[16]  = { 0 };
-  float complex out[16] = { 0 };
-  in[0]                 = 1.0f + 0.0f * I;
+  float _Complex in[16]  = { 0 };
+  float _Complex out[16] = { 0 };
+  in[0]                  = 1.0f + 0.0f * I;
   fir_filter_steps (f, in, out, 16);
 
   printf ("out[0]=%.2f  out[1]=%.2f  out[2]=%.2f\n", crealf (out[0]),
@@ -276,7 +276,7 @@ baseline:  106.8 M complex samples/sec
 with SIMD: 154.1 M complex samples/sec   (1.4×)
 ```
 
-The ceiling is the `memmove` of 120 bytes (15 `float complex`) that runs every
+The ceiling is the `memmove` of 120 bytes (15 `float _Complex`) that runs every
 sample.  The vectoriser can auto-vectorise the 16-tap MAC, but it can't overlap
 that store with the accumulate.  Flags alone don't get you there.
 
@@ -298,8 +298,8 @@ that stamps out the outer dispatch loop so you never write it by hand.
 
 #if JM_SIMD_WIDTH_F32 > 1
 JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch (fir_filter_state_t *state, const float complex *window,
-                       float complex *out)
+fir_filter_step_batch (fir_filter_state_t *state, const float _Complex *window,
+                       float _Complex *out)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   for (int k = 0; k < FIR_TAPS; k++)
@@ -331,7 +331,7 @@ but you never write `steps()`.
 ```c
 #define FIR_CHUNK 256 /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS (fir_filter, fir_filter_state_t, float complex, FIR_LENGTH,
+JM_DEFINE_STEPS (fir_filter, fir_filter_state_t, float _Complex, FIR_LENGTH,
                  FIR_BATCH, FIR_CHUNK)
 ```
 

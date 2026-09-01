@@ -66,8 +66,8 @@ def _block_in_elem_disp(arg_type: str) -> str:
     already its own element type.
     """
     if T.is_array_param_type(arg_type):
-        return T._ctype_display(T.array_elem_ctype(arg_type))
-    return T._ctype_display(arg_type)
+        return T.array_elem_ctype(arg_type)
+    return arg_type
 
 
 def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
@@ -82,7 +82,7 @@ def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
     src = out_type if out_type else return_type
     if src.endswith("[]"):
         src = src[:-2]
-    return T._ctype_display(src)
+    return src
 
 
 def _max_out_count_param(
@@ -154,12 +154,12 @@ def _methods_c_stub_variable(
         suppress_parts: list[str] = []
         for pn, pt in params:
             if T.is_array_param_type(pt):
-                elem_disp = T._ctype_display(T.array_elem_ctype(pt))
+                elem_disp = T.array_elem_ctype(pt)
                 p_parts.append(f"const {elem_disp} *{pn}")
                 p_parts.append(f"size_t {pn}_len")
                 suppress_parts += [f"(void){pn};", f"(void){pn}_len;"]
             else:
-                p_parts.append(f"{T._ctype_display(pt)} {pn}")
+                p_parts.append(f"{pt} {pn}")
                 suppress_parts.append(f"(void){pn};")
         step_param = ", " + ", ".join(p_parts)
         suppress_in = "    " + " ".join(suppress_parts)
@@ -169,8 +169,7 @@ def _methods_c_stub_variable(
 
     all_extra = list(multi_output)
     extra_out_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}"
-        for i, rt in enumerate(all_extra)
+        f", {rt} *out{i + 1}" for i, rt in enumerate(all_extra)
     )
     cap_param = ", size_t max_out" if pass_capacity else ""
     cap_suppress = " (void)max_out;" if pass_capacity else ""
@@ -234,7 +233,7 @@ def _methods_c_stub_result_fields(
     that prototype declares, so the two must not drift.
     """
     c_fn = c_fn or f"{component}_{name}"
-    ret_disp = T._ctype_display(return_type)
+    ret_disp = return_type
     has_arg = arg_type != "void"
     params = params or []
     if has_arg:
@@ -287,7 +286,7 @@ def _methods_c_stub_result_single(
     it with every declared param — a guaranteed "too many arguments".
     """
     c_fn = c_fn or f"{component}_{name}"
-    ret_disp = T._ctype_display(return_type)
+    ret_disp = return_type
     has_arg = arg_type != "void"
     params = params or []
     if has_arg:
@@ -332,7 +331,7 @@ def _methods_c_stub_fixed(
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
     c_fn = c_fn or f"{component}_{name}"
-    ret_disp = T._ctype_display(return_type)
+    ret_disp = return_type
     has_arg = arg_type != "void"
     multi_output = multi_output or []
     params = params or []
@@ -354,13 +353,12 @@ def _methods_c_stub_fixed(
         )
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}"
-        for i, rt in enumerate(multi_output)
+        f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
     )
     extra_suppress = "".join(
         f" (void)out{i + 1};" for i in range(len(multi_output))
     )
-    out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
+    out_param = f", {out_type} *out" if out_type else ""
     out_suppress = " (void)out;" if out_type else ""
 
     if params:
@@ -368,23 +366,23 @@ def _methods_c_stub_fixed(
         suppress_parts: list[str] = []
         if has_arg:
             if T.is_array_param_type(arg_type):
-                elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+                elem_disp = T.array_elem_ctype(arg_type)
                 param_parts.append(f"const {elem_disp} *x")
                 param_parts.append("size_t x_len")
                 suppress_parts.append("(void)x;")
                 suppress_parts.append("(void)x_len;")
             else:
-                param_parts.append(f"{T._ctype_display(arg_type)} x")
+                param_parts.append(f"{arg_type} x")
                 suppress_parts.append("(void)x;")
         for n, t in params:
             if T.is_array_param_type(t):
-                elem_disp = T._ctype_display(T.array_elem_ctype(t))
+                elem_disp = T.array_elem_ctype(t)
                 param_parts.append(f"const {elem_disp} *{n}")
                 param_parts.append(f"size_t {n}_len")
                 suppress_parts.append(f"(void){n};")
                 suppress_parts.append(f"(void){n}_len;")
             else:
-                param_parts.append(f"{T._ctype_display(t)} {n}")
+                param_parts.append(f"{t} {n}")
                 suppress_parts.append(f"(void){n};")
         param_str = ", ".join(param_parts)
         c_params = (
@@ -396,14 +394,14 @@ def _methods_c_stub_fixed(
         )
     elif has_arg:
         if T.is_array_param_type(arg_type):
-            elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+            elem_disp = T.array_elem_ctype(arg_type)
             c_params = (
                 f"{component}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
             )
             suppress = f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
         else:
-            arg_disp = T._ctype_display(arg_type)
+            arg_disp = arg_type
             c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
             suppress = (
                 f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
@@ -679,7 +677,7 @@ def _build_method_prototype(
     chain and :func:`run`'s stub dispatch).
     """
     c_fn = c_fn or f"{component}_{name}"
-    ret_disp = T._ctype_display(return_type)
+    ret_disp = return_type
     has_arg = arg_type != "void"
     multi_output = multi_output or []
     params = params or []
@@ -730,10 +728,9 @@ def _build_method_prototype(
         )
 
     extra_params = "".join(
-        f", {T._ctype_display(rt)} *out{i + 1}"
-        for i, rt in enumerate(multi_output)
+        f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
     )
-    out_param = f", {T._ctype_display(out_type)} *out" if out_type else ""
+    out_param = f", {out_type} *out" if out_type else ""
     cap_param = ", size_t max_out" if pass_capacity else ""
 
     if variable_output:
@@ -745,11 +742,11 @@ def _build_method_prototype(
             p_parts: list[str] = []
             for pn, pt in params:
                 if T.is_array_param_type(pt):
-                    elem_disp = T._ctype_display(T.array_elem_ctype(pt))
+                    elem_disp = T.array_elem_ctype(pt)
                     p_parts.append(f"const {elem_disp} *{pn}")
                     p_parts.append(f"size_t {pn}_len")
                 else:
-                    p_parts.append(f"{T._ctype_display(pt)} {pn}")
+                    p_parts.append(f"{pt} {pn}")
             step_param = ", " + ", ".join(p_parts)
         else:
             step_param = ", size_t n"
@@ -768,22 +765,22 @@ def _build_method_prototype(
         parts: list[str] = []
         if has_arg:
             if T.is_array_param_type(arg_type):
-                elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+                elem_disp = T.array_elem_ctype(arg_type)
                 parts.append(f"const {elem_disp} *x")
                 parts.append("size_t x_len")
             else:
-                parts.append(f"{T._ctype_display(arg_type)} x")
+                parts.append(f"{arg_type} x")
         for n, t in params:
             if T.is_array_param_type(t):
-                elem_disp = T._ctype_display(T.array_elem_ctype(t))
+                elem_disp = T.array_elem_ctype(t)
                 parts.append(f"const {elem_disp} *{n}")
                 parts.append(f"size_t {n}_len")
             else:
-                parts.append(f"{T._ctype_display(t)} {n}")
+                parts.append(f"{t} {n}")
         c_params = f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
     elif has_arg:
         if T.is_array_param_type(arg_type):
-            elem_disp = T._ctype_display(T.array_elem_ctype(arg_type))
+            elem_disp = T.array_elem_ctype(arg_type)
             c_params = (
                 f"{component}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
@@ -791,7 +788,7 @@ def _build_method_prototype(
         else:
             c_params = (
                 f"{component}_state_t *state, "
-                f"{T._ctype_display(arg_type)} x{extra_params}{out_param}"
+                f"{arg_type} x{extra_params}{out_param}"
             )
     else:
         c_params = f"{component}_state_t *state{extra_params}{out_param}"

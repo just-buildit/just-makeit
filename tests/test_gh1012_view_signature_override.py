@@ -149,7 +149,7 @@ class TestSignatureOverride:
         h = (
             override_project / "native" / "inc" / "rx" / "rx_core.h"
         ).read_text(encoding="utf-8")
-        assert "rx_block(rx_state_t *state, const float complex *" in h
+        assert "rx_block(rx_state_t *state, const float _Complex *" in h
         assert "rx_block_real(rx_state_t *state, const float *" in h
 
     def test_the_stub_is_scaffolded_into_the_shared_core(

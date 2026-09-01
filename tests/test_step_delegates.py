@@ -61,7 +61,7 @@ class TestDelegatorBodies:
         # step() forwards to steps(.., 1)
         assert "qpsk_steps(state, &x, &y, 1);" in h
         # state is no longer const (steps() mutates it)
-        assert "const qpsk_state_t *state, float complex x" not in h
+        assert "const qpsk_state_t *state, float _Complex x" not in h
         # a forward decl precedes the inline step() so it compiles
         assert "Forward decl" in h
         # steps() body must NOT call step() (would recurse)
@@ -93,7 +93,7 @@ class TestDelegatorBodies:
             tmp_path, "float _Complex", "float _Complex", delegate=False
         )
         assert "qpsk_steps(state, &x, &y, 1);" not in h
-        assert "return (float complex)x;" in h
+        assert "return (float _Complex)x;" in h
         assert "output[i] = qpsk_step(state, input[i]);" in c
 
 
