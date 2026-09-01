@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Every key a `[module.X]` face accepts now survives the next save
+    (gh-1229).** `_keys` decided which keys a kind module accepts and `_dump`
+    decided which it wrote back. Those are two answers to one question, and for
+    **20 of them** -- 9 on a handle, 10 on a capsule, 12 on a composer -- they
+    disagreed: the validator said yes, the writer had no branch, and the key was
+    gone from the file the command had just rewritten.
+
+    gh-794's `capsule` was the sharpest instance. It is what makes a handle
+    publish `_capsule` at all, so a handle another module borrows a pointer from
+    **stopped publishing it on the next mutating command**, and the consumer's
+    `PyCapsule_GetPointer` began failing against C nobody had touched. Nothing
+    warned. `create_error`, `create_error_message`, `type_name`, `create_fn`,
+    `destroy_fn`, `factories`, `getters`, `serializable`, `optional_backend`,
+    `close_returns`, `init_params`, `properties`, `extra_methods` and `cli` went
+    the same way. A hand-written manifest worked right up until the first `jm`
+    command rewrote it.
+
+    The writer's answer is now **derived** from the validator's:
+    `_keys.MODULE_KEYS_BY_KIND` is the one declaration, and `_dump` writes back
+    anything in it that its hand-written branches did not emit -- so a key added
+    to a `*_MODULE_KEYS` set is preserved without touching the dumper. What
+    counts as "already emitted" is read off the lines just produced, not from a
+    second list that could drift.
+
+    The gate derives its key list the same way and is per kind, because the
+    three faces have different vocabularies. It carries a representative value
+    for every key and **checks the fixture before trusting it**: a wrong row
+    shape reads as key loss, which is what made this issue's first sweep
+    over-report by five keys.
+
+    Left out deliberately, filed as gh-1232: four keys (`enums`, and a
+    composer's `stream` / `generator` / `flat_sources`) are accepted by the
+    validator and read by nobody. Three of them are a real key one table up.
+
 ## [0.73.0] — 2026-09-01
 
 ### Added

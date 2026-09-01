@@ -31,6 +31,7 @@ import sys as _sys
 # second. `_keys` imports only `_report`, so this is not a cycle.
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
+from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
 
 try:
     import tomllib
@@ -4833,6 +4834,83 @@ def _inline_computed(c: dict) -> str:
     return "{ " + ", ".join(parts) + " }"
 
 
+def _module_leftover_lines(
+    data: dict, header: list[str], subtables: list[str], mk: str
+) -> list[str]:
+    """The accepted `[module.X]` keys `_dump` has no hand-written branch for.
+
+    gh-1229. `_keys` decides which keys a module face accepts and `_dump`
+    decides which it writes back, and for twenty of them those two answers
+    disagreed: the validator said yes, the writer had no branch, and the key
+    was gone from the file the command had just rewritten. gh-794's `capsule`
+    was the sharpest instance -- a handle stopped publishing `_capsule` on the
+    next mutating command, so a consumer's `PyCapsule_GetPointer` began failing
+    against C nobody had touched.
+
+    So the writer's answer is now *derived* from the validator's:
+    :data:`_keys.MODULE_KEYS_BY_KIND` is the one declaration, and anything in
+    it that the hand-written block did not emit is written here as an inline
+    value. That is what makes it registration-free -- a key added to a
+    ``*_MODULE_KEYS`` set is preserved without anyone remembering this file.
+
+    What "did not emit" means is read off the lines just produced, not from a
+    second list that could drift: a ``key = `` assignment in the module's own
+    header, or a ``[module.X.key]`` / ``[[module.X.key]]`` sub-table header.
+    Only those two -- an assignment *inside* a sub-table belongs to a row, and
+    counting it would let a getter row's `type_name` mask the module's.
+
+    Parameters
+    ----------
+    data : dict
+        The `[module.X]` table as loaded.
+    header : list of str
+        The scalar lines already emitted for this module's own table.
+    subtables : list of str
+        The lines emitted after it (`functions`, `getters`, `source`, ...).
+    mk : str
+        The module's TOML key, as `_module_key` spells it.
+
+    Returns
+    -------
+    list of str
+        Assignment lines to splice in at the end of *header*, in the
+        vocabulary's sorted order so a manifest does not churn between saves.
+
+    Notes
+    -----
+    A falsy value is skipped, matching every hand-written branch above: an
+    empty list or table is indistinguishable from an absent key once written,
+    so emitting one would add churn without preserving anything.
+
+    Examples
+    --------
+    >>> _module_leftover_lines(
+    ...     {"kind": "handle", "capsule": "p.ring", "backing": "ring"},
+    ...     ['[module.ring]', 'kind = "handle"', 'backing = "ring"'],
+    ...     [],
+    ...     "ring",
+    ... )
+    ['capsule = "p.ring"']
+    """
+    accepted = _MODULE_KEYS_BY_KIND.get(str(data.get("kind") or ""))
+    if not accepted:
+        return []
+    written = {
+        m.group(1)
+        for m in (_re.match(r"(\w+) = ", line) for line in header)
+        if m
+    }
+    pat = _re.compile(r"\[\[?module\." + _re.escape(mk) + r"\.(\w+)\]\]?$")
+    written |= {
+        m.group(1) for m in (pat.match(line) for line in subtables) if m
+    }
+    return [
+        f"{k} = {_toml_value(data[k])}"
+        for k in sorted(accepted - written)
+        if data.get(k)
+    ]
+
+
 def _dump_composer_settings(mk: str, data: dict) -> list[str]:
     """gh-1126 rows, rendered so they survive `load` / `save`.
 
@@ -5241,6 +5319,11 @@ def _dump(cfg: dict) -> str:
         lines.append("")
 
     for mod, data in cfg.get("module", {}).items():
+        # gh-1229: where this module's block starts, and (below) where its
+        # scalar header ends -- so the accepted keys with no hand-written
+        # branch can be inserted back into the header rather than after the
+        # sub-tables, where TOML would bind them to the wrong table.
+        mod_start = len(lines)
         lines.append(f"[module.{_module_key(mod)}]")
         if data.get("no_generate") in (True, "true"):
             lines.append('no_generate = "true"')
@@ -5332,6 +5415,7 @@ def _dump(cfg: dict) -> str:
                 names_str = ", ".join(f'"{n}"' for n in names)
                 parts.append(f"{sub} = [{names_str}]")
             lines.append(f"reexports = {{ {', '.join(parts)} }}")
+        header_end = len(lines)
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{_module_key(mod)}.functions]]")
@@ -5426,6 +5510,12 @@ def _dump(cfg: dict) -> str:
             lines += _dump_composer_subtables(_module_key(mod), data)
         if data.get("kind") == "handle":
             lines += _dump_handle_subtables(_module_key(mod), data)
+        lines[header_end:header_end] = _module_leftover_lines(
+            data,
+            lines[mod_start:header_end],
+            lines[header_end:],
+            _module_key(mod),
+        )
 
     for comp in components(cfg):
         comp_data = cfg[comp]
