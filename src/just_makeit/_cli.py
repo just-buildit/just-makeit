@@ -766,6 +766,7 @@ def main() -> None:
         key_fn = ""
         value_fn = ""
         capsule = ""  # gh-788
+        capsule_type = ""  # gh-1235
 
         remaining = args[3:]
         i = 0
@@ -832,6 +833,9 @@ def main() -> None:
                 "--value-fn",
                 # gh-788: publish a borrowed pointer as a named PyCapsule.
                 "--capsule",
+                # gh-1235: and what that pointer IS, so a consumer naming
+                # this producer with `object` can line up against it.
+                "--capsule-type",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -856,6 +860,8 @@ def main() -> None:
                     value_fn = val
                 elif tok == "--capsule":
                     capsule = val  # gh-788
+                elif tok == "--capsule-type":
+                    capsule_type = val  # gh-1235
                 else:
                     expr = val
                 i += 1
@@ -873,6 +879,14 @@ def main() -> None:
             print(
                 "error: --buf-field and --expr are mutually exclusive — a "
                 "property is backed by a buffer or by an expression, not both",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if capsule_type and not capsule:
+            print(
+                "error: --capsule-type names the C type a capsule lends, so "
+                "it needs --capsule to say which capsule — on its own it "
+                "describes a pointer nothing publishes",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -897,6 +911,7 @@ def main() -> None:
             key_fn=key_fn,
             value_fn=value_fn,
             capsule=capsule,
+            capsule_type=capsule_type,
         )
 
     elif cmd == "warning":

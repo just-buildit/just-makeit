@@ -27,6 +27,30 @@
     fifth. A consumer disagreeing with the producer about either path is a
     broken include or a broken import, not a warning.
 
+- **A capsule producer can declare what its pointer IS (gh-1235).**
+    `capsule_type` on a `type = "capsule"` property, and `--capsule-type` on
+    `jm property`.
+
+    gh-1224 argued that the capsule *name* must be read from the producer
+    rather than derived, because the producer owns that string -- and then
+    derived the C type it points at, from the component id. That holds for one
+    producer and only one: a capsule property publishes
+    `expr or "self->handle"`, and `self->handle` **is** the object's
+    `<comp>_state_t *`. An `expr` reaching a member published something else
+    while the consumer's `create()` was generated taking `<comp>_state_t *`.
+    gh-1234 reported it and 0.73.1 refused the case; this is the answer, and
+    it makes the refusal's advice actionable. The type was never unknowable --
+    only undeclared.
+
+    Deliberately not `ctype`: on a property that is a legacy synonym for
+    `type`, and a capsule property's `type` is already the word `capsule`, so
+    reusing it would be one key answering two questions.
+
+    Measured while wiring it: `jm script` emitted **neither** `--capsule` nor
+    the new flag, so a replay reproduced a capsule property as a plain one --
+    a producer that publishes nothing. gh-1242's defect, one face over, and
+    invisible from it.
+
 ### Fixed
 
 - **Four module keys were accepted by the validator and read by nobody

@@ -821,19 +821,34 @@ name, `header` the include, `type_name` the class. A handle generates one
 class, so `wfm_writer.Writer` is accepted and any other suffix is refused. A
 `capsule` or `composer` module is still not a target.
 
-The `type` is the one thing still **derived**, and it is sound only for a
-producer publishing the default `self->handle` — which *is* the object's
-`<component>_state_t *`. A capsule property may instead carry an `expr`
-reaching a member, and then the published pointer is something jm has no way
-to name: a producer cannot declare what its pointer *is* yet
-([gh-1235](https://github.com/just-buildit/just-makeit/issues/1235)). So an
-`object` reference to such a producer is **refused** rather than resolved to a
-type the capsule does not carry. Write that one out the long way, naming the
-type yourself:
+The `type` is **read when the producer states it and inferred otherwise**.
+Undeclared, it is `<component>_state_t *`, which is right for a producer
+publishing the default `self->handle`. A capsule property may instead carry an
+`expr` reaching a member — and then the pointer is something no consumer can
+name, so the producer says so with `capsule_type` (gh-1235):
+
+```toml
+[[frame.properties]]
+name         = "_capsule"
+type         = "capsule"
+capsule      = "p.frame.desc"
+expr         = "&self->handle->d"        # publishes a member...
+capsule_type = "const wfm_frame_desc_t *"  # ...and this is what it IS
+```
 
 ```sh
-jm object seg --init-param 'frame:const wfm_frame_desc_t *:capsule:p.frame.desc:wfm/frame.h'
+jm property frame _capsule --type capsule --capsule p.frame.desc \
+    --expr '&self->handle->d' --capsule-type 'const wfm_frame_desc_t *'
 ```
+
+It is deliberately **not** `ctype`, which on a property is a legacy synonym for
+`type` — and a capsule property's `type` is already the word `capsule`, so
+reusing it would be one key answering two questions.
+
+An `expr`-publishing producer that declares no `capsule_type` is **refused**
+rather than resolved to a type the capsule does not carry, naming both fixes:
+declare it on the producer, or write the type out at the consumer the gh-790
+way.
 
 !!! note "This is sugar, not a new mechanism"
 
