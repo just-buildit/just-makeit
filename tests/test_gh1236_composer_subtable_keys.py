@@ -158,12 +158,21 @@ def test_every_accepted_key_has_a_representative() -> None:
 
 
 def test_the_walk_covers_every_dict_subtable_the_dumper_writes() -> None:
-    """Registration-free in the direction that matters: a composer sub-table
+    """Registration-free in the direction that matters: an ACCEPTED sub-table
     with no vocabulary is REPORTED, not skipped, so adding one cannot be a way
-    back into the silence this issue is about."""
-    cfg = _cfg()
-    cfg["module"][MOD]["brand_new_table"] = {"anything": 1}
-    assert "has no key vocabulary" in _warnings(cfg)
+    back into the silence this issue is about.
+
+    The condition is built rather than borrowed -- a made-up table name is
+    already reported as an unknown module key, and gh-1232 stopped this branch
+    from adding a second, contradictory message about the same mistake.
+    """
+    import just_makeit._keys as _k
+
+    saved = _k.KIND_DICT_TABLE_VOCAB.pop(("composer", "timeline"))
+    try:
+        assert "has no key vocabulary" in _warnings(_cfg())
+    finally:
+        _k.KIND_DICT_TABLE_VOCAB[("composer", "timeline")] = saved
 
 
 def test_a_clean_manifest_stays_silent(tmp_path: pathlib.Path) -> None:

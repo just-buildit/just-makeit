@@ -413,7 +413,6 @@ _SHARED_MODULE_KEYS = frozenset(
         "init_params",
         "methods",
         "properties",
-        "enums",
     }
 )
 
@@ -462,9 +461,6 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     "getters",
     "type_name",
     "create_fn",
-    "stream",
-    "generator",
-    "flat_sources",
     # gh-1126: post-construction settings.
     "settings",
 }
@@ -719,14 +715,14 @@ KIND_KEYS: dict[str, frozenset] = {
     "kind setting": KIND_SETTING_KEYS,
     "kind init_param": KIND_INIT_PARAM_KEYS,
     # gh-1236: the composer's dict sub-tables and the rows inside them.
-    "composer source": COMPOSER_SOURCE_KEYS,
-    "composer source.generates": COMPOSER_GENERATES_KEYS,
-    "composer segment": COMPOSER_SEGMENT_KEYS,
-    "composer timeline": COMPOSER_TIMELINE_KEYS,
-    "composer oo": COMPOSER_OO_KEYS,
-    "composer ergonomics": COMPOSER_ERGONOMICS_KEYS,
-    "composer json": COMPOSER_JSON_KEYS,
-    "composer cli": COMPOSER_CLI_KEYS,
+    "[module.X.source]": COMPOSER_SOURCE_KEYS,
+    "[module.X.source.generates]": COMPOSER_GENERATES_KEYS,
+    "[module.X.segment]": COMPOSER_SEGMENT_KEYS,
+    "[module.X.timeline]": COMPOSER_TIMELINE_KEYS,
+    "[module.X.oo]": COMPOSER_OO_KEYS,
+    "[module.X.composer]": COMPOSER_ERGONOMICS_KEYS,
+    "[module.X.json]": COMPOSER_JSON_KEYS,
+    "[module.X.cli]": COMPOSER_CLI_KEYS,
     "composer field": COMPOSER_FIELD_KEYS,
     "composer computed": COMPOSER_COMPUTED_KEYS,
 }
@@ -737,20 +733,20 @@ KIND_KEYS: dict[str, frozenset] = {
 #: separate because the walk differs: a dict sub-table is checked itself and
 #: then its own nested tables are, whereas a list one is checked per row.
 KIND_DICT_TABLE_VOCAB = {
-    ("composer", "source"): "composer source",
-    ("composer", "segment"): "composer segment",
-    ("composer", "timeline"): "composer timeline",
-    ("composer", "oo"): "composer oo",
-    ("composer", "composer"): "composer ergonomics",
-    ("composer", "json"): "composer json",
-    ("composer", "cli"): "composer cli",
+    ("composer", "source"): "[module.X.source]",
+    ("composer", "segment"): "[module.X.segment]",
+    ("composer", "timeline"): "[module.X.timeline]",
+    ("composer", "oo"): "[module.X.oo]",
+    ("composer", "composer"): "[module.X.composer]",
+    ("composer", "json"): "[module.X.json]",
+    ("composer", "cli"): "[module.X.cli]",
 }
 
 #: ``(kind, outer, inner)`` -> vocabulary, for a table nested one level down.
 #: ``source.generates`` is a table; ``source.fields`` / ``segment.fields`` /
 #: ``source.computed`` are arrays of inline tables.
 KIND_NESTED_VOCAB = {
-    ("composer", "source", "generates"): "composer source.generates",
+    ("composer", "source", "generates"): "[module.X.source.generates]",
     ("composer", "source", "fields"): "composer field",
     ("composer", "source", "computed"): "composer computed",
     ("composer", "segment", "fields"): "composer field",
@@ -897,6 +893,11 @@ def _entries(table: dict, key: str) -> list:
     return [e for e in value if isinstance(e, dict)]
 
 
+def _accepted_keys(kind: str) -> frozenset:
+    """The keys a ``kind`` module face accepts, or empty for an unknown kind."""
+    return KIND_KEYS.get(f"{kind} module", frozenset())
+
+
 def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
     """Collect the unrecognised keys of a kind module's TABLE sub-tables.
 
@@ -927,7 +928,13 @@ def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
             continue
         vocab = KIND_DICT_TABLE_VOCAB.get((kind, tbl))
         if vocab is None:
-            found.append(Unknown("unwalked sub-table", mod, tbl, ()))
+            # gh-1232: a name the module face does not accept AT ALL is
+            # already reported as an unknown key, and "no vocabulary for its
+            # rows" is a different claim about the same mistake -- it reads as
+            # "jm cannot check inside this" when the answer is "this does not
+            # belong here". One mistake, one message.
+            if tbl in _accepted_keys(kind):
+                found.append(Unknown("unwalked sub-table", mod, tbl, ()))
             continue
         found += _check(vocab, f"{mod}.{tbl}", body)
         for inner, val in body.items():
@@ -972,7 +979,17 @@ def _check_kind_module(mod: str, data: dict) -> list:
             # is unchecked. That is the state this whole issue is about, so
             # it is reported rather than skipped: adding a sub-table must not
             # be a way back into the silence.
-            found.append(Unknown("unwalked sub-table", mod, tbl, ()))
+            #
+            # gh-1232: but only for a key the face ACCEPTS. A name it does not
+            # accept is already reported as an unknown key, and this second
+            # message says the opposite thing about the same mistake -- "jm
+            # cannot check inside this" when the answer is "this does not
+            # belong here". gh-1114's own test had to pick `enums`, a key that
+            # validated and was read by nobody, precisely to reach this branch
+            # without tripping the unknown-key one; that key is gone now, so
+            # the interaction is settled here rather than worked around there.
+            if tbl in _accepted_keys(kind):
+                found.append(Unknown("unwalked sub-table", mod, tbl, ()))
             continue
         for row in rows:
             if not isinstance(row, dict):
