@@ -32,6 +32,7 @@ import sys as _sys
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
+from ._keys import PROPERTY_KEYS as _PROPERTY_KEYS
 
 try:
     import tomllib
@@ -5288,6 +5289,26 @@ def _property_dump_lines(p: dict, header: str) -> list[str]:
     for _fn in ("count_fn", "key_fn", "value_fn"):
         if p.get(_fn):
             lines.append(f'{_fn} = "{p[_fn]}"')
+    # gh-1242: everything else `PROPERTY_KEYS` accepts, DERIVED rather than
+    # listed. The hand-written chain above kept growing a key behind, and the
+    # cost is not cosmetic: `capsule` (gh-788 gap 4) was dropped here, so
+    # `jm split-objects` left a property still typed `capsule` that published
+    # nothing -- and after gh-1224 every `object` reference to that component
+    # stopped resolving against a name that used to be right. A codec property
+    # (gh-554) lost its decoder the same way.
+    #
+    # The order above is deliberate (`enum` reads best under `type`), so this
+    # appends the remainder rather than replacing the chain; a key handled
+    # above is already written and is skipped by `_written`.
+    _written = {
+        m.group(1)
+        for m in (_re.match(r"(\w+) = ", ln) for ln in lines[1:])
+        if m
+    }
+    for _k in sorted(_PROPERTY_KEYS - _written):
+        _v = p.get(_k)
+        if _v not in (None, "", False, [], {}):
+            lines.append(f"{_k} = {_toml_value(_v)}")
     lines.append("")
     return lines
 
