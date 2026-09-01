@@ -1,33 +1,5 @@
 ## [Unreleased]
 
-### Fixed
-
-- **The `_Complex` sweep reached CI and the shipped scripts too (gh-1246
-    follow-up).** gh-1246's sweep covered `tests/`, `examples/` and `docs/`,
-    and the review that checked it counted the same three trees. Neither looked
-    in `.github/`.
-
-    `artifact.yml`'s pre-publish smoke patches a generated stub through a regex
-    anchored on `float complex`. Once jm emitted `_Complex` it matched nothing
-    and asserted `stub not found` on **all twelve legs** -- and it surfaced in
-    the **v0.74.0 release run**, after the tag was pushed, rather than in a PR.
-    The publish gate held, `publish` and `github-release` were skipped and
-    nothing reached PyPI, which is the only reason this was cheap.
-
-    A second copy of the same patching logic lives in the shipped
-    `scripts/docker-e2e.sh` and had the same defect. Also swept: comments in
-    `templates/c/inc/jm_perf.h` and `templates/make/Makefile` (both land in
-    generated projects), two historical-bug comments, and 15 docs files.
-
-    `make lint` now runs `complex-spelling-check`, which reads **every tracked
-    file** and names the six allowed to carry the old spelling with the reason
-    each one is allowed -- the input alias table, the `jm bind` normaliser, the
-    `clib_common.h` comment that quotes it while explaining it, the CHANGELOG,
-    the migration command in `docs/upgrading.md`, and the test asserting the
-    registry rejects it as a stored key. An allow-list entry whose file no
-    longer contains the spelling is itself a failure: an exception nobody needs
-    reads as one somebody justified.
-
 ## [0.74.0] — 2026-09-01
 
 ### Breaking
@@ -256,6 +228,32 @@
     a sample. It now asserts that its shapes' union covers `PROPERTY_KEYS`, so
     a key added with no representative fails there rather than going quietly
     uncovered.
+
+- **The `_Complex` sweep reached CI and the shipped scripts too (gh-1246
+    follow-up).** gh-1246's sweep covered `tests/`, `examples/` and `docs/`,
+    and the review that checked it counted the same three trees. Neither looked
+    in `.github/`.
+
+    `artifact.yml`'s pre-publish smoke patches a generated stub through a regex
+    anchored on `float complex`. Once jm emitted `_Complex` it matched nothing
+    and asserted `stub not found` on **all twelve legs** -- and it surfaced in
+    the **v0.74.0 release run**, after the tag was pushed, rather than in a PR.
+    The publish gate held, `publish` and `github-release` were skipped and
+    nothing reached PyPI, which is the only reason this was cheap.
+
+    A second copy of the same patching logic lives in the shipped
+    `scripts/docker-e2e.sh` and had the same defect. Also swept: comments in
+    `templates/c/inc/jm_perf.h` and `templates/make/Makefile` (both land in
+    generated projects), two historical-bug comments, and 15 docs files.
+
+    `make lint` now runs `complex-spelling-check`, which reads **every tracked
+    file** and names the six allowed to carry the old spelling with the reason
+    each one is allowed -- the input alias table, the `jm bind` normaliser, the
+    `clib_common.h` comment that quotes it while explaining it, the CHANGELOG,
+    the migration command in `docs/upgrading.md`, and the test asserting the
+    registry rejects it as a stored key. An allow-list entry whose file no
+    longer contains the spelling is itself a failure: an exception nobody needs
+    reads as one somebody justified.
 
 ## [0.73.1] — 2026-09-01
 
