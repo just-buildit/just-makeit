@@ -121,6 +121,80 @@ def _rewrite_makefile_bench(text: str) -> str:
     return "".join(out)
 
 
+# ── schema-independent repairs (gh-1248) ─────────────────────────────────────
+#
+# A repair is not a migration: it is keyed to nothing, runs on every `upgrade`,
+# and is idempotent. gh-887 already established that `upgrade` is where "your
+# project is current by schema number and still needs work" lives -- it reports
+# stale manifest keys there rather than claiming "already up to date", because
+# the schema number is not a compatibility statement.
+#
+# gh-887 also refuses to REWRITE what it reports, and states its reason: "the
+# replacement can alter what your API does, so it is yours to make, not a
+# migration's." That is the line, and this falls on the other side of it.
+# `complex` is a `<complex.h>` macro for `_Complex`, so the two spellings are
+# the same tokens after preprocessing -- the rewrite cannot change what the
+# project does, which is exactly what makes it a migration's to make.
+#
+# gh-1246 changed what jm EMITS. An existing project keeps the old spelling in
+# its own C; `apply` cannot reach it (the inline `step()` lives in the sacred
+# header) and neither can `regenerate`. Before this, the answer in
+# `docs/upgrading.md` was a `perl -pi -e` block the author ran by hand.
+_COMPLEX_DIRS = (
+    "native/inc",
+    "native/src",
+    "native/tests",
+    "native/benchmarks",
+)
+
+#: Longest first. Not load-bearing -- rewriting `double complex` inside
+#: `long double complex` yields the same string either way -- but the order
+#: states the intent, and a future pair may not be so forgiving.
+_COMPLEX_SPELLING = (
+    (re.compile(r"\blong double complex\b"), "long double _Complex"),
+    (re.compile(r"\bfloat complex\b"), "float _Complex"),
+    (re.compile(r"\bdouble complex\b"), "double _Complex"),
+)
+
+
+def _repair_complex_spelling(root: Path) -> "list[Path]":
+    """Rewrite the pre-gh-1246 complex spelling in the project's own C.
+
+    Returns the files changed, in path order; empty when there is nothing to
+    do -- which is the second run of this, and every run on a project
+    scaffolded after gh-1246.
+
+    ``clib_common.h`` is skipped deliberately, and the reason is not
+    hypothetical: jm's render of it is already correct, and its comment
+    *quotes* the old spelling while explaining why that spelling was a
+    problem. A blanket pass rewrites that prose into a false statement --
+    `_Complex` parses fine from C++ -- which is the "generated code contains
+    prose about itself" trap. It was found by running the documented command
+    in the documented order, having verified it in the reverse one.
+    """
+    changed: list[Path] = []
+    for rel in _COMPLEX_DIRS:
+        base = root / rel
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or path.name == "clib_common.h":
+                continue
+            if path.suffix not in (".c", ".h"):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            new = text
+            for pat, repl in _COMPLEX_SPELLING:
+                new = pat.sub(repl, new)
+            if new != text:
+                path.write_text(new, encoding="utf-8")
+                changed.append(path)
+    return changed
+
+
 # Migration table: schema N → N+1.
 # Keep migrations append-only; never modify an existing entry.
 MIGRATIONS: dict[int, list] = {
@@ -304,6 +378,30 @@ def _where_declared(root: Path, unknown) -> str:
     return f"{frag.relative_to(root).as_posix()}: " if frag.exists() else ""
 
 
+def _report_repairs(root: Path) -> None:
+    """Run the schema-independent repairs and say what they changed.
+
+    Called from BOTH exits of :func:`run`. A project already at
+    `CURRENT_SCHEMA` is the common case for this one -- gh-1246 needed no
+    schema bump -- so wiring it only into the migration loop would have meant
+    it never ran for anybody who was up to date, which is everybody it is for.
+    """
+    fixed = _repair_complex_spelling(root)
+    if not fixed:
+        return
+    print(
+        f"\nrespelled the complex types in {len(fixed)} file(s) "
+        f"(`complex` -> `_Complex`, gh-1246):"
+    )
+    for path in fixed:
+        print(f"  {path.relative_to(root)}")
+    print(
+        "  Same type, same ABI -- identical tokens after preprocessing.\n"
+        "  Rebuild and run your tests. If you adopted jm's new "
+        "clib_common.h,\n  a C++11 caller can use `std::complex` again."
+    )
+
+
 def run(root: Path) -> None:
     """Advance the project at *root* to CURRENT_SCHEMA."""
     cfg = C.load(root)
@@ -333,6 +431,7 @@ def run(root: Path) -> None:
         stale = _keys.unknown_keys(cfg)
         if not stale:
             print(f"already up to date (schema {current})")
+            _report_repairs(root)
             return
         print(f"schema {current} — current.")
         print(
@@ -347,6 +446,7 @@ def run(root: Path) -> None:
             "can alter what your API does,\nso it is yours to make, not a "
             "migration's."
         )
+        _report_repairs(root)
         return
 
     ctx = _build_ctx(cfg)
@@ -364,3 +464,4 @@ def run(root: Path) -> None:
         C.save(root, cfg)
 
     print(f"project is now at schema {target}")
+    _report_repairs(root)

@@ -42,10 +42,12 @@ allowed_reason() {
         echo "the comment quotes the old spelling while explaining why it was a problem" ;;
     CHANGELOG.md)
         echo "historical entries describe what past releases emitted" ;;
-    docs/upgrading.md)
-        echo "the migration command matches the old spelling in order to replace it" ;;
     tests/test_gh595_unknown_return_type.py)
         echo "asserts the type registry rejects it as a STORED key" ;;
+    src/just_makeit/_upgrade.py)
+        echo "the gh-1248 migration -- it must name the spelling it replaces" ;;
+    tests/test_gh1248_upgrade_complex_spelling.py)
+        echo "builds a pre-gh-1246 tree in order to migrate it" ;;
     *) return 1 ;;
     esac
 }
@@ -82,7 +84,9 @@ fi
 stale=""
 for f in src/just_makeit/_types.py src/just_makeit/_bind.py \
          src/just_makeit/templates/c/inc/clib_common.h CHANGELOG.md \
-         docs/upgrading.md tests/test_gh595_unknown_return_type.py; do
+         tests/test_gh595_unknown_return_type.py \
+         src/just_makeit/_upgrade.py \
+         tests/test_gh1248_upgrade_complex_spelling.py; do
     [ -f "$f" ] || continue
     grep -qIE "$pattern" "$f" || stale="$stale $f"
 done
@@ -93,4 +97,4 @@ if [ -n "$stale" ]; then
     exit 1
 fi
 
-echo "complex-spelling-check: jm's \`_Complex\` spelling holds outside 6 named files"
+echo "complex-spelling-check: jm's \`_Complex\` spelling holds outside 7 named files"
