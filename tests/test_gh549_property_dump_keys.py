@@ -97,6 +97,10 @@ class TestEveryKeyRoundTrips:
         "type": "capsule",
         "doc": "The backing pointer.",
         "capsule": "dsp.nco.state",
+        # gh-1235, added the release after this shape was. It failed the
+        # union assertion above on the commit that introduced it, which is
+        # the whole point of having one.
+        "capsule_type": "const dp_nco_desc_t *",
         "expr": "&self->handle->d",
     }
     SCALAR_PROP = {

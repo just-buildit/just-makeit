@@ -80,6 +80,7 @@ def run(
     codec: str = "",
     entry_fn: str = "",
     capsule: str = "",
+    capsule_type: str = "",
     entry_type: str = "",
     type_field: str = "",
     count_field: str = "",
@@ -281,6 +282,14 @@ def run(
         # the same string gh-432's capsule-typed params unwrap with, and the
         # two must agree exactly or PyCapsule_GetPointer returns NULL.
         prop_entry["capsule"] = capsule
+        # gh-1235: the C type the capsule lends. Optional -- an object
+        # publishing the default `self->handle` lends its own
+        # `<comp>_state_t *`, which a consumer can infer. It is only when
+        # `expr` reaches a member that the pointer becomes something no
+        # consumer can name, and `resolve_object_ref` refuses that case
+        # (gh-1234) unless this says what it is.
+        if capsule_type:
+            prop_entry["capsule_type"] = capsule_type
     if container:
         # Only record what was actually asked for; the render layer supplies
         # the defaults, so an unspecified accessor stays unspecified in the

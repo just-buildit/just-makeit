@@ -319,6 +319,12 @@ PROPERTY_KEYS = frozenset(
         "entry_fn",
         "codec",
         "capsule",
+        # gh-1235: what the published pointer IS. Deliberately not `ctype`,
+        # which on a property is a legacy synonym for `type` -- and a capsule
+        # property's `type` slot is already spent on the word `capsule`, so
+        # reusing it would be one key answering two questions. This repo has
+        # paid for that four times.
+        "capsule_type",
         "default",
         "out",
     }

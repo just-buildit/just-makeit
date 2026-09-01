@@ -2618,15 +2618,23 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     # already a synonym for `type` on a property, so it cannot be borrowed for
     # a second question). Until it can, refusing is the only honest answer:
     # the gh-790 spelling still writes the type out by hand and is unaffected.
+    # gh-1235: the producer can now SAY what its pointer is, so this is read
+    # like the name beside it rather than inferred. That closes gh-1234's
+    # refusal on its own terms: the type was never unknowable, only undeclared.
+    declared = str(prop.get("capsule_type") or "").strip()
+    if declared:
+        return (declared, capsule, f"{comp}/{comp}_core.h", cls)
     expr = str(prop.get("expr") or "").strip()
     if expr and expr != "self->handle":
         raise ValueError(
             f"init_param object = '{ref}': component '{comp}' publishes its "
             f'capsule over `expr = "{expr}"`, so the pointer it carries is '
             f"not the object's `{comp}_state_t *` and jm cannot know what it "
-            f"is. An `object` reference resolves the C type from the "
-            f"producer, and a producer has no way to declare one yet -- see "
-            f"gh-1235. Name the type yourself instead, the gh-790 way:\n"
+            f"is. Say so on the producer (gh-1235):\n"
+            f"    jm property {comp} {prop.get('name', '_capsule')} "
+            f"--type capsule --capsule {capsule} "
+            f"--capsule-type '<the C type> *'\n"
+            f"or name the type at the consumer, the gh-790 way:\n"
             f"    --init-param '<name>:<the C type> *:capsule:{capsule}"
             f":<header>'"
         )

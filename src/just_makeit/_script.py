@@ -478,6 +478,17 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
         if p.get(_fn):
             parts.append(_flag(_flagname, p[_fn]))
 
+    # gh-788 gap 4 / gh-1235. Measured while adding `--capsule-type`: the
+    # replay emitted NEITHER, so `jm script` reproduced a capsule property as
+    # a plain one -- a producer that publishes nothing, and after gh-1224
+    # every `object` reference to it fails to resolve. Same class as gh-1242
+    # one face over: the dumper lost it on `split-objects`, this lost it on
+    # replay, and each was invisible from the other.
+    if p.get("capsule"):
+        parts.append(_flag("--capsule", p["capsule"]))
+    if p.get("capsule_type"):
+        parts.append(_flag("--capsule-type", p["capsule_type"]))
+
     if p.get("doc"):
         parts.append(_flag("--doc", p["doc"]))
 
