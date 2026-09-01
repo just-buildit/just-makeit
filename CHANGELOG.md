@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.73.0] — 2026-09-01
+
 ### Added
 
 - **An `init_param` can name another generated class (gh-1224).**
@@ -58,6 +60,21 @@
     scalar of a type jm does not know. That is the failure `_init_param_spec`
     already documented for the capsule grammar, one shape over.
 
+### Changed
+
+- **`init_param_tuple_to_dict` no longer writes a `type` for an `object`
+    param, and no longer writes back the resolution.** Both are derived, and
+    persisting either would bake a consumer's copy of someone else's capsule
+    string into its own declaration -- re-creating by round-trip exactly the
+    duplication `object` removes.
+
+    gh-838's probe was split in two as a consequence. Its premise was that one
+    param can carry every key, and that stopped being true the moment `object`
+    and `capsule` became mutually exclusive: a probe filling every slot would
+    have reported `capsule` and `header` as *unwritable*, which is the precise
+    false negative that gate exists to catch. The key set is now the union
+    over both shapes, and each shape's probe is asserted non-vacuous.
+
 ### Fixed
 
 - **An `object` reference to a declared MODULE no longer reports it as an
@@ -80,21 +97,6 @@
     that makes a handle publish `_capsule` at all, is dropped by `C.save`, so
     resolving a reference against it would work until the first `jm` command
     rewrote the manifest.
-
-### Changed
-
-- **`init_param_tuple_to_dict` no longer writes a `type` for an `object`
-    param, and no longer writes back the resolution.** Both are derived, and
-    persisting either would bake a consumer's copy of someone else's capsule
-    string into its own declaration -- re-creating by round-trip exactly the
-    duplication `object` removes.
-
-    gh-838's probe was split in two as a consequence. Its premise was that one
-    param can carry every key, and that stopped being true the moment `object`
-    and `capsule` became mutually exclusive: a probe filling every slot would
-    have reported `capsule` and `header` as *unwritable*, which is the precise
-    false negative that gate exists to catch. The key set is now the union
-    over both shapes, and each shape's probe is asserted non-vacuous.
 
 ## [0.72.2] — 2026-08-31
 
