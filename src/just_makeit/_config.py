@@ -4851,12 +4851,27 @@ def _inline_field(f: dict) -> str:
         parts.append(f'default = "{f["default"]}"')
     if f.get("bytes"):
         parts.append("bytes = true")
+    # gh-1236: read by `_composer` and written by nobody, so a field carrying
+    # any of these was silently flattened on the next mutating command.
+    # `complex` turns a complex64 stream back into a scalar, and `c_ptr` /
+    # `c_len` (gh-1184) are what let an owned array live in a nested struct
+    # member -- lose them and the generated C writes to `<name>` / `n_<name>`
+    # instead, against the author's own struct. Same defect as gh-1229, one
+    # table down, and worse: it changes emitted C rather than dropping a
+    # property.
+    if f.get("complex"):
+        parts.append("complex = true")
+    for _k in ("c_ptr", "c_len"):
+        if f.get(_k):
+            parts.append(f'{_k} = "{f[_k]}"')
     if f.get("aliases"):
         parts.append(
             "aliases = [" + ", ".join(f'"{a}"' for a in f["aliases"]) + "]"
         )
     if f.get("coerce"):
         parts.append(f'coerce = "{f["coerce"]}"')
+    if f.get("doc"):
+        parts.append(f"doc = {_toml_scalar(str(f['doc']))}")
     return "{ " + ", ".join(parts) + " }"
 
 
@@ -4979,7 +4994,13 @@ def _inline_computed(c: dict) -> str:
         f'fn = "{c["fn"]}"',
     ]
     if c.get("doc"):
-        parts.append(f'doc = "{c["doc"]}"')
+        # gh-1236: through the shared writer, not raw interpolation. This was
+        # the only `doc` in the composer dumper still interpolated bare, so a
+        # computed property documented with a quote in it made `_dump`'s own
+        # round-trip check reject the manifest jm had just produced --
+        # "just-makeit generated a manifest it cannot read back". Exactly the
+        # gh-1153 shape, which was itself the fifth site of gh-844's.
+        parts.append(f"doc = {_toml_scalar(str(c['doc']))}")
     return "{ " + ", ".join(parts) + " }"
 
 

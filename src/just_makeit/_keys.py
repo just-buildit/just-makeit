@@ -603,6 +603,89 @@ COMPOSER_EXTRA_METHOD_KEYS = frozenset(
     {"name", "fn", "flags", "doc", "args", "returns", "type"}
 )
 
+# ── composer sub-TABLES (gh-1236) ────────────────────────────────────────────
+#
+# `_check_kind_module` walked a kind module's LIST sub-tables and reported an
+# "unwalked sub-table" for any it had no vocabulary for. Its dict ones -- a
+# composer's `source`, `segment`, `timeline`, `oo`, `json`, `cli`, `composer`
+# -- fell out of that walk entirely, because the guard is
+# `isinstance(rows, list)`. Nothing checked a key inside any of them.
+#
+# gh-1234 is what that cost: `object` written on a `source.fields` row passed
+# in silence and came out of the renderer as `KeyError: 'type'`, when `object`
+# is a real key one table over and the registry already knows how to say so.
+#
+# Derived from the WRITER (`_config._dump_composer_subtables` and its
+# `_inline_*` helpers) cross-checked against an AST sweep of every reader, not
+# from a grep for `f.get(` -- a set that is wrong in the narrow direction turns
+# working manifests red, which is why gh-1236 argued for measuring rather than
+# guessing.
+COMPOSER_FIELD_KEYS = frozenset(
+    {
+        "name",
+        "type",
+        "enum",
+        "default",
+        "bytes",
+        # gh-1184: an owned array's pointer/length members may name a path
+        # into a nested struct. These three were READ and not WRITTEN, so a
+        # field carrying them was silently flattened on the next save.
+        "complex",
+        "c_ptr",
+        "c_len",
+        "coerce",
+        "aliases",
+        "doc",
+    }
+)
+COMPOSER_COMPUTED_KEYS = frozenset({"name", "type", "fn", "doc"})
+COMPOSER_SOURCE_KEYS = frozenset(
+    {"object", "struct", "type_name", "fields", "computed", "generates"}
+)
+COMPOSER_GENERATES_KEYS = frozenset(
+    {
+        "generator",
+        "bridge_fn",
+        "state_type",
+        "steps_fn",
+        "step_fn",
+        "reset_fn",
+        "destroy_fn",
+        "header",
+        "output_type",
+    }
+)
+COMPOSER_SEGMENT_KEYS = frozenset(
+    {
+        "type_name",
+        "struct",
+        "sources",
+        "sources_member",
+        "count_member",
+        "flat_sources",
+        "fields",
+    }
+)
+COMPOSER_TIMELINE_KEYS = frozenset({"type_name", "loop"})
+COMPOSER_OO_KEYS = frozenset(
+    {"factories", "emit", "discriminant", "composer_type_name"}
+)
+#: `[module.X.composer]` -- composer-level ergonomics. Deliberately NOT the
+#: module's own key set; the table shares its name with the kind, which is
+#: exactly why it needs its own entry rather than falling through.
+COMPOSER_ERGONOMICS_KEYS = frozenset({"stream", "to_dict", "realtime"})
+COMPOSER_JSON_KEYS = frozenset(
+    {
+        "enabled",
+        "to_json_fn",
+        "from_json_fn",
+        "from_file_fn",
+        "to_json_trailing",
+    }
+)
+COMPOSER_CLI_KEYS = frozenset({"enabled", "name"})
+
+
 KIND_KEYS: dict[str, frozenset] = {
     "object": OBJECT_KEYS,
     "state": STATE_KEYS,
@@ -635,6 +718,42 @@ KIND_KEYS: dict[str, frozenset] = {
     "kind serializer": KIND_SERIALIZER_KEYS,
     "kind setting": KIND_SETTING_KEYS,
     "kind init_param": KIND_INIT_PARAM_KEYS,
+    # gh-1236: the composer's dict sub-tables and the rows inside them.
+    "composer source": COMPOSER_SOURCE_KEYS,
+    "composer source.generates": COMPOSER_GENERATES_KEYS,
+    "composer segment": COMPOSER_SEGMENT_KEYS,
+    "composer timeline": COMPOSER_TIMELINE_KEYS,
+    "composer oo": COMPOSER_OO_KEYS,
+    "composer ergonomics": COMPOSER_ERGONOMICS_KEYS,
+    "composer json": COMPOSER_JSON_KEYS,
+    "composer cli": COMPOSER_CLI_KEYS,
+    "composer field": COMPOSER_FIELD_KEYS,
+    "composer computed": COMPOSER_COMPUTED_KEYS,
+}
+
+
+#: gh-1236. ``(kind, table)`` -> vocabulary, for a sub-table that is a TABLE
+#: rather than an array of them. The peer of :data:`KIND_TABLE_VOCAB`, kept
+#: separate because the walk differs: a dict sub-table is checked itself and
+#: then its own nested tables are, whereas a list one is checked per row.
+KIND_DICT_TABLE_VOCAB = {
+    ("composer", "source"): "composer source",
+    ("composer", "segment"): "composer segment",
+    ("composer", "timeline"): "composer timeline",
+    ("composer", "oo"): "composer oo",
+    ("composer", "composer"): "composer ergonomics",
+    ("composer", "json"): "composer json",
+    ("composer", "cli"): "composer cli",
+}
+
+#: ``(kind, outer, inner)`` -> vocabulary, for a table nested one level down.
+#: ``source.generates`` is a table; ``source.fields`` / ``segment.fields`` /
+#: ``source.computed`` are arrays of inline tables.
+KIND_NESTED_VOCAB = {
+    ("composer", "source", "generates"): "composer source.generates",
+    ("composer", "source", "fields"): "composer field",
+    ("composer", "source", "computed"): "composer computed",
+    ("composer", "segment", "fields"): "composer field",
 }
 
 
@@ -778,6 +897,51 @@ def _entries(table: dict, key: str) -> list:
     return [e for e in value if isinstance(e, dict)]
 
 
+def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
+    """Collect the unrecognised keys of a kind module's TABLE sub-tables.
+
+    gh-1236. :func:`_check_kind_module` walked the sub-tables whose rows are
+    arrays of tables and, per its own comment, reported an "unwalked
+    sub-table" for any it had no vocabulary for -- "adding a sub-table must
+    not be a way back into the silence". Its guard is
+    ``isinstance(rows, list)``, so a sub-table that is a plain TABLE was never
+    a candidate: a composer's ``source``, ``segment``, ``timeline``, ``oo``,
+    ``json``, ``cli`` and ``composer`` fell out of the walk entirely, and
+    nothing checked a key inside any of them.
+
+    gh-1234 is what that cost. ``object`` on a ``source.fields`` row passed in
+    silence and reached ``_composer._field_fmt`` as ``KeyError: 'type'`` --
+    when ``object`` is a real key one table over and this registry already
+    knows how to say which. A misplaced key is the most likely mistake on
+    these tables precisely because they are nested: TOML binds whatever sits
+    under the last header, so a key written two lines too low lands here.
+
+    One level of nesting is walked (``source.generates``, ``source.fields``,
+    ``source.computed``, ``segment.fields``) because that is how deep the
+    manifest goes; anything deeper would be reported as an unwalked table
+    rather than skipped.
+    """
+    found: list = []
+    for tbl, body in data.items():
+        if not isinstance(body, dict):
+            continue
+        vocab = KIND_DICT_TABLE_VOCAB.get((kind, tbl))
+        if vocab is None:
+            found.append(Unknown("unwalked sub-table", mod, tbl, ()))
+            continue
+        found += _check(vocab, f"{mod}.{tbl}", body)
+        for inner, val in body.items():
+            nvocab = KIND_NESTED_VOCAB.get((kind, tbl, inner))
+            if nvocab is None:
+                continue
+            where = f"{mod}.{tbl}.{inner}"
+            rows = val if isinstance(val, list) else [val]
+            for row in rows:
+                if isinstance(row, dict):
+                    found += _check(nvocab, where, row)
+    return found
+
+
 def _check_kind_module(mod: str, data: dict) -> list:
     """Collect the unrecognised keys of one ``kind``-bearing module (gh-1114).
 
@@ -795,6 +959,7 @@ def _check_kind_module(mod: str, data: dict) -> list:
     if f"{kind} module" not in KIND_KEYS:
         return []  # not a kind jm generates; nothing to say about it
     found = _check(f"{kind} module", mod, data)
+    found += _check_dict_subtables(kind, mod, data)
     for tbl, rows in data.items():
         if not isinstance(rows, list) or not any(
             isinstance(r, dict) for r in rows
