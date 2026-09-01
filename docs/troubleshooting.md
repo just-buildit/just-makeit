@@ -318,7 +318,7 @@ value the binding has to convert.)
 **Cause:** the manifest declares a `return_type` that is not one of jm's
 registered types. Common causes are a natural C spelling whose width is
 platform-dependent (`long`, `unsigned`, `ssize_t`), the *display* form of a
-complex type (`float complex` — jm stores `float _Complex`), or a plain typo.
+complex type (`float _Complex` — jm stores `float _Complex`), or a plain typo.
 
 Before jm 0.33.14 this was accepted silently: the generated binding called
 the C function, discarded its return value and emitted `Py_RETURN_NONE`. It

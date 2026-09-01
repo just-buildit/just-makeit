@@ -62,7 +62,7 @@ def _block_in_elem_disp(arg_type: str) -> str:
     A block method's input is always ``const <elem> *in, size_t n_in``. When
     ``arg_type`` is given as an array (``"float _Complex[]"``) the ``[]`` must
     be stripped to the element type, or the rendered prototype/cast becomes the
-    invalid ``const float complex[] *in`` (gh-139). A scalar ``arg_type`` is
+    invalid ``const float _Complex[] *in`` (gh-139). A scalar ``arg_type`` is
     already its own element type.
     """
     if T.is_array_param_type(arg_type):

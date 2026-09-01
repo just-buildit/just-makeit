@@ -9,7 +9,8 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check conflict-check coverage-subprocess-check \
+                changelog-check conflict-check complex-spelling-check \
+                coverage-subprocess-check \
                 doppler-pin-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
@@ -182,6 +183,17 @@ lint: conflict-check
 
 conflict-check: ## Fail on a merge-conflict marker in a tracked text file
 	@scripts/conflict-check.sh
+
+# gh-1246 changed generated C to the `_Complex` spelling. The sweep that came
+# with it covered tests/, examples/ and docs/; nobody looked in .github/, and
+# artifact.yml's pre-publish smoke patches a stub through a regex anchored on
+# the old one. It matched nothing and failed all TWELVE legs -- in the v0.74.0
+# RELEASE run, after the tag was pushed, not in a PR. A second copy of the same
+# logic was in the shipped scripts/docker-e2e.sh.
+lint: complex-spelling-check
+
+complex-spelling-check: ## Fail on the pre-gh-1246 `complex` spelling outside its allow-list
+	@scripts/complex-spelling-check.sh
 
 # ADVISORY, and hung off `lint` so it is seen on every PR without gating one.
 # The pin drifts because doppler published, not because of the change being

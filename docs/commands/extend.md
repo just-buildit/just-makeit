@@ -117,7 +117,7 @@ Generated C stub:
 ```c
 size_t
 resamp_execute_ctrl(resamp_state_t *state,
-                    const float complex *ctrl, size_t ctrl_len)
+                    const float _Complex *ctrl, size_t ctrl_len)
 {
     (void)state; (void)ctrl; (void)ctrl_len;
     return (size_t)0;
@@ -267,8 +267,8 @@ size_t hbdecim_execute_max_out(hbdecim_state_t *state);
 
 /* Process n_in samples; write up to _max_out results; return actual count. */
 size_t hbdecim_execute(hbdecim_state_t *state,
-                       const float complex *in, size_t n_in,
-                       float complex *out);
+                       const float _Complex *in, size_t n_in,
+                       float _Complex *out);
 ```
 
 Python call:
@@ -410,7 +410,7 @@ just-makeit method ddc execute --module ddc \
 
 ```c
 /* generated binding (abridged) */
-const float complex *_ng0 = (const float complex *)PyArray_DATA(x_arr);
+const float _Complex *_ng0 = (const float _Complex *)PyArray_DATA(x_arr);
 size_t _ng1 = (size_t)PyArray_SIZE(x_arr);
 size_t n_out;
 Py_BEGIN_ALLOW_THREADS

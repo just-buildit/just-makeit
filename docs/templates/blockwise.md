@@ -53,8 +53,8 @@ void              my_xform_reset(my_xform_state_t *state);
 void
 my_xform_steps(
     my_xform_state_t *state,
-    const float complex     *in, size_t n,
-    float complex          *out);
+    const float _Complex     *in, size_t n,
+    float _Complex          *out);
 
 float my_xform_get_gain(const my_xform_state_t *state);
 void  my_xform_set_gain(my_xform_state_t *state, float val);
@@ -66,13 +66,13 @@ void  my_xform_set_gain(my_xform_state_t *state, float val);
 void
 my_xform_steps(
     my_xform_state_t *state,
-    const float complex     *in, size_t n,
-    float complex          *out)
+    const float _Complex     *in, size_t n,
+    float _Complex          *out)
 {
     /* <<IMPLEMENT: blockwise transform — replace this pass-through>> */
     (void)state;
     for (size_t i = 0; i < n; i++)
-        out[i] = (float complex)in[i];
+        out[i] = (float _Complex)in[i];
 }
 ```
 
@@ -180,8 +180,8 @@ Then implement `steps()` in `fft_core.c`:
 ```c
 void
 fft_steps(fft_state_t        *state,
-          const float complex *in, size_t n,
-          float complex       *out)
+          const float _Complex *in, size_t n,
+          float _Complex       *out)
 {
     memcpy(state->scratch, in, n * sizeof(*in));
     fftwf_execute(state->plan);

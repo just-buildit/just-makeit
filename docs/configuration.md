@@ -709,7 +709,7 @@ derived = ["ny", "nx"]
 ```
 
 ```c
-corr2d_state_t *corr2d_create(const float complex *ref,
+corr2d_state_t *corr2d_create(const float _Complex *ref,
                               size_t ny, size_t nx, size_t dwell);
 ```
 

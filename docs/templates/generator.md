@@ -43,25 +43,25 @@ void          NAME_destroy(NAME_state_t *state);
 void          NAME_reset(NAME_state_t *state);
 
 /* Per-call generator: emit one sample. */
-static inline float complex
+static inline float _Complex
 NAME_step(NAME_state_t *state);
 
 /* Block generator: fill n samples into out[]. */
-void NAME_steps(NAME_state_t *state, float complex *out, size_t n);
+void NAME_steps(NAME_state_t *state, float _Complex *out, size_t n);
 ```
 
 ### `native/src/NAME/NAME_core.c`
 
 ```c
-static inline float complex
+static inline float _Complex
 NAME_step(NAME_state_t *state)
 {
     (void)state; /* TODO: implement */
-    return (float complex)0;
+    return (float _Complex)0;
 }
 
 void
-NAME_steps(NAME_state_t *state, float complex *out, size_t n)
+NAME_steps(NAME_state_t *state, float _Complex *out, size_t n)
 {
     for (size_t i = 0; i < n; i++) out[i] = NAME_step(state);
 }
@@ -73,10 +73,10 @@ The `step()` body — advance state, emit one sample. A cosine oscillator
 is typical (add `#include <math.h>` to `NAME_core.c` for `cosf`/`sinf`):
 
 ```c
-static inline float complex
+static inline float _Complex
 NAME_step(NAME_state_t *state)
 {
-    float complex y = cosf(state->phase) + sinf(state->phase) * I;
+    float _Complex y = cosf(state->phase) + sinf(state->phase) * I;
     state->phase += state->freq;
     return y;
 }

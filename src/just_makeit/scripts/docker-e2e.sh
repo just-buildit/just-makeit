@@ -98,25 +98,25 @@ python3 - <<'PYEOF'
 import pathlib, re
 header = pathlib.Path("my_fir/native/inc/fir_filter/fir_filter_core.h")
 impl = (
-    "fir_filter_step(fir_filter_state_t *state, float complex x)\n"
+    "fir_filter_step(fir_filter_state_t *state, float _Complex x)\n"
     "{\n"
-    "    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));\n"
+    "    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float _Complex));\n"
     "    state->delay[0] = x;\n"
-    "    float complex y = 0.0f + 0.0f * I;\n"
+    "    float _Complex y = 0.0f + 0.0f * I;\n"
     "    for (int k = 0; k < 16; k++)\n"
     "        y += state->coeffs[k] * state->delay[k];\n"
-    "    return (float complex)state->gain * y;\n"
+    "    return (float _Complex)state->gain * y;\n"
     "}"
 )
 stub_re = re.compile(
-    r"(static inline|JM_FORCEINLINE JM_HOT) float complex\s*\n"
+    r"(static inline|JM_FORCEINLINE JM_HOT) float _Complex\s*\n"
     r"fir_filter_step\(const fir_filter_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 text = header.read_text()
 m = stub_re.search(text)
 assert m, "stub not found"
-header.write_text(stub_re.sub(m.group(1) + " float complex\n" + impl, text))
+header.write_text(stub_re.sub(m.group(1) + " float _Complex\n" + impl, text))
 print("  patched fir_filter_step")
 PYEOF
 
@@ -159,7 +159,7 @@ int main(void) {
     fir_filter_state_t *f = fir_filter_create(1.0f);
     float h[16] = {0}; h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
     fir_filter_set_coeffs(f, h);
-    float complex in[16] = {0}, out[16] = {0};
+    float _Complex in[16] = {0}, out[16] = {0};
     in[0] = 1.0f;
     fir_filter_steps(f, in, out, 16);
     assert(fabsf(crealf(out[0]) - 0.25f) < 1e-6f);
@@ -257,15 +257,15 @@ def patch(path, fn, return_type, new_sig, body):
 
 patch(
     "native/inc/fir/fir_core.h",
-    "fir_step", "float complex",
-    "fir_step(fir_state_t *state, float complex x)\n",
+    "fir_step", "float _Complex",
+    "fir_step(fir_state_t *state, float _Complex x)\n",
     "{\n"
-    "    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float complex));\n"
+    "    memmove(&state->delay[1], &state->delay[0], 15 * sizeof(float _Complex));\n"
     "    state->delay[0] = x;\n"
-    "    float complex y = 0.0f;\n"
+    "    float _Complex y = 0.0f;\n"
     "    for (int k = 0; k < 16; k++)\n"
     "        y += state->coeffs[k] * state->delay[k];\n"
-    "    return (float complex)state->gain * y;\n"
+    "    return (float _Complex)state->gain * y;\n"
     "}",
 )
 patch(
@@ -357,7 +357,7 @@ int main(void) {
     fir_state_t *f = fir_create(1.0f);
     float h[16] = {0}; h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
     fir_set_coeffs(f, h);
-    float complex in[16] = {0}, out[16] = {0};
+    float _Complex in[16] = {0}, out[16] = {0};
     in[0] = 1.0f;
     fir_steps(f, in, out, 16);
     assert(fabsf(crealf(out[0]) - 0.25f) < 1e-6f);

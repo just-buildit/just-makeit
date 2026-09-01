@@ -87,8 +87,8 @@ Generated as a pass-through stub — implement your DSP here.
 
 ```c
 /** Inlined for maximum performance. */
-static inline float complex
-<component>_step(const <component>_state_t *state, float complex x)
+static inline float _Complex
+<component>_step(const <component>_state_t *state, float _Complex x)
 {
     (void)state; /* TODO: implement DSP using state variables */
     return x;
@@ -103,8 +103,8 @@ static inline float complex
  */
 void <component>_steps(
     <component>_state_t *state,
-    const float complex  *input,
-    float complex        *output,
+    const float _Complex  *input,
+    float _Complex        *output,
     size_t                n);
 ```
 

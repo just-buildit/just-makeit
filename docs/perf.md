@@ -85,7 +85,7 @@ JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)
 | ---------- | ----------- | ----------------------------------------------------------- |
 | `fn`       | —           | Name prefix; resolves `fn##_step()` and `fn##_step_batch()` |
 | `state_t`  | —           | State struct type                                           |
-| `sample_t` | —           | Per-sample type (e.g. `float complex`)                      |
+| `sample_t` | —           | Per-sample type (e.g. `float _Complex`)                     |
 | `LENGTH`   | algorithm   | History depth: samples held in `state->delay[]`             |
 | `BATCH`    | parallelism | SIMD width in samples                                       |
 | `CHUNK`    | tuning      | Samples per scratch-buffer fill                             |
@@ -132,8 +132,8 @@ ______________________________________________________________________
 JM_FORCEINLINE JM_HOT void
 fir_filter_step_batch(
     fir_filter_state_t     *state,
-    const float complex    *window,
-    float complex          *out)
+    const float _Complex    *window,
+    float _Complex          *out)
 {
     __m512 vg  = _mm512_set1_ps(state->gain);
     __m512 acc = _mm512_setzero_ps();
@@ -156,7 +156,7 @@ history, index `FIR_LENGTH` = current sample).
 ```c
 #define FIR_CHUNK 256  /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float complex,
+JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float _Complex,
                 FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 

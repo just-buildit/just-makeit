@@ -2802,7 +2802,7 @@ def make_methods_ctx(
             # scalar-only loop that used to live here. That loop emitted
             # `type` as a declaration and `_CTYPE_META.get(
             # type, {}).get("fmt", "d")` as a format char, so an array param
-            # rendered the invalid `float complex[] rx = 0;`, parsed as a
+            # rendered the invalid `float _Complex[] rx = 0;`, parsed as a
             # scalar double, and passed no length -- three compile errors from
             # one omission. The shared builder already handles arrays (ptr +
             # `_len`), capsules, `parse_type` scalars and gh-240 defaults, and

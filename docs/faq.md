@@ -82,8 +82,8 @@ just-makeit method integrator step_controlled \
 Generated C signature:
 
 ```c
-float complex integrator_step_controlled(
-    integrator_state_t *state, float complex x, bool dump_now);
+float _Complex integrator_step_controlled(
+    integrator_state_t *state, float _Complex x, bool dump_now);
 ```
 
 Generated Python stub:

@@ -63,7 +63,7 @@ __all__ = ["Fir", "Biquad"]
 ```
 
 Types within a module may have different `--arg-type`/`--return-type`. Here
-`Fir` processes `float complex` and `Biquad` processes `float`.
+`Fir` processes `float _Complex` and `Biquad` processes `float`.
 
 ## 3. Implement
 
