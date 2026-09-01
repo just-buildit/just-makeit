@@ -27,6 +27,41 @@
     fifth. A consumer disagreeing with the producer about either path is a
     broken include or a broken import, not a warning.
 
+### Fixed
+
+- **A composer's table sub-tables are checked, and their rows survive a save
+    (gh-1236).** `_check_kind_module` walked a kind module's sub-tables whose
+    rows are arrays of tables, and reported an "unwalked sub-table" for any it
+    had no vocabulary for -- its own comment says "adding a sub-table must not
+    be a way back into the silence". Its guard is `isinstance(rows, list)`, so
+    a sub-table that is a plain **table** was never a candidate: a composer's
+    `source`, `segment`, `timeline`, `oo`, `json`, `cli` and `composer` fell
+    out of the walk entirely, and nothing checked a key inside any of them.
+
+    gh-1234 is what that cost. `object` on a `source.fields` row passed in
+    silence and reached the renderer as `KeyError: 'type'`, when `object` is a
+    real key one table over and the registry already knew how to say which. It
+    is reported at load now, naming the tables it *is* valid on.
+
+    Measuring the vocabularies -- from the writer, cross-checked against an AST
+    sweep of every reader, because gh-1229 had just shown what guessing one
+    costs -- turned up two writer defects nobody had reported:
+
+    - a `source.fields` / `segment.fields` row was **read** for `complex`,
+        `c_ptr`, `c_len` and `doc` and **written** for none of them. `complex`
+        turned a complex64 stream back into a scalar, and `c_ptr` / `c_len`
+        (gh-1184) are what let an owned array live in a nested struct member --
+        lose them and the generated C writes to `<name>` / `n_<name>` against
+        the author's own struct. gh-1229 dropped a property; this changed
+        emitted C.
+    - `_inline_computed` interpolated `doc` raw, so a computed property
+        documented with a quote in it made `_dump`'s own round-trip check
+        reject the manifest jm had just produced. The gh-1153 shape, which was
+        itself the fifth site of gh-844's.
+
+    `_composer._FIELD_KEYS` -- the list gh-1234's refusal names -- **is** the
+    registry's `composer field` vocabulary now rather than a second copy of it.
+
 ## [0.73.1] — 2026-09-01
 
 ### Fixed

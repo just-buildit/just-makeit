@@ -26,6 +26,7 @@ from pathlib import Path
 from . import _config as C
 from . import _procglobal
 from . import _enumc
+from . import _keys
 from ._docstring import ClassParam, class_docstring
 from ._pyfmt import reflow_pyi
 
@@ -43,26 +44,13 @@ _FMT = {
 }
 
 
-#: Keys a composer field row legitimately carries, used only to say which of
-#: the author's keys jm did NOT read when the row has no `type`. Deliberately
-#: not a validator -- see gh-1236 for why that needs measuring rather than a
-#: hand-written set, and note this one is allowed to be generous: naming one
-#: key too few in a message costs nothing, refusing one costs a manifest.
-_FIELD_KEYS = frozenset(
-    {
-        "name",
-        "type",
-        "enum",
-        "default",
-        "bytes",
-        "complex",
-        "doc",
-        "c_ptr",
-        "c_len",
-        "coerce",
-        "aliases",
-    }
-)
+#: Keys a composer field row legitimately carries -- the registry's set, not
+#: a second copy. gh-1236 registered it as the `composer field` vocabulary, so
+#: the validator's answer and the "which of your keys jm did not read" clause
+#: below are one declaration. Two copies would disagree the first time a key
+#: was added, and this message would then name a key as unread that the
+#: validator accepts.
+_FIELD_KEYS = _keys.COMPOSER_FIELD_KEYS
 
 
 def _field_fmt(field: dict) -> str:
