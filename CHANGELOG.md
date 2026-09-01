@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.73.1] — 2026-09-01
+
 ### Fixed
 
 - **jm refuses two `object` references it was answering wrongly (gh-1234).**
