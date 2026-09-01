@@ -58,6 +58,29 @@
     scalar of a type jm does not know. That is the failure `_init_param_spec`
     already documented for the capsule grammar, one shape over.
 
+### Fixed
+
+- **An `object` reference to a declared MODULE no longer reports it as an
+    undeclared component (gh-1227).** The name *is* declared — as a module —
+    so the old message sent the reader to check a spelling that was already
+    right, against a list of components that could not contain the answer no
+    matter what they typed. A confidently wrong diagnosis costs more than the
+    missing feature standing behind it.
+
+    Three cases now, each naming what the thing IS:
+
+    | the name is      | what it says                                                                      |
+    | ---------------- | --------------------------------------------------------------------------------- |
+    | nothing declared | unchanged — undeclared component, with the list                                   |
+    | a plain module   | "a module is a container" — **and names the objects in it**                       |
+    | a `kind` module  | names the kind, points at gh-1227, and gives the gh-790 spelling that works today |
+
+    A `kind = "handle"` module is not a valid target yet, which is the gh-1227
+    half **not** shipped here: it is blocked on gh-1229 — `capsule`, the key
+    that makes a handle publish `_capsule` at all, is dropped by `C.save`, so
+    resolving a reference against it would work until the first `jm` command
+    rewrote the manifest.
+
 ### Changed
 
 - **`init_param_tuple_to_dict` no longer writes a `type` for an `object`

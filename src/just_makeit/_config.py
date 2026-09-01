@@ -2433,6 +2433,30 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     comp, _, cls = ref.partition(".")
     known = components(cfg)
     if comp not in known:
+        # gh-1227: a declared MODULE is not an undeclared component. Reporting
+        # it as one sent the reader to check a spelling that was already
+        # right, against a list that could not contain the answer no matter
+        # what they typed -- a confidently wrong diagnosis, which costs more
+        # than the missing feature it stands in front of. Say what the name
+        # IS before saying what it is not.
+        if comp in modules(cfg):
+            kind = module_kind(cfg, comp)
+            if kind:
+                raise ValueError(
+                    f"init_param object = '{ref}': '{comp}' is a declared "
+                    f'kind = "{kind}" module, not a component. An `object` '
+                    f"reference names a component or one of its views; a "
+                    f"kind module is not a valid target yet -- see gh-1227. "
+                    f"A handle publishing a capsule (gh-794) can still be "
+                    f"named the gh-790 way, with `capsule` and `header` "
+                    f"written out."
+                )
+            raise ValueError(
+                f"init_param object = '{ref}': '{comp}' is a declared "
+                f"module, not a component -- a module is a container. Name "
+                f"one of the objects in it: "
+                f"{', '.join(module_objects(cfg, comp)) or '(it has none)'}."
+            )
         names = ", ".join(sorted(known)) or "(none declared)"
         raise ValueError(
             f"init_param object = '{ref}' references an undeclared "
