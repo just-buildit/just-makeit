@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.0] — 2026-09-01
+
 ### Added
 
 - **`jm upgrade` migrates a project to the `_Complex` spelling (gh-1248).**
