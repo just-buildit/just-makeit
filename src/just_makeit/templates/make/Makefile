@@ -50,7 +50,7 @@ NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(
 
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
 # shell), force the MinGW Makefiles generator so CMake uses gcc instead of
-# MSVC.  MSVC does not support C99 float complex; gcc does.
+# MSVC.  MSVC does not support C99 float _Complex; gcc does.
 ifeq ($(OS), Windows_NT)
 CMAKE_GENERATOR ?= MinGW Makefiles
 CMAKE_GEN_FLAG  := -G "$(CMAKE_GENERATOR)"

@@ -57,7 +57,7 @@ NAME_state_t *NAME_create(const char *filepath, size_t header_bytes);
 void          NAME_destroy(NAME_state_t *state);
 void          NAME_reset(NAME_state_t *state);
 
-float complex NAME_read(NAME_state_t *state, size_t n, float complex *out);
+float _Complex NAME_read(NAME_state_t *state, size_t n, float _Complex *out);
 int           NAME_seek(NAME_state_t *state, size_t sample_index);
 void          NAME_close(NAME_state_t *state);
 ```
@@ -91,11 +91,11 @@ NAME_destroy(NAME_state_t *state)
 }
 
 /* <<IMPLEMENT: read >> */
-float complex
-NAME_read(NAME_state_t *state, size_t n, float complex *out)
+float _Complex
+NAME_read(NAME_state_t *state, size_t n, float _Complex *out)
 {
     (void)state; (void)n; (void)out;
-    return (float complex)0.0f + 0.0f * I;
+    return (float _Complex)0.0f + 0.0f * I;
 }
 
 /* <<IMPLEMENT: seek >> */
@@ -149,8 +149,8 @@ NAME_destroy(NAME_state_t *state)
     free(state);
 }
 
-float complex
-NAME_read(NAME_state_t *state, size_t n, float complex *out)
+float _Complex
+NAME_read(NAME_state_t *state, size_t n, float _Complex *out)
 {
     ssize_t bytes = read(state->fd, out, n * sizeof(*out));
     if (bytes > 0) state->position += (size_t)bytes;
@@ -160,7 +160,7 @@ NAME_read(NAME_state_t *state, size_t n, float complex *out)
 int
 NAME_seek(NAME_state_t *state, size_t sample_index)
 {
-    off_t off = (off_t)(sample_index * sizeof(float complex));
+    off_t off = (off_t)(sample_index * sizeof(float _Complex));
     if (lseek(state->fd, off, SEEK_SET) == (off_t)-1) return -1;
     state->position = (size_t)off;
     return 0;
@@ -177,7 +177,7 @@ Other common shapes:
 
 - Wire-format demultiplexing (separate I and Q from interleaved bytes).
 - Header parsing (use `header_bytes` to skip a file header).
-- Type conversion (read int16 from disk, return float complex).
+- Type conversion (read int16 from disk, return float \_Complex).
 - Endianness swap on read.
 
 ## Python usage

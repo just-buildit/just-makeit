@@ -119,11 +119,11 @@ engine_state_t *engine_create(double gain);
 void            engine_destroy(engine_state_t *state);
 void            engine_reset(engine_state_t *state);
 
-static inline float complex
-engine_step(const engine_state_t *state, float complex x);
+static inline float _Complex
+engine_step(const engine_state_t *state, float _Complex x);
 
 void engine_steps(engine_state_t *state,
-                  const float complex *in, float complex *out, size_t n);
+                  const float _Complex *in, float _Complex *out, size_t n);
 
 double engine_get_gain(const engine_state_t *state);
 void   engine_set_gain(engine_state_t *state, double gain);

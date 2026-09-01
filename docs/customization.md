@@ -195,8 +195,8 @@ ______________________________________________________________________
 Open `<component>/src/<component>_core.c` and replace the pass-through stub:
 
 ```c
-static inline float complex
-my_filter_step(const my_filter_state_t *state, float complex x)
+static inline float _Complex
+my_filter_step(const my_filter_state_t *state, float _Complex x)
 {
     (void)state; /* TODO: implement DSP using state variables */
     return x;

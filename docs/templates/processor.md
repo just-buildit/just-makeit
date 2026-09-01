@@ -48,16 +48,16 @@ void               my_filter_destroy(my_filter_state_t *state);
 void               my_filter_reset(my_filter_state_t *state);
 
 /* inline step — declared in the header so callers can inline at -O2 */
-static inline float complex
-my_filter_step(const my_filter_state_t *state, float complex x)
+static inline float _Complex
+my_filter_step(const my_filter_state_t *state, float _Complex x)
 {
     (void)state; /* TODO: implement using state variables */
-    return (float complex)x;
+    return (float _Complex)x;
 }
 
 void my_filter_steps(my_filter_state_t *state,
-                     const float complex *input,
-                     float complex       *output,
+                     const float _Complex *input,
+                     float _Complex       *output,
                      size_t               n);
 
 float my_filter_get_gain(const my_filter_state_t *state);
@@ -85,8 +85,8 @@ void my_filter_reset(my_filter_state_t *state)   { state->gain = 1.0f; }
 
 void
 my_filter_steps(my_filter_state_t *state,
-                const float complex *input,
-                float complex       *output,
+                const float _Complex *input,
+                float _Complex       *output,
                 size_t               n)
 {
     for (size_t i = 0; i < n; i++)
@@ -149,8 +149,8 @@ class MyFilter:
 One line in `my_filter_step()`. A first-order IIR is typical:
 
 ```c
-static inline float complex
-my_filter_step(const my_filter_state_t *state, float complex x)
+static inline float _Complex
+my_filter_step(const my_filter_state_t *state, float _Complex x)
 {
     return state->gain * x;   /* ← your math here */
 }

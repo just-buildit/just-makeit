@@ -39,10 +39,10 @@ void          NAME_reset(NAME_state_t *state);
 
 /* Per-sample consumer. */
 static inline void
-NAME_step(NAME_state_t *state, float complex x);
+NAME_step(NAME_state_t *state, float _Complex x);
 
 /* Block consumer. */
-void NAME_steps(NAME_state_t *state, const float complex *in, size_t n);
+void NAME_steps(NAME_state_t *state, const float _Complex *in, size_t n);
 
 /* Generic accessor to read accumulated state. */
 double NAME_get_sum(const NAME_state_t *state);
@@ -53,13 +53,13 @@ uint64_t NAME_get_count(const NAME_state_t *state);
 
 ```c
 static inline void
-NAME_step(NAME_state_t *state, float complex x)
+NAME_step(NAME_state_t *state, float _Complex x)
 {
     (void)state; (void)x; /* TODO: implement */
 }
 
 void
-NAME_steps(NAME_state_t *state, const float complex *in, size_t n)
+NAME_steps(NAME_state_t *state, const float _Complex *in, size_t n)
 {
     for (size_t i = 0; i < n; i++) NAME_step(state, in[i]);
 }
@@ -71,7 +71,7 @@ The reducer in `step()`. A running-power accumulator is typical:
 
 ```c
 static inline void
-NAME_step(NAME_state_t *state, float complex x)
+NAME_step(NAME_state_t *state, float _Complex x)
 {
     state->sum += (double)(crealf(x) * crealf(x) + cimagf(x) * cimagf(x));
     state->count++;

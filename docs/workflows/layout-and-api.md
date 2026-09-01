@@ -60,14 +60,14 @@ void engine_destroy(engine_state_t *state);
 void engine_reset(engine_state_t *state);
 
 /* Single sample — inline stub in _core.h; implement here */
-static inline float complex
-engine_step(const engine_state_t *state, float complex x);
+static inline float _Complex
+engine_step(const engine_state_t *state, float _Complex x);
 
 /* Block processor — in _core.c, loops over step() */
 void engine_steps(
     engine_state_t       *state,
-    const float complex  *input,
-    float complex        *output,
+    const float _Complex  *input,
+    float _Complex        *output,
     size_t                n);
 
 /* Generator (--arg-type void) — no input parameter */
