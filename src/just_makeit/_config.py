@@ -2346,6 +2346,22 @@ def resolve_enum_type(cfg: dict, ptype: str) -> str:
     return "string_enum:" + ",".join(registry[name])
 
 
+def object_ref_capsule_prop(cfg: dict, component: str) -> dict:
+    """The property row publishing *component*'s capsule, or ``{}``.
+
+    gh-1234: :func:`resolve_object_ref` needs more of this row than its name --
+    it needs to know *what the published pointer is* -- so the lookup returns
+    the declaration rather than one field of it, and
+    :func:`object_ref_capsule` reads the name back out of it. One walk over
+    ``properties``, not two that could disagree about which row wins when a
+    component declares more than one capsule.
+    """
+    for prop in properties(cfg, component):
+        if prop.get("capsule"):
+            return dict(prop)
+    return {}
+
+
 def object_ref_capsule(cfg: dict, component: str) -> str:
     """The capsule name *component* publishes, or ``""`` if it publishes none.
 
@@ -2356,10 +2372,7 @@ def object_ref_capsule(cfg: dict, component: str) -> str:
     derived its own name would be a second opinion about a string the producer
     already owns, and the two would drift the first time either changed.
     """
-    for prop in properties(cfg, component):
-        if prop.get("capsule"):
-            return str(prop["capsule"])
-    return ""
+    return str(object_ref_capsule_prop(cfg, component).get("capsule") or "")
 
 
 def object_ref_classes(cfg: dict, component: str) -> list[str]:
@@ -2471,7 +2484,8 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             f"init_param object = '{ref}': component '{comp}' generates no "
             f"class '{cls}'; it generates: {', '.join(classes)}"
         )
-    capsule = object_ref_capsule(cfg, comp)
+    prop = object_ref_capsule_prop(cfg, comp)
+    capsule = str(prop.get("capsule") or "")
     if not capsule:
         raise ValueError(
             f"init_param object = '{ref}': component '{comp}' publishes no "
@@ -2479,6 +2493,32 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             f"another module. Declare one on '{comp}' first:\n"
             f"    jm property {comp} _capsule --type capsule "
             f"--capsule <name>"
+        )
+    # gh-1234. The capsule NAME is read from the producer; the C type it points
+    # at was derived here, from the component id, and only the default producer
+    # makes that true. A `type = "capsule"` property publishes
+    # `expr or "self->handle"`, and `self->handle` is the object's
+    # `<comp>_state_t *` -- so an `expr` reaching a member publishes something
+    # else entirely while this went on saying `<comp>_state_t *`. The consumer's
+    # `create()` was then generated taking a type the capsule does not carry:
+    # a silent confusion across exactly the ABI boundary the capsule triangle
+    # exists to protect.
+    #
+    # A producer cannot yet SAY what its pointer is (gh-1235 -- `ctype` is
+    # already a synonym for `type` on a property, so it cannot be borrowed for
+    # a second question). Until it can, refusing is the only honest answer:
+    # the gh-790 spelling still writes the type out by hand and is unaffected.
+    expr = str(prop.get("expr") or "").strip()
+    if expr and expr != "self->handle":
+        raise ValueError(
+            f"init_param object = '{ref}': component '{comp}' publishes its "
+            f'capsule over `expr = "{expr}"`, so the pointer it carries is '
+            f"not the object's `{comp}_state_t *` and jm cannot know what it "
+            f"is. An `object` reference resolves the C type from the "
+            f"producer, and a producer has no way to declare one yet -- see "
+            f"gh-1235. Name the type yourself instead, the gh-790 way:\n"
+            f"    --init-param '<name>:<the C type> *:capsule:{capsule}"
+            f":<header>'"
         )
     return (f"{comp}_state_t *", capsule, f"{comp}/{comp}_core.h", cls)
 
