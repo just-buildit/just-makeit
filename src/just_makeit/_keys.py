@@ -638,6 +638,21 @@ KIND_KEYS: dict[str, frozenset] = {
 }
 
 
+#: ``[module.X] kind`` -> the keys that face accepts, derived from
+#: :data:`KIND_KEYS` rather than restated. gh-1229: `_config._dump` reads it to
+#: write back every accepted key it has no hand-written branch for, so the
+#: validator's answer and the writer's answer come from one declaration. A key
+#: added to a ``*_MODULE_KEYS`` set above is therefore preserved on the next
+#: save without touching the dumper -- which is the half that was missing when
+#: gh-794's `capsule` validated, wrote nothing, and took the handle's
+#: `_capsule` property with it on the following command.
+MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
+    name.split()[0]: keys
+    for name, keys in KIND_KEYS.items()
+    if name.endswith(" module")
+}
+
+
 #: ``(kind, key)`` -> the advice that follows "is a <other> key". Only for
 #: confusions where jm can name the thing the author actually wanted; a key
 #: that is merely misplaced gets the generic message instead.
