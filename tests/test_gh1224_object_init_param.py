@@ -146,19 +146,29 @@ class TestItRefusesWithTheFix:
     def test_a_kind_module_says_so_and_names_the_working_spelling(
         self, tmp_path
     ):
-        """A `kind` module is the shape most likely to be wanted here (gh-794
-        exists so a handle can give a capsule), so the refusal names the open
-        issue and the spelling that works TODAY rather than only refusing."""
+        """A `kind` module is the shape most likely to be wanted here, so the
+        refusal names the spelling that works TODAY rather than only refusing.
+
+        This asserted the same of a **handle** until gh-1227, which made one a
+        real target -- so the case moved to `capsule`, which is still refused.
+        The handle's own behaviour, including the "publishes no capsule"
+        refusal this used to hit, lives in
+        `test_gh1227_handle_object_target.py`.
+        """
         root = _project(tmp_path)
         cfg = C.load(root)
-        cfg.setdefault("module", {})["ring"] = {"kind": "handle"}
+        cfg.setdefault("module", {})["ring"] = {"kind": "capsule"}
         with pytest.raises(ValueError) as e:
             C.resolve_object_ref(cfg, "ring")
         msg = str(e.value)
-        assert 'kind = "handle" module' in msg
-        assert "gh-1227" in msg
+        assert 'kind = "capsule" module' in msg
+        assert "a capsule module is not a valid target" in msg
         assert "gh-790" in msg  # the spelling that works today
         assert "undeclared" not in msg
+        # It must not describe a capsule module as the kind that IS a target.
+        assert 'names a component, one of its views, or a kind = "handle"' in (
+            msg
+        )
 
     def test_object_and_capsule_together_are_refused(self, tmp_path):
         """Allowing both would re-create the duplication `object` removes,

@@ -1330,7 +1330,7 @@ def render_type(
     htype = C.handle_type(cfg, module)
     close_fn = C.handle_close_fn(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.handle_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.handle_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     # struct: opaque handle + closed flag + stashed init scalars (expr refs) +
@@ -1574,7 +1574,7 @@ def render_ext(
     """Render the full ``<module>_ext.c`` for a handle module (gh-306)."""
     backing = C.handle_backing(cfg, module)
     tname = C.handle_type_name(cfg, module)
-    header = C.handle_header(cfg, module) or f"{backing}/{backing}_core.h"
+    header = C.handle_header_resolved(cfg, module)
     mp = C.module_paths(module)
     leaf = mp.leaf
     opt_backend = C.handle_optional_backend(cfg, module)
@@ -1671,7 +1671,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     Mirrors the capsule CMake generator exactly."""
     mp = C.module_paths(module)
     leaf, cname = mp.leaf, mp.cname
-    out_pkg = C.handle_package(cfg, module) or mp.pypath
+    out_pkg = C.handle_package_resolved(cfg, module)
 
     link_cores = C.dep_link_libs(C.handle_depends_on(cfg, module))
     extra = C.handle_extra_link_libs(cfg, module)
@@ -2206,7 +2206,7 @@ def materialize(
 
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
-    out_pkg = C.handle_package(cfg, module) or mp.pypath
+    out_pkg = C.handle_package_resolved(cfg, module)
     doc_blocks = _backing_doc_blocks(cfg, module, project_root or root)
 
     _write(
