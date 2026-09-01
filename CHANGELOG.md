@@ -29,6 +29,28 @@
 
 ### Fixed
 
+- **Four module keys were accepted by the validator and read by nobody
+    (gh-1232).** `enums` on all three kind faces, and a composer's `stream`,
+    `generator` and `flat_sources`. Three of them are a real key **one table
+    up** -- `[module.X.composer] stream`, `source.generates.generator`,
+    `[module.X.segment] flat_sources` -- which is the worst version of this:
+    an author who wrote one on the module got silence and a composer that
+    ignored it, when the registry already knew which table it belongs to.
+
+    They report now, and (on gh-1236's vocabularies) the message names the
+    table: *"`stream` … it is a `[module.X.composer]` key"*. `enums` correctly
+    still says it is read nowhere -- `C.enums(cfg)` is project-level and takes
+    no module -- because claiming a table for it would be the same wrong
+    diagnosis in the other direction.
+
+    A stray key that happens to hold a table used to warn **twice**: once as an
+    unknown key and once as a sub-table with no vocabulary. The second says the
+    opposite thing about the same mistake, so it is now emitted only for a key
+    the face accepts. gh-1114's own test had to pick `enums` to reach that
+    branch without tripping the unknown-key one -- borrowing this defect as a
+    fixture, which is why it broke the day the defect was fixed. It builds the
+    condition now instead.
+
 - **A composer's table sub-tables are checked, and their rows survive a save
     (gh-1236).** `_check_kind_module` walked a kind module's sub-tables whose
     rows are arrays of tables, and reported an "unwalked sub-table" for any it

@@ -150,15 +150,25 @@ class TestAWrongKeyIsNamed:
         """An unwalked table is exactly the state this issue is about, so it
         must not be reachable by adding one.
 
-        `enums`, not an invented name: a made-up table is caught one step
-        earlier as an unknown MODULE key, so it never reaches this branch and
-        the first version of this test passed with the branch deleted. It has
-        to be a table whose key is valid and whose rows have no vocabulary.
+        It has to be a table whose key is VALID and whose rows have no
+        vocabulary: a made-up name is caught one step earlier as an unknown
+        module key, so it never reaches this branch, and the first version of
+        this test passed with the branch deleted.
+
+        This used to use `enums` for that -- a key the vocabulary accepted and
+        nothing read. gh-1232 removed it, because "accepted and read by
+        nobody" was itself a defect, so the condition is now *built*: take a
+        real table's row vocabulary away and put it back. Borrowing a bug as a
+        fixture is why this test broke the day the bug was fixed.
         """
-        cfg = _handle_module(enums=[{"name": "ftype"}])
-        msgs = _msgs(cfg)
+        saved = _keys.KIND_TABLE_VOCAB.pop(("handle", "create_post"))
+        try:
+            cfg = _handle_module()
+            msgs = _msgs(cfg)
+        finally:
+            _keys.KIND_TABLE_VOCAB[("handle", "create_post")] = saved
         assert len(msgs) == 1, msgs
-        assert "no key vocabulary" in msgs[0] and "enums" in msgs[0]
+        assert "no key vocabulary" in msgs[0] and "create_post" in msgs[0]
 
 
 class TestACorrectModuleIsSilent:
@@ -304,7 +314,6 @@ def _every_handle_key_module():
                 "serializable": True,
                 "reexports": [],
                 "extra_types": [],
-                "enums": [],
                 "functions_in_core": True,
                 "extra_link_libs": ["m"],
                 "extra_include_dirs": ["x"],
