@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.74.0] — 2026-09-01
+
 ### Breaking
 
 - **Generated C now spells the complex types `_Complex`, not `complex`
