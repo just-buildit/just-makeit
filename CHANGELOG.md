@@ -1,54 +1,50 @@
 ## [Unreleased]
 
-### Fixed
+### Breaking
 
-- **A C++11 caller can use `std::complex` again (gh-1246).** gh-1148 made
-    every generated header parse as C++ by restoring C99's spelling under
-    `__cplusplus` -- `#undef complex` / `#define complex _Complex` in
-    `clib_common.h`. A macro cannot be scoped, so it did not stop at jm's
-    headers: it leaked into the consumer's whole translation unit and rewrote
-    the `complex` in `std::complex`, which is the one name a C++11 application
-    linking a complex-valued C library reaches for. The headers parsed and the
-    callers broke, in **both** include orders.
+- **Generated C now spells the complex types `_Complex`, not `complex`
+    (gh-1246).** Same type, same ABI — `complex` is a `<complex.h>` macro for
+    `_Complex`, so after preprocessing the tokens are identical and nothing
+    about a project's behaviour changes. What changes is the text of every
+    generated public header, and **an existing project is not fixed by
+    upgrading jm.**
 
-    The shim existed only because jm emitted a spelling it does not store.
-    `_CTYPE_META` is keyed on `float _Complex`; `_ctype_display` -- whose own
-    docstring called it a *display form* -- converted it back to the
-    `<complex.h>` macro on the way out, at **104 call sites** across nine
-    modules, all of them building real C declarations. One function answering
-    two questions, with an unscopable macro papering over the second answer.
+    Two files put it out of `apply`'s reach. `native/inc/clib_common.h` is
+    create-only, so `apply` will not replace the `#define complex _Complex`
+    shim it already has; `native/inc/<comp>/<comp>_core.h` is sacred, because
+    it holds the author's inline `step()`, so nothing rewrites the spelling in
+    it either. Measured on a project scaffolded before this change: `jm apply`,
+    `jm regenerate <comp>` and `jm upgrade` all exit 0 and leave all 8
+    occurrences in place.
 
-    `_ctype_display` is gone rather than split in two. Splitting it would have
-    left 104 sites to route by hand, where a missed one emits `complex` into C
-    and breaks a downstream's build; deleting it makes the canonical spelling
-    the only one there is. The prose sites went with it -- at
-    `_context/_step.py` a single value feeds both a C declaration and the
-    Doxygen text beside it, so a prose helper would have rebuilt the same
-    coupling one layer down. Generated docs now read `float _Complex`, which is
-    what the type is called.
+    **Adopting only `clib_common.h` is worse than doing nothing.** That is the
+    file `jm status --check` points at, and taking it alone removes the shim
+    while leaving `float complex` in the prototypes — which trades gh-1246's
+    failure for gh-1148's original one, `expected initializer before   '<comp>_step'`. Do both steps or neither:
 
-    `complex` typed by an **author** is untouched: it is an input alias in
-    `_types.py`, resolved to `_Complex` before anything renders, and
-    `_bind._normalize_ctype` still maps it back when parsing a hand-written
-    header. ABI- and behaviour-neutral -- `complex` is a `<complex.h>` macro
-    for `_Complex`, so after preprocessing the tokens were always identical.
+    ```sh
+    # 1. adopt jm's new clib_common.h -- take the render as-is; do not
+    #    hand-edit it. `status --check` names it as OUTDATED.
+    # 2. re-spell the component C. clib_common.h is EXCLUDED on purpose: jm's
+    #    render is already right, and its comment quotes the old spelling, so
+    #    a blanket pass would rewrite that prose into a false statement.
+    files=$(grep -rl 'float complex\|double complex' \
+              native/inc native/src native/tests native/benchmarks \
+            | grep -v '/clib_common\.h$')
+    [ -n "$files" ] && perl -pi -e '
+        s/\blong double complex\b/long double _Complex/g;
+        s/\bfloat complex\b/float _Complex/g;
+        s/\bdouble complex\b/double _Complex/g;' $files
+    ```
 
-    Gated by `tests/test_gh1246_cxx_std_complex.py`, which needs three
-    properties at once because gh-1148's two gates each have only some: a C++11
-    TU that includes a jm header **and** compiles a `std::complex`, in **both**
-    include orders, linked against the **real built** `lib<pkg>.a` rather than
-    a hand-compiled `_core.o` -- per `_libwiring.py` the C consumer is the only
-    observer of whether a core reached the library at all. Sabotaged by
-    restoring the `#define`: the new gate goes red and both gh-1148 gates stay
-    green, which is what makes "the old pair could not express this" evidence
-    rather than a claim.
+    Verified end to end on a pre-change project: after both steps a C++11 TU
+    using `std::complex` compiles, the project builds, and its CTest suite
+    passes. `just-makeit` has no command that does this for you — that is
+    gh-1248.
 
-    Two assertions were found passing for the wrong reason on the way through.
-    `test_gh137_multiline_decl` claimed to prove a multi-line prototype was
-    replaced, but the only thing separating its fixture from the generated form
-    was the complex spelling; it now anchors on the line wrap and the space
-    before the paren. `test_gh594`'s `"complex[]" not in ext` could no longer
-    match anything jm emits, and is now case-folded.
+    You only need this if you compile the generated headers from C++.
+    A C-only project is unaffected either way, though `jm status --check` will
+    report `clib_common.h` as outdated until step 1 is taken.
 
 ### Added
 
@@ -102,6 +98,54 @@
     invisible from it.
 
 ### Fixed
+
+- **A C++11 caller can use `std::complex` again (gh-1246).** gh-1148 made
+    every generated header parse as C++ by restoring C99's spelling under
+    `__cplusplus` -- `#undef complex` / `#define complex _Complex` in
+    `clib_common.h`. A macro cannot be scoped, so it did not stop at jm's
+    headers: it leaked into the consumer's whole translation unit and rewrote
+    the `complex` in `std::complex`, which is the one name a C++11 application
+    linking a complex-valued C library reaches for. The headers parsed and the
+    callers broke, in **both** include orders.
+
+    The shim existed only because jm emitted a spelling it does not store.
+    `_CTYPE_META` is keyed on `float _Complex`; `_ctype_display` -- whose own
+    docstring called it a *display form* -- converted it back to the
+    `<complex.h>` macro on the way out, at **104 call sites** across nine
+    modules, all of them building real C declarations. One function answering
+    two questions, with an unscopable macro papering over the second answer.
+
+    `_ctype_display` is gone rather than split in two. Splitting it would have
+    left 104 sites to route by hand, where a missed one emits `complex` into C
+    and breaks a downstream's build; deleting it makes the canonical spelling
+    the only one there is. The prose sites went with it -- at
+    `_context/_step.py` a single value feeds both a C declaration and the
+    Doxygen text beside it, so a prose helper would have rebuilt the same
+    coupling one layer down. Generated docs now read `float _Complex`, which is
+    what the type is called.
+
+    `complex` typed by an **author** is untouched: it is an input alias in
+    `_types.py`, resolved to `_Complex` before anything renders, and
+    `_bind._normalize_ctype` still maps it back when parsing a hand-written
+    header. ABI- and behaviour-neutral -- `complex` is a `<complex.h>` macro
+    for `_Complex`, so after preprocessing the tokens were always identical.
+
+    Gated by `tests/test_gh1246_cxx_std_complex.py`, which needs three
+    properties at once because gh-1148's two gates each have only some: a C++11
+    TU that includes a jm header **and** compiles a `std::complex`, in **both**
+    include orders, linked against the **real built** `lib<pkg>.a` rather than
+    a hand-compiled `_core.o` -- per `_libwiring.py` the C consumer is the only
+    observer of whether a core reached the library at all. Sabotaged by
+    restoring the `#define`: the new gate goes red and both gh-1148 gates stay
+    green, which is what makes "the old pair could not express this" evidence
+    rather than a claim.
+
+    Two assertions were found passing for the wrong reason on the way through.
+    `test_gh137_multiline_decl` claimed to prove a multi-line prototype was
+    replaced, but the only thing separating its fixture from the generated form
+    was the complex spelling; it now anchors on the line wrap and the space
+    before the paren. `test_gh594`'s `"complex[]" not in ext` could no longer
+    match anything jm emits, and is now case-folded.
 
 - **Four module keys were accepted by the validator and read by nobody
     (gh-1232).** `enums` on all three kind faces, and a composer's `stream`,
