@@ -100,6 +100,38 @@ jobs:
         os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
+        # macOS + 3.9 is dropped for a MECHANISM, not for being slow.
+        #
+        # Measured on run 33501865715 (main @ 8eed7d5, 2026-09-01), reading
+        # the interpreter each leg actually reported to pytest:
+        #
+        #   macos-latest  3.9   Python 3.9.6    876s   <- the critical path
+        #   macos-latest  3.10  Python 3.10.21  387s
+        #   macos-latest  3.13  Python 3.13.14  516s
+        #   ubuntu-latest 3.9   Python 3.9.25   590s
+        #
+        # 3.9.6 is Apple's /usr/bin/python3 -- the system interpreter, built
+        # without the optimisations a python-build-standalone release carries.
+        # Every other version on that runner gets a uv-managed standalone
+        # build (note the patch levels: .21, .14 are current; .6 is frozen at
+        # whatever macOS shipped). So this one leg was not testing 3.9 the way
+        # anyone runs it; it was testing Apple's build of it, at 2.2x the cost
+        # of its siblings and 1.7x the next slowest job in the whole matrix.
+        #
+        # 3.9 itself is NOT dropped -- `requires-python = ">=3.9"` and a
+        # downstream is actively on it. It still runs on ubuntu-latest
+        # (x86-64) and ubuntu-24.04-arm (aarch64), so both architectures stay
+        # covered and only the unrepresentative interpreter goes.
+        # `tests/test_own_ci_matrix.py` gates that: an `exclude` that removed
+        # a Python version from the matrix ENTIRELY fails there, so this
+        # narrowing cannot quietly become a deletion.
+        #
+        # Revisit if uv gains a managed aarch64-apple-darwin build for 3.9 --
+        # then this leg becomes as cheap as the others and should come back.
+        exclude:
+          - os: macos-latest
+            python-version: "3.9"
+
     steps:
       - uses: actions/checkout@v7.0.1
 
