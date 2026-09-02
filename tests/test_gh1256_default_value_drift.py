@@ -92,6 +92,26 @@ class TestTheFourthAxis:
         )
         assert init_kwargs_drift(existing, reference)[3] == ""
 
+    def test_a_non_numeric_default_change_is_still_reported(self):
+        """Not every C default is a plain float literal — a symbolic
+        constant (an enum member, `INT_MAX`) is not `float()`-parseable, so
+        the numeric-tolerance check must fall through to a plain string
+        comparison rather than silently dropping the finding."""
+        existing = _frag(
+            '"fs", "mode"',
+            "d|i",
+            "    double fs = 1.0;\n    int mode = MODE_FAST;\n",
+        )
+        reference = _frag(
+            '"fs", "mode"',
+            "d|i",
+            "    double fs = 1.0;\n    int mode = MODE_SLOW;\n",
+        )
+        *_, detail = init_kwargs_drift(existing, reference)
+        assert "mode" in detail
+        assert "MODE_FAST" in detail
+        assert "MODE_SLOW" in detail
+
     def test_an_unrelated_required_param_is_not_compared(self):
         """`fs` has no default (required, no `=` before `|`) — nothing to
         compare, and it must not be reported as one."""
