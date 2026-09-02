@@ -39,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._docstring import reconcile_param_docs  # noqa: E402
+from just_makeit._init import _reconcile_decl_doc  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
@@ -210,3 +211,79 @@ class TestTheReconcilerItself:
         decl = "s_t *s_create(const float *ref, size_t dwell);"
         once = reconcile_param_docs(self.BLOCK, decl)
         assert reconcile_param_docs(once, decl) == once
+
+
+class TestReconcileDeclDocPicksTheAdjacentBlock:
+    """gh-1257. `_reconcile_decl_doc` finds the Doxygen block above the
+    declaration being replaced by searching `before` (all text preceding
+    it) for `/\\*\\*.*?\\*/` anchored at the end. When an *earlier*,
+    unrelated function's comment also starts with `/**`, a lazy `.*?` is
+    not leftmost-shortest across the whole match: at the earlier start
+    position it kept stretching past that block's own `*/`, right through
+    the unchanged function's prototype and into the target's own comment,
+    until *some* trailing `*/` satisfied the `\\Z` anchor. The reconciler
+    then rewrote the SPAN's first `@param` group — which belonged to the
+    unrelated, unchanged function — with the target's parameter names.
+    """
+
+    TWO_FN_HEADER = (
+        "#ifndef X_H\n#define X_H\n\n"
+        "/**\n"
+        " * @brief Create.\n"
+        " *\n"
+        " * @param path some path\n"
+        " * @param sample_type a hint\n"
+        " * @param endian byte order\n"
+        " * @return a thing\n"
+        " */\n"
+        "x_state_t *x_create(const char *path, int sample_type,"
+        " int endian);\n\n"
+        "/**\n"
+        " * @brief Read samples.\n"
+        " *\n"
+        " * @param state the reader\n"
+        " * @param n how many\n"
+        " * @param out dest buffer\n"
+        " * @param max_out capacity\n"
+        " * @return count\n"
+        " */\n"
+        "size_t x_read(x_state_t *state, size_t n, float _Complex *out,"
+        " size_t max_out);\n\n"
+        "#endif\n"
+    )
+
+    def test_an_unrelated_earlier_functions_doc_is_untouched(self):
+        new_decl = (
+            "size_t x_read(x_state_t *state, size_t n, double *out,"
+            " size_t max_out);"
+        )
+        text = self.TWO_FN_HEADER.replace(
+            "size_t x_read(x_state_t *state, size_t n, float _Complex *out,"
+            " size_t max_out);",
+            new_decl,
+        )
+        out = _reconcile_decl_doc(text, new_decl)
+        at = out.index("x_state_t *x_create(")
+        start = out.rindex("/**", 0, at)
+        create_block = out[start : out.index("*/", start) + 2]
+        for name in ("path", "sample_type", "endian"):
+            assert f"@param {name}" in create_block
+        assert "@param state" not in create_block
+        assert "@param n" not in create_block
+
+    def test_the_replaced_functions_own_params_are_reconciled(self):
+        new_decl = (
+            "size_t x_read(x_state_t *state, size_t n, double *out,"
+            " size_t max_out);"
+        )
+        text = self.TWO_FN_HEADER.replace(
+            "size_t x_read(x_state_t *state, size_t n, float _Complex *out,"
+            " size_t max_out);",
+            new_decl,
+        )
+        out = _reconcile_decl_doc(text, new_decl)
+        at = out.index(new_decl)
+        start = out.rindex("/**", 0, at)
+        read_block = out[start : out.index("*/", start) + 2]
+        for name in ("state", "n", "out", "max_out"):
+            assert f"@param {name}" in read_block

@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` no longer swaps `@param` docs between two functions in the
+    same sacred header when only the later one needs its declaration
+    replaced (gh-1257).** `_reconcile_decl_doc` located the Doxygen block
+    above a refreshed declaration with `/\*\*.*?\*/` anchored at the end of
+    the preceding text. A lazy `.*?` is not leftmost-shortest across the
+    whole match: when the *nearest* `/**` couldn't reach the anchor without
+    hopping over an intervening `*/`, `re.search` kept stretching that same
+    candidate past it -- through an unrelated, unchanged function's
+    prototype and into the target's own comment -- rather than trying the
+    next, closer `/**` first. The reconciler then rewrote the resulting
+    span's first `@param` group, which belonged to the earlier, unchanged
+    function, with the later function's parameter names -- corrupting real,
+    published API documentation for a function nothing about the apply run
+    touched. Found adopting 0.75.0 in doppler, where gh-1246's
+    `complex` -> `_Complex` respelling forced nearly every hand-written
+    prototype with a complex parameter through the replace-by-name path at
+    once, hitting this in 9 sacred headers.
+
 ## [0.75.0] — 2026-09-01
 
 ### Added

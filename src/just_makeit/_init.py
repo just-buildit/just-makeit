@@ -411,7 +411,18 @@ def _reconcile_decl_doc(text: str, decl: str) -> str:
     if at == -1:
         return text
     before = text[:at]
-    m = re.search(r"(/\*\*.*?\*/)(\s*)\Z", before, re.DOTALL)
+    # gh-1257: `.*?` is lazy but not leftmost-shortest across the whole
+    # string -- when the nearest `/**` can't reach \Z without hopping over
+    # an intervening `*/`, re.search keeps extending that same match past
+    # it rather than trying the NEXT `/**` first, engulfing an unrelated
+    # earlier function's comment (and prototype) into one bogus "block".
+    # `(?:(?!\*/).)*` forbids the body from crossing its own `*/`, so a
+    # start position can only close at its own nearest one; if that isn't
+    # followed by nothing but whitespace, this position fails outright
+    # (no backtracking around the lookahead) and search moves on to the
+    # next, closer `/**` -- landing on the block actually butted against
+    # `decl`.
+    m = re.search(r"(/\*\*(?:(?!\*/).)*\*/)(\s*)\Z", before, re.DOTALL)
     if m is None:
         return text
     block = m.group(1)
