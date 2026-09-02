@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`reconcile_param_docs` no longer detaches a wrapped `@param` description's
+    continuation line, and no longer deletes the block's own closing `*/`
+    when it does (gh-1261).** The parser was purely line-based -- one dict
+    entry per matched `@param NAME ...` line -- so a description that wraps
+    onto a following physical line (common under a 79-column style) fell
+    through into "everything else, left in place" at its OLD position. Once
+    the `@param` group was re-emitted elsewhere the orphaned continuation was
+    left behind, silently attaching one parameter's prose to a different one
+    or leaving it dangling after the whole group -- and since the block's
+    closing `*/` satisfies the same "non-blank comment content" test as a
+    real continuation, a `@param` with no following `@return` could swallow
+    the terminator itself; if that param's signature then dropped an
+    argument, its whole entry -- closing marker included -- vanished with it,
+    leaving an unterminated `/**` comment that ate the next declaration.
+    Continuation lines now travel with their owning `@param` as one unit,
+    whether kept, dropped, or reordered, and the closing marker is excluded
+    from being claimed by any of them. Found re-verifying gh-1257 against
+    real headers in doppler: multiple sacred headers had a wrapped `@param`
+    description and the type-only `complex` -> `_Complex` respelling was
+    enough to trigger it even though no `@param` set actually changed.
+
 ## [0.75.1] — 2026-09-02
 
 ### Fixed
