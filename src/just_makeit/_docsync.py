@@ -1165,6 +1165,44 @@ def _init_kwarg_optionality(text: str) -> tuple | None:
     return (names[:k], names[k:])
 
 
+def _init_kwarg_defaults(text: str) -> "dict[str, str] | None":
+    """``{name: C default-literal}`` for the constructor's OPTIONAL kwargs.
+
+    ``None`` when there is nothing to compare — the same cases
+    :func:`_init_kwarg_optionality` bails out on, since this reuses it to
+    know which names are optional.
+
+    gh-1256. `_init_kwarg_optionality` sees WHICH names are optional and in
+    what order; it does not see the *value* a retuned default seeds the
+    local with. A manifest default changed without moving a name or the
+    ``|`` boundary reads as "no drift" on every existing axis, while
+    ``double cn0 = 50.0;`` stays whatever the original scaffold (or an
+    earlier apply) wrote — so the `.pyi` advertised the new default and the
+    binding kept honouring the old one, silently.
+    """
+    opt = _init_kwarg_optionality(text)
+    if opt is None:
+        return None
+    _, optional_names = opt
+    body = _init_body(text)
+    if body is None:
+        return None
+    mask = _code_mask(body)
+    out: dict[str, str] = {}
+    for name in optional_names:
+        m = re.search(
+            r"^[ \t]*[A-Za-z_][\w \t\*]*\b"
+            + re.escape(name)
+            + r"\s*=\s*([^;]+);",
+            mask,
+            re.MULTILINE,
+        )
+        if m is None:
+            continue
+        out[name] = body[m.start(1) : m.end(1)].strip()
+    return out
+
+
 def _init_kwargs(text: str) -> tuple[str, ...]:
     """The constructor's keyword names, in ``PyArg_ParseTupleAndKeywords``
     order. Empty when the fragment has no ``*_init`` or no kwlist.
@@ -1284,6 +1322,36 @@ def init_kwargs_drift(existing: str, reference: str):
             detail.append(
                 "now required, still omittable here: "
                 + ", ".join(became_required)
+            )
+
+    # gh-1256: a name that stays optional in both, at the same position, can
+    # still have had its DEFAULT retuned in the manifest — invisible to
+    # `ex_opt`/`ref_opt` above, which only ever compare name sets and the
+    # `|` boundary. Scoped to names present (and still optional) on both
+    # sides: `added`/`removed` above already cover a name entering or
+    # leaving, and comparing a name this axis cannot read on one side would
+    # be a false positive, not a missed one.
+    ex_dflt, ref_dflt = (
+        _init_kwarg_defaults(existing),
+        _init_kwarg_defaults(reference),
+    )
+    if ex_dflt is not None and ref_dflt is not None:
+        changed_defaults = []
+        for n in ref:
+            if n not in ex_dflt or n not in ref_dflt:
+                continue
+            ev, rv = ex_dflt[n], ref_dflt[n]
+            if ev == rv:
+                continue
+            try:
+                if float(ev) == float(rv):
+                    continue
+            except ValueError:
+                pass  # not both numeric literals -- fall through and report
+            changed_defaults.append(f"{n} ({ev} -> {rv})")
+        if changed_defaults:
+            detail.append(
+                "default value changed: " + ", ".join(changed_defaults)
             )
     return (added, removed, reordered, "; ".join(detail))
 
