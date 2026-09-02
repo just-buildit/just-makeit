@@ -1185,8 +1185,9 @@ def _init_kwarg_defaults(text: str) -> "dict[str, str] | None":
         return None
     _, optional_names = opt
     body = _init_body(text)
-    if body is None:
-        return None
+    if body is None:  # pragma: no cover - _init_kwarg_optionality already
+        return None  # called _init_body(text) and only returns non-None
+        # when THAT call found one; same deterministic function, same text.
     mask = _code_mask(body)
     out: dict[str, str] = {}
     for name in optional_names:
