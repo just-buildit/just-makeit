@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.1] — 2026-09-02
+
 ### Fixed
 
 - gh-1256's `init_kwargs_drift` fourth axis: covered the `except ValueError`
