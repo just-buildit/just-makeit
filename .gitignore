@@ -200,7 +200,10 @@ cython_debug/
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+# Editor config. Deliberately not tracked: VS Code writes machine-specific
+# absolute paths in here. just-buildit's copy pinned cmake.sourceDirectory
+# to one machine's $HOME and nobody noticed until a lint job finally ran.
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
