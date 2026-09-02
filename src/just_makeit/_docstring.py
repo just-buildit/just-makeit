@@ -1318,17 +1318,45 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
     _fn, names, _returns = sig
     lines = block.splitlines()
     param_re = re.compile(r"^\s*\*\s*@param\s+(\w+)\b(.*)$")
+    # gh-1261: a description that wraps onto a following physical line (the
+    # 79-column style makes this common) is not itself a `@param` line, so a
+    # PURE line-based capture -- one dict entry per matched line -- silently
+    # drops it into "everything else" at its OLD position, orphaned from the
+    # `@param` that owns it once the group is re-emitted elsewhere. Doxygen's
+    # own rule for where a description ends is what these two decide: a line
+    # continues the most recent `@param` unless it is blank or starts a new
+    # tag of its own, so that is also the rule for what travels WITH it here.
+    continuation_re = re.compile(r"^\s*\*\s*(\S.*)$")
+    tag_re = re.compile(r"^\s*\*\s*@\w")
+    # The closing `*/` of the block itself: `\S.*` above happily matches its
+    # `/`, which -- with no `@return` after the last `@param` -- swallowed
+    # the terminator into that param's "continuation" and deleted it from
+    # `kept` outright, moving `*/` earlier in the rebuilt block and leaving
+    # everything originally after it (frequently the next declaration)
+    # inside an unterminated `/**` comment.
+    close_re = re.compile(r"^\s*\*/\s*$")
 
-    existing: dict[str, str] = {}
+    existing: dict[str, list[str]] = {}
     first_idx = None
     kept: list[str] = []
-    for i, line in enumerate(lines):
+    current: str | None = None
+    for line in lines:
         m = param_re.match(line)
         if m:
             if first_idx is None:
                 first_idx = len(kept)
-            existing[m.group(1)] = line
+            current = m.group(1)
+            existing[current] = [line]
             continue
+        if (
+            current is not None
+            and continuation_re.match(line)
+            and not tag_re.match(line)
+            and not close_re.match(line)
+        ):
+            existing[current].append(line)
+            continue
+        current = None
         kept.append(line)
 
     if first_idx is None:
@@ -1343,7 +1371,9 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
             max(len(kept) - 1, 0),
         )
 
-    rebuilt = [existing.get(n, f"{indent} * @param {n}") for n in names]
+    rebuilt = [
+        ln for n in names for ln in existing.get(n, [f"{indent} * @param {n}"])
+    ]
     return "\n".join(kept[:first_idx] + rebuilt + kept[first_idx:])
 
 
