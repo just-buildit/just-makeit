@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.2] — 2026-09-02
+
 ### Fixed
 
 - **`reconcile_param_docs` no longer detaches a wrapped `@param` description's
