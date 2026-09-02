@@ -2,6 +2,25 @@
 
 ### Fixed
 
+- **`jm status --check` now catches a retuned `init_params` default that
+    never reached the sacred binding fragment (gh-1256).** `init_kwargs_drift`
+    already compared the constructor's keyword names, their order, and (gh-823)
+    which side of the `PyArg_ParseTupleAndKeywords` `|` each sits on -- none of
+    those three axes reads the *value* the local variable is seeded with. A
+    parameter that stays optional at the same position, with only its manifest
+    `default` changed (`50.0` -> `0.0`), produced identical names in identical
+    order and an unmoved `|`: no drift on any existing axis, while
+    `double cn0 = 50.0;` in `native/src/<mod>/<mod>_ext_<obj>.c` kept the stale
+    value forever -- `apply` regenerated the `.pyi` and even the runtime
+    docstring's own "default 0.0" text, so every other signal read as current
+    while the compiled constructor still built with the old default whenever
+    the caller omitted the keyword. Adds the fourth axis to the one
+    `init_kwargs_drift` implementation, gated the same way the third one
+    (gh-823) is: unsuppressible except through `status_allow`, since jm cannot
+    regenerate a hand-owned constructor body on its own and reconciling the
+    manifest with the binding (or moving the constructor to an `_extra.c`) is
+    the author's call to make.
+
 - **`jm apply` no longer swaps `@param` docs between two functions in the
     same sacred header when only the later one needs its declaration
     replaced (gh-1257).** `_reconcile_decl_doc` located the Doxygen block
