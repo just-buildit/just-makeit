@@ -2,6 +2,11 @@
 
 ### Fixed
 
+- gh-1256's `init_kwargs_drift` fourth axis: covered the `except ValueError`
+    fallback for a non-numeric C default (a symbolic constant, e.g. an enum
+    member) that `codecov/patch` flagged after #1258 merged. No behavior
+    change -- test coverage only.
+
 - **`jm status --check` now catches a retuned `init_params` default that
     never reached the sacred binding fragment (gh-1256).** `init_kwargs_drift`
     already compared the constructor's keyword names, their order, and (gh-823)
