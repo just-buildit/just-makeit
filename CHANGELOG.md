@@ -2,6 +2,27 @@
 
 ### Fixed
 
+- **A record's docs now reach the runtime type on `apply`, not only the
+    `.pyi` (gh-1267).** gh-646 made `_record.descriptor_c` emit the record
+    type's own doc and each field's doc into the two `PyStructSequence`
+    tables, from the same `_record.fields` / `_record.type_doc` calls the
+    `.pyi` writer uses -- but nothing refreshed an *existing* fragment. A
+    module object's `native/src/<mod>/<mod>_ext_<obj>.c` is sacred: it is
+    spliced, never re-rendered, so hand-written bindings survive, and
+    `_docsync` carries derived prose into it instead -- for `PyMethodDef`,
+    `PyGetSetDef` and `tp_doc`, but not for the structseq descriptor. That
+    descriptor was therefore frozen at the moment the method was first
+    declared, so documenting the record afterwards (`/**< … */` on the struct
+    members in the sacred header, or `record_doc` / a `--result-field` doc in
+    the manifest) reached the `.pyi` and stopped: the stub grew a full
+    `Attributes` table while `help()` on the built type showed
+    `{"n", NULL}` and the `Sum(n, mean)` synopsis. Measured in doppler on
+    0.75.3, where gh-1264 made these types real module attributes and so made
+    the gap visible. The standalone path never had it -- it re-renders
+    `<comp>_ext.c` wholesale. Fixed by teaching the transplant the two
+    tables; those slots have no hand-written variant to protect, since the
+    whole descriptor is generated from the manifest and the header.
+
 - **One extension module now publishes exactly one type object per record
     name, so a view and its parent sharing a `single = true` method no
     longer segfault (gh-1268).** gh-1264 deduplicated the list of records to

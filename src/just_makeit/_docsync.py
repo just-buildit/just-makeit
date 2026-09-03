@@ -47,6 +47,16 @@ _DOC_FIELD = 3
 
 _METHODS_RE = re.compile(r"static\s+PyMethodDef\s+\w+\s*\[\s*\]\s*=\s*\{")
 _GETSET_RE = re.compile(r"static\s+PyGetSetDef\s+\w+\s*\[\s*\]\s*=\s*\{")
+# gh-1267: the two tables `_record.descriptor_c` emits. Both carry their doc
+# in field 1 -- `{name, DOC}` for a field row, `{qualname, DOC, fields, n}`
+# for the descriptor -- rather than at `_DOC_FIELD` like the two above.
+_SS_FIELDS_RE = re.compile(
+    r"static\s+PyStructSequence_Field\s+(\w+)_fields\s*\[\s*\]\s*=\s*\{"
+)
+_SS_DESC_RE = re.compile(
+    r"static\s+PyStructSequence_Desc\s+(\w+)_desc\s*=\s*\{"
+)
+_SS_DOC_FIELD = 1
 _TP_DOC_RE = re.compile(r"\.tp_doc\s*=\s*")
 _TYPE_RE = re.compile(r"static\s+PyTypeObject\s+\w+\s*=\s*\{")
 # The PyTypeObject slot each array kind is wired into. A freshly spliced array
@@ -213,6 +223,55 @@ def _doc_slots(text: str, mask: str, array_re: re.Pattern) -> dict[str, tuple]:
             continue
         fs, fe = fields[_DOC_FIELD]
         out[name] = (fs, fe, text[fs:fe])
+    return out
+
+
+def _record_doc_slots(text: str, mask: str) -> "dict[tuple, tuple]":
+    """Map ``(sid, field)`` -> ``(start, end, cur)`` for every structseq doc.
+
+    gh-1267. ``_record.descriptor_c`` writes the record type's own doc and each
+    field's doc into two file-scope tables, and both were frozen at the moment
+    the fragment was first generated -- these fragments are *sacred* and never
+    re-rendered, and the doc transplant knew only about ``PyMethodDef`` /
+    ``PyGetSetDef`` / ``tp_doc``. Documenting the struct in the sacred header
+    (or declaring ``record_doc`` in the manifest) afterwards therefore reached
+    the ``.pyi`` on the next ``apply`` and stopped there: the ``.pyi`` grew a
+    full ``Attributes`` table while ``help()`` on the built type showed
+    nothing, which is the two-faces-disagree bug gh-646 exists to prevent,
+    arriving through the one path that skips the renderer.
+
+    *field* is the field's own name for a row of ``<sid>_fields[]``, and ``""``
+    for the record type's doc in ``<sid>_desc``. A file carries one pair of
+    tables per ``single = true`` method, so both are keyed by *sid* rather than
+    found once like the arrays above.
+    """
+    out: dict[tuple, tuple] = {}
+    for m in _SS_FIELDS_RE.finditer(mask):
+        sid = m.group(1)
+        open_idx = m.end() - 1
+        close_idx = _match_brace(mask, open_idx)
+        if close_idx == -1:
+            continue
+        for s, e in _entry_spans(mask, open_idx + 1, close_idx):
+            name = _entry_name(text, mask, s, e)
+            if name is None:  # the {NULL, NULL} sentinel
+                continue
+            fields = _field_spans(mask, s, e)
+            if len(fields) <= _SS_DOC_FIELD:
+                continue
+            fs, fe = fields[_SS_DOC_FIELD]
+            out[(sid, name)] = (fs, fe, text[fs:fe])
+    for m in _SS_DESC_RE.finditer(mask):
+        sid = m.group(1)
+        open_idx = m.end() - 1
+        close_idx = _match_brace(mask, open_idx)
+        if close_idx == -1:
+            continue
+        fields = _field_spans(mask, open_idx, close_idx)
+        if len(fields) <= _SS_DOC_FIELD:
+            continue
+        fs, fe = fields[_SS_DOC_FIELD]
+        out[(sid, "")] = (fs, fe, text[fs:fe])
     return out
 
 
@@ -670,6 +729,22 @@ def transplant_docs(
             while at > 0 and existing[at - 1] in " \t":
                 at -= 1
             edits.append((at, at, "," + ref[2]))
+
+    # gh-1267: the structseq descriptor's docs. Unlike a `PyMethodDef` row,
+    # these slots have no hand-written variant to protect: `descriptor_c`
+    # generates the whole table from `record_doc` / `result_fields[].doc` /
+    # the header's `/**<` member docs, and the `.pyi` beside it is rendered
+    # from the SAME `_record.fields` call — so a slot that disagrees with the
+    # reference is stale by construction, and leaving it is what let the two
+    # faces diverge. The author's channel for this prose is the manifest or
+    # the sacred header, both of which the reference already reflects.
+    ex_rec = _record_doc_slots(existing, ex_mask)
+    ref_rec = _record_doc_slots(reference, ref_mask)
+    for key, (fs, fe, cur) in ex_rec.items():
+        ref = ref_rec.get(key)
+        if ref is None or _norm(ref[2]) == _norm(cur):
+            continue
+        edits.append((fs, fe, ref[2]))
 
     ex_tp = _tp_doc_span(existing, ex_mask)
     ref_tp = _tp_doc_span(reference, ref_mask)
