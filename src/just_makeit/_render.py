@@ -24,6 +24,7 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
+from . import _record
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -1516,15 +1517,16 @@ def make_functions_ctx(
 
 
 def record_registration_c(
-    registrations: "list[tuple[str, str]]",
+    registrations: "list[_record.RecordReg]",
+    seen: "dict[str, _record.RecordReg] | None" = None,
 ) -> "tuple[list[str], list[str]]":
     """``(type_ready_lines, add_object_lines)`` for a component's records.
 
-    gh-1264. *registrations* is ``[(sid, public_name), ...]`` from
-    :func:`_record.registrations` — one entry per ``single = true`` method's
-    structseq. Shared by every ``PyInit_`` assembly site (the standalone
-    template's ctx and both module-init assemblers below) so the create-then-
-    register shape is written once rather than three times drifting apart.
+    gh-1264. *registrations* comes from :func:`_record.registrations` — one
+    entry per ``single = true`` method's structseq. Shared by every
+    ``PyInit_`` assembly site (the standalone template's ctx and both
+    module-init assemblers below) so the create-then-register shape is
+    written once rather than three times drifting apart.
 
     The type-ready half runs BEFORE the module object exists (creating a
     type needs no module); the add-object half runs after, so a caller
@@ -1535,10 +1537,40 @@ def record_registration_c(
     explicit `Py_INCREF` before `AddObject` "steals" one) — passed straight
     to `PyModule_AddObject`, and `Py_DECREF`'d only if THAT call fails, since
     on success ownership has already transferred to the module.
+
+    *seen* is the public-name namespace of the extension module being
+    assembled (gh-1268). A module aggregator threads ONE dict through every
+    component so a name claimed by an object is not claimed again by its
+    view — the second claim aliases the first type object instead, since
+    ``PyModule_AddObject`` steals its reference and a second call under the
+    same key frees the first type out from under the wrapper still pointing
+    at it. Passing ``None`` starts a fresh namespace, which is what a
+    standalone object's own ``PyInit_`` wants: its `.so` is its own module.
+
+    Raises
+    ------
+    ValueError
+        Via :func:`_record.resolve`, when two records claim one name with
+        different shapes.
     """
+    ns = {} if seen is None else seen
     ready: list[str] = []
     add: list[str] = []
-    for sid, name in registrations:
+    for reg in registrations:
+        sid, name = reg.sid, reg.name
+        alias = _record.resolve(reg, ns)
+        if alias is not None:
+            # gh-1268: the module already publishes this record. Point this
+            # wrapper's static at that one type rather than registering a
+            # second under the same key. Both statics are borrowed aliases
+            # of the reference the module dict owns, so this adds no
+            # refcount and the lazy in-wrapper fallback (a NULL check) never
+            # fires again.
+            ready.append(
+                f"    {sid}_type = {alias.sid}_type;"
+                f"  /* {name}: one public name, one type */"
+            )
+            continue
         ready.append(
             f"    if (!{sid}_type) {{\n"
             f"        {sid}_type = PyStructSequence_NewType(&{sid}_desc);\n"
@@ -1617,6 +1649,10 @@ def render_module_ext_c(
 
     type_ready_lines: list[str] = []
     add_object_calls_lines: list[str] = []
+    # gh-1268: ONE public-name namespace for the whole module, so a view and
+    # its parent sharing a record_name publish one type object rather than
+    # two, the second of which frees the first.
+    _rec_seen: dict[str, _record.RecordReg] = {}
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -1628,7 +1664,7 @@ def render_module_ext_c(
         # here instead of lazily inside the method (which never told the
         # module it existed).
         _rec_ready, _rec_add = record_registration_c(
-            ctx.get("record_registrations") or []
+            ctx.get("record_registrations") or [], _rec_seen
         )
         type_ready_lines += _rec_ready
         C_ = ctx["Component"]
@@ -1789,6 +1825,9 @@ def render_module_ext_aggregator(
     _extra_types = extra_types or []
     type_ready_lines: list[str] = []
     add_object_calls_lines: list[str] = []
+    # gh-1268: see the peer loop in render_module_ext_c — one namespace per
+    # module, not per component.
+    _rec_seen: dict[str, _record.RecordReg] = {}
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -1800,7 +1839,7 @@ def render_module_ext_aggregator(
         # here instead of lazily inside the method (which never told the
         # module it existed).
         _rec_ready, _rec_add = record_registration_c(
-            ctx.get("record_registrations") or []
+            ctx.get("record_registrations") or [], _rec_seen
         )
         type_ready_lines += _rec_ready
         C_ = ctx["Component"]

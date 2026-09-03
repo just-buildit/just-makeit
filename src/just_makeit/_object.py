@@ -2217,10 +2217,16 @@ def _regenerate_module_now(
     # re-exports only what it is TOLD is public, so without this the type
     # was reachable as `pkg.mod.mod.X` (the raw extension) and not
     # `pkg.mod.X`, the path the `.pyi` and `record_module` both advertise.
+    # gh-1268: `record_registrations` now lists EVERY record method rather
+    # than the first per public name, so a view sharing its parent's record
+    # names it twice here. Deliberately not deduplicated: the export merge
+    # below already collapses repeats (measured — removing a dedupe here
+    # changes neither the fresh render nor the merge), and a second one would
+    # be a check written twice.
     record_names = [
-        name
+        reg.name
         for ctx in comp_ctxs
-        for _sid, name in ctx.get("record_registrations", [])
+        for reg in ctx.get("record_registrations", [])
     ]
     # gh-342: extra_types are names jm itself emits into the `from .<module>
     # import …` line (types from a hand-written sibling compiled into the same
