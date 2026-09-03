@@ -108,7 +108,7 @@ PyInit_/*<<component>>*/(void)
     import_array();
     if (PyType_Ready(&/*<<ComponentW>>*/Type) < 0)
         return NULL;/*<<stream_type_ready>>*/
-
+/*<<record_type_ready>>*/
     PyObject *m = PyModule_Create(&/*<<component>>*/_module);
     if (!m)
         return NULL;
@@ -120,5 +120,5 @@ PyInit_/*<<component>>*/(void)
         Py_DECREF(m);
         return NULL;
     }
-/*<<procglobal>>*/    return m;
+/*<<record_add_object>>*//*<<procglobal>>*/    return m;
 }

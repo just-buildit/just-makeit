@@ -397,6 +397,39 @@ def pyi_classes(methods: list[dict], doc_blocks: dict | None = None) -> str:
     return "\n".join(out)
 
 
+def registrations(
+    methods: list[dict], wrapper_prefix: str
+) -> list[tuple[str, str]]:
+    """``(sid, public_name)`` for every ``single = true`` method's record.
+
+    gh-1264. The ``.pyi`` declares each record's class at module level
+    (:func:`pyi_classes`, deduplicated by name the same way) — but nothing
+    registered the *runtime* type anywhere a caller could reach it by name.
+    ``PyStructSequence_NewType`` built it lazily inside the method wrapper
+    and never handed it to ``PyModule_AddObject``, so ``hasattr(module,
+    "X")`` stayed ``False`` even after the method had run and returned an
+    instance: `type(r).__name__` read `"X"` while `module.X` did not exist.
+    Callers use this to create the type at module init instead, alongside
+    every other type jm registers, and add it under its public name.
+
+    Deduplicated by public name, first occurrence wins — the same rule
+    :func:`pyi_classes` uses, so two methods sharing a ``record_name``
+    register (and the ``.pyi`` describes) the same logical class rather than
+    two C types silently overwriting one module attribute in method order.
+    """
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for m in methods:
+        if not is_record(m):
+            continue
+        nm = public_name(m)
+        if nm in seen:
+            continue
+        seen.add(nm)
+        out.append((f"{wrapper_prefix}_{m['name']}", nm))
+    return out
+
+
 def validate_record_shape(
     what: str,
     name: str,

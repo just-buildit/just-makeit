@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A `single = true` method's record type is now created at module init and
+    registered under its public name, so it is reachable the way the `.pyi`
+    already advertises it (gh-1264).** The `.pyi` declares `class X(tuple   [...])` at module level, so a reader and a type checker both expect
+    `from pkg.mod import X` -- but the C binding built the `PyStructSequence`
+    type lazily, inside the method wrapper, and never handed it to
+    `PyModule_AddObject`. `hasattr(pkg.mod, "X")` stayed `False` even after
+    the method had run and returned an instance: `type(r).__name__` read
+    `"X"` while `pkg.mod.X` did not exist, so `isinstance(r, X)` and a docs
+    directive naming `pkg.mod.X` both had nothing to bind to. Measured in
+    doppler on jm 0.73.1 for every record it has (`doppler.ber.BerInterval`,
+    `doppler.measure.ToneMetrics`, `doppler.dsss.ReceiverStatus`). Fixed by
+    creating the type eagerly at module init -- the same
+    `PyType_Ready`/`PyModule_AddObject` split every other jm-owned type
+    already goes through -- in the standalone object's own `PyInit_`, the
+    module aggregator's `PyInit_<module>`, and the module subpackage's
+    `__init__.py` re-export list, which previously advertised only the
+    Component classes.
+
 ## [0.75.2] — 2026-09-02
 
 ### Fixed

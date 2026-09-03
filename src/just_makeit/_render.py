@@ -1515,6 +1515,47 @@ def make_functions_ctx(
     }
 
 
+def record_registration_c(
+    registrations: "list[tuple[str, str]]",
+) -> "tuple[list[str], list[str]]":
+    """``(type_ready_lines, add_object_lines)`` for a component's records.
+
+    gh-1264. *registrations* is ``[(sid, public_name), ...]`` from
+    :func:`_record.registrations` — one entry per ``single = true`` method's
+    structseq. Shared by every ``PyInit_`` assembly site (the standalone
+    template's ctx and both module-init assemblers below) so the create-then-
+    register shape is written once rather than three times drifting apart.
+
+    The type-ready half runs BEFORE the module object exists (creating a
+    type needs no module); the add-object half runs after, so a caller
+    splices the first into its `PyType_Ready` block and the second into its
+    `PyModule_AddObject` block, the same two-phase split every other jm-owned
+    type already goes through. `PyStructSequence_NewType` returns an owned
+    new reference (unlike the static `PyTypeObject`s beside it, which need an
+    explicit `Py_INCREF` before `AddObject` "steals" one) — passed straight
+    to `PyModule_AddObject`, and `Py_DECREF`'d only if THAT call fails, since
+    on success ownership has already transferred to the module.
+    """
+    ready: list[str] = []
+    add: list[str] = []
+    for sid, name in registrations:
+        ready.append(
+            f"    if (!{sid}_type) {{\n"
+            f"        {sid}_type = PyStructSequence_NewType(&{sid}_desc);\n"
+            f"        if (!{sid}_type) return NULL;\n"
+            f"    }}"
+        )
+        add.append(
+            f'    if (PyModule_AddObject(m, "{name}",'
+            f" (PyObject *){sid}_type) < 0) {{\n"
+            f"        Py_DECREF({sid}_type);\n"
+            f"        Py_DECREF(m);\n"
+            f"        return NULL;\n"
+            f"    }}"
+        )
+    return ready, add
+
+
 def render_module_ext_c(
     module: str,
     comp_ctxs: list[dict],
@@ -1575,6 +1616,7 @@ def render_module_ext_c(
         parts.append(render(COMPONENT_TYPE_SECTION, ctx))
 
     type_ready_lines: list[str] = []
+    add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -1582,9 +1624,13 @@ def render_module_ext_c(
         # gh-203: a streamable object also readies its iterator type.
         if ctx.get("stream_module_ready"):
             type_ready_lines.append(ctx["stream_module_ready"])
-    type_ready_checks = "\n".join(type_ready_lines)
-    add_object_calls_lines: list[str] = []
-    for ctx in comp_ctxs:
+        # gh-1264: a single=true method's structseq, created and registered
+        # here instead of lazily inside the method (which never told the
+        # module it existed).
+        _rec_ready, _rec_add = record_registration_c(
+            ctx.get("record_registrations") or []
+        )
+        type_ready_lines += _rec_ready
         C_ = ctx["Component"]
         CW_ = ctx["ComponentW"]
         add_object_calls_lines += [
@@ -1593,6 +1639,8 @@ def render_module_ext_c(
             f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
             "    }",
         ]
+        add_object_calls_lines += _rec_add
+    type_ready_checks = "\n".join(type_ready_lines)
     add_object_calls = "\n".join(add_object_calls_lines)
 
     footer_ctx = {
@@ -1740,6 +1788,7 @@ def render_module_ext_aggregator(
         parts.append("\n" + fn_ctx["function_wrappers"] + "\n")
     _extra_types = extra_types or []
     type_ready_lines: list[str] = []
+    add_object_calls_lines: list[str] = []
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -1747,13 +1796,13 @@ def render_module_ext_aggregator(
         # gh-203: a streamable object also readies its iterator type.
         if ctx.get("stream_module_ready"):
             type_ready_lines.append(ctx["stream_module_ready"])
-    type_ready_lines += [
-        f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
-        for et in _extra_types
-    ]
-    type_ready_checks = "\n".join(type_ready_lines)
-    add_object_calls_lines: list[str] = []
-    for ctx in comp_ctxs:
+        # gh-1264: a single=true method's structseq, created and registered
+        # here instead of lazily inside the method (which never told the
+        # module it existed).
+        _rec_ready, _rec_add = record_registration_c(
+            ctx.get("record_registrations") or []
+        )
+        type_ready_lines += _rec_ready
         C_ = ctx["Component"]
         CW_ = ctx["ComponentW"]
         add_object_calls_lines += [
@@ -1762,6 +1811,12 @@ def render_module_ext_aggregator(
             f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
             "    }",
         ]
+        add_object_calls_lines += _rec_add
+    type_ready_lines += [
+        f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
+        for et in _extra_types
+    ]
+    type_ready_checks = "\n".join(type_ready_lines)
     for et in _extra_types:
         add_object_calls_lines += [
             f"    Py_INCREF(&{et}Type);",
