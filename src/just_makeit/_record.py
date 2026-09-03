@@ -397,14 +397,26 @@ def pyi_classes(methods: list[dict], doc_blocks: dict | None = None) -> str:
     return "\n".join(out)
 
 
-def registrations(
-    methods: list[dict], wrapper_prefix: str
-) -> list[tuple[str, str]]:
-    """``(sid, public_name)`` for every ``single = true`` method's record.
+class RecordReg(NamedTuple):
+    """One record type a ``PyInit_`` must create and publish.
+
+    ``shape`` is the field list reduced to what decides *type identity* —
+    each field's name and C type, in order. Two declarations with the same
+    ``shape`` describe the same ``PyStructSequence``; docs are excluded
+    because they change what the type *says*, not what it *is*.
+    """
+
+    sid: str
+    name: str
+    shape: tuple[tuple[str, str], ...]
+
+
+def registrations(methods: list[dict], wrapper_prefix: str) -> list[RecordReg]:
+    """A :class:`RecordReg` for every ``single = true`` method's record.
 
     gh-1264. The ``.pyi`` declares each record's class at module level
-    (:func:`pyi_classes`, deduplicated by name the same way) — but nothing
-    registered the *runtime* type anywhere a caller could reach it by name.
+    (:func:`pyi_classes`, deduplicated by name) — but nothing registered the
+    *runtime* type anywhere a caller could reach it by name.
     ``PyStructSequence_NewType`` built it lazily inside the method wrapper
     and never handed it to ``PyModule_AddObject``, so ``hasattr(module,
     "X")`` stayed ``False`` even after the method had run and returned an
@@ -412,22 +424,99 @@ def registrations(
     Callers use this to create the type at module init instead, alongside
     every other type jm registers, and add it under its public name.
 
-    Deduplicated by public name, first occurrence wins — the same rule
-    :func:`pyi_classes` uses, so two methods sharing a ``record_name``
-    register (and the ``.pyi`` describes) the same logical class rather than
-    two C types silently overwriting one module attribute in method order.
+    **Every** record method is listed, including two that share a public
+    name. gh-1264 deduplicated here and that is what made gh-1268 a
+    segfault: this function sees ONE component, while the name it is
+    deduplicating lives in the *module*, so a view and its parent each
+    passed the "first occurrence" test in their own call and the aggregator
+    registered two type objects under one key. Deduplication belongs to
+    whoever assembles a whole module's list — :func:`resolve`.
     """
-    seen: set[str] = set()
-    out: list[tuple[str, str]] = []
-    for m in methods:
-        if not is_record(m):
-            continue
-        nm = public_name(m)
-        if nm in seen:
-            continue
-        seen.add(nm)
-        out.append((f"{wrapper_prefix}_{m['name']}", nm))
-    return out
+    return [
+        RecordReg(
+            f"{wrapper_prefix}_{m['name']}",
+            public_name(m),
+            tuple((f.name, f.ctype) for f in fields(m)),
+        )
+        for m in methods
+        if is_record(m)
+    ]
+
+
+def _conflict_message(first: RecordReg, other: RecordReg) -> str:
+    """Why *other* cannot publish under a name *first* already claimed."""
+
+    def _shape(reg: RecordReg) -> str:
+        return ", ".join(f"{n}:{t}" for n, t in reg.shape) or "(no fields)"
+
+    return (
+        f"two records share the public name '{first.name}' but describe\n"
+        f"different shapes, so one module attribute cannot name both:\n"
+        f"  {first.sid}: {_shape(first)}\n"
+        f"  {other.sid}: {_shape(other)}\n"
+        f"Give one of them its own name with --record-name, or make the\n"
+        f"result_fields agree."
+    )
+
+
+def resolve(
+    reg: RecordReg, seen: "dict[str, RecordReg]"
+) -> "RecordReg | None":
+    """Claim *reg*'s public name in *seen*, or the entry it must alias.
+
+    gh-1268. One extension module publishes one type object per public
+    name. ``PyModule_AddObject`` *steals* the reference it is given, so a
+    second call under a key already present drops the module's only
+    reference to the first type: it is freed at the next GC pass while the
+    first wrapper's ``static PyTypeObject *`` still points at it, and the
+    next call through that wrapper dereferences freed memory.
+
+    Returns ``None`` when *reg* is the first claim on its name (the caller
+    creates and registers it), or the earlier :class:`RecordReg` whose type
+    object it must reuse — one public name, one type, so ``isinstance``
+    holds for every class that returns the record.
+
+    Raises
+    ------
+    ValueError
+        When the name is claimed by a *different* shape. There is no
+        correct C to emit: aliasing would fill a descriptor of one arity
+        from a kernel of another, and registering both is the segfault this
+        exists to prevent.
+
+    Examples
+    --------
+    >>> a = RecordReg("Frame_layout", "FrameLayout", (("n", "size_t"),))
+    >>> b = RecordReg("FrameDesc_layout", "FrameLayout", (("n", "size_t"),))
+    >>> seen = {}
+    >>> resolve(a, seen) is None
+    True
+    >>> resolve(b, seen) is a
+    True
+    """
+    first = seen.get(reg.name)
+    if first is None:
+        seen[reg.name] = reg
+        return None
+    if first.shape != reg.shape:
+        raise ValueError(_conflict_message(first, reg))
+    return first
+
+
+def name_conflict(regs: "list[RecordReg]") -> str:
+    """The refusal *regs* earns as a whole, or ``""``.
+
+    The same walk :func:`resolve` drives one entry at a time, for a caller
+    that wants to refuse *before* writing anything rather than partway
+    through a render.
+    """
+    seen: dict[str, RecordReg] = {}
+    for reg in regs:
+        try:
+            resolve(reg, seen)
+        except ValueError as exc:
+            return str(exc)
+    return ""
 
 
 def validate_record_shape(

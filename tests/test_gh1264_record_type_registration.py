@@ -56,7 +56,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
-from just_makeit._record import registrations  # noqa: E402
+from just_makeit._record import RecordReg, registrations  # noqa: E402
 from just_makeit._render import record_registration_c  # noqa: E402
 
 _CC = shutil.which("cc") or shutil.which("gcc")
@@ -156,8 +156,11 @@ def _scaffold_module(tmp_path: Path) -> Path:
     return root
 
 
+_SHAPE = tuple((f["name"], f["type"]) for f in _FIELDS)
+
+
 class TestRegistrationsHelper:
-    """Unit-level: the (sid, public_name) list itself."""
+    """Unit-level: the RecordReg list itself."""
 
     def test_a_record_method_is_found(self):
         methods = [
@@ -168,7 +171,9 @@ class TestRegistrationsHelper:
                 "result_fields": _FIELDS,
             }
         ]
-        assert registrations(methods, "Sync") == [("Sync_find", "SyncHit")]
+        assert registrations(methods, "Sync") == [
+            ("Sync_find", "SyncHit", _SHAPE)
+        ]
 
     def test_a_non_record_method_is_ignored(self):
         methods = [{"name": "step", "arg_type": "float"}]
@@ -177,9 +182,16 @@ class TestRegistrationsHelper:
     def test_no_methods_is_empty(self):
         assert registrations([], "Sync") == []
 
-    def test_two_methods_sharing_a_record_name_dedupe_to_the_first(self):
-        """Same rule `pyi_classes` uses -- the `.pyi` only ever declares
-        the class once, so only one C type should claim that name too."""
+    def test_two_methods_sharing_a_record_name_are_both_listed(self):
+        """gh-1268 moved the deduplication OUT of here.
+
+        This function sees one component; the name it was deduplicating is
+        an attribute of the whole extension MODULE. Dropping the repeat here
+        meant each component passed its own "first occurrence" test, the
+        aggregator registered two type objects under one key, and the second
+        `PyModule_AddObject` freed the first. `_record.resolve` owns the
+        rule now, over a namespace the caller keeps for the whole module.
+        """
         methods = [
             {
                 "name": "find",
@@ -194,17 +206,22 @@ class TestRegistrationsHelper:
                 "result_fields": _FIELDS,
             },
         ]
-        assert registrations(methods, "Sync") == [("Sync_find", "Hit")]
+        assert registrations(methods, "Sync") == [
+            ("Sync_find", "Hit", _SHAPE),
+            ("Sync_find2", "Hit", _SHAPE),
+        ]
 
 
 class TestRecordRegistrationC:
-    """Unit-level: the C emitted for a (sid, name) list."""
+    """Unit-level: the C emitted for a RecordReg list."""
 
     def test_empty_list_emits_nothing(self):
         assert record_registration_c([]) == ([], [])
 
     def test_one_entry_creates_then_registers(self):
-        ready, add = record_registration_c([("Sync_find", "SyncHit")])
+        ready, add = record_registration_c(
+            [RecordReg("Sync_find", "SyncHit", _SHAPE)]
+        )
         assert len(ready) == 1
         assert "PyStructSequence_NewType(&Sync_find_desc)" in ready[0]
         assert len(add) == 1

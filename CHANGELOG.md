@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+### Fixed
+
+- **One extension module now publishes exactly one type object per record
+    name, so a view and its parent sharing a `single = true` method no
+    longer segfault (gh-1268).** gh-1264 deduplicated the list of records to
+    register in `_record.registrations`, which sees one *component*, while
+    the name being deduplicated is an attribute of the whole *module*. A view
+    and its parent each passed their own "first occurrence" test, so the
+    aggregator emitted `PyModule_AddObject(m, "FrameLayout", ...)` twice with
+    two different type objects. That call *steals* the reference it is given:
+    the second dropped the module's only reference to the first type, which
+    survived on its own `tp_mro`/descriptor self-references as an unreachable
+    cycle and was freed at the next GC pass -- while the first wrapper's
+    `static PyTypeObject *` still pointed at it. The next call through that
+    wrapper read freed memory. Nothing failed at import, and on a fresh
+    interpreter the first call still returned a correct-looking record, which
+    is why it shipped; doppler caught it as `make test-stubs` exiting 139.
+    The rule now lives in `_record.resolve`, over a namespace the module
+    aggregator keeps for all of its components: a repeat of a name already
+    claimed by an identical shape **aliases** the first type object
+    (`SeededAcc_summary_type = Acc_summary_type;`) instead of registering a
+    second, so both classes return instances of the one class the `.pyi`
+    declares and `isinstance` holds for both. A repeat claiming one name with
+    a **different** shape is refused instead -- aliasing would fill a
+    descriptor of one arity from a kernel of another -- and `jm method`
+    refuses it before writing anything, naming both claimants, both field
+    lists, and `--record-name` as the way out.
+
 ## [0.75.3] — 2026-09-03
 
 ### Fixed
