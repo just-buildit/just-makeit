@@ -3426,6 +3426,12 @@ def make_methods_ctx(
         # at module level above the component class that returns them. Empty
         # for every project without one, so the slot costs nothing.
         "pyi_records": _pyi_records(methods, doc_blocks),
+        # gh-1264: (sid, public_name) pairs the module init must create the
+        # structseq type for and register under -- see _record.registrations.
+        # Consumed by the module-init assembly in _render.py, not by the
+        # generic `<<key>>` substitution (a list value, so render() skips
+        # it), which is also why an empty list here costs nothing.
+        "record_registrations": _record.registrations(methods, wrapper_prefix),
         "bench_methods_timing_block": bench_methods_timing_block,
         "bench_elapsed_helper": (_BENCH_ELAPSED_HELPER if _has_timing else ""),
         "bench_timer_decls": _BENCH_TIMER_DECLS if _has_timing else "",

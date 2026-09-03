@@ -2211,11 +2211,24 @@ def _regenerate_module_now(
     # user-written wrapper classes and docstrings are not destroyed.
     Components = [ctx["Component"] for ctx in comp_ctxs]
     fn_names = [f["name"] for f in functions]
+    # gh-1264: a single=true method's record class. jm now creates AND
+    # registers the type on the C extension itself (`record_registrations`,
+    # threaded from `make_methods_ctx`) — but the subpackage `__init__.py`
+    # re-exports only what it is TOLD is public, so without this the type
+    # was reachable as `pkg.mod.mod.X` (the raw extension) and not
+    # `pkg.mod.X`, the path the `.pyi` and `record_module` both advertise.
+    record_names = [
+        name
+        for ctx in comp_ctxs
+        for _sid, name in ctx.get("record_registrations", [])
+    ]
     # gh-342: extra_types are names jm itself emits into the `from .<module>
     # import …` line (types from a hand-written sibling compiled into the same
     # .so). They must be in the keep-set or the gh-329 prune strips them from
     # both the import and __all__ (data loss of declared public types).
-    all_exports = Components + fn_names + list(C.extra_types(cfg, module))
+    all_exports = (
+        Components + record_names + fn_names + list(C.extra_types(cfg, module))
+    )
     reexports = C.module_reexports(cfg, module)
     # Nested module: ensure the intermediate packages exist, then write under
     # the nested pypath (or the gh-523 `package` destination).

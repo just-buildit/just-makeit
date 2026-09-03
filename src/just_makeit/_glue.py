@@ -360,6 +360,17 @@ def component_ctx(
     # `PyInit_` at all; the aggregator carries the block for those, which is
     # why this keys on the component name rather than on `module`.
     ctx["procglobal"] = _procglobal.rendezvous_c(cfg, object_name)
+    # gh-1264: create and register a single=true method's structseq type at
+    # module init instead of lazily inside the method (which never told the
+    # module it existed). `make_methods_ctx` already computed WHICH ones;
+    # this is the one place that turns that list into the two C slots the
+    # standalone template splices — the `stream_type_ready` line above it is
+    # the one that already needed the "blank when empty" trick this copies.
+    _rec_ready, _rec_add = R.record_registration_c(
+        ctx.get("record_registrations") or []
+    )
+    ctx["record_type_ready"] = "\n".join(_rec_ready)
+    ctx["record_add_object"] = "\n".join(_rec_add) + "\n" if _rec_add else ""
     return ctx
 
 

@@ -115,6 +115,16 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # so a missed call site would compile, ship, and silently generate no
         # rendezvous at all; `_glue.component_ctx` computes the real value.
         "procglobal": "",
+        # gh-1264: a single=true method's structseq type, created and
+        # registered at module init instead of lazily inside the method
+        # (which never told the module it existed). Seeded here for the same
+        # reason `procglobal` is -- an unset slot leaves a literal
+        # `/*<<record_type_ready>>*/`/`/*<<record_add_object>>*/` behind,
+        # which compiles (a comment / dead code) and silently ships no
+        # registration; `Ctx.make_methods_ctx`'s `record_registrations`
+        # computes the real value for any component that has one.
+        "record_type_ready": "",
+        "record_add_object": "",
         # Windows CMake boilerplate is opt-in (gh-213); default off so the
         # generated CMakeLists has no `if(WIN32 …)` block unless the project
         # lists `windows` in [project] platforms.
