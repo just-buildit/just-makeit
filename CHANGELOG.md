@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.3] — 2026-09-03
+
 ### Fixed
 
 - **A `single = true` method's record type is now created at module init and
