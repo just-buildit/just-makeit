@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.4] — 2026-09-03
+
 ### Fixed
 
 - **A record's docs now reach the runtime type on `apply`, not only the
