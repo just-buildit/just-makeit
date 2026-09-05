@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.75.5] — 2026-09-05
+
 ### Added
 
 - **Two `single = true` records sharing a public name now WARN when their
