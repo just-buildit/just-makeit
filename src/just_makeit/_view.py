@@ -82,10 +82,22 @@ def run(
 
     if not create_fn:
         _fail("--create-fn is required (the view's C constructor).")
-    if create_fn == f"{object_name}_create":
+    # The parent's ACTUAL constructor, not the default-derived name. gh-509
+    # lets an object back its `tp_init` with a differently named C function
+    # (`acq_create_continuous`, where `acq_create` does not exist), and this
+    # check never learned about it: it compared against `<obj>_create` while
+    # its own message claimed to be comparing against the parent's. Under an
+    # override that made `<obj>_create` the one name a view could not use,
+    # even though it was no longer the parent's -- which blocks the shape
+    # where the general constructor is the base and the specialised one is
+    # the flavor (gh-1277).
+    parent_create = C.object_create_fn(cfg, object_name) or (
+        f"{object_name}_create"
+    )
+    if create_fn == parent_create:
         _fail(
             f"--create-fn must differ from the parent's "
-            f"'{object_name}_create' — a view exists to build from a "
+            f"'{parent_create}' — a view exists to build from a "
             f"different constructor."
         )
 
