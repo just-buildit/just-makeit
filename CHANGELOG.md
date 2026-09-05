@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Docs
+
+- **The release checklist stops restating the mechanics `standard.mk` owns.**
+    It told you to hand-edit `pyproject.toml`'s version (`make bump-version`
+    writes every manifest from one declaration, and `version-check` probes the
+    same table), to merge through a queue (no `merge_queue` rule is active —
+    the ruleset allows rebase only), and to expect the first `git commit` of a
+    release to abort, which the Makefile's own comment records as a defect
+    that had been survived often enough to be written up as expected
+    behaviour. It now owns the two things the targets cannot know — which
+    digit to bump, and what to look at when something goes wrong — and names
+    the target for everything else. Four pitfalls are gone from the table
+    because `tag-release` refuses them outright.
+
 ## [0.75.5] — 2026-09-05
 
 ### Added
