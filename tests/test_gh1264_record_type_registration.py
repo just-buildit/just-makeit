@@ -172,7 +172,7 @@ class TestRegistrationsHelper:
             }
         ]
         assert registrations(methods, "Sync") == [
-            ("Sync_find", "SyncHit", _SHAPE)
+            RecordReg("Sync_find", "SyncHit", _SHAPE, "SyncHit(found, offset)")
         ]
 
     def test_a_non_record_method_is_ignored(self):
@@ -207,8 +207,8 @@ class TestRegistrationsHelper:
             },
         ]
         assert registrations(methods, "Sync") == [
-            ("Sync_find", "Hit", _SHAPE),
-            ("Sync_find2", "Hit", _SHAPE),
+            RecordReg("Sync_find", "Hit", _SHAPE, "Hit(found, offset)"),
+            RecordReg("Sync_find2", "Hit", _SHAPE, "Hit(found, offset)"),
         ]
 
 

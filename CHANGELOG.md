@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Added
+
+- **Two `single = true` records sharing a public name now WARN when their
+    docs disagree, instead of silently dropping one (gh-1270).** gh-1268
+    made two same-shape records under one name safe to alias
+    (`B_sum_type = A_sum_type;`) rather than a segfault, but left open what
+    happens to the aliased record's own doc: its descriptor (with its own
+    `record_doc` or `--result-field` doc) is still compiled, and then never
+    used -- nothing ever calls `PyStructSequence_NewType` on it, so a reader
+    of the aliased method sees the first method's prose on both faces. Two
+    methods sharing one record almost always share its documentation, so
+    this is advisory (`_report.warn`, `~`), not the refusal a shape mismatch
+    earns -- naming both methods, both doc strings, and the two ways out
+    (`--record-name`, or dropping `--record-doc` from whichever should
+    inherit the other's). Surfaced wherever a record's runtime type is
+    assembled: the module aggregator (a parent+view or two sibling objects
+    sharing a name) and a standalone object's own `PyInit_` (two methods on
+    one object). `jm status --check` has nothing to fail on.
+
 ## [0.75.4] — 2026-09-03
 
 ### Fixed

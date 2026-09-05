@@ -27,6 +27,7 @@ from . import _config as C
 from ._docstring import class_import_line
 from . import _procglobal
 from . import _context as Ctx
+from . import _record
 from . import _render as R
 from . import _report
 from . import _targets
@@ -1818,6 +1819,19 @@ def _regenerate_module_now(
     out_pkg = C.module_package(cfg, module) or mp.pypath
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
+
+    # gh-1270: a doc-only sibling of gh-1268's shape refusal. Two records
+    # under one name that AGREE on shape are safely aliased (gh-1268) rather
+    # than refused — but the one that loses the alias also loses whichever
+    # doc it declared, silently, since nothing ever builds a type from its
+    # descriptor. Walked over the WHOLE module's registrations, the same
+    # scope `record_registration_c` resolves names in, so a parent+view or
+    # two sibling objects sharing a name are both covered, not just one
+    # object's own methods.
+    for _msg in _record.doc_conflict(
+        [r for ctx in comp_ctxs for r in ctx.get("record_registrations", [])]
+    ):
+        _report.warn(_msg)
 
     # Per-object fragment files (<module>_ext_<comp>.c).
     # Each fragment is preserved independently: body-preservation reads from
