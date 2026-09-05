@@ -403,15 +403,25 @@ class RecordReg(NamedTuple):
     ``shape`` is the field list reduced to what decides *type identity* —
     each field's name and C type, in order. Two declarations with the same
     ``shape`` describe the same ``PyStructSequence``; docs are excluded
-    because they change what the type *says*, not what it *is*.
+    because they change what the type *says*, not what it *is* — see
+    :func:`resolve`, which compares ``shape`` alone, and :func:`doc_conflict`,
+    which compares ``doc`` alone for the entries ``resolve`` already agreed
+    to alias.
+
+    ``doc`` defaults to ``""`` so every existing caller — one still
+    constructs these by hand — keeps working unchanged; :func:`registrations`
+    is the only one that fills it with the record's real derived doc.
     """
 
     sid: str
     name: str
     shape: tuple[tuple[str, str], ...]
+    doc: str = ""
 
 
-def registrations(methods: list[dict], wrapper_prefix: str) -> list[RecordReg]:
+def registrations(
+    methods: list[dict], wrapper_prefix: str, doc_blocks: dict | None = None
+) -> list[RecordReg]:
     """A :class:`RecordReg` for every ``single = true`` method's record.
 
     gh-1264. The ``.pyi`` declares each record's class at module level
@@ -431,16 +441,27 @@ def registrations(methods: list[dict], wrapper_prefix: str) -> list[RecordReg]:
     passed the "first occurrence" test in their own call and the aggregator
     registered two type objects under one key. Deduplication belongs to
     whoever assembles a whole module's list — :func:`resolve`.
+
+    *doc_blocks* is the sacred header's parsed Doxygen (gh-671), passed
+    through to :func:`fields` / :func:`type_doc` so ``RecordReg.doc`` (gh-1270)
+    is the SAME text the C descriptor and the ``.pyi`` both derive — a second
+    computation here would be a second opinion that could disagree with
+    either.
     """
-    return [
-        RecordReg(
-            f"{wrapper_prefix}_{m['name']}",
-            public_name(m),
-            tuple((f.name, f.ctype) for f in fields(m)),
+    out = []
+    for m in methods:
+        if not is_record(m):
+            continue
+        flds = fields(m, doc_blocks)
+        out.append(
+            RecordReg(
+                f"{wrapper_prefix}_{m['name']}",
+                public_name(m),
+                tuple((f.name, f.ctype) for f in flds),
+                type_doc(m, flds),
+            )
         )
-        for m in methods
-        if is_record(m)
-    ]
+    return out
 
 
 def _conflict_message(first: RecordReg, other: RecordReg) -> str:
@@ -517,6 +538,53 @@ def name_conflict(regs: "list[RecordReg]") -> str:
         except ValueError as exc:
             return str(exc)
     return ""
+
+
+def _doc_conflict_message(kept: RecordReg, dropped: RecordReg) -> str:
+    """Why *dropped*'s own doc never reaches a reader (gh-1270)."""
+    return (
+        f"two records named '{kept.name}' agree on shape but declare "
+        f"different docs -- only one is published, since {dropped.sid} is\n"
+        f"aliased to {kept.sid}'s type (gh-1268):\n"
+        f"  {kept.sid} (kept):    {kept.doc!r}\n"
+        f"  {dropped.sid} (dropped): {dropped.doc!r}\n"
+        f"Give {dropped.name} its own name with --record-name, or drop\n"
+        f"--record-doc from whichever method should inherit the other's."
+    )
+
+
+def doc_conflict(regs: "list[RecordReg]") -> "list[str]":
+    """Advisory messages (gh-1270) for records that alias but disagree on doc.
+
+    gh-1268 made two same-shape records under one name safe — the second is
+    aliased to the first's type rather than freeing it — but that alias also
+    means the second's OWN doc (whatever ``record_doc`` or a
+    ``--result-field`` doc it declared) is compiled and then never used:
+    nothing ever calls ``PyStructSequence_NewType`` on its descriptor. A
+    reader of the aliased method sees the FIRST method's prose on both faces,
+    silently.
+
+    Unlike :func:`name_conflict`, this is not a refusal — two methods sharing
+    one record almost always share its documentation, and a doc-only
+    mismatch corrupts nothing the way a shape mismatch does (gh-1268's own
+    `resolve` already raises for that case, so this never re-flags it: a
+    ``ValueError`` from a differing shape means the pair does not reach
+    here). This is a report, through the caller's `_report.warn`, of the
+    same "one keeps its doc, one loses it" fact `resolve` already decided
+    silently — named here so the drop is visible rather than assumed away.
+    """
+    seen: dict[str, RecordReg] = {}
+    out: list[str] = []
+    for reg in regs:
+        first = seen.get(reg.name)
+        if first is None:
+            seen[reg.name] = reg
+            continue
+        if first.shape != reg.shape:
+            continue  # resolve()'s refusal, not this function's concern
+        if first.doc != reg.doc:
+            out.append(_doc_conflict_message(first, reg))
+    return out
 
 
 def validate_record_shape(

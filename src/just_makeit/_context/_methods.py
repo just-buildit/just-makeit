@@ -3430,8 +3430,12 @@ def make_methods_ctx(
         # structseq type for and register under -- see _record.registrations.
         # Consumed by the module-init assembly in _render.py, not by the
         # generic `<<key>>` substitution (a list value, so render() skips
-        # it), which is also why an empty list here costs nothing.
-        "record_registrations": _record.registrations(methods, wrapper_prefix),
+        # it), which is also why an empty list here costs nothing. doc_blocks
+        # (gh-1270) makes each entry's derived `.doc` the SAME text
+        # `pyi_records` above just rendered, not a second computation of it.
+        "record_registrations": _record.registrations(
+            methods, wrapper_prefix, doc_blocks
+        ),
         "bench_methods_timing_block": bench_methods_timing_block,
         "bench_elapsed_helper": (_BENCH_ELAPSED_HELPER if _has_timing else ""),
         "bench_timer_decls": _BENCH_TIMER_DECLS if _has_timing else "",

@@ -21,6 +21,8 @@ from pathlib import Path
 
 from . import _config as C
 from . import _procglobal
+from . import _record
+from . import _report
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_class_brief, class_import_line
 from . import _context as Ctx
@@ -371,6 +373,12 @@ def component_ctx(
     )
     ctx["record_type_ready"] = "\n".join(_rec_ready)
     ctx["record_add_object"] = "\n".join(_rec_add) + "\n" if _rec_add else ""
+    # gh-1270: this object's own `.so` is its own namespace (gh-1268), so
+    # unlike the module aggregator there is no cross-component list to
+    # gather — every record this object could collide with is already in
+    # `record_registrations`.
+    for _msg in _record.doc_conflict(ctx.get("record_registrations") or []):
+        _report.warn(_msg)
     return ctx
 
 
