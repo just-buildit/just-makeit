@@ -19,6 +19,26 @@
     sharing a name) and a standalone object's own `PyInit_` (two methods on
     one object). `jm status --check` has nothing to fail on.
 
+### Fixed
+
+- **A view may now use `<obj>_create` when the parent's `create_fn` points
+    elsewhere (gh-1277).** The check refusing a view whose constructor matched
+    its parent's compared against the *default-derived* `<obj>_create`, while
+    its own message claimed to be naming the parent's. gh-509 lets an object
+    back its `tp_init` with a differently named C function, and this check
+    never learned about it -- so under an override, `<obj>_create` stayed the
+    one name a view could not use even though it was no longer the parent's.
+    That blocked the arrangement where the **general** constructor is the base
+    and the specialised one is the flavor: `exclude_properties`/
+    `exclude_methods` trim a view and never a parent, so a surface belonging to
+    only one of two front doors must sit on the base, with the trimmed one as
+    the view -- unreachable when the trimmed one is the historical
+    `<obj>_create`. Found in doppler, whose `frame` object has a deferred
+    builder (`frame_create_desc`) and a materialising four-field constructor
+    (`frame_create`) whose nine builder verbs all refuse. Now compared against
+    `C.object_create_fn`, the accessor `_apply` already used; byte-identical
+    for any project that never set `create_fn`.
+
 ## [0.75.4] — 2026-09-03
 
 ### Fixed
