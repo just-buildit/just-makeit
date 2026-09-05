@@ -1,11 +1,26 @@
 # Release checklist
 
+The procedure lives in `standard.mk`'s targets, not here. This page owns the
+two things they cannot know — **which digit to bump**, and **what to look at
+when something goes wrong** — and names the target for everything else.
+
+That split is the point. This page used to restate the mechanics: hand-edit
+`pyproject.toml`, merge through a queue, expect the first `git commit` to
+abort. All three had drifted from what the repo actually does, and a runbook
+that disagrees with the tooling is worse than no runbook, because it is
+followed.
+
+______________________________________________________________________
+
 ## Before you start
 
-- [ ] All intended changes are merged to `main`
-- [ ] `uv run pytest` passes locally
-- [ ] CI badge on `main` is green
-- [ ] Run `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"` and visually confirm all examples pass locally — catches environment-sensitive failures (missing `pytest`, `cmake`, etc.) that CI may not surface
+- [ ] All intended changes are merged to `main`, and CI on `main` is green
+- [ ] `make test` passes locally
+- [ ] `make lint` passes locally
+- [ ] `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"`
+    — visually confirm the examples pass locally. This catches
+    environment-sensitive failures (a missing `pytest`, `cmake`) that CI does
+    not surface, because CI always has them
 
 ______________________________________________________________________
 
@@ -17,128 +32,104 @@ ______________________________________________________________________
 | New command or flag                          | patch (`0.X.Y`) |
 | Bug fix, docs, internal refactor             | patch (`0.X.Y`) |
 
-We are pre-1.0, so the digits shift down one place: the minor digit
-stands in for major (breaking changes only), and the patch digit
-absorbs both new features and fixes.
+Pre-1.0, so the digits shift down one place: the minor digit stands in for
+major (breaking changes only), and the patch digit absorbs both new features
+and fixes.
 
-______________________________________________________________________
-
-## 2. Update version and changelog
+## 2. Cut the release branch
 
 ```sh
-# pyproject.toml — single source of truth for the version
-version = "X.Y.Z"
-# bootstrap.toml is auto-synced by the pre-commit hook (sync-bootstrap-version)
-
-# CHANGELOG.md — entries were already added under `## [Unreleased]` in the
-# PR that made each change (add yours there when you author a change, not here).
-# The release step only PROMOTES that heading to the new version:
-## [Unreleased]        ->   ## [Unreleased]
-                            ## [X.Y.Z] — YYYY-MM-DD
-# (leave an empty [Unreleased] on top for the next cycle; sections are
-# Breaking / Added / Fixed / Docs, keep-a-changelog style). If a long-lived
-# branch left [Unreleased] lagging, populate it to match the shipped work now —
-# the release notes are extracted verbatim from this section.
+make release-branch VERSION=X.Y.Z
 ```
 
-Commit on a branch and merge via PR (`main` is protected — no direct pushes):
+Branches `chore/release-X.Y.Z` **off `origin/main`** — not off whatever HEAD
+you happen to be on — and writes the version into every manifest a release
+commit touches (`pyproject.toml`, `bootstrap.toml`, `uv.lock`) from one
+declaration. `make version-check` reads the same table, so a missed file is a
+red gate rather than a number nobody probes.
+
+## 3. Promote the changelog heading
+
+The only hand-written step, and it stays prose. Entries were already written
+under `## [Unreleased]` by the PR that made each change — this promotes the
+heading:
+
+1. `## [Unreleased]` → `## [X.Y.Z] — YYYY-MM-DD`
+1. add a fresh empty `## [Unreleased]` above it
+
+Sections are Breaking / Added / Fixed / Docs, keep-a-changelog style. **The
+release notes are extracted verbatim from this section**, so if a long-lived
+branch left `[Unreleased]` lagging, populate it to match the shipped work now.
+
+## 4. PR it, and merge it green
 
 ```sh
-git checkout -b chore/bump-X.Y.Z
-git add pyproject.toml CHANGELOG.md bootstrap.toml uv.lock
-git commit -m "chore: bump to X.Y.Z"
-git push -u origin chore/bump-X.Y.Z
+git commit -am "chore: release vX.Y.Z"
+git push -u origin HEAD
 gh pr create --fill
-# once CI is green, add the PR to the merge queue ("Merge when ready"):
-# the queue rebases it, re-runs CI on the batched commit, and squash-merges it
 ```
 
-> **Pre-commit will rewrite files and abort the first commit.** The
-> `sync-bootstrap-version` hook regenerates `bootstrap.toml`, `uv-lock` refreshes `uv.lock`,
-> and `mdformat`/`ruff format` may reflow what you touched. This is expected:
-> re-stage everything the hooks changed (`git add -A`) and commit again — the
-> second run passes because the files are already normalized. Make sure the
-> hook-generated `bootstrap.toml` and `uv.lock` land in the commit.
+`main` is protected: the ruleset requires a pull request, the status checks,
+and linear history, and allows **rebase** merges only. Merge once every
+required check is green — that merge is what makes the release safe, because
+the tag will point at it.
 
-______________________________________________________________________
-
-## 3. Wait for CI on the bump PR
-
-Watch the [CI workflow](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml).
-**Do not tag until CI is green and the bump PR is merged.**
-
-______________________________________________________________________
-
-## 4. Tag and push the release tag
-
-Tags must be prefixed with `v` — the Release workflow triggers on `v*`.
-**Tag the merged commit on `origin/main`, not your local branch** — a
-squash/rebase merge gives the bump a new SHA, so a local tag made before
-merging would point at a commit that never lands on `main`:
+## 5. Ship
 
 ```sh
-git fetch origin
-git tag vX.Y.Z origin/main
-git push origin vX.Y.Z
-# sanity check: the tag and main must have identical trees
-git diff vX.Y.Z origin/main   # expect no output
+git checkout main && git pull
+make ship VERSION=X.Y.Z      # = tag-release + release-watch
 ```
 
-This kicks off `release.yml`: test → build wheel → publish to PyPI.
+`tag-release` refuses unless you are on `main`, local `main` equals
+`origin/main`, and `version-check` agrees with the tag. It pushes **only the
+tag**, never `main`, and it is idempotent — re-running `ship` after an
+interrupted watch reuses a tag that already points at HEAD, and refuses one
+that points anywhere else, because a released tag must not move.
 
-______________________________________________________________________
+`release-watch` streams `release.yml`'s jobs, auto-reruns **one** pre-publish
+flake (safe: publish is gated behind smoke), and then verifies the real
+artifacts — PyPI per-version and `latest`, and the GitHub Release. The
+`github-release` job writes the release notes from the CHANGELOG section, so
+there is no manual step.
 
-## 5. Verify the release
-
-Watch [release.yml](https://github.com/just-buildit/just-makeit/actions/workflows/release.yml)
-complete all four jobs: `test`, `build`, `publish`, `github-release`.
-
-The `github-release` job creates the GitHub Release automatically using the
-relevant CHANGELOG section as the release notes — no manual step needed.
-
-After publish, `artifact.yml` fires automatically and:
-
-- Installs `just-makeit==X.Y.Z` from PyPI (retries for up to 10 min for CDN propagation)
-- Scaffolds the `fir_filter` standalone workflow end-to-end (cmake build + test)
-- Scaffolds the `filter_module` module/object workflow end-to-end
-- Installs and verifies the C library via pkg-config and CMake `find_package`
-
-If `artifact.yml` fails due to CDN lag it will auto-retry; if it fails for
-any other reason, investigate before the next release.
-
-______________________________________________________________________
+After publish, `artifact.yml` fires automatically and installs
+`just-makeit==X.Y.Z` from PyPI (retrying up to 10 min for CDN propagation),
+scaffolds the `fir_filter` standalone and `filter_module` workflows end to
+end, and verifies the C library via pkg-config and CMake `find_package`. If it
+fails for anything other than CDN lag, investigate before the next release.
 
 ## 6. Post-release
 
-- [ ] Confirm `pip install just-makeit==X.Y.Z` works locally
 - [ ] GitHub repo top-right shows the new version as "Latest release"
-- [ ] Docs site rebuilt and live at https://just-buildit.github.io/just-makeit/
+- [ ] Docs site rebuilt and live at
+    <https://just-buildit.github.io/just-makeit/>
 
 ______________________________________________________________________
 
-## Common pitfalls
+## When it goes wrong
 
-| Mistake                                                       | Fix                                                                                                                                              |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pushed tag without `v` prefix                                 | Push `vX.Y.Z` — release workflow ignores bare version tags                                                                                       |
-| Tagged before CI green (and **before** publish ran)           | Safe to fix: delete the tag locally and on remote, fix CI, re-tag — see below                                                                    |
-| Tag points at a local commit not on `main`                    | You tagged before the bump PR merged, or tagged your local SHA. `git fetch && git tag -f vX.Y.Z origin/main` **only if publish has not run yet** |
-| Want to "redo" a release after publish already succeeded      | You can't — PyPI rejects a duplicate version. Bump to the next patch (`X.Y.Z+1`) and release that instead                                        |
-| PyPI CDN lag causes `artifact.yml` to fail                    | Wait — retry loop runs for 10 min; if it still fails, check the logs                                                                             |
-| `artifact.yml` uses old CLI flags                             | Keep `artifact.yml` in sync with any CLI renames                                                                                                 |
-| Example `test.py` calls a tool not in the release environment | Guard optional tool invocations with an availability check (`import X`) and skip gracefully — see `full_workflow` step 7 as the pattern          |
-| GitHub repo still shows old version                           | `github-release` job failed — check the Actions log and re-run, or create manually with `gh release create vX.Y.Z --latest`                      |
+Four of the old pitfalls are gone because `tag-release` refuses them: a tag
+without the `v` prefix, a tag on a local commit that is not on `main`, a tag
+while local `main` is behind, and a version mismatch between the tag and the
+manifests. They are listed nowhere below because they can no longer happen.
 
-To delete a tag and re-tag — **only safe if `release.yml` has not yet
-published to PyPI.** Re-pushing a tag re-triggers `release.yml`, and the PyPI
-upload step fails on a duplicate version once `X.Y.Z` exists. If publish has
-already succeeded, do not re-tag; bump to the next patch version instead.
+| Mistake                                                                 | Fix                                                                                                         |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Want to "redo" a release after publish succeeded                        | You can't — PyPI rejects a duplicate version. Bump to the next patch and release that                       |
+| PyPI CDN lag fails `artifact.yml`                                       | Wait — the retry loop runs for 10 min; if it still fails, read the logs                                     |
+| `artifact.yml` uses old CLI flags                                       | Keep it in sync with any CLI rename                                                                         |
+| An example's `test.py` calls a tool absent from the release environment | Guard optional tools with an availability check and skip gracefully — `full_workflow` step 7 is the pattern |
+| GitHub still shows the old version                                      | The `github-release` job failed — read the Actions log and re-run, or `gh release create vX.Y.Z --latest`   |
+
+**Re-tagging is only safe before `release.yml` has published to PyPI.**
+Re-pushing a tag re-triggers the workflow, and the upload step fails on a
+duplicate version once `X.Y.Z` exists. If publish already succeeded, do not
+re-tag — cut the next patch instead.
 
 ```sh
 git tag -d vX.Y.Z
 git push origin :refs/tags/vX.Y.Z
-# fix the issue, then re-tag the merged commit on main:
-git fetch origin
-git tag vX.Y.Z origin/main
-git push origin vX.Y.Z
+# fix the issue, then re-run the same command as before:
+make ship VERSION=X.Y.Z
 ```
