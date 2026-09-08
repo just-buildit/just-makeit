@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Added
+
+- **`[project] version` may be omitted from `just-makeit.toml`, deferring to
+    `pyproject.toml` (gh-1283).** The manifest carried a second copy of a value
+    that already lives in `pyproject.toml`, and jm compared the two rather than
+    reading one -- making the manifest a version carrier every release has to
+    remember. Omitting the key was no escape: it defaulted to `0.1.0`, so
+    absence was indistinguishable from declaring `0.1.0`, and a project that
+    deleted the duplicate got a permanently red `status --check` reporting
+    drift against a default it had never written. Absence now means **defer**.
+    A manifest that declares a version is untouched and `pyproject.toml` is not
+    consulted, so this is opt-in by deletion and needs no new key; `jm_version`
+    is unaffected, since it pins the tool rather than the project.
+
+    The effect on the gh-1141 drift check is the point: `pyproject.toml` leaves
+    the `VERSION` finding entirely, because the file jm reads the version
+    *from* cannot disagree with it -- the class made unrepresentable rather
+    than merely detected. Expect the finding count to go *up* on a project
+    whose create-only copies (`CMakeLists.txt`, `Doxyfile`,
+    `native/src/<pkg>_lib.c`, `bootstrap.toml`) were stale: the old `0.1.0`
+    default had been masking them by agreeing with them.
+
+    Resolved in `_config.load` and folded back in `_config.save`, the
+    symmetric pair gh-999 uses for `[[group]]` expansion. `load` is the one
+    place every reader passes through, so the deferral cannot reach some of
+    `project_version`'s thirteen call sites and not others; the `save` half is
+    load-bearing, because `_dump`'s `[project]` loop emits every key it is
+    handed and would otherwise write the resolved value back into the manifest
+    on the first mutating command -- recreating the carrier in the file the
+    author had just cleaned out.
+
 ## [0.75.5] — 2026-09-05
 
 ### Added
