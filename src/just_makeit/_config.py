@@ -126,6 +126,71 @@ def load_manifest(root: Path) -> dict:
         return tomllib.load(f)
 
 
+#: Marks a ``[project] version`` that `load` resolved from ``pyproject.toml``
+#: because the manifest omitted it (gh-1283). Private, and never written back:
+#: the manifest keeps its silence, and `save` strips this key *and the value
+#: it resolved* before writing.
+#:
+#: The strip is not optional. `_dump`'s ``[project]`` loop emits every key it
+#: is handed, with no ``_``-prefix guard of the kind the method-key loop has —
+#: so without it the very first mutating command writes both the marker and
+#: the resolved number back into the manifest, silently recreating the carrier
+#: this feature exists to remove. That is the gh-999 failure exactly, and it is
+#: answered the same way: what `load` unfolds, `save` folds back.
+VERSION_DEFERRED_KEY = "_version_deferred"
+
+
+def _pyproject_version(root: Path) -> "str | None":
+    """``[project] version`` as ``pyproject.toml`` declares it, else None.
+
+    Parsed rather than matched: ``^version = `` matches under any table, and
+    a ``[tool.*]`` section carrying one would otherwise be read as the
+    project's. `_projversion` reads the same file the same way, for the same
+    reason.
+
+    An unreadable or malformed file is not an error here. The caller's
+    fallback is today's ``0.1.0`` default, which is what a project with no
+    manifest version and no readable `pyproject.toml` already got.
+    """
+    try:
+        with (root / "pyproject.toml").open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    got = data.get("project", {}).get("version")
+    return got if isinstance(got, str) and got else None
+
+
+def _resolve_deferred_version(cfg: dict, root: Path) -> None:
+    """Fill in an omitted ``[project] version`` from ``pyproject.toml``.
+
+    gh-1283. An absent version means **defer to `pyproject.toml`**, not
+    "declare 0.1.0". Before this, omitting the key was indistinguishable from
+    writing ``version = "0.1.0"``, so there was no way to say "the version
+    lives in `pyproject.toml`, read it from there" — and a project that
+    deleted the duplicate got a permanently red `status --check` reporting
+    drift against a default it never wrote.
+
+    Resolved HERE, in `load`, rather than threaded through the thirteen
+    call sites of `project_version`, because `load` is the one place every
+    reader passes through. A resolution behind some callers and not others is
+    the half-wired shape `_expand_init_groups` documents one screen below --
+    the PEP 723 app script would render the deferred version while
+    `<pkg>_lib.c` rendered ``0.1.0``, and only one of them is checked.
+
+    A manifest that *declares* a version keeps today's behaviour exactly, so
+    every existing project is untouched and no new key is needed.
+    """
+    proj = cfg.get("project")
+    if not isinstance(proj, dict) or "version" in proj:
+        return
+    got = _pyproject_version(root)
+    if got is None:
+        return
+    proj["version"] = got
+    proj[VERSION_DEFERRED_KEY] = True
+
+
 def load(root: Path) -> dict:
     """Read the manifest and merge every included fragment into one dict
     (schema 6+). For a single-file project (no `include` key) the result
@@ -161,6 +226,9 @@ def load(root: Path) -> dict:
     # accessor would reach some of them and not others. That is the shape this
     # repo keeps finding a half-wired feature in.
     _expand_init_groups(cfg)
+    # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
+    # After the fragment merge, so a split-layout project resolves the same.
+    _resolve_deferred_version(cfg, root)
     from ._keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
@@ -701,6 +769,33 @@ def _without_group_expansion(cfg: dict) -> dict:
     return out
 
 
+def _without_deferred_version(cfg: dict) -> dict:
+    """*cfg* with a `pyproject.toml`-resolved ``[project] version`` removed.
+
+    The `save` half of the gh-1283 pair: what `load` unfolds, `save` folds
+    back, so a deferred version round-trips as the *absence* the author
+    wrote. Both the marker and the resolved number come out — `_dump`'s
+    ``[project]`` loop writes every key it is given, so leaving either behind
+    puts the carrier straight back into the manifest.
+
+    A manifest that declares its own version carries no marker and is
+    returned untouched, so the write path is byte-identical to before.
+
+    The caller's dict is never mutated, for the reason
+    `_without_group_expansion` gives: `save` is called with the live config
+    and commands keep rendering from it afterwards.
+    """
+    proj = cfg.get("project")
+    if not isinstance(proj, dict) or not proj.get(VERSION_DEFERRED_KEY):
+        return cfg
+    section = dict(proj)
+    section.pop(VERSION_DEFERRED_KEY, None)
+    section.pop("version", None)
+    out = dict(cfg)
+    out["project"] = section
+    return out
+
+
 def save(root: Path, cfg: dict) -> None:
     """Write cfg back to disk, routing each top-level object section to
     the file that owns it on disk. `[project]` / `[module.X]` always
@@ -727,6 +822,10 @@ def save(root: Path, cfg: dict) -> None:
     # sabotaging the writer guard and watching the suite stay green, which is
     # what a test asserting only `jm apply` could never see.
     cfg = _without_group_expansion(cfg)
+    # gh-1283: and the deferred version, for the same reason and in the same
+    # place -- ahead of the `deferred_save` cache below, so a batched write
+    # folds back too rather than persisting the resolution at scope exit.
+    cfg = _without_deferred_version(cfg)
     # gh-764: under `deferred_save()` this becomes a cache update; the single
     # real write happens when that scope exits.
     #
@@ -4031,6 +4130,16 @@ def project_name(cfg: dict) -> str:
 
 
 def project_version(cfg: dict) -> str:
+    """The project version every generated copy is rendered from.
+
+    Reads the manifest only. When ``[project] version`` is omitted, `load`
+    has already resolved it from ``pyproject.toml`` (gh-1283), so this sees
+    a value either way and needs no root of its own — which is exactly why
+    the resolution lives in `load` and not here.
+
+    ``0.1.0`` remains the answer when the manifest omits the key and
+    `pyproject.toml` supplies nothing either.
+    """
     return cfg.get("project", {}).get("version", "0.1.0")
 
 

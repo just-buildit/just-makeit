@@ -1019,14 +1019,50 @@ ______________________________________________________________________
 
 ### `[project]`
 
-| Key                | Type                  | Default   | Set by                                             |
-| ------------------ | --------------------- | --------- | -------------------------------------------------- |
-| `name`             | string                | —         | `just-makeit new <name>`                           |
-| `version`          | string                | `"0.1.0"` | `just-makeit new` / `just-makeit config version X` |
-| `build`            | `"cmake"` or `"make"` | `"cmake"` | `--build-system make`                              |
-| `perf`             | `"true"` or `"false"` | `"false"` | `--perf`                                           |
-| `pytest`           | `"true"` or `"false"` | `"false"` | `--pytest`                                         |
-| `pytest_benchmark` | `"true"` or `"false"` | `"false"` | `--pytest-benchmark`                               |
+| Key                | Type                  | Default                          | Set by                                             |
+| ------------------ | --------------------- | -------------------------------- | -------------------------------------------------- |
+| `name`             | string                | —                                | `just-makeit new <name>`                           |
+| `version`          | string                | `pyproject.toml`, else `"0.1.0"` | `just-makeit new` / `just-makeit config version X` |
+| `build`            | `"cmake"` or `"make"` | `"cmake"`                        | `--build-system make`                              |
+| `perf`             | `"true"` or `"false"` | `"false"`                        | `--perf`                                           |
+| `pytest`           | `"true"` or `"false"` | `"false"`                        | `--pytest`                                         |
+| `pytest_benchmark` | `"true"` or `"false"` | `"false"`                        | `--pytest-benchmark`                               |
+
+#### Omitting `version` defers to `pyproject.toml`
+
+`version` is the one `[project]` key you may delete. Leave it out and jm reads
+`[project] version` from `pyproject.toml` instead of declaring a version of its
+own:
+
+```toml
+# just-makeit.toml
+[project]
+name = "my_project"
+# no version -- pyproject.toml is authoritative
+```
+
+The manifest then stops being a version carrier. That matters because a release
+has to bump every file that holds a copy, and `just-makeit.toml` was one a human
+had to remember; deleting it also makes the `VERSION` drift finding
+*unrepresentable* for `pyproject.toml` rather than merely detected, since the
+file jm reads the version **from** cannot disagree with it.
+
+Three things this deliberately does not do:
+
+- **A declared version still wins.** An existing manifest is untouched, and
+    `pyproject.toml` is not consulted at all. This is opt-in by deletion.
+- **jm never writes the resolved version back.** It is resolved when the
+    manifest is read and dropped again when it is written, so a mutating command
+    like `just-makeit object` cannot silently restore the key you removed.
+- **`jm_version` is unaffected.** It pins the *tool*, not the project, and stays
+    a literal.
+
+If the manifest omits `version` and `pyproject.toml` supplies none either, the
+default is still `"0.1.0"`.
+
+The other copies (`CMakeLists.txt`, the `Doxyfile`, `native/src/<pkg>_lib.c`,
+`bootstrap.toml`) are create-only and still carry their own literal, so they are
+still checked -- see [`status`](commands/build.md).
 
 ### `[<object>]`
 
