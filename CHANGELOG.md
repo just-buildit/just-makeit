@@ -30,6 +30,7 @@
     handed and would otherwise write the resolved value back into the manifest
     on the first mutating command -- recreating the carrier in the file the
     author had just cleaned out.
+
 ### Docs
 
 - **The release checklist stops restating the mechanics `standard.mk` owns.**
@@ -43,6 +44,14 @@
     digit to bump, and what to look at when something goes wrong — and names
     the target for everything else. Four pitfalls are gone from the table
     because `tag-release` refuses them outright.
+
+    The target names it now leans on are gated rather than trusted.
+    `TestTheDocsCannotDriftFromTheMakefile` already checked that every
+    `` `make <target>` `` in a contributor doc exists, but over a hand-kept
+    tuple of two files -- while three others under `docs/developers/` were
+    already naming targets unwatched, this checklist among them. The list is
+    now derived from `docs/developers/*.md` plus `CLAUDE.md`, so a doc is
+    covered by existing and a rewrite like this one cannot outrun its gate.
 
 ## [0.75.5] — 2026-09-05
 
