@@ -278,10 +278,23 @@ class TestTheDocsCannotDriftFromTheMakefile:
     longer leave the docs quietly wrong.
     """
 
-    # Only this repo's own contributor docs. The user-facing docs describe
-    # GENERATED projects, whose Makefile is just-makeit's product and has its
-    # own, different target set.
-    OWN_DOCS = ("docs/developers/START_HERE.md", "CLAUDE.md")
+    # DERIVED, not listed. The user-facing docs under `docs/` are deliberately
+    # out of scope -- they describe GENERATED projects, whose Makefile is
+    # just-makeit's product and has its own, different target set. But which of
+    # this repo's OWN contributor docs get swept is not a judgement call, and a
+    # hand-kept tuple was making it one: it named two files while three others
+    # under docs/developers/ already carried `make <target>` references
+    # (release-checklist.md, testing.md, why-zensical.md), none of them gated.
+    #
+    # That is the same "list someone must remember to extend" shape this gate
+    # exists to close, one level up. A new contributor doc is now covered by
+    # existing, with nothing to remember.
+    OWN_DOCS = tuple(
+        sorted(
+            p.relative_to(ROOT).as_posix()
+            for p in (ROOT / "docs" / "developers").glob("*.md")
+        )
+    ) + ("CLAUDE.md",)
 
     @staticmethod
     def _referenced(text):

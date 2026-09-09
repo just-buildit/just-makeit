@@ -45,8 +45,13 @@ make release-branch VERSION=X.Y.Z
 Branches `chore/release-X.Y.Z` **off `origin/main`** — not off whatever HEAD
 you happen to be on — and writes the version into every manifest a release
 commit touches (`pyproject.toml`, `bootstrap.toml`, `uv.lock`) from one
-declaration. `make version-check` reads the same table, so a missed file is a
-red gate rather than a number nobody probes.
+declaration.
+
+`make version-check` probes the two that declare a literal version
+(`pyproject.toml`, `bootstrap.toml`), so a missed one is a red gate rather
+than a number nobody reads. `uv.lock` is not probed and does not need to be:
+`uv lock` regenerates it, and the `uv-lock` pre-commit hook fails on a lock
+that has drifted from the manifest.
 
 ## 3. Promote the changelog heading
 
