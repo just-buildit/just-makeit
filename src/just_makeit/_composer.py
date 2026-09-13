@@ -704,11 +704,14 @@ _attach_{cn}({struct} *src, PyObject *obj)
 }}
 """)
 
-    # `*dst/*n_dst` would put a `/*` inside this block comment, which every
-    # compiler warns on (-Wcomment) in every project that generates a
-    # composer -- the sequence is how an unterminated comment usually looks.
-    parts.append(f"""/* {attach_doc} into an owned *dst and *n_dst (one
- * shared coercer; each bytes field passes its own struct destination). */
+    # Two things this banner has to avoid, both invisible here and loud in
+    # every downstream build. `*dst/*n_dst` puts a `/*` inside the block
+    # comment, which every compiler warns on (-Wcomment) because that is what
+    # an unterminated comment looks like; and `attach_doc` runs to 59 columns,
+    # so it only fits under 80 on a line of its own.
+    parts.append(f"""/* {attach_doc}
+ * into an owned *dst and *n_dst (one shared coercer; each bytes field
+ * passes its own struct destination). */
 static int
 _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {{
