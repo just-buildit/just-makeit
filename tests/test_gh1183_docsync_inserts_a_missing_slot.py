@@ -245,7 +245,9 @@ class TestWhatIsStillPreserved:
     when the slot is ABSENT, so nothing written by hand is at stake — but that
     is an argument, and an argument is not a gate."""
 
-    def test_a_hand_written_tp_doc_is_untouched(self, project: Path) -> None:
+    def test_a_header_declared_brief_reaches_tp_doc(
+        self, project: Path
+    ) -> None:
         frag = _frag(project, "peek")
         body = frag.read_text(encoding="utf-8")
         new, n = re.subn(
@@ -258,8 +260,12 @@ class TestWhatIsStillPreserved:
         frag.write_text(new, encoding="utf-8")
         assert _cli("apply", cwd=project).returncode == 0
         after = frag.read_text(encoding="utf-8")
-        assert "HAND WRITTEN, DO NOT TOUCH." in after, after
-        assert BRIEF not in after.split(".tp_doc")[1][:400], after
+        # gh-1288: the class docstring is a doc slot like any other, and the
+        # header's `@brief` on `create()` is what declares it. Preserving the
+        # hand-written text here is what kept an edited `@brief` off the
+        # runtime face while the `.pyi` tracked it.
+        assert "HAND WRITTEN, DO NOT TOUCH." not in after, after
+        assert BRIEF in after.split(".tp_doc")[1][:400], after
 
     def test_a_slot_set_to_null_stays_null(self, project: Path) -> None:
         """The deliberate asymmetry. `NULL` is a decision someone wrote down;

@@ -642,8 +642,33 @@ def _refresh_slot(
         return der  # jm's own output from some earlier release -> refresh
     if _is_reclaimable_glue(name, cur, der):
         return der  # jm-owned glue still holding jm's old one-liner
-    if ncur == "" and nfb is not None and nder != nfb:
-        return der  # empty slot -> fill, but only with real Doxygen content
+    if nfb is not None and nder != nfb:
+        # gh-1288: the HEADER declares this doc, and the header is the
+        # author's. `fb` is this same fragment rendered with the Doxygen
+        # ignored, so `der != fb` says the difference came from prose the
+        # author wrote -- exactly the question `authored` asks of the
+        # manifest, asked of the other place a doc can be declared.
+        #
+        # This is gh-1191's reasoning one source over, and its own docstring
+        # is the argument: the tests above ask "did jm write this", which is
+        # unanswerable once jm's own earlier HEADER-derived render is on disk
+        # -- it matches neither the new derived form nor the scaffold, so an
+        # EDIT to a `@brief` was classified hand-written and dropped, forever.
+        # Filling an empty slot worked (gh-1192) and editing an occupied one
+        # never did, which is the case a user meets when they go back to
+        # improve prose.
+        #
+        # It subsumes the empty-slot branch this replaces: "fill when the
+        # header has content" was always the special case of "write what the
+        # header declares", restricted to the one slot state where doing so
+        # could not overwrite anything.
+        #
+        # The cost is real and is paid loudly rather than hidden: a runtime
+        # docstring hand-tuned to differ from its header is replaced, and
+        # `transplant_docs` names every member it took. Same trade gh-871
+        # made, for the same reason -- the alternative is two faces of one
+        # object disagreeing with nothing able to say so.
+        return der
     return None  # hand-written -> preserve
 
 
@@ -700,13 +725,26 @@ def transplant_docs(
             )
             if new_text is not None:
                 edits.append((fs, fe, new_text))
-                # gh-871: only glue is reported. Every other refresh already
-                # required the slot to hold jm's own scaffold or synopsis, so
-                # nothing a human wrote was at stake there.
+                # gh-871 reported glue only, on the reasoning that "every
+                # other refresh already required the slot to hold jm's own
+                # scaffold or synopsis, so nothing a human wrote was at stake
+                # there". gh-1288 ends that: a header-declared doc is written
+                # over whatever the slot holds, so the population at stake is
+                # every slot jm cannot PROVE it wrote.
+                #
+                # It cannot be proved for exactly the text that is neither the
+                # scaffold nor jm-shaped -- which is jm's own older
+                # header-derived render AND a hand edit, indistinguishable by
+                # construction. So both are reported, and the diff says which.
                 if (
                     reclaimed is not None
-                    and name in _gluedoc.glue_method_names()
                     and _norm(cur)
+                    and not (
+                        (fb is not None and _norm(cur) == _norm(fb[2]))
+                        or _is_jm_shaped(
+                            cur, ref[2] if ref else "", fb[2] if fb else None
+                        )
+                    )
                 ):
                     reclaimed.append(name)
         # gh-1183: the entries with no doc field to refresh. Replacing cannot
@@ -2266,13 +2304,20 @@ def refresh_module_fragment_docs(
                     f"refusal for {', '.join(sorted(set(_emsgs)))}"
                 )
             # gh-871: the reclaim is unconditional now, so it is also loud.
-            # This is the whole safety story for overwriting a glue docstring
+            # This is the whole safety story for overwriting a docstring
             # somebody may have hand-edited: it is named, in the same place a
             # repaired arity is named, and the diff is right there.
+            #
+            # gh-1288 widened the population from glue to every slot whose
+            # text jm cannot prove it wrote, so the wording dropped
+            # "jm-owned" -- it was accurate while only glue could appear here
+            # and would now be a claim about text that may be the author's.
+            # It names the source instead, which is the actionable half: the
+            # header is where the prose has to change.
             if _reclaimed:
                 print(
-                    f"  update  {_rel}: refreshed jm-owned docstring(s) for "
-                    f"{', '.join(sorted(set(_reclaimed)))}"
+                    f"  update  {_rel}: docstring(s) rewritten from the "
+                    f"header for {', '.join(sorted(set(_reclaimed)))}"
                 )
             # gh-622: the splice above is additive by name, so a member whose
             # *signature* changed keeps its old binding while the .pyi takes
