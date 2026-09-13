@@ -29,6 +29,13 @@ so the artifact is what gets read here.
 
 The scanner is the gate, so `TestTheScannerItself` sabotages it directly: a
 scanner that silently matched nothing would keep reporting green forever.
+
+**It is deliberately not `_docsync._code_mask`,** which walks the same four
+states for `jm apply`'s structural scans. That is the one place reuse is the
+wrong instinct: a gate whose oracle comes from the pipeline it is checking is
+blind to every fault in that pipeline, so a lexing bug in `_code_mask` would
+silently be a blind spot here rather than a finding. The two are peers on
+purpose, and they check each other.
 """
 
 from __future__ import annotations
