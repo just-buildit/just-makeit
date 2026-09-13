@@ -704,8 +704,11 @@ _attach_{cn}({struct} *src, PyObject *obj)
 }}
 """)
 
-    parts.append(f"""/* {attach_doc} into an owned *dst/*n_dst (one shared
- * coercer; each bytes field passes its own struct destination). */
+    # `*dst/*n_dst` would put a `/*` inside this block comment, which every
+    # compiler warns on (-Wcomment) in every project that generates a
+    # composer -- the sequence is how an unterminated comment usually looks.
+    parts.append(f"""/* {attach_doc} into an owned *dst and *n_dst (one
+ * shared coercer; each bytes field passes its own struct destination). */
 static int
 _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {{
