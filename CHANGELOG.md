@@ -2,6 +2,47 @@
 
 ### Fixed
 
+- **A `const char *` parameter could not be optional, and every parameter
+    default reached the stub as the C literal it was written as (gh-1271).**
+    Two spellings, neither working: `default = ""` is read as *no* default, so
+    the parameter stayed required and the refusal arrived two parameters later
+    naming a different one; `default = "NULL"` got past that and rendered
+    `dataset: str = NULL`, a `NameError` under `mypy` and a collection error
+    under `pytest --doctest-glob='*.pyi'`.
+
+    **The worse defect was beside it, and is the reason this is bigger than
+    the report.** Both param-stub producers emitted the declared C literal
+    *verbatim*, for every type -- so `default = "0U"` on a `uint64_t`
+    parameter rendered `count: int = 0U`, a **SyntaxError** that kills the
+    whole file rather than one name. gh-515 and gh-1043 had already fixed that
+    class on the *state* and *init-param* faces; `_py_default_stub` exists for
+    exactly this, and neither parameter producer was calling it.
+
+    `NULL` now renders `None` and the parameter annotates `str | None`,
+    because the binding parses it with `z` ("str or None") rather than `s`.
+    That was the whole of why `NULL` used to become `""` -- a workaround for
+    a format char, stated as such in the comment that used to sit in
+    `_py_default` -- and `""` was a *different value* from the declared one:
+    it reaches the author's C as a valid empty string rather than as NULL, and
+    the generated doctest constructed objects with it. A **required**
+    `const char *` still takes `s` and still rejects `None`; the format char
+    and the annotation are read from one predicate, so a stub cannot promise a
+    call the extension refuses.
+
+    `default = ""` is now refused where it is written, naming both spellings:
+    `default = '""'` for an empty string, `default = "NULL"` for an omittable
+    one. And the module-aggregated producer stopped discarding every defaulted
+    init-param's literal -- the same object read `gain: float = 1.0`
+    standalone and `gain: float = ...` in a module, which is the divergence
+    `_stubs.py` already carried a fix for on the state-vars branch and had
+    missed on this one.
+
+    The face-parity gate grows the axis that made this invisible: every method
+    it built took no parameter, so a defaulted one was outside the tree it
+    walks. Adding one surfaced a second, unrelated live divergence --
+    gh-1292, a parameterised method documented in full standalone and
+    brief-only in a module -- measured on `main` and filed rather than waived.
+
 - **An `[[enum]]` that gained a value did not reach its C table in a module
     object's fragment, and the getter then indexed past its own `NULL`
     (gh-1273).** The fragment `native/src/<mod>/<mod>_ext_<obj>.c` is sacred:

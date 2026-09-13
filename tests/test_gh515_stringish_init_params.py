@@ -59,7 +59,20 @@ def test_explicit_default_still_passes_through():
     """A real default is untouched — the sentinel is only for absent ones."""
     assert _py_default("const char *", '"/dev/null"') == '"/dev/null"'
     assert _py_default("int", "7") == "7"
-    assert _py_default("const char *", "NULL") == '""'
+
+
+def test_null_is_none_not_an_empty_string():
+    """gh-1271: `NULL` is the null pointer, and `None` is how Python spells it.
+
+    It was `""` here, because the binding parsed with `s` and `s` rejects
+    `None` — a workaround for the format char, stated as such in the comment
+    that used to sit in `_py_default`. `""` is a *different value* from the
+    one declared: it reaches the author's C as a valid empty string rather
+    than as NULL, and the generated doctest constructed the object with it.
+    `_types.param_fmt` emits `z` for such a parameter now, so the workaround
+    has no reason left.
+    """
+    assert _py_default("const char *", "NULL") == "None"
 
 
 # ── integration: the generated .pyi is valid Python ─────────────────────────

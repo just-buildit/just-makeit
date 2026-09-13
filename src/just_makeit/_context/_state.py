@@ -14,6 +14,7 @@ from .._docstring import (
     render_runtime_doc,
 )
 from ._parse import _build_ml_doc, capsule_unwrap_c as _capsule_unwrap_c
+from .. import _types as T
 from .._types import default_type_error as _default_type_error
 from .._types import (
     c_param_list,
@@ -915,7 +916,9 @@ def _build_no_state_init_ctx(
         if kind == "str_enum"
         else "O"
         if kind in ("opt_arr", "def_arr")
-        else _CTYPE_META[_opt_scalar_meta[name][0]]["fmt"]
+        # gh-1271: an optional `const char *` seeded NULL takes `z`, so a
+        # caller can say None where the manifest said NULL.
+        else T.param_fmt(*_opt_scalar_meta[name][:2])
         for kind, name in optional_entries
     )
     if optional_fmt:
@@ -1243,9 +1246,14 @@ def _build_no_state_init_ctx(
             # gh-1099: `default_raw` is C jm cannot evaluate, so the stub says
             # `...` rather than inventing a literal. `_dr` was already in scope
             # here and discarded.
+            # gh-1271: `str | None` when the parameter declared NULL, from
+            # the same predicate `param_fmt` reads to emit `z`. Without this
+            # the stub said `tag: str = None`, which is the binding's own
+            # behaviour annotated as a type error.
             pyi_parts.append(
-                f"{name}: {scalar_py_annotation(ct)} ="
-                f" {'...' if _dr and not dflt else _py_default(ct, dflt)}"
+                f"{name}: "
+                f"{T.py_param_annotation(scalar_py_annotation(ct), ct, dflt or '')}"
+                f" = {'...' if _dr and not dflt else _py_default(ct, dflt)}"
             )
     init_params_pyi = ", ".join(pyi_parts)
 
@@ -2631,7 +2639,7 @@ def make_state_ctx(
 
     array_fmt = "O" * len(_aa)
     scalar_fmt_str = "".join(
-        _CTYPE_META[ct]["fmt"] for _, ct, __ in ctor_scalars
+        T.param_fmt(ct, dflt or "") for _, ct, dflt in ctor_scalars
     )
     if ctor_scalars:
         init_parse_fmt = array_fmt + "|" + scalar_fmt_str

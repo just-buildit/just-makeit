@@ -13,6 +13,7 @@ from .._types import (
     _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
+    param_fmt,
 )
 
 
@@ -466,7 +467,10 @@ def _build_params_parse(
                 )
             meta = _CTYPE_META[ptype]
             disp = ptype
-            fmt_chars.append(meta["fmt"])
+            # gh-1271: `z` where the parameter declared NULL as a value, `s`
+            # otherwise. Through the shared predicate, so the stub's
+            # `str | None` and this char cannot disagree.
+            fmt_chars.append(param_fmt(ptype, p.get("default") or ""))
 
             if "parse_type" in meta:
                 raw = f"{pname}_raw"

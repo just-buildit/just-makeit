@@ -321,6 +321,11 @@ class TestItCompilesAndRuns:
         assert "must be the doppler.telemetry.tlm capsule" in out
 
 
+# gh-1271: `n: int = 1024`, not `= ...`. The module-aggregated producer
+# discarded every defaulted init-param's literal while the standalone one
+# emitted it, so the same object read two ways. Incidental to what these
+# two assert -- the capsule's positionality and annotation -- but the
+# literal is in the string, so it moves with the fix.
 class TestTheModuleFaceAgreesWithItsBinding:
     """gh-845: §H fixed the standalone `.pyi` and missed the module one.
 
@@ -383,7 +388,7 @@ class TestTheModuleFaceAgreesWithItsBinding:
     def test_a_nullable_handle_is_positional_and_annotated(self, tmp_path):
         root = self._module_project(tmp_path, nullable=True)
         pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
-        assert "def __init__(self, tlm: object | None, n: int = ...)" in pyi
+        assert "def __init__(self, tlm: object | None, n: int = 1024)" in pyi
         # The binding keeps it before the `|`, so a default here would bless
         # a call that raises.
         assert "tlm: object | None = " not in pyi
@@ -392,4 +397,4 @@ class TestTheModuleFaceAgreesWithItsBinding:
     def test_a_mandatory_handle_is_unchanged(self, tmp_path):
         root = self._module_project(tmp_path, nullable=False)
         pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
-        assert "def __init__(self, tlm: object, n: int = ...)" in pyi
+        assert "def __init__(self, tlm: object, n: int = 1024)" in pyi

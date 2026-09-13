@@ -907,6 +907,12 @@ def _py_default_stub(ctype: str, default: str) -> str:
         # bucket below), so the C/TOML spelling `true`/`false` passed
         # straight through into generated Python — a NameError.
         return "True" if default.strip().lower() == "true" else "False"
+    # gh-1271: the peer had a `str` branch and this one did not, so a
+    # `const char *` default fell through to the integer bucket below and
+    # reached the stub as the C token -- `dataset: str = NULL`, a NameError.
+    # One answer, shared, so the two cannot drift again.
+    if T._CTYPE_META.get(ctype, {}).get("kind") == "str":
+        return T.string_default_literal(default)
     kind_map = {
         "float": "float",
         "double": "float",
@@ -1741,7 +1747,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     else f"{n}: {_py(t)} = ..."
                 )
             else:
-                parts_init.append(f"{n}: {_py(t)} = ...")
+                # gh-1271: the real default, and the annotation that goes with
+                # it. This branch emitted `= ...` for every defaulted scalar,
+                # so the SAME object read `tag: str | None = None` standalone
+                # and `tag: str = ...` inside a module -- the module-aggregated
+                # peer of `_context/_state.py`'s line, exactly the divergence
+                # the `if ip:` comment above is already the record of.
+                # `_py_default_stub` falls back to `...` on its own when there
+                # is no literal to seed (gh-515), so the sentinel still appears
+                # where it should.
+                parts_init.append(
+                    f"{n}: {T.py_param_annotation(_py(t), t, dflt or '')}"
+                    f" = {_py_default_stub(t, dflt or '')}"
+                )
         init_params_str = ", ".join(req_parts + parts_init)
         lines.append(f"    def __init__(self, {init_params_str}) -> None: ...")
     elif state_vars and not no_state:
@@ -2000,12 +2018,22 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # `fn_py_surface`, which spells the same two rules for the peer
             # surface. A stub saying `int` here is what let a manifest declare
             # an enum and hand the caller a TypeError.
-            pann = f"{p['name']}: {'str' if p.get('enum') else _py(p['type'])}"
+            _pbase = "str" if p.get("enum") else _py(p["type"])
+            _pdflt = p.get("default") or ""
+            # gh-1271: `str | None` where the binding takes `z`. Derived from
+            # the same predicate the format char is, so the stub cannot
+            # document a call the extension refuses.
+            pann = f"{p['name']}: {T.py_param_annotation(_pbase, p['type'], _pdflt)}"
             # gh-240: a defaulted param renders as an optional kwarg.
             if p.get("default"):
-                # An enum default is a choice string — quote it; scalar
-                # defaults are C literals shown verbatim.
-                pann += f" = {repr(p['default']) if p.get('enum') else p['default']}"
+                # An enum default is a choice string — quote it. Everything
+                # else was emitted as the C literal *verbatim*, which is how
+                # `count: int = 0U` and `p: float = 1.5f` reached the stub:
+                # not a NameError but a SyntaxError, killing the whole file
+                # for `mypy` and for `pytest --doctest-glob='*.pyi'`. That is
+                # what `_py_default_stub` is for, and this producer was not
+                # calling it (gh-1271).
+                pann += f" = {repr(p['default']) if p.get('enum') else _py_default_stub(p['type'], _pdflt)}"
             param_parts.append(pann)
 
         if m_py_return_type:
@@ -2364,12 +2392,18 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
             ann = "str"
         else:
             ann = _py(p["type"])
+        # gh-1271: the same two corrections as the method producer above, and
+        # for the same reason — this is that producer's peer, and the defect
+        # was in both.
+        ann = T.py_param_annotation(ann, p["type"], p.get("default") or "")
         py_params.append((p["name"], ann))
         part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):
-            # An enum default is a choice string — quote it; scalar defaults are
-            # C literals shown verbatim (gh-240 behavior).
-            dflt = repr(p["default"]) if p.get("enum") else p["default"]
+            dflt = (
+                repr(p["default"])
+                if p.get("enum")
+                else _py_default_stub(p["type"], p["default"])
+            )
             part += f" = {dflt}"
         parts.append(part)
     return ret, py_params, parts

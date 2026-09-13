@@ -59,6 +59,24 @@ from just_makeit._object import run as object_run
 _KNOWN_DIVERGENT: set[str] = set()
 
 
+# gh-1271: one defaulted parameter per literal kind, on both the constructor
+# and a method. Each of these reached the stub as the C token at some point --
+# `0U` and `1.5f` are SyntaxErrors in a `.pyi`, `true` and `NULL` are
+# NameErrors -- and the nullable string is the one whose ANNOTATION also has
+# to move, to `str | None`.
+_INIT_PARAMS = [
+    ("gain", "float", "1.0"),
+    ("tag", "const char *", "NULL"),
+]
+
+_DEFAULTED_PARAMS = [
+    ("count", "uint64_t", "0U"),
+    ("ratio", "float", "1.5f"),
+    ("loud", "bool", "true"),
+    ("label", "const char *", "NULL"),
+]
+
+
 def _docstrings(pyi: Path) -> dict[str, str]:
     """``{member_name: docstring}`` for every method of every class in *pyi*.
 
@@ -328,6 +346,99 @@ class TestBothStubProducersAgree:
             f"{stale} no longer diverge — remove them from "
             "_KNOWN_DIVERGENT so the gate keeps its teeth."
         )
+
+
+def _scaffold_defaults(root: Path, module: str | None) -> Path:
+    """One object whose constructor AND one method carry defaults.
+
+    A second axis, not a second gate. `SHAPES` above varies the I/O types and
+    every method it builds takes no parameter -- so a defaulted parameter, and
+    every way of getting one wrong, was outside the tree this file walks. That
+    is how gh-1271 stayed invisible here: the module-aggregated producer
+    discarded every defaulted init-param's literal (`gain: float = ...`
+    against the standalone `gain: float = 1.0`), and BOTH producers emitted
+    the declared C literal verbatim into the stub.
+    """
+    new_run("p", root, [], [])
+    if module:
+        module_run(root, module)
+    object_run(root, "w", module, init_params=_INIT_PARAMS)
+    method_run(
+        root,
+        "w",
+        "tune",
+        module,
+        "void",
+        "void",
+        False,
+        [],
+        params=_DEFAULTED_PARAMS,
+    )
+    apply_run(root)
+    return (
+        root / "src" / "p" / module / f"{module}.pyi"
+        if module
+        else root / "src" / "p" / "w.pyi"
+    )
+
+
+@pytest.fixture(scope="module")
+def default_faces(tmp_path_factory) -> tuple[dict[str, str], dict[str, str]]:
+    base = tmp_path_factory.mktemp("parity_defaults")
+    return (
+        _signatures(_scaffold_defaults(base / "sa", None)),
+        _signatures(_scaffold_defaults(base / "mo", "m")),
+    )
+
+
+class TestDefaultedParamsAgreeAcrossFaces:
+    """gh-1271: a default is part of the surface, so it is part of parity.
+
+    Signatures rather than docstrings, deliberately. A parameterised method's
+    *docstring* still diverges -- the module face renders the brief alone
+    where the standalone renders the full numpy block -- and that is gh-1292,
+    measured on unmodified `main` and filed rather than waived here. Asserting
+    it would mean putting an entry into `_KNOWN_DIVERGENT`, whose whole rule
+    is that it may only shrink.
+    """
+
+    def test_both_faces_actually_built_the_method(self, default_faces):
+        """Two empty dicts would agree perfectly and prove nothing."""
+        sa, mo = default_faces
+        assert "tune" in sa, sorted(sa)
+        assert "tune" in mo, sorted(mo)
+        assert "__init__" in sa and "__init__" in mo
+
+    def test_the_defaulted_method_signs_identically(self, default_faces):
+        sa, mo = default_faces
+        assert sa["tune"] == mo["tune"]
+
+    def test_the_constructor_signs_identically(self, default_faces):
+        """The peer that was wrong: `= ...` in a module, the literal alone."""
+        sa, mo = default_faces
+        assert sa["__init__"] == mo["__init__"]
+
+    def test_no_c_literal_reaches_either_face(self, default_faces):
+        """`0U` and `1.5f` are SyntaxErrors in a `.pyi`, `true`/`NULL` names.
+
+        Named individually rather than trusting the signature comparison
+        above: two producers with the SAME defect agree with each other, and
+        agreeing on a stub that does not parse is not parity.
+        """
+        sa, mo = default_faces
+        for face, sigs in (("standalone", sa), ("module", mo)):
+            blob = sigs["tune"] + sigs["__init__"]
+            for token in ("0U", "1.5f", "true", "NULL"):
+                assert token not in blob, f"{face}: C literal {token!r}"
+
+    def test_the_nullable_string_is_annotated_as_nullable(self, default_faces):
+        """The binding parses it with `z`, so the stub must say `| None`."""
+        sa, mo = default_faces
+        for sigs in (sa, mo):
+            assert "label: str | None=None" in sigs["tune"].replace(" =", "=")
+            assert "tag: str | None=None" in sigs["__init__"].replace(
+                " =", "="
+            )
 
 
 class TestLifecycleGlueSpecifically:

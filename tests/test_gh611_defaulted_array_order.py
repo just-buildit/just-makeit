@@ -173,9 +173,14 @@ class TestRequiredArrayModulePyiOrder:
                 encoding="utf-8"
             )
         )
+        # gh-1271: `= 1.0`, not `= ...`. The module-aggregated producer
+        # discarded every defaulted init-param's literal, so the same object
+        # read one way standalone and another inside a module. `_stubs.py`
+        # already carried that fix for the state-vars branch and this was the
+        # branch it missed; the subject here (the ordering) is unchanged.
         assert (
             "def __init__(self, taps: NDArray[np.float32],"
-            " gain: float = ...) -> None: ..." in pyi
+            " gain: float = 1.0) -> None: ..." in pyi
         )
 
 

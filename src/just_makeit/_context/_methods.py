@@ -12,6 +12,7 @@ from .. import _coerce
 from .. import _outbuf
 from .. import _record
 from .. import _types as T
+from ._types import _py_default
 from .. import _gluedoc
 from .._types import (
     _CTYPE_META,
@@ -165,12 +166,21 @@ def _stub_params(
             fields.append((p["name"], "object | None", ""))
         else:
             # gh-240: a defaulted scalar renders as an optional kwarg.
-            suffix = (
-                f" = {p['default']}"
-                if p.get("default") not in (None, "")
-                else ""
+            # gh-1271: through `_py_default`, not verbatim. The C literal went
+            # straight out as Python here, so `default = "0U"` rendered
+            # `count: int = 0U` -- a SyntaxError that kills the whole file for
+            # `mypy` and for `pytest --doctest-glob='*.pyi'`, not merely a
+            # wrong value. The annotation widens with it, from the same
+            # predicate the format char uses.
+            _d = p.get("default") or ""
+            suffix = f" = {_py_default(pt, _d)}" if _d else ""
+            fields.append(
+                (
+                    p["name"],
+                    T.py_param_annotation(_pyi_scalar(pt), pt, _d),
+                    suffix,
+                )
             )
-            fields.append((p["name"], _pyi_scalar(pt), suffix))
     return (
         [f"{n}: {a}{s}" for n, a, s in fields],
         [(n, a) for n, a, _ in fields],
