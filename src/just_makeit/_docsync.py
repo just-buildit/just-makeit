@@ -1458,6 +1458,124 @@ def _init_kwargs(text: str) -> tuple[str, ...]:
     return tuple(n for n in re.findall(r'"([^"]*)"', lit))
 
 
+def _record_shapes(text: str) -> "dict[str, tuple]":
+    """``{sid: (field_names, n_in_sequence)}`` for each record in *text*.
+
+    Both halves, because they are separately wrong in the same fragment:
+    gh-1267's doc transplant already refreshes the descriptor's ``doc``
+    field, so a stale record announces itself as ``"DevRec(a, b)"`` while
+    ``n_in_sequence`` still says ``1``. Reading only the arity would miss a
+    field RENAMED without a count change; reading only the names would miss
+    an arity jm never rewrote.
+
+    Field names come off the first string literal of each row, so the
+    ``{NULL, NULL}`` terminator drops out by having none rather than by being
+    filtered on its spelling.
+    """
+    mask = _code_mask(text)
+    out: dict[str, tuple] = {}
+    names: dict[str, list] = {}
+    for m in _SS_FIELDS_RE.finditer(mask):
+        open_at = mask.index("{", m.end() - 1)
+        end = _match_brace(mask, open_at)
+        if end < 0:
+            continue
+        rows = []
+        for s, e in _entry_spans(mask, open_at + 1, end):
+            lit = _C_STR_RE.search(text[s : e + 1])
+            if lit:
+                rows.append(lit.group(1))
+        names[m.group(1)] = rows
+    for m in _SS_DESC_RE.finditer(mask):
+        sid = m.group(1)
+        open_at = mask.index("{", m.end() - 1)
+        end = _match_brace(mask, open_at)
+        if end < 0:
+            continue
+        # `_field_spans` takes the entry's `{` and `}` indices, not the
+        # text between them -- passing `open_at + 1` shifted every field by
+        # one and left the closing brace inside the last, so the arity read
+        # back as "1\n}".
+        parts = [
+            text[s:e].strip() for s, e in _field_spans(mask, open_at, end)
+        ]
+        arity = parts[-1] if parts else ""
+        out[sid] = (names.get(sid, []), arity)
+    return out
+
+
+def record_drift(existing: str, reference: str) -> str:
+    """``""`` when every record's shape matches, else why not.
+
+    gh-1290. A ``single`` method returns a named ``PyStructSequence``, and
+    three things move together when its ``result_fields`` change: the
+    ``PyStructSequence_Field`` row, the descriptor's ``n_in_sequence``, and
+    the ``PyStructSequence_SET_ITEM`` calls that fill the sequence.
+
+    Split from :func:`warn_record_drift` for the reason
+    :func:`init_kwargs_drift` is split from its own warner: one comparison,
+    two presentations — stderr during a refresh, and a `jm status` report
+    section. Two copies would drift in the usual way.
+
+    *detail* is ``""`` exactly when the shapes agree, so it doubles as the
+    "is there drift" predicate.
+    """
+    ex, ref = _record_shapes(existing), _record_shapes(reference)
+    bits = []
+    for sid, (ref_names, ref_arity) in sorted(ref.items()):
+        cur = ex.get(sid)
+        if cur is None:
+            continue
+        cur_names, cur_arity = cur
+        if cur_names == ref_names and cur_arity == ref_arity:
+            continue
+        bit = (
+            f"{sid} builds {len(cur_names)} field(s) "
+            f"[{', '.join(cur_names) or '-'}], manifest declares "
+            f"{len(ref_names)} [{', '.join(ref_names) or '-'}]"
+        )
+        if cur_arity != ref_arity:
+            bit += f", n_in_sequence {cur_arity} should be {ref_arity}"
+        bits.append(bit)
+    return "; ".join(bits)
+
+
+#: Why a record's shape is reported and never repaired. Named once, because
+#: both presentations say it and a second wording would be a second opinion.
+_RECORD_REMEDY = (
+    "The field table, the descriptor arity and the "
+    "`PyStructSequence_SET_ITEM` calls are regenerated with the wrapper "
+    "body, so jm will not move them on their own -- a table grown without "
+    "the body leaves a slot nothing sets, which reads back as NULL. Delete "
+    "the record's wrapper and its row and re-run `just-makeit apply` to "
+    "regenerate that member alone, or keep the binding in an _extra.c."
+)
+
+
+def warn_record_drift(rel, existing: str, reference: str) -> str:
+    """Warn when a record's field table no longer matches the manifest.
+
+    Reported rather than repaired, and the asymmetry with gh-1273's enum
+    table is the point: jm owns every byte of an enum table and nothing else
+    has to move with it, so that one is rewritten. A record's third moving
+    part is in the wrapper body, which is the author's under gh-767 — and
+    writing the table without the body would be strictly worse than leaving
+    both, since the sequence would grow a slot nothing ever sets and an unset
+    ``PyStructSequence`` slot is a NULL the caller reads as a tuple item.
+    Today's failure is an ``AttributeError`` on a field the stub promises:
+    wrong, but honest.
+
+    Gating on gh-823's test — the ``.pyi`` documents a field the extension
+    does not have — and `jm status` asks the same question itself, from
+    :func:`record_drift`, so the mark is a statement about the gate rather
+    than a decoration on it.
+    """
+    detail = record_drift(existing, reference)
+    if detail:
+        _report.warn(f"{rel}: record {detail}. {_RECORD_REMEDY}", gates=True)
+    return detail
+
+
 def warn_init_kwargs_drift(rel, existing: str, reference: str):
     """Warn when a refresh would change the constructor's keyword arguments.
 
@@ -2329,6 +2447,12 @@ def refresh_module_fragment_docs(
             # the constructor's kwlist. Invisible to a member-level audit, so
             # it gets its own report.
             warn_init_kwargs_drift(_rel, updated, reference)
+            # gh-1290: and a record whose `result_fields` changed. Invisible
+            # to the same audit for the same reason -- no member is lost, the
+            # shape of one changed -- and doubly so since gh-1267 refreshes
+            # the descriptor's DOC, so a stale record announces itself as
+            # "DevRec(a, b)" while its arity still says 1.
+            warn_record_drift(_rel, updated, reference)
             # gh-541: the teardown wrappers are manifest-derived, not
             # hand-owned, once [<obj>.destroy] exists. transplant_missing_
             # bindings above is additive by name, so it adds the alias ROW but

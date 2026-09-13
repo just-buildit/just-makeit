@@ -402,6 +402,12 @@ def run(
     # (path, detail, allowed) — gh-823. `allowed` entries are reported
     # and not counted, exactly like every other allowed deviation.
     kwargs_entries: list[tuple[str, str, bool]] = []
+    # gh-1290: the same shape for a record whose `result_fields`
+    # changed. Asked here for the reason gh-612 gives above for the
+    # kwlist: `apply` can answer it mid-refresh, but `status`
+    # redirects that stderr away, so for a fragment nobody refreshes
+    # the question was never put.
+    record_entries: list[tuple[str, str, bool]] = []
     # gh-848: why each unreconciled fragment differs, keyed by path.
     # Kept beside `entries` rather than widened into its tuple, which
     # several call sites unpack positionally.
@@ -627,6 +633,18 @@ def run(
                                 _is_allowed(rel_posix, allow_patterns),
                             )
                         )
+                    _rec = _docsync.record_drift(
+                        before.decode("utf-8", "replace"),
+                        after.decode("utf-8", "replace"),
+                    )
+                    if _rec:
+                        record_entries.append(
+                            (
+                                rel_posix,
+                                _rec,
+                                _is_allowed(rel_posix, allow_patterns),
+                            )
+                        )
                 diff = (
                     _unified_diff(before, after, rel_posix)
                     if show_diff
@@ -809,6 +827,9 @@ def run(
         # stays on, the finding is visible, and an instance is exempted by
         # name with a reason.
         + sum(1 for e in kwargs_entries if not e[2])
+        # gh-1290: gating, on gh-823's test — the `.pyi` documents a
+        # field the extension does not have.
+        + sum(1 for e in record_entries if not e[2])
         + (_wide if _strict else 0)
         # gh-806: gates, unconditionally. The failure mode is a **green** CI
         # run — a scaffold that compiles, passes and is counted while the real
@@ -893,6 +914,10 @@ def run(
                             "expected": v.expected,
                         }
                         for v in version_entries
+                    ],
+                    "record_drift": [
+                        {"path": p, "detail": d, "allowed": a}
+                        for (p, d, a) in record_entries
                     ],
                     "kwargs_drift": [
                         {"path": p, "detail": d, "allowed": a}
@@ -1569,6 +1594,39 @@ def run(
     # fragment has. Both spellings compile, both import, and a type checker
     # blesses the call that raises: doppler's `CorrDetector2D(ref, 1, 0, 3,
     # "median")` shipped in 0.38.1 as a `TypeError` its own stub endorsed.
+    # gh-1290: the same treatment, for the same reason one level in. The
+    # `.pyi` is rendered from the manifest and declares every `result_field`;
+    # the struct sequence the extension builds has room for the fields the
+    # fragment was generated with. A reader gets `DevRec(a, b)` from `help()`
+    # -- gh-1267 refreshes the descriptor's DOC -- and an AttributeError from
+    # `.b`, with the arity beside the doc still saying 1.
+    if record_entries:
+        print(
+            f"RECORDS ({len(record_entries)}) — a record's fields disagree "
+            "with the manifest:"
+        )
+        for path, detail, _allowed in record_entries:
+            print(f"  {'~' if _allowed else '!'} {path}")
+            print(f"      {detail}")
+            if _allowed:
+                print("      (allowed by status_allow — not counted)")
+        print(
+            "  The .pyi promises every declared field; the extension builds "
+            "the sequence\n"
+            "  the fragment was generated with, so `.field` raises "
+            "AttributeError on a name\n"
+            "  a type checker blesses. jm will not grow the table on its "
+            "own: the field row,\n"
+            "  the descriptor arity and the SET_ITEM calls are regenerated "
+            "with the wrapper\n"
+            "  body, and a table grown without the body leaves a slot "
+            "nothing sets. Delete\n"
+            "  the record's wrapper and its row and re-run `just-makeit "
+            "apply` to regenerate\n"
+            "  that member alone, or keep the binding in an _extra.c."
+        )
+        print()
+
     if kwargs_entries:
         print(
             f"KWARGS ({len(kwargs_entries)}) — the constructor's keyword "
@@ -1618,6 +1676,11 @@ def run(
         and not _orphan_pg
         and not manifest_doc_entries
         and not any(not e[2] for e in kwargs_entries)
+        # gh-1290: and the record shapes, on the same argument — a
+        # summary opening "OK — up to date" is what a reader takes
+        # away from a stub that documents a field the extension has
+        # no slot for.
+        and not any(not e[2] for e in record_entries)
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
         # is the precise sentence this issue is about; the exit code alone
@@ -1759,6 +1822,12 @@ def run(
                 else ""
             )
             + (f", {len(_orphan_pg)} orphan-header (!)" if _orphan_pg else "")
+            + (
+                f", {sum(1 for e in record_entries if not e[2])} "
+                "record-drift (!)"
+                if any(not e[2] for e in record_entries)
+                else ""
+            )
             + (
                 f", {len(manifest_doc_entries)} doc-overflow (!)"
                 if manifest_doc_entries
