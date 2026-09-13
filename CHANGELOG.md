@@ -2,6 +2,37 @@
 
 ### Fixed
 
+- **A `single` record that gained a `result_field` left the sacred fragment
+    half-updated, and nothing said so (gh-1290).** The `.pyi` moved to promise
+    the new field; the `PyStructSequence_Field` table kept the fields it was
+    generated with, the descriptor's `n_in_sequence` kept the old count, and
+    the wrapper kept filling the slots it filled before. So `help()` announced
+    `DevRec(a, b)` — gh-1267 refreshes the descriptor's *doc* — while `.b`
+    raised `AttributeError` against a stub a type checker blesses. `jm apply`
+    printed nothing and `jm status --check` returned 0.
+
+    **Reported, never repaired, and the asymmetry with gh-1273 is the point.**
+    jm rewrites an `[[enum]]` table in place because it owns every byte and
+    nothing else moves with it. A record's third moving part is the
+    `PyStructSequence_SET_ITEM` calls, in the wrapper body, which is the
+    author's under gh-767 — and growing the table without the body is strictly
+    worse than leaving both: the sequence gains a slot nothing ever sets, and
+    an unset slot is a NULL the caller reads back as a tuple item. Today's
+    failure is wrong but honest. Same rule `warn_init_kwargs_drift` follows,
+    reaching the same answer for the same reason.
+
+    The finding names a remedy that works — delete the record's wrapper and
+    its row, re-run `jm apply`, and that member alone is regenerated — and
+    the change is gated on both surfaces: a `RECORDS` section in `jm status`,
+    a `record_drift` key in `--json`, and a non-zero `--check`. **`status`
+    asks the question itself** rather than trusting the `!` mark, because
+    nothing about that mark makes the gate fail and `_report`'s own docstring
+    says a gating mark that does not gate teaches readers to ignore it.
+
+    Both halves of the shape are read, since they go stale independently: the
+    field names catch a rename at a constant count, the arity catches gh-1267's
+    refreshed-doc-beside-a-stale-count case.
+
 - **An edit to an authored doc never reached an existing member of a module
     fragment; the `.pyi` moved and the runtime `__doc__` stayed frozen at its
     first render (gh-1288).** Filling an *empty* doc slot worked (gh-1192).
