@@ -359,6 +359,23 @@ def render_component_pyi(ctx: dict) -> str:
     """
     from ._pyfmt import reflow_pyi
 
+    # gh-1272: `import os` is decided HERE, from the rendered stub, because
+    # this is the one place that has the whole of it. `make_state_ctx` set the
+    # slot from `init_params_pyi` alone and its comment claimed the derivation
+    # was general -- "derived from the rendered parts, so a new path shape
+    # cannot forget the import" -- but it could only see the constructor, and
+    # `make_methods_ctx` runs afterwards. A `path` METHOD parameter was the
+    # new shape, and the stub annotated `str | os.PathLike` with no import.
+    #
+    # The annotation is the only thing that can need it, so a first pass with
+    # the slot empty answers the question exactly, for every slot at once.
+    probe = render(COMPONENT_PYI, {**ctx, "pyi_os_import": ""})
+    ctx = {
+        **ctx,
+        "pyi_os_import": (
+            "\nimport os" if _coerce.PATH_PY_TYPE in probe else ""
+        ),
+    }
     return reflow_pyi(render(COMPONENT_PYI, ctx))
 
 
@@ -889,6 +906,20 @@ def _build_params_parse(
             addr_exprs.append(_coerce.path_addr(pname))
             path_names.append(pname)
             call_args.append(_coerce.path_call_expr(pname))
+        elif ptype == "bytes":
+            # gh-1272: `bytes` is the OTHER pseudo-type, and this face had an
+            # arm for one of the two — so a `path` function param worked and
+            # a `bytes` one raised `KeyError: 'bytes'` from inside
+            # `_CTYPE_META`, four lines down. `_types.PSEUDO_TYPES` is the
+            # SSOT for the pair and `_config._usable_ctype` was already
+            # answering "yes, a binding exists" for both.
+            #
+            # No release: `y#` borrows the object's buffer rather than taking
+            # a reference, and the args tuple keeps it alive for the call.
+            decl_lines.extend("    " + ln for ln in _coerce.bytes_decl(pname))
+            fmt_chars.append(_coerce.bytes_fmt())
+            addr_exprs.append(_coerce.bytes_addr(pname))
+            call_args.append(_coerce.bytes_call_exprs(pname))
         elif p.get("enum"):
             # gh-353 (mirrors _handle's enum-validate in render_tp_init): parse
             # the choice string with `s`, validate to its SSOT int via

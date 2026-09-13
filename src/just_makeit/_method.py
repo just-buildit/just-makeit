@@ -362,28 +362,15 @@ def _methods_c_stub_fixed(
     out_suppress = " (void)out;" if out_type else ""
 
     if params:
-        param_parts: list[str] = []
-        suppress_parts: list[str] = []
-        if has_arg:
-            if T.is_array_param_type(arg_type):
-                elem_disp = T.array_elem_ctype(arg_type)
-                param_parts.append(f"const {elem_disp} *x")
-                param_parts.append("size_t x_len")
-                suppress_parts.append("(void)x;")
-                suppress_parts.append("(void)x_len;")
-            else:
-                param_parts.append(f"{arg_type} x")
-                suppress_parts.append("(void)x;")
-        for n, t in params:
-            if T.is_array_param_type(t):
-                elem_disp = T.array_elem_ctype(t)
-                param_parts.append(f"const {elem_disp} *{n}")
-                param_parts.append(f"size_t {n}_len")
-                suppress_parts.append(f"(void){n};")
-                suppress_parts.append(f"(void){n}_len;")
-            else:
-                param_parts.append(f"{t} {n}")
-                suppress_parts.append(f"(void){n};")
+        # gh-1272: the fourth copy of the expansion, and the only one that
+        # also needed the NAMES -- which is what `c_param_names` is for. A
+        # stub body whose `(void)n;` list is derived beside a second copy of
+        # the declaration list is how the two drift: the body would suppress
+        # `blob` while the signature declared `blob` and `blob_len`, and the
+        # scaffold stops compiling on an unused-parameter warning.
+        _pp = ([("x", arg_type)] if has_arg else []) + list(params)
+        param_parts = T.c_param_parts(_pp)
+        suppress_parts = [f"(void){n};" for n in T.c_param_names(_pp)]
         param_str = ", ".join(param_parts)
         c_params = (
             f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
@@ -739,15 +726,13 @@ def _build_method_prototype(
                 f", const {_block_in_elem_disp(arg_type)} *in, size_t n_in"
             )
         elif params:
-            p_parts: list[str] = []
-            for pn, pt in params:
-                if T.is_array_param_type(pt):
-                    elem_disp = T.array_elem_ctype(pt)
-                    p_parts.append(f"const {elem_disp} *{pn}")
-                    p_parts.append(f"size_t {pn}_len")
-                else:
-                    p_parts.append(f"{pt} {pn}")
-            step_param = ", " + ", ".join(p_parts)
+            # gh-1272: through `c_param_parts`, like the branch above. This
+            # was one of FOUR inline copies of that expansion, which is why a
+            # `path` parameter declared `path meta;` in the sacred header --
+            # a pseudo-type reaching a copy that did not know it is not a C
+            # type. One implementation, and the pseudo-types arrive on every
+            # site at once.
+            step_param = ", " + ", ".join(T.c_param_parts(params))
         else:
             step_param = ", size_t n"
         out_disp = _out_elem_disp(return_type, record_dtype or out_type)
@@ -762,21 +747,11 @@ def _build_method_prototype(
         )
 
     if params:
-        parts: list[str] = []
-        if has_arg:
-            if T.is_array_param_type(arg_type):
-                elem_disp = T.array_elem_ctype(arg_type)
-                parts.append(f"const {elem_disp} *x")
-                parts.append("size_t x_len")
-            else:
-                parts.append(f"{arg_type} x")
-        for n, t in params:
-            if T.is_array_param_type(t):
-                elem_disp = T.array_elem_ctype(t)
-                parts.append(f"const {elem_disp} *{n}")
-                parts.append(f"size_t {n}_len")
-            else:
-                parts.append(f"{t} {n}")
+        # gh-1272: `x` expands by the same rule every declared param does, so
+        # it goes through the same function -- named `x`, and prepended.
+        parts = T.c_param_parts(
+            ([("x", arg_type)] if has_arg else []) + list(params)
+        )
         c_params = f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
     elif has_arg:
         if T.is_array_param_type(arg_type):

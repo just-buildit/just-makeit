@@ -2,6 +2,45 @@
 
 ### Fixed
 
+- **A `path` or `bytes` parameter on a method was a bare `KeyError` from
+    inside the renderer, and `bytes` was missing on the module-function face
+    too (gh-1272).** `path` and `bytes` are deliberately absent from
+    `_CTYPE_META` -- they name a Python-side coercion, not a C type -- and
+    `_types.PSEUDO_TYPES` is the SSOT for the pair. Its own comment already
+    scoped it to *"component `init_params` and the `params` / `arg_type` of
+    methods and module functions"*, so `_config._usable_ctype` had been
+    answering "yes, a binding exists for this" on all three faces while the
+    renderers had arms for two of them:
+
+    | type    | `init_params` | method params | module functions |
+    | ------- | ------------- | ------------- | ---------------- |
+    | `path`  | yes (gh-515)  | **KeyError**  | yes (gh-353)     |
+    | `bytes` | yes (gh-565)  | **KeyError**  | **KeyError**     |
+
+    Only the `path`/method cell was reported. Validation said yes and
+    rendering raised `KeyError: 'path'` from a stack frame deep in
+    `_CTYPE_META` -- the same traceback-where-a-diagnostic-belongs shape
+    gh-1021 fixed for `enum:`.
+
+    **One cell became four because `c_param_parts` had four inline copies.**
+    It is documented as *"the one place that knows how a declared param
+    becomes C"*, and `_method.py` re-implemented it four times. A pseudo-type
+    reaching one of those copies declared `path meta;` in the **sacred**
+    `_core.h`, which is not C and does not compile -- and that header is the
+    half the author's `_core.c` is written against. The copies are gone, and
+    the pseudo-types arrived on every site at once as a result.
+
+    Two `import os` deciders had the same shape: both enumerated the surfaces
+    that can carry a path instead of reading the rendered annotation, so both
+    missed the new one and the stub wrote `meta_path: str | os.PathLike` with
+    no import. Both ask the rendered text now. `_context/_state.py`'s comment
+    had claimed the general derivation -- *"so a new path shape cannot forget
+    the import"* -- while seeing only the constructor.
+
+    The gate parametrises over `PSEUDO_TYPES` itself and over the method
+    shapes that select different prototype branches, so a third pseudo-type
+    is covered on the day it is added.
+
 - **A `const char *` parameter could not be optional, and every parameter
     default reached the stub as the C literal it was written as (gh-1271).**
     Two spellings, neither working: `default = ""` is read as *no* default, so

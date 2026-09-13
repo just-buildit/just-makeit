@@ -2486,22 +2486,24 @@ def _uses_literal(cfg: dict, module: str) -> bool:
     return False
 
 
-def _uses_os(cfg: dict, module: str) -> bool:
-    """Return True if any path surface in this module needs ``os`` (gh-353).
+def _uses_os(body: str) -> bool:
+    """Return True if the rendered stub *body* needs ``import os`` (gh-353).
 
-    A path annotates as ``str | os.PathLike``, so the stub must ``import os``.
-    Both surfaces count: a ``jm function`` param (gh-353) and an object
-    init-param (gh-623 — before that, an init-param annotated bare ``str`` and
-    so needed no import, which is exactly the narrowness gh-623 fixed)."""
-    for fn in C.module_functions(cfg, module):
-        for p in fn.get("params", []):
-            if p["type"] == "path":
-                return True
-    for obj in C.module_objects(cfg, module):
-        # init_params are 10-tuples; [1] is the type (see C.init_params).
-        if any(ip[1] == "path" for ip in C.init_params(cfg, obj)):
-            return True
-    return False
+    A path annotates as ``str | os.PathLike``, so the stub must import ``os``
+    or the annotation is an undefined name.
+
+    **Asked of the rendered text, not of the declarations.** This used to
+    enumerate the surfaces that can carry a path -- module functions (gh-353)
+    and object init-params (gh-623) -- and a list of surfaces is a list that
+    goes stale: gh-1272 gave a path a third home, a method parameter, and this
+    function had no arm for it. The stub then annotated
+    ``meta_path: str | os.PathLike`` with no import, which is the same class
+    of broken stub gh-515 and gh-1271 are about.
+
+    The annotation is the only thing that can need the import, so reading the
+    text answers the question exactly and cannot miss a fourth surface.
+    """
+    return _coerce.PATH_PY_TYPE in body
 
 
 def _uses_numpy(cfg: dict, module: str) -> bool:
@@ -2561,7 +2563,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
     needs_any = _uses_any(cfg, module)
-    needs_os = _uses_os(cfg, module)  # gh-353: a path param -> os.PathLike
+    # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is
+    # remembered here so the import still lands in its historical position
+    # (after `Sequence`, before numpy) and no existing stub churns.
     # gh-203: a streamable object's stub references Callable + Iterator.
     needs_stream = any(_obj_stream_pyi(cfg, o) for o in objects)
     # An async-streamable object's stub also references AsyncIterator (its
@@ -2605,8 +2609,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         parts.append(f"from typing import {typing_imports}")
     if needs_sequence:
         parts.append("from collections.abc import Sequence")
-    if needs_os:
-        parts.append("import os")
+    _os_slot = len(parts)
     if needs_numpy:
         parts.append("import numpy as np")
         parts.append("from numpy.typing import NDArray")
@@ -2783,4 +2786,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # producers reflow, so neither face of the drift gate sees raw text.
     from ._pyfmt import reflow_pyi
 
+    # gh-1272: the annotation is the only thing that can need `os`, so the
+    # rendered body is what gets asked. A list of surfaces that can carry a
+    # path is a list that goes stale, and it did — a method parameter was the
+    # third surface and had no arm.
+    if _uses_os("\n".join(parts[_os_slot:])):
+        parts.insert(_os_slot, "import os")
     return reflow_pyi("\n".join(parts)) + "\n"
