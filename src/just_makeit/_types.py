@@ -631,14 +631,16 @@ def c_param_suppress(params) -> list[str]:
     --------
     >>> c_param_suppress([("rx", "float[]"), ("t0", "size_t")])
     ['(void)rx;', '(void)rx_len;', '(void)t0;']
+
+    A `bytes` param expands to a pointer/length pair like an array does, and
+    this re-implemented the expansion rather than reading it -- so it knew
+    about `[]` and not about the pseudo-types, and under-suppressed
+    `blob_len`:
+
+    >>> c_param_suppress([("blob", "bytes")])
+    ['(void)blob;', '(void)blob_len;']
     """
-    out: list[str] = []
-    for p in params:
-        pname, ptype = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
-        out.append(f"(void){pname};")
-        if is_array_param_type(ptype):
-            out.append(f"(void){pname}_len;")
-    return out
+    return [f"(void){n};" for n in c_param_names(params)]
 
 
 def is_supported_return_type(
