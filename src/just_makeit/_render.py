@@ -24,6 +24,7 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
+from . import _types as T
 from . import _record
 
 _TMPL_DIR = Path(__file__).parent / "templates"
@@ -1020,7 +1021,8 @@ def _build_params_parse(
         else:
             meta = _CTYPE_META[ptype]
             disp = ptype
-            fmt_chars.append(meta["fmt"])
+            # gh-1271: same rule as the method face, one call away.
+            fmt_chars.append(T.param_fmt(ptype, p.get("default") or ""))
 
             if "parse_type" in meta:
                 raw = f"{pname}_raw"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    string_default_literal,
     strip_c_literal_suffix,
 )
 
@@ -91,17 +92,14 @@ def _py_default(ctype: str, default: str) -> str:
     if kind == "complex":
         return "0j"
     if kind == "str":
-        # `const char *` defaults: C "NULL" becomes an empty Python
-        # string literal. None would fit the semantics better, but
-        # the generated CPython binding uses the "s" format code
-        # which rejects None — empty string `""` passes the type
-        # check, doesn't crash, and gives the user a clear placeholder
-        # to swap for a real fixture path in their tests.
-        # Any other C string literal (e.g. "/dev/null") is already
-        # quoted in the TOML default and passes through verbatim.
-        if default == "NULL":
-            return '""'
-        return default if default.strip() else "..."
+        # gh-1271: `NULL` is `None`, through the shared answer. It used to be
+        # `""` here, and the comment said exactly why: *"None would fit the
+        # semantics better, but the generated CPython binding uses the `s`
+        # format code which rejects None."* `_types.param_fmt` emits `z` for
+        # this parameter now, so the constraint is gone and the workaround
+        # goes with it -- `""` was a different value from the declared one,
+        # and the generated doctest constructed the object with it.
+        return string_default_literal(default)
     # gh-1043: the integer bucket. `0U` is a C literal and a SyntaxError in
     # Python, and this function ALREADY knew C literals carry suffixes — the
     # float branch two above strips `fF`. The knowledge was in the function

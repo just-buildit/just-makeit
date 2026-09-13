@@ -286,6 +286,113 @@ def strip_c_literal_suffix(default: str) -> str:
     return m.group("value") if m else default.strip()
 
 
+#: The one ``const char *`` default that is not text: the null pointer.
+_C_NULL = "NULL"
+
+
+def is_nullable_string(ctype: str, default: str) -> bool:
+    """True when a ``const char *`` parameter declares ``NULL`` as a value.
+
+    gh-1271. A string parameter has two different optionalities and jm used to
+    offer neither. ``default = "NULL"`` says the C side has a meaning for *no
+    string* -- it is the spelling every other default uses, the C literal --
+    so the binding must let a caller say so, and ``PyArg`` already spells that
+    ``z`` ("str or None") rather than ``s``.
+
+    Read as the pair, never as the type alone: a **required** ``const char *``
+    stays ``s`` and rejects ``None``, because nothing declared that NULL means
+    anything there. That is why this takes the default as well.
+
+    Examples
+    --------
+    >>> is_nullable_string("const char *", "NULL")
+    True
+    >>> is_nullable_string("const char *", '"/dev/null"')
+    False
+    >>> is_nullable_string("const char *", "")
+    False
+    >>> is_nullable_string("int", "NULL")
+    False
+    """
+    return ctype == "const char *" and default.strip() == _C_NULL
+
+
+def param_fmt(ctype: str, default: str = "") -> str:
+    """The ``PyArg_ParseTuple`` format char for a parameter of *ctype*.
+
+    ``_CTYPE_META[ctype]["fmt"]`` answers this for the type; the parameter's
+    **default** can change it, and that is the whole of what this adds. Every
+    face that parses a parameter goes through here so a nullable string cannot
+    be nullable on one surface and not on its sibling -- the constructor, the
+    method and the module function each assembled the char themselves.
+
+    Examples
+    --------
+    >>> param_fmt("const char *")
+    's'
+    >>> param_fmt("const char *", "NULL")
+    'z'
+    >>> param_fmt("double", "1.0")
+    'd'
+    """
+    if is_nullable_string(ctype, default):
+        return "z"
+    return _CTYPE_META[ctype]["fmt"]
+
+
+def string_default_literal(default: str) -> str:
+    """A ``const char *`` default's Python spelling.
+
+    ``NULL`` is the null pointer and becomes ``None``; anything else is text
+    and must already be quoted in the manifest, which is the convention every
+    non-NULL string default has always used.
+
+    It used to become ``""`` on the init-param face, and the comment there
+    said why: *"None would fit the semantics better, but the generated CPython
+    binding uses the `s` format code which rejects None."* :func:`param_fmt`
+    removes that constraint, so the workaround goes with it -- ``""`` was a
+    different value from the one declared, and the generated doctest
+    constructed with it.
+
+    Shared rather than written twice, on gh-1043's precedent: the two
+    ``_py_default`` peers each own their own branch structure, and this is the
+    one answer inside them that had drifted.
+
+    Examples
+    --------
+    >>> string_default_literal("NULL")
+    'None'
+    >>> string_default_literal('"/dev/null"')
+    '"/dev/null"'
+    >>> string_default_literal("")
+    '...'
+    """
+    if default.strip() == _C_NULL:
+        return "None"
+    return default if default.strip() else "..."
+
+
+def py_param_annotation(base: str, ctype: str, default: str) -> str:
+    """*base*, widened to ``| None`` when the parameter accepts ``None``.
+
+    The annotation and the format char are one decision read in two places, so
+    they are derived from the same predicate. A stub saying ``str`` for a
+    parameter the binding accepts ``None`` on is the mismatch gh-805 §E is the
+    worked example of -- the module-aggregated stub offering a call the
+    binding refused.
+
+    Examples
+    --------
+    >>> py_param_annotation("str", "const char *", "NULL")
+    'str | None'
+    >>> py_param_annotation("str", "const char *", '"x"')
+    'str'
+    """
+    if is_nullable_string(ctype, default):
+        return f"{base} | None"
+    return base
+
+
 def default_type_error(ctype: str, default: str) -> str:
     """``""`` when *default* is a valid literal for *ctype*, else why not.
 
@@ -840,6 +947,23 @@ def _join_fmt_with_optional(fmt_chars: list[str], params: list[dict]) -> str:
 
     Raises ``ValueError`` if a required param follows a defaulted one.
     """
+    # gh-1271: `default = ""` is read as ABSENT, and that is the right reading
+    # -- it is how every manifest spells "no default". But a `const char *`
+    # author reaches for it meaning the empty *string*, and what they got was
+    # the refusal below, two parameters later, naming a different parameter.
+    # Say it where it was written, and name the spelling that works.
+    for p in params:
+        if "default" in p and not str(p.get("default") or "").strip():
+            raise ValueError(
+                f"parameter '{p['name']}': `default = \"\"` is read as NO "
+                "default, so the parameter stays required.\n"
+                "Drop the key if that is what you meant. For an empty string "
+                "default, quote it as C:\n"
+                f'    {{ name = "{p["name"]}", type = "{p.get("type", "const char *")}", '
+                "default = '\"\"' }\n"
+                "For an omittable string whose absence means NULL, write "
+                '`default = "NULL"` -- the parameter then takes `str | None`.'
+            )
     first_opt = next(
         (
             i
