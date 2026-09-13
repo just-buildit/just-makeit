@@ -483,6 +483,26 @@ def default_type_error(ctype: str, default: str) -> str:
     )
 
 
+def c_param_names(params) -> list[str]:
+    """The identifiers :func:`c_param_parts` declares, in the same order.
+
+    Its companion, because four sites needed the declarations *and* the names
+    -- a generated stub body suppresses each one with ``(void)n;`` -- and
+    re-deriving the names beside a second copy of the expansion is how the
+    expansion came to exist four times (gh-1272).
+
+    Examples
+    --------
+    >>> c_param_names([("rx", "float _Complex[]"), ("t0", "size_t")])
+    ['rx', 'rx_len', 't0']
+    >>> c_param_names([("blob", "bytes")])
+    ['blob', 'blob_len']
+    """
+    return [
+        part.rsplit(None, 1)[-1].lstrip("*") for part in c_param_parts(params)
+    ]
+
+
 def c_param_parts(params) -> list[str]:
     """Expand a method/function param list into C parameter declarations.
 
@@ -512,6 +532,15 @@ def c_param_parts(params) -> list[str]:
     ['const float _Complex *rx', 'size_t rx_len', 'size_t t0']
     >>> c_param_parts([{"name": "n", "type": "int", "default": "4"}])
     ['int n']
+
+    A pseudo-type is not a C type, and this is where it stops being one
+    (gh-1272). ``bytes`` expands to two C parameters exactly as an array
+    does -- the borrowed buffer and its length:
+
+    >>> c_param_parts([("meta", "path")])
+    ['const char * meta']
+    >>> c_param_parts([("blob", "bytes")])
+    ['const void * blob', 'size_t blob_len']
     """
     parts: list[str] = []
     for p in params:
@@ -519,6 +548,20 @@ def c_param_parts(params) -> list[str]:
         if is_array_param_type(ptype):
             elem_disp = array_elem_ctype(ptype)
             parts.append(f"const {elem_disp} *{pname}")
+            parts.append(f"size_t {pname}_len")
+        elif ptype == "path":
+            # `path` names a Python-side coercion, not a C type. The
+            # prototype takes what `PyBytes_AS_STRING` hands it. Without this
+            # the sacred `_core.h` declared `int f(state_t *, path meta)`,
+            # which does not compile -- and the header is the half the
+            # author's `_core.c` is written against.
+            from . import _coerce as _c
+
+            parts.append(f"{_c.PATH_C_TYPE} {pname}")
+        elif ptype == "bytes":
+            from . import _coerce as _c
+
+            parts.append(f"{_c.BYTES_C_TYPE} {pname}")
             parts.append(f"size_t {pname}_len")
         else:
             parts.append(f"{ptype} {pname}")
@@ -1099,7 +1142,21 @@ def scalar_py_annotation(ctype: str) -> str:
     'int'
     >>> scalar_py_annotation("float _Complex")
     'complex'
+
+    gh-1272: the pseudo-types answer here too. `_stubs._py` already knew both
+    (gh-623 spelled a path "for every surface"), and this peer said `Any` --
+    so a method parameter jm marshals with `PyUnicode_FSConverter` was
+    documented as accepting anything at all.
+
+    >>> scalar_py_annotation("path")
+    'str | os.PathLike'
+    >>> scalar_py_annotation("bytes")
+    'bytes'
     """
+    if ctype in PSEUDO_TYPES:
+        from . import _coerce as _c
+
+        return _c.PATH_PY_TYPE if ctype == "path" else "bytes"
     if ctype == "void":
         return "None"
     if ctype == "bool":

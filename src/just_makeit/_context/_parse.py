@@ -306,12 +306,44 @@ def _build_params_parse(
     arr_acq: list[str] = []  # array acquisition lines (after ParseTuple)
     call_args: list[str] = []  # final C args to pass
     arr_names: list[str] = []  # arr variable names for Py_DECREF cleanup
+    # gh-1272: borrowed `PyBytes` from `PyUnicode_FSConverter`, released AFTER
+    # the C call has copied the string. A method's borrow outlives the parse
+    # block -- unlike an array's, which `arr_acq` owns -- so it goes in the
+    # `cleanup` the caller emits before every return, next to the DECREFs.
+    path_names: list[str] = []
 
     for p in params:
         pname = p["name"]
         ptype = p["type"]
 
-        if p.get("enum"):
+        # gh-1272: the pseudo-types. `_types.PSEUDO_TYPES` is the SSOT and its
+        # own comment already scoped it to "component `init_params` and the
+        # `params` / `arg_type` of methods and module functions" -- so
+        # `_config._usable_ctype` has been answering "yes, a binding exists"
+        # for these on this face all along, while the renderer four lines
+        # down raised a bare `KeyError: 'path'` from inside `_CTYPE_META`.
+        # Validation said yes and rendering crashed.
+        #
+        # The handlers are `_coerce`'s, not a second copy: the same five
+        # primitives the init-param face (gh-515) and the module-function
+        # face (gh-353) already call. What differs per face is only WHERE the
+        # release goes, which is the one thing spelled out here.
+        if ptype == "path":
+            decl_lines.append("    " + _coerce.path_decl(pname))
+            fmt_chars.append(_coerce.path_fmt())
+            addr_exprs.append(_coerce.path_addr(pname))
+            path_names.append(pname)
+            call_args.append(_coerce.path_call_expr(pname))
+        elif ptype == "bytes":
+            # No release step, deliberately: `y#` borrows the object's own
+            # buffer rather than creating a reference, and the args tuple
+            # keeps it alive for the call. The callee must copy, exactly as
+            # it must for a path.
+            decl_lines.extend("    " + ln for ln in _coerce.bytes_decl(pname))
+            fmt_chars.append(_coerce.bytes_fmt())
+            addr_exprs.append(_coerce.bytes_addr(pname))
+            call_args.append(_coerce.bytes_call_exprs(pname))
+        elif p.get("enum"):
             # gh-1021: parse the choice string with `s` and validate it to its
             # SSOT int, mirroring the module-function emitter in
             # `_render._build_params_parse` — the difference is only the
@@ -513,7 +545,13 @@ def _build_params_parse(
         + conv_lines
         + arr_acq
     )
-    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names)
+    # gh-1272: the path borrow is released with the array DECREFs, which the
+    # caller emits after the C call has copied the string (gh-219's rule) and
+    # on every error path after the parse. `Py_XDECREF` is NULL-safe, so it is
+    # correct even where `PyUnicode_FSConverter` never ran.
+    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names) + "".join(
+        f"    {_coerce.path_release(n)}\n" for n in path_names
+    )
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
