@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 from just_makeit._build import run_generated_pytest
+from test_gh1287_nested_block_comment import (
+    assert_no_nested_block_comments,
+)
 
 # Formatting rules are cmake-format's responsibility.
 _CMAKE_LINT_DISABLED = ["C0301", "C0307"]
@@ -88,6 +91,12 @@ def test_example(example_dir, tmp_path):
     run = _load_run(example_dir)
     run(tmp_path)
     _cmake_lint_check(tmp_path)
+    # gh-1287: the widest corpus jm has for a property of the C it renders.
+    # The scanner lives with its own sabotage tests next to the bug it was
+    # written for; this is the second corpus it runs over, not a second
+    # implementation of it. Every example is swept, so a shape jm learns to
+    # emit is covered as soon as an example exercises it.
+    assert_no_nested_block_comments(tmp_path)
     _generated_pytest_check(tmp_path)
 
 

@@ -184,32 +184,6 @@ class TestSourceType:
         )
         assert "free(*dst);" in s
 
-    def test_no_slash_star_inside_a_block_comment(self):
-        """Generated C must not put `/*` inside a block comment.
-
-        Every compiler warns on it (-Wcomment) because the sequence is what
-        an unterminated comment looks like, so one careless prose line in a
-        template becomes a warning in every downstream project that
-        generates a composer -- doppler saw it three times per build. The
-        offender was `*dst/*n_dst` in _attach_bytes' banner.
-        """
-        s = _composer.render_source_type(_cfg(), "wfm_compose")
-        i = 0
-        while True:
-            start = s.find("/*", i)
-            if start < 0:
-                break
-            end = s.find("*/", start + 2)
-            assert end > 0, "unterminated block comment in generated C"
-            inner = s[start + 2 : end]
-            assert "/*" not in inner, (
-                "`/*` inside a block comment at line "
-                f"{s[:start].count(chr(10)) + 1}: "
-                f"{s.splitlines()[s[:start].count(chr(10))].strip()!r} "
-                "-- every compiler warns (-Wcomment)"
-            )
-            i = end + 2
-
     def test_factories(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
         assert 'return _Synth_factory("tone", args, kwds);' in s

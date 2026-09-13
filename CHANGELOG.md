@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A composer's `_attach_bytes` banner put a `/*` inside a block comment, so
+    every downstream build warned (gh-1287).** The prose read *"into an owned
+    `*dst/*n_dst`"*, and to a compiler the `/*` in `/*n_dst` opens a second
+    comment inside the first -- `warning: '/*' within block comment   [-Wcomment]`. It was in a template, so one line became a warning in every
+    project that generates a composer, on every build (doppler counted three
+    per coverage build), and the consumer could not fix it where they saw it:
+    `jm apply` owns the file and reverts an edit to it. The banner now carries
+    `attach_doc` on a line of its own, which also brings it under 80 columns --
+    the doc runs to 59, so the old one-line form overflowed regardless.
+
+    Gated rather than described, because jm's own suite could not see it: a
+    lexical scanner over **rendered** C -- the artifact the compiler reads,
+    not the templates, where all 19 `/*` hits are jm's own `/*<<token>>*/`
+    placeholder -- runs over a project carrying every C-emitting face, and
+    over every bundled example's scaffolded tree.
+
 ### Added
 
 - **`[project] version` may be omitted from `just-makeit.toml`, deferring to
