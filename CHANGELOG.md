@@ -2,6 +2,40 @@
 
 ### Fixed
 
+- **An `[[enum]]` that gained a value did not reach its C table in a module
+    object's fragment, and the getter then indexed past its own `NULL`
+    (gh-1273).** The fragment `native/src/<mod>/<mod>_ext_<obj>.c` is sacred:
+    `jm apply` reconciles it member by member and never re-renders it, which
+    protects *wrapper bodies*. It was also freezing the `_enum_*` tables, and
+    those are not wrapper bodies -- a table is a verbatim projection of
+    `[[enum]]`, jm owns every byte, and there is nothing in one to author. So
+    a third value moved the `.pyi` to `Literal["none", "timecode", "sigmf"]`
+    and left the table at two entries, and
+    `PyUnicode_FromString(_enum_Reader_t0_source[2])` read the terminator: a
+    crash, on the value that was just added, which is the case a smoke test
+    does not reach.
+
+    The refusal message moves with the table, because it carries the same
+    projection -- a setter that accepted the new value would still have said
+    `(choices: none, timecode)`. It is rewritten only where the line is
+    otherwise byte-identical to what `_enumc.validate_c` emits, so an author
+    who reworded it keeps their text. The table is read as **values**, never
+    as text: these fragments are reformatted after every apply on a `c_style`
+    project, so a GNU-indented table and jm's own render declare the same
+    choices and never match as substrings.
+
+    A change that is not a pure **append** is warned about and gates instead,
+    because order IS the C int: re-numbering a discriminant already written to
+    disk is not something rewriting a table can repair.
+
+    The standalone face was never affected -- `native/src/<comp>/<comp>_ext.c`
+    is re-rendered whole -- and the two disagreed for as long as they did
+    because nothing compared them. The gate asks the manifest rather than
+    asking one face about the other, so it is registration-free over faces.
+    The same shape in a `single` record's field table is gh-1290: jm cannot
+    fix that one in place, because the field row, the descriptor arity and the
+    `SET_ITEM` calls move with the wrapper body.
+
 - **A composer's `_attach_bytes` banner put a `/*` inside a block comment, so
     every downstream build warned (gh-1287).** The prose read *"into an owned
     `*dst/*n_dst`"*, and to a compiler the `/*` in `/*n_dst` opens a second

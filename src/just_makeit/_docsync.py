@@ -1179,6 +1179,133 @@ def refresh_glue_bindings(existing: str, reference: str) -> tuple[str, list]:
     return out, repaired
 
 
+#: A C string literal's contents, escapes kept whole.
+_C_STR_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+#: jm's own refusal wording for a string enum, as `_enumc.validate_c` emits
+#: it. The choices list is a verbatim projection of the manifest, so it goes
+#: stale with the table; the rest of the line is what says the message is
+#: still jm's and not something the author reworded.
+_CHOICES_RE = re.compile(r"invalid (\w+) '%s' \(choices: ([^)\"]*)\)")
+
+#: The enum tables `_enumc.render_tables` emits, and only those. The lookup
+#: helper shares the prefix and never changes, so it is excluded by name
+#: rather than by shape.
+_ENUM_TABLE_PREFIX = "_enum_"
+_ENUM_INDEX_PREFIX = "_enum_index"
+
+
+def _table_values(decl: str) -> list:
+    """The choices in one ``static const char *const …[] = {…};``.
+
+    Read as *values*, never as text. These fragments are reformatted after
+    every apply on a `c_style` project, so a GNU-indented table and jm's own
+    render declare the same choices and never match as substrings — the same
+    trap `_referenced_file_scope_decls` documents for whole declarations. A
+    text comparison here would report drift on every formatted project and
+    then rewrite the formatting to "fix" it.
+    """
+    return _C_STR_RE.findall(decl)
+
+
+def refresh_enum_tables(existing: str, reference: str) -> tuple:
+    """Re-render the ``_enum_*`` tables whose ``[[enum]]`` gained values.
+
+    gh-1273. A sacred fragment's wrapper bodies are the author's and jm never
+    re-renders them (gh-767). **A string-enum table is not a wrapper body**:
+    it is a verbatim projection of the manifest, jm owns every byte of it, and
+    there is nothing in it to author. Leaving it frozen is what made adding a
+    third value to an existing ``[[enum]]`` a NULL dereference --
+    ``jm apply`` moved the ``.pyi`` to ``Literal["none", "timecode",
+    "sigmf"]`` while the table kept two entries, so the getter's
+    ``PyUnicode_FromString(_enum_Reader_t0_source[2])`` read the terminator.
+    Only for the value that was just added, which is precisely the case a
+    smoke test does not reach.
+
+    The refusal message moves with the table, because it carries the same
+    projection: a setter that accepted the new value would still have
+    printed ``(choices: none, timecode)``. It is rewritten **only** where the
+    line is otherwise byte-identical to what `_enumc.validate_c` emits -- an
+    author who reworded it has said the text is theirs, and no match means no
+    clobber. Same licence `_is_reclaimable_glue` takes, asked of the wording
+    rather than of the name.
+
+    The standalone face was never affected: ``native/src/<comp>/<comp>_ext.c``
+    is re-rendered whole, so its table and message have always been correct.
+    That is the peer to compare against, and the reason the two disagreed for
+    as long as they did is that nothing compared them.
+
+    Parameters
+    ----------
+    existing : str
+        The on-disk fragment.
+    reference : str
+        The fragment jm would render now, from the manifest.
+
+    Returns
+    -------
+    tuple
+        ``(text, changed, rewritten)``. *changed* is one
+        ``(table, old_values, new_values)`` per table reconciled; *rewritten*
+        names the enums whose refusal message was rewritten with it.
+
+    Examples
+    --------
+    >>> one = 'static const char *const _enum_A_k[] = {"x", NULL,};'
+    >>> two = one.replace('"x",', '"x", "y",')
+    >>> text, changed, _ = refresh_enum_tables(one, two)
+    >>> changed
+    [('_enum_A_k', ['x'], ['x', 'y'])]
+    >>> text == two
+    True
+    """
+    ref = _file_scope_decls(reference)
+    ex = _file_scope_decls(existing)
+    out = existing
+    changed: list = []
+    for name, decl in ref.items():
+        if not name.startswith(_ENUM_TABLE_PREFIX):
+            continue
+        if name.startswith(_ENUM_INDEX_PREFIX):
+            continue
+        cur = ex.get(name)
+        if cur is None:
+            continue
+        old, new = _table_values(cur), _table_values(decl)
+        if old == new:
+            continue
+        out = out.replace(cur, decl, 1)
+        changed.append((name, old, new))
+    if not changed:
+        return out, [], []
+    out, rewritten = _refresh_choice_messages(out, reference)
+    return out, changed, rewritten
+
+
+def _refresh_choice_messages(existing: str, reference: str) -> tuple:
+    """Carry `_enumc`'s ``(choices: …)`` suffix over from *reference*.
+
+    Keyed by the declared name the message already carries, and applied only
+    where the rest of the line is jm's own wording -- see
+    :func:`refresh_enum_tables` for why that is the whole safety story.
+
+    Returns ``(text, names_rewritten)``.
+    """
+    want = {m.group(1): m.group(2) for m in _CHOICES_RE.finditer(reference)}
+    if not want:
+        return existing, []
+    rewritten: list = []
+
+    def _sub(m):
+        new = want.get(m.group(1))
+        if new is None or new == m.group(2):
+            return m.group(0)
+        rewritten.append(m.group(1))
+        return f"invalid {m.group(1)} '%s' (choices: {new})"
+
+    return _CHOICES_RE.sub(_sub, existing), rewritten
+
+
 _KWLIST_RE = re.compile(
     r"static\s+char\s*\*\s*kwlist\s*\[\s*\]\s*=\s*\{([^}]*)\}"
 )
@@ -2102,6 +2229,42 @@ def refresh_module_fragment_docs(
             updated, _fixed = refresh_glue_bindings(updated, reference)
             for _name in _fixed:
                 print(f"  update  {_rel}: {_name} binding arity")
+            # gh-1273: the `[[enum]]` tables, on the same licence -- jm owns
+            # every byte of them and there is nothing in one to author, so a
+            # frozen table is stale rather than hand-written. Loud for the
+            # same reason the reclaim above is: the diff is right there.
+            updated, _etabs, _emsgs = refresh_enum_tables(updated, reference)
+            for _tab, _old, _new in _etabs:
+                # What changed, not how many: `(3 -> 3 value(s))` is what a
+                # reorder prints, and it reads as a no-op on the one change
+                # that is dangerous.
+                _added = _new[len(_old) :] if _new[: len(_old)] == _old else []
+                _what = (
+                    "+" + ", ".join(_added)
+                    if _added
+                    else "now " + ", ".join(_new)
+                )
+                print(f"  update  {_rel}: enum table {_tab} ({_what})")
+                # A value APPENDED keeps every existing int meaning what it
+                # meant; anything else silently re-numbers data already
+                # written by the C, which the `[[enum]]` contract forbids
+                # (order IS the int) and jm cannot undo by rewriting a table.
+                if _new[: len(_old)] != _old:
+                    _report.warn(
+                        f"{_rel}: {_tab} changed by more than an append "
+                        f"({_old} -> {_new}) -- every C int already stored "
+                        "against the old order now means something else",
+                        # Gating, on the same test `warn_init_kwargs_drift`
+                        # meets: re-numbering a stored discriminant is a
+                        # correctness break jm cannot repair by rewriting the
+                        # table, so `status --check` must fail on it.
+                        gates=True,
+                    )
+            if _emsgs:
+                print(
+                    f"  update  {_rel}: refreshed enum choices in the "
+                    f"refusal for {', '.join(sorted(set(_emsgs)))}"
+                )
             # gh-871: the reclaim is unconditional now, so it is also loud.
             # This is the whole safety story for overwriting a glue docstring
             # somebody may have hand-edited: it is named, in the same place a
