@@ -339,17 +339,36 @@ def test_transplant_preserves_nonmanifest():
     assert "HAND STAGES" in out  # hand method (not in reference)
 
 
-def test_transplant_preserves_handwritten_doc():
-    # A manifest method whose existing doc is NOT the scaffold form (someone
-    # hand-wrote a richer docstring into the sacred fragment) must be left
-    # alone — this is the RateConverter / cvt case that motivated the gating.
+def test_a_header_declared_doc_replaces_a_handwritten_one():
+    """gh-1288. This asserted the opposite, for the RateConverter / cvt case.
+
+    The gating it motivated was right about the danger and wrong about the
+    boundary: it protected a hand-written fragment docstring even when the
+    HEADER declared one, which froze every later `@brief` edit on the runtime
+    face while the `.pyi` tracked it. Writing the richer summary in the header
+    gets it onto both faces; writing it here only ever got it onto one, and
+    then only until someone looked.
+
+    `_REFERENCE` differs from `_FALLBACK`, which is what says the header
+    declares this doc — see `test_no_header_doc_leaves_a_handwritten_one`.
+    """
     hand = _EXISTING.replace(
         "Old fallback, with a brace {x} and comma, inside.",
-        "Hand-written rich summary that must survive.",
+        "Hand-written rich summary.",
     )
     out = D.transplant_docs(hand, _REFERENCE, _FALLBACK)
-    assert "Hand-written rich summary that must survive." in out
-    assert "Derived summary." not in out  # not clobbered
+    assert "Derived summary." in out
+    assert "Hand-written rich summary." not in out
+
+
+def test_no_header_doc_leaves_a_handwritten_one():
+    """The residual. With nothing declared, nothing is taken."""
+    hand = _EXISTING.replace(
+        "Old fallback, with a brace {x} and comma, inside.",
+        "Hand-written rich summary.",
+    )
+    out = D.transplant_docs(hand, _FALLBACK, _FALLBACK)
+    assert "Hand-written rich summary." in out
 
 
 def test_transplant_idempotent():

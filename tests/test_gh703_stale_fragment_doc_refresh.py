@@ -29,6 +29,22 @@ are pinned here:
    members have no declaration to attach Doxygen to, so there is no authoring
    path and the prose is jm's at any length. See `TestGlueSlotReclaim`.
 
+**gh-1288 narrowed property 2, and the narrowing is the same honest-rule move
+gh-871 made.** "Preserved" now means *preserved unless the header declares a
+doc for that member* — `der != fb`, where `fb` is this fragment rendered with
+the Doxygen ignored, so the difference is prose the author wrote. A member
+whose header says nothing still keeps whatever the fragment holds, and that
+residual is pinned by `test_no_header_doc_still_preserves_a_hand_written_one`.
+
+The reason is gh-1191's, one source over: the tests above ask "did jm write
+this", which is unanswerable once jm's own earlier header-derived render is on
+disk. So an EDIT to a `@brief` was read as hand-written and dropped forever,
+while the `.pyi` beside it moved — two faces of one object, permanently
+disagreeing, with `status --check` clean. The cost is that a docstring
+hand-tuned in the fragment to differ from its header is now replaced; it is
+reported by name when that happens, and the fix is to write the better prose
+in the header, where it reaches both faces.
+
 Tests drive `_refresh_slot`/`transplant_docs` directly *and* a real `apply` on
 a scaffolded project — the unit layer localises a break, the project layer is
 the one that was actually broken.
@@ -45,7 +61,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._apply import run as apply_run  # noqa: E402
-from just_makeit._docsync import _refresh_slot, transplant_docs  # noqa: E402
+from just_makeit._docsync import (  # noqa: E402
+    _is_jm_shaped,
+    _refresh_slot,
+    transplant_docs,
+)
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
@@ -85,9 +105,27 @@ class TestRefreshSlot:
         """The regression: same synopsis, unrecognised body -> still jm's."""
         assert _refresh_slot(OLD_JM, DERIVED, SCAFFOLD) == DERIVED
 
-    def test_hand_written_is_preserved(self):
-        """The property the version-sensitive test was protecting."""
-        assert _refresh_slot(HAND, DERIVED, SCAFFOLD) is None
+    def test_a_header_declared_doc_wins_over_hand_written_text(self):
+        """gh-1288. `DERIVED != SCAFFOLD`, so the header declares this doc.
+
+        This asserted `is None` for five releases. What it was really pinning
+        is that jm cannot tell its own older render from a human's prose --
+        true, and the reason the answer had to come from somewhere else.
+        """
+        assert _refresh_slot(HAND, DERIVED, SCAFFOLD) == DERIVED
+
+    def test_no_header_doc_still_preserves_a_hand_written_one(self):
+        """The residual, and what stops the rule being "jm overwrites all".
+
+        With no Doxygen on the member, the derived form IS the scaffold form,
+        nothing was declared, and the fragment's text is the only prose there
+        is.
+        """
+        assert _refresh_slot(HAND, SCAFFOLD, SCAFFOLD) is None
+
+    def test_an_unknown_fallback_preserves(self):
+        """No `fb` means the question cannot be asked — so it is not answered."""
+        assert _refresh_slot(HAND, DERIVED, None) is None
 
     def test_todays_scaffold_is_still_reclaimed(self):
         assert _refresh_slot(SCAFFOLD, DERIVED, SCAFFOLD) == DERIVED
@@ -96,20 +134,28 @@ class TestRefreshSlot:
         assert _refresh_slot(DERIVED, DERIVED, SCAFFOLD) is None
 
     def test_a_different_synopsis_does_not_count_as_jm_shaped(self):
-        """Matching *a* synopsis is not enough — it must be jm's own."""
+        """Matching *a* synopsis is not enough — it must be jm's own.
+
+        Asked of `_is_jm_shaped` directly rather than through
+        `_refresh_slot`, which is what it was always about: since gh-1288 a
+        header-declared doc is written whatever the slot holds, so routing
+        this through the caller would now be measuring the wrong predicate
+        and would pass or fail for a reason unrelated to its name.
+        """
         other = OLD_JM.replace("configure(up, dn)", "configure(x, y, z)")
-        assert _refresh_slot(other, DERIVED, SCAFFOLD) is None
+        assert not _is_jm_shaped(other, DERIVED, SCAFFOLD)
 
     def test_prose_only_slots_keep_the_strict_rule(self):
         """reset/glue/tp_doc have no version-stable anchor to widen on.
 
-        Their derived form carries no synopsis, so the new rule must not fire
-        — otherwise any doc whose first line happened to match would be
-        overwritten on the strength of one line of prose.
+        Their derived form carries no synopsis, so the synopsis rule must not
+        fire — otherwise any doc whose first line happened to match would be
+        claimed as jm's on the strength of one line of prose. Asked of
+        `_is_jm_shaped` for the same reason as the test above.
         """
         der = '"Reset state.\\n"\n     "\\n"\n     "Extended.\\n"'
         cur = '"Reset state.\\n"\n     "\\n"\n     "Mine.\\n"'
-        assert _refresh_slot(cur, der, '"Reset state.\\n"') is None
+        assert not _is_jm_shaped(cur, der, '"Reset state.\\n"')
 
 
 class TestTransplantDocs:
@@ -134,10 +180,20 @@ class TestTransplantDocs:
         assert "Parameters" in out
         assert "Upper threshold." in out
 
-    def test_hand_written_fragment_is_untouched(self):
+    def test_a_header_declared_doc_reaches_a_hand_written_slot(self):
+        """gh-1288, through the real slot-finding machinery."""
         existing = self._fragment(HAND)
         out = transplant_docs(
             existing, self._fragment(DERIVED), self._fragment(SCAFFOLD)
+        )
+        assert out != existing
+        assert "Re-tune thresholds." in out
+
+    def test_a_hand_written_slot_with_no_header_doc_is_untouched(self):
+        """The residual, at this layer too: nothing declared, nothing taken."""
+        existing = self._fragment(HAND)
+        out = transplant_docs(
+            existing, self._fragment(SCAFFOLD), self._fragment(SCAFFOLD)
         )
         assert out == existing
 
@@ -233,11 +289,34 @@ class TestRealApply:
         assert "Upper threshold, in dB." in entry
         assert "A live lock survives a retune" in entry
 
-    def test_a_hand_written_fragment_survives_apply(self, project):
+    def test_the_header_reaches_a_hand_written_slot_on_apply(self, project):
+        """gh-1288: the header is the author's, so an edit to it lands.
+
+        This asserted survival, and survival is what made a `@brief` edit
+        invisible on the runtime face forever while the `.pyi` moved. The
+        fixture's header carries real Doxygen, so the header declares this
+        doc and jm writes it.
+        """
         root, frag = project
         _replace_entry(frag, _HAND_C)
         apply_run(root)
-        assert "Hand-written by a human." in _configure_entry(frag)
+        entry = _configure_entry(frag)
+        assert "Re-tune thresholds and verify counts." in entry
+        assert "Hand-written by a human." not in entry
+
+    def test_taking_it_is_reported_by_name(self, project, capsys):
+        """The whole safety story for overwriting prose someone may own.
+
+        gh-871 set the rule when it made the glue reclaim unconditional: it
+        is named, in the same place a repaired arity is named, and the diff
+        is right there. gh-1288 widened the population, so the report had to
+        widen with it.
+        """
+        root, frag = project
+        _replace_entry(frag, _HAND_C)
+        capsys.readouterr()
+        apply_run(root)
+        assert "configure" in capsys.readouterr().out
 
     def test_refresh_is_idempotent(self, project):
         root, frag = project

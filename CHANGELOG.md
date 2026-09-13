@@ -2,6 +2,43 @@
 
 ### Fixed
 
+- **An edit to an authored doc never reached an existing member of a module
+    fragment; the `.pyi` moved and the runtime `__doc__` stayed frozen at its
+    first render (gh-1288).** Filling an *empty* doc slot worked (gh-1192).
+    Editing one that already held text never did, repeated `jm apply` did not
+    converge, and `jm status --check` was clean throughout — so the two faces
+    of one object disagreed permanently with nothing able to say so. The
+    `@code` half is the one that stings: jm flows a `@code` into the `.pyi` as
+    a runnable `Examples` section, so a project that doctests its stubs gates
+    the stub face while the runtime face keeps an example that no longer runs.
+
+    **Measured rather than assumed.** Tracing `_refresh_slot` on the repro,
+    the reference carried the edit all along and the refresh refused it: `cur`
+    held jm's own previous header-derived render, so it matched neither the
+    new derived form nor the scaffold, was not jm-shaped and was not empty —
+    every test fell through to "hand-written, preserve".
+
+    That is gh-1191's situation one source over, and gh-1191's own docstring
+    is the argument: the tests ask *"did jm write this"*, which is
+    unanswerable once jm's own earlier render is on disk. Asking *"did the
+    author declare this text"* is answerable, and for a header-derived doc the
+    answer is in the header — `der != fb`, where `fb` is the same fragment
+    rendered with the Doxygen ignored, so the difference is prose the author
+    wrote. It subsumes gh-1192's empty-slot branch, which was always this rule
+    restricted to the one slot state where it could overwrite nothing.
+
+    **What it costs.** A docstring hand-tuned in the fragment to differ from
+    its header is now replaced. That is reported by name, on gh-871's
+    precedent — the report widened with the population it covers and dropped
+    the word "jm-owned", which would now be a claim about text that may be the
+    author's. The fix for such a member is to write the better prose in the
+    header, where it reaches both faces. A member whose header declares
+    nothing keeps whatever the fragment holds, and that residual is pinned.
+
+    gh-1192's `status` labelling half closes with it: the occupied case now
+    files under `APPLY FIXES THESE` rather than "stays unreconciled
+    permanently", because it is now true.
+
 - **A `path` or `bytes` parameter on a method was a bare `KeyError` from
     inside the renderer, and `bytes` was missing on the module-function face
     too (gh-1272).** `path` and `bytes` are deliberately absent from
