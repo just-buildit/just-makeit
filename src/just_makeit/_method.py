@@ -362,15 +362,13 @@ def _methods_c_stub_fixed(
     out_suppress = " (void)out;" if out_type else ""
 
     if params:
-        # gh-1272: the fourth copy of the expansion, and the only one that
-        # also needed the NAMES -- which is what `c_param_names` is for. A
-        # stub body whose `(void)n;` list is derived beside a second copy of
-        # the declaration list is how the two drift: the body would suppress
-        # `blob` while the signature declared `blob` and `blob_len`, and the
-        # scaffold stops compiling on an unused-parameter warning.
+        # gh-1272: the fourth copy of the expansion. Its `(void)n;` list
+        # goes through `c_param_suppress`, the same door its two siblings
+        # above use -- gh-1272 first spelled it out inline here, which made
+        # a third answer to a question that already had one.
         _pp = ([("x", arg_type)] if has_arg else []) + list(params)
         param_parts = T.c_param_parts(_pp)
-        suppress_parts = [f"(void){n};" for n in T.c_param_names(_pp)]
+        suppress_parts = T.c_param_suppress(_pp)
         param_str = ", ".join(param_parts)
         c_params = (
             f"{component}_state_t *state, {param_str}{extra_params}{out_param}"

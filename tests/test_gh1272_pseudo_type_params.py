@@ -103,6 +103,24 @@ class TestTheCExpansionKnowsThem:
             assert not part.startswith(f"{ptype} "), parts
 
     @pytest.mark.parametrize("ptype", sorted(T.PSEUDO_TYPES))
+    def test_suppression_covers_every_declared_parameter(self, ptype):
+        """`c_param_suppress` must silence exactly what `c_param_parts` emits.
+
+        It re-implemented the expansion instead of reading it, so it knew
+        about `[]` and not about the pseudo-types: a `bytes` param declared
+        `blob` and `blob_len` and suppressed only `blob`, and the scaffold
+        warns (or fails under `-Werror`) on the one it missed.
+
+        gh-1272's first pass made this worse rather than better -- it added a
+        THIRD answer inline in `_method.py` rather than routing to the one
+        that already existed. All three read `c_param_parts` now, so a fourth
+        pseudo-type cannot arrive in two of them and not the third.
+        """
+        assert T.c_param_suppress([("p", ptype)]) == [
+            f"(void){n};" for n in T.c_param_names([("p", ptype)])
+        ]
+
+    @pytest.mark.parametrize("ptype", sorted(T.PSEUDO_TYPES))
     def test_the_names_match_the_declarations(self, ptype):
         """`c_param_names` must expand in lockstep, or a stub body's
         `(void)n;` list stops matching its own signature and the scaffold

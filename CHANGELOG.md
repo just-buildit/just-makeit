@@ -2,6 +2,20 @@
 
 ### Fixed
 
+- **`c_param_suppress` under-suppressed a `bytes` parameter, and gh-1272 had
+    left a third copy of the same expansion.** A `bytes` param expands to a
+    pointer and a length, exactly as an array does; `c_param_suppress`
+    re-implemented that expansion rather than reading it, so it knew about
+    `[]` and not about the pseudo-types and emitted `(void)blob;` for a stub
+    declaring `blob` **and** `blob_len` — the scaffold then warns, or fails
+    under `-Werror`, on the parameter it missed.
+
+    gh-1272 routed four inline copies of the declaration list through
+    `c_param_parts` and, in the same change, spelled the `(void)n;` list out
+    inline at one of them — adding a third answer to a question that already
+    had one. All three read `c_param_parts` now, through `c_param_names`, so
+    a fourth pseudo-type cannot arrive in two of them and not the third.
+
 - **A `single` record that gained a `result_field` left the sacred fragment
     half-updated, and nothing said so (gh-1290).** The `.pyi` moved to promise
     the new field; the `PyStructSequence_Field` table kept the fields it was
