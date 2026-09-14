@@ -2,6 +2,43 @@
 
 ### Fixed
 
+- **A method declared in TOML got a prototype and a call and no definition, so
+    the project did not link (gh-1294).** Declared through the CLI a method
+    also gets a stub body; declared in TOML and materialised by `jm apply` it
+    did not — while `apply` printed *"Project already matches
+    just-makeit.toml — nothing to do"* and `status --check` returned 0. TOML
+    is the documented way to declare a multi-method component, so the route jm
+    recommends was the one that did not build.
+
+    `apply` now appends the body. **Additive, never a re-render**, which is
+    the rule `_core.c` has always had: gh-541 already patches it in place on
+    the same licence, and `_core.h` "only ever gains missing declarations".
+    The issue was filed proposing a warning instead, on the premise that
+    `apply` must not write `_core.c` at all — that premise was wrong, and the
+    alternative remedy was `jm regenerate <component>`, a whole-component
+    rebuild with body-lifting, for one absent function.
+
+    The text is the temp tree's rather than a fifth copy of the shape
+    dispatch: `apply` already replays every declared method into its scratch
+    scaffold, so the stub jm would write is on disk there. It carries its
+    `/* <<IMPLEMENT: … >> */` marker, which is load-bearing — `already_provides`
+    reads it to tell jm's own stub from a built-in body (gh-994).
+
+    **What stops a duplicate symbol.** gh-275: a component's OBJECT lib may
+    compile sources besides `<comp>_core.c`, so every `.c` in the component's
+    directory is read before deciding, and when the CMake names extra sources
+    and the symbol is in none of them jm warns rather than guessing. The
+    "is it defined" test reads masked source and tolerates formatting — the
+    body extractor wants the return type and the name on adjacent lines, and
+    reading one side with it and one side without appended a **second**
+    definition the moment a signature was reformatted, which any `c_style`
+    project's formatter does.
+
+    Left unfixed and filed: gh-1301 (`apply` strips a vendored source from a
+    standalone object's OBJECT lib), gh-1302 (a module object's TOML-declared
+    method gets no prototype, so that half still does not build), gh-1303 (why
+    `status` cannot yet gate on this class).
+
 - **`c_param_suppress` under-suppressed a `bytes` parameter, and gh-1272 had
     left a third copy of the same expansion.** A `bytes` param expands to a
     pointer and a length, exactly as an array does; `c_param_suppress`

@@ -1300,6 +1300,26 @@ def _overwrite_if_changed(
     return True
 
 
+def _object_core_extra_sources(text: str, comp: str) -> list:
+    """Sources the component's OBJECT lib compiles besides ``<comp>_core.c``.
+
+    gh-275's signal, on its own. :func:`_is_hand_owned_object_cmake` ORs it
+    with the presence of `set_source_files_properties` /
+    `add_custom_command` / `add_custom_target`, which answers a different
+    question — "may jm re-render this file" — and is true for *every*
+    scaffolded object, because jm's own template emits a POST_BUILD
+    `add_custom_command`. gh-1294 asked the narrow question and reached for
+    the composite one, and got "hand-owned" for a plain `jm object`.
+    """
+    m = re.search(
+        rf"add_library\(\s*{re.escape(comp)}_core\s+OBJECT\s+([^)]*)\)",
+        text,
+    )
+    if not m:
+        return []
+    return [s for s in m.group(1).split() if s != f"{comp}_core.c"]
+
+
 def _is_hand_owned_object_cmake(text: str, comp: str) -> bool:
     """True when a per-object ``CMakeLists.txt`` carries bespoke build wiring.
 
@@ -1319,10 +1339,7 @@ def _is_hand_owned_object_cmake(text: str, comp: str) -> bool:
     - a ``set_source_files_properties`` / ``add_custom_command`` /
       ``add_custom_target`` statement anywhere in the file.
     """
-    m = re.search(
-        rf"add_library\(\s*{re.escape(comp)}_core\s+OBJECT\s+([^)]*)\)", text
-    )
-    if m and any(s != f"{comp}_core.c" for s in m.group(1).split()):
+    if _object_core_extra_sources(text, comp):
         return True
     return any(
         kw in text
@@ -2024,6 +2041,177 @@ def _refresh_component_core_h(
     return changed
 
 
+def missing_core_definitions(
+    rendered: str, existing: str, siblings: "list[str]" = ()
+) -> list:
+    """Function names *rendered* defines that *existing* and *siblings* do not.
+
+    gh-1294. One comparison with two callers: `apply` splices the bodies in,
+    `status` gates on the ones it cannot. Two copies would drift the usual
+    way — `apply` taught about a new shape, `status` quietly still wrong —
+    and the whole point of the gate is that it agrees with what `apply` does.
+
+    *siblings* are the other ``.c`` files the component owns. gh-275: a
+    component's OBJECT lib may compile sources besides ``<comp>_core.c``, so
+    a definition can legitimately live next door, and reporting it missing
+    would be a false positive on doppler's `fft_core`.
+    """
+    from ._object import _extract_c_function_bodies
+
+    ref = _extract_c_function_bodies(rendered, require_static=False)
+    return [
+        n
+        for n in ref
+        if not any(_defines(src, n) for src in (existing, *siblings))
+    ]
+
+
+def _defines(source: str, name: str) -> bool:
+    """Whether *source* defines *name* — read tolerantly of formatting.
+
+    NOT `_extract_c_function_bodies`, which is the obvious reuse and is
+    wrong here. That function wants `<returntype>\n<name>(` on adjacent
+    lines, so it does not see
+
+        void o_steps(
+            o_state_t *state, ...)
+
+    -- jm's own multi-line render. It happens not to matter when both sides
+    are read with it, because both are blind identically. The moment they are
+    not, the asymmetry appends a SECOND definition of a symbol that was
+    already there: measured by reformatting one signature onto a single line,
+    after which `apply` wrote a duplicate `o_create` and the project stopped
+    linking. Any `c_style` project runs a formatter over this file.
+
+    So the question is asked the way the compiler asks it, on masked source so
+    a mention in a comment or a string cannot answer it: the name, an argument
+    list, and a body brace rather than a `;`.
+    """
+    from ._docsync import _code_mask
+
+    return bool(
+        re.search(
+            rf"\b{re.escape(name)}\s*\([^;{{}}]*\)\s*\{{",
+            _code_mask(source),
+            re.S,
+        )
+    )
+
+
+def component_core_sources(root: Path, comp: str) -> "list[str]":
+    """Every ``.c`` the component owns except its own ``_core.c``."""
+    d = root / "native" / "src" / comp
+    return [
+        p.read_text(encoding="utf-8")
+        for p in sorted(d.glob("*.c"))
+        if p.name != f"{comp}_core.c"
+    ]
+
+
+def _splice_missing_core_definitions(
+    root: Path, temp_root: Path, cfg: dict
+) -> list:
+    """Append a declared method's missing ``_core.c`` body (gh-1294).
+
+    A method declared in the manifest gets a prototype in ``_core.h`` and a
+    call in the binding. Declared through the CLI it also gets a stub body;
+    declared in TOML and materialised by ``apply`` it did not — so the
+    extension did not **link**, while ``apply`` printed "Project already
+    matches just-makeit.toml — nothing to do" and ``status --check`` returned
+    0. TOML is the documented way to declare a multi-method component, so the
+    route jm recommends was the one that did not build.
+
+    **Additive, never a re-render**, which is the rule ``_core.c`` has always
+    had: gh-541 already patches it in place (``void`` -> ``int`` on a
+    ``destroy`` that declares a status) on the same licence, and ``_core.h``
+    "only ever gains missing declarations". A body that exists is untouched;
+    this only ever appends one that does not.
+
+    **The text is the temp tree's, not a second emitter.** ``apply`` already
+    replays every declared method into its throwaway scaffold to build the
+    reference, so the stub jm would write is on disk there, produced by the
+    same four-way shape dispatch ``jm method`` uses. Re-deriving it here would
+    be a fifth copy of that dispatch, which is how the four in
+    ``_build_method_prototype`` came about.
+
+    **What stops a duplicate symbol.** gh-275: a component's OBJECT lib may
+    compile sources besides ``<comp>_core.c`` (doppler's ``fft_core`` pulls in
+    pocketfft), so a definition can legitimately live in a sibling file.
+    Every ``.c`` in the component's own directory is read before deciding,
+    and a symbol found in any of them is left alone. When the CMake names
+    hand-owned sources AND the symbol is nowhere in the directory, jm warns
+    instead of appending: the author has put their sources somewhere jm
+    cannot enumerate, and a wrong guess here is a duplicate definition, which
+    is worse than the missing one.
+    """
+    from ._object import _extract_c_function_bodies
+
+    changed: list = []
+    mods = C.modules(cfg)
+    module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
+    comps = [c for c in C.components(cfg) if c not in module_owned]
+    comps += [o for m in mods for o in C.module_objects(cfg, m)]
+
+    for comp in comps:
+        real_dir = root / "native" / "src" / comp
+        core_c = real_dir / f"{comp}_core.c"
+        temp_c = temp_root / "native" / "src" / comp / f"{comp}_core.c"
+        if not core_c.exists() or not temp_c.exists():
+            continue
+        temp_text = temp_c.read_text(encoding="utf-8")
+        ref = _extract_c_function_bodies(temp_text, require_static=False)
+        missing = missing_core_definitions(
+            temp_text,
+            core_c.read_text(encoding="utf-8"),
+            component_core_sources(root, comp),
+        )
+        if not missing:
+            continue
+        cmake = real_dir / "CMakeLists.txt"
+        _extra = (
+            _object_core_extra_sources(cmake.read_text(encoding="utf-8"), comp)
+            if cmake.exists()
+            else []
+        )
+        if _extra:
+            _report.warn(
+                f"native/src/{comp}/{comp}_core.c does not define "
+                f"{', '.join(f'{n}()' for n in missing)}, which the manifest "
+                "declares and the binding calls — the extension will not "
+                f"link. {comp}_core also compiles "
+                f"{', '.join(_extra)}, so the body may live somewhere jm "
+                "cannot enumerate and appending it could define the symbol "
+                "twice -- write it yourself, or say where by putting it in "
+                f"native/src/{comp}/.",
+                gates=True,
+            )
+            continue
+        # With its `/* <<IMPLEMENT: … >> */` marker, which is load-bearing
+        # rather than decorative: `already_provides` reads it through
+        # `_is_method_stub` to tell jm's own stub from a built-in body
+        # (gh-994), so a body spliced without one would make a later
+        # `jm method` of the same name decide a built-in already provides it
+        # and skip. `_leading_comment_start` is the primitive `_docsync`
+        # already uses for "the comment immediately above this".
+        from ._docsync import _leading_comment_start
+
+        bodies = []
+        for n in missing:
+            at = temp_text.index(ref[n])
+            bodies.append(
+                temp_text[_leading_comment_start(temp_text, at) : at]
+                + ref[n].rstrip("\n")
+                + "\n"
+            )
+        text = core_c.read_text(encoding="utf-8")
+        core_c.write_text(
+            text.rstrip("\n") + "\n\n" + "\n".join(bodies),
+            encoding="utf-8",
+        )
+        changed.append((core_c, missing))
+    return changed
+
+
 def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
     """Append a missing bench_*_core CMake target to each component CMakeLists.
 
@@ -2530,6 +2718,19 @@ def run(
             # decorating a stack trace with it.
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
+
+        # gh-1294: a declared method with no body in `_core.c`. INSIDE the
+        # `with`, because the stub text is the temp tree's and that tree is a
+        # TemporaryDirectory -- placed after it, `temp_root` no longer exists
+        # and the splice silently found nothing to do, which is the same
+        # silence the issue is about.
+        core_spliced = _splice_missing_core_definitions(root, temp_root, cfg)
+        for _p, _names in core_spliced:
+            _rel_c = _p.relative_to(root) if _p.is_absolute() else _p
+            print(
+                f"  update  {_rel_c}: scaffolded "
+                f"{', '.join(f'{n}()' for n in _names)}"
+            )
 
     bench_updated = _reconcile_bench_cmake(root, cfg)
 
