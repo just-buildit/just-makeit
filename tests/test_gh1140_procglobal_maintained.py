@@ -188,6 +188,20 @@ class TestApplyMaintainsTheHeader:
 # An exact set, not a pattern list, and that is the point in both directions:
 # a newly generated file that no gate holds fails this, and a file that BECOMES
 # visible fails it too, so the list can only be shortened deliberately.
+# gh-1294: the three OBJECT `_core.c` files left this set, which is the
+# direction it is allowed to move. Their CONTENT is still the author's and
+# `status` still does not compare it -- what changed is that a `_core.c`
+# missing a definition the manifest declares is now visible, because `apply`
+# appends it and `status` reports what `apply` would do. Clobbering one
+# removes every definition, so the clobber is exactly that case.
+#
+# A `_core.c` with real author code and every declared definition present
+# stays silent and byte-identical across `apply`; that is asserted in
+# `tests/test_apply.py::TestApplySacredGlueSplit`.
+#
+# The two module `<mod>_core.c` files below are still here and are not an
+# inconsistency: a module's functions get their own `<fn>.c`, materialised by
+# `apply`, so they never had gh-1294's gap.
 YOURS = {
     "README.md",
     "benchmarks/history/.gitkeep",
@@ -198,12 +212,9 @@ YOURS = {
     "native/inc/own/own_core.h",
     "native/inc/solo/solo_core.h",
     "native/inc/user/user_core.h",
-    "native/src/flag/flag_core.c",
     "native/src/other/other_core.c",
     "native/src/own/own_core.c",
     "native/src/pgdemo_lib.c",
-    "native/src/solo/solo_core.c",
-    "native/src/user/user_core.c",
     "native/tests/test_flag_core.c",
     "native/tests/test_solo_core.c",
     "native/tests/test_user_core.c",

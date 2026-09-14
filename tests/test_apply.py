@@ -1327,9 +1327,34 @@ class TestApplySacredGlueSplit:
             encoding="utf-8",
         )
         apply_run(root)
-        # Sacred file is byte-for-byte unchanged.
-        assert core_c.read_bytes() == before
+        # gh-1294: everything that was there is byte-for-byte unchanged, and
+        # the ONLY change is the newly declared method's stub, appended.
+        #
+        # This asserted whole-file byte-identity, which is a stronger claim
+        # than the contract above ("never touched once it exists ... user
+        # algorithm code is never clobbered") and a weaker test: it also
+        # passes when apply does nothing at all, which is what it was really
+        # pinning. A method declared in TOML got a prototype in `_core.h` and
+        # a call in the binding and no definition here, so the extension did
+        # not link -- while this test called that correct.
+        after = core_c.read_bytes()
+        assert after.startswith(before), after
         assert "USER_SENTINEL" in core_c.read_text(encoding="utf-8")
+        assert b"eng_reset_gain(" in after[len(before) :], after[len(before) :]
+
+    def test_nothing_is_appended_when_nothing_is_missing(self, tmp_path):
+        """The other half: the splice is additive, not unconditional.
+
+        A second apply with no new declaration must leave the file alone, or
+        every run grows it.
+        """
+        root = tmp_path / "proj"
+        self._project(root)
+        core_c = root / "native" / "src" / "eng" / "eng_core.c"
+        apply_run(root)
+        before = core_c.read_bytes()
+        apply_run(root)
+        assert core_c.read_bytes() == before
 
     def test_glue_refreshes_from_manifest(self, tmp_path):
         root = tmp_path / "proj"
