@@ -1874,7 +1874,17 @@ def _sync_aggregates(
         core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
         if not core_h.exists():
             continue
-        decls = _property_accessor_decls(cfg, comp)
+        # gh-1302: methods alongside gh-627's accessors. Same loop, same
+        # additive rule -- `skip_names` below names every prototype offered,
+        # so one the header already declares (with any signature) is left
+        # exactly as written and only a genuinely new one is inserted. The
+        # measured reason that matters: switching on the full reconcile here
+        # would replay 125 changed declarations across doppler's 44 sacred
+        # headers, including a `create()` rewritten to disagree with its own
+        # definition. Adding a missing declaration is not that.
+        decls = _property_accessor_decls(cfg, comp) + _declared_method_decls(
+            cfg, comp, temp_root
+        )
         if not decls:
             continue
         from ._init import _inject_decls_into_core_h
@@ -1966,6 +1976,43 @@ def _reconcile_procglobal_headers(
         ):
             updated.append(root / rel)
     return updated
+
+
+def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
+    """Method prototypes for *comp*, read off the temp render.
+
+    gh-1302, the sibling of gh-627's accessor slice. A module object's
+    manifest-declared method got a call in the fragment and a prototype in
+    **no** header, so the freshly spliced binding called an undeclared
+    function and the build failed on implicit declaration — the standalone
+    path put the same prototype in `<comp>_core.h` all along.
+
+    The text comes from the temp tree's header rather than from a second call
+    to `_build_method_prototype`. That builder takes twenty-odd keys off the
+    declaration and `_apply._replay_method` already passes all of them; a
+    second call site would be a second place to forget one, which is exactly
+    how gh-788 put the wrong `create()` shape into a sacred header.
+
+    Which names to offer comes from the manifest, so an unrelated declaration
+    in the temp header is not swept along. `variable_output` methods declare a
+    sibling `_max_out`, and it is as undeclared as its method.
+    """
+    temp_h = temp_root / "native" / "inc" / comp / f"{comp}_core.h"
+    if not temp_h.exists():
+        return []
+    from ._init import _core_h_decl_lines
+
+    want: set = set()
+    for m in C.methods(cfg, comp):
+        fn = m.get("fn") or f"{comp}_{m['name']}"
+        want.add(fn)
+        want.add(f"{fn}_max_out")
+    out = []
+    for d in _core_h_decl_lines(temp_h.read_text(encoding="utf-8")):
+        m = re.search(r"(\w+)\s*\(", d)
+        if m and m.group(1) in want:
+            out.append(d)
+    return out
 
 
 def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:

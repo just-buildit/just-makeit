@@ -2,6 +2,33 @@
 
 ### Fixed
 
+- **A module object's TOML-declared method got a call and no prototype, so the
+    build failed on implicit declaration (gh-1302).** The standalone path put
+    the prototype in `native/inc/<obj>/<obj>_core.h` all along; the
+    module-object path put it nowhere, and the freshly spliced binding called
+    an undeclared function. That is the shape doppler uses, so it is the half
+    that mattered.
+
+    **Narrow on purpose.** `_apply` documents with numbers why a module
+    object's header is not reconciled — switching on the full reconcile would
+    replay *"125 changed declarations"* across doppler's *"44 sacred
+    headers, including a `create()` prototype rewritten to disagree with its
+    own definition"*. This is gh-627's additive slice instead, which already
+    offers a property accessor's prototype to the same header, extended to
+    methods: `skip_names` names every prototype offered, so a declaration the
+    header already carries — with **any** signature — is left exactly as
+    written and only a genuinely absent one is inserted.
+
+    The prototype text is the temp tree's rendered header, not a second call
+    to `_build_method_prototype`: that builder takes twenty-odd keys off the
+    declaration, and a second call site is a second place to forget one.
+    Which names to offer comes from the manifest, so an unrelated declaration
+    in the temp render is not swept into a sacred header.
+
+    Filed while verifying it end to end: gh-1305, a module object's generated
+    benchmark does not link libm, so `jm test` fails on every module-object
+    project — with no methods declared at all, so it is not this issue's.
+
 - **A method declared in TOML got a prototype and a call and no definition, so
     the project did not link (gh-1294).** Declared through the CLI a method
     also gets a stub body; declared in TOML and materialised by `jm apply` it
