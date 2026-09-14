@@ -25,8 +25,8 @@
     Which names to offer comes from the manifest, so an unrelated declaration
     in the temp render is not swept into a sacred header.
 
-    Filed while verifying it end to end: gh-1305, a module object's generated
-    benchmark does not link libm, so `jm test` fails on every module-object
+    Filed while verifying it end to end: gh-1305, a module named `m`
+    shadowing the math library, so `jm test` fails on every module-object
     project — with no methods declared at all, so it is not this issue's.
 
 - **A method declared in TOML got a prototype and a call and no definition, so
