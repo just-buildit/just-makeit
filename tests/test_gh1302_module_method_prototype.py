@@ -201,9 +201,11 @@ class TestTheExtensionBuilds:
     """The claim: implicit declaration, the build fails.
 
     Only the extension target is built. `jm test` builds the generated
-    benchmark too, and that does not link libm on a module object — gh-1305,
-    measured with NO methods declared, so it is not this issue's and would
-    make this test fail for an unrelated reason.
+    benchmark too, and this project's module is named `m` -- which shadows
+    the math library, because a bare `m` in `target_link_libraries` resolves
+    as a CMake target first. That is gh-1305, measured with NO methods
+    declared, so it is not this issue's and would make this test fail for an
+    unrelated reason.
     """
 
     def test_the_module_extension_compiles_and_links(self, project: Path):
@@ -224,7 +226,17 @@ class TestTheExtensionBuilds:
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
 
     def test_without_the_prototype_it_does_not(self, project: Path):
-        """Prove the build was the thing at stake."""
+        """Prove the build was the thing at stake.
+
+        With `-Werror=implicit-function-declaration` passed explicitly, not
+        left to the compiler's default. Whether an implicit declaration is an
+        error or a warning is a compiler-and-version question -- it is an
+        error on gcc 14+ and a warning before it -- so asserting a bare
+        non-zero exit asserts the runner's toolchain rather than jm's output.
+        Measured: this passed locally and the same sabotage BUILT CLEAN on the
+        ubuntu-24.04-arm runner, so the test reported green for the missing
+        prototype it exists to catch.
+        """
         assert _cli("apply", cwd=project).returncode == 0
         h = _header(project)
         h.write_text(
@@ -235,7 +247,14 @@ class TestTheExtensionBuilds:
         )
         shutil.rmtree(project / "build", ignore_errors=True)
         subprocess.run(
-            ["cmake", "-S", str(project), "-B", str(project / "build")],
+            [
+                "cmake",
+                "-S",
+                str(project),
+                "-B",
+                str(project / "build"),
+                "-DCMAKE_C_FLAGS=-Werror=implicit-function-declaration",
+            ],
             capture_output=True,
             text=True,
             timeout=900,
@@ -247,3 +266,4 @@ class TestTheExtensionBuilds:
             timeout=900,
         )
         assert r.returncode != 0, r.stdout[-2000:]
+        assert "o_fin" in (r.stdout + r.stderr), r.stdout[-2000:]
