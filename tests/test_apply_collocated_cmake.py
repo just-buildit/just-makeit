@@ -215,7 +215,11 @@ def test_collocated_dep_survives_apply(tmp_path):
 
 def test_collocated_no_dep_has_no_object_core_link(tmp_path):
     # No depends_on, no module extra_libs -> no PUBLIC object-core link, and
-    # test/bench stay at the bare `<obj>_core m` (no churn for the common case).
+    # test/bench stay at plain `<obj>_core` + libm (no churn for the common
+    # case). gh-1305: libm is `${JM_MATH_LIBRARY}`, a path from
+    # `find_library`, not the bare name `m` -- a bare `m` resolves as a CMake
+    # TARGET first, so `jm module m` shadowed the math library and the link
+    # failed on `undefined reference to sqrt`.
     dest = tmp_path / "p"
     _silent(new_run, "p", dest)
     _silent(module_run, dest, "ddc")
@@ -230,7 +234,9 @@ def test_collocated_no_dep_has_no_object_core_link(tmp_path):
     )
     cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
     assert "target_link_libraries(ddc_core PUBLIC" not in cmake
-    assert "PRIVATE ddc_core m" in _link_block(cmake, "test_ddc_core")
+    assert "PRIVATE ddc_core ${JM_MATH_LIBRARY}" in _link_block(
+        cmake, "test_ddc_core"
+    )
 
 
 def test_collocated_composed_dep_builds_e2e(tmp_path):
