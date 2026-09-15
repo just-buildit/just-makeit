@@ -12,11 +12,14 @@ failed differently:
 
 | shape                                  | symptom                           |
 | -------------------------------------- | --------------------------------- |
-| `jm module m` + `jm object --module m` | link: `undefined reference to     |
-|                                        | sqrt`                             |
+| `jm module m` + `jm object --module m` | link: the module DSO is handed to |
+|                                        | the linker -- wording is per      |
+|                                        | platform, see                     |
+|                                        | `_SHADOW_DIAGNOSTICS`             |
 | `jm module m` + `jm function`          | configure: *Target "m" of type    |
 |                                        | MODULE_LIBRARY may not be linked  |
-|                                        | into another target*              |
+|                                        | into another target* (CMake's own |
+|                                        | message, so it is invariant)      |
 
 The filed issue measured the first. The second is worse -- a hard configure
 error, so nothing in the project builds at all -- and it lives in a different
@@ -150,6 +153,23 @@ def _build(root, target):
     )
 
 
+_SHADOW_DIAGNOSTICS = (
+    # GNU ld: the module DSO linked, and it has no libm symbols in it.
+    "undefined reference to `sqrt",
+    "undefined reference to sqrt",
+    # Apple ld: a CPython extension is an MH_BUNDLE, refused up front.
+    "unsupported mach-o filetype",
+)
+
+
+def _names_the_shadow(output):
+    """Whether *output* blames the module target rather than something else.
+
+    One claim, two spellings -- see `test_with_a_bare_m_it_does_not`.
+    """
+    return any(d in output for d in _SHADOW_DIAGNOSTICS)
+
+
 def _unfix(cmake):
     """Put the pre-fix text back: bare `m`, and no declaration."""
     text = cmake.read_text()
@@ -243,16 +263,30 @@ class TestTheFiledShapeBuilds:
         """Prove the link was the thing at stake.
 
         The sabotage is applied to the generated CMakeLists rather than to
-        jm, so it reproduces the exact text the bug shipped, and the
-        assertion names `sqrt` -- a non-zero exit alone would also be
-        satisfied by an unrelated build failure.
+        jm, so it reproduces the exact text the bug shipped. A bare non-zero
+        exit would also be satisfied by an unrelated build failure, so the
+        diagnostic has to name the shadow -- but WHICH diagnostic is a
+        platform question, and hard-coding one asserts the runner:
+
+        * **GNU ld** links the module DSO happily and only then finds the
+          symbol libm would have provided: `undefined reference to sqrt`.
+        * **Apple ld** rejects it a step earlier, because a CPython extension
+          is a `MH_BUNDLE`: *"unsupported mach-o filetype (only MH_OBJECT and
+          MH_DYLIB can be linked)"*, naming the `.so` in the message.
+
+        Measured: asserting `sqrt` alone passed on every Linux leg and failed
+        on macos-latest for exactly the sabotage it exists to catch. What is
+        invariant is not the wording but the CLAIM -- the linker was handed
+        the module named `m` instead of the math library -- so the assertion
+        is the alternation, and an empty one would be a bug in the test.
         """
         root = self._project(tmp_path / "p")
         _unfix(root / "native/src/o/CMakeLists.txt")
         assert _configure(root).returncode == 0
         r = _build(root, "bench_o_core")
-        assert r.returncode != 0, r.stdout[-2000:]
-        assert "sqrt" in (r.stdout + r.stderr), r.stdout[-2000:]
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, out[-2000:]
+        assert _names_the_shadow(out), out[-2000:]
 
 
 @pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
