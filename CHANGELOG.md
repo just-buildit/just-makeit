@@ -33,6 +33,7 @@
     The generated `native/src/*/CMakeLists.txt` is reconciled, so existing
     projects pick this up on `jm apply`; the only visible churn is libm's
     spelling on the test and bench link lines.
+
 - **A module object's TOML-declared method got a call and no prototype, so the
     build failed on implicit declaration (gh-1302).** The standalone path put
     the prototype in `native/inc/<obj>/<obj>_core.h` all along; the
