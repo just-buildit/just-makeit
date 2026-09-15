@@ -2,6 +2,38 @@
 
 ### Fixed
 
+- **A module named `m` shadowed the math library, so `jm test` failed on
+    every module-object project (gh-1305).** A bare name in
+    `target_link_libraries` is resolved as a CMake **target** first, and only
+    falls through to a system library search when no such target exists.
+    `jm module m` defines one — `Python3_add_library(m MODULE ...)` — so every
+    generated test and benchmark target, all of which link libm because
+    `jm_bench.h` calls `sqrt`, got the module's own extension DSO instead.
+
+    Two shapes, failing differently. `jm module m` + `jm object --module m`
+    is the one filed: the link fails with `undefined reference to sqrt`. The
+    module's **own** `test_`/`bench_<cname>_core` pair — `jm module m` plus
+    any free function — is worse and was not filed: the target is in the same
+    directory, so CMake rejects it at configure time with *"Target "m" of
+    type MODULE_LIBRARY may not be linked into another target"* and nothing
+    in the project builds at all. Found by measuring the mechanism per shape
+    rather than fixing the issue as reported; it lives in a different emitter
+    (`_render._module_link_libs`) that the templates' fix did not reach.
+
+    Every emitter now links `${JM_MATH_LIBRARY}`, a `find_library` result —
+    an absolute path no target name can shadow, and empty on platforms that
+    fold libm into libc, which links nothing. The declaration and the
+    reference are **one pair** (`_render.LIBM_PREAMBLE` / `LIBM_REF`, loaded
+    from a single `templates/cmake/libm.cmake`), because a reference without
+    its declaration expands to the empty string and silently links no libm at
+    all — the same broken build by a quieter route. `jm apply`'s bench
+    reconciler appends to a CMakeLists it does not re-render, so it seeds the
+    declaration when an older tree lacks one.
+
+    The generated `native/src/*/CMakeLists.txt` is reconciled, so existing
+    projects pick this up on `jm apply`; the only visible churn is libm's
+    spelling on the test and bench link lines.
+
 - **A module object's TOML-declared method got a call and no prototype, so the
     build failed on implicit declaration (gh-1302).** The standalone path put
     the prototype in `native/inc/<obj>/<obj>_core.h` all along; the
@@ -26,8 +58,8 @@
     in the temp render is not swept into a sacred header.
 
     Filed while verifying it end to end: gh-1305, a module named `m`
-    shadowing the math library, so `jm test` fails on every module-object
-    project — with no methods declared at all, so it is not this issue's.
+    shadowing the math library — with no methods declared at all, so it is
+    not this issue's. Fixed above, in the same release.
 
 - **A method declared in TOML got a prototype and a call and no definition, so
     the project did not link (gh-1294).** Declared through the CLI a method
