@@ -196,8 +196,17 @@ class TestTheModulePairLinksWhatTheSoLinks:
             missing = [lib for lib in so_libs if lib not in libs]
             assert not missing, f"{target} is missing {missing}"
 
-    def test_a_module_with_no_dependency_is_unchanged(self, tmp_path):
-        """No churn for free: the one-line form is preserved exactly."""
+    def test_a_module_with_no_dependency_keeps_the_one_line_form(
+        self, tmp_path
+    ):
+        """No churn for free: the one-line form is preserved exactly.
+
+        gh-1305 changed libm's SPELLING here, from the bare name `m` to
+        `${JM_MATH_LIBRARY}` -- a bare `m` resolves as a CMake target first,
+        so `jm module m` shadowed the math library and this very pair failed
+        configure outright. The shape this test is named for -- one line, no
+        dependency, nothing else added -- is what it still asserts.
+        """
         root = tmp_path / "demo"
         _quiet(new_run, "demo", root)
         _quiet(module_run, root, "dsp")
@@ -213,12 +222,11 @@ class TestTheModulePairLinksWhatTheSoLinks:
         text = (root / "native" / "src" / "dsp" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
-        assert (
-            "target_link_libraries(test_dsp_core PRIVATE dsp_core m)" in text
-        )
-        assert (
-            "target_link_libraries(bench_dsp_core PRIVATE dsp_core m)" in text
-        )
+        for target in ("test_dsp_core", "bench_dsp_core"):
+            assert (
+                f"target_link_libraries({target} PRIVATE dsp_core"
+                " ${JM_MATH_LIBRARY})" in text
+            ), text
 
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")

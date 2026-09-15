@@ -2265,6 +2265,8 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
     Existing projects that were scaffolded before the bench target was added
     to the template will have the bench source file but no CMake target.  This
     is idempotent: if the target is already present the file is not touched."""
+    from . import _render as R
+
     updated: list[Path] = []
     for comp in C.components(cfg):
         cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
@@ -2273,12 +2275,21 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
         text = cmake_path.read_text(encoding="utf-8")
         if f"bench_{comp}_core" in text:
             continue
+        # gh-1305: libm by path, never the bare name `m`, which resolves
+        # as a CMake TARGET first and so is shadowed by a module named
+        # `m`. This file is APPENDED to rather than re-rendered, so it may
+        # predate the preamble that declares the variable -- and a
+        # reference to an undeclared variable expands to nothing and links
+        # no libm at all, which is the same broken build by a quieter
+        # route. Seed it here when absent.
+        if "JM_MATH_LIBRARY" not in text:
+            text = R.LIBM_PREAMBLE + "\n" + text
         bench_block = (
             f"\nadd_executable(bench_{comp}_core\n"
             f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/"
             f"bench_{comp}_core.c)\n"
             f"target_link_libraries(bench_{comp}_core"
-            f" PRIVATE {comp}_core m)\n"
+            f" PRIVATE {comp}_core " + R.LIBM_REF + ")\n"
             f"target_include_directories(bench_{comp}_core\n"
             f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
             f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"

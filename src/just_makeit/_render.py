@@ -56,8 +56,20 @@ NO_STEP_BENCH_C = _load("c/src/no_step_bench.c")
 MODULE_CORE_C = _load("c/src/module_core.c")
 LIB_STUB_C = _load("c/src/lib_stub.c")
 # ── CMake ────────────────────────────────────────────────────────────────────
+# gh-1305: the one declaration of `JM_MATH_LIBRARY`, prepended to every
+# generated CMakeLists that links libm. It is a preamble rather than a slot
+# because it takes no context, and it lives in one file rather than three
+# copies because a fourth emitter (`_apply._reconcile_bench_cmake`) needs the
+# same text and three verbatim copies is what drifts.
+LIBM_PREAMBLE = _load("cmake/libm.cmake")
+# What every generated target links INSTEAD of a bare `m`. Paired with
+# LIBM_PREAMBLE: a reference without the preamble expands to nothing and
+# silently links no libm at all.
+LIBM_REF = "${JM_MATH_LIBRARY}"
 CMAKE_LISTS_TOP = _load("cmake/CMakeLists_top.cmake")
-CMAKE_LISTS_MODULE = _load("cmake/CMakeLists_module.cmake")
+CMAKE_LISTS_MODULE = (
+    LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_module.cmake")
+)
 # gh-1034: the C test and benchmark a function-only module now gets, the
 # same pair an object has always had.
 MODULE_TEST_C = _load("c/src/module_test.c")
@@ -84,9 +96,9 @@ def module_targets_block(
     gh-1061: `extra_libs` is everything the module's own `.so` links beyond
     `<cname>_core` and Python — its `extra_link_libs`, each member object's
     core, and each member's `depends_on ... link = true` closure. The pair
-    used to link `<cname>_core m` and nothing else, built from the name
-    alone, so a declared dependency had no path by which it could reach them
-    and a module function calling a sibling core did not link.
+    used to link `<cname>_core` and libm and nothing else, built from the
+    name alone, so a declared dependency had no path by which it could reach
+    them and a module function calling a sibling core did not link.
 
     This is gh-254's lesson one target pair later. That issue made
     `link = true` ADDITIVE for a collocated object's own test/bench rather
@@ -116,15 +128,22 @@ def _module_link_libs(cname: str, extra_libs: Sequence[str]) -> str:
     """The link-library argument for a module's test/bench pair (gh-1061).
 
     `<cname>_core` first, then each declared dependency in the order the
-    module's `.so` link line carries it, then `m`. With nothing declared this
-    is the one-line form the pair has always rendered, so a module that
-    depends on nothing stays byte-identical and no project churns for free.
+    module's `.so` link line carries it, then libm. With nothing declared
+    this is the one-line form the pair has always rendered, so a module that
+    depends on nothing churns only by libm's spelling.
+
+    gh-1305: libm is `LIBM_REF`, never the bare name `m`. This pair is
+    rendered into the MODULE's own CMakeLists, where a module named `m` has
+    just defined a `MODULE_LIBRARY` target of that name — so the bare form
+    did not merely link the wrong thing, it failed configure with *"Target
+    "m" of type MODULE_LIBRARY may not be linked into another target"*, and
+    `jm module m` plus any free function was unbuildable.
 
     Returns the text that follows `PRIVATE`, its own leading space included,
     so the multi-line form does not leave `PRIVATE ` with a trailing space on
     it — which cmake-lint rejects (C0303) and `make lint` gates on.
     """
-    parts = [f"{cname}_core", *extra_libs, "m"]
+    parts = [f"{cname}_core", *extra_libs, LIBM_REF]
     if len(parts) == 2:
         return " " + " ".join(parts)
     return "\n    " + "\n    ".join(parts)
@@ -205,8 +224,12 @@ def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
     return "\n".join(lines), 0
 
 
-CMAKE_LISTS_OBJECT_CORE = _load("cmake/CMakeLists_object_core.cmake")
-CMAKE_LISTS_COMPONENT = _load("cmake/CMakeLists_component.cmake")
+CMAKE_LISTS_OBJECT_CORE = (
+    LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_object_core.cmake")
+)
+CMAKE_LISTS_COMPONENT = (
+    LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_component.cmake")
+)
 CMAKE_PC_IN = _load("cmake/package.pc.in")
 CMAKE_CONFIG_IN = _load("cmake/packageConfig.cmake.in")
 # ── CI workflows ───────────────────────────────────────────────────────────────
