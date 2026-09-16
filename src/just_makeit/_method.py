@@ -672,7 +672,9 @@ def _build_method_prototype(
     # declaration must match _methods_c_stub_result_fields/_result_single's
     # shape (size_t count + results[]/max_results out-params, or one record
     # by value with `single`), not the generic scalar/array fallback below.
-    if result_fields and not (variable_output and record_dtype):
+    if result_fields and not _record.is_record_array(
+        variable_output, record_dtype
+    ):
         # gh-594: the record shapes used to build their signature from
         # `arg_type` alone, silently dropping every declared `param`. The
         # binding passed them anyway, so a `single` method with params gave
@@ -1516,7 +1518,9 @@ def run(
                 params=[(p["name"], p["type"]) for p in params],
                 c_fn=fn,
             )
-        elif result_fields and not (variable_output and record_dtype):
+        elif result_fields and not _record.is_record_array(
+            variable_output, record_dtype
+        ):
             stub = _methods_c_stub_result_fields(
                 object_name,
                 method_name,

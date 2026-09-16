@@ -1352,7 +1352,7 @@ def make_methods_ctx(
         # the manifest having to spell it three times.
         _vo_out_src = (
             record_dtype
-            if (variable_output and record_dtype)
+            if _record.is_record_array(variable_output, record_dtype)
             else (out_type if (variable_output and out_type) else return_type)
         )
         _vo_out_elem = (
@@ -1776,7 +1776,9 @@ def make_methods_ctx(
         # wrapper chain already prefers `variable_output`; before this the
         # two chains disagreed and the declaration described a kernel the
         # binding never called.
-        if result_fields and not (variable_output and record_dtype):
+        if result_fields and not _record.is_record_array(
+            variable_output, record_dtype
+        ):
             # gh-594: this is the peer of _method._build_method_prototype's
             # record branch and must render the identical signature -- params
             # expanded (array -> ptr + `_len`), and `single` returning the

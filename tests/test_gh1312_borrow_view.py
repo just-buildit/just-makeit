@@ -262,3 +262,46 @@ class TestTheEmitterItself:
             # shared call. `out_arr` is the caller-pinned shape and keeps its
             # own, checked, in-place call.
             assert "(PyObject *)self) < 0" not in src, mod.__name__
+
+
+class TestTheRecordArrayPredicateHasOneHome:
+    """`record_dtype` + `variable_output` means "an ARRAY of records".
+
+    That predicate was spelled inline in four places -- `_method`'s prototype
+    builder and its stub dispatch, and `_context/_methods`' declaration and
+    return-annotation chains. Four copies of one question is what drifts, and
+    gh-788 records that it did: two chains disagreed and the generated
+    declaration described a kernel the binding never called.
+
+    Extracted as `_record.is_record_array`, the peer of `_record.is_record`.
+    Behaviour is unchanged by that move; what changes is that the borrow
+    shape can widen it in ONE place instead of four.
+    """
+
+    _SRC = Path(__file__).parent.parent / "src" / "just_makeit"
+
+    def _sources(self):
+        for rel in ("_method.py", "_context/_methods.py"):
+            yield rel, (self._SRC / rel).read_text()
+
+    def test_no_module_spells_the_predicate_inline(self):
+        offenders = []
+        for rel, text in self._sources():
+            for n, line in enumerate(text.splitlines(), 1):
+                code = line.split("#", 1)[0]
+                if "variable_output and record_dtype" in code:
+                    offenders.append(f"{rel}:{n}: {line.strip()}")
+        assert not offenders, "\n".join(offenders)
+
+    def test_both_modules_actually_call_it(self):
+        """An empty scan passes the test above for free -- these are the
+        modules that asked the question, so they must still ask it."""
+        for rel, text in self._sources():
+            assert "is_record_array(" in text, rel
+
+    def test_the_predicate_answers_the_three_shapes(self):
+        from just_makeit import _record
+
+        assert _record.is_record_array(True, "dp_tlm_rec_t")
+        assert not _record.is_record_array(True, "")
+        assert not _record.is_record_array(False, "dp_tlm_rec_t")

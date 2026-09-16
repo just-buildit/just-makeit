@@ -84,6 +84,36 @@ def is_record(m: dict) -> bool:
     return bool(m.get("single")) and bool(m.get("result_fields"))
 
 
+def is_record_array(variable_output: object, record_dtype: object) -> bool:
+    """True when a method returns an ARRAY of records — a structured ndarray.
+
+    The peer of :func:`is_record`, which answers the same question for a
+    *single* record. Both exist because ``result_fields`` alone does not say
+    which shape is meant: with ``single`` it is one ``PyStructSequence``, with
+    ``record_dtype`` it is one structured ndarray of rows, and with neither it
+    is a ``list[tuple]``.
+
+    **This was spelled inline in four places** — ``_method``'s prototype
+    builder and its stub dispatch, and ``_context/_methods``' declaration and
+    return-annotation chains. Four copies of one predicate is what drifts, and
+    it has: gh-788's note records that when two of those chains disagreed, the
+    generated declaration described a kernel the binding never called.
+
+    Taking the two flags rather than the method dict, because that is what all
+    four call sites have in scope at the point they ask.
+
+    Examples
+    --------
+    >>> is_record_array(True, "dp_tlm_rec_t")
+    True
+    >>> is_record_array(False, "dp_tlm_rec_t")   # a bare record_dtype
+    False
+    >>> is_record_array(True, "")                # plain variable_output
+    False
+    """
+    return bool(variable_output) and bool(record_dtype)
+
+
 def public_name(m: dict) -> str:
     """The record's public Python type name.
 
