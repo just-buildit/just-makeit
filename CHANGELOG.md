@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### Added
+
+- **A method may return a zero-copy VIEW of memory the C state already owns —
+    `borrow = true` (gh-1312).** Every other array-returning shape hands back
+    memory somebody allocated *for the call*: NumPy's, or the caller's `out=`.
+    A borrow is the other arrangement — the kernel returns a pointer
+    (`<T> *comp_wait(comp_state_t *, size_t n)`), the binding wraps it without
+    copying, and the view pins the object so its memory outlives any reference
+    to it.
+
+    jm could already emit exactly that, from two places, and **both are
+    accessors** — the `buf_field` property and an array state's
+    `get_<name>_view()`. There was no method form, so a kernel whose whole
+    point is *give me a pointer to n samples* had no declaration and its
+    binding was hand-written across four unreconciled faces.
+
+    `--borrow` / `[[obj.methods]] borrow = "true"`. `--borrow-count` names the
+    param that sizes the view — defaulted from a sole param, and **required**
+    beyond that, because sizing a borrowed view from the wrong argument
+    reaches past what the state owns and reads as data rather than as an
+    error. The view is read-only unless `--borrow-writeable`. Returning `NULL`
+    raises, `--error`/`--error-message` choosing which.
+
+    **It is a usage contract and jm says so rather than enforcing it.** The
+    view is valid until the author's own release call. In CPython that cannot
+    be enforced — there is no hook on element access, and every scheme that
+    refuses to recycle while a view is outstanding refuses *correct*
+    idiomatic code, because the caller's own name for the previous view is
+    still bound at every point the producer could check. Two such designs
+    were built and measured before this one was written.
+
+    `docs/memory-ownership.md` gains the row, and **rule 3 is restated against
+    the evidence it was derived from**: it was written about a grow-on-demand
+    buffer that `free()`d under a live view, and it does not reach a fixed
+    mapping, where the worst case is stale values rather than a dangling
+    pointer. The line is *who knows* — guessing about the caller stays
+    forbidden; a contract the author states does not.
+
 ### Fixed
 
 - **The "returns an ARRAY of records" predicate was spelled inline in five

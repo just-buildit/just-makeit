@@ -219,6 +219,16 @@ METHOD_KEYS = frozenset(
         "record_module",
         "record_doc",
         "record_dtype",
+        # gh-1312: the method returns a BORROWED view -- a numpy array over
+        # memory the C state owns, pinned to `self`. The kernel returns a
+        # pointer instead of filling one, which is the shape a fixed-mapping
+        # ring buffer needs and the only array shape jm had no method form
+        # of. `borrow_count` names the param carrying the element count
+        # (defaulted from the sole param); `borrow_writeable` opts out of the
+        # read-only default. See docs/memory-ownership.md.
+        "borrow",
+        "borrow_count",
+        "borrow_writeable",
         "py_return_type",
         "none_on_empty",
         # error translation

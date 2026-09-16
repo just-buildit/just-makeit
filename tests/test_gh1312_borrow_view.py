@@ -26,9 +26,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import shutil
+import subprocess
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -36,6 +41,9 @@ from just_makeit._context._methods import (  # noqa: E402
     make_properties_ctx,
 )
 from just_makeit._context._parse import borrow_view_c  # noqa: E402
+from just_makeit import _borrow  # noqa: E402
+from just_makeit._method import run as method_run  # noqa: E402
+from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
@@ -44,6 +52,16 @@ def _silent(fn, *a, **k):
     with contextlib.redirect_stdout(io.StringIO()):
         return fn(*a, **k)
 
+
+def _no_toolchain():
+    if not shutil.which("cmake"):
+        return "cmake not found"
+    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+        return "no C compiler found"
+    return None
+
+
+_SKIP = _no_toolchain()
 
 _SETBASE = re.compile(r"PyArray_SetBaseObject\s*\(")
 
@@ -64,6 +82,18 @@ def _setbase_calls(text: str) -> list[str]:
 def _is_checked(line: str) -> bool:
     """True when the call is the condition of an `if`, not a bare statement."""
     return line.strip().startswith("if (") or line.strip().startswith("if(")
+
+
+def _wrapper_of(ext: str, first_line: str) -> str:
+    """The whole C wrapper starting at *first_line*, to its closing brace.
+
+    A fixed-width slice truncates the emitted body and reports a missing pin
+    that is right there -- the same defect as matching one line's layout
+    instead of the property it stands for.
+    """
+    i = ext.index(first_line)
+    j = ext.index("\n}\n", i)
+    return ext[i : j + 3]
 
 
 def _every_borrow_shape(dest: Path) -> Path:
@@ -329,3 +359,312 @@ class TestTheRecordArrayPredicateHasOneHome:
         assert _record.is_record_array(True, "dp_tlm_rec_t")
         assert not _record.is_record_array(True, "")
         assert not _record.is_record_array(False, "dp_tlm_rec_t")
+
+
+class TestTheBorrowShape:
+    """`borrow = true`: the kernel LENDS a pointer into the state's memory.
+
+    Every other array-returning shape jm generates hands back memory somebody
+    allocated for the call -- NumPy's, or the caller's `out=`. A borrow is the
+    other arrangement, and jm had no method form of it: the two existing
+    borrowing shapes are both accessors.
+    """
+
+    @staticmethod
+    def _project(root, **kw):
+        _silent(new_run, "p", root)
+        _silent(
+            object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
+        )
+        _silent(
+            method_run,
+            root,
+            "ring",
+            "wait",
+            None,  # module
+            "void",  # arg_type
+            "float _Complex",  # return_type
+            False,  # variable_output
+            [],  # multi_output
+            params=[("n", "size_t")],
+            borrow=True,
+            **kw,
+        )
+        return root
+
+    def test_the_prototype_returns_a_pointer(self, tmp_path):
+        """The kernel lends; it does not fill an out-param."""
+        root = self._project(tmp_path / "p")
+        h = (root / "native/inc/ring/ring_core.h").read_text()
+        assert "float _Complex *ring_wait(ring_state_t *state, size_t n);" in h
+
+    def test_the_stub_returns_a_pointer_too(self, tmp_path):
+        """A scalar `return` for a pointer-returning function does not
+        compile, and "no foot-guns" means the untouched scaffold builds."""
+        root = self._project(tmp_path / "p")
+        core = (root / "native/src/ring/ring_core.c").read_text()
+        body = core[core.index("ring_wait") :][:400]
+        assert "return NULL;" in body, body
+
+    def test_the_binding_pins_and_is_checked(self, tmp_path):
+        root = self._project(tmp_path / "p")
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
+        assert (
+            borrow_view_c(
+                "_p", "(n)", "NPY_COMPLEX64", writeable=False, arr="_view"
+            )
+            in wrapper
+        ), wrapper
+
+    def test_a_null_return_raises(self, tmp_path):
+        """NULL is the author's only failure signal -- there is no count to
+        report -- so it always raises, declared `error` or not."""
+        root = self._project(tmp_path / "p")
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
+        assert "if (!_p)" in wrapper
+        assert "PyErr_SetString(PyExc_ValueError" in wrapper, wrapper
+        # ...and NOT the return-code raise, which reads an `_rc` this shape
+        # has not got and would not compile.
+        assert "_rc" not in wrapper, wrapper
+
+    def test_it_is_read_only_by_default(self, tmp_path):
+        root = self._project(tmp_path / "p")
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
+        assert "NPY_ARRAY_WRITEABLE" in wrapper
+
+    def test_borrow_writeable_opts_out(self, tmp_path):
+        root = self._project(tmp_path / "p", borrow_writeable=True)
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
+        assert "NPY_ARRAY_WRITEABLE" not in wrapper, wrapper
+
+
+class TestBothFacesAgree:
+    """The four-face problem is the reason this shape is generated at all.
+
+    doppler hand-writes stub, header, core and ext with no gate over any of
+    them, and the three widths have already diverged. A generated borrow is
+    only worth having if its faces cannot.
+    """
+
+    @staticmethod
+    def _project(root):
+        _silent(new_run, "p", root)
+        _silent(
+            object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
+        )
+        _silent(module_run, root, "m")
+        _silent(
+            object_run,
+            root,
+            "mring",
+            module="m",
+            state_vars=[("cap", "size_t", "8")],
+        )
+        for obj, mod in (("ring", None), ("mring", "m")):
+            _silent(
+                method_run,
+                root,
+                obj,
+                "wait",
+                mod,  # module
+                "void",  # arg_type
+                "float _Complex",  # return_type
+                False,  # variable_output
+                [],  # multi_output
+                params=[("n", "size_t")],
+                borrow=True,
+            )
+        return root
+
+    def test_both_pyi_writers_say_ndarray(self, tmp_path):
+        """A borrow returns a VIEW, not one element. Both writers had to be
+        taught, and they are peers that have disagreed before."""
+        root = self._project(tmp_path / "p")
+        standalone = (root / "src/p/ring.pyi").read_text()
+        module = (root / "src/p/m/m.pyi").read_text()
+        want = "def wait(self, n: int) -> NDArray[np.complex64]:"
+        assert want in standalone, standalone
+        assert want in module, module
+
+    def test_the_runtime_synopsis_agrees(self, tmp_path):
+        """`-> complex` above a body handing back an array is a doc face
+        describing a different function than the one it is attached to."""
+        root = self._project(tmp_path / "p")
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        assert '"wait(n) -> ndarray' in ext, ext[:200]
+
+    def test_the_generated_doctest_is_not_a_scalar(self, tmp_path):
+        """It used to assert `obj.wait(0)` -> `0j`: a doctest that is wrong,
+        not merely misleading."""
+        root = self._project(tmp_path / "p")
+        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        demo = ext[ext.index('"wait(n) -> ndarray') :][:900]
+        assert ">>> y = obj.wait(" in demo, demo
+        assert '"    0j' not in demo, demo
+
+
+class TestTheRefusals:
+    """`_borrow.why_not` answers in prose, so a bad declaration is caught at
+    the door rather than as a C compile error several files away."""
+
+    def test_borrow_and_variable_output_are_different_answers(self):
+        why = _borrow.why_not(
+            {"name": "wait", "borrow": True, "variable_output": True}
+        )
+        assert "different answers to who owns the result" in why
+
+    def test_out_type_is_refused(self):
+        why = _borrow.why_not(
+            {"name": "wait", "borrow": True, "out_type": "float"}
+        )
+        assert "no `out_type`" in why
+
+    def test_a_count_is_required(self):
+        why = _borrow.why_not({"name": "wait", "borrow": True})
+        assert "needs a param carrying the element count" in why
+
+    def test_an_ambiguous_count_is_never_guessed(self):
+        why = _borrow.why_not(
+            {
+                "name": "wait",
+                "borrow": True,
+                "params": [{"name": "a"}, {"name": "b"}],
+            }
+        )
+        assert "cannot tell which of 2 params" in why
+        assert "borrow_count" in why
+
+    def test_a_count_naming_no_param_is_refused(self):
+        why = _borrow.why_not(
+            {
+                "name": "wait",
+                "borrow": True,
+                "borrow_count": "nope",
+                "params": [{"name": "n"}],
+            }
+        )
+        assert "not one of its params" in why
+
+    def test_a_good_declaration_is_accepted(self):
+        assert (
+            _borrow.why_not(
+                {"name": "wait", "borrow": True, "params": [{"name": "n"}]}
+            )
+            == ""
+        )
+
+
+@pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
+class TestItActuallyBorrows:
+    """Built and run, because reading it is what missed the last two defects.
+
+    The generated stub returned a VALUE for a pointer-returning function --
+    it did not compile -- and three of the four faces said `-> complex` for a
+    method handing back an array. Neither is visible in a string comparison;
+    both are obvious the moment a compiler and an interpreter see them.
+    """
+
+    KERNEL = """    if (n > 8) return NULL;
+    for (size_t i = 0; i < n; i++)
+        state->buf[i] = (float)i + 0.0f * I;
+    return state->buf;"""
+
+    @classmethod
+    def _built(cls, root: Path, implement: bool):
+        _silent(new_run, "p", root)
+        _silent(
+            object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
+        )
+        _silent(
+            method_run,
+            root,
+            "ring",
+            "wait",
+            None,
+            "void",
+            "float _Complex",
+            False,
+            [],
+            params=[("n", "size_t")],
+            borrow=True,
+        )
+        if implement:
+            h = root / "native/inc/ring/ring_core.h"
+            h.write_text(
+                h.read_text().replace(
+                    "    size_t cap;",
+                    "    size_t cap;\n    float _Complex buf[8];",
+                    1,
+                )
+            )
+            c = root / "native/src/ring/ring_core.c"
+            text = c.read_text()
+            i = text.index("ring_wait(ring_state_t *state, size_t n)")
+            j = text.index("\n}\n", i)
+            body_start = text.index("{", i) + 1
+            c.write_text(text[:body_start] + "\n" + cls.KERNEL + text[j:])
+        r = subprocess.run(
+            ["cmake", "-S", str(root), "-B", str(root / "build")],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+        r = subprocess.run(
+            ["cmake", "--build", str(root / "build"), "--target", "ring"],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        return r
+
+    def test_the_untouched_scaffold_compiles(self, tmp_path):
+        """ "No foot-guns, all green from day one": before this the stub
+        emitted a scalar `return` for a `T *` function."""
+        r = self._built(tmp_path / "p", implement=False)
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+
+    def test_the_view_borrows_pins_and_refuses_writes(self, tmp_path):
+        root = tmp_path / "p"
+        r = self._built(root, implement=True)
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+
+        probe = root / "probe.py"
+        probe.write_text(
+            "import sys, numpy as np\n"
+            "from p.ring import Ring\n"
+            "r = Ring(cap=8)\n"
+            "v = r.wait(4)\n"
+            "assert v.dtype == np.complex64, v.dtype\n"
+            "assert v.shape == (4,), v.shape\n"
+            "assert not v.flags.writeable, 'writeable'\n"
+            "assert v.base is r, 'not pinned to the object'\n"
+            # it BORROWS: a second call sees the same memory, no copy
+            "assert np.shares_memory(v, r.wait(4)), 'copied'\n"
+            # the pin is a real reference, so the object outlives the name
+            "before = sys.getrefcount(r)\n"
+            "w = r.wait(2)\n"
+            "assert sys.getrefcount(r) > before, 'pin did not incref'\n"
+            "del w\n"
+            # NULL -> the declared exception, not a segfault or a None
+            "try:\n"
+            "    r.wait(99)\n"
+            "    raise SystemExit('oversize did not raise')\n"
+            "except ValueError:\n"
+            "    pass\n"
+            "print('OK')\n"
+        )
+        out = subprocess.run(
+            [sys.executable, str(probe)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(root),
+            env={**os.environ, "PYTHONPATH": str(root / "src")},
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "OK" in out.stdout, out.stdout

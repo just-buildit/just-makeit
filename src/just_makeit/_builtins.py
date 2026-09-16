@@ -226,6 +226,7 @@ def overridden_builtin_slots(
             result_fields=m.get("result_fields") or [],
             single=bool(m.get("single")),
             record_dtype=m.get("record_dtype", ""),
+            borrow=bool(m.get("borrow")),
         )
         builtin = ctx.get(_DECL_SLOT[m["name"]], "")
         # The built-in's slot may carry a Doxygen block above the declaration;

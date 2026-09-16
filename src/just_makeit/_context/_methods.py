@@ -9,6 +9,7 @@ import re
 
 from .. import _codec as _codec
 from .. import _coerce
+from .. import _borrow
 from .. import _outbuf
 from .. import _record
 from .. import _types as T
@@ -1303,6 +1304,26 @@ def make_methods_ctx(
         # machinery -- only the numpy allocation differs, because a struct
         # has no `_CTYPE_META` entry and so no single NPY_ enum.
         record_dtype: str = str(m.get("record_dtype", "") or "").strip()
+        # gh-1312: a borrow returns a pointer into the state's own memory.
+        # The element type is the method's `return_type` -- there is no
+        # out-parameter to name one -- and the view's length is a declared
+        # param, resolved by `_borrow.count_param` so the CLI, the binding
+        # and both .pyi writers ask one place. The count is cast at the C
+        # level because the param may be any integer type.
+        borrow: bool = _borrow.is_borrow(m)
+        borrow_writeable: bool = _borrow.is_writeable(m)
+        _borrow_elem = (
+            return_type[:-2] if return_type.endswith("[]") else return_type
+        )
+        _borrow_count_c = f"({_borrow.count_param(m)})" if borrow else ""
+        _borrow_np_enum = (
+            _NP_ENUM.get(
+                _CTYPE_META.get(_borrow_elem, {}).get("py_type", ""),
+                "NPY_CFLOAT",
+            )
+            if borrow
+            else ""
+        )
         # gh-657: a void-input variable_output method's `count` is the whole
         # user-facing knob — its default IS the method's zero-arg behaviour.
         # jm's own `1` was inert until gh-607 started feeding that count to
@@ -1375,7 +1396,15 @@ def make_methods_ctx(
         _sig_parts, _doc_params = _stub_params(arg_type, params)
         # ...and the return annotation with it, for the same reason: it is the
         # type line of the `Returns` section on both faces.
-        if status_return:
+        if borrow:
+            # gh-1312: a borrow returns an ndarray VIEW of the element type,
+            # not one element of it. Ahead of every other branch because the
+            # shape owns its whole return; falling through annotated the
+            # scalar `return_type` and told the reader `-> complex` for an
+            # array. Peer of the same branch in `_stubs.py`, and the two are
+            # gated to agree.
+            _ret_ann = _pyi_ndarray(return_type)
+        elif status_return:
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
         elif result_fields and single_record:
@@ -3121,7 +3150,45 @@ def make_methods_ctx(
                 )
                 meth_flags = "METH_NOARGS"
 
-            if error_negative:
+            if borrow:
+                # gh-1312: the kernel LENDS a pointer into memory the state
+                # owns. NULL is the author's failure signal -- end of stream,
+                # interrupted, a count the state can never satisfy -- and it
+                # is the only one, because there is no count to report.
+                #
+                # The view is built by the shared emitter, so this shape pins
+                # and checks exactly as the `buf_field` property and
+                # `get_<name>_view()` do. Read-only unless the author opts
+                # out: a consumer holding a view into a producer's region has
+                # no business writing through it.
+                ret_body = (
+                    f"    {_borrow_elem} *_p ="
+                    f" {c_fn}({call_args_c});\n"
+                    f"{_p_cleanup}"
+                    f"    if (!_p) {{\n"
+                    # A NULL borrow ALWAYS raises, declared `error` or not --
+                    # there is no count to report and no empty array to hand
+                    # back, so `raise_pair_of` supplies the undeclared
+                    # defaults rather than this branch restating them (the
+                    # reason that helper exists; see its import above).
+                    #
+                    # `empty_raise_c`, not `_rc_raise_c`: the latter appends
+                    # `(rc=%lld)` and reads an `_rc` this shape does not have
+                    # -- a borrow fails by returning NULL, and there is no
+                    # code to print. Its docstring draws exactly this line.
+                    + empty_raise_c(*raise_pair_of(m, name), indent=8)
+                    + "    }\n"
+                    + _borrow_view_c(
+                        "_p",
+                        _borrow_count_c,
+                        _borrow_np_enum,
+                        writeable=borrow_writeable,
+                        arr="_view",
+                        indent="    ",
+                    )
+                    + "\n"
+                )
+            elif error_negative:
                 # gh-805 §B: value-or-negative-error. The int IS the result on
                 # success, so this returns it; only `< 0` raises.
                 #
@@ -3273,9 +3340,14 @@ def make_methods_ctx(
             _fix_ret_hint = (
                 "None"
                 if status_return
+                # gh-1312: a borrow returns an ndarray view, so its synopsis
+                # line says so. Left out, this read `-> complex` above a
+                # body that hands back an array -- the same "doc face
+                # describing a different function" defect the comment above
+                # is about.
                 else (
                     "ndarray"
-                    if out_type or multi_output
+                    if out_type or multi_output or borrow
                     else _pyi_scalar(return_type)
                 )
             )
@@ -3286,7 +3358,11 @@ def make_methods_ctx(
                 _fix_demo.append("")
             _fix_demo += [*_from_line, _obj_line]
             _call_str = _demo_call_args()
-            if out_type or multi_output:
+            if out_type or multi_output or borrow:
+                # gh-1312: a borrow demos like every other array-returning
+                # shape. Without this it fell to the scalar branch below and
+                # printed `0j` as the expected output of a call that returns
+                # an array -- a doctest that is wrong as well as misleading.
                 _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
                 _fix_demo.append("    >>> y.ndim")
                 _fix_demo.append("    1")
