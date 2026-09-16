@@ -2046,7 +2046,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # annotation is the ordinary scalar one and it must fall through.
             # The two keys are mutually exclusive at declaration time.
             ret_ann = "None"
-        elif m_result_fields and not (m_var and m.get("record_dtype")):
+        elif m_result_fields and not _record.is_record_array(
+            m_var, m.get("record_dtype")
+        ):
             # gh-244: a `single` method returns ONE record, not a list of them.
             # gh-646: and that record is a declared class, not a bare tuple —
             # `make_module_pyi` emits it from the same `_record` builder the
