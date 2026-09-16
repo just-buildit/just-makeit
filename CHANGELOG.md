@@ -26,6 +26,37 @@
 
     `--header-only`, or `header_only = "true"` on the component.
 
+- **A borrowed view's element may be a RECORD — `record_dtype` with
+    `borrow` (gh-1310).** numpy has no complex-integer dtype, so integer IQ
+    comes back as a structured array `[('i','<i2'),('q','<i2')]`: 1-D, one
+    element per sample, byte order stated. gh-1310 measured all four zero-copy
+    spellings of the same bytes and chose this one — the packed `int32`
+    alternative is 1-D and one element per sample too, and `d + 1` silently
+    increments I only, because int32 addition carries across the I/Q boundary.
+    The structured form refuses arithmetic loudly instead.
+
+    The ring that needs it *borrows* (gh-1312), and `record_dtype` could not
+    be declared with `borrow`: it required `variable_output`, which `borrow`
+    refuses by name as a different answer to who owns the result. That was one
+    flag standing in for a second question — `record_dtype` names the ELEMENT
+    TYPE, and ownership is separate. The two owners stay mutually exclusive;
+    only the element type is now shared.
+
+    `_record.is_record_array` takes `borrow` as a **required** argument rather
+    than one defaulting to `False`: a call site that had not heard of it would
+    otherwise keep answering `False` for a borrowed record and silently render
+    the `list[tuple]` shape — the drift the predicate was extracted to end,
+    arriving through the fix for it. `_borrow.element_type` is the one home for
+    "`record_dtype` names the element", asked by the sacred header, the stub
+    and the binding.
+
+    Gated by itemsize and offsets measured from **compiled C** (`sizeof` /
+    `offsetof` in a separate program), over a deliberately PADDED struct:
+    `int16, int32, int16` is 12 bytes as the compiler lays it out and 8 as
+    numpy packs a bare format list, so a descr built from the field list reads
+    every row after the first from the wrong bytes. The unpadded `i`/`q` pair
+    agrees either way and cannot tell the two apart.
+
 - **A method may return a zero-copy VIEW of memory the C state already owns —
     `borrow = true` (gh-1312).** Every other array-returning shape hands back
     memory somebody allocated *for the call*: NumPy's, or the caller's `out=`.
@@ -63,6 +94,22 @@
     forbidden; a contract the author states does not.
 
 ### Fixed
+
+- **A `borrow` method generated a benchmark that does not compile (gh-1312,
+    found by gh-1310).** The bench face was never taught about `borrow`, so it
+    declared `volatile <T> sink` for a pointer-returning kernel — a constraint
+    violation, a warning by default and an error under `-Werror`, in the one
+    generated file no test compiles. The sink is now `<T> *volatile`, and a
+    borrowed record no longer takes the list-of-records bench branch, which
+    called a kernel signature that does not exist.
+
+- **`borrow_view_c` fell back to `NPY_CFLOAT` on an unknown element type.**
+    Unreachable while both front doors refused an unregistered type first, but
+    a fallback on a lookup miss is the `_PYBUILD_FMT` shape that cost a silent
+    `ptrdiff_t` truncation, and gh-1310 adds the first caller that reaches the
+    resolver with a type deliberately absent from `_CTYPE_META`. A complex64
+    view over int16 data is 4x the itemsize and reads past the mapping with no
+    error; it now raises instead.
 
 - **The "returns an ARRAY of records" predicate was spelled inline in five
     places, not the four that were documented (gh-1312).** `record_dtype` together with `variable_output` is what

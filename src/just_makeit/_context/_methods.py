@@ -455,6 +455,20 @@ def _bench_method_block(component: str, m: dict) -> str:
     result_fields: list[dict] = m.get("result_fields", [])
     single_record: bool = m.get("single", False)
     max_results: int = int(m.get("max_results", 64))
+    # gh-1310: the bench face never heard about `borrow` (gh-1312). A borrow
+    # returns a POINTER into the state's memory, so the generic sink below
+    # declared `volatile int16_t sink` for an `int16_t *` -- a constraint
+    # violation that is a warning by default and an error under -Werror, in
+    # the one generated file no test compiles. `record_dtype` makes it worse
+    # rather than introducing it: the element is then a struct, and
+    # `result_fields` would also send it down the list-of-records branch and
+    # call a kernel signature that does not exist.
+    borrow_m: bool = bool(m.get("borrow"))
+    borrow_elem: str = (
+        _borrow.element_type(m.get("record_dtype", ""), return_type)
+        if borrow_m
+        else ""
+    )
 
     has_arg = arg_type != "void"
     has_ret = return_type != "void"
@@ -482,7 +496,7 @@ def _bench_method_block(component: str, m: dict) -> str:
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
     lines.append(f"        double _times_{name}[ITERATIONS];")
 
-    if result_fields and not single_record:
+    if result_fields and not single_record and not borrow_m:
         # gh-244: a results[]/max_results method returns a count (size_t),
         # not `return_type` directly — the call signature and sink differ
         # from every other shape below, so this is handled first and skips
@@ -557,7 +571,14 @@ def _bench_method_block(component: str, m: dict) -> str:
             f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
         ]
         if has_ret:
-            lines.append(f"        volatile {ret_disp} {name}_sink;")
+            # `T *volatile` -- the POINTER is the volatile object, so the
+            # compiler cannot elide the call. `volatile T *` would make the
+            # pointee volatile and leave the assignment removable.
+            lines.append(
+                f"        {borrow_elem} *volatile {name}_sink;"
+                if borrow_m
+                else f"        volatile {ret_disp} {name}_sink;"
+            )
         sink = f"{name}_sink = " if has_ret else ""
         call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args})"
         lines += [
@@ -574,7 +595,14 @@ def _bench_method_block(component: str, m: dict) -> str:
 
     else:
         if has_ret:
-            lines.append(f"        volatile {ret_disp} {name}_sink;")
+            # `T *volatile` -- the POINTER is the volatile object, so the
+            # compiler cannot elide the call. `volatile T *` would make the
+            # pointee volatile and leave the assignment removable.
+            lines.append(
+                f"        {borrow_elem} *volatile {name}_sink;"
+                if borrow_m
+                else f"        volatile {ret_disp} {name}_sink;"
+            )
         sink = f"{name}_sink = " if has_ret else ""
         in_arg = f", {arg_zero}" if has_arg else ""
         call = f"{c_fn}(obj{in_arg}{param_args})"
@@ -1312,18 +1340,39 @@ def make_methods_ctx(
         # level because the param may be any integer type.
         borrow: bool = _borrow.is_borrow(m)
         borrow_writeable: bool = _borrow.is_writeable(m)
+        # gh-1310: with `record_dtype` the element is the author's POD
+        # struct, so it names the pointer type AND the view's dtype -- which
+        # is a constructed descr, not an `NPY_*` enum.
         _borrow_elem = (
-            return_type[:-2] if return_type.endswith("[]") else return_type
+            record_dtype
+            if (borrow and record_dtype)
+            else (
+                return_type[:-2] if return_type.endswith("[]") else return_type
+            )
         )
         _borrow_count_c = f"({_borrow.count_param(m)})" if borrow else ""
-        _borrow_np_enum = (
-            _NP_ENUM.get(
-                _CTYPE_META.get(_borrow_elem, {}).get("py_type", ""),
-                "NPY_CFLOAT",
+        if borrow and not record_dtype:
+            # Was `.get(..., "NPY_CFLOAT")`. Unreachable then -- both front
+            # doors refuse an unregistered element type first -- but a
+            # fallback on a lookup miss is the `_PYBUILD_FMT` shape that cost
+            # a silent `ptrdiff_t` truncation (see `_types.py`), and gh-1310
+            # adds the first caller that can reach this resolver with a type
+            # that is deliberately NOT in `_CTYPE_META`. A complex64 view
+            # over int16 data is 4x the itemsize and reads past the mapping
+            # with no error, so this fails loudly instead.
+            _borrow_py_type = _CTYPE_META.get(_borrow_elem, {}).get(
+                "py_type", ""
             )
-            if borrow
-            else ""
-        )
+            if _borrow_py_type not in _NP_ENUM:
+                raise KeyError(
+                    f"method '{name}': borrow element type "
+                    f"{_borrow_elem!r} has no numpy enum. A record element "
+                    f"type needs `record_dtype`; a builtin one must be "
+                    f"registered in `_CTYPE_META`."
+                )
+            _borrow_np_enum = _NP_ENUM[_borrow_py_type]
+        else:
+            _borrow_np_enum = ""
         # gh-657: a void-input variable_output method's `count` is the whole
         # user-facing knob — its default IS the method's zero-arg behaviour.
         # jm's own `1` was inert until gh-607 started feeding that count to
@@ -1352,6 +1401,13 @@ def make_methods_ctx(
         # structured dtype (gh-788) so both name their statics the same way
         # and `_docsync`/`_apply` have one shape to look for.
         _sid = f"{wrapper_prefix}_{name}"
+        # gh-1310: derived from `_sid`, so it is defined HERE rather than
+        # beside the other borrow slots above -- `_sid` is not set until this
+        # line, and an f-string reading it earlier is an UnboundLocalError the
+        # moment a borrow declares a record.
+        _borrow_descr_fn = (
+            f"{_sid}_get_dtype" if (borrow and record_dtype) else ""
+        )
 
         ret_disp = return_type
         _ret_elem = (
@@ -1373,7 +1429,7 @@ def make_methods_ctx(
         # the manifest having to spell it three times.
         _vo_out_src = (
             record_dtype
-            if _record.is_record_array(variable_output, record_dtype)
+            if _record.is_record_array(variable_output, record_dtype, borrow)
             else (out_type if (variable_output and out_type) else return_type)
         )
         _vo_out_elem = (
@@ -1403,7 +1459,13 @@ def make_methods_ctx(
             # scalar `return_type` and told the reader `-> complex` for an
             # array. Peer of the same branch in `_stubs.py`, and the two are
             # gated to agree.
-            _ret_ann = _pyi_ndarray(return_type)
+            # gh-1310: the element type, which `record_dtype` names when
+            # the borrow carries one -- `_pyi_ndarray` then yields
+            # `NDArray[Any]`, the same annotation the variable-output record
+            # path uses, because a record type is not in `_CTYPE_META`.
+            _ret_ann = _pyi_ndarray(
+                _borrow.element_type(record_dtype, return_type)
+            )
         elif status_return:
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
@@ -1415,7 +1477,7 @@ def make_methods_ctx(
             # record class itself (see `pyi_records` below) and names it here.
             _ret_ann = _record.public_name(m)
         elif result_fields and not _record.is_record_array(
-            variable_output, record_dtype
+            variable_output, record_dtype, borrow
         ):
             # gh-788: a record_dtype method also carries `result_fields`, but
             # they describe the dtype's columns, not a list of per-row tuples
@@ -1816,7 +1878,7 @@ def make_methods_ctx(
         # two chains disagreed and the declaration described a kernel the
         # binding never called.
         if result_fields and not _record.is_record_array(
-            variable_output, record_dtype
+            variable_output, record_dtype, borrow
         ):
             # gh-594: this is the peer of _method._build_method_prototype's
             # record branch and must render the identical signature -- params
@@ -3014,7 +3076,18 @@ def make_methods_ctx(
                 f" {_md_flags},\n"
                 f"     {_build_ml_doc(_s_doc_lines)}}},\n"
             )
-        elif result_fields:
+        elif result_fields and not _record.is_record_array(
+            variable_output, record_dtype, borrow
+        ):
+            # gh-1310: this chain never needed the guard while `record_dtype`
+            # implied `variable_output` -- such a method always took the
+            # branch above and could not reach here. A BORROWED record
+            # carries `result_fields` for the dtype's columns and reaches
+            # this branch, which would render the list-of-records kernel
+            # (`results, max_results`) for a method that lends a pointer.
+            # The fifth place that must suppress the list reading of
+            # `result_fields`, and the first one a borrow can reach.
+            #
             # gh-598: peer of _render's list-of-records builder — both go
             # through record_tuple_build so a field type converts via
             # _CTYPE_META's to_py rather than a cast-less "i" fallback.
@@ -3182,6 +3255,7 @@ def make_methods_ctx(
                         "_p",
                         _borrow_count_c,
                         _borrow_np_enum,
+                        descr_fn=_borrow_descr_fn,
                         writeable=borrow_writeable,
                         arr="_view",
                         indent="    ",
@@ -3322,7 +3396,16 @@ def make_methods_ctx(
                     f"{_p_cleanup}"
                     f"    Py_RETURN_NONE;\n"
                 )
+            # gh-1310: same rule as the variable-output record path -- the
+            # cached descr builder is file-scope and the wrapper calls it, so
+            # the two travel together or the fragment does not compile.
             wrapper = (
+                _record.dtype_c(
+                    _sid, record_dtype, _record.fields(m, doc_blocks)
+                )
+                if (borrow and record_dtype)
+                else ""
+            ) + (
                 f"static PyObject *\n"
                 f"{wrapper_prefix}_{name}({fn_sig})\n"
                 f"{{\n"

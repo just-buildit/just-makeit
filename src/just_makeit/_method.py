@@ -329,6 +329,7 @@ def _methods_c_stub_fixed(
     out_type: str | None = None,
     batch: bool = False,
     borrow: bool = False,
+    record_dtype: str = "",
     c_fn: str = "",
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
@@ -373,7 +374,8 @@ def _methods_c_stub_fixed(
         )
         return (
             f"/* <<IMPLEMENT: {name} (borrowed view) >> */\n"
-            f"{ret_disp} *\n{c_fn}({component}_state_t *state{sep})\n"
+            f"{_borrow.element_type(record_dtype, ret_disp)} *\n"
+            f"{c_fn}({component}_state_t *state{sep})\n"
             f"{{\n{sup}\n"
             f"    /* Return a pointer into the state's own memory, or NULL\n"
             f"       to raise. The caller must not use the view after the\n"
@@ -703,7 +705,7 @@ def _build_method_prototype(
     # shape (size_t count + results[]/max_results out-params, or one record
     # by value with `single`), not the generic scalar/array fallback below.
     if result_fields and not _record.is_record_array(
-        variable_output, record_dtype
+        variable_output, record_dtype, borrow
     ):
         # gh-594: the record shapes used to build their signature from
         # `arg_type` alone, silently dropping every declared `param`. The
@@ -758,7 +760,9 @@ def _build_method_prototype(
             ([("x", arg_type)] if has_arg else []) + list(params)
         )
         _bsep = ", " + ", ".join(_bparts) if _bparts else ""
-        return f"{ret_disp} *{c_fn}({component}_state_t *state{_bsep});"
+        # gh-1310: `record_dtype` names the element, so it names this pointer.
+        _belem = _borrow.element_type(record_dtype, ret_disp)
+        return f"{_belem} *{c_fn}({component}_state_t *state{_bsep});"
 
     extra_params = "".join(
         f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
@@ -1044,11 +1048,21 @@ def run(
         print(f"error: {_borrow_why}", file=sys.stderr)
         sys.exit(1)
     if record_dtype:
-        if not variable_output:
+        if not (variable_output or borrow):
+            # gh-1310: `record_dtype` names the ELEMENT TYPE. Who owns the
+            # buffer is a separate question, and the two owners are refused
+            # together above -- but both produce an ARRAY of records, so both
+            # can carry one. Requiring `variable_output` was a flag standing
+            # in for a second question: it held only while every record array
+            # happened to be variable-output.
             print(
-                "error: --record-dtype describes the ELEMENT of a "
-                "variable-output result;\n"
-                "it needs --variable-output as well.",
+                "error: --record-dtype names the ELEMENT TYPE of an array "
+                "result,\n"
+                "so it needs a result that is an array. Add "
+                "--variable-output\n"
+                "(the kernel fills a buffer sized for the call) or --borrow\n"
+                "(the kernel returns a pointer into memory the state already "
+                "owns).",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -1591,7 +1605,7 @@ def run(
                 c_fn=fn,
             )
         elif result_fields and not _record.is_record_array(
-            variable_output, record_dtype
+            variable_output, record_dtype, borrow
         ):
             stub = _methods_c_stub_result_fields(
                 object_name,
@@ -1633,6 +1647,7 @@ def run(
                 out_type,
                 batch=batch,
                 borrow=borrow,
+                record_dtype=record_dtype,
                 c_fn=fn,
             )
         if impl_body is not None:

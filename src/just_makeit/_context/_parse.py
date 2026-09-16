@@ -96,9 +96,10 @@ def capsule_new_c(
 def borrow_view_c(
     ptr_expr: str,
     count_expr: str,
-    npy_enum: str,
+    npy_enum: str = "",
     *,
     writeable: bool,
+    descr_fn: str = "",
     arr: str = "arr",
     indent: str = "    ",
 ) -> str:
@@ -170,6 +171,16 @@ def borrow_view_c(
         }
         return arr;
     """
+    if bool(npy_enum) == bool(descr_fn):
+        # Not a style preference: the element type decides which numpy
+        # constructor is correct, and a call supplying both or neither has not
+        # decided. Silently preferring one is how a structured borrow would
+        # come back as a builtin-typed view over the same bytes.
+        raise ValueError(
+            "borrow_view_c: pass exactly one of npy_enum (a builtin element "
+            "type) or descr_fn (a constructed record dtype); "
+            f"got npy_enum={npy_enum!r}, descr_fn={descr_fn!r}"
+        )
     i = indent
     ro = (
         f"{i}PyArray_CLEARFLAGS((PyArrayObject *){arr},"
@@ -177,10 +188,29 @@ def borrow_view_c(
         if not writeable
         else ""
     )
+    if descr_fn:
+        # gh-1310: a record element type has no `NPY_*` enum -- its layout is
+        # the compiler's, so it arrives as a constructed `PyArray_Descr *`
+        # from `_record.dtype_c`. `PyArray_NewFromDescr` STEALS that
+        # reference on the failure path as well as the success path, so the
+        # new reference from `_get_dtype()` balances exactly and `_descr` is
+        # never decref'd below -- the same contract the variable-output
+        # record path states, and the reason both spell it out.
+        make = (
+            f"{i}PyArray_Descr *_descr = {descr_fn}();\n"
+            f"{i}if (!_descr) return NULL;\n"
+            f"{i}PyObject *{arr} = PyArray_NewFromDescr(\n"
+            f"{i}    &PyArray_Type, _descr, 1, &_dim,\n"
+            f"{i}    NULL, (void *)({ptr_expr}), 0, NULL);\n"
+        )
+    else:
+        make = (
+            f"{i}PyObject *{arr} = PyArray_SimpleNewFromData(\n"
+            f"{i}    1, &_dim, {npy_enum}, (void *)({ptr_expr}));\n"
+        )
     return (
         f"{i}npy_intp _dim = (npy_intp){count_expr};\n"
-        f"{i}PyObject *{arr} = PyArray_SimpleNewFromData(\n"
-        f"{i}    1, &_dim, {npy_enum}, (void *)({ptr_expr}));\n"
+        f"{make}"
         f"{i}if (!{arr}) return NULL;\n"
         f"{ro}"
         f"{i}Py_INCREF(self);\n"
