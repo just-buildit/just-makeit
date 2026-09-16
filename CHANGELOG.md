@@ -1,32 +1,6 @@
 ## [Unreleased]
 
-### Fixed
-
-- **An object honoured `create_fn` but had no counterpart, so a custom creator
-    was paired with a destroyer it never agreed to (gh-1323).** `create_fn`
-    names the C jm calls to construct; the dealloc path emitted
-    `<comp>_destroy` regardless. One declaration, one direction.
-
-    Not a naming inconvenience: doppler's ring `create` builds a double-mapped
-    region (`memfd_create` plus two `mmap`s of the same pages) and its
-    destroyer unmaps it, while jm's scaffolded counterpart is `free(state)` on
-    a pointer that was never `malloc`'d, with the mapping never released.
-    Under `header_only` the author hits the compiler first — an ordinary
-    component gets the `free()` version scaffolded into `_core.c`, so it
-    builds, links, and is wrong at runtime.
-
-    `_destroy.c_fn` is now the one resolver, threaded into every emitter
-    (each used to build the name itself): an explicit `fn` in the
-    `[<comp>.destroy]` table wins, otherwise it is **derived** from `create_fn`
-    when that ends in `_create` (`dp_f32_create` → `dp_f32_destroy`), otherwise
-    `<comp>_destroy` as before — byte-identical for every project that does not
-    set `create_fn`. A creator with no `_create` suffix is not guessed at:
-    naming something plausible that does not exist is worse than the default.
-
-    Gated by the property gh-1323 asked for — the constructor and destructor
-    the binding calls **share a prefix** — which catches the mismatch without
-    compiling, since both names render fine and simply are not the same
-    function.
+## [0.76.0] — 2026-09-16
 
 ### Added
 
@@ -47,89 +21,6 @@
     Deliberately simpler than doppler's ring: `wait()` refuses a wrapping span
     instead of double-mapping the memory. That mapping is a property of the
     ring, not of the features under test.
-
-### Fixed
-
-- **`header_only` composed with nothing that writes a C body (gh-1321).**
-    gh-1311 scaffolds a component with no `<comp>_core.c`; every command that
-    adds a body still targeted that file. `jm method` died with a raw
-    `FileNotFoundError` on it, and `jm property` told the author to implement
-    the getter there — a path that cannot exist.
-
-    Worse on a **module** object, where `--header-only` was broken four ways at
-    once and the result did not configure: `header_only` was never recorded in
-    the manifest (the module path's `add_component` did not forward the key, so
-    it was silently absent), a `_core.c` was written that no target compiles,
-    and `$<TARGET_OBJECTS:<comp>_core>` was emitted for an INTERFACE library —
-    a hard CMake **generate** error, the exact failure gh-1311 exists to
-    prevent. doppler's ring is a module, so that was the shape that mattered
-    and the one nothing exercised.
-
-    A new C body now goes `static inline` into the header through one writer,
-    `_init.append_component_body`, reusing gh-1311's `staticize` rather than a
-    second copy of it, and the guidance names the file it was actually written
-    into. The header stays sacred: an author's implementation survives
-    `jm apply`.
-
-    Gated over **both** shapes. The module leg configures a fresh build dir
-    rather than reading `CMakeLists.txt`, because a generator-expression error
-    is invisible to a text scan. gh-1311's suite created a header-only object
-    and stopped — it never added anything afterwards, so every writer that
-    assumed `_core.c` was out of frame.
-
-### Changed
-
-- **The `nco_tone` example fetches doppler's LATEST release instead of
-    scanning the machine.** The example is for jm/doppler *users*, so what
-    happens to be installed on the box must not decide what it builds against —
-    and it did. `_find_doppler_prefix` searched `/usr/local`, `/usr`,
-    `~/.local/doppler`, `~/.local` and `~/doppler/build` *before* the download,
-    so on any machine with doppler present the pinned version was never
-    exercised.
-
-    Measured 2026-09-16: a two-week-old `~/doppler/build` shadowed the pin at
-    **0.46.0** while CI ran **0.49.0** and the pin said **0.49.0** — three
-    paths, three answers — and the run reported it as `version unknown`, so
-    nothing in the output revealed the disagreement. Uninstalling the offending
-    prefix did not fix it; it promoted the next candidate.
-
-    Now: resolve the latest release, download it to
-    `~/.cache/jm-tests/doppler/v<ver>/<platform>`, build against that. CI
-    downloads the latest release too, so the two agree **by construction**
-    rather than while someone remembers to bump a constant.
-    `_DOPPLER_VERSION` is the fallback when the release list is unreachable,
-    which is what keeps `make lint`'s currency report worth running. A
-    machine-local doppler is now opt-**in** via `--doppler-prefix`, which is
-    explicit and printed, rather than opt-out by accident.
-
-- **gh-434's prefix validation and the version floor moved to
-    `--doppler-prefix`.** Both were written for the discovery that is now gone,
-    and neither hazard went with it: a person can pass exactly the same two
-    directories, and it is worse there, because they chose the path and the
-    cmake error never mentions it. `why_prefix_unusable` refuses a config-only
-    build tree (cmake hard-fails at *configure*) and a below-floor doppler
-    (fails at *compile* with `too many arguments to nco_steps_u32`) and names
-    the fix in both cases. Being a pure function of a path, it also retired a
-    module-level `skipif` that disabled those tests on any machine with a
-    system-wide doppler — the machines most likely to have the bug.
-
-### Fixed
-
-- **`_prefix_version` could not read a source build tree's version.** It looked
-    only in `lib/pkgconfig/` and `lib64/pkgconfig/`, but a cmake build dir
-    writes `doppler.pc` at its root — and `~/doppler/build` was an explicit
-    candidate, so that layout was the expected local case. Every such prefix
-    reported "version unknown", and an unknown version **skips the floor
-    check**: the floor, described in that file as the part with teeth, had none
-    for the commonest developer prefix.
-
-- **`latest_release` had two implementations about to exist.**
-    `scripts/check_doppler_pin.py` now imports it from the example rather than
-    carrying its own GitHub-API copy — the same direction the pin already flows
-    (that script reads `_DOPPLER_VERSION` out of that file). Gated, because two
-    copies of one primitive drift.
-
-### Added
 
 - **A component's C may live entirely in its header — `header_only = true`
     (gh-1311).** A macro template or a family of `static inline` functions has
@@ -222,7 +113,139 @@
     pointer. The line is *who knows* — guessing about the caller stays
     forbidden; a contract the author states does not.
 
+- **`[project] version` may be omitted from `just-makeit.toml`, deferring to
+    `pyproject.toml` (gh-1283).** The manifest carried a second copy of a value
+    that already lives in `pyproject.toml`, and jm compared the two rather than
+    reading one -- making the manifest a version carrier every release has to
+    remember. Omitting the key was no escape: it defaulted to `0.1.0`, so
+    absence was indistinguishable from declaring `0.1.0`, and a project that
+    deleted the duplicate got a permanently red `status --check` reporting
+    drift against a default it had never written. Absence now means **defer**.
+    A manifest that declares a version is untouched and `pyproject.toml` is not
+    consulted, so this is opt-in by deletion and needs no new key; `jm_version`
+    is unaffected, since it pins the tool rather than the project.
+
+    The effect on the gh-1141 drift check is the point: `pyproject.toml` leaves
+    the `VERSION` finding entirely, because the file jm reads the version
+    *from* cannot disagree with it -- the class made unrepresentable rather
+    than merely detected. Expect the finding count to go *up* on a project
+    whose create-only copies (`CMakeLists.txt`, `Doxyfile`,
+    `native/src/<pkg>_lib.c`, `bootstrap.toml`) were stale: the old `0.1.0`
+    default had been masking them by agreeing with them.
+
+    Resolved in `_config.load` and folded back in `_config.save`, the
+    symmetric pair gh-999 uses for `[[group]]` expansion. `load` is the one
+    place every reader passes through, so the deferral cannot reach some of
+    `project_version`'s thirteen call sites and not others; the `save` half is
+    load-bearing, because `_dump`'s `[project]` loop emits every key it is
+    handed and would otherwise write the resolved value back into the manifest
+    on the first mutating command -- recreating the carrier in the file the
+    author had just cleaned out.
+
+### Changed
+
+- **The `nco_tone` example fetches doppler's LATEST release instead of
+    scanning the machine.** The example is for jm/doppler *users*, so what
+    happens to be installed on the box must not decide what it builds against —
+    and it did. `_find_doppler_prefix` searched `/usr/local`, `/usr`,
+    `~/.local/doppler`, `~/.local` and `~/doppler/build` *before* the download,
+    so on any machine with doppler present the pinned version was never
+    exercised.
+
+    Measured 2026-09-16: a two-week-old `~/doppler/build` shadowed the pin at
+    **0.46.0** while CI ran **0.49.0** and the pin said **0.49.0** — three
+    paths, three answers — and the run reported it as `version unknown`, so
+    nothing in the output revealed the disagreement. Uninstalling the offending
+    prefix did not fix it; it promoted the next candidate.
+
+    Now: resolve the latest release, download it to
+    `~/.cache/jm-tests/doppler/v<ver>/<platform>`, build against that. CI
+    downloads the latest release too, so the two agree **by construction**
+    rather than while someone remembers to bump a constant.
+    `_DOPPLER_VERSION` is the fallback when the release list is unreachable,
+    which is what keeps `make lint`'s currency report worth running. A
+    machine-local doppler is now opt-**in** via `--doppler-prefix`, which is
+    explicit and printed, rather than opt-out by accident.
+
+- **gh-434's prefix validation and the version floor moved to
+    `--doppler-prefix`.** Both were written for the discovery that is now gone,
+    and neither hazard went with it: a person can pass exactly the same two
+    directories, and it is worse there, because they chose the path and the
+    cmake error never mentions it. `why_prefix_unusable` refuses a config-only
+    build tree (cmake hard-fails at *configure*) and a below-floor doppler
+    (fails at *compile* with `too many arguments to nco_steps_u32`) and names
+    the fix in both cases. Being a pure function of a path, it also retired a
+    module-level `skipif` that disabled those tests on any machine with a
+    system-wide doppler — the machines most likely to have the bug.
+
 ### Fixed
+
+- **An object honoured `create_fn` but had no counterpart, so a custom creator
+    was paired with a destroyer it never agreed to (gh-1323).** `create_fn`
+    names the C jm calls to construct; the dealloc path emitted
+    `<comp>_destroy` regardless. One declaration, one direction.
+
+    Not a naming inconvenience: doppler's ring `create` builds a double-mapped
+    region (`memfd_create` plus two `mmap`s of the same pages) and its
+    destroyer unmaps it, while jm's scaffolded counterpart is `free(state)` on
+    a pointer that was never `malloc`'d, with the mapping never released.
+    Under `header_only` the author hits the compiler first — an ordinary
+    component gets the `free()` version scaffolded into `_core.c`, so it
+    builds, links, and is wrong at runtime.
+
+    `_destroy.c_fn` is now the one resolver, threaded into every emitter
+    (each used to build the name itself): an explicit `fn` in the
+    `[<comp>.destroy]` table wins, otherwise it is **derived** from `create_fn`
+    when that ends in `_create` (`dp_f32_create` → `dp_f32_destroy`), otherwise
+    `<comp>_destroy` as before — byte-identical for every project that does not
+    set `create_fn`. A creator with no `_create` suffix is not guessed at:
+    naming something plausible that does not exist is worse than the default.
+
+    Gated by the property gh-1323 asked for — the constructor and destructor
+    the binding calls **share a prefix** — which catches the mismatch without
+    compiling, since both names render fine and simply are not the same
+    function.
+
+- **`header_only` composed with nothing that writes a C body (gh-1321).**
+    gh-1311 scaffolds a component with no `<comp>_core.c`; every command that
+    adds a body still targeted that file. `jm method` died with a raw
+    `FileNotFoundError` on it, and `jm property` told the author to implement
+    the getter there — a path that cannot exist.
+
+    Worse on a **module** object, where `--header-only` was broken four ways at
+    once and the result did not configure: `header_only` was never recorded in
+    the manifest (the module path's `add_component` did not forward the key, so
+    it was silently absent), a `_core.c` was written that no target compiles,
+    and `$<TARGET_OBJECTS:<comp>_core>` was emitted for an INTERFACE library —
+    a hard CMake **generate** error, the exact failure gh-1311 exists to
+    prevent. doppler's ring is a module, so that was the shape that mattered
+    and the one nothing exercised.
+
+    A new C body now goes `static inline` into the header through one writer,
+    `_init.append_component_body`, reusing gh-1311's `staticize` rather than a
+    second copy of it, and the guidance names the file it was actually written
+    into. The header stays sacred: an author's implementation survives
+    `jm apply`.
+
+    Gated over **both** shapes. The module leg configures a fresh build dir
+    rather than reading `CMakeLists.txt`, because a generator-expression error
+    is invisible to a text scan. gh-1311's suite created a header-only object
+    and stopped — it never added anything afterwards, so every writer that
+    assumed `_core.c` was out of frame.
+
+- **`_prefix_version` could not read a source build tree's version.** It looked
+    only in `lib/pkgconfig/` and `lib64/pkgconfig/`, but a cmake build dir
+    writes `doppler.pc` at its root — and `~/doppler/build` was an explicit
+    candidate, so that layout was the expected local case. Every such prefix
+    reported "version unknown", and an unknown version **skips the floor
+    check**: the floor, described in that file as the part with teeth, had none
+    for the commonest developer prefix.
+
+- **`latest_release` had two implementations about to exist.**
+    `scripts/check_doppler_pin.py` now imports it from the example rather than
+    carrying its own GitHub-API copy — the same direction the pin already flows
+    (that script reads `_DOPPLER_VERSION` out of that file). Gated, because two
+    copies of one primitive drift.
 
 - **A `borrow` method generated a benchmark that does not compile (gh-1312,
     found by gh-1310).** The bench face was never taught about `borrow`, so it
@@ -603,37 +626,6 @@
     not the templates, where all 19 `/*` hits are jm's own `/*<<token>>*/`
     placeholder -- runs over a project carrying every C-emitting face, and
     over every bundled example's scaffolded tree.
-
-### Added
-
-- **`[project] version` may be omitted from `just-makeit.toml`, deferring to
-    `pyproject.toml` (gh-1283).** The manifest carried a second copy of a value
-    that already lives in `pyproject.toml`, and jm compared the two rather than
-    reading one -- making the manifest a version carrier every release has to
-    remember. Omitting the key was no escape: it defaulted to `0.1.0`, so
-    absence was indistinguishable from declaring `0.1.0`, and a project that
-    deleted the duplicate got a permanently red `status --check` reporting
-    drift against a default it had never written. Absence now means **defer**.
-    A manifest that declares a version is untouched and `pyproject.toml` is not
-    consulted, so this is opt-in by deletion and needs no new key; `jm_version`
-    is unaffected, since it pins the tool rather than the project.
-
-    The effect on the gh-1141 drift check is the point: `pyproject.toml` leaves
-    the `VERSION` finding entirely, because the file jm reads the version
-    *from* cannot disagree with it -- the class made unrepresentable rather
-    than merely detected. Expect the finding count to go *up* on a project
-    whose create-only copies (`CMakeLists.txt`, `Doxyfile`,
-    `native/src/<pkg>_lib.c`, `bootstrap.toml`) were stale: the old `0.1.0`
-    default had been masking them by agreeing with them.
-
-    Resolved in `_config.load` and folded back in `_config.save`, the
-    symmetric pair gh-999 uses for `[[group]]` expansion. `load` is the one
-    place every reader passes through, so the deferral cannot reach some of
-    `project_version`'s thirteen call sites and not others; the `save` half is
-    load-bearing, because `_dump`'s `[project]` loop emits every key it is
-    handed and would otherwise write the resolved value back into the manifest
-    on the first mutating command -- recreating the carrier in the file the
-    author had just cleaned out.
 
 ### Docs
 
