@@ -2,8 +2,8 @@
 
 ### Fixed
 
-- **The "returns an ARRAY of records" predicate was spelled inline in four
-    places (gh-1312).** `record_dtype` together with `variable_output` is what
+- **The "returns an ARRAY of records" predicate was spelled inline in five
+    places, not the four that were documented (gh-1312).** `record_dtype` together with `variable_output` is what
     distinguishes a structured ndarray from a `list[tuple]`, and each of
     `_method`'s prototype builder, `_method`'s stub dispatch, and
     `_context/_methods`' declaration and return-annotation chains asked it in
@@ -11,10 +11,25 @@
     records that it did, when two of those chains disagreed and the generated
     declaration described a kernel the binding never called.
 
+    **The fifth was `_stubs.py`**, one of the two `.pyi` generators, and it
+    hid because it asks in its own local names — `m_var and   m.get("record_dtype")` rather than `variable_output and record_dtype`. A
+    gate keyed to the literal spelling walked past it and reported that no
+    module asked inline while one did, so the gate now keys on the two
+    **terms**: a `record_dtype` reference conjoined with a variable-output
+    flag, whatever either is called locally.
+
+    The two `.pyi` generators had also **diverged**: one asked
+    `not record_dtype` and the other `not (variable_output and record_dtype)`,
+    which differ when `record_dtype` is declared without `variable_output`.
+    Measured: the CLI and `apply` both refuse that combination, so the
+    divergence was unreachable rather than live. Both were still routed
+    through the predicate — two peers agreeing only because a validator in a
+    third file rejects the differing input is an arrangement that breaks the
+    moment the validator relaxes.
+
     Extracted as `_record.is_record_array`, the peer of the existing
-    `_record.is_record`. Behaviour is unchanged; what changes is that a fifth
-    shape widens the predicate in one place instead of four. Gated by a source
-    scan, so the inline spelling cannot come back.
+    `_record.is_record`. Behaviour is unchanged; what changes is that a new
+    shape widens the predicate in one place instead of five.
 
 - **`PyArray_SetBaseObject` was emitted unchecked from two of its three call
     sites, leaking a reference and returning an unpinned view on failure

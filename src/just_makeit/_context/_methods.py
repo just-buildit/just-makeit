@@ -1385,12 +1385,22 @@ def make_methods_ctx(
             # checker and undocumented to the reader. The stub now declares the
             # record class itself (see `pyi_records` below) and names it here.
             _ret_ann = _record.public_name(m)
-        elif result_fields and not record_dtype:
+        elif result_fields and not _record.is_record_array(
+            variable_output, record_dtype
+        ):
             # gh-788: a record_dtype method also carries `result_fields`, but
             # they describe the dtype's columns, not a list of per-row tuples
             # -- it returns ONE structured ndarray. Without this guard the
             # richer shape is shadowed by the older one that merely mentions
             # the same key.
+            #
+            # gh-1312: this used to read `not record_dtype`, dropping the
+            # `variable_output` term its peer in `_stubs.py` carries. The two
+            # agreed only because a `record_dtype` without `variable_output`
+            # is refused up front (measured: both the CLI and `apply` reject
+            # it), so the divergence was unreachable rather than harmless.
+            # Both now ask `_record.is_record_array`, so they agree by
+            # construction instead of by a validator in another file.
             _ret_ann = "list[tuple]"
         elif variable_output:
             # Only the record case reads the resolved element type here; the

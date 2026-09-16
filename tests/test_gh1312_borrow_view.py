@@ -280,16 +280,40 @@ class TestTheRecordArrayPredicateHasOneHome:
 
     _SRC = Path(__file__).parent.parent / "src" / "just_makeit"
 
+    #: Every module that asks the question. `_stubs.py` was missed on the
+    #: first pass -- it spells the predicate with its OWN local names
+    #: (`m_var and m.get("record_dtype")`), so a scan keyed to one module's
+    #: variable names did not see it. CLAUDE.md says "four places"; there
+    #: are five, and the fifth is one of the two .pyi generators.
+    _ASKERS = ("_method.py", "_context/_methods.py", "_stubs.py")
+
     def _sources(self):
-        for rel in ("_method.py", "_context/_methods.py"):
+        for rel in self._ASKERS:
             yield rel, (self._SRC / rel).read_text()
 
     def test_no_module_spells_the_predicate_inline(self):
+        """`record_dtype` conjoined with a variable-output flag, anywhere
+        outside `_record`.
+
+        Keyed on the two TERMS rather than on one module's local variable
+        names, which is what hid the fifth site: `_stubs.py` spells it
+        `m_var and m.get("record_dtype")`, so a scan looking for the literal
+        `variable_output and record_dtype` walked straight past it.
+
+        `record_dtype and i == 0` is a different question (which output is
+        the record) and is not matched -- the second term has to be a
+        variable-output flag.
+        """
+        var_flag = re.compile(r"\b\w*var(?:iable_output)?\w*\b")
         offenders = []
         for rel, text in self._sources():
             for n, line in enumerate(text.splitlines(), 1):
                 code = line.split("#", 1)[0]
-                if "variable_output and record_dtype" in code:
+                if "record_dtype" not in code or "is_record_array" in code:
+                    continue
+                if not re.search(r"\band\b", code):
+                    continue
+                if var_flag.search(code.replace("record_dtype", "")):
                     offenders.append(f"{rel}:{n}: {line.strip()}")
         assert not offenders, "\n".join(offenders)
 
