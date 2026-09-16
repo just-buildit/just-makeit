@@ -353,12 +353,27 @@ class TestTheRecordArrayPredicateHasOneHome:
         for rel, text in self._sources():
             assert "is_record_array(" in text, rel
 
-    def test_the_predicate_answers_the_three_shapes(self):
+    def test_the_predicate_answers_the_shapes(self):
         from just_makeit import _record
 
-        assert _record.is_record_array(True, "dp_tlm_rec_t")
-        assert not _record.is_record_array(True, "")
-        assert not _record.is_record_array(False, "dp_tlm_rec_t")
+        # variable_output owns the buffer...
+        assert _record.is_record_array(True, "dp_tlm_rec_t", False)
+        # ...and gh-1310: so does a borrow, with the same element type.
+        assert _record.is_record_array(False, "dp_tlm_rec_t", True)
+        # Neither owner, or no record type, is not a record array.
+        assert not _record.is_record_array(True, "", False)
+        assert not _record.is_record_array(False, "dp_tlm_rec_t", False)
+        assert not _record.is_record_array(False, "", True)
+
+    def test_the_borrow_argument_is_required(self):
+        """gh-1310: a call site that has not heard of `borrow` must FAIL,
+        not quietly answer `False` and render the `list[tuple]` shape for a
+        borrowed record -- the drift this predicate was extracted to end,
+        arriving through the fix for it."""
+        from just_makeit import _record
+
+        with pytest.raises(TypeError):
+            _record.is_record_array(True, "dp_tlm_rec_t")
 
 
 class TestTheBorrowShape:

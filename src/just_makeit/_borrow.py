@@ -137,6 +137,38 @@ def count_param(m: dict) -> str:
     return ""
 
 
+def element_type(record_dtype: object, return_type: str) -> str:
+    """The C type of ONE element of the borrowed view.
+
+    gh-1310. With ``record_dtype`` the element is the author's POD struct, so
+    it names the pointer the kernel returns (``iq_pair_t *ring_wait(...)``),
+    the cast the binding makes, and the dtype the view carries. Without it the
+    element is the method's ``return_type``.
+
+    One home because three faces ask: the sacred ``_core.h`` prototype, the
+    ``_core.c`` stub written against it, and the binding that wraps the
+    pointer. jm's record history is three copies of one rule drifting until
+    the declaration described a kernel the binding never called -- the same
+    reason :func:`_record.is_record_array` was extracted.
+
+    The ``[]`` strip is here rather than at the call sites because a borrow's
+    ``return_type`` is stored scalar but reaches this through paths that
+    spell it either way.
+
+    Examples
+    --------
+    >>> element_type("iq_pair_t", "float _Complex")
+    'iq_pair_t'
+    >>> element_type("", "float _Complex")
+    'float _Complex'
+    >>> element_type("", "int16_t[]")
+    'int16_t'
+    """
+    if record_dtype:
+        return str(record_dtype)
+    return return_type[:-2] if return_type.endswith("[]") else return_type
+
+
 def why_not(m: dict) -> str:
     """Why this borrow declaration cannot be generated, or ``""``.
 

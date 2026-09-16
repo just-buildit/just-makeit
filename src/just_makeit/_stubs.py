@@ -2047,7 +2047,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # would let the annotation disagree with the array the binding
             # actually builds, which is the divergence this shape is
             # supposed to close.
-            ret_ann = f"NDArray[{_np(m_ret)}]"
+            # gh-1310: the element type -- `record_dtype` names it when the
+            # borrow carries one. Peer of the same call in the annotation
+            # chain; both go through `_borrow.element_type`.
+            ret_ann = (
+                "NDArray[Any]"
+                if m.get("record_dtype")
+                else f"NDArray[{_np(m_ret)}]"
+            )
         elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m.get("status_return"):
@@ -2059,7 +2066,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # The two keys are mutually exclusive at declaration time.
             ret_ann = "None"
         elif m_result_fields and not _record.is_record_array(
-            m_var, m.get("record_dtype")
+            m_var, m.get("record_dtype"), m.get("borrow")
         ):
             # gh-244: a `single` method returns ONE record, not a list of them.
             # gh-646: and that record is a declared class, not a bare tuple —

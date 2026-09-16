@@ -84,7 +84,9 @@ def is_record(m: dict) -> bool:
     return bool(m.get("single")) and bool(m.get("result_fields"))
 
 
-def is_record_array(variable_output: object, record_dtype: object) -> bool:
+def is_record_array(
+    variable_output: object, record_dtype: object, borrow: object
+) -> bool:
     """True when a method returns an ARRAY of records — a structured ndarray.
 
     The peer of :func:`is_record`, which answers the same question for a
@@ -99,19 +101,38 @@ def is_record_array(variable_output: object, record_dtype: object) -> bool:
     it has: gh-788's note records that when two of those chains disagreed, the
     generated declaration described a kernel the binding never called.
 
-    Taking the two flags rather than the method dict, because that is what all
-    four call sites have in scope at the point they ask.
+    Taking the flags rather than the method dict, because that is what all
+    call sites have in scope at the point they ask.
+
+    **``record_dtype`` names the ELEMENT TYPE; it does not say who owns the
+    buffer** (gh-1310). It required ``variable_output`` until a borrow needed
+    the same element type, because every record array that existed when it was
+    written happened to be variable-output — one flag standing in for a second
+    question, the same shape as ``allow_none`` meaning "is this a ctor". The
+    two owners stay mutually exclusive (``_borrow.why_not`` refuses them
+    together); what is shared is the *shape* of the result.
+
+    ``borrow`` is a **required** argument rather than one defaulting to
+    ``False`` on purpose. A call site that had not heard of it would otherwise
+    keep answering ``False`` for a borrowed record and silently render the
+    ``list[tuple]`` shape — which is exactly the drift this predicate was
+    extracted to end, arriving through the fix for it. Required, a stale
+    caller is a ``TypeError`` the suite reports by name.
 
     Examples
     --------
-    >>> is_record_array(True, "dp_tlm_rec_t")
+    >>> is_record_array(True, "dp_tlm_rec_t", False)
     True
-    >>> is_record_array(False, "dp_tlm_rec_t")   # a bare record_dtype
+    >>> is_record_array(False, "dp_tlm_rec_t", True)    # a borrowed record
+    True
+    >>> is_record_array(False, "dp_tlm_rec_t", False)   # a bare record_dtype
     False
-    >>> is_record_array(True, "")                # plain variable_output
+    >>> is_record_array(True, "", False)                # plain variable_output
+    False
+    >>> is_record_array(False, "", True)                # a scalar borrow
     False
     """
-    return bool(variable_output) and bool(record_dtype)
+    return bool(record_dtype) and (bool(variable_output) or bool(borrow))
 
 
 def public_name(m: dict) -> str:
