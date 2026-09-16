@@ -81,6 +81,55 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 _DEFAULT_CATEGORY = "RuntimeError"
 
 
+def c_fn(component: str, spec: dict, create_fn: str = "") -> str:
+    """The C function the binding calls to DESTROY the object.
+
+    gh-1323. `create_fn` names the C jm calls to construct, and until now
+    nothing named its counterpart -- the dealloc path emitted
+    ``<comp>_destroy`` regardless of who created the thing. One declaration,
+    one direction, and the two halves of an object's lifetime decided by
+    different things.
+
+    That is not a naming inconvenience. doppler's ring `create` builds a
+    double-mapped region (``memfd_create`` plus two ``mmap``s of the same
+    pages) and its destroyer unmaps it; jm's scaffolded counterpart is
+    ``free(state)`` on a pointer that was never ``malloc``'d, with the mapping
+    never released. Under `header_only` the author hits the compiler first
+    (``implicit declaration of 'f32_buffer_destroy'``), which is the GOOD case
+    -- an ordinary component gets the ``free()`` version scaffolded into
+    ``_core.c``, so it builds, links, and is wrong at runtime.
+
+    Resolution order, so the pair comes from ONE place wherever possible:
+
+    1. an explicit ``fn`` in the ``[<comp>.destroy]`` table;
+    2. **derived from `create_fn`** when that ends in ``_create`` --
+       ``dp_f32_create`` implies ``dp_f32_destroy``, which is what a reader
+       expects and what every C API this binds actually does;
+    3. ``<comp>_destroy``, the historical name, when there is no `create_fn`.
+
+    Deriving rather than defaulting is the point: an author who names the
+    constructor has already said which C API owns this object, and making them
+    say it twice is how the two drift apart.
+
+    Examples
+    --------
+    >>> c_fn("f32_buffer", {}, "dp_f32_create")
+    'dp_f32_destroy'
+    >>> c_fn("f32_buffer", {"fn": "dp_f32_release"}, "dp_f32_create")
+    'dp_f32_release'
+    >>> c_fn("engine", {}, "")
+    'engine_destroy'
+    >>> c_fn("engine", {}, "spawn_engine")   # not <prefix>_create
+    'engine_destroy'
+    """
+    declared = str(spec.get("fn") or "")
+    if declared:
+        return declared
+    if create_fn.endswith("_create"):
+        return create_fn[: -len("_create")] + "_destroy"
+    return f"{component}_destroy"
+
+
 def validate_destroy_spec(
     component: str, spec: dict, methods: list[dict] | None = None
 ) -> None:
@@ -139,7 +188,19 @@ def validate_destroy_spec(
     if not spec:
         return
 
-    known = {"name", "aliases", "returns", "error", "error_message", "exit"}
+    # gh-1323: `fn` names the C destructor, the counterpart of the object's
+    # `create_fn`. Without it the dealloc path emitted `<comp>_destroy`
+    # whoever built the thing, so a custom creator was paired with a
+    # destroyer it never agreed to.
+    known = {
+        "name",
+        "aliases",
+        "returns",
+        "error",
+        "error_message",
+        "exit",
+        "fn",
+    }
     unknown = sorted(set(spec) - known)
     if unknown:
         raise ValueError(
@@ -276,7 +337,10 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
 
 
 def _teardown_body(
-    component: str, spec: dict, exit_method: dict | None = None
+    component: str,
+    spec: dict,
+    exit_method: dict | None,
+    dfn: str,
 ) -> str:
     """The shared ``close()``/``__exit__`` body.
 
@@ -292,7 +356,7 @@ def _teardown_body(
     if spec.get("returns") != "int":
         return (
             "    if (self->handle) {\n"
-            f"        {component}_destroy(self->handle);\n"
+            f"        {dfn}(self->handle);\n"
             "        self->handle = NULL;\n"
             "    }\n"
             "    Py_RETURN_NONE;\n"
@@ -300,15 +364,17 @@ def _teardown_body(
     if exit_method:
         category, _inherited_msg = _inherited_error(spec, exit_method)
         message = _inherited_msg or _DEFAULT_MSG.format(component=component)
-        return _teardown_int_body(component, category, message)
+        return _teardown_int_body(component, category, message, dfn)
     category = spec.get("error") or _DEFAULT_CATEGORY
     message = spec.get("error_message") or _DEFAULT_MSG.format(
         component=component
     )
-    return _teardown_int_body(component, category, message)
+    return _teardown_int_body(component, category, message, dfn)
 
 
-def _teardown_int_body(component: str, category: str, message: str) -> str:
+def _teardown_int_body(
+    component: str, category: str, message: str, dfn: str
+) -> str:
     """The fallible teardown block, once — inherited and declared alike.
 
     Extracted so the gh-805 §H inheritance path and the ordinary declared
@@ -318,7 +384,7 @@ def _teardown_int_body(component: str, category: str, message: str) -> str:
     """
     return (
         "    if (self->handle) {\n"
-        f"        int rc = {component}_destroy(self->handle);\n"
+        f"        int rc = {dfn}(self->handle);\n"
         "        /* gh-541: clear the handle before reporting, so a second\n"
         "           call is a no-op rather than a double free — the state is\n"
         "           released whatever the status says. */\n"
@@ -450,6 +516,7 @@ def make_destroy_ctx(
     spec: "dict | None",
     methods: "list[dict] | None",
     class_name: str = "",
+    create_fn: str = "",
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -524,6 +591,10 @@ def make_destroy_ctx(
     True
     """
     spec = dict(spec or {})
+    # gh-1323: ONE resolution of "which C function destroys this", threaded
+    # into every emitter below. Each used to build `<comp>_destroy` itself, so
+    # `create_fn` could name a constructor whose counterpart jm never called.
+    dfn = c_fn(component, spec, create_fn)
     validate_destroy_spec(component, spec)
     fallible = spec.get("returns") == "int"
 
@@ -537,14 +608,11 @@ def make_destroy_ctx(
             "           must not be clobbered. Discarding the status is the\n"
             "           only correct choice here; the explicit teardown and\n"
             "           __exit__ paths do report it. */\n"
-            f"        (void){component}_destroy(self->handle);\n"
+            f"        (void){dfn}(self->handle);\n"
             "    }\n"
         )
     else:
-        dealloc = (
-            "    if (self->handle)\n"
-            f"        {component}_destroy(self->handle);\n"
-        )
+        dealloc = f"    if (self->handle)\n        {dfn}(self->handle);\n"
 
     # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
     # BEFORE the teardown body, because the destructor inherits the
@@ -574,7 +642,7 @@ def make_destroy_ctx(
                 f"Declared: {declared or 'none'}."
             )
 
-    body = _teardown_body(component, spec, exit_method or None)
+    body = _teardown_body(component, spec, exit_method or None, dfn)
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.

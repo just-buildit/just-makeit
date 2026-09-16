@@ -229,6 +229,8 @@ def component_ctx(
             C.destroy_spec(cfg, object_name),
             C.methods(cfg, object_name),
             class_name=C.class_name(cfg, object_name) or "",
+            # gh-1323: pair the destructor with the declared creator.
+            create_fn=C.object_create_fn(cfg, object_name) or "",
         )
     )
     ctx.update(
