@@ -18,6 +18,7 @@ Public API:
 
 from ._sample import make_sample_ctx, resolve_return_type
 from ._state import (
+    apply_header_only,
     make_state_ctx,
     state_accessor_stubs,
     _pyi_examples_block,
@@ -55,6 +56,7 @@ def bench_todo_for_functions(component: str, functions: "list[str]") -> str:
 
 
 __all__ = [
+    "apply_header_only",
     "make_sample_ctx",
     "resolve_return_type",
     "make_state_ctx",

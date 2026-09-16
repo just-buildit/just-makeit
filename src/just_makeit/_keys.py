@@ -47,6 +47,10 @@ OBJECT_KEYS = frozenset(
         "no_step",
         "no_reset",
         "opaque_state",
+        # gh-1311: the core is entirely `static inline` in the
+        # header, so there is no `_core.c` to scaffold and the CMake
+        # core library is INTERFACE rather than OBJECT.
+        "header_only",
         "process_global",
         "serializable",
         "streamable",

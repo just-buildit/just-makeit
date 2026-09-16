@@ -1,9 +1,4 @@
-# OBJECT library — pure C core, no Python dependency.
-# Linked into both the Python DSO and the combined libmy_dsp.so.
-add_library(<<component>>_core OBJECT <<component>>_core.c)
-target_include_directories(<<component>>_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/native/inc
-    ${CMAKE_SOURCE_DIR}/native/inc/<<component>>)
+<<component_core_decl>>
 <<extra_include_dirs_on_core>><<extra_link_on_core>>
 if(BUILD_PYTHON)
 Python3_add_library(<<component>> MODULE WITH_SOABI <<component>>_ext.c<<extra_ext_sources>>)

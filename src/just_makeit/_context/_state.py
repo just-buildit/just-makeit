@@ -1528,6 +1528,7 @@ def _pyi_examples_block(
     py_create_args: str,
     Component: str,
     no_reset: bool = False,
+    header_only: bool = False,
     init_params: "list | None" = None,
 ) -> str:
     """Build an indented ``Examples`` section for a .pyi class docstring.
@@ -2014,6 +2015,148 @@ def _apply_no_reset(ctx: dict, no_reset: bool) -> dict:
     return ctx
 
 
+#: Slots whose text is a DECLARATION in the sacred header, paired with the
+#: definition slot that carries the same function's body. Under
+#: ``header_only`` the declaration is dropped and the definition moves into
+#: the header as ``static inline`` -- see :func:`apply_header_only`.
+_HEADER_ONLY_DECL_SLOTS = (
+    "builtin_reset_decl",
+    "steps_c_decl",
+    "getter_setter_decls",
+)
+
+#: Definition slots, in the order the header should carry them.
+_HEADER_ONLY_DEF_SLOTS = (
+    "reset_c_open",
+    "reset_assignments",
+    "reset_c_close",
+    "steps_c_impl",
+    "getter_setter_impls",
+)
+
+
+def apply_header_only(ctx: dict, header_only: bool) -> dict:
+    """Move the core's definitions into the header as ``static inline``.
+
+    gh-1311, and the peer of :func:`_apply_no_reset` in shape -- but NOT in
+    placement, which is the thing to get right. ``_apply_no_reset`` runs
+    inside ``make_state_ctx`` because every reset slot is that builder's own.
+    This one is not: ``steps_c_decl`` and ``steps_c_impl`` come from
+    ``make_step_ctx``, which runs AFTER. Called from there it blanked slots
+    that did not exist yet and read a ``component`` the caller had not set,
+    so the header kept its ``steps()`` prototype and the inline definitions
+    were emitted for ``_state_t *_create`` -- measured, not reasoned.
+
+    So it runs where the FULL context is assembled, immediately before the
+    templates are rendered.
+
+    A ``header_only`` component has no ``_core.c`` -- its whole
+    implementation is inline in the sacred header -- so a *declaration* there
+    would be a promise nothing keeps. jm's own scaffold has to link before
+    the author has written a line of it ("no foot-guns, all green from day
+    one"), which means the generated header carries stub **definitions**, not
+    prototypes, and the author replaces them with the real thing.
+
+    ``static inline`` rather than plain ``static``: each translation unit
+    including the header gets its own copy, which is what a header-only core
+    is for, and an unused ``static inline`` does not warn the way an unused
+    ``static`` does.
+
+    The bodies are **not rewritten** here. They are the same slots
+    ``_core.c`` renders, so the two faces cannot describe different
+    functions -- only where they land differs.
+
+    Examples
+    --------
+    >>> apply_header_only({"steps_c_decl": "x"}, False)["steps_c_decl"]
+    'x'
+    >>> apply_header_only({"steps_c_decl": "x"}, True)["steps_c_decl"]
+    ''
+    """
+    L = chr(10)
+    comp = str(ctx.get("component", ""))
+    # create/destroy are the two the header states literally rather than
+    # through a definition slot, so their declaration text is built here and
+    # their bodies come from the same slots `_core.c` uses.
+    ctx["create_decl"] = (
+        f"{comp}_state_t *{comp}_create({ctx.get('create_params', '')});"
+    )
+    ctx["destroy_decl"] = (
+        f"{ctx.get('destroy_c_ret', 'void')} {comp}_destroy"
+        f"({comp}_state_t *state);"
+    )
+    if not header_only:
+        ctx.setdefault("inline_core", "")
+        return ctx
+    lifecycle = (
+        f"{L}static inline {comp}_state_t *{L}"
+        f"{comp}_create({ctx.get('create_params', '')}){L}{{{L}"
+        f"    {comp}_state_t *obj = calloc(1, sizeof(*obj));{L}"
+        f"    if (!obj){L}        return NULL;{L}"
+        f"{ctx.get('create_assignments', '')}"
+        f"    return obj;{L}}}{L}{L}"
+        f"static inline {ctx.get('destroy_c_ret', 'void')}{L}"
+        f"{comp}_destroy({comp}_state_t *state){L}{{{L}"
+        f"{ctx.get('destroy_impl', '')}    free(state);"
+        f"{ctx.get('destroy_ret_stmt', '')}{L}}}{L}"
+    )
+    body = "".join(str(ctx.get(k, "")) for k in _HEADER_ONLY_DEF_SLOTS)
+    ctx["inline_core"] = lifecycle + _staticize(body)
+    ctx["create_decl"] = ""
+    ctx["destroy_decl"] = ""
+    for key in _HEADER_ONLY_DECL_SLOTS:
+        ctx[key] = ""
+    for key in _HEADER_ONLY_DEF_SLOTS:
+        ctx[key] = ""
+    return ctx
+
+
+def _staticize(text: str) -> str:
+    r"""Prefix every top-level C definition in *text* with ``static inline``.
+
+    A definition starts at column 0 with an identifier and opens a
+    parameter list either on that line (``void ring_steps(``) or on the
+    next (``void`` / ``ring_reset(...)``). Both spellings are emitted by
+    jm's own slots, and handling only the second left ``steps()`` with
+    external linkage in every translation unit that included the header --
+    measured, not reasoned.
+
+    Anything already ``static`` is left alone, so this is idempotent.
+
+    Examples
+    --------
+    >>> _staticize("void f(int x)\n").strip()
+    'static inline void f(int x)'
+    >>> _staticize("void\nf(int x)\n").splitlines()[0]
+    'static inline void'
+    >>> _staticize("static inline void f(void) { }\n")
+    'static inline void f(void) { }\n'
+    """
+    out, lines = [], text.splitlines(keepends=True)
+    # The two-line spelling puts the return type and the name on separate
+    # lines, and BOTH look like the start of a definition. Prefixing each
+    # gives `static inline void` / `static inline f(...)` -- 'duplicate
+    # static', a compile error. One prefix per definition.
+    consumed = False
+    for n, line in enumerate(lines):
+        if consumed:
+            consumed = False
+            out.append(line)
+            continue
+        if not line[:1].isalpha() or line.startswith("static"):
+            out.append(line)
+            continue
+        nxt = lines[n + 1] if n + 1 < len(lines) else ""
+        if "(" in line:
+            out.append("static inline " + line)
+        elif nxt[:1].isalpha() and "(" in nxt:
+            out.append("static inline " + line)
+            consumed = True
+        else:
+            out.append(line)
+    return "".join(out)
+
+
 def _state_struct_decl(
     component: str, Component: str, fields: str, opaque: bool = False
 ) -> str:
@@ -2244,6 +2387,7 @@ def make_state_ctx(
     no_ctor_names: "frozenset[str]" = frozenset(),
     create_fn: "str | None" = None,
     no_reset: bool = False,
+    header_only: bool = False,
     opaque_state: bool = False,
     doc_blocks: dict | None = None,
 ) -> dict[str, str]:

@@ -62,6 +62,10 @@ Commands:
     --mutable                   Remove const from state pointer in step().
     --no-state                  Generate empty state struct; user fills in fields manually.
     --no-step                   Omit step() method.
+    --header-only               The core is entirely `static inline` in the header:
+                                no `<comp>_core.c` is scaffolded and the CMake core
+                                library is INTERFACE rather than OBJECT, so it
+                                contributes no object files to lib<pkg>.so.
     --opaque-state              Forward-declare the state struct in the header and
                                 define it in _core.c, so its members stay private.
                                 Requires --no-step; excludes --state.

@@ -1621,6 +1621,19 @@ def is_no_step(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_step"))
 
 
+def is_header_only(cfg: dict, component: str) -> bool:
+    """True when the component's C lives entirely in its header (gh-1311).
+
+    A macro template or a family of ``static inline`` functions has no
+    ``_core.c`` for jm to scaffold or keep sacred, and an OBJECT library with
+    no sources is a hard CMake **configure** error. Such a component declares
+    an INTERFACE core library instead — see `_render.object_core_decl` — which
+    also keeps it out of ``lib<pkg>.so`` for free, because `_libwiring`'s
+    detector asks whether an ``add_library(... OBJECT`` exists.
+    """
+    return _truthy(cfg.get(component, {}).get("header_only"))
+
+
 def is_opaque_state(cfg: dict, component: str) -> bool:
     """True if the state struct is forward-declared in the header (gh-588).
 
@@ -4642,6 +4655,7 @@ def add_component(
     no_reset_: bool = False,
     process_global_: bool = False,
     opaque_state_: bool = False,
+    header_only_: bool = False,
     mutable_: bool = False,
     step_delegates_: bool = False,
     serializable_: bool = False,
@@ -4697,6 +4711,8 @@ def add_component(
         entry["process_global"] = "true"
     if opaque_state_:
         entry["opaque_state"] = "true"
+    if header_only_:
+        entry["header_only"] = "true"
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
@@ -5846,6 +5862,11 @@ def _dump(cfg: dict) -> str:
             # the replay round-trips the manifest through `_dump`, so a key
             # missing here is silently absent by the time anything renders.
             "process_global",
+            # gh-1311: and again. Dropping it would put back the `_core.c`
+            # and the OBJECT library on the next apply, and an OBJECT library
+            # with no sources fails CONFIGURE -- so the project would not
+            # build at all.
+            "header_only",
             "step_delegates_to_steps",
             "serializable",
             "streamable",
