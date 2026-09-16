@@ -19,6 +19,27 @@ from just_makeit._apply import run as apply_run
 from just_makeit._config import load, methods
 
 
+def _pins_checked(ext: str, view: str, base: str) -> bool:
+    """Is *view* pinned to *base*, with the steal's return value checked?
+
+    Matches the PROPERTY, not one line's layout. gh-1312 wrapped this call
+    across lines to check `PyArray_SetBaseObject`'s return -- it steals its
+    reference on success and does not when it returns -1 -- and two
+    assertions keyed to the single-line spelling reported that as a missing
+    pin. What matters is that the call names both operands and is the
+    condition of an `if`, which is also the thing gh-1312 exists to enforce.
+    """
+    return any(
+        view in m.group("args") and base in m.group("args")
+        for m in re.finditer(
+            r"if\s*\(\s*PyArray_SetBaseObject\s*\("
+            r"(?P<args>[^;]*?)\)\s*<\s*0\s*\)",
+            ext,
+            re.DOTALL,
+        )
+    )
+
+
 class TestMethodPreservesInitParams:
     """gh-87: when an object is scaffolded with both `--state` and
     `--init-param` (e.g. a reader), the regenerated `_core.h` after a
@@ -504,9 +525,11 @@ class TestMethodOutKwarg:
         # passed to the kernel.
         assert "nco_execute_cf32_max_out(self->handle, (size_t)n)" in ext
         assert "PyExc_ValueError" in ext
-        # the returned view is pinned to the caller's array, not self
-        assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
-        assert "(PyObject *)out_arr)" in ext
+        # the returned view is pinned to the caller's array, not self.
+        # gh-1312 wrapped this call and made it checked, so match the pin
+        # rather than one line's spelling -- an assertion keyed to the
+        # layout reports a formatting change as a missing pin.
+        assert _pins_checked(ext, "_oview", "out_arr"), ext
 
     def test_out_validation_requires_max_of_max_out_and_call_size(
         self, project
@@ -669,8 +692,7 @@ class TestVariableOutputSingleArrayParam:
 
     def test_returned_view_pinned_to_callers_array(self, project):
         ext = self._ext(project)
-        assert "PyArray_SetBaseObject((PyArrayObject *)_oview," in ext
-        assert "(PyObject *)out_arr)" in ext
+        assert _pins_checked(ext, "_oview", "out_arr"), ext
 
     def test_genuine_multi_param_method_still_excluded(self, project):
         # Farrow.delay-shaped (x + mu): must NOT gain out= just because this

@@ -357,23 +357,50 @@ silent truncation from the allocation into the caller's own buffer.
     block) frees the state while the view still points at it. Read such a view
     before destroying, or copy it with `np.array(v)`.
 
+!!! note "The two borrowing shapes disagree about writeability, deliberately"
+
+    `get_<name>_view()` is **read-only** — it clears `NPY_ARRAY_WRITEABLE` —
+    and the `buf_field` property is **writeable**. The table above presents
+    the two rows identically, which hid the difference until gh-1312 factored
+    their shared emitter and had to decide which one it was.
+
+    Neither was changed. Normalising them would have been a silent behaviour
+    change for anyone writing through a `buf_field` property today, so
+    `borrow_view_c` takes `writeable` as a **required argument with no
+    default** and each caller states its answer. If you add a third borrowing
+    shape, pick deliberately rather than copying whichever neighbour you read
+    first.
+
 ## Rules for new shapes
 
 When you add an array-returning shape to the generator:
 
 1. **Name the owner.** NumPy, the caller, or the C state. Write it in the
     shape's comment and add a row to the table above.
+
 1. **A borrowed view must pin something.** If you return
     `PyArray_SimpleNewFromData` over memory you did not allocate, call
     `PyArray_SetBaseObject` on whatever keeps that memory alive. A view that
     pins nothing is a dangling pointer waiting for a `del`.
+
+    **Emit it from `_parse.borrow_view_c`, and check the return.**
+    `SetBaseObject` *steals* its reference on success and does **not** steal
+    it when it returns `-1`, so an unchecked call leaks on failure and hands
+    back an array whose base was never set — the dangling view the pin exists
+    to prevent. gh-1312 found three call sites and two of them were unchecked.
+    The pin-`self` shape now has one emitter; the `variable_output` `out=`
+    return keeps its own call because it hands over a reference it already
+    owns rather than taking a new one, and that call is checked in place.
+
 1. **Never make validity depend on a runtime probe.** If the correctness of a
     returned array depends on the binding guessing what the caller did with the
     previous one, the design is wrong. This is the specific mistake gh-219 and
     gh-437 made.
+
 1. **Prefer per-call allocation.** It is ~130 ns, flat in `n`. Reuse is an
     optimisation you must justify with a measurement against the *hold* case,
     not the drop case.
+
 1. **Trim in place when the array is fresh and unshared**
     (`PyArray_DIMS(arr)[0] = n`); use a view + `SetBaseObject` only when the
     base is the caller's array.

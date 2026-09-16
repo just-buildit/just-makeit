@@ -13,7 +13,11 @@ from .._docstring import (
     render_numpy_doc,
     render_runtime_doc,
 )
-from ._parse import _build_ml_doc, capsule_unwrap_c as _capsule_unwrap_c
+from ._parse import (
+    _build_ml_doc,
+    borrow_view_c as _borrow_view_c,
+    capsule_unwrap_c as _capsule_unwrap_c,
+)
 from .. import _types as T
 from .._types import default_type_error as _default_type_error
 from .._types import (
@@ -2803,22 +2807,13 @@ def make_state_ctx(
             f"    {Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
             f"{{\n"
             f"{guard}"
-            f"    npy_intp dims[] = {{{size}}};\n"
-            f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
-            f"        1, dims, {npy_enum},\n"
-            f"        (void *){component}_get_{name}_view(self->handle));\n"
-            f"    if (!arr) return NULL;\n"
-            f"    PyArray_CLEARFLAGS("
-            f"(PyArrayObject *)arr, NPY_ARRAY_WRITEABLE);\n"
-            f"    Py_INCREF(self);\n"
-            f"    if (PyArray_SetBaseObject(\n"
-            f"            (PyArrayObject *)arr, (PyObject *)self) < 0) {{\n"
-            f"        Py_DECREF(self);\n"
-            f"        Py_DECREF(arr);\n"
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    return arr;\n"
-            f"}}"
+            + _borrow_view_c(
+                f"{component}_get_{name}_view(self->handle)",
+                size,
+                npy_enum,
+                writeable=False,
+            )
+            + "\n}"
         )
         array_setter = (
             f"static PyObject *\n"
