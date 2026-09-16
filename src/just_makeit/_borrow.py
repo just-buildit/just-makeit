@@ -40,6 +40,30 @@ fixed mapping has neither: nothing is reallocated, so the worst case is stale
 values rather than a dangling pointer, and the invalidating call is the
 consumer's own explicit release rather than an unrelated later call.
 
+The element type, and integer IQ
+--------------------------------
+The view's element type is the method's ``return_type``, and it must be one
+``_CTYPE_META`` registers -- so there is no complex-integer borrow, because
+there is no complex-integer type at all. C's ``_Complex`` is float-only and
+numpy has no complex-integer dtype, so ``int16_t _Complex`` has nothing to
+convert through; the CLI and ``jm apply`` both refuse it by name.
+
+Integer IQ is borrowed as a **two-field record** -- ``record_dtype`` over
+``int16_t i, q``, i.e. ``[('i','<i2'),('q','<i2')]``. Decided on gh-1310
+after measuring all four zero-copy spellings of the same bytes; the two
+worth remembering as rejected are 1-D interleaved ``int16`` of length ``2n``
+(no longer one element per sample) and 1-D packed ``int32``, which is
+**silently wrong** -- ``d + 1`` increments I only, because int32 addition
+carries across the I/Q boundary. The structured form refuses arithmetic
+loudly instead, and gh-1314 tracks giving integer IQ the operations
+``complex64`` gets.
+
+This is also why ``elements_per_sample`` (gh-805 §C) is not extended to a
+borrow. It is a param-side key -- ``_coerce.array_len_c`` uses it to divide
+an *incoming* array's length -- and the interleaving it describes is the
+representation gh-1310 rejected for this direction, so reaching for it here
+would re-introduce a measured wrong answer rather than fill a gap.
+
 The count
 ---------
 The view's length is a *declared param*, because the kernel is told how many
