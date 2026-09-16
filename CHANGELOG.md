@@ -2,6 +2,20 @@
 
 ### Fixed
 
+- **The "returns an ARRAY of records" predicate was spelled inline in four
+    places (gh-1312).** `record_dtype` together with `variable_output` is what
+    distinguishes a structured ndarray from a `list[tuple]`, and each of
+    `_method`'s prototype builder, `_method`'s stub dispatch, and
+    `_context/_methods`' declaration and return-annotation chains asked it in
+    its own words. Four copies of one question is what drifts — and gh-788
+    records that it did, when two of those chains disagreed and the generated
+    declaration described a kernel the binding never called.
+
+    Extracted as `_record.is_record_array`, the peer of the existing
+    `_record.is_record`. Behaviour is unchanged; what changes is that a fifth
+    shape widens the predicate in one place instead of four. Gated by a source
+    scan, so the inline spelling cannot come back.
+
 - **`PyArray_SetBaseObject` was emitted unchecked from two of its three call
     sites, leaking a reference and returning an unpinned view on failure
     (gh-1312).** It *steals* its reference on success and does **not** steal
