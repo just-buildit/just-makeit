@@ -61,6 +61,25 @@ MODULES_SENTINEL = "# ── Modules"
 # to lines shaped like jm's own bounds the blast radius if the reader is ever
 # incomplete again. A test asserting it would be decoration; the property that
 # earns a test is the reader finding everything, which two now pin.
+# gh-1311: `OBJECT` in this pattern is LOAD-BEARING, not incidental spelling.
+#
+# A `header_only` component declares `add_library(<X>_core INTERFACE)` — it has
+# no `.c` file, so an OBJECT library would be a hard CMake *configure* error.
+# This detector therefore does not see it, and that is the correct answer
+# rather than a gap: `$<TARGET_OBJECTS:>` on an INTERFACE target is a configure
+# error too, so such a core MUST NOT be wired into `lib<pkg>.so`. Asked as
+# *does this contribute an out-of-line symbol*, an INTERFACE library honestly
+# answers no.
+#
+# So gh-1311 needed no change here at all, in either direction: `unwired` does
+# not report a header-only core as missing, and `cmake_core_wiring` is not
+# asked to emit a line for one. Widening this to `(OBJECT|INTERFACE)` would
+# manufacture the bug — every header-only component would be reported unwired,
+# and `apply` would "fix" it by writing a line that fails configure.
+#
+# Deriving the answer from the tree (gh-988) is what makes a new component
+# KIND free here; a manifest table of which cores are wired would have needed
+# a row for it.
 _DECLARES_CORE = re.compile(r"^[ \t]*add_library\(\s*(\w+)\s+OBJECT\b", re.M)
 _DECLARES_LIB = re.compile(
     r"^[ \t]*add_library\(\s*(\w+_lib(?:_static)?)\s", re.M

@@ -350,40 +350,6 @@ def component_core_decl(component: str, header_only: bool) -> str:
         + f"    {inc}/{component})"
     )
 
-    if header_only:
-        head = f"  {component}_core INTERFACE "
-        return (
-            "# INTERFACE library — the core is header-only, so there"
-            " is nothing to"
-            + chr(10)
-            + "# compile, and an OBJECT library with no sources fails"
-            " configure."
-            + chr(10)
-            + f"add_library({component}_core INTERFACE)"
-            + chr(10)
-            + "target_include_directories("
-            + chr(10)
-            + head
-            + inc
-            + chr(10)
-            + " " * len(head)
-            + f"{inc}/{component})"
-        )
-    head = f"  {component}_core PUBLIC "
-    return (
-        "# OBJECT library — pure C core, no Python dependency."
-        + chr(10)
-        + f"add_library({component}_core OBJECT {component}_core.c)"
-        + chr(10)
-        + "target_include_directories("
-        + chr(10)
-        + head
-        + inc
-        + chr(10)
-        + " " * len(head)
-        + f"{inc}/{component})"
-    )
-
 
 CMAKE_LISTS_OBJECT_CORE = (
     LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_object_core.cmake")
