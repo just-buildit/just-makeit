@@ -1248,6 +1248,9 @@ def _make_view_ctx(
             C.destroy_spec(cfg, obj),
             C.methods(cfg, obj),
             class_name=C.class_name(cfg, obj) or "",
+            # gh-1323: so the destructor is the counterpart of whatever
+            # `create_fn` names, not always `<comp>_destroy`.
+            create_fn=C.object_create_fn(cfg, obj) or "",
         )
     )
     ctx.update(

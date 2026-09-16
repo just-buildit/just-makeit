@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+### Fixed
+
+- **An object honoured `create_fn` but had no counterpart, so a custom creator
+    was paired with a destroyer it never agreed to (gh-1323).** `create_fn`
+    names the C jm calls to construct; the dealloc path emitted
+    `<comp>_destroy` regardless. One declaration, one direction.
+
+    Not a naming inconvenience: doppler's ring `create` builds a double-mapped
+    region (`memfd_create` plus two `mmap`s of the same pages) and its
+    destroyer unmaps it, while jm's scaffolded counterpart is `free(state)` on
+    a pointer that was never `malloc`'d, with the mapping never released.
+    Under `header_only` the author hits the compiler first — an ordinary
+    component gets the `free()` version scaffolded into `_core.c`, so it
+    builds, links, and is wrong at runtime.
+
+    `_destroy.c_fn` is now the one resolver, threaded into every emitter
+    (each used to build the name itself): an explicit `fn` in the
+    `[<comp>.destroy]` table wins, otherwise it is **derived** from `create_fn`
+    when that ends in `_create` (`dp_f32_create` → `dp_f32_destroy`), otherwise
+    `<comp>_destroy` as before — byte-identical for every project that does not
+    set `create_fn`. A creator with no `_create` suffix is not guessed at:
+    naming something plausible that does not exist is worse than the default.
+
+    Gated by the property gh-1323 asked for — the constructor and destructor
+    the binding calls **share a prefix** — which catches the mismatch without
+    compiling, since both names render fine and simply are not the same
+    function.
+
 ### Added
 
 - **`ring_buffer` example — a header-only ring whose `wait(n)` lends a
