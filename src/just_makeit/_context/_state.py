@@ -2101,7 +2101,7 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
         f"{ctx.get('destroy_ret_stmt', '')}{L}}}{L}"
     )
     body = "".join(str(ctx.get(k, "")) for k in _HEADER_ONLY_DEF_SLOTS)
-    ctx["inline_core"] = lifecycle + _staticize(body)
+    ctx["inline_core"] = lifecycle + staticize(body)
     ctx["create_decl"] = ""
     ctx["destroy_decl"] = ""
     for key in _HEADER_ONLY_DECL_SLOTS:
@@ -2111,7 +2111,7 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
     return ctx
 
 
-def _staticize(text: str) -> str:
+def staticize(text: str) -> str:
     r"""Prefix every top-level C definition in *text* with ``static inline``.
 
     A definition starts at column 0 with an identifier and opens a
@@ -2125,11 +2125,11 @@ def _staticize(text: str) -> str:
 
     Examples
     --------
-    >>> _staticize("void f(int x)\n").strip()
+    >>> staticize("void f(int x)\n").strip()
     'static inline void f(int x)'
-    >>> _staticize("void\nf(int x)\n").splitlines()[0]
+    >>> staticize("void\nf(int x)\n").splitlines()[0]
     'static inline void'
-    >>> _staticize("static inline void f(void) { }\n")
+    >>> staticize("static inline void f(void) { }\n")
     'static inline void f(void) { }\n'
     """
     out, lines = [], text.splitlines(keepends=True)

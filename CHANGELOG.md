@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`header_only` composed with nothing that writes a C body (gh-1321).**
+    gh-1311 scaffolds a component with no `<comp>_core.c`; every command that
+    adds a body still targeted that file. `jm method` died with a raw
+    `FileNotFoundError` on it, and `jm property` told the author to implement
+    the getter there — a path that cannot exist.
+
+    Worse on a **module** object, where `--header-only` was broken four ways at
+    once and the result did not configure: `header_only` was never recorded in
+    the manifest (the module path's `add_component` did not forward the key, so
+    it was silently absent), a `_core.c` was written that no target compiles,
+    and `$<TARGET_OBJECTS:<comp>_core>` was emitted for an INTERFACE library —
+    a hard CMake **generate** error, the exact failure gh-1311 exists to
+    prevent. doppler's ring is a module, so that was the shape that mattered
+    and the one nothing exercised.
+
+    A new C body now goes `static inline` into the header through one writer,
+    `_init.append_component_body`, reusing gh-1311's `staticize` rather than a
+    second copy of it, and the guidance names the file it was actually written
+    into. The header stays sacred: an author's implementation survives
+    `jm apply`.
+
+    Gated over **both** shapes. The module leg configures a fresh build dir
+    rather than reading `CMakeLists.txt`, because a generator-expression error
+    is invisible to a text scan. gh-1311's suite created a header-only object
+    and stopped — it never added anything afterwards, so every writer that
+    assumed `_core.c` was out of frame.
+
 ### Changed
 
 - **The `nco_tone` example fetches doppler's LATEST release instead of
