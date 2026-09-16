@@ -62,6 +62,7 @@ GALLERY = {
     "composites": "Composites",
     "views_module": "Views",
     "record_shapes": "Record shapes",
+    "ring_buffer": "Ring buffer",
     "errors_warnings": "Errors and warnings",
     "composer_seams": "Composer seams",
     "kitchen_sink": "Kitchen sink",
