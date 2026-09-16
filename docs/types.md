@@ -116,19 +116,49 @@ Notes:
 - `bool` and `int` are not array element types: `bool` doesn't fit
     the numpy parse path (use `uint8_t` for byte arrays); `int` has
     platform-dependent width (use `int32_t`).
+
 - `const char *` is only legal as an init-param — strings can't be
     state fields (no lifetime story) or step inputs (no per-sample
     semantics). If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
+
 - `long double _Complex` is truncated to `double _Complex` at the
     Python boundary; not legal as an array element (no contiguous
     numpy dtype).
+
+- **There is no complex-integer type, and integer IQ is a structured
+    array.** C's `_Complex` is float-only and numpy has no complex-integer
+    dtype to map one onto, so `int16_t _Complex` has nothing to convert
+    through; the CLI and `jm apply` both refuse it by name.
+
+    Integer IQ is returned as a **two-field record** — `record_dtype` over
+    `int16_t i, q`, giving `[('i','<i2'),('q','<i2')]`: 1-D, one element per
+    sample, byte order stated. Decided on
+    [gh-1310](https://github.com/just-buildit/just-makeit/issues/1310) after
+    measuring all four zero-copy spellings of the same bytes. Two were
+    rejected for reasons worth keeping:
+
+    - *1-D `int16`, length 2n (interleaved)* — no longer one element per
+        sample, so every length and index is in half-samples.
+    - *1-D `int32`, packed I/Q* — tempting (builtin enum, 1-D, one element
+        per sample) and **silently wrong**: `d + 1` yields
+        `[1, 1, 3, 3, 5, 5, 7, 7]`, incrementing I only, because int32
+        addition carries across the I/Q boundary. `arr * 2` or `arr - dc`
+        corrupts with no error. Which half holds I is also
+        endianness-dependent.
+
+    The structured form refuses arithmetic *loudly* instead — `ufunc 'add'   did not contain a loop` — which is the trade jm exists to make. Giving
+    integer IQ the operations `complex64` gets is tracked separately as
+    [gh-1314](https://github.com/just-buildit/just-makeit/issues/1314).
+
 - `void` is special — only legal as `--arg-type` or `--return-type`,
     where it strips that side of the step signature
     ([generator](templates/generator.md), [consumer](templates/consumer.md)).
+
 - `bool` is a usable scalar everywhere a scalar is legal (state, step
     IO, init-param, function param) — it just isn't an *array element*
     type (use `uint8_t` for byte arrays).
+
 - Array **input** (`T[]` as `--arg-type`, `--param`, `--out-param`)
     works. Array **return** (`--return-type "T[]"`) is supported via
     `--preset blockwise` (array-in / array-out; see
