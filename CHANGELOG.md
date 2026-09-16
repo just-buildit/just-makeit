@@ -1,5 +1,57 @@
 ## [Unreleased]
 
+### Changed
+
+- **The `nco_tone` example fetches doppler's LATEST release instead of
+    scanning the machine.** The example is for jm/doppler *users*, so what
+    happens to be installed on the box must not decide what it builds against —
+    and it did. `_find_doppler_prefix` searched `/usr/local`, `/usr`,
+    `~/.local/doppler`, `~/.local` and `~/doppler/build` *before* the download,
+    so on any machine with doppler present the pinned version was never
+    exercised.
+
+    Measured 2026-09-16: a two-week-old `~/doppler/build` shadowed the pin at
+    **0.46.0** while CI ran **0.49.0** and the pin said **0.49.0** — three
+    paths, three answers — and the run reported it as `version unknown`, so
+    nothing in the output revealed the disagreement. Uninstalling the offending
+    prefix did not fix it; it promoted the next candidate.
+
+    Now: resolve the latest release, download it to
+    `~/.cache/jm-tests/doppler/v<ver>/<platform>`, build against that. CI
+    downloads the latest release too, so the two agree **by construction**
+    rather than while someone remembers to bump a constant.
+    `_DOPPLER_VERSION` is the fallback when the release list is unreachable,
+    which is what keeps `make lint`'s currency report worth running. A
+    machine-local doppler is now opt-**in** via `--doppler-prefix`, which is
+    explicit and printed, rather than opt-out by accident.
+
+- **gh-434's prefix validation and the version floor moved to
+    `--doppler-prefix`.** Both were written for the discovery that is now gone,
+    and neither hazard went with it: a person can pass exactly the same two
+    directories, and it is worse there, because they chose the path and the
+    cmake error never mentions it. `why_prefix_unusable` refuses a config-only
+    build tree (cmake hard-fails at *configure*) and a below-floor doppler
+    (fails at *compile* with `too many arguments to nco_steps_u32`) and names
+    the fix in both cases. Being a pure function of a path, it also retired a
+    module-level `skipif` that disabled those tests on any machine with a
+    system-wide doppler — the machines most likely to have the bug.
+
+### Fixed
+
+- **`_prefix_version` could not read a source build tree's version.** It looked
+    only in `lib/pkgconfig/` and `lib64/pkgconfig/`, but a cmake build dir
+    writes `doppler.pc` at its root — and `~/doppler/build` was an explicit
+    candidate, so that layout was the expected local case. Every such prefix
+    reported "version unknown", and an unknown version **skips the floor
+    check**: the floor, described in that file as the part with teeth, had none
+    for the commonest developer prefix.
+
+- **`latest_release` had two implementations about to exist.**
+    `scripts/check_doppler_pin.py` now imports it from the example rather than
+    carrying its own GitHub-API copy — the same direction the pin already flows
+    (that script reads `_DOPPLER_VERSION` out of that file). Gated, because two
+    copies of one primitive drift.
+
 ### Added
 
 - **A component's C may live entirely in its header — `header_only = true`

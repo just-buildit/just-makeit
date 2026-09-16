@@ -14,8 +14,51 @@ just-makeit example nco_tone
 !!! note "External dependency"
 
     This example links against the [Doppler](https://github.com/doppler-dsp/doppler)
-    DSP library. The test runner auto-fetches a prebuilt tarball when Doppler is
-    not already installed; no manual step is needed unless you are working offline.
+    DSP library. The test runner fetches Doppler's **latest** prebuilt release into
+    a per-user cache (`~/.cache/jm-tests/doppler/v<version>/<platform>`) and builds
+    against that, so no manual step is needed and a local run matches CI, which
+    downloads the latest release too.
+
+    It deliberately does **not** search for an installed Doppler. Scanning
+    `/usr/local`, `~/.local` and `~/doppler/build` meant that on any machine with
+    Doppler present the fetched version was never used — and the versions silently
+    disagreed. If you want a specific Doppler, say so with `--doppler-prefix`.
+
+!!! tip "Installing Doppler permanently instead of per-run"
+
+    The per-run fetch is a convenience for trying the example. If you are building
+    against Doppler for real, install it once and point the example at it with
+    `--doppler-prefix`. Either form works — `find_package(Doppler)` searches both
+    `<prefix>/lib/cmake` and `<prefix>/lib64/cmake`.
+
+    **From a release tarball** (platform tags: `linux-x86_64`, `linux-aarch64`,
+    `darwin-x86_64`, `darwin-arm64`):
+
+    ```sh
+    VER=0.49.0; PLAT=linux-x86_64
+    curl -fsSL -o /tmp/doppler.tar.gz \
+        "https://github.com/doppler-dsp/doppler/releases/download/v$VER/doppler-$VER-$PLAT.tar.gz"
+    mkdir -p ~/.local/doppler
+    tar xzf /tmp/doppler.tar.gz -C ~/.local/doppler --strip-components=1
+    ```
+
+    **Or from source:**
+
+    ```sh
+    git clone https://github.com/doppler-dsp/doppler && cd doppler
+    cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local/doppler"
+    cmake --build build && cmake --install build
+    ```
+
+    Then run the example against it:
+
+    ```sh
+    python src/just_makeit/examples/nco_tone/test.py \
+        --doppler-prefix ~/.local/doppler
+    ```
+
+    A prefix passed this way is printed in the run output, so which Doppler a
+    build used is always answerable from the log.
 
 ## Prerequisites
 
