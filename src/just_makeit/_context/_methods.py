@@ -51,6 +51,7 @@ from ._parse import (
     _build_ml_doc,
     _build_params_parse,
     _step_parse_block,
+    borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
 )
@@ -2361,9 +2362,20 @@ def make_methods_ctx(
                     f"{_vo_view}"
                     f"        if (!_oview)"
                     f" {{ Py_DECREF(out_arr); return NULL; }}\n"
-                    f"        PyArray_SetBaseObject("
-                    f"(PyArrayObject *)_oview,"
-                    f" (PyObject *)out_arr);\n"
+                    # gh-1312: checked, like every other SetBaseObject jm
+                    # emits. This one pins the CALLER's array rather than
+                    # `self`, so it hands over the reference this function
+                    # already owns instead of taking a new one -- which is
+                    # why there is no Py_INCREF above. On failure the steal
+                    # did not happen, so that reference is still ours to
+                    # drop.
+                    f"        if (PyArray_SetBaseObject(\n"
+                    f"                (PyArrayObject *)_oview,\n"
+                    f"                (PyObject *)out_arr) < 0) {{\n"
+                    f"            Py_DECREF(out_arr);\n"
+                    f"            Py_DECREF(_oview);\n"
+                    f"            return NULL;\n"
+                    f"        }}\n"
                     f"        return _oview;\n"
                     f"    }}\n"
                 )
@@ -4073,6 +4085,17 @@ def make_properties_ctx(
                 if valid_field
                 else ""
             )
+            # gh-1312: one emitter for "borrow a pointer, pin self", shared
+            # with an array state's get_<name>_view(). This site used to
+            # ignore PyArray_SetBaseObject's return and Py_INCREF *after* it
+            # -- a failing call does not steal the reference, so that leaked
+            # one and handed back an array with no base at all.
+            #
+            # writeable=True preserves this property's behaviour, which
+            # differs from the state view's. The asymmetry is deliberate here
+            # and recorded in docs/memory-ownership.md rather than quietly
+            # normalised: a consumer writing through a buf_field property
+            # today would break.
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"
@@ -4081,17 +4104,13 @@ def make_properties_ctx(
                 f"{{\n"
                 f"{guard}"
                 f"{_valid_check}"
-                f"    npy_intp dim ="
-                f" (npy_intp)self->handle->{len_field};\n"
-                f"    PyObject *arr = PyArray_SimpleNewFromData(\n"
-                f"        1, &dim, {_np_enum},"
-                f" self->handle->{buf_field});\n"
-                f"    if (!arr) return NULL;\n"
-                f"    PyArray_SetBaseObject("
-                f"(PyArrayObject *)arr, (PyObject *)self);\n"
-                f"    Py_INCREF(self);\n"
-                f"    return arr;\n"
-                f"}}"
+                + _borrow_view_c(
+                    f"self->handle->{buf_field}",
+                    f"self->handle->{len_field}",
+                    _np_enum,
+                    writeable=True,
+                )
+                + "\n}"
             )
         elif p.get("expr"):
             # gh-602: expr is arbitrary author-supplied C, unlike the field/

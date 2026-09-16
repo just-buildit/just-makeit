@@ -93,6 +93,107 @@ def capsule_new_c(
     )
 
 
+def borrow_view_c(
+    ptr_expr: str,
+    count_expr: str,
+    npy_enum: str,
+    *,
+    writeable: bool,
+    arr: str = "arr",
+    indent: str = "    ",
+) -> str:
+    """A NumPy view over memory the C state owns, pinned to ``self``.
+
+    The one emitter for *borrow a pointer, wrap it, pin the owner* — the
+    shape ``docs/memory-ownership.md`` calls "allocated by the C state struct,
+    kept alive by ``self``". Two call sites had their own copy of it: the
+    ``buf_field`` property (``_context/_methods.py``) and an array state's
+    ``get_<name>_view()`` (``_context/_state.py``).
+
+    **They had drifted, and one of them was wrong.** ``get_<name>_view()``
+    checks ``PyArray_SetBaseObject``'s return and unwinds on failure;
+    ``buf_field`` ignored it and called ``Py_INCREF(self)`` *afterwards*, so a
+    failing ``SetBaseObject`` — which does not steal the reference when it
+    returns ``-1`` — leaked that reference and returned an array whose base
+    was never set, which is the dangling view the pin exists to prevent. That
+    is the peer-implementation trap exactly: two copies of one contract, a fix
+    applied to one. Emitting both from here retires it.
+
+    ``SetBaseObject`` **steals** the reference on success, which is why the
+    ``Py_INCREF`` comes first and is undone on the error path rather than
+    being conditional.
+
+    Parameters
+    ----------
+    ptr_expr : str
+        C expression for the borrowed pointer — a struct member
+        (``self->handle->buf``) or a call that returns one.
+    count_expr : str
+        C expression for the element count. Cast to ``npy_intp`` here, so a
+        ``size_t`` field may be passed as written.
+    npy_enum : str
+        The NumPy type enum (``NPY_CFLOAT``, ``NPY_INT16``, …).
+    writeable : bool
+        ``False`` clears ``NPY_ARRAY_WRITEABLE``. Deliberately explicit and
+        with no default: the two existing call sites disagree — an array
+        state's view is read-only, a ``buf_field`` property is not — and that
+        difference is load-bearing for their consumers, so it is passed rather
+        than assumed. See the asymmetry note in ``docs/memory-ownership.md``.
+    arr : str
+        Name for the emitted local, for call sites that already use one.
+    indent : str
+        Leading whitespace for each emitted line.
+
+    Notes
+    -----
+    **The pin keeps the OBJECT alive, not its state.** An explicit
+    ``destroy()`` frees the state while the base still pins only the wrapper,
+    so a view does not survive it. That caveat belongs in the accessor's
+    docstring; it cannot be fixed here.
+
+    Examples
+    --------
+    >>> print(borrow_view_c(
+    ...     "self->handle->buf", "self->handle->n", "NPY_CFLOAT",
+    ...     writeable=False))
+        npy_intp _dim = (npy_intp)self->handle->n;
+        PyObject *arr = PyArray_SimpleNewFromData(
+            1, &_dim, NPY_CFLOAT, (void *)(self->handle->buf));
+        if (!arr) return NULL;
+        PyArray_CLEARFLAGS((PyArrayObject *)arr, NPY_ARRAY_WRITEABLE);
+        Py_INCREF(self);
+        if (PyArray_SetBaseObject(
+                (PyArrayObject *)arr, (PyObject *)self) < 0) {
+            Py_DECREF(self);
+            Py_DECREF(arr);
+            return NULL;
+        }
+        return arr;
+    """
+    i = indent
+    ro = (
+        f"{i}PyArray_CLEARFLAGS((PyArrayObject *){arr},"
+        f" NPY_ARRAY_WRITEABLE);\n"
+        if not writeable
+        else ""
+    )
+    return (
+        f"{i}npy_intp _dim = (npy_intp){count_expr};\n"
+        f"{i}PyObject *{arr} = PyArray_SimpleNewFromData(\n"
+        f"{i}    1, &_dim, {npy_enum}, (void *)({ptr_expr}));\n"
+        f"{i}if (!{arr}) return NULL;\n"
+        f"{ro}"
+        f"{i}Py_INCREF(self);\n"
+        f"{i}if (PyArray_SetBaseObject(\n"
+        f"{i}        (PyArrayObject *){arr}, (PyObject *)self) < 0) {{\n"
+        f"{i}    Py_DECREF(self);\n"
+        f"{i}    Py_DECREF({arr});\n"
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+        f"{i}return {arr};"
+    )
+
+
 def capsule_unwrap_c(
     name: str,
     ctype: str,

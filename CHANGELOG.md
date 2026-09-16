@@ -2,6 +2,33 @@
 
 ### Fixed
 
+- **`PyArray_SetBaseObject` was emitted unchecked from two of its three call
+    sites, leaking a reference and returning an unpinned view on failure
+    (gh-1312).** It *steals* its reference on success and does **not** steal
+    it when it returns `-1`. An array state's `get_<name>_view()` checked the
+    return and unwound; the `buf_field` property ignored it and called
+    `Py_INCREF(self)` *afterwards*, so a failure leaked that reference and
+    handed back an array whose base was never set — the dangling view the pin
+    exists to prevent. A `variable_output` `out=` return ignored it too, where
+    the reference at stake is the caller's array.
+
+    Two copies of one contract, and the fix had been applied to one.
+    `_context/_parse.borrow_view_c` is now the single emitter for the
+    pin-`self` shape and both sites render it; the `out=` return keeps its own
+    call, because it hands over a reference it already owns rather than taking
+    a new one, and that call is checked in place.
+
+    **The writeability asymmetry was preserved, not normalised.**
+    `get_<name>_view()` is read-only and a `buf_field` property is writeable —
+    a difference the ownership table presented identically and nothing
+    recorded. Making them agree would have silently broken anyone writing
+    through the property, so `writeable` is a required argument with no
+    default and `docs/memory-ownership.md` now states both answers.
+
+    Gated registration-free: every `PyArray_SetBaseObject` in a generated tree
+    must be the condition of an `if`, so a fourth emitter is covered without
+    being added to a list.
+
 - **A module named `m` shadowed the math library, so `jm test` failed on
     every module-object project (gh-1305).** A bare name in
     `target_link_libraries` is resolved as a CMake **target** first, and only
