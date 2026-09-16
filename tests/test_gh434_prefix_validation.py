@@ -22,6 +22,10 @@ the tests could not run on the machines most likely to have the bug.
 nothing is skipped.
 """
 
+# `str | None` below is PEP 604; jm's matrix starts at 3.9, where that is
+# a runtime TypeError in a signature without this import.
+from __future__ import annotations
+
 import importlib.util
 import sys
 from pathlib import Path

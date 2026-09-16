@@ -51,6 +51,15 @@ def _example():
     """
     import importlib.util as u
 
+    # The example imports `just_makeit` at module scope, and `make lint` runs
+    # this with a bare `python3` where the package is not installed. The repo's
+    # own `src/` is right here, so put it on the path rather than making the
+    # gate depend on an install -- CI caught this as
+    # `ModuleNotFoundError: No module named 'just_makeit'`, which a local run
+    # with an editable install cannot reproduce.
+    src = str(PIN_FILE.parents[3])
+    if src not in sys.path:
+        sys.path.insert(0, src)
     spec = u.spec_from_file_location("_nco_tone_example", PIN_FILE)
     mod = u.module_from_spec(spec)
     spec.loader.exec_module(mod)

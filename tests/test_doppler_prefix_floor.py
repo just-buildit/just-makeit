@@ -21,6 +21,10 @@ doppler can only arrive by someone naming it with `--doppler-prefix`. That is
 where the check belongs: they chose the path, so the refusal should name it.
 """
 
+# `str | None` below is PEP 604; jm's matrix starts at 3.9, where that is
+# a runtime TypeError in a signature without this import.
+from __future__ import annotations
+
 import importlib.util
 import sys
 from pathlib import Path
