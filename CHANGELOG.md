@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Added
+
+- **`ring_buffer` example — a header-only ring whose `wait(n)` lends a
+    zero-copy view.** The shape of doppler's `DECLARE_DP_BUFFER`, and the first
+    place `header_only` (gh-1311), `borrow` (gh-1312) and a borrowed
+    `record_dtype` (gh-1310 decision B / gh-1317) are exercised **together**.
+    All three shipped with unit tests and no end-to-end demonstration, and
+    every defect in gh-1321 lived precisely in their composition.
+
+    Two objects in one module, because the element type decides the shape:
+    `Cf32Ring` returns a `complex64` view, `Iq16Ring` returns
+    `[('i','<i2'),('q','<i2')]` — integer IQ as a structured array, since numpy
+    has no complex-integer dtype. The demo asserts the property that chose that
+    representation: `w + 1` raises rather than silently incrementing I only,
+    which is what the packed-`int32` alternative does.
+
+    Deliberately simpler than doppler's ring: `wait()` refuses a wrapping span
+    instead of double-mapping the memory. That mapping is a property of the
+    ring, not of the features under test.
+
 ### Fixed
 
 - **`header_only` composed with nothing that writes a C body (gh-1321).**
