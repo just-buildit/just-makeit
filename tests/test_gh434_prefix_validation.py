@@ -1,22 +1,30 @@
-"""gh-434 — _find_doppler_prefix must not accept a config-only prefix.
+"""gh-434 — a config-only prefix must be refused, with a reason.
 
-A doppler source build tree ships doppler-config.cmake but (pre
-doppler#380) no doppler-targets.cmake: install(EXPORT) only materialises
-the targets file at install time. The candidate scan accepted any
-directory containing the config, so such a tree was returned as a usable
-prefix and the example hard-failed at cmake configure ("include could
-not find requested file: .../doppler-targets.cmake") instead of falling
-through to the auto-downloaded prebuilt release.
+A doppler source build tree ships `doppler-config.cmake` but, pre doppler#380,
+no `doppler-targets.cmake`: `install(EXPORT)` only materialises the targets
+file at install time. Such a directory looks like a doppler prefix and hard-
+fails at cmake CONFIGURE — *"include could not find requested file:
+.../doppler-targets.cmake"* — which reads as a broken example rather than an
+unfinished install.
 
-The fix requires doppler-targets.cmake to exist next to the config
-before a candidate is accepted.
+**This moved rather than went away.** The check was written for the candidate
+SCAN, which no longer exists: the example downloads doppler's latest release
+and does not look at the machine (see `_find_doppler_prefix`). The hazard did
+not move with it — a person can hand exactly this directory to
+`--doppler-prefix`, and there the failure is worse, because they chose the
+path deliberately and the cmake error never mentions it. So the rule now lives
+in `why_prefix_unusable`, on the explicit path.
+
+That also made these tests honest. They used to carry a module-level skip when
+a system-wide doppler existed, because a real install outranked the fixtures —
+the tests could not run on the machines most likely to have the bug.
+`why_prefix_unusable` is a pure function of a path, so nothing shadows it and
+nothing is skipped.
 """
 
 import importlib.util
 import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -37,70 +45,60 @@ def _load_module():
     return mod
 
 
-# A real doppler install in a system prefix would satisfy the candidate
-# scan before the home-relative paths this test controls.
-_SYSTEM_HAS_DOPPLER = any(
-    (Path(p) / rel / "doppler-config.cmake").exists()
-    for p in ("/usr/local", "/usr")
-    for rel in (".", "lib/cmake/doppler", "lib64/cmake/doppler")
-)
-
-pytestmark = pytest.mark.skipif(
-    _SYSTEM_HAS_DOPPLER,
-    reason="system-wide doppler install shadows the test prefixes",
-)
-
-
-def _fake_home(tmp_path, monkeypatch, mod):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    # The download fallback must not fire a real network fetch; a sentinel
-    # also lets tests assert the fall-through happened.
-    monkeypatch.setattr(mod, "_download_doppler", lambda: "DOWNLOAD")
-
-
-def test_config_only_build_tree_is_rejected(tmp_path, monkeypatch):
-    mod = _load_module()
-    _fake_home(tmp_path, monkeypatch, mod)
-    build = tmp_path / "doppler" / "build"
-    build.mkdir(parents=True)
-    (build / "doppler-config.cmake").write_text("# config\n")
-    # No doppler-targets.cmake: the false-positive prefix must be skipped
-    # and the scan must fall through to the download.
-    assert mod._find_doppler_prefix() == "DOWNLOAD"
-
-
-def test_complete_build_tree_is_accepted(tmp_path, monkeypatch):
-    mod = _load_module()
-    _fake_home(tmp_path, monkeypatch, mod)
-    build = tmp_path / "doppler" / "build"
-    build.mkdir(parents=True)
-    (build / "doppler-config.cmake").write_text("# config\n")
-    (build / "doppler-targets.cmake").write_text("# targets\n")
-    assert mod._find_doppler_prefix() == str(build)
-
-
-def test_installed_prefix_is_accepted(tmp_path, monkeypatch):
-    mod = _load_module()
-    _fake_home(tmp_path, monkeypatch, mod)
-    cfgdir = tmp_path / ".local" / "doppler" / "lib" / "cmake" / "doppler"
-    cfgdir.mkdir(parents=True)
-    (cfgdir / "doppler-config.cmake").write_text("# config\n")
-    (cfgdir / "doppler-targets.cmake").write_text("# targets\n")
-    assert mod._find_doppler_prefix() == str(tmp_path / ".local" / "doppler")
-
-
-def test_installed_prefix_outranks_incomplete_build_tree(
-    tmp_path, monkeypatch
+def _prefix(
+    root: Path, rel: str, *, targets: bool, version: str | None = None
 ):
-    mod = _load_module()
-    _fake_home(tmp_path, monkeypatch, mod)
-    # Incomplete source build tree (the last candidate) ...
-    build = tmp_path / "doppler" / "build"
-    build.mkdir(parents=True)
-    (build / "doppler-config.cmake").write_text("# config\n")
-    # ... and a complete rootless install (an earlier candidate).
-    cfgdir = tmp_path / ".local" / "doppler" / "lib" / "cmake" / "doppler"
-    cfgdir.mkdir(parents=True)
-    (cfgdir / "doppler-config.cmake").write_text("# config\n")
-    (cfgdir / "doppler-targets.cmake").write_text("# targets\n")
-    assert mod._find_doppler_prefix() == str(tmp_path / ".local" / "doppler")
+    """A doppler-shaped prefix; *targets* controls the gh-434 condition."""
+    d = root / rel
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "doppler-config.cmake").write_text("# config\n", encoding="utf-8")
+    if targets:
+        (d / "doppler-targets.cmake").write_text(
+            "# targets\n", encoding="utf-8"
+        )
+    if version is not None:
+        pc = root / "lib" / "pkgconfig" / "doppler.pc"
+        pc.parent.mkdir(parents=True, exist_ok=True)
+        pc.write_text(f"Version: {version}\n", encoding="utf-8")
+    return root
+
+
+def test_a_config_only_build_tree_is_refused(tmp_path):
+    m = _load_module()
+    p = _prefix(tmp_path / "bld", ".", targets=False)
+    why = m.why_prefix_unusable(p)
+    assert why is not None
+    assert "doppler-targets.cmake" in why
+
+
+def test_the_refusal_says_what_to_do_about_it(tmp_path):
+    """A refusal that does not name the fix just relocates the confusion."""
+    m = _load_module()
+    why = m.why_prefix_unusable(_prefix(tmp_path / "bld", ".", targets=False))
+    assert "cmake --install" in why
+
+
+def test_a_complete_build_tree_is_accepted(tmp_path):
+    m = _load_module()
+    p = _prefix(tmp_path / "bld", ".", targets=True)
+    assert m.why_prefix_unusable(p) is None
+
+
+def test_an_installed_prefix_is_accepted(tmp_path):
+    m = _load_module()
+    p = _prefix(tmp_path / "inst", "lib/cmake/doppler", targets=True)
+    assert m.why_prefix_unusable(p) is None
+
+
+def test_a_lib64_prefix_is_accepted(tmp_path):
+    """cmake searches both; so must this."""
+    m = _load_module()
+    p = _prefix(tmp_path / "inst64", "lib64/cmake/doppler", targets=True)
+    assert m.why_prefix_unusable(p) is None
+
+
+def test_a_directory_with_no_doppler_at_all_is_refused(tmp_path):
+    m = _load_module()
+    (tmp_path / "empty").mkdir()
+    why = m.why_prefix_unusable(tmp_path / "empty")
+    assert why is not None and "doppler-config.cmake" in why

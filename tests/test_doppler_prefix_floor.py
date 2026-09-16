@@ -1,41 +1,25 @@
-"""A discovered doppler below the example's floor is rejected, not compiled.
+"""A doppler below the example's floor is refused, not compiled.
 
-`_find_doppler_prefix` searches `/usr/local`, `/usr`, `~/.local/doppler`,
-`~/.local` and `~/doppler/build` *before* falling back to the pinned
-auto-download, so any local install **shadows** the pin. That is the
-convenience it exists for, and it has cost real time twice — 2026-07-30 and
-2026-08-30 — both times as::
+doppler v0.39.0 added the trailing capacity argument the example's `step()`
+passes; anything older configures fine and then fails to COMPILE as::
 
     error: too many arguments to function 'nco_steps_u32'
 
-which reads as a bug in the example rather than a fact about the install.
-doppler v0.39.0 added the trailing capacity argument the example's `step()`
-passes; anything older configures fine and then fails to compile.
+which reads as a bug in the example rather than a fact about the install. That
+cost real time twice — 2026-07-30 and 2026-08-30.
 
-**This is gh-434's rule, one stage later.** That change rejected a discovered
-prefix carrying `doppler-config.cmake` without `doppler-targets.cmake`,
-because it "hard-fails at cmake configure instead of falling through to the
-auto-download". A below-floor install is the same false positive, caught at
-compile instead of configure, and gets the same answer: skip it and use the
-pin.
+**This is gh-434's rule one stage later**, and it moved to the same place.
+gh-434 refused a prefix carrying `doppler-config.cmake` with no
+`doppler-targets.cmake` because it hard-fails at cmake *configure*; a
+below-floor prefix is the same false positive caught at *compile*. Both now
+live in `why_prefix_unusable`.
 
-Two deliberate limits:
-
-* **Unreadable version means accept.** A source build tree may ship the cmake
-  config without a `.pc`, and rejecting a prefix that merely could not be
-  measured would break doppler's own developers. "Cannot judge" is not
-  "unusable".
-* **This says nothing about currency.** A local install newer than the pin is
-  still used, and still shadows it. That is the pin's job, reported advisorily
-  by `make lint` — see `tests/test_doppler_pin_check.py` for why it does not
-  gate.
-
-The choice is announced either way, because "which doppler did this build
-against" is the first question a failure raises, and a discovered install
-answered it nowhere — which is how one shadowed the pin for six releases.
+The original framing — "a local install SHADOWS the pin, and that is the
+convenience it exists for" — is gone with the scan. The example fetches
+doppler's latest release and never inspects the machine, so a below-floor
+doppler can only arrive by someone naming it with `--doppler-prefix`. That is
+where the check belongs: they chose the path, so the refusal should name it.
 """
-
-from __future__ import annotations
 
 import importlib.util
 import sys
@@ -43,7 +27,9 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLE = (
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+_NCO_TONE = (
     Path(__file__).parent.parent
     / "src"
     / "just_makeit"
@@ -53,97 +39,49 @@ EXAMPLE = (
 )
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("_nco_tone_ex", EXAMPLE)
+def _load_module():
+    spec = importlib.util.spec_from_file_location("nco_tone_test", _NCO_TONE)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["_nco_tone_ex"] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-M = _load()
-
-
-def _install(prefix: Path, version: str | None, libdir: str = "lib") -> Path:
-    """A directory indistinguishable from a real doppler install."""
-    cm = prefix / libdir / "cmake" / "doppler"
-    cm.mkdir(parents=True)
-    for f in ("doppler-config.cmake", "doppler-targets.cmake"):
-        (cm / f).write_text("", encoding="utf-8")
+def _install(root: Path, version: str | None):
+    """A complete, installed-shape doppler prefix at *version*."""
+    d = root / "lib" / "cmake" / "doppler"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "doppler-config.cmake").write_text("# config\n", encoding="utf-8")
+    (d / "doppler-targets.cmake").write_text("# targets\n", encoding="utf-8")
     if version is not None:
-        pc = prefix / libdir / "pkgconfig"
-        pc.mkdir(parents=True, exist_ok=True)
-        (pc / "doppler.pc").write_text(
-            f"Name: doppler\nVersion: {version}\n", encoding="utf-8"
-        )
-    return prefix
+        pc = root / "lib" / "pkgconfig" / "doppler.pc"
+        pc.parent.mkdir(parents=True, exist_ok=True)
+        pc.write_text(f"Version: {version}\n", encoding="utf-8")
+    return root
 
 
-def _search(tmp_path: Path, monkeypatch, version: str | None, libdir="lib"):
-    """Run the real search with a fake HOME holding one install."""
-    _install(tmp_path / ".local" / "doppler", version, libdir)
-    monkeypatch.setattr(M.Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(M, "_download_doppler", lambda *a, **k: "<downloaded>")
-    return M._find_doppler_prefix()
+@pytest.mark.parametrize("version", ["0.13.2", "0.33.3", "0.38.1"])
+def test_a_below_floor_prefix_is_refused(tmp_path, version):
+    m = _load_module()
+    why = m.why_prefix_unusable(_install(tmp_path / version, version))
+    assert why is not None
+    assert version in why and m._DOPPLER_FLOOR in why
 
 
-def test_the_floor_is_encoded_not_only_described():
-    """It lived in a comment while the code compared nothing, which is what
-    let a below-floor install reach the compiler twice."""
-    assert M._DOPPLER_FLOOR == "0.39.0"
-    assert M._version_key(M._DOPPLER_VERSION) >= M._version_key(
-        M._DOPPLER_FLOOR
-    ), "the pin must not be below the floor it enforces"
+def test_the_refusal_explains_why_that_version_cannot_work(tmp_path):
+    """Naming the floor without the reason invites someone to lower it."""
+    m = _load_module()
+    why = m.why_prefix_unusable(_install(tmp_path / "old", "0.38.1"))
+    assert "nco_steps_u32" in why
 
 
-@pytest.mark.parametrize("version", ["0.33.3", "0.13.2", "0.38.1"])
-def test_a_below_floor_install_is_skipped_for_the_pin(
-    tmp_path: Path, monkeypatch, capsys, version
-):
-    """0.33.3 and 0.13.2 are the two that actually shadowed the pin here."""
-    assert _search(tmp_path, monkeypatch, version) == "<downloaded>"
-    out = capsys.readouterr().out
-    assert "skipping" in out and version in out
-    assert M._DOPPLER_FLOOR in out, "must say what the floor is"
+@pytest.mark.parametrize("version", ["0.39.0", "0.45.0", "0.49.0", "1.0.0"])
+def test_an_at_or_above_floor_prefix_is_accepted(tmp_path, version):
+    m = _load_module()
+    assert m.why_prefix_unusable(_install(tmp_path / version, version)) is None
 
 
-@pytest.mark.parametrize("version", ["0.39.0", "0.45.0", "1.0.0"])
-def test_an_at_or_above_floor_install_is_used(
-    tmp_path: Path, monkeypatch, capsys, version
-):
-    got = _search(tmp_path, monkeypatch, version)
-    assert got == str(tmp_path / ".local" / "doppler")
-    assert version in capsys.readouterr().out, "must announce which doppler"
-
-
-def test_an_unmeasurable_install_is_accepted_not_rejected(
-    tmp_path: Path, monkeypatch, capsys
-):
-    """A source build tree may have no `.pc`. Rejecting what cannot be
-    measured would break doppler's own developers, so "unknown" is accepted
-    and labelled rather than treated as unusable."""
-    got = _search(tmp_path, monkeypatch, None)
-    assert got == str(tmp_path / ".local" / "doppler")
-    assert "version unknown" in capsys.readouterr().out
-
-
-def test_the_version_is_read_from_lib64_too(tmp_path: Path, monkeypatch):
-    """Some distributions install into lib64; a prefix there must not read as
-    unmeasurable and silently bypass the floor."""
-    assert _search(tmp_path, monkeypatch, "0.33.3", libdir="lib64") == (
-        "<downloaded>"
-    )
-
-
-def test_no_local_install_downloads_the_pin(
-    tmp_path: Path, monkeypatch, capsys
-):
-    monkeypatch.setattr(M.Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(M, "_download_doppler", lambda *a, **k: "<downloaded>")
-    assert M._find_doppler_prefix() == "<downloaded>"
-    assert M._DOPPLER_VERSION in capsys.readouterr().out
-
-
-def test_version_keys_compare_numerically():
-    assert M._version_key("0.9.0") < M._version_key("0.10.0")
-    assert M._version_key("0.39.0") == M._version_key("0.39.0")
+def test_an_unmeasurable_prefix_is_accepted_not_refused(tmp_path):
+    """None means 'cannot judge'. Refusing a prefix merely because its version
+    could not be read would reject working installs that ship no `.pc`."""
+    m = _load_module()
+    assert m.why_prefix_unusable(_install(tmp_path / "nopc", None)) is None

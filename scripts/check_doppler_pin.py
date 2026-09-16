@@ -26,11 +26,8 @@ this must never do is print nothing and look like a pass.
 
 from __future__ import annotations
 
-import json
 import re
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 PIN_FILE = (
@@ -46,6 +43,20 @@ _PIN_RE = re.compile(r'^_DOPPLER_VERSION\s*=\s*"([^"]+)"', re.MULTILINE)
 TIMEOUT_S = 10
 
 
+def _example():
+    """The nco_tone example module, loaded by path.
+
+    It is example payload rather than importable library code, so it is loaded
+    the way the example runner loads it.
+    """
+    import importlib.util as u
+
+    spec = u.spec_from_file_location("_nco_tone_example", PIN_FILE)
+    mod = u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def read_pin(path: Path = PIN_FILE) -> str | None:
     """The pinned version, or None when the constant is gone or renamed."""
     if not path.is_file():
@@ -57,19 +68,13 @@ def read_pin(path: Path = PIN_FILE) -> str | None:
 def latest_release(url: str = LATEST_URL) -> str | None:
     """doppler's latest release tag without the leading ``v``, or None.
 
-    None covers every reason the answer is unknown — offline, rate-limited,
-    the repo moved — because the caller treats them identically: it cannot
-    compare, so it says so rather than guessing.
+    **Delegates to the example**, which is the one implementation. This script
+    already reads `_DOPPLER_VERSION` out of that file; the resolver flows the
+    same direction. It lives there rather than here because the example must
+    run standalone — it ships in the package and `scripts/` does not, so a copy
+    here would be the second implementation of a primitive, and those drift.
     """
-    try:
-        req = urllib.request.Request(
-            url, headers={"Accept": "application/vnd.github+json"}
-        )
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as fh:
-            tag = json.load(fh).get("tag_name") or ""
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
-        return None
-    return tag.lstrip("v") or None
+    return _example().latest_release(url)
 
 
 def _key(v: str) -> tuple:

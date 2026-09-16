@@ -6,12 +6,22 @@ Demonstrates:
   - opaque state (nco_state_t*) with create_impl / destroy_impl
   - jm apply keeping the find_package() call alive across re-runs
 
-doppler can be supplied three ways, tried in order:
+doppler is supplied two ways, tried in order:
   1. --doppler-prefix PATH on the command line (or argument to run()).
-  2. A local install / build tree discoverable by _find_doppler_prefix().
-  3. Auto-download of the prebuilt release tarball into a cache dir
-     (~/.cache/jm-tests/doppler/v<version>/). Skips if the download
-     fails (no network, asset name mismatch on this platform, etc.).
+     The explicit, opt-in escape hatch: a doppler developer testing a working
+     tree passes `--doppler-prefix ~/doppler/build`, and CI passes the prefix
+     it extracted. Whatever is passed is printed.
+  2. Otherwise the LATEST doppler release is downloaded into a per-user cache
+     (~/.cache/jm-tests/doppler/v<version>/<platform>) and built against.
+     `_DOPPLER_VERSION` is the fallback when the release list is unreachable,
+     not the target. Skips if the download cannot be completed (no network and
+     nothing cached, asset name mismatch on this platform, etc.).
+
+This example is for jm/doppler USERS, so it does not look at what is installed
+on the machine — see `_find_doppler_prefix` for the measurement that killed
+that. If you want doppler installed permanently rather than fetched per run,
+install it normally and pass --doppler-prefix; the docs page for this example
+shows how.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/nco_tone/test.py [--doppler-prefix PATH]
@@ -50,7 +60,7 @@ from just_makeit._pyfmt import flatten_prose
 # because doppler published, not because of the change being linted, and
 # doppler ships roughly weekly. The floor is the part with teeth and is
 # asserted in tests/test_doppler_pin_check.py.
-_DOPPLER_VERSION = "0.45.0"
+_DOPPLER_VERSION = "0.49.0"
 #: The oldest doppler whose API this example actually compiles against —
 #: v0.39.0 added the trailing capacity argument to `nco_steps_u32`. It lived
 #: only in the prose above until it was encoded here, which is why a local
@@ -194,12 +204,26 @@ def _prefix_version(prefix: Path) -> str | None:
     """The doppler version installed at *prefix*, or None if unreadable.
 
     Read from the pkg-config file, the only place a prebuilt release states
-    its own version. None means "cannot judge" — a source build tree may ship
-    the cmake config without a `.pc` — and the caller accepts such a prefix
-    rather than rejecting one it merely could not measure.
+    its own version. None means "cannot judge", and the caller accepts such a
+    prefix rather than rejecting one it merely could not measure.
+
+    **The prefix ROOT is searched too, and that is the case with teeth.** A
+    prebuilt release puts the `.pc` under `lib/pkgconfig/`; a source BUILD
+    TREE writes it at the top of the build dir. `~/doppler/build` is an
+    explicit candidate in `_find_doppler_prefix`, so the build-tree layout is
+    the expected local-dev case rather than an edge one -- and looking only
+    under `lib/` made every such prefix report "version unknown", which skips
+    the floor check entirely. The floor is described above as the part with
+    teeth; for the commonest local prefix it had none, which is exactly the
+    `too many arguments to nco_steps_u32` failure it was added to stop (twice,
+    2026-07-30 and 2026-08-30). Measured 2026-09-16: `~/doppler/build` shipped
+    `doppler.pc` reading 0.46.0 at its root and was used as "version unknown".
     """
-    for libdir in ("lib", "lib64"):
+    for libdir in ("lib", "lib64", "."):
         pc = prefix / libdir / "pkgconfig" / "doppler.pc"
+        if not pc.is_file() and libdir == ".":
+            # a build tree writes it at the top, with no pkgconfig/ level
+            pc = prefix / "doppler.pc"
         if not pc.is_file():
             continue
         for line in pc.read_text(encoding="utf-8").splitlines():
@@ -208,68 +232,155 @@ def _prefix_version(prefix: Path) -> str | None:
     return None
 
 
-def _find_doppler_prefix() -> str | None:
-    """Return the doppler prefix to pass to --doppler-prefix.
+_LATEST_URL = (
+    "https://api.github.com/repos/doppler-dsp/doppler/releases/latest"
+)
 
-    Tries in order:
-      1. A locally-installed doppler (system paths, ~/doppler/build).
-      2. The auto-downloaded prebuilt release in the cache dir.
 
-    Returns the prefix (i.e. the directory one level above
-    lib/cmake/doppler/) or None when neither path produces a usable
-    cmake config."""
-    candidates = [
-        Path("/usr/local"),
-        Path("/usr"),
-        # Rootless installs (e.g. unpacking the prebuilt
-        # doppler-<ver>-<plat>.tar.gz into a user prefix) are listed before
-        # the local source build tree, which may be stale or incomplete.
-        Path.home() / ".local" / "doppler",
-        Path.home() / ".local",
-        Path.home() / "doppler" / "build",
-    ]
-    for prefix in candidates:
-        for rel in (".", "lib/cmake/doppler", "lib64/cmake/doppler"):
-            d = prefix / rel
-            # gh-434: require the targets file NEXT TO the config. A doppler
-            # source build tree ships doppler-config.cmake but (pre
-            # doppler#380) no doppler-targets.cmake -- install(EXPORT) only
-            # materialises it at install time -- so a config-only directory
-            # is a false-positive prefix that hard-fails at cmake configure
-            # instead of falling through to the auto-download.
-            if (d / "doppler-config.cmake").exists() and (
-                d / "doppler-targets.cmake"
-            ).exists():
-                # gh-434 rejected a discovered prefix that would hard-fail at
-                # cmake CONFIGURE and fell through to the download. A doppler
-                # below the floor is the same false positive one stage later:
-                # it configures, then fails to COMPILE with an error about
-                # argument counts that reads as a bug in the example rather
-                # than a fact about the install. Reject it for the same
-                # reason.
-                found = _prefix_version(prefix)
-                if found is not None and _version_key(found) < _version_key(
-                    _DOPPLER_FLOOR
-                ):
-                    print(
-                        f"  [nco_tone] skipping {prefix}: doppler {found} is "
-                        f"below the {_DOPPLER_FLOOR} floor this example needs"
-                    )
-                    break
-                # "Which doppler did this build against" is the first question
-                # a failure raises, and a discovered install answered it
-                # nowhere -- which is how a local one shadowed the pin for six
-                # releases without anyone noticing.
-                print(
-                    f"  [nco_tone] using {prefix} "
-                    f"(doppler {found or 'version unknown'}, local install)"
+def latest_release(url: str = _LATEST_URL) -> str | None:
+    """doppler's latest release tag without the leading ``v``, or None.
+
+    None covers every reason the answer is unknown — offline, rate-limited,
+    the repo moved — because every caller treats them identically: it cannot
+    ask, so it falls back rather than guessing.
+
+    **This is the one implementation.** `scripts/check_doppler_pin.py` imports
+    it from here rather than carrying its own, the same direction the pin
+    already flows (that script reads `_DOPPLER_VERSION` out of this file). It
+    lives in the example because the example must run standalone — it ships in
+    the package and `scripts/` does not.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as fh:
+            tag = json.load(fh).get("tag_name") or ""
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    return tag.lstrip("v") or None
+
+
+def why_prefix_unusable(prefix: Path) -> str | None:
+    """Why *prefix* cannot be built against, or None when it is usable.
+
+    Both refusals here were learned from a DISCOVERED prefix, back when this
+    example scanned the machine. Discovery is gone (see
+    :func:`_find_doppler_prefix`), but neither hazard went with it — a person
+    passing ``--doppler-prefix`` can hand over exactly the same two directories,
+    and the failure is worse there because they chose it deliberately and the
+    error does not mention their choice.
+
+    - **config without targets** (gh-434). A doppler source build tree ships
+      ``doppler-config.cmake`` but, pre doppler#380, no
+      ``doppler-targets.cmake`` — ``install(EXPORT)`` only materialises that at
+      install time. cmake then hard-fails at CONFIGURE with *"include could not
+      find requested file: .../doppler-targets.cmake"*, which reads as a broken
+      example rather than an unfinished install.
+    - **below the floor**. The same false positive one stage later: it
+      configures, then fails to COMPILE with an argument-count error about
+      ``nco_steps_u32``. That happened twice (2026-07-30, 2026-08-30) before the
+      floor existed.
+
+    An UNMEASURABLE prefix is accepted. None means "cannot judge", and refusing
+    a prefix merely because its version could not be read would reject working
+    installs — the caller is told what was used either way.
+    """
+    for rel in ("lib/cmake/doppler", "lib64/cmake/doppler", "."):
+        d = prefix / rel
+        if (d / "doppler-config.cmake").exists():
+            if not (d / "doppler-targets.cmake").exists():
+                return (
+                    f"{prefix} has doppler-config.cmake but no "
+                    f"doppler-targets.cmake beside it.\n"
+                    f"  That is a doppler build tree that was never installed; "
+                    f"cmake fails at configure.\n"
+                    f"  Run `cmake --install` on it, or point "
+                    f"--doppler-prefix at an installed tree."
                 )
-                return str(prefix)
+            break
+    else:
+        return (
+            f"{prefix} contains no doppler-config.cmake "
+            f"(looked in ./, lib/cmake/doppler, lib64/cmake/doppler)."
+        )
+    found = _prefix_version(prefix)
+    if found is not None and _version_key(found) < _version_key(
+        _DOPPLER_FLOOR
+    ):
+        return (
+            f"{prefix} has doppler {found}, below the {_DOPPLER_FLOOR} floor "
+            f"this example needs.\n"
+            f"  v{_DOPPLER_FLOOR} added the trailing capacity argument to "
+            f"nco_steps_u32 that step() passes."
+        )
+    return None
+
+
+def _find_doppler_prefix() -> str | None:
+    """Fetch doppler and return the prefix to pass to --doppler-prefix.
+
+    **This example is for jm/doppler USERS, not doppler developers**, and that
+    decides the whole design: it resolves doppler's *latest* release, downloads
+    it into a per-user cache and builds against that. It deliberately does
+    **not** look at what is installed on the machine.
+
+    That scanning is what this replaced, and it was the bug. The candidate list
+    ran `/usr/local`, `/usr`, `~/.local/doppler`, `~/.local`, `~/doppler/build`
+    ahead of the download, so on any box with doppler present the pin was never
+    exercised — measured 2026-09-16, a stale `~/doppler/build` from two weeks
+    earlier shadowed it at 0.46.0 while CI ran 0.49.0 and the pin said 0.49.0.
+    Three paths, three answers, and the local one reported itself as "version
+    unknown". A developer prefix is now opt-IN via `--doppler-prefix`, which is
+    explicit and printed, rather than opt-out by accident.
+
+    CI downloads the latest release too, so the two paths now agree by
+    construction instead of agreeing only while someone remembers to bump a
+    constant.
+
+    The pin is the **fallback**, not the target: when the release lookup cannot
+    be made, `_DOPPLER_VERSION` is used so an offline box still runs against a
+    known-good version (and reuses an already-extracted tarball). That is what
+    keeps `make lint`'s currency report meaningful — the fallback must not rot.
+    """
+    version = latest_release()
+    if version is None:
+        print(
+            "  [nco_tone] could not reach doppler's release list; "
+            f"falling back to the pinned {_DOPPLER_VERSION}"
+        )
+        version = _DOPPLER_VERSION
+    elif version != _DOPPLER_VERSION:
+        # Not a failure: the pin is a fallback and doppler ships ~weekly.
+        print(
+            f"  [nco_tone] doppler latest is {version} "
+            f"(pinned fallback is {_DOPPLER_VERSION})"
+        )
+    if _version_key(version) < _version_key(_DOPPLER_FLOOR):
+        # Refuse rather than fail later at COMPILE with an argument-count
+        # error that reads as a bug in the example (gh-434's lesson, and the
+        # `too many arguments to nco_steps_u32` failure that happened twice).
+        print(
+            f"  [nco_tone] doppler {version} is below the "
+            f"{_DOPPLER_FLOOR} floor this example needs"
+        )
+        return None
+    prefix = _download_doppler(version)
+    if prefix is None:
+        return None
+    # An independent check that the tarball is what was asked for: the
+    # extracted `.pc` states its own version, and a mismatch means the release
+    # asset does not carry what its tag claims.
+    got = _prefix_version(Path(prefix))
     print(
-        "  [nco_tone] no usable local doppler; downloading the pinned "
-        f"{_DOPPLER_VERSION}"
+        f"  [nco_tone] using {prefix} "
+        f"(doppler {got or version}, downloaded release)"
     )
-    return _download_doppler()
+    return prefix
 
 
 # ── TOML fragment ─────────────────────────────────────────────────────────────
@@ -449,6 +560,16 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     # From here on we need a real doppler install to configure/build/link.
     if doppler_prefix is None:
         doppler_prefix = _find_doppler_prefix()
+    elif (why := why_prefix_unusable(Path(doppler_prefix))) is not None:
+        # An EXPLICIT prefix is validated; a downloaded one is not, because
+        # this code produced it. Refusing here names the directory the caller
+        # chose, instead of letting cmake fail several layers down.
+        print(f"nco_tone: SKIP build — --doppler-prefix {why}")
+        return
+    else:
+        print(
+            f"  [nco_tone] using {doppler_prefix} (explicit --doppler-prefix)"
+        )
     if doppler_prefix is None:
         print(
             "nco_tone: enrichment verified; SKIP build — doppler not found "
