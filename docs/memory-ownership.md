@@ -344,6 +344,7 @@ silent truncation from the allocation into the caller's own buffer.
 | `buf_field` property               | **C state struct**              | the object's state                                | `self` (INCREF'd)  | n/a      |
 | Array state `get_<name>()`         | NumPy, per call                 | nothing (copy)                                    | itself             | n/a      |
 | Array state `get_<name>_view()`    | **C state struct**              | the object's state                                | `self`             | n/a      |
+| `borrow` method                    | **C state struct**              | the object's state                                | `self`             | n/a      |
 | Handle (c)/(e)                     | NumPy, per call                 | nothing                                           | itself             | no       |
 | Handle (d), capsule `execute`      | **caller**                      | the caller's array                                | the caller's array | required |
 | Handle (f) `bytes`                 | copied into `bytes`             | nothing                                           | —                  | n/a      |
@@ -351,9 +352,9 @@ silent truncation from the allocation into the caller's own buffer.
 
 !!! danger "Borrowed views do not survive `destroy()`"
 
-    The two shapes that borrow the C state's memory — the `buf_field` property
-    and `get_<name>_view()` — pin the Python wrapper, which keeps the *object*
-    alive but not its state. An explicit `obj.destroy()` (or leaving a `with`
+    The three shapes that borrow the C state's memory — the `buf_field`
+    property, `get_<name>_view()` and a `borrow` method — pin the Python
+    wrapper, which keeps the *object* alive but not its state. An explicit `obj.destroy()` (or leaving a `with`
     block) frees the state while the view still points at it. Read such a view
     before destroying, or copy it with `np.array(v)`.
 
@@ -393,9 +394,31 @@ When you add an array-returning shape to the generator:
     owns rather than taking a new one, and that call is checked in place.
 
 1. **Never make validity depend on a runtime probe.** If the correctness of a
-    returned array depends on the binding guessing what the caller did with the
-    previous one, the design is wrong. This is the specific mistake gh-219 and
-    gh-437 made.
+    returned array depends on the binding **guessing what the caller did with
+    the previous one**, the design is wrong. This is the specific mistake
+    gh-219 and gh-437 made.
+
+    **What this rule is, and is not, about.** It was derived from a
+    grow-on-demand buffer: gh-219 `free()`d under an outstanding view (a
+    genuine use-after-free), and gh-437's *next call* overwrote the same
+    buffer in place. gh-604 then measured the fix — a weakref to the caller's
+    last view — at 6-8× slower and +514 KiB per call, worse than letting
+    NumPy own each result. The rule is the bill for that, not a taste.
+
+    It does **not** forbid a borrow over a *fixed* mapping (`borrow`, above).
+    Nothing is reallocated there, so the worst case is stale values rather
+    than a dangling pointer, and the invalidating call is the consumer's own
+    explicit release rather than an unrelated later one. Such a shape states
+    its contract on both faces and does not enforce it — which is honest
+    rather than lax, because **in CPython it cannot be enforced**: there is no
+    hook on element access, and every scheme that refuses to recycle while a
+    view is outstanding (a buffer-protocol export count, a refcounted token)
+    refuses *correct* idiomatic code, since the caller's own name for the
+    previous view is still bound at every point the producer could check.
+    Measured on gh-1312.
+
+    The line is **who knows**: guessing about the caller is forbidden;
+    a contract the author states and the consumer keeps is not.
 
 1. **Prefer per-call allocation.** It is ~130 ns, flat in `n`. Reuse is an
     optimisation you must justify with a measurement against the *hold* case,

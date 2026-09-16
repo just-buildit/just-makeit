@@ -186,6 +186,17 @@ Commands:
                                 array whose dtype is that C struct's own layout
                                 (offsetof/sizeof), one row per record. The
                                 --result-field list names its columns.
+    --borrow                    Return a zero-copy numpy VIEW of memory the C state
+                                already owns: the kernel returns a pointer instead
+                                of filling a buffer, and the view pins the object.
+                                Returning NULL raises (see --error/--error-message).
+                                A usage contract -- the view is valid until the
+                                author's own release call; see docs/memory-ownership.md.
+    --borrow-count NAME         Which param carries the borrowed view's element
+                                count. Defaulted from the sole param; required
+                                when there is more than one.
+    --borrow-writeable          Let the caller write through a borrowed view
+                                (default: read-only).
     --batch                     Generate 1:1-rate array transform (allocates output per call).
     --no-bench                  Exclude this method from the C benchmark.
     --impl file::funcname       Lift method body from funcname in file.

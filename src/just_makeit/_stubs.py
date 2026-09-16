@@ -33,6 +33,7 @@ from . import _coerce
 from . import _config as C
 from . import _gluedoc
 from . import _outbuf
+from . import _borrow
 from . import _record
 from . import _context as Ctx
 from . import _types as T
@@ -2036,7 +2037,18 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 pann += f" = {repr(p['default']) if p.get('enum') else _py_default_stub(p['type'], _pdflt)}"
             param_parts.append(pann)
 
-        if m_py_return_type:
+        if _borrow.is_borrow(m):
+            # gh-1312: peer of the borrow branch in `make_methods_ctx`'s
+            # annotation chain -- a borrowed view is an ndarray of the
+            # element type, not one element of it.
+            #
+            # Ahead of `py_return_type`: that key renames a type jm cannot
+            # infer, and here jm knows the shape exactly. Letting it win
+            # would let the annotation disagree with the array the binding
+            # actually builds, which is the divergence this shape is
+            # supposed to close.
+            ret_ann = f"NDArray[{_np(m_ret)}]"
+        elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m.get("status_return"):
             # gh-432: status returns bind as None (raise on failure).

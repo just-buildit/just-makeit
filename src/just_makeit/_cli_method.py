@@ -46,6 +46,9 @@ def run(args: list[str]) -> None:
     record_module = ""
     record_doc = ""
     record_dtype = ""
+    borrow = False
+    borrow_count = ""
+    borrow_writeable = False
     # gh-805 §A2 / §B
     fn = ""
     error_negative = False
@@ -85,6 +88,24 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--variable-output":
             variable_output = True
+            i += 1
+        elif tok == "--borrow":
+            # gh-1312: the kernel lends a pointer into the state's own
+            # memory instead of filling a buffer sized for the call.
+            borrow = True
+            i += 1
+        elif tok == "--borrow-writeable":
+            borrow_writeable = True
+            i += 1
+        elif tok == "--borrow-count":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --borrow-count requires a param name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            borrow_count = remaining[i]
             i += 1
         elif tok == "--error-on-empty":
             # gh-1159: an empty result is a REFUSAL, not an empty answer.
@@ -578,6 +599,9 @@ def run(args: list[str]) -> None:
         record_module=record_module,
         record_doc=record_doc,
         record_dtype=record_dtype,
+        borrow=borrow,
+        borrow_count=borrow_count,
+        borrow_writeable=borrow_writeable,
         varargs=varargs,
         manual_stub=manual_stub,
         pass_capacity=pass_capacity,

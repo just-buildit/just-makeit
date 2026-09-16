@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _borrow
 from . import _record
 from . import _glue
 from . import _render as R
@@ -327,6 +328,7 @@ def _methods_c_stub_fixed(
     params: list[tuple[str, str]] | None = None,
     out_type: str | None = None,
     batch: bool = False,
+    borrow: bool = False,
     c_fn: str = "",
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
@@ -350,6 +352,33 @@ def _methods_c_stub_fixed(
         return (
             f"/* <<IMPLEMENT: {name} (1:1-rate batch) >> */\n"
             f"void\n{c_fn}({c_params})\n{{\n{sup}\n}}\n"
+        )
+
+    # gh-1312: a borrow RETURNS a pointer into the state's own memory, so its
+    # stub returns one -- `NULL`, which the binding turns into the declared
+    # exception. The scalar fall-through below would emit a VALUE for a
+    # pointer-returning function, which does not compile: "no foot-guns, all
+    # green from day one" means the scaffold builds before the author has
+    # written a line of it.
+    if borrow:
+        parts = T.c_param_parts(
+            ([("x", arg_type)] if has_arg else []) + list(params)
+        )
+        sep = ", " + ", ".join(parts) if parts else ""
+        sup = "    (void)state;" + "".join(
+            f" (void){pname};"
+            for pname, _ in (
+                ([("x", arg_type)] if has_arg else []) + list(params)
+            )
+        )
+        return (
+            f"/* <<IMPLEMENT: {name} (borrowed view) >> */\n"
+            f"{ret_disp} *\n{c_fn}({component}_state_t *state{sep})\n"
+            f"{{\n{sup}\n"
+            f"    /* Return a pointer into the state's own memory, or NULL\n"
+            f"       to raise. The caller must not use the view after the\n"
+            f"       release call that invalidates it. */\n"
+            f"    return NULL;\n}}\n"
         )
 
     extra_params = "".join(
@@ -643,6 +672,7 @@ def _build_method_prototype(
     result_fields: list[dict] | None = None,
     single: bool = False,
     record_dtype: str = "",
+    borrow: bool = False,
     c_fn: str = "",
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
@@ -713,6 +743,22 @@ def _build_method_prototype(
             f"void {c_fn}({component}_state_t *state"
             f"{in_part}, {ret_disp} *out);"
         )
+
+    # gh-1312: a borrow RETURNS a pointer into memory the state owns rather
+    # than filling one the caller sized. Placed with `batch` above the
+    # variable_output / out-param shapes because it is the one shape whose
+    # result is not an out-parameter at all -- falling through would declare
+    # a kernel that writes where this one only lends.
+    #
+    # NULL is the author's failure signal (end of stream, interrupted, a
+    # count the state can never satisfy), and the binding turns it into an
+    # exception, so nothing here needs a status out-param.
+    if borrow:
+        _bparts = T.c_param_parts(
+            ([("x", arg_type)] if has_arg else []) + list(params)
+        )
+        _bsep = ", " + ", ".join(_bparts) if _bparts else ""
+        return f"{ret_disp} *{c_fn}({component}_state_t *state{_bsep});"
 
     extra_params = "".join(
         f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
@@ -800,6 +846,13 @@ _SIGNATURE_COERCIONS: dict = {
     "record_name": (str, ""),
     "record_module": (str, ""),
     "record_dtype": (str, ""),
+    # gh-1312: all three are part of the CALL -- `borrow` decides whether
+    # the kernel lends or fills, `borrow_count` which argument sizes the
+    # view, `borrow_writeable` what the caller may do with it. Two objects
+    # differing in any of them differ in the C symbol they need.
+    "borrow": (bool, False),
+    "borrow_count": (str, ""),
+    "borrow_writeable": (bool, False),
     "py_return_type": (str, ""),
     "max_out": (int, 0),
     "varargs": (bool, False),
@@ -920,6 +973,9 @@ def run(
     record_module: str = "",
     record_doc: str = "",
     record_dtype: str = "",
+    borrow: bool = False,
+    borrow_count: str = "",
+    borrow_writeable: bool = False,
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -971,6 +1027,22 @@ def run(
     # member list. Both are checked here rather than left to fail later as a
     # C compile error in the user's tree, where the cause is several
     # generated files away from the symptom.
+    # gh-1312: a borrow's refusals live in `_borrow.why_not` so every face
+    # asks one place and the reason reaches the author as prose rather than
+    # as a C compile error several generated files away.
+    _borrow_why = _borrow.why_not(
+        {
+            "name": method_name,
+            "borrow": borrow,
+            "borrow_count": borrow_count,
+            "variable_output": variable_output,
+            "out_type": out_type,
+            "params": C.as_named_tables(params or []),
+        }
+    )
+    if _borrow_why:
+        print(f"error: {_borrow_why}", file=sys.stderr)
+        sys.exit(1)
     if record_dtype:
         if not variable_output:
             print(
@@ -1560,6 +1632,7 @@ def run(
                 [(p["name"], p["type"]) for p in params],
                 out_type,
                 batch=batch,
+                borrow=borrow,
                 c_fn=fn,
             )
         if impl_body is not None:
@@ -1595,6 +1668,7 @@ def run(
             result_fields=result_fields,
             single=single,
             record_dtype=record_dtype,
+            borrow=borrow,
             c_fn=fn,
         ).split("\n")
 
@@ -1767,6 +1841,17 @@ def run(
         # gh-788: the POD C struct whose layout becomes the returned numpy
         # array's dtype. Paired with `result_fields`, which names its members.
         method_entry["record_dtype"] = record_dtype
+    if borrow:
+        # gh-1312: the kernel lends a pointer into the state's own memory.
+        # `borrow_count` is persisted only when it was DECLARED -- it is
+        # defaulted from a sole param at read time, and writing the derived
+        # value back would freeze a default the manifest deliberately leaves
+        # implicit (the gh-999 carrier lesson).
+        method_entry["borrow"] = True
+        if borrow_count:
+            method_entry["borrow_count"] = borrow_count
+        if borrow_writeable:
+            method_entry["borrow_writeable"] = True
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:

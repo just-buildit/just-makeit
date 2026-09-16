@@ -509,6 +509,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # record one. gh-632's replace-by-name warning is what surfaced
             # it; before that it would have landed silently.
             record_dtype=m.get("record_dtype", ""),
+            # gh-1312: forwarded EXPLICITLY, like record_dtype above and
+            # for the same reason -- this loop names keys one by one, so
+            # an unnamed one is silently absent and the replayed method
+            # loses its shape.
+            borrow=bool(m.get("borrow")),
+            borrow_count=m.get("borrow_count", ""),
+            borrow_writeable=bool(m.get("borrow_writeable")),
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
             varargs=bool(m.get("varargs")),

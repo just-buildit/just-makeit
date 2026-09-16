@@ -291,6 +291,12 @@ def _record_flags(entry: dict) -> list[str]:
     # the two together.
     if entry.get("record_dtype"):
         parts.append(_flag("--record-dtype", str(entry["record_dtype"])))
+    if entry.get("borrow"):
+        parts.append("--borrow")
+    if entry.get("borrow_count"):
+        parts.append(_flag("--borrow-count", str(entry["borrow_count"])))
+    if entry.get("borrow_writeable"):
+        parts.append("--borrow-writeable")
 
     return parts
 
