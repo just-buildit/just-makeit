@@ -2,6 +2,30 @@
 
 ### Added
 
+- **A component's C may live entirely in its header — `header_only = true`
+    (gh-1311).** A macro template or a family of `static inline` functions has
+    no out-of-line code, so jm scaffolds **no `<comp>_core.c`** and the CMake
+    core library is **INTERFACE** rather than OBJECT.
+
+    That kind is load-bearing twice over. An OBJECT library with no sources is
+    a hard CMake **configure** error, so the project would not build at all —
+    and nothing may fold an INTERFACE target into `lib<pkg>.so`, because
+    `$<TARGET_OBJECTS:>` is resolved at configure time too. The target keeps
+    its `<comp>_core` name, so the test and bench targets and every other
+    reference are unchanged, and `_libwiring` needed no change whatever: its
+    detector matches `add_library(... OBJECT`, and an INTERFACE library
+    honestly answers *no* to "does this contribute an out-of-line symbol".
+
+    **The header carries definitions, not prototypes.** A scaffold that
+    declares `create()` and defines it nowhere does not link, and jm's rule is
+    that the untouched scaffold builds and passes before the author has
+    written a line of it. `create`, `destroy`, `reset`, `steps` and every
+    state accessor are emitted `static inline` — the same bodies `_core.c`
+    would have carried, relocated rather than rewritten, so the two faces
+    cannot describe different functions.
+
+    `--header-only`, or `header_only = "true"` on the component.
+
 - **A method may return a zero-copy VIEW of memory the C state already owns —
     `borrow = true` (gh-1312).** Every other array-returning shape hands back
     memory somebody allocated *for the call*: NumPy's, or the caller's `out=`.

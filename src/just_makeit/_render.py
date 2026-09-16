@@ -224,6 +224,167 @@ def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
     return "\n".join(lines), 0
 
 
+def object_core_decl(component: str, header_only: bool) -> str:
+    """The core library a component declares: OBJECT, or INTERFACE (gh-1311).
+
+    A component whose C is entirely ``static inline`` in its header has no
+    ``_core.c`` to compile, and an OBJECT library with no sources is a hard
+    CMake **configure** error — not a link-time surprise, so the project does
+    not build at all. The idiomatic answer is an INTERFACE library: it carries
+    the include directories and nothing else.
+
+    **The target keeps its name.** ``<comp>_core`` is what the test and bench
+    targets link and what `_libwiring` looks for, so every downstream
+    reference is unchanged — the only difference is the kind.
+
+    That kind is also what keeps a header-only core OUT of ``lib<pkg>.so``,
+    with no change to `_libwiring` at all: its detector matches
+    ``add_library(<name> OBJECT``, and an INTERFACE library honestly answers
+    "no" to *does this contribute an out-of-line symbol*. Wiring one in would
+    be a configure error, because `$<TARGET_OBJECTS:>` resolves then
+    (gh-984). Deriving the answer from the tree rather than a manifest table
+    is what makes the new shape free here.
+
+    Examples
+    --------
+    >>> print(object_core_decl("fir", header_only=False))
+    # OBJECT library — pure C core, no Python dependency.
+    add_library(fir_core OBJECT fir_core.c)
+    target_include_directories(
+      fir_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
+                      ${CMAKE_SOURCE_DIR}/native/inc/fir)
+    >>> print(object_core_decl("ring", header_only=True))
+    # INTERFACE library — the core is header-only, so there is nothing to
+    # compile, and an OBJECT library with no sources fails configure.
+    add_library(ring_core INTERFACE)
+    target_include_directories(
+      ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
+                          ${CMAKE_SOURCE_DIR}/native/inc/ring)
+    """
+    inc = "${CMAKE_SOURCE_DIR}/native/inc"
+    if header_only:
+        head = f"  {component}_core INTERFACE "
+        return (
+            "# INTERFACE library — the core is header-only, so there is nothing to"
+            + chr(10)
+            + "# compile, and an OBJECT library with no sources fails"
+            " configure."
+            + chr(10)
+            + f"add_library({component}_core INTERFACE)"
+            + chr(10)
+            + "target_include_directories("
+            + chr(10)
+            + head
+            + inc
+            + chr(10)
+            + " " * len(head)
+            + f"{inc}/{component})"
+        )
+    head = f"  {component}_core PUBLIC "
+    return (
+        "# OBJECT library — pure C core, no Python dependency."
+        + chr(10)
+        + f"add_library({component}_core OBJECT {component}_core.c)"
+        + chr(10)
+        + "target_include_directories("
+        + chr(10)
+        + head
+        + inc
+        + chr(10)
+        + " " * len(head)
+        + f"{inc}/{component})"
+    )
+
+
+def component_core_decl(component: str, header_only: bool) -> str:
+    """The core library for a standalone or module OBJECT (gh-1311).
+
+    Peer of :func:`object_core_decl`, which serves the COLLOCATED shape
+    (a module whose leaf name is also one of its objects). The two differ
+    only in wording and wrapping -- this one notes that the core reaches
+    the combined library as well as the Python DSO -- and they are
+    separate functions for the same reason their templates are separate
+    files. What must not differ is the OBJECT/INTERFACE decision, which
+    is why both take the same flag and a gate asserts neither emits an
+    OBJECT library for a header-only component.
+
+    Examples
+    --------
+    >>> print(component_core_decl("fir", header_only=True))
+    # INTERFACE library — the core is header-only, so there is nothing
+    # to compile, and an OBJECT library with no sources fails configure.
+    add_library(fir_core INTERFACE)
+    target_include_directories(fir_core INTERFACE
+        ${CMAKE_SOURCE_DIR}/native/inc
+        ${CMAKE_SOURCE_DIR}/native/inc/fir)
+    """
+    inc = "${CMAKE_SOURCE_DIR}/native/inc"
+    if header_only:
+        return (
+            "# INTERFACE library — the core is header-only, so there"
+            " is nothing"
+            + chr(10)
+            + "# to compile, and an OBJECT library with no sources fails"
+            " configure."
+            + chr(10)
+            + f"add_library({component}_core INTERFACE)"
+            + chr(10)
+            + f"target_include_directories({component}_core INTERFACE"
+            + chr(10)
+            + f"    {inc}"
+            + chr(10)
+            + f"    {inc}/{component})"
+        )
+    return (
+        "# OBJECT library — pure C core, no Python dependency."
+        + chr(10)
+        + "# Linked into both the Python DSO and the combined"
+        " libmy_dsp.so."
+        + chr(10)
+        + f"add_library({component}_core OBJECT {component}_core.c)"
+        + chr(10)
+        + f"target_include_directories({component}_core PUBLIC"
+        + chr(10)
+        + f"    {inc}"
+        + chr(10)
+        + f"    {inc}/{component})"
+    )
+
+    if header_only:
+        head = f"  {component}_core INTERFACE "
+        return (
+            "# INTERFACE library — the core is header-only, so there"
+            " is nothing to"
+            + chr(10)
+            + "# compile, and an OBJECT library with no sources fails"
+            " configure."
+            + chr(10)
+            + f"add_library({component}_core INTERFACE)"
+            + chr(10)
+            + "target_include_directories("
+            + chr(10)
+            + head
+            + inc
+            + chr(10)
+            + " " * len(head)
+            + f"{inc}/{component})"
+        )
+    head = f"  {component}_core PUBLIC "
+    return (
+        "# OBJECT library — pure C core, no Python dependency."
+        + chr(10)
+        + f"add_library({component}_core OBJECT {component}_core.c)"
+        + chr(10)
+        + "target_include_directories("
+        + chr(10)
+        + head
+        + inc
+        + chr(10)
+        + " " * len(head)
+        + f"{inc}/{component})"
+    )
+
+
 CMAKE_LISTS_OBJECT_CORE = (
     LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_object_core.cmake")
 )

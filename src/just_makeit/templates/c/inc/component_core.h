@@ -29,13 +29,13 @@ extern "C" {
  * @return Heap-allocated state, or NULL on allocation failure.
  * @note Caller must call /*<<component>>*/_destroy() when done.
  */
-/*<<component>>*/_state_t */*<<component>>*/_create(/*<<create_params>>*/);
+/*<<create_decl>>*/
 
 /**
  * @brief Destroy a /*<<component>>*/ instance and release all memory.
  * @param state  May be NULL./*<<destroy_ret_doc>>*/
  */
-/*<<destroy_c_ret>>*/ /*<<component>>*/_destroy(/*<<component>>*/_state_t *state);
+/*<<destroy_decl>>*/
 
 /*<<builtin_reset_decl>>*/
 
@@ -46,7 +46,7 @@ extern "C" {
 /*<<getter_setter_decls>>*/
 
 /*<<property_decls>>*/
-/*<<method_decls>>*/
+/*<<method_decls>>*//*<<inline_core>>*/
 #ifdef __cplusplus
 }
 #endif

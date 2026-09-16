@@ -151,6 +151,12 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "array_args": C.array_args(cfg, comp),
         "no_state": C.is_no_state(cfg, comp),
         "no_step": C.is_no_step(cfg, comp),
+        # gh-1311: replayed for the sharpest version of gh-542's reason --
+        # dropping it here puts back both the `_core.c` and the OBJECT core
+        # library, and an OBJECT library with no sources fails CONFIGURE, so
+        # the project does not build at all rather than merely regenerating
+        # something the manifest asked to remove.
+        "header_only": C.is_header_only(cfg, comp),
         # gh-542: replayed like every other shape key — a manifest key that
         # apply drops regenerates the very method it asked to remove.
         "no_reset": C.is_no_reset(cfg, comp),

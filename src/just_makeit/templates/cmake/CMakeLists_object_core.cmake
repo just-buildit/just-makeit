@@ -1,8 +1,4 @@
-# OBJECT library — pure C core, no Python dependency.
-add_library(<<component>>_core OBJECT <<component>>_core.c)
-target_include_directories(
-  <<component>>_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
-                            ${CMAKE_SOURCE_DIR}/native/inc/<<component>>)
+<<object_core_decl>>
 <<extra_include_dirs_on_object_core>><<extra_link_on_object_core>>
 add_executable(test_<<component>>_core
                ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)

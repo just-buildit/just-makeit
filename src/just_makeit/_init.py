@@ -933,6 +933,7 @@ def run(
     init_params: list[tuple[str, str, str]] = (),
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
+    header_only: bool = False,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     pytest_: bool | None = None,
@@ -1061,6 +1062,7 @@ def run(
             create_fn=create_fn,
             no_reset=no_reset,
             opaque_state=opaque_state,
+            header_only=header_only,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1320,6 +1322,17 @@ def run(
     else:
         ctx["extra_include_dirs_on_core"] = ""
 
+    # gh-1311: the core library's KIND. A header-only component has no
+    # `_core.c`, and an OBJECT library with no sources fails configure --
+    # so it declares an INTERFACE library carrying the include dirs.
+    ctx["component_core_decl"] = R.component_core_decl(comp, header_only)
+
+    # gh-1311: the full context is assembled by here -- state, step,
+    # methods, properties -- which is the only point at which every
+    # declaration slot the header carries actually exists. Moving the
+    # core inline earlier left `steps()` declared and undefined.
+    Ctx.apply_header_only(ctx, header_only)
+
     print(f"just-makeit: adding component '{comp}' to project '{pkg}'")
     print()
 
@@ -1371,12 +1384,20 @@ def run(
         h_path.write_text(h_text, encoding="utf-8")
 
     # C sources (create-only — see above).
-    core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
-    _write(
-        core_c_path,
-        r(core_c_tmpl),
-        "update" if core_c_path.exists() else "create",
-    )
+    #
+    # gh-1311: a header-only component has NO `_core.c`. Its whole
+    # implementation is `static inline` in the sacred header, so there is
+    # nothing out-of-line to scaffold -- and writing an empty one would be
+    # worse than not writing it, because the CMake core library is INTERFACE
+    # and would not compile it, leaving a file that looks authoritative and
+    # reaches no build.
+    if not header_only:
+        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        _write(
+            core_c_path,
+            r(core_c_tmpl),
+            "update" if core_c_path.exists() else "create",
+        )
     _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
 
     # gh-1117: the process-global contract header, when the component declares
@@ -1467,8 +1488,18 @@ def run(
         # built via `jm new --object` and one built via `jm new` + `jm object`
         # have identical CMakeLists, and so `jm apply`'s aggregate reconcile
         # is a no-op on either.
+        # gh-1311: a header-only core is an INTERFACE library, which has no
+        # objects to fold into lib<pkg>. Wiring one in is a CONFIGURE error
+        # -- `$<TARGET_OBJECTS:>` is resolved then -- so the project would
+        # not build at all. `_libwiring`'s detector already reaches the same
+        # answer from the tree (it matches `add_library(... OBJECT`); this is
+        # the creation-time half, which emits rather than detects.
         splice_cmake_component(
-            root, pkg, comp, dep_core_libs(depends_on) + [f"{comp}_core"]
+            root,
+            pkg,
+            comp,
+            dep_core_libs(depends_on)
+            + ([] if header_only else [f"{comp}_core"]),
         )
     else:
         # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile
@@ -1504,6 +1535,7 @@ def run(
         no_reset_=no_reset,
         process_global_=process_global,
         opaque_state_=opaque_state,
+        header_only_=header_only,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,

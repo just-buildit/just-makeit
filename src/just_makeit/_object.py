@@ -362,6 +362,7 @@ def _make_object_ctx(
     class_name: str | None = None,
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
+    header_only: bool = False,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable: list[tuple[str, str]] = (),
     doc_blocks: dict | None = None,
@@ -401,6 +402,7 @@ def _make_object_ctx(
             init_post_parse_impl=init_post_parse_impl,
             opaque_fields=opaque_fields,
             opaque_state=opaque_state,
+            header_only=header_only,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
             no_reset=no_reset,
@@ -2126,6 +2128,10 @@ def _regenerate_module_now(
                 "extra_include_dirs_on_object_core": (
                     extra_include_dirs_on_object_core
                 ),
+                # gh-1311: OBJECT, or INTERFACE when the core is header-only.
+                "object_core_decl": R.object_core_decl(
+                    obj, C.is_header_only(cfg, obj)
+                ),
             }
             obj_cmake = R.render(R.CMAKE_LISTS_OBJECT_CORE, ctx_cmake)
             # Append the collocated object's extra sources: a legacy
@@ -2338,6 +2344,7 @@ def run(
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
+    header_only: bool = False,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     variable_output: bool = False,
@@ -2420,6 +2427,7 @@ def run(
             array_args=array_args,
             no_state=no_state,
             no_step=no_step,
+            header_only=header_only,
             no_reset=no_reset,
             process_global=process_global,
             mutable=mutable,
@@ -2628,6 +2636,17 @@ def run(
         )
     else:
         ctx["extra_include_dirs_on_object_core"] = ""
+
+    # gh-1311: the core library's KIND. A header-only component has no
+    # `_core.c`, and an OBJECT library with no sources fails configure.
+    ctx["object_core_decl"] = R.object_core_decl(ctx["component"], header_only)
+
+    # gh-1311: the SECOND header render. `_init.run` has its own, and wiring
+    # only that one left this path writing `<<create_decl>>` /
+    # `<<destroy_decl>>` / `<<inline_core>>` verbatim -- caught loudly by
+    # gh-1199's refusal to write a file still carrying unfilled slots, which
+    # is exactly the "you wired one path" mistake that gate exists for.
+    Ctx.apply_header_only(ctx, header_only)
 
     # gh-170: include each depends_on component's header so opaque fields of
     # its types compile (mirrors the standalone path in _init.run). Only deps

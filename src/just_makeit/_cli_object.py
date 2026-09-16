@@ -112,6 +112,7 @@ def run(args: list[str]) -> None:
     no_state = False
     no_step = False
     opaque_state = False
+    header_only = False
     no_reset = False
     mutable = False
     step_delegates = False
@@ -253,6 +254,12 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--no-step":
             no_step = True
+            i += 1
+        elif tok == "--header-only":
+            # gh-1311: the whole core is `static inline` in the header, so
+            # there is no `_core.c` to scaffold and the CMake core library is
+            # INTERFACE -- an OBJECT library with no sources fails configure.
+            header_only = True
             i += 1
         elif tok == "--opaque-state":
             # gh-588: forward-declare the struct; the definition stays in
@@ -454,6 +461,7 @@ def run(args: list[str]) -> None:
         no_step=no_step,
         no_reset=no_reset,
         opaque_state=opaque_state,
+        header_only=header_only,
         mutable=mutable,
         step_delegates=step_delegates,
         serializable=serializable,
