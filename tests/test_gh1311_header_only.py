@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -289,3 +290,91 @@ class TestTheUntouchedScaffoldBuildsAndRuns:
         )
         assert out.returncode == 0, out.stdout + out.stderr
         assert "OK" in out.stdout
+
+
+class TestEveryCoreLibraryEmitterAgrees:
+    """Registration-free: the OBJECT/INTERFACE decision has TWO emitters.
+
+    `_render.object_core_decl` serves the collocated shape (a module whose
+    leaf name is also one of its objects) and `_render.component_core_decl`
+    serves the standalone/module one. They are separate functions for the
+    same reason their templates are separate files -- different wording and
+    wrapping -- and jm's peer-implementation history says a fix applied to
+    one of a pair silently leaves the other wrong.
+
+    The tests above pin the tree that ONE of them produced. This one asks
+    the question of every emitter there is, discovered by SIGNATURE rather
+    than by a list, so a third peer added later is covered without anyone
+    remembering to register it -- and a signature this cannot call fails
+    loudly instead of quietly dropping the emitter from the sweep.
+
+    A stray unreachable paste of one emitter's body inside the other is how
+    this was found, so "two copies of the decision" is not hypothetical.
+    """
+
+    @staticmethod
+    def _emitters():
+        import inspect
+
+        from just_makeit import _render
+
+        found = {}
+        for name, fn in vars(_render).items():
+            if name.startswith("_") or not inspect.isfunction(fn):
+                continue
+            if fn.__module__ != _render.__name__:
+                continue
+            params = inspect.signature(fn).parameters
+            if "header_only" not in params:
+                continue
+            # A signature this cannot drive is a FAILURE, not a skip: the
+            # point of discovering by signature is that nothing falls out
+            # of the sweep silently.
+            assert set(params) == {"component", "header_only"}, (
+                f"{name}{inspect.signature(fn)} takes a shape this gate "
+                f"cannot call; widen the gate, do not exempt the emitter"
+            )
+            found[name] = fn
+        return found
+
+    def test_the_sweep_is_armed(self):
+        """An empty or shrinking sweep passes vacuously, so pin the floor."""
+        found = self._emitters()
+        assert len(found) >= 2, found
+
+    def test_none_emits_an_object_library_for_a_header_only_core(self):
+        for name, fn in self._emitters().items():
+            out = fn("ring", header_only=True)
+            assert "add_library(ring_core INTERFACE)" in out, (name, out)
+            assert "add_library(ring_core OBJECT" not in out, (name, out)
+
+    def test_every_one_still_emits_object_otherwise(self):
+        """The converse, so a gate cannot be satisfied by always saying
+        INTERFACE -- which would break every ordinary component."""
+        for name, fn in self._emitters().items():
+            out = fn("ring", header_only=False)
+            assert "add_library(ring_core OBJECT ring_core.c)" in out, (
+                name,
+                out,
+            )
+            assert "INTERFACE" not in out, (name, out)
+
+    def test_no_emitter_carries_unreachable_code(self):
+        """The dead paste that prompted this class was a second copy of the
+        very decision the sweep pins -- editing it would have changed
+        nothing, and the sweep above cannot see it because it never runs.
+        """
+        import ast
+        import inspect
+
+        from just_makeit import _render
+
+        for name in self._emitters():
+            src = inspect.getsource(getattr(_render, name))
+            body = ast.parse(textwrap.dedent(src)).body[0].body
+            for i, stmt in enumerate(body[:-1]):
+                assert not isinstance(stmt, (ast.Return, ast.Raise)), (
+                    f"_render.{name}: {len(body) - i - 1} statement(s) after "
+                    f"a {type(stmt).__name__} on line {stmt.lineno} can never "
+                    f"run"
+                )
