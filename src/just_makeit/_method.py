@@ -32,6 +32,7 @@ from . import _stubs as S
 from . import _types as T
 
 from . import _report
+from . import _init
 from ._builtins import (
     builtin_method_names,
     is_builtin_symbol,
@@ -1571,6 +1572,11 @@ def run(
             _report.warn(_warn)
 
     # 1. Write C stub: either append to _core.c or write sacred binding file
+    # gh-1321: ...or into the HEADER, for a header-only component, which has
+    # no `_core.c` at all. Read from the manifest rather than probing for the
+    # file: an absent `_core.c` is also what a half-written tree looks like,
+    # and the manifest is what every other face asks.
+    _hdr_only = C.is_header_only(C.load(root), object_name)
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
     if manual_stub or codec:
         # manual_stub (gh-428): the C binding already exists, hand-written,
@@ -1661,13 +1667,37 @@ def run(
             stub = I.inject_body_into_stub(stub, body)
         # gh-994: `fn` overrides the symbol; unset it derives the same way
         # every stub emitter above does.
-        _append_to_core_c(core_c, stub, _c_fn, _provided_by)
+        # gh-1321: a header-only component has no `_core.c` -- this opened
+        # it unconditionally and crashed. `append_component_body` is the one
+        # place that knows where a body goes; the prototype is suppressed
+        # below, because a non-static declaration ahead of the `static inline`
+        # definition does not compile.
+        if _hdr_only:
+            if _c_fn and _provided_by:
+                print(f"  skip    {_c_fn}() — {_provided_by}")
+            else:
+                _init.append_component_body(
+                    root, object_name, stub, header_only=True
+                )
+        else:
+            _append_to_core_c(core_c, stub, _c_fn, _provided_by)
 
     # The method's public prototype, injected surgically into _core.h below
     # (one or two lines; variable-output methods declare a sibling _max_out).
     # Varargs methods have no typed C prototype — their binding is Python-aware
     # and lives in the sacred binding .c file, not _core.h.
     proto_lines: list[str] = []
+    # gh-1321: NO `not _hdr_only` here, deliberately. For a header-only
+    # component the `static inline` definition written above is also the
+    # declaration, and a non-static prototype beside it would be `static
+    # declaration of 'f' follows non-static declaration` -- but measured, no
+    # prototype lands: `_inject_decls_into_core_h` already skips a symbol the
+    # header defines, and the standalone path re-renders from the manifest.
+    # A guard here was added, could not be sabotaged into failing on either
+    # shape, and was removed. What pins the outcome is
+    # `test_the_prototype_is_suppressed`, which counts declarations in the
+    # header over both shapes -- so if that injector ever stops skipping, the
+    # suite says so rather than this line silently carrying the weight.
     if not varargs and not manual_stub and not codec:
         proto_lines = _build_method_prototype(
             object_name,
@@ -1998,7 +2028,11 @@ def run(
         # gh-805 §A2: name the symbol actually written. Pointing the author at
         # a function the file does not contain is a small lie that costs a
         # grep on the one path where the two names differ.
+        # gh-1321: name the file the body was actually written into. For a
+        # header-only component that is the HEADER -- `core_c` does not exist,
+        # and pointing at it sent the author somewhere that cannot work.
+        _where = f"{object_name}_core.h" if _hdr_only else core_c.name
         print(
             f"Done!  Implement {fn or f'{object_name}_{method_name}'}()"
-            f" in {core_c.name}"
+            f" in {_where}"
         )

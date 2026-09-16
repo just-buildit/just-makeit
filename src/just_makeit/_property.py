@@ -157,6 +157,14 @@ def run(
             sys.exit(1)
 
     cfg = C.load(root)
+    # gh-1321: a header-only component has no `_core.c`, so the guidance below
+    # must not send the author there. The getter/setter bodies are the
+    # author's either way; only the file named changes.
+    _body_file = (
+        f"native/inc/{object_name}/{object_name}_core.h"
+        if C.is_header_only(cfg, object_name)
+        else f"native/src/{object_name}/{object_name}_core.c"
+    )
 
     # gh-519: an `enum` property presents its C int as the [[enum]] string on
     # the Python side. Validate the name *before* the manifest is written, so
@@ -378,7 +386,7 @@ def run(
     if container and codec:
         fns = container_fn_names(object_name, prop_name, prop_entry)
         e_fn = entry_fn or f"{object_name}_{prop_name}_entry"
-        core_c = f"native/src/{object_name}/{object_name}_core.c"
+        core_c = _body_file
         todo = [fns["count_fn"]]
         if ctype == "dict":
             todo.append(fns["key_fn"])
@@ -395,7 +403,7 @@ def run(
         if ctype == "dict":
             todo.append(fns["key_fn"])
         vtype = value_type or T.OBJECT_VALUE_TYPE
-        core_c = f"native/src/{object_name}/{object_name}_core.c"
+        core_c = _body_file
         if vtype == T.OBJECT_VALUE_TYPE:
             print(
                 f"Done!  Implement {', '.join(f'{n}()' for n in todo)} in"
@@ -420,6 +428,6 @@ def run(
     else:
         print(
             f"Done!  Implement {object_name}_get_{prop_name}() in"
-            f" native/src/{object_name}/{object_name}_core.c"
+            f" {_body_file}"
             f"  [{rw}]"
         )

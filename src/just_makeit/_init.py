@@ -34,6 +34,58 @@ from ._libwiring import (  # noqa: F401
 )
 
 
+def append_component_body(
+    root: Path, component: str, stub: str, *, header_only: bool
+) -> Path:
+    """Write a new C body for *component* and return the file it went into.
+
+    gh-1321. One home for *where does a body go*, because the answer stopped
+    being "``_core.c``" when gh-1311 landed and every writer had its own copy
+    of the old answer. `jm method` opened that path unconditionally and
+    crashed with ``FileNotFoundError`` on a header-only component -- the file
+    the feature deliberately does not create.
+
+    For a header-only component the body is emitted ``static inline`` into the
+    **header**, exactly as gh-1311 relocates ``create``/``destroy``/``reset``/
+    ``steps`` -- the same :func:`_context._state.staticize`, not a second one.
+    It is inserted before the ``extern "C"`` close, which is where the
+    ``inline_core`` slot puts the bodies written at creation time, so
+    everything a header-only component defines ends up in one place and in the
+    same form.
+
+    **No prototype may accompany it.** A non-static declaration ahead of a
+    ``static inline`` definition is ``static declaration of 'f' follows
+    non-static declaration``, so the definition in the header has to BE the
+    declaration. Measured: nothing emits one today —
+    ``_inject_decls_into_core_h`` skips a symbol the header already defines,
+    and the standalone path re-renders the header from the manifest. That is a
+    property of those two, not of this function, so it is pinned by a test
+    that counts declarations rather than by a guard here that could not be
+    made to fail.
+    """
+    if not header_only:
+        path = root / "native" / "src" / component / f"{component}_core.c"
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n" + stub, encoding="utf-8"
+        )
+        print(f"  update  {path}")
+        return path
+
+    from ._context._state import staticize
+
+    path = root / "native" / "inc" / component / f"{component}_core.h"
+    text = path.read_text(encoding="utf-8")
+    body = staticize(stub if stub.endswith("\n") else stub + "\n")
+    marker = "#ifdef __cplusplus"
+    # The LAST one closes the extern "C" block; the first opens it.
+    cut = text.rfind(marker)
+    if cut == -1:  # no C++ guard: fall back to the include guard's #endif
+        cut = text.rfind("#endif")
+    path.write_text(text[:cut] + body + "\n" + text[cut:], encoding="utf-8")
+    print(f"  update  {path}")
+    return path
+
+
 def _to_title(snake: str) -> str:
     """C-side class name for *snake* — see ``_config.default_class_name``.
 

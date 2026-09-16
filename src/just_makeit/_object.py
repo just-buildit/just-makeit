@@ -2713,12 +2713,19 @@ def run(
         h_text = core_h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
         core_h_path.write_text(h_text, encoding="utf-8")
-    core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
-    _write(
-        core_c_path,
-        r(R.COMPONENT_CORE_C),
-        "update" if core_c_path.exists() else "create",
-    )
+    # gh-1321: the peer of the same guard in `_init.run`. A header-only
+    # component has nothing out-of-line to scaffold, and writing an empty
+    # `_core.c` is worse than not writing one: the CMake core library is
+    # INTERFACE and never compiles it, so it looks authoritative and reaches
+    # no build. This path wrote it unconditionally, which is how a module
+    # object ended up with an INTERFACE library AND a source file.
+    if not header_only:
+        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        _write(
+            core_c_path,
+            r(R.COMPONENT_CORE_C),
+            "update" if core_c_path.exists() else "create",
+        )
     obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
     _write(obj_cmake_path, r(R.CMAKE_LISTS_OBJECT_CORE))
     # Propagate any external-library cmake blocks from sibling objects so the
@@ -2796,6 +2803,13 @@ def run(
         no_reset_=no_reset,
         process_global_=process_global,
         opaque_state_=opaque_state,
+        # gh-1321: the MODULE path's recorder never forwarded this, so a
+        # `--header-only` module object recorded no such key -- the CMake took
+        # the header-only branch (INTERFACE library) while everything that
+        # reads the manifest took the ordinary one. `add_component` enumerates
+        # keys one by one, so an unnamed key is silently absent rather than an
+        # error, which is the same trap `_apply` and `_script` carry.
+        header_only_=header_only,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
@@ -2848,8 +2862,16 @@ def run(
     # These two operations are independent: a same-name module (module.agc with
     # object "agc") may have the add_subdirectory already present from the
     # `just-makeit module` step, but the target_sources lines still need adding.
+    # gh-1321: peer of the same guard in `_init.run`. A header-only core is an
+    # INTERFACE library, and `$<TARGET_OBJECTS:>` on one is a CONFIGURE error
+    # -- not a tidiness point, the project does not build. This path wired it
+    # unconditionally, so `--header-only --module X` produced a tree that
+    # cmake refuses outright.
     _splice_cmake_component(
-        root, pkg, comp, _dep_core_libs(depends_on) + [f"{comp}_core"]
+        root,
+        pkg,
+        comp,
+        _dep_core_libs(depends_on) + ([] if header_only else [f"{comp}_core"]),
     )
 
     # Umbrella header
