@@ -148,60 +148,88 @@ class TestTheDefaultIsUnchanged:
         )
 
 
-class TestTheDispatchShapesAreUnmoved:
-    """`opt_arr_ip` / `dispatch_meta` keep 0.76.2's behaviour exactly.
+class TestAnOptionalArrayAlsoHonoursTheObjectLevelName:
+    """gh-1335. Two `create_fn`s, at different levels, answering different
+    questions -- and both have to be right.
 
-    Those features select a constructor PER CALL and their "nothing
-    supplied" branch calls ``<comp>_create`` literally. Renaming the
-    definition without renaming those branches leaves `_ext.c` calling a
-    symbol nothing defines -- and `apply` then appends a body for the
-    renamed one into the sacred ``_core.c``.
+    An `optional = true` array selects a constructor **per call**: the
+    param-level `create_fn` when the array is supplied, and the object-level
+    one when it is not. Before this, the "not supplied" branch named
+    ``<comp>_create`` literally, so doppler's `acq` -- where `acq_create`
+    does not exist at all -- got the phantom appended into its sacred file.
 
-    That is not hypothetical: it is what this change did before this guard,
-    measured as an extra ``frame_open(void)`` sitting beside the real
-    ``frame_create(size_t n)``. 0.76.2 ignores an object-level ``create_fn``
-    outright here, so holding that is a no-op rather than a new refusal.
-    Supporting the combination is gh-1335.
+    This is exactly the shape gh-1328's report carried and the one a first
+    pass at the fix excluded. That exclusion came from measuring a
+    HALF-threaded state (the definition renamed, these branches not) and from
+    a fixture that scaffolded the component BEFORE adding `create_fn`, so its
+    `_core.c` genuinely lacked the declared constructor and the append was
+    the correct answer to a real mismatch. Neither measured the combination
+    as a project actually declares it. Threaded on both sides it is
+    consistent, and doppler's `acq` needs it to be.
     """
 
-    def _frame(self, tmp_path):
+    def _acq(self, tmp_path, *, object_level: bool):
+        """doppler's `acq`: declared with `create_fn` from the start, so the
+        sacred `_core.c` defines the real constructor, plus an optional
+        array with its own."""
         root = tmp_path / "q"
         _silent(new_run, "q", root)
+        kw = {"create_fn": "acq_create_continuous"} if object_level else {}
         _silent(
-            object_run, root, "frame", None, state_vars=[("n", "size_t", "4")]
+            object_run,
+            root,
+            "acq",
+            None,
+            state_vars=[("n", "size_t", "4")],
+            **kw,
         )
         p = root / "just-makeit.toml"
-        t = p.read_text(encoding="utf-8")
-        t = t.replace("[frame]", '[frame]\ncreate_fn = "frame_open"', 1)
-        t += (
-            '\n[[frame.init_params]]\nname = "preamble"\n'
+        p.write_text(
+            p.read_text(encoding="utf-8")
+            + '\n[[acq.init_params]]\nname = "code"\n'
             'type = "uint8_t[]"\noptional = true\n'
-            'create_fn = "frame_open_pre"\n'
+            'create_fn = "acq_create_coded"\n',
+            encoding="utf-8",
         )
-        p.write_text(t, encoding="utf-8")
         return root
 
-    def test_apply_appends_nothing_to_the_sacred_core_c(self, tmp_path):
+    def test_both_branches_name_a_constructor_that_exists(self, tmp_path):
         from just_makeit._apply import run as apply_run
 
-        root = self._frame(tmp_path)
-        core = root / "native/src/frame/frame_core.c"
+        root = self._acq(tmp_path, object_level=True)
+        _silent(apply_run, root)  # the declaration reaches the glue
+        ext = (root / "native/src/acq/acq_ext.c").read_text(encoding="utf-8")
+        assert "acq_create_continuous(" in ext, ext
+        assert "acq_create_coded(" in ext, ext
+        assert "acq_create(" not in ext, (
+            "the not-supplied branch still calls the derived name, which "
+            f"this project does not define:\n{ext}"
+        )
+
+    def test_apply_appends_no_phantom_constructor(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+
+        root = self._acq(tmp_path, object_level=True)
+        core = root / "native/src/acq/acq_core.c"
         before = core.read_text(encoding="utf-8")
         _silent(apply_run, root)
         after = core.read_text(encoding="utf-8")
-        assert "frame_open(" not in after, (
-            "a body for the renamed constructor was appended to a sacred "
-            f"file:\n{after[len(before) :]}"
+        assert "acq_create(" not in after, (
+            f"phantom constructor appended:\n{after[len(before) :]}"
         )
-        assert after == before, after
+        assert after == before, "apply rewrote a sacred file"
 
-    def test_the_caller_and_callee_still_agree(self, tmp_path):
-        """The property that actually matters: whatever name is chosen, both
-        sides must choose the same one."""
-        root = self._frame(tmp_path)
-        core = (root / "native/src/frame/frame_core.c").read_text()
-        ext = (root / "native/src/frame/frame_ext.c").read_text()
-        assert "frame_create(" in core and "frame_create(" in ext, (core, ext)
+    def test_without_an_object_level_create_fn_nothing_moves(self, tmp_path):
+        """The param-level feature on its own is untouched: the not-supplied
+        branch still calls the derived name, because that is what the
+        project defines."""
+        from just_makeit._apply import run as apply_run
+
+        root = self._acq(tmp_path, object_level=False)
+        _silent(apply_run, root)
+        ext = (root / "native/src/acq/acq_ext.c").read_text(encoding="utf-8")
+        assert "acq_create(" in ext, ext
+        assert "acq_create_coded(" in ext, ext
 
 
 @pytest.mark.skipif(

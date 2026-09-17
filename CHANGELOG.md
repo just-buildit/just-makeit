@@ -93,16 +93,25 @@
     Both are fixed where they were: the fixture carries a `create_fn`
     component, and the sweep measures from the scaffold jm just wrote.
 
-    Two carve-outs, filed rather than explained in a docstring. An
-    object-level `create_fn` is still ignored when the object also declares
-    an `optional` array or dtype-dispatch init-param, because those select a
-    constructor per call and their "nothing supplied" branch names
-    `<comp>_create` literally — half-threading it reintroduced the very
-    append this fixes, through a different door (gh-1335; 0.76.2's behaviour
-    is held exactly, so no tree moves). And the app writer has no
-    unfilled-slot guard, so the missing slot shipped as literal token text
-    inside a C string rather than being refused the way `_init` refuses it
-    (gh-1336).
+    **The per-call dispatch shapes are covered too (gh-1335).** An
+    `optional = true` array selects a constructor per call — the param-level
+    `create_fn` when the array is supplied, the object-level one when it is
+    not — and that second branch named `<comp>_create` literally. doppler's
+    `acq` is exactly this shape and `acq_create` does not exist there, so it
+    kept the phantom append. Both sides move together now: threading only the
+    definition and not these branches is *worse* than neither, because
+    `_ext.c` then calls a symbol nothing defines.
+
+    That combination was briefly excluded on a bad measurement — a
+    half-threaded state, and a fixture that scaffolded the component *before*
+    adding `create_fn`, so its `_core.c` genuinely lacked the declared
+    constructor and the append was the correct answer to a real mismatch.
+    Neither measured the shape as a project actually declares it.
+
+    One carve-out remains, filed rather than explained in a docstring: the
+    app writer has no unfilled-slot guard, so a missing slot shipped as
+    literal token text inside a C string rather than being refused the way
+    `_init` refuses it (gh-1336).
 
 ## [0.76.2] — 2026-09-17
 
