@@ -450,6 +450,24 @@ def _build_no_state_init_ctx(
         n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
     }
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
+    # gh-1328: which name the C FACES render, which is not always `_create`.
+    #
+    # `opt_arr_ip` and `dispatch_meta` each select a constructor PER CALL --
+    # an alternate `create_fn` when the optional array is supplied, a
+    # dtype-specific one per real element type -- and their "nothing supplied"
+    # branch calls `<comp>_create` literally. Renaming the definition while
+    # those branches still call the derived name would leave `_ext.c` calling
+    # a symbol nothing defines, and `apply` would then append a body for the
+    # renamed one into the sacred `_core.c`: measured, an extra
+    # `frame_open(void)` beside the real `frame_create(size_t n)`.
+    #
+    # 0.76.2 ignores an object-level `create_fn` outright on these paths, so
+    # holding that behaviour here is a no-op rather than a new refusal --
+    # nobody's tree moves. Supporting the combination means teaching those
+    # branches the object-level name too, which is gh-1335, not this fix.
+    _c_render_name = (
+        f"{component}_create" if (opt_arr_ip or dispatch_meta) else _create
+    )
     _path_names: frozenset[str] = frozenset(path_ip)
     _bytes_names: frozenset[str] = frozenset(bytes_ip)
     _capsule_meta: dict[str, tuple[str, str, bool, str]] = {
@@ -1468,14 +1486,14 @@ def _build_no_state_init_ctx(
         # and the bench must declare `obj` (else the unconditional destroy(obj)
         # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
-            f"    {component}_state_t *obj = {_create}({c_create_args});"
+            f"    {component}_state_t *obj = {_c_render_name}({c_create_args});"
         ),
         # gh-1328: every C face -- the `_core.c` definition, the `_core.h`
         # declaration, the CTest smoke test and the bench -- names the
         # constructor through this ONE slot, so `create_fn` cannot rename the
         # caller (`_ext.c`) without renaming the callee. Defaults to
         # `<comp>_create`, byte-identical for every project without one.
-        "create_name": _create,
+        "create_name": _c_render_name,
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
             test_obj

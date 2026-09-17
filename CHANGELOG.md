@@ -64,6 +64,17 @@
     Both are fixed where they were: the fixture carries a `create_fn`
     component, and the sweep measures from the scaffold jm just wrote.
 
+    Two carve-outs, filed rather than explained in a docstring. An
+    object-level `create_fn` is still ignored when the object also declares
+    an `optional` array or dtype-dispatch init-param, because those select a
+    constructor per call and their "nothing supplied" branch names
+    `<comp>_create` literally — half-threading it reintroduced the very
+    append this fixes, through a different door (gh-1335; 0.76.2's behaviour
+    is held exactly, so no tree moves). And the app writer has no
+    unfilled-slot guard, so the missing slot shipped as literal token text
+    inside a C string rather than being refused the way `_init` refuses it
+    (gh-1336).
+
 ## [0.76.2] — 2026-09-17
 
 ### Fixed
