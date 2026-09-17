@@ -278,3 +278,87 @@ class TestItCompilesAndPasses:
             "build exited 0 but produced no extension module; this check "
             f"was not armed.\n{r.stdout}\n{r.stderr}"
         )
+
+
+class TestTheAdjacentShapes:
+    """Two shapes next to the boundary, named from the doppler side before
+    they could surface as a third door.
+
+    Neither is an optional array, so neither was ever excluded -- but "it
+    should be fine" is not a measurement, and the whole reason this bug ran
+    for three releases is that the shapes nobody built were the shapes that
+    broke.
+    """
+
+    def test_a_view_with_its_own_create_fn(self, tmp_path):
+        """`dp_tlm_capture`'s shape: an object-level `create_fn` AND a view
+        declaring a second one. A view is the other place a component names
+        a constructor, so it is the obvious third door."""
+        from just_makeit._apply import run as apply_run
+        from just_makeit._module import run as module_run
+        from just_makeit._view import run as view_run
+
+        root = tmp_path / "q"
+        _silent(new_run, "q", root)
+        _silent(module_run, root, "tlm")
+        _silent(
+            object_run,
+            root,
+            "cap",
+            "tlm",
+            state_vars=[("n", "size_t", "4")],
+            create_fn="cap_open_memory",
+        )
+        _silent(view_run, root, "cap", "Capture", "tlm", "cap_open")
+        core = root / "native/src/cap/cap_core.c"
+        before = core.read_text(encoding="utf-8")
+        # Both constructors are the author's, and neither is derived.
+        assert "cap_open_memory(" in before, before
+        assert "cap_open(" in before, before
+        _silent(apply_run, root)
+        after = core.read_text(encoding="utf-8")
+        assert "cap_create(" not in after, (
+            f"phantom constructor appended:\n{after[len(before) :]}"
+        )
+        assert after == before, "apply rewrote a sacred file"
+
+    def test_a_capsule_init_param_beside_create_fn(self, tmp_path):
+        """`dp_tlm_capture` again: `tlm` arrives as an `object:` capsule, not
+        a scalar. It takes an unwrap step before the call, which is the
+        family the excluded dispatch shapes came from."""
+        from just_makeit._apply import run as apply_run
+
+        root = tmp_path / "q"
+        _silent(new_run, "q", root)
+        _silent(
+            object_run,
+            root,
+            "cap",
+            None,
+            state_vars=[("n", "size_t", "4")],
+            create_fn="cap_open_memory",
+            init_params=[
+                (
+                    "tlm",
+                    "dp_tlm_t *",
+                    "",
+                    "",
+                    "",
+                    "",
+                    False,
+                    "",
+                    True,
+                    "",
+                    "doppler.telemetry.tlm",
+                    "telemetry/telemetry.h",
+                )
+            ],
+        )
+        core = root / "native/src/cap/cap_core.c"
+        before = core.read_text(encoding="utf-8")
+        _silent(apply_run, root)
+        after = core.read_text(encoding="utf-8")
+        assert "cap_create(" not in after, (
+            f"phantom constructor appended:\n{after[len(before) :]}"
+        )
+        assert after == before, "apply rewrote a sacred file"
