@@ -121,3 +121,62 @@ class TestTheKeyIsAccepted:
         """Adding `fn` must not widen the table to anything."""
         with pytest.raises(ValueError):
             D.validate_destroy_spec("c", {"destroy_fn": "x"}, [])
+
+
+# ── the derivation has to REACH the render (gh-1326) ────────────────────────
+#
+# gh-1323's resolver was correct in isolation and the suite above proved it,
+# while `jm apply` still emitted `<comp>_destroy`: `make_destroy_ctx` takes
+# `create_fn` as a keyword and THREE call sites did not pass it. A capability
+# computed and then dropped in transit, which a unit test of the resolver
+# cannot see -- doppler found it adopting v0.76.0.
+#
+# So this gate asks the question of every caller rather than of the resolver:
+# any site that can know `create_fn` must hand it over.
+
+
+def _destroy_ctx_call_sites():
+    """Every `make_destroy_ctx(...)` call in the tree, with its source text."""
+    import ast
+
+    root = Path(__file__).parent.parent / "src" / "just_makeit"
+    for path in sorted(root.rglob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        if "make_destroy_ctx(" not in src:
+            continue
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            nm = getattr(fn, "attr", None) or getattr(fn, "id", None)
+            if nm != "make_destroy_ctx":
+                continue
+            yield path, node, ast.get_source_segment(src, node) or ""
+
+
+class TestEveryCallerPassesCreateFn:
+    def test_the_sweep_is_armed(self):
+        sites = list(_destroy_ctx_call_sites())
+        assert len(sites) >= 6, sites
+
+    def test_a_site_that_can_know_create_fn_passes_it(self):
+        """The exemption is narrow and stated: a site with no manifest and no
+        `create_fn` in scope (a bare scaffold render, `jm bind`) genuinely
+        cannot know, and passes nothing. Anything that mentions `cfg` or has
+        `create_fn` available must pass it, or the derivation silently does not
+        happen for that path.
+        """
+        missing = []
+        for path, node, text in _destroy_ctx_call_sites():
+            kwargs = {k.arg for k in node.keywords}
+            if "create_fn" in kwargs:
+                continue
+            # a site that reads the manifest can always look it up
+            if "cfg" in text:
+                missing.append(f"{path.name}:{node.lineno} (reads cfg)")
+        assert not missing, (
+            "make_destroy_ctx called without `create_fn` where the manifest "
+            "is available; the destructor will not be derived from the "
+            "declared creator on this path: " + "; ".join(missing)
+        )

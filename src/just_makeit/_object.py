@@ -1488,6 +1488,9 @@ def build_component_ctxs(
                 C.destroy_spec(cfg, obj),
                 C.methods(cfg, obj),
                 class_name=C.class_name(cfg, obj) or "",
+                # gh-1326: this path dropped it, so `create_fn` derived
+                # nothing here even though the resolver was right.
+                create_fn=C.object_create_fn(cfg, obj) or "",
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -2573,6 +2576,10 @@ def run(
             if declared_methods is not None
             else C.methods(cfg, ctx["component"]),
             class_name=class_name or "",
+            # gh-1326: `jm apply` replays creation through here, and this was
+            # the site that dropped `create_fn` -- the derivation was correct
+            # in isolation and never reached the render.
+            create_fn=create_fn or "",
         )
     )
 

@@ -1183,6 +1183,8 @@ def run(
             if declared_methods is not None
             else C.methods(cfg, component),
             class_name=class_name or "",
+            # gh-1326: the standalone creation path dropped it too.
+            create_fn=create_fn or "",
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
