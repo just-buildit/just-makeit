@@ -234,6 +234,43 @@ def descriptor_c(
     )
 
 
+def typedef_c(record_t: str, flds: "list[RecordField]") -> str:
+    """A scaffold ``typedef`` for the record, so the untouched tree BUILDS.
+
+    gh-1319. `record_dtype` renders prototypes in the author's struct type and
+    nothing defined it, so a freshly declared record method did not compile:
+    ``unknown type name 'iq_pair_t'``, in the sacred header AND the sacred
+    source, from a declaration jm accepted without a word. Both record paths
+    had it -- `borrow` inherited it from `variable_output` rather than
+    introducing it -- and jm's own rule is that the untouched scaffold builds
+    and passes before the author has written a line of it.
+
+    **It is a scaffold, not a definition.** It carries the same
+    ``/* <<IMPLEMENT: ... >> */`` marker a body stub does, and it is the
+    author's to replace: the whole point of `dtype_c` is that the numpy dtype
+    is read back from the compiler through ``offsetof``/``sizeof``, so a
+    layout the author changes -- padding, ordering, a wider field -- is
+    followed rather than assumed. Replacing this typedef is the expected
+    action, not a workaround.
+
+    Field order is the declaration's. A packed guess would be wrong for
+    exactly the padded case gh-1310's oracle test pins, which is why nothing
+    here claims the layout is right -- only that it compiles.
+    """
+    body = "\n".join(f"    {f.ctype} {f.name};" for f in flds)
+    return (
+        f"/* <<IMPLEMENT: {record_t} -- the record this component's rows are."
+        f" jm scaffolds\n"
+        f"   it so the untouched tree builds; the LAYOUT is yours. The numpy"
+        f" dtype is\n"
+        f"   read back from this struct with offsetof/sizeof, so padding and"
+        f" ordering\n"
+        f"   you change here are followed automatically. >> */\n"
+        f"typedef struct\n"
+        f"{{\n{body}\n}} {record_t};\n"
+    )
+
+
 def dtype_c(sid: str, record_t: str, flds: list[RecordField]) -> str:
     """A cached ``PyArray_Descr *`` matching the C record's layout exactly.
 
