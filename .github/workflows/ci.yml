@@ -72,7 +72,7 @@ jobs:
           # string.
           changed=$(git diff --name-only "$base" HEAD)
           if echo "$changed" \
-             | grep -qvE '^(CHANGELOG\.md|pyproject\.toml|jb\.toml|uv\.lock)$'
+             | grep -qvE '^(CHANGELOG\.md|pyproject\.toml|bootstrap\.toml|uv\.lock)$'
           then
             echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
