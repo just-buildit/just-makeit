@@ -2336,6 +2336,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         C.destroy_spec(cfg, obj),
         C.methods(cfg, obj),  # gh-856
         class_name=C.class_name(cfg, obj) or "",
+        # gh-1326: this site consumes only `pyi_destroy_methods` (the PYTHON
+        # names, which do not depend on the C symbol), so passing this changes
+        # nothing today. Passed anyway rather than exempted: an exemption is a
+        # thing to maintain, and this is already right if the stub ever reads a
+        # slot that does carry the symbol.
+        create_fn=C.object_create_fn(cfg, obj) or "",
     )
     lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the

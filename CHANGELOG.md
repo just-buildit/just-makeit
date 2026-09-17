@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`create_fn` did not reach the destructor derivation (gh-1326).** gh-1323's
+    resolver was correct in isolation and its suite proved it, while
+    `jm apply` still emitted `<comp>_destroy`: `make_destroy_ctx` takes
+    `create_fn` as a keyword and **four** call sites did not pass it — the
+    module render, the `jm apply` creation replay, the standalone creation path
+    and the stub writer. A capability computed and then dropped in transit,
+    which a unit test of the resolver cannot see.
+
+    Found by doppler adopting 0.76.0, where it meant an explicit
+    `[<comp>.destroy] fn` was still required for something the manifest already
+    implied.
+
+    Gated by asking the question of every **caller** rather than of the
+    resolver: any `make_destroy_ctx` site that can read the manifest must hand
+    `create_fn` over. That sweep found the fourth site, which I had missed.
+
 ## [0.76.0] — 2026-09-16
 
 ### Added
