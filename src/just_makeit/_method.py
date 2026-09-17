@@ -557,6 +557,46 @@ def _is_method_stub(text: str, at: int) -> bool:
     return "}" not in text[prev.end() : at]
 
 
+def record_type_advice(core_h: Path, record_dtype: str, flds) -> str:
+    """What to tell the author when nothing defines *record_dtype*, else "".
+
+    gh-1319. `record_dtype` renders prototypes in the author's struct type and
+    jm accepted the declaration without a word, so the untouched tree failed
+    to compile with ``unknown type name 'iq_pair_t'`` -- in the sacred header
+    AND the sacred source, three files from the declaration that caused it.
+    Both record paths had it; `borrow` inherited it from `variable_output`.
+
+    **jm reports rather than writes, and that is a deliberate carve-out.**
+    Scaffolding the typedef was implemented first and reverted: the record
+    struct is routinely added to the header AFTER the method is declared --
+    gh-788's own fixtures do exactly that -- so a scaffolded definition
+    collides with the author's (``conflicting types for 'dp_tlm_rec_t'``) and
+    jm would have created a compile error in a sacred file to avoid a
+    different one. A scaffold that does not build is a better outcome than a
+    file jm broke, which this repo has now learned twice (gh-1328).
+
+    So *"the untouched scaffold builds"* is **not** met for a record method,
+    and that gap is filed rather than papered over. What is fixed is the
+    silence: the author is told the exact type to declare, with the field list
+    jm already has, at the moment they declare the method.
+    """
+    if not record_dtype or not flds:
+        return ""
+    if core_h.is_file() and record_dtype in core_h.read_text(encoding="utf-8"):
+        return ""
+    body = "\n".join(f"    {f.ctype} {f.name};" for f in flds)
+    return (
+        f"\nNOTE: nothing defines `{record_dtype}` yet, so the tree will not"
+        f" compile\n"
+        f"      until you add it to {core_h.name}. It is YOURS -- jm reads its"
+        f" layout\n"
+        f"      back with offsetof/sizeof, so padding and ordering you choose"
+        f" are\n"
+        f"      followed:\n"
+        f"\ntypedef struct\n{{\n{body}\n}} {record_dtype};\n"
+    )
+
+
 def _append_to_core_c(
     path: Path, stub: str, c_fn: str = "", provided_by: str = ""
 ) -> None:
@@ -1913,6 +1953,11 @@ def run(
     print(f"  update  {cfg_path}")
 
     # 3. Regenerate ext.c (with updated method wrappers)
+    # gh-1319: bound on BOTH paths. Assigned in one branch and read after the
+    # join is an UnboundLocalError for every module object -- the same shape
+    # as gh-1323's `dfn`, caught the same way, by the suite rather than by
+    # reading.
+    _rec_advice = ""
     if module:
         _regenerate_module(root, cfg, module, pkg)
         # Surgically add the new method's declaration to the per-object
@@ -1920,6 +1965,11 @@ def run(
         # no body splice.
         core_h_ = (
             root / "native" / "inc" / object_name / f"{object_name}_core.h"
+        )
+        _rec_advice = record_type_advice(
+            core_h_,
+            record_dtype,
+            _record.fields({"result_fields": result_fields}, {}),
         )
         if _inject_decls_into_core_h(
             core_h_,
@@ -1972,6 +2022,13 @@ def run(
         obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
+        # gh-1319: `record_dtype` names a type jm does not own. Say so HERE
+        # rather than leaving the compiler to, three files away.
+        _rec_advice = record_type_advice(
+            core_h,
+            record_dtype,
+            _record.fields({"result_fields": result_fields}, {}),
+        )
         if _inject_decls_into_core_h(
             core_h,
             object_name,
@@ -2036,3 +2093,8 @@ def run(
             f"Done!  Implement {fn or f'{object_name}_{method_name}'}()"
             f" in {_where}"
         )
+        # gh-1319: printed AFTER the Done! line so it is the last thing on
+        # screen -- the failure it prevents is a compile error three files
+        # away, and a note scrolled off the top prevents nothing.
+        if _rec_advice:
+            print(_rec_advice, end="")

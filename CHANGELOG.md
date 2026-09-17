@@ -28,6 +28,28 @@
     property — an up-to-date project's `_core.c` files are **all** byte-identical
     after `apply`.
 
+- **A `record_dtype` declaration said nothing about the type it renders
+    prototypes in (gh-1319).** `record_dtype = "iq_pair_t"` makes jm emit
+    `iq_pair_t *comp_wait(...)` into the sacred header and the sacred source,
+    and nothing defined that type — so the tree failed to compile with
+    `unknown type name`, three files from the declaration that caused it, from
+    a command jm accepted without a word. Both record paths had it, so `borrow`
+    inherited it from `variable_output` rather than introducing it.
+
+    `jm method` now prints the exact `typedef` to add and which file to add it
+    to, using the `result_fields` it already has, and stays quiet once the type
+    exists. Handing over the fields matters as much as naming the type: a wrong
+    field order is a silently wrong dtype, not a compile error.
+
+    **jm reports rather than writes, deliberately.** Scaffolding the typedef
+    into the sacred header was implemented first and reverted: the record
+    struct is routinely added *after* the method is declared — gh-788's own
+    fixtures do that — so a scaffolded definition collides with the author's
+    (`conflicting types`), and jm would have created a compile error in a
+    sacred file to avoid a different one. *"The untouched scaffold builds"* is
+    therefore still not met for a record method; that gap is filed rather than
+    papered over.
+
 ## [0.76.1] — 2026-09-16
 
 ### Fixed
