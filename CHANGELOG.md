@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.76.3] — 2026-09-17
+
 ### Fixed
 
 - **`jm status` contradicted itself about a sacred file, in a single screen
