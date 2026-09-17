@@ -450,24 +450,19 @@ def _build_no_state_init_ctx(
         n: (ct, dflt) for n, ct, dflt, *_ in scalar_ip
     }
     _opt_arr_names: frozenset[str] = frozenset(n for n, *_ in opt_arr_ip)
-    # gh-1328: which name the C FACES render, which is not always `_create`.
+    # gh-1328 / gh-1335: ONE name for every C face, and for both branches
+    # of a per-call dispatch.
     #
-    # `opt_arr_ip` and `dispatch_meta` each select a constructor PER CALL --
-    # an alternate `create_fn` when the optional array is supplied, a
-    # dtype-specific one per real element type -- and their "nothing supplied"
-    # branch calls `<comp>_create` literally. Renaming the definition while
-    # those branches still call the derived name would leave `_ext.c` calling
-    # a symbol nothing defines, and `apply` would then append a body for the
-    # renamed one into the sacred `_core.c`: measured, an extra
-    # `frame_open(void)` beside the real `frame_create(size_t n)`.
+    # `opt_arr_ip` and `dispatch_meta` choose a constructor per call -- the
+    # param-level `create_fn` when the array is supplied, this one when it is
+    # not. That second branch named `<comp>_create` literally, so doppler's
+    # `acq`, where `acq_create` does not exist at all, had the phantom
+    # appended into its sacred `_core.c`.
     #
-    # 0.76.2 ignores an object-level `create_fn` outright on these paths, so
-    # holding that behaviour here is a no-op rather than a new refusal --
-    # nobody's tree moves. Supporting the combination means teaching those
-    # branches the object-level name too, which is gh-1335, not this fix.
-    _c_render_name = (
-        f"{component}_create" if (opt_arr_ip or dispatch_meta) else _create
-    )
+    # Threading only the DEFINITION and not these branches is worse than
+    # neither: `_ext.c` then calls a symbol nothing defines. Both sides move
+    # together or not at all.
+    _c_render_name = _create
     _path_names: frozenset[str] = frozenset(path_ip)
     _bytes_names: frozenset[str] = frozenset(bytes_ip)
     _capsule_meta: dict[str, tuple[str, str, bool, str]] = {
@@ -1061,7 +1056,7 @@ def _build_no_state_init_ctx(
                 f"            size_t {aname}_len ="
                 f" (size_t)PyArray_SIZE({aname}_arr);\n"
                 f"            self->handle ="
-                f" {component}_create({create_call_args});\n"
+                f" {_create}({create_call_args});\n"
                 f"            Py_DECREF({aname}_arr);\n"
                 f"        }}\n"
                 f"    }}\n"
@@ -1150,7 +1145,7 @@ def _build_no_state_init_ctx(
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
                 f"        self->handle ="
-                f" {component}_create({scalar_call_str});\n"
+                f" {_create}({scalar_call_str});\n"
                 f"    }}\n"
             )
         else:
@@ -1175,7 +1170,7 @@ def _build_no_state_init_ctx(
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
                 f"        self->handle ="
-                f" {component}_create({scalar_call_str});\n"
+                f" {_create}({scalar_call_str});\n"
                 f"    }}\n"
             )
 
