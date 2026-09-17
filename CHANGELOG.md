@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.76.5] — 2026-09-17
+
 ### Fixed
 
 - **Every release ran the full matrix for a version string, because the
