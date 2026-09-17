@@ -43,6 +43,7 @@ from . import _render as R
 from . import _report
 from . import _types as T
 from ._init import _to_title
+from ._init import _write as _write_guarded
 
 
 # gh-1046: one definition, in the module that also has to recognise them
@@ -1568,10 +1569,16 @@ def _run_c(
             " logic in a component (`jm method`) and call it from the"
             " generated main(), or keep your own copy outside native/src/app/."
         )
-    main_c.write_text(rendered, encoding="utf-8")
-    # gh-962: computed BEFORE the write. It was after, so `exists()` was
-    # trivially true and a first-time scaffold announced itself as `update`.
-    print(f"  {'update' if _existed else 'create'}  {main_c}")
+    # gh-1336: through the SHARED guard, so a slot no context filled is
+    # refused here the way `_init` already refuses it. This face wrote the
+    # raw token into C -- `"error: /*<<create_name>>*/() failed\n"` -- which
+    # compiles, because it lands inside a string literal, and ships jm's
+    # template syntax in a user-facing message.
+    #
+    # gh-962: the verb is computed BEFORE the write. It was after, so
+    # `exists()` was trivially true and a first-time scaffold announced
+    # itself as `update`.
+    _write_guarded(main_c, rendered, "update" if _existed else "create")
 
     tgt = exe_target or name
     if tgt != name:
@@ -1612,10 +1619,11 @@ def _run_console(
         cli_dir = cli_dir / module
     cli_py = cli_dir / "cli.py"
     dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
-    cli_py.parent.mkdir(parents=True, exist_ok=True)
-    cli_py.write_text(R.render(tmpl, ctx), encoding="utf-8")
-    verb = "update" if cli_py.exists() else "create"
-    print(f"  {verb}  {cli_py}")
+    # gh-962's twin, still live here: `exists()` was read AFTER the write,
+    # so this always said `update`. gh-1336 routes it through the shared
+    # guard, which is also where the ordering gets fixed.
+    _verb = "update" if cli_py.exists() else "create"
+    _write_guarded(cli_py, R.render(tmpl, ctx), _verb)
 
     updated = _update_pyproject_scripts(root, name, pkg, module)
     if updated:
@@ -1632,9 +1640,9 @@ def _run_pep723(
     root: Path, ctx: dict, name: str, tmpl: str = R.APP_PEP723
 ) -> None:
     script = root / f"{name}.py"
-    script.write_text(R.render(tmpl, ctx), encoding="utf-8")
-    verb = "update" if script.exists() else "create"
-    print(f"  {verb}  {script}")
+    # Same pair as above: the guard, and the verb read before the write.
+    _verb = "update" if script.exists() else "create"
+    _write_guarded(script, R.render(tmpl, ctx), _verb)
 
 
 def _print_summary(target: str, root: Path, name: str, pkg: str) -> None:
