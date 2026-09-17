@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -214,6 +215,19 @@ class TestItCompilesAndPasses:
         `implicit declaration of function 'widget_open'`.
         """
         root = _scaffold(tmp_path / "q", CREATE_FN)
+        # PYTHONPATH rather than relying on `sys.executable` having jm
+        # importable. Locally that interpreter is the project venv and the
+        # import works; in CI it is a bare uv-managed one and the subprocess
+        # died with `ModuleNotFoundError: No module named 'just_makeit'`.
+        # The module-level `sys.path.insert` above is in-process only and
+        # does not cross a subprocess boundary.
+        src = str(Path(__file__).parent.parent / "src")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = (
+            src + os.pathsep + env["PYTHONPATH"]
+            if env.get("PYTHONPATH")
+            else src
+        )
         r = subprocess.run(
             [
                 sys.executable,
@@ -224,6 +238,7 @@ class TestItCompilesAndPasses:
             cwd=root,
             capture_output=True,
             text=True,
+            env=env,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         # A zero exit is not proof a compiler ran. Require the artefact --
