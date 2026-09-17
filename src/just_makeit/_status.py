@@ -1041,19 +1041,60 @@ def run(
                 print(f"  + {p}")
             print()
         if stale:
-            print(
-                f"STALE ({len(stale)}) — `jm apply` will rewrite "
-                "from the manifest:"
-            )
-            for p, _, _, diff, _ in stale:
-                print(f"  ~ {p}")
-                if diff:
-                    print("".join(f"    {ln}" for ln in diff.splitlines(True)))
-            print(
-                "  Run `jm apply` to sync (glue regenerated; "
-                "your _core.c is kept)."
-            )
-            print()
+            # gh-1337: split by WHO OWNS the file, because `apply` does two
+            # different things and one header cannot describe both. Printed
+            # together, the old wording contradicted itself inside a single
+            # screen -- "`jm apply` will rewrite from the manifest" above a
+            # list containing `_core.c`, then "your _core.c is kept" two
+            # lines below it, then "apply never changes it" in the footer.
+            #
+            # Ownership is `_createonly`'s question and it already answers
+            # it; asking it a second way here is how the two would drift.
+            def _is_yours(entry) -> bool:
+                # Unclassified falls to the glue wording: a false "jm will
+                # rewrite this" sends the reader to look, while a false
+                # "yours, apply only adds" tells them not to.
+                rule = _createonly.classify(str(entry[0]))
+                return rule is not None and rule.kind == _createonly.AUTHOR
+
+            _sacred = [e for e in stale if _is_yours(e)]
+            _glue = [e for e in stale if not _is_yours(e)]
+
+            def _emit(entries):
+                for p, _, _, diff, _ in entries:
+                    print(f"  ~ {p}")
+                    if diff:
+                        print(
+                            "".join(
+                                f"    {ln}" for ln in diff.splitlines(True)
+                            )
+                        )
+
+            if _glue:
+                print(
+                    f"STALE ({len(_glue)}) — `jm apply` will rewrite "
+                    "from the manifest:"
+                )
+                _emit(_glue)
+                print("  Run `jm apply` to sync.")
+                print()
+            if _sacred:
+                # Not "will rewrite", and not "never changes" either: apply
+                # APPENDS a definition the manifest declares and the file
+                # does not have (gh-1294). It never edits or removes a line
+                # the author wrote. Saying either absolute was wrong in one
+                # direction or the other.
+                print(
+                    f"STALE ({len(_sacred)}) — yours; `jm apply` will ADD "
+                    "a missing definition, never rewrite what you wrote:"
+                )
+                _emit(_sacred)
+                print(
+                    "  Run `jm apply` to splice in what is missing, or "
+                    "`jm regenerate <component>` to rebuild from the "
+                    "manifest (discards your edits)."
+                )
+                print()
         if unreconciled_entries:
             print(
                 f"UNRECONCILED ({len(unreconciled_entries)}) — `jm apply` "
@@ -1883,8 +1924,17 @@ def run(
             + (f", {_n_unwired} unwired (!)" if _n_unwired else "")
             + (f", {len(_dangling)} dangling (!)" if _dangling else "")
             + ".\n"
-            "Your `_core.c` is sacred — apply never changes it; use "
-            "`jm regenerate <component>` to rebuild one from the manifest."
+            # gh-1337: "never changes it" was false in the one direction
+            # that matters -- gh-1294 taught apply to splice a declared
+            # method's missing body, which is a change, to a sacred file, by
+            # design. Stating the absolute made every appended line look
+            # like a bug in the reader's own tree rather than the feature it
+            # is; and when it WAS a bug (gh-1328) this line argued it had
+            # not happened.
+            "Your `_core.c` is yours — apply only ADDS a definition the "
+            "manifest declares and the file lacks, never rewriting or "
+            "removing what you wrote; use `jm regenerate <component>` to "
+            "rebuild one from the manifest."
         )
         # gh-745: name the formatter *when there is drift to explain*. A
         # `c_style` project's most confusing failure is "stale in CI, clean

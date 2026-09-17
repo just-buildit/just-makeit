@@ -145,10 +145,12 @@ It depends on the verb — they follow a sacred/glue contract. See the
 [Customization](customization.md#what-regenerates-vs-whats-yours) page for the
 complete table. In short:
 
-- **`jm apply`** never touches `_core.c`. It regenerates the glue (`*_ext.c`,
-    `.pyi`, `CMakeLists.txt`) and injects any missing method/property
-    *declaration* into `*_core.h`; the state struct and inline `step()` body
-    stay sacred.
+- **`jm apply`** never rewrites or removes what you wrote in `_core.c`. It
+    does *add* to it: a method the manifest declares and the file has no
+    definition for gets a stub appended, which is how a declaration you add
+    to the TOML reaches the C. It regenerates the glue (`*_ext.c`, `.pyi`,
+    `CMakeLists.txt`) and injects any missing method/property *declaration*
+    into `*_core.h`; the state struct and inline `step()` body stay sacred.
 - **`jm method` / computed `jm property` / `jm function`** are additive: they
     inject one declaration and append a fresh stub, leaving your existing
     bodies intact.
