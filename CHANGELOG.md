@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` appended placeholder bodies into SACRED `_core.c` for symbols
+    the header already defines (gh-1328).** gh-1294 (new in 0.76.0) taught
+    `apply` to splice a declared method's missing `_core.c` body;
+    `missing_core_definitions` asked `_core.c` and the component's sibling
+    `.c` files and **never the header**. A function defined `static inline` in
+    the sacred `<comp>_core.h`, and absent from `_core.c` by design, read as
+    missing.
+
+    The build break is the *lucky* outcome. C forbids redefinition within one
+    translation unit, so doppler's `cic_decimate` and `dp_tlm_set_now` failed
+    to compile. Move the real definition to another TU and the placeholder
+    **links**, and the decimator silently returns 0 for every call — in a file
+    the author owns, written by a tool that promises not to write there, with
+    nothing in the tree pointing at jm.
+
+    `_method.already_provides` has stated the rule since gh-994 — *"reads the
+    header as well as the source"* — and gh-1294 did not carry it across. The
+    sources are one list now (`component_core_sources`), so `apply`, `status`
+    and any third reader ask the same question.
+
+    Gated two ways: the inline case specifically, and the stronger class-wide
+    property — an up-to-date project's `_core.c` files are **all** byte-identical
+    after `apply`.
+
 ## [0.76.1] — 2026-09-16
 
 ### Fixed

@@ -2159,13 +2159,40 @@ def _defines(source: str, name: str) -> bool:
 
 
 def component_core_sources(root: Path, comp: str) -> "list[str]":
-    """Every ``.c`` the component owns except its own ``_core.c``."""
+    """Every source that can DEFINE one of the component's symbols.
+
+    Every ``.c`` the component owns except its own ``_core.c`` (gh-275: an
+    OBJECT lib may compile sources besides it, so a definition can legitimately
+    live next door) -- **and the sacred ``_core.h``** (gh-1328).
+
+    The header is not an afterthought here, it is the case that bit. A
+    function may be defined ``static inline`` in the header and never appear
+    in ``_core.c`` at all: `step` is jm's own example, and an author may do the
+    same for anything. Asking only the ``.c`` files reports such a symbol
+    MISSING, and gh-1294's splice then appends a placeholder definition into a
+    file jm's contract says it never writes.
+
+    doppler measured it on 0.76.0: `cic_decimate` (defined inline at
+    `cic_core.h:278`) and `dp_tlm_set_now` both got empty placeholder bodies
+    appended to their sacred ``_core.c``. A redefinition error was the LUCKY
+    outcome -- move the real definition to another TU and the placeholder
+    links, and a decimator silently returns 0 forever with nothing in the tree
+    pointing at jm.
+
+    `_method.already_provides` has stated this rule since gh-994 -- *"reads the
+    header as well as the source"* -- and gh-1294 did not carry it across. It
+    is one list now so a third reader cannot get it wrong either.
+    """
     d = root / "native" / "src" / comp
-    return [
+    out = [
         p.read_text(encoding="utf-8")
         for p in sorted(d.glob("*.c"))
         if p.name != f"{comp}_core.c"
     ]
+    hdr = root / "native" / "inc" / comp / f"{comp}_core.h"
+    if hdr.is_file():
+        out.append(hdr.read_text(encoding="utf-8"))
+    return out
 
 
 def _splice_missing_core_definitions(
