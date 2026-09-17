@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.76.2] — 2026-09-17
+
 ### Fixed
 
 - **`jm apply` appended placeholder bodies into SACRED `_core.c` for symbols
