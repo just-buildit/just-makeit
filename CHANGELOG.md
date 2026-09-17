@@ -31,6 +31,47 @@
     cross-org standard, so fixing it here would be a private copy of shared
     tooling and `standard-check` fails `make lint` on exactly that. It goes
     to canonical and comes back through the vendored copy.
+- **Every generated benchmark called `clock_gettime` directly, so none of
+    them compiled on Windows (gh-1341).** `jm_bench.h` recorded timings and
+    wrote the JSON but handed the clock read back to the generated file, so
+    each `bench_<obj>_core.c` did its own `clock_gettime(CLOCK_MONOTONIC)`.
+    Both are POSIX and the UCRT has neither — 106 benchmark files in doppler,
+    every one of them failing to compile.
+
+    The clock is in `jm_bench.h` now, as `jm_bench_now_ns()` plus
+    `jm_bench_elapsed_sec()`: `clock_gettime` on POSIX,
+    `QueryPerformanceCounter` on Windows. The generated code names neither a
+    POSIX clock nor `struct timespec`, which is C11 on MSVC and was optional
+    before that. This is a codegen change, so a project picks it up on its
+    next `apply`.
+
+    It had to be fixed here. `jm_bench.h` is vendored and create-only, so a
+    downstream patch is a private copy that does not survive a re-vendor —
+    doppler has lost two edits from `jm_simd.h` exactly that way, one costing
+    864 broken doc links. Editing the 106 generated files is worse: they are
+    scaffolds the author then writes, so a fix there is 106 copies with no
+    home.
+
+    **The QPC scaling is quotient-plus-remainder, not `counter * 1e9 /   freq`.** That product overflows 64 bits after about nine seconds at a
+    1 GHz QPC frequency — well inside a benchmark's runtime, and doppler hit
+    it porting its own timing core. The split form is exact, and that is
+    gated arithmetically rather than by needing a Windows runner.
+
+    The sweep is over generated **output**, not the emitters, because there
+    were two independent sets of call sites (`_context/_methods.py` and
+    `_context/_step.py`) and fixing the first and believing the job done is
+    what happened: the benchmark still carried four `clock_gettime` calls
+    from the other file. A test reading the templates would have agreed with
+    the mistake.
+
+    Two follow-ons the suite caught rather than review: the JSON's
+    `options.timer` field said `clock_gettime` unconditionally and now
+    derives from the same `#if` that picks the clock, so the artefact cannot
+    claim a timer that did not run; and the unfinished-benchmark TODO showed
+    the author a `static double elapsed_sec(…)` to paste, which after the
+    move is advice to redefine what the header provides — with a body still
+    dereferencing `t1->tv_sec` on `uint64_t` parameters, so it would not have
+    compiled.
 
 ## [0.76.3] — 2026-09-17
 

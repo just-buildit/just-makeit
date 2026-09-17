@@ -268,15 +268,33 @@ class TestItShipsNoDeadCode:
         )
         assert done.returncode == 0, done.stderr
 
-    def test_the_helper_and_timers_follow_the_timing_block(self, tmp_path):
+    def test_the_timers_follow_the_timing_block(self, tmp_path):
         empty = _bench_src(_unfillable(tmp_path), "tlm")
         # Not emitted when nothing times — but the TODO carries a
-        # copy-pasteable copy of both, so the author is not left to write
-        # them from scratch.
-        assert "\nelapsed_sec(struct timespec" not in empty
-        assert "\n    struct timespec t0, t1;" not in empty
-        assert "*   elapsed_sec(struct timespec" in empty
-        assert "*   struct timespec t0, t1;" in empty
+        # copy-pasteable copy, so the author is not left to write it from
+        # scratch.
+        assert "\n    uint64_t t0, t1;" not in empty
+        assert "*   uint64_t t0, t1;" in empty
+
+    def test_the_todo_does_not_tell_the_author_to_redefine_the_helper(
+        self, tmp_path
+    ):
+        """gh-1341 moved the clock and the elapsed helper into `jm_bench.h`.
+
+        The example used to show a `static double elapsed_sec(...)` for the
+        author to paste. Keeping that after the move would be advice to
+        redefine a function the header already provides -- and the first cut
+        of this change left exactly that, with a body still dereferencing
+        `t1->tv_sec` on what were now `uint64_t` parameters. It would not
+        have compiled, which is the tell that a paste-and-run block nobody
+        pastes has stopped being checked.
+        """
+        empty = _bench_src(_unfillable(tmp_path), "tlm")
+        assert "static double" not in empty, empty
+        assert "tv_sec" not in empty, empty
+        assert "jm_bench.h" in empty, (
+            "the TODO should say where the clock comes from"
+        )
 
     def test_a_populated_bench_still_declares_them(self, tmp_path):
         root = tmp_path / "p"
@@ -295,6 +313,9 @@ class TestItShipsNoDeadCode:
             [],
         )
         src = _bench_src(root, "tlm")
-        assert "elapsed_sec(struct timespec" in src
-        assert "struct timespec t0, t1;" in src
+        # gh-1341: the DECLS are still emitted here (they are the
+        # benchmark's own locals), but the helper is not -- it moved to
+        # `jm_bench.h`, so a populated bench must not define one either.
+        assert "uint64_t t0, t1;" in src
+        assert "static double" not in src, src
         assert "TODO" not in src
