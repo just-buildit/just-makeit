@@ -93,9 +93,7 @@ def _project(root: Path):
     # this fixture used the default name, so a sweep that walks every
     # `*_core.c` was registration-free over FILES and still blind to a whole
     # SHAPE -- it went green for a release while `apply` appended a phantom
-    # `acq_create` into three of doppler's sacred files. Nothing is
-    # hand-edited here: a `create_fn` scaffold is correct as jm emits it,
-    # and `apply` must leave it alone.
+    # `acq_create` into three of doppler's sacred files.
     _silent(
         object_run,
         root,
@@ -104,6 +102,33 @@ def _project(root: Path):
         state_vars=[("n", "size_t", "4")],
         create_fn="widget_open",
     )
+    # ...and the constructor's name is then asserted into the sacred files by
+    # HAND, not left as whatever jm rendered.
+    #
+    # This is the difference between a gate and a description. `_project`
+    # builds its tree by running jm, so a fault in the renderer moves the
+    # fixture and the reference render together and they still agree --
+    # the checker's oracle comes from the pipeline under test, and it is
+    # blind to every fault in it. Measured: reverting the fix leaves this
+    # sweep GREEN while the scaffold is broken, because both halves moved.
+    #
+    # doppler's `acq` is the real shape and it is not self-consistent: the
+    # author wrote `acq_create_continuous` themselves, so the sacred file
+    # says one thing no matter what jm thinks. Writing the name in here is
+    # what makes `apply`'s derived `<comp>_create` show up as the append it
+    # is.
+    for rel in (
+        "native/src/widget/widget_core.c",
+        "native/inc/widget/widget_core.h",
+    ):
+        f = root / rel
+        s = f.read_text(encoding="utf-8")
+        f.write_text(
+            s.replace("widget_create", "widget_open"), encoding="utf-8"
+        )
+    assert "widget_open(" in (
+        root / "native/src/widget/widget_core.c"
+    ).read_text(encoding="utf-8"), "fixture failed to name the constructor"
     return root
 
 
