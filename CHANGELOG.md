@@ -23,6 +23,7 @@
     sacred file to avoid a different one. *"The untouched scaffold builds"* is
     therefore still not met for a record method; that gap is filed rather than
     papered over.
+
 - **`create_fn` renamed the caller and not the callee, so a `create_fn`
     scaffold did not compile and `apply` invented a constructor (gh-1328
     repro B).** `create_fn` (gh-509) reached exactly one face — the `tp_init`
