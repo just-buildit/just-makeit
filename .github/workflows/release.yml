@@ -80,18 +80,34 @@ jobs:
           SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           # The merge that produced this commit may still be running its
-          # main-push matrix, so poll until "CI passed" concludes (up to ~20
-          # min), then require success.
-          for i in $(seq 1 60); do
+          # main-push matrix, so poll until "CI passed" concludes, then
+          # require success.
+          #
+          # gh-1327: the window is sized against main's OBSERVED CI duration,
+          # not guessed. It polled for ~20 min while ci.yml took 21-37 min
+          # (Coverage is the long pole), so the first attempt timed out on
+          # EVERY release cut straight after a merge -- v0.76.0's ran
+          # 00:11:06 -> 00:31:38, exactly 60 x 20s, and exited on the timeout
+          # branch. `release-watch` then logged it as "likely a flake" and
+          # spent the one pre-publish auto-recovery on it.
+          #
+          # This costs nothing when CI is fast: the loop exits on the first
+          # conclusion. It is only the cap on how long we are willing to wait.
+          # `tests/test_gh1327_verify_ci_poll_window.py` fails if the product
+          # of these two drops below the floor the measurements justify, so
+          # shortening it means facing that number.
+          ATTEMPTS=180
+          INTERVAL=20
+          for i in $(seq 1 "$ATTEMPTS"); do
             runs="$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate \
               --jq '.check_runs[] | select(.name == "CI passed")
                     | "\(.status) \(.conclusion)"' | head -n1)"
             status="${runs%% *}"
             conclusion="${runs#* }"
             if [[ -z "$status" ]]; then
-              echo "No 'CI passed' check yet for $SHA (attempt $i/60); waiting..."
+              echo "No 'CI passed' check yet for $SHA (attempt $i/$ATTEMPTS); waiting..."
             elif [[ "$status" != "completed" ]]; then
-              echo "'CI passed' is $status for $SHA (attempt $i/60); waiting..."
+              echo "'CI passed' is $status for $SHA (attempt $i/$ATTEMPTS); waiting..."
             elif [[ "$conclusion" == "success" ]]; then
               echo "'CI passed' is green for $SHA — proceeding to release."
               exit 0
@@ -99,9 +115,9 @@ jobs:
               echo "::error::'CI passed' concluded '$conclusion' for $SHA — refusing to release a tree CI did not certify."
               exit 1
             fi
-            sleep 20
+            sleep "$INTERVAL"
           done
-          echo "::error::Timed out waiting for 'CI passed' on $SHA. Tag a commit merged to main that CI certified green."
+          echo "::error::Timed out after $((ATTEMPTS * INTERVAL / 60)) min waiting for 'CI passed' on $SHA. That is longer than main's CI has ever taken, so this is a real failure, not the gh-1327 race: check ci.yml on that commit."
           exit 1
 
   build:

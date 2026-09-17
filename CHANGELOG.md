@@ -1,5 +1,37 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The release raced main's CI, and spent its one auto-recovery on it every
+    time (gh-1327).** `release.yml`'s *"Verify CI already passed for this
+    commit"* job polls for a conclusion on the tagged SHA — it always did;
+    the reported cause, that it read once, was wrong. What it did not do was
+    poll long enough:
+
+    |             |                                         |
+    | ----------- | --------------------------------------- |
+    | poll window | `60 x 20s` = **20 min**                 |
+    | main's CI   | **18–33 min** over 15 runs, median 24.7 |
+
+    The window sat *below the median*, so a release cut straight after a bump
+    merge — which is what the documented flow produces — timed out on its
+    first attempt. v0.76.0's ran `00:11:06 → 00:31:38`: 20m32s, exactly
+    `60 x 20s` plus API latency, exiting on the timeout branch. The window is
+    60 min now, sized against that measurement, and costs nothing when CI is
+    fast because the loop exits on the first conclusion.
+
+    Gated on the relationship rather than the number: the poll window must
+    exceed a floor that itself must clear the longest measured CI run, and
+    the loop must actually read the declared values — an unused
+    `ATTEMPTS=180` beside a literal `seq 1 60` would otherwise pass.
+
+    The second half of gh-1327 — `release-watch` reporting every pre-publish
+    failure as *"likely a flake"*, including the verify-ci one it had just
+    diagnosed — is **not** in this change. That script is vendored from the
+    cross-org standard, so fixing it here would be a private copy of shared
+    tooling and `standard-check` fails `make lint` on exactly that. It goes
+    to canonical and comes back through the vendored copy.
+
 ## [0.76.3] — 2026-09-17
 
 ### Fixed
