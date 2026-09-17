@@ -38,9 +38,7 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -239,44 +237,44 @@ class TestAnOptionalArrayAlsoHonoursTheObjectLevelName:
 )
 class TestItCompilesAndPasses:
     def test_the_create_fn_scaffold_builds(self, tmp_path):
-        """The end-to-end form: before this change the build stopped with
+        """The end-to-end form: before this change the C stopped with
         `implicit declaration of function 'widget_open'`.
+
+        This COMPILES the tree rather than running `jm build`. The property
+        under test is that the C holds together -- `jm build` goes on to
+        produce and REPAIR a wheel, which on macOS arm64 fails inside
+        `delocate` for a reason with nothing to do with `create_fn`
+        (a `universal2`-tagged wheel carrying no x86_64 slice). Asserting
+        through that step made a green compile read as a red test, which is
+        the wrong failure pointing at the wrong thing.
         """
+        from just_makeit._build import _ensure_built
+
         root = _scaffold(tmp_path / "q", CREATE_FN)
-        # PYTHONPATH rather than relying on `sys.executable` having jm
-        # importable. Locally that interpreter is the project venv and the
-        # import works; in CI it is a bare uv-managed one and the subprocess
-        # died with `ModuleNotFoundError: No module named 'just_makeit'`.
-        # The module-level `sys.path.insert` above is in-process only and
-        # does not cross a subprocess boundary.
-        src = str(Path(__file__).parent.parent / "src")
-        env = dict(os.environ)
-        env["PYTHONPATH"] = (
-            src + os.pathsep + env["PYTHONPATH"]
-            if env.get("PYTHONPATH")
-            else src
-        )
-        r = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from just_makeit._cli import main; main()",
-                "build",
-            ],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert r.returncode == 0, r.stdout + r.stderr
-        # A zero exit is not proof a compiler ran. Require the artefact --
+        build = root / "build"
+        # `_ensure_built` exits non-zero via `sys.exit` on a cmake failure,
+        # which is exactly what this test exists to catch -- so catch it and
+        # report a failure rather than letting it read as a harness error.
+        try:
+            _silent(_ensure_built, root, build)
+        except SystemExit as e:
+            raise AssertionError(
+                f"the {CREATE_FN} scaffold did not compile (exit {e.code})"
+            ) from None
+        # A clean exit is not proof a compiler ran. Require the artefact --
         # the linked extension module is what "it builds" means, and it is
         # the thing that could not exist while `_ext.c` called a symbol
         # nothing defined.
-        built = list(root.rglob("widget*.so"))
+        # The extension is COPIED out of `build/` into the package dir, so
+        # sweep the project rather than the build tree.
+        built = [
+            q
+            for q in root.rglob("widget*")
+            if q.suffix in (".so", ".pyd", ".dylib")
+        ]
         assert built, (
-            "build exited 0 but produced no extension module; this check "
-            f"was not armed.\n{r.stdout}\n{r.stderr}"
+            "cmake exited 0 but produced no extension module; this check "
+            "was not armed"
         )
 
 
