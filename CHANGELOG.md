@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.76.4] — 2026-09-17
+
 ### Fixed
 
 - **jm re-wired a core the project already wires itself, unguarded (gh-1338).**
