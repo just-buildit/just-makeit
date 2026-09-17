@@ -275,20 +275,24 @@ def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
-#: The timing helper the no-`step()` bench template used to define
-#: unconditionally. gh-840: with no benchable method it was dead code, and the
-#: compiler said so — `-Wall -Wextra` on a generated stub gives four
-#: unused-symbol warnings, so a project building its benchmarks with `-Werror`
-#: could not compile a jm scaffold at all. Emitted only when something times.
-_BENCH_ELAPSED_HELPER = """static double
-elapsed_sec(struct timespec *t0, struct timespec *t1)
-{
-    return (double)(t1->tv_sec - t0->tv_sec)
-           + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;
-}
-"""
+#: The timing helper the no-`step()` bench template used to define itself.
+#:
+#: gh-840: with no benchable method it was dead code, and the compiler said
+#: so — `-Wall -Wextra` on a generated stub gives four unused-symbol
+#: warnings, so a project building its benchmarks with `-Werror` could not
+#: compile a jm scaffold at all. Emitted only when something times.
+#:
+#: gh-1341: now EMPTY, because the helper lives in `jm_bench.h` as
+#: `jm_bench_elapsed_sec` alongside the clock that feeds it. The slot stays
+#: rather than being deleted: the template carries it, and a slot the render
+#: stops filling is refused at write time (gh-1199), so removing it here
+#: means removing it there in the same change or nothing builds.
+_BENCH_ELAPSED_HELPER = ""
 
-_BENCH_TIMER_DECLS = "    struct timespec t0, t1;\n"
+#: gh-1341: `uint64_t`, not `struct timespec` — the generated benchmark no
+#: longer names a POSIX type. `struct timespec` is C11 on MSVC and was
+#: optional before that.
+_BENCH_TIMER_DECLS = "    uint64_t t0, t1;\n"
 
 
 #: The worked `jm_bench_add` example every unfinished benchmark carries.
@@ -300,20 +304,16 @@ _BENCH_TODO_TAIL = [
     "measurement into the JSON; without one this target writes an empty",
     '"benchmarks": [] array.',
     "",
-    "  static double",
-    "  elapsed_sec(struct timespec *t0, struct timespec *t1)",
-    "  {",
-    "      return (double)(t1->tv_sec - t0->tv_sec)",
-    "             + (double)(t1->tv_nsec - t0->tv_nsec) * 1e-9;",
-    "  }",
+    "The clock and the elapsed helper come from `jm_bench.h`, which this",
+    "file already includes — do not redefine them (gh-1341).",
     "",
-    "  struct timespec t0, t1;",
+    "  uint64_t t0, t1;",
     "  double times[ITERATIONS];",
     "  for (int r = 0; r < ITERATIONS; r++) {",
-    "      clock_gettime(CLOCK_MONOTONIC, &t0);",
+    "      t0 = jm_bench_now_ns();",
     "      ... call the method BENCH_N times ...",
-    "      clock_gettime(CLOCK_MONOTONIC, &t1);",
-    "      times[r] = elapsed_sec(&t0, &t1);",
+    "      t1 = jm_bench_now_ns();",
+    "      times[r] = jm_bench_elapsed_sec(t0, t1);",
     "  }",
     '  jm_bench_add(&_bench, "<name>", times, ITERATIONS, BENCH_N);',
 ]
@@ -356,10 +356,12 @@ def _bench_todo(
       generated stubs, so the API the scaffold exists to standardise was
       never shown by the scaffold.
 
-    The example carries its own `elapsed_sec` / `t0` / `t1` declarations
-    because those are no longer emitted unconditionally (they were dead code
-    the compiler flagged), so pasting the block in gives a compiling
-    measurement rather than a fragment needing three other edits first.
+    The example carries its own `t0` / `t1` declarations because those are
+    no longer emitted unconditionally (they were dead code the compiler
+    flagged), so pasting the block in gives a compiling measurement rather
+    than a fragment needing three other edits first. The timer and the
+    elapsed helper come from `jm_bench.h`, which the benchmark already
+    includes (gh-1341).
 
     The comment prefix is applied **once, here**, rather than written into
     each line: hand-prefixing produced a block whose continuation lines sat
@@ -520,10 +522,10 @@ def _bench_method_block(component: str, m: dict) -> str:
         lines += [
             f"        for (int i = 0; i < 4; i++) {name}_sink = {call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
-            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "            t0 = jm_bench_now_ns();",
             f"            {name}_sink = {call};",
-            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
-            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            "            t1 = jm_bench_now_ns();",
+            f"            _times_{name}[r] = jm_bench_elapsed_sec(t0, t1);",
             "        }",
         ]
         if has_arg:
@@ -553,10 +555,10 @@ def _bench_method_block(component: str, m: dict) -> str:
             "        for (int i = 0; i < 4; i++)",
             f"            {call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
-            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "            t0 = jm_bench_now_ns();",
             f"            {call};",
-            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
-            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            "            t1 = jm_bench_now_ns();",
+            f"            _times_{name}[r] = jm_bench_elapsed_sec(t0, t1);",
             "        }",
         ]
         if has_arg:
@@ -585,10 +587,10 @@ def _bench_method_block(component: str, m: dict) -> str:
             "        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
-            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "            t0 = jm_bench_now_ns();",
             f"            {sink}{call};",
-            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
-            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            "            t1 = jm_bench_now_ns();",
+            f"            _times_{name}[r] = jm_bench_elapsed_sec(t0, t1);",
             "        }",
             f"        free({name}_in);",
         ]
@@ -609,11 +611,11 @@ def _bench_method_block(component: str, m: dict) -> str:
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
-            "            clock_gettime(CLOCK_MONOTONIC, &t0);",
+            "            t0 = jm_bench_now_ns();",
             "            for (int i = 0; i < BENCH_N; i++)",
             f"                {sink}{call};",
-            "            clock_gettime(CLOCK_MONOTONIC, &t1);",
-            f"            _times_{name}[r] = elapsed_sec(&t0, &t1);",
+            "            t1 = jm_bench_now_ns();",
+            f"            _times_{name}[r] = jm_bench_elapsed_sec(t0, t1);",
             "        }",
         ]
 

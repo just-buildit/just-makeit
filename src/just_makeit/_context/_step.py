@@ -547,11 +547,11 @@ def make_step_ctx(
         _bw_bench_timing = (
             f"    double _times_steps[ITERATIONS];\n"
             f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        t0 = jm_bench_now_ns();\n"
             f"        {component}_steps(obj, in, BENCH_N, out"
             f"{ctrl_obj_args});\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
-            f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
+            f"        t1 = jm_bench_now_ns();\n"
+            f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
             f"    }}\n"
             f'    jm_bench_add(&_bench, "steps",'
             f" _times_steps, ITERATIONS, BENCH_N);\n"
@@ -1413,24 +1413,24 @@ def make_step_ctx(
     _is_arr = arg_type.endswith("[]")
     if _is_arr:
         _inner = (
-            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        t0 = jm_bench_now_ns();\n"
             f"        {_bsink}{component}_step"
             f"(obj{_bsep}{_barg}{ctrl_obj_args});\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+            f"        t1 = jm_bench_now_ns();\n"
         )
     else:
         _inner = (
-            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        t0 = jm_bench_now_ns();\n"
             f"        for (int i = 0; i < BENCH_N; i++)\n"
             f"            {_bsink}{component}_step"
             f"(obj{_bsep}{_barg}{ctrl_obj_args});\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
+            f"        t1 = jm_bench_now_ns();\n"
         )
     bench_step_timing_block = (
         f"    double _times_step[ITERATIONS];\n"
         f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
         f"{_inner}"
-        f"        _times_step[r] = elapsed_sec(&t0, &t1);\n"
+        f"        _times_step[r] = jm_bench_elapsed_sec(t0, t1);\n"
         f"    }}\n"
         f'    jm_bench_add(&_bench, "step",'
         f" _times_step, ITERATIONS, BENCH_N);\n"
@@ -1449,10 +1449,10 @@ def make_step_ctx(
         bench_steps_timing_block = (
             f"    double _times_steps[ITERATIONS];\n"
             f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t0);\n"
+            f"        t0 = jm_bench_now_ns();\n"
             f"        {component}_steps(obj,{si_arg}{so_arg}{ctrl_obj_args});\n"
-            f"        clock_gettime(CLOCK_MONOTONIC, &t1);\n"
-            f"        _times_steps[r] = elapsed_sec(&t0, &t1);\n"
+            f"        t1 = jm_bench_now_ns();\n"
+            f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
             f"    }}\n"
             f'    jm_bench_add(&_bench, "steps",'
             f" _times_steps, ITERATIONS, BENCH_N);\n"
