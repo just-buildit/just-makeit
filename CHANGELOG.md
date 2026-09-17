@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Every release ran the full matrix for a version string, because the
+    bump-only fast path named a file that no longer exists.** `ci.yml`'s
+    `changes` job exists to skip the 6×2 matrix and Coverage for a bump, and
+    `ci-passed` already treats that skip as green — but the allow-list said
+    `jb.toml`, which this repo renamed to `bootstrap.toml`. The comment two
+    lines above the regex already said `bootstrap.toml`; only the pattern was
+    missed, so the mechanism had **never once fired**.
+
+    Measured on v0.76.2–v0.76.4, which were consistent to within a minute:
+
+    | stage                      | time        |
+    | -------------------------- | ----------- |
+    | bump-PR CI                 | 31.2 min    |
+    | main CI on the bump commit | 28.8 min    |
+    | of which Coverage          | 28.4 min    |
+    | `release.yml`              | 8.1–8.8 min |
+
+    About an hour of CI per release for a changed version string, Coverage
+    running twice over it — and it is what made the pre-tag wait in the
+    release flow necessary at all.
+
+    The gate derives the file set from the repo's own machinery rather than
+    restating it: the allow-list is checked against the files
+    `sync-bootstrap-version` declares it rewrites, and against the real diffs
+    of the last three release tags. A hand-written list is exactly what broke
+    — the rename updated the prose and left the pattern matching a name
+    nothing produces — so an allow-listed file that does not exist in the
+    repo is now itself a failure.
+
 ## [0.76.4] — 2026-09-17
 
 ### Fixed
