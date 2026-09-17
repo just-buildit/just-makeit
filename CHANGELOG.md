@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.76.1] — 2026-09-16
+
 ### Fixed
 
 - **`create_fn` did not reach the destructor derivation (gh-1326).** gh-1323's
