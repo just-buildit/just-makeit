@@ -90,8 +90,15 @@ _WIRING = re.compile(
 # The generous counterpart, for asking "does this core reach the library at
 # all" (gh-988). Indentation allowed, because a conditional wiring block is
 # what a platform-gated core looks like in a hand-written CMakeLists.
+# gh-1338: whitespace RUNS, not a single space. A hand-written block aligns
+# its arguments -- `target_sources(doppler_lib        PRIVATE ...)` -- and the
+# generous reader existed precisely to see hand-written wiring, so matching
+# only jm's own single-space spelling made it blind to the case it was added
+# for. jm's writer still emits one space; this only widens what is READ.
 _WIRING_ANY = re.compile(
-    r"^[ \t]*target_sources\((\w+) PRIVATE \$<TARGET_OBJECTS:(\w+)>\)", re.M
+    r"^[ \t]*target_sources\(\s*(\w+)\s+PRIVATE\s+"
+    r"\$<TARGET_OBJECTS:(\w+)>\s*\)",
+    re.M,
 )
 # gh-991: `add_library(NAME SHARED|STATIC …)` — the other way objects reach a
 # library, and the only way doppler's second library gets its two cores.
@@ -200,6 +207,59 @@ def shipped_cores(root: Path) -> set[str]:
     return shipped
 
 
+def wired_pairs(root: Path) -> "set[tuple[str, str]]":
+    """Every ``(target, core)`` the project wires, in ANY of its CMakeLists.
+
+    gh-988's "read generously" scan, lifted out of :func:`unwired` so the
+    writer can ask the same question. cmake does not care which file said a
+    core reaches a library, so neither may this module: the detector has
+    honoured that since gh-988 and the emitter had not, which is gh-1338.
+    """
+    pairs: set[tuple[str, str]] = set()
+    files = [root / "CMakeLists.txt"]
+    native = root / "native"
+    if native.is_dir():
+        files += sorted(native.rglob("CMakeLists.txt"))
+    for path in files:
+        if path.is_file():
+            pairs |= set(_WIRING_ANY.findall(path.read_text(encoding="utf-8")))
+    return pairs
+
+
+def externally_wired(root: Path) -> "set[str]":
+    """Cores some file OTHER than the root CMakeLists already wires.
+
+    gh-1338. This is the precise predicate for *the project wires this
+    itself, outside jm's block* -- and it is deliberately not "wired
+    anywhere": a core wired only in the root is jm's own line, which the
+    emitter must still own and re-emit.
+
+    Why it matters. A component may declare its core inside a platform
+    guard and fold it into both libraries there, which is what doppler does
+    for a POSIX-only timing core -- specifically to keep the conditional out
+    of the jm-managed region. jm then emitted its own UNGUARDED pair into the
+    root, which is redundant where the guard holds and fatal where it does
+    not: cmake resolves ``$<TARGET_OBJECTS:>`` at CONFIGURE time, so a
+    missing target kills the whole generate step before anything compiles.
+
+    Hand-guarding jm's pair is not available as a workaround -- the next
+    `apply` re-emits the canonical unguarded pair and relocates the
+    hand-written one, leaving both, and `status` then reports the file STALE
+    until it is reverted.
+
+    Note this reads the REAL tree, so it says nothing about whether the core
+    *should* be wired -- only that the project has already said where. The
+    "is it in a library at all" question stays :func:`unwired`'s.
+    """
+    root_cmake = root / "CMakeLists.txt"
+    root_pairs: set[tuple[str, str]] = set()
+    if root_cmake.is_file():
+        root_pairs = set(
+            _WIRING_ANY.findall(root_cmake.read_text(encoding="utf-8"))
+        )
+    return {core for _t, core in wired_pairs(root) - root_pairs}
+
+
 def lib_targets(cmake_text: str, pkg: str) -> list[str]:
     """The combined C library targets the root CMakeLists declares.
 
@@ -227,16 +287,34 @@ def dep_core_libs(depends_on: list) -> list[str]:
 # ── Writing it ───────────────────────────────────────────────────────────────
 
 
-def cmake_core_wiring(cmake_text: str, pkg: str, cores: list[str]) -> str:
+def cmake_core_wiring(
+    cmake_text: str,
+    pkg: str,
+    cores: list[str],
+    already_wired: "set[str] | None" = None,
+) -> str:
     """``target_sources`` lines folding each core in *cores* into every
     combined C library target the root CMakeLists declares.
 
     Lines already present in *cmake_text* are skipped, so every caller is
     idempotent and a second generator touching the same component adds only
     what the first left out.
+
+    gh-1338: *already_wired* is :func:`externally_wired` -- cores the project
+    folds in from somewhere other than the root. jm emits nothing for those.
+    Its line would duplicate the project's where the project's works, and
+    would be a dangling ``$<TARGET_OBJECTS:>`` (a CONFIGURE error, not a link
+    error) where the project's is inside a platform guard that is false.
+
+    Default ``None`` rather than an empty set so a caller that cannot reach
+    the tree keeps the old behaviour explicitly, instead of silently
+    claiming nothing is externally wired.
     """
+    skip = already_wired or set()
     lines = ""
     for core in cores:
+        if core in skip:
+            continue
         for target in lib_targets(cmake_text, pkg):
             line = wiring_line(target, core)
             if line not in cmake_text and line not in lines:
@@ -275,7 +353,7 @@ def splice_cmake_component(
             text = text[:idx] + sub + text[idx:]
         else:
             text += sub
-    wiring = cmake_core_wiring(text, pkg, cores)
+    wiring = cmake_core_wiring(text, pkg, cores, externally_wired(root))
     if wiring:
         idx = text.index("\n", text.index(sub)) + 1
         text = text[:idx] + wiring + text[idx:]
@@ -336,14 +414,8 @@ def unwired(root: Path, cfg: dict) -> list[Unwired]:
     targets = lib_targets(text, C.project_name(cfg))
     if not targets:
         return []
-    wired = {(t, c) for t, c in _WIRING_ANY.findall(text)}
+    wired = wired_pairs(root)
     shipped = shipped_cores(root)
-    src = root / "native"
-    if src.is_dir():
-        for cmake in sorted(src.rglob("CMakeLists.txt")):
-            wired |= set(
-                _WIRING_ANY.findall(cmake.read_text(encoding="utf-8"))
-            )
     found = []
     for core, comp in sorted(declared_cores(root).items()):
         # gh-991: a core that reaches SOME shared/static library is shipped,

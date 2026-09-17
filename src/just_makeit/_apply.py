@@ -1167,10 +1167,28 @@ def _splice_cmake_components(
     known = set(_libwiring.declared_cores(real_path.parent)) | set(
         _libwiring.declared_cores(temp_path.parent)
     )
+    # gh-1338: drop a re-emitted wiring line for a core the REAL project
+    # already folds in from somewhere other than its root.
+    #
+    # The replay tree is a fresh scaffold, so jm's canonical unguarded pair
+    # is always in it -- which is why deleting the pair from the root by hand
+    # does not stick, and why guarding it by hand leaves two copies. A
+    # component that declares its core inside a platform guard and wires it
+    # there (doppler's POSIX-only timing core, kept conditional precisely to
+    # stay out of jm's block) then got an UNGUARDED duplicate: redundant
+    # where the guard holds, and a CONFIGURE error where it does not, since
+    # cmake resolves `$<TARGET_OBJECTS:>` before compiling anything.
+    #
+    # Read from the real tree, never the replay: the replay has only jm's own
+    # root wiring, so asking it would always answer "nothing is external".
+    external = _libwiring.externally_wired(real_path.parent)
     new_real = "".join(
         line
         for line in new_real.splitlines(keepends=True)
-        if not ((m := _WIRED_CORE.match(line)) and m.group(1) not in known)
+        if not (
+            (m := _WIRED_CORE.match(line))
+            and (m.group(1) not in known or m.group(1) in external)
+        )
     )
 
     if new_real != real:

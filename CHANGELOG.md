@@ -2,6 +2,49 @@
 
 ### Fixed
 
+- **jm re-wired a core the project already wires itself, unguarded (gh-1338).**
+    A component may declare its core inside a platform guard and fold it into
+    both combined libraries there — doppler does, for a POSIX-only timing
+    core, *specifically* to keep the conditional out of the jm-managed block.
+    With another module declaring it via `depends_on` + `link = true`, jm
+    emitted its own **unguarded** pair into the root: redundant where the
+    guard holds, and fatal where it does not, since cmake resolves
+    `$<TARGET_OBJECTS:>` at **configure** time and a missing target kills
+    generate before anything compiles.
+
+    Neither workaround was available. Hand-guarding jm's pair drifts — the
+    next `apply` re-emits the canonical unguarded pair and relocates the
+    hand-written one, leaving both, with `status` reporting STALE until it is
+    reverted. Dropping `link = true` does not remove the emission, and in
+    doppler that key is load-bearing for `process_global`.
+
+    **The asymmetry was the bug**, not a missing feature. `unwired` has read
+    wiring from any CMakeLists since gh-988 — its docstring says outright
+    that a project may wire a core from the component's own file *and that
+    doppler deliberately does* — while the emitter looked only at the root.
+    `_libwiring` exists to hold the writer and the reader together, so the
+    fix is one scan (`wired_pairs`) that both use, and `externally_wired` for
+    the precise question: *does some file other than the root already wire
+    this?* A core wired only in the root stays jm's to own and re-emit.
+
+    Also fixed, and found by building the fixture: the generous reader
+    matched only jm's own single-space spelling, so it was blind to
+    `target_sources(doppler_lib        PRIVATE …)` — the aligned form a
+    hand-written block actually takes, which is the case it was added for.
+    It reads whitespace runs now; `unwired` would otherwise report a
+    correctly-shipped core as unwired, and that is gated.
+
+    The fixture took three attempts and each wrong one measured something
+    else: a normal component's `CMakeLists.txt` is RECONCILED, so `apply`
+    deleted the hand-written wiring and the guard could not live there
+    (a `no_generate` module is the shape that holds it); and without the
+    `link = true` dependent nothing is emitted into the root at all, so the
+    bug did not appear. The end-to-end check is that configure **succeeds**
+    with the guard false — on `main` it dies with
+    `Error evaluating generator expression`.
+
+### Fixed
+
 - **The release raced main's CI, and spent its one auto-recovery on it every
     time (gh-1327).** `release.yml`'s *"Verify CI already passed for this
     commit"* job polls for a conclusion on the tagged SHA — it always did;
