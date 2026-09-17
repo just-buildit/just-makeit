@@ -147,6 +147,62 @@ class TestTheDefaultIsUnchanged:
         )
 
 
+class TestTheDispatchShapesAreUnmoved:
+    """`opt_arr_ip` / `dispatch_meta` keep 0.76.2's behaviour exactly.
+
+    Those features select a constructor PER CALL and their "nothing
+    supplied" branch calls ``<comp>_create`` literally. Renaming the
+    definition without renaming those branches leaves `_ext.c` calling a
+    symbol nothing defines -- and `apply` then appends a body for the
+    renamed one into the sacred ``_core.c``.
+
+    That is not hypothetical: it is what this change did before this guard,
+    measured as an extra ``frame_open(void)`` sitting beside the real
+    ``frame_create(size_t n)``. 0.76.2 ignores an object-level ``create_fn``
+    outright here, so holding that is a no-op rather than a new refusal.
+    Supporting the combination is gh-1335.
+    """
+
+    def _frame(self, tmp_path):
+        root = tmp_path / "q"
+        _silent(new_run, "q", root)
+        _silent(
+            object_run, root, "frame", None, state_vars=[("n", "size_t", "4")]
+        )
+        p = root / "just-makeit.toml"
+        t = p.read_text(encoding="utf-8")
+        t = t.replace("[frame]", '[frame]\ncreate_fn = "frame_open"', 1)
+        t += (
+            '\n[[frame.init_params]]\nname = "preamble"\n'
+            'type = "uint8_t[]"\noptional = true\n'
+            'create_fn = "frame_open_pre"\n'
+        )
+        p.write_text(t, encoding="utf-8")
+        return root
+
+    def test_apply_appends_nothing_to_the_sacred_core_c(self, tmp_path):
+        from just_makeit._apply import run as apply_run
+
+        root = self._frame(tmp_path)
+        core = root / "native/src/frame/frame_core.c"
+        before = core.read_text(encoding="utf-8")
+        _silent(apply_run, root)
+        after = core.read_text(encoding="utf-8")
+        assert "frame_open(" not in after, (
+            "a body for the renamed constructor was appended to a sacred "
+            f"file:\n{after[len(before) :]}"
+        )
+        assert after == before, after
+
+    def test_the_caller_and_callee_still_agree(self, tmp_path):
+        """The property that actually matters: whatever name is chosen, both
+        sides must choose the same one."""
+        root = self._frame(tmp_path)
+        core = (root / "native/src/frame/frame_core.c").read_text()
+        ext = (root / "native/src/frame/frame_ext.c").read_text()
+        assert "frame_create(" in core and "frame_create(" in ext, (core, ext)
+
+
 @pytest.mark.skipif(
     not shutil.which("cmake")
     or not any(shutil.which(c) for c in ("cc", "gcc", "clang")),
