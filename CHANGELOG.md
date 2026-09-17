@@ -121,6 +121,40 @@
     dereferencing `t1->tv_sec` on `uint64_t` parameters, so it would not have
     compiled.
 
+- **A missing template slot shipped as literal token text in generated C
+    (gh-1336).** `_init._write` refuses to write a rendered file still
+    carrying an unmatched `<<key>>` — that refusal is how gh-1328's missing
+    `create_name` was found, named with its file and its slot. **The app
+    writer had no such guard**, so the same missing slot produced
+
+    ```c
+    fprintf(stderr, "error: /*<<create_name>>*/() failed\n");
+    ```
+
+    which compiles, because the token lands inside a string literal, and
+    ships jm's template syntax in a user-facing message. Nothing failed and
+    nothing was reported; it surfaced only because an unrelated assertion
+    happened to look for `"_create() failed"` nearby.
+
+    The guard's value is that a slot added to a template is *self-reporting* —
+    any render path that forgets to fill it fails loudly the moment it is
+    added. That holds only while every writer has it, and which writers do is
+    not something the person adding a slot can be expected to know. The app's
+    three render-writes go through the shared guard now rather than a second
+    copy of the check.
+
+    Gated in two layers, because one is not enough: a sweep over every file a
+    project can contain (built by RUNNING jm across object, module, view,
+    method, property, function and all three app faces, so a face added later
+    is covered without being registered), and a writer-level test that the
+    refusal happens at all. Sabotaged separately — dropping the context key
+    makes the writer refuse; dropping it *and* bypassing the guard makes the
+    sweep catch the file.
+
+    Fixed alongside: gh-962's twin, still live in two of those three writers —
+    `verb = "update" if path.exists() else "create"` was read *after* the
+    write, so a first-time scaffold always announced itself as `update`.
+
 ## [0.76.3] — 2026-09-17
 
 ### Fixed
