@@ -27,10 +27,15 @@
 
     The second half of gh-1327 — `release-watch` reporting every pre-publish
     failure as *"likely a flake"*, including the verify-ci one it had just
-    diagnosed — is **not** in this change. That script is vendored from the
-    cross-org standard, so fixing it here would be a private copy of shared
-    tooling and `standard-check` fails `make lint` on exactly that. It goes
-    to canonical and comes back through the vendored copy.
+    diagnosed — is also fixed, and it names the failing jobs instead. Not
+    here, though: that script is vendored from the cross-org standard, so
+    fixing it in this repo would be a private copy of shared tooling and
+    `standard-check` fails `make lint` on exactly that (measured — the first
+    attempt was written here and the gate caught it). It went to canonical
+    and came back through `make standard-update`, which is also why no test
+    for it lives here: canonical gates the behaviour in its own CI, and a
+    second copy of that check is what the drift gate exists to prevent.
+
 - **Every generated benchmark called `clock_gettime` directly, so none of
     them compiled on Windows (gh-1341).** `jm_bench.h` recorded timings and
     wrote the JSON but handed the clock read back to the generated file, so
