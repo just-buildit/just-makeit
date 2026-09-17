@@ -23,6 +23,46 @@
     sacred file to avoid a different one. *"The untouched scaffold builds"* is
     therefore still not met for a record method; that gap is filed rather than
     papered over.
+- **`create_fn` renamed the caller and not the callee, so a `create_fn`
+    scaffold did not compile and `apply` invented a constructor (gh-1328
+    repro B).** `create_fn` (gh-509) reached exactly one face — the `tp_init`
+    call in `_ext.c`. Every C face jm renders kept the derived name, so
+    `jm object widget --create-fn widget_open` emitted `_ext.c` calling
+    `widget_open` while `_core.c` defined and `_core.h` declared
+    `widget_create`:
+
+    ```
+    widget_ext.c:49:20: error: implicit declaration of function 'widget_open'
+    ```
+
+    Four commands from `jm new`, no hand-editing, against the rule that every
+    valid CLI sequence produces a scaffold that builds and passes.
+
+    On an EXISTING project the author's constructor is already defined, so
+    nothing fails to compile — instead `apply` rendered a reference tree
+    naming `<comp>_create`, found no such definition and appended a
+    placeholder one into the sacred `_core.c`. A **new** symbol, so it links
+    silently: dead code returning an uninitialised state, in a file jm
+    promises not to write. doppler carried three (`acq`, `dp_event_log`,
+    `dp_tlm_capture`) and saw them only through an unrelated bare-`calloc`
+    ratchet.
+
+    One root, two symptoms. The constructor's name is one slot now
+    (`create_name`), used by the `_core.c` definition, the `_core.h`
+    declaration, the CTest smoke test, the bench and the generated app — it
+    defaults to `<comp>_create`, so a project without a `create_fn` is
+    byte-identical.
+
+    **The gate that should have caught it was vacuous twice over.** 0.76.2
+    shipped a sweep asserting every sacred `_core.c` survives `apply`
+    untouched, and it passed while this was live: no component in its
+    fixture declared a `create_fn`, so a sweep that was registration-free
+    over FILES was still blind to a SHAPE — and it called `apply` once to
+    "settle" before snapshotting, which measured idempotence rather than
+    damage. The append happens on the FIRST apply and every later run finds
+    the symbol present, so the bug SATISFIED the property being checked.
+    Both are fixed where they were: the fixture carries a `create_fn`
+    component, and the sweep measures from the scaffold jm just wrote.
 
 ## [0.76.2] — 2026-09-17
 

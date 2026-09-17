@@ -1468,8 +1468,14 @@ def _build_no_state_init_ctx(
         # and the bench must declare `obj` (else the unconditional destroy(obj)
         # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
-            f"    {component}_state_t *obj = {component}_create({c_create_args});"
+            f"    {component}_state_t *obj = {_create}({c_create_args});"
         ),
+        # gh-1328: every C face -- the `_core.c` definition, the `_core.h`
+        # declaration, the CTest smoke test and the bench -- names the
+        # constructor through this ONE slot, so `create_fn` cannot rename the
+        # caller (`_ext.c`) without renaming the callee. Defaults to
+        # `<comp>_create`, byte-identical for every project without one.
+        "create_name": _create,
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
             test_obj
@@ -2078,8 +2084,13 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
     # create/destroy are the two the header states literally rather than
     # through a definition slot, so their declaration text is built here and
     # their bodies come from the same slots `_core.c` uses.
+    #
+    # gh-1328: the NAME comes from `create_name`, never from `comp` -- the
+    # header must declare the function `_core.c` defines and `_ext.c` calls,
+    # and `create_fn` renames all three at once.
+    cname = str(ctx.get("create_name") or f"{comp}_create")
     ctx["create_decl"] = (
-        f"{comp}_state_t *{comp}_create({ctx.get('create_params', '')});"
+        f"{comp}_state_t *{cname}({ctx.get('create_params', '')});"
     )
     ctx["destroy_decl"] = (
         f"{ctx.get('destroy_c_ret', 'void')} {comp}_destroy"
@@ -2090,7 +2101,7 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
         return ctx
     lifecycle = (
         f"{L}static inline {comp}_state_t *{L}"
-        f"{comp}_create({ctx.get('create_params', '')}){L}{{{L}"
+        f"{cname}({ctx.get('create_params', '')}){L}{{{L}"
         f"    {comp}_state_t *obj = calloc(1, sizeof(*obj));{L}"
         f"    if (!obj){L}        return NULL;{L}"
         f"{ctx.get('create_assignments', '')}"
@@ -2158,7 +2169,11 @@ def staticize(text: str) -> str:
 
 
 def _state_struct_decl(
-    component: str, Component: str, fields: str, opaque: bool = False
+    component: str,
+    Component: str,
+    fields: str,
+    opaque: bool = False,
+    create_name: str = "",
 ) -> str:
     """The state struct as the PUBLIC header declares it.
 
@@ -2179,6 +2194,10 @@ def _state_struct_decl(
     in this header and dereferences state — hence ``opaque_state`` requires
     ``no_step``, which `_object` validates rather than leaving to the compiler.
     """
+    # gh-1328: the doc comment names the constructor the author actually
+    # calls. Naming `<comp>_create()` under a `create_fn` project points the
+    # reader at a function the tree does not contain.
+    _cn = create_name or f"{component}_create"
     if opaque:
         return (
             f"/**\n"
@@ -2186,7 +2205,7 @@ def _state_struct_decl(
             f" *\n"
             f" * The definition lives in {component}_core.c; this header\n"
             f" * exports only the handle type. Allocate with\n"
-            f" * {component}_create().\n"
+            f" * {_cn}().\n"
             f" */\n"
             f"typedef struct {component}_state {component}_state_t;"
         )
@@ -2194,7 +2213,7 @@ def _state_struct_decl(
         f"/**\n"
         f" * @brief {Component} state.\n"
         f" *\n"
-        f" * Allocate with {component}_create().\n"
+        f" * Allocate with {_cn}().\n"
         f" */\n"
         f"typedef struct {{\n"
         f"{fields}/*<<property_struct_fields>>*/\n"
@@ -2434,6 +2453,12 @@ def make_state_ctx(
             "ComponentW": f"{Component}Obj",
             "state_struct_fields": "    /* <<IMPLEMENT: add fields >> */",
             "create_params": "void",
+            # gh-1328: `create_name` travels WITH `create_params` -- the two
+            # halves of the same prototype, and the C templates carry a slot
+            # for each. A branch that sets one and not the other writes a
+            # file with an unfilled `<<create_name>>`, which `_init` refuses
+            # rather than emits. That refusal is how this branch was found.
+            "create_name": _create,
             "create_param_docs": (
                 " * @param (none)  Caller is responsible for all state management."
             ),
@@ -2476,7 +2501,7 @@ def make_state_ctx(
             ),
             "c_create_args": "",
             "bench_create_stmt": (
-                f"    /* TODO: {component}_state_t *obj = {component}_create(...); */"
+                f"    /* TODO: {component}_state_t *obj = {_create}(...); */"
             ),
             "bench_destroy_stmt": "",
             "getter_setter_test_c": "",
@@ -2546,6 +2571,7 @@ def make_state_ctx(
             Component,
             base["state_struct_fields"] + "\n",
             opaque_state,
+            _create,
         )
         base["state_struct_def"] = _state_struct_def(
             component, base["state_struct_fields"] + "\n", opaque_state
@@ -3229,7 +3255,11 @@ def make_state_ctx(
 
     result: dict[str, str] = {
         "state_struct_decl": _state_struct_decl(
-            component, Component, state_struct_fields + "\n", opaque_state
+            component,
+            Component,
+            state_struct_fields + "\n",
+            opaque_state,
+            _create,
         ),
         "state_struct_def": _state_struct_def(
             component, state_struct_fields + "\n", opaque_state
@@ -3286,8 +3316,11 @@ def make_state_ctx(
         # and the bench must declare `obj` (else the unconditional destroy(obj)
         # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
-            f"    {component}_state_t *obj = {component}_create({c_create_args});"
+            f"    {component}_state_t *obj = {_create}({c_create_args});"
         ),
+        # gh-1328: see the twin in `_build_no_state_init_ctx`. One slot names
+        # the constructor for every C face.
+        "create_name": _create,
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
@@ -3401,11 +3434,11 @@ def make_state_ctx(
             _init_ctx["c_create_args"] = _c_args
             _init_ctx["py_create_args"] = _py_args
             _init_ctx["bench_create_stmt"] = (
-                f"    {component}_state_t *obj = {component}_create({_c_args});"
+                f"    {component}_state_t *obj = {_create}({_c_args});"
                 if _c_args
                 else (
                     f"    /* TODO: {component}_state_t *obj ="
-                    f" {component}_create(...); */"
+                    f" {_create}(...); */"
                 )
             )
         _CTOR_OVERRIDE_KEYS = (
@@ -3431,6 +3464,10 @@ def make_state_ctx(
             "py_create_args",
             "c_create_args",
             "bench_create_stmt",
+            # gh-1328: the ctor-override path rebuilds the create slots, so
+            # the NAME has to come across with them or `result` keeps the
+            # state half's -- the two prototypes would then disagree.
+            "create_name",
             # gh-790: the borrowed-handle owner refs. This list is an explicit
             # allow-list, so a slot absent from it is silently dropped rather
             # than left unreplaced — the generated tp_init stored into a

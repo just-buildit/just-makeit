@@ -6,7 +6,7 @@
  *
  * Example:
  * @code
- * /*<<component>>*/_state_t *obj = /*<<component>>*/_create(/*<<c_create_args>>*/);
+ * /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
  * /*<<step_example_lhs>>*//*<<component>>*/_step(obj/*<<step_example_suffix>>*/);
  * /*<<component>>*/_destroy(obj);
  * @endcode

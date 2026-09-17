@@ -47,22 +47,38 @@ def _scaffold_module_object(tmp_path, create_fn="acq_create_continuous"):
 
 
 def _hand_author_create_fn_doc(root, create_fn="acq_create_continuous"):
-    """Add a real, hand-written ``create_fn`` function with non-boilerplate
-    Doxygen — the derived ``acq_create`` stays as jm's own scaffold text,
-    exactly like the doppler `acq`/`CorrDetector2D`-style report."""
+    """Give the ``create_fn`` declaration non-boilerplate Doxygen.
+
+    gh-1328 changed the tree this fixture stands on. It used to append a
+    SECOND declaration, because jm emitted ``acq_create`` no matter what
+    ``create_fn`` said and the author's real constructor had to be added
+    alongside it. That tree was the bug: ``_ext.c`` called
+    ``acq_create_continuous`` while the header declared and ``_core.c``
+    defined ``acq_create``, so it did not link — and on an existing project
+    `apply` kept appending the phantom ``acq_create`` into the sacred
+    ``_core.c``.
+
+    jm now declares the constructor the manifest names, once. So the
+    author's Doxygen goes ON that declaration, replacing jm's scaffold
+    brief, which is what a real project does. What is being asserted is
+    unchanged: the ``.tp_doc`` transplant keys off ``create_fn``'s block,
+    not off a derived ``<obj>_create``.
+    """
     header = root / "native" / "inc" / "acq" / "acq_core.h"
     text = header.read_text(encoding="utf-8")
+    old = " * @brief Create a acq instance.\n"
+    assert text.count(old) == 1, (
+        f"scaffold brief not found exactly once in {header}; this fixture "
+        f"must author the doc on the declaration jm actually emits"
+    )
     text = text.replace(
-        "acq_state_t *acq_create(double carrier);",
-        "acq_state_t *acq_create(double carrier);\n\n"
-        "/**\n"
+        old,
         " * @brief Create a continuous-mode acquisition engine: always\n"
         " *        wideband window-tiling, never coherent multi-epoch\n"
-        " *        combining.\n"
-        " * @param carrier  carrier (default: 0.05).\n"
-        " * @return Heap-allocated state, or NULL on allocation failure.\n"
-        " */\n"
-        f"acq_state_t *{create_fn}(double carrier);",
+        " *        combining.\n",
+    )
+    assert f"acq_state_t *{create_fn}(double carrier);" in text, (
+        f"jm must declare {create_fn} itself (gh-1328)"
     )
     header.write_text(text, encoding="utf-8")
 
