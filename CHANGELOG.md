@@ -2,6 +2,34 @@
 
 ### Fixed
 
+- **`jm status` contradicted itself about a sacred file, in a single screen
+    (gh-1337).** Reported from doppler against 0.76.2:
+
+    ```
+    STALE (2) — `jm apply` will rewrite from the manifest:
+      ~ native/src/acq/acq_core.c
+      Run `jm apply` to sync (glue regenerated; your _core.c is kept).
+
+    Your `_core.c` is sacred — apply never changes it; use ...
+    ```
+
+    Three claims and no two agree. **Both absolutes were false, in opposite
+    directions:** gh-1294 taught `apply` to splice a declared method's
+    missing body into `_core.c` — a change, to a sacred file, by design — so
+    *"never changes it"* is wrong; and it never edits or removes a line the
+    author wrote, so *"will rewrite from the manifest"* is wrong too. Each
+    made the other look like a defect: an appended body read as a bug in the
+    reader's own tree, and when it WAS a bug (gh-1328) the footer argued it
+    had not happened.
+
+    `status` now splits the stale list by who owns the file — apply does two
+    different things and one header cannot describe both — using
+    `_createonly`'s existing classification rather than a second way to ask.
+    Glue keeps *"will rewrite from the manifest"*; yours reads *"apply will
+    ADD a missing definition, never rewrite what you wrote"*. The wording is
+    gated against what `apply` actually does, not just against itself.
+    `docs/faq.md` carried the same false absolute and has since gh-1294.
+
 - **A `record_dtype` declaration said nothing about the type it renders
     prototypes in (gh-1319).** `record_dtype = "iq_pair_t"` makes jm emit
     `iq_pair_t *comp_wait(...)` into the sacred header and the sacred source,
