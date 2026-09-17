@@ -1199,9 +1199,15 @@ def _build_ctx(
     arg_t = C.arg_type(cfg, component)
     ret_t = C.return_type(cfg, component)
 
+    # gh-1328: the app calls the constructor the manifest declares, not
+    # `<comp>_create`. A `create_fn` project's app linked against a symbol
+    # the tree does not define -- the same root as the scaffold that would
+    # not compile, reached through a third face.
+    create_name = C.object_create_fn(cfg, component) or f"{component}_create"
+
     def _create_call(parsed: bool) -> str:
         a = _ctor_c_args(all_flags, parsed)
-        return f"{component}_create({a})" if a else f"{component}_create()"
+        return f"{create_name}({a})" if a else f"{create_name}()"
 
     shape = _app_shape(cfg, component)
     if shape is not None:
@@ -1360,6 +1366,7 @@ def _build_ctx(
         "io_loop": io_loop,
         "helpers": helpers,
         "app_create_line": f"    {component}_state_t *state = {create_call};",
+        "create_name": create_name,
         "cleanup_tail": cleanup_tail,
         # gh-944: the same closes, one block deeper, for the `create() failed`
         # early return. Derived from cleanup_tail rather than written twice --

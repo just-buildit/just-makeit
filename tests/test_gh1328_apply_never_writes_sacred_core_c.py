@@ -86,6 +86,24 @@ def _project(root: Path):
         s[:cut] + "static inline " + body.lstrip() + "\n" + s[cut:],
         encoding="utf-8",
     )
+    # gh-1328 repro B. A SECOND component, whose constructor is named by
+    # `create_fn` rather than derived as `<comp>_create`.
+    #
+    # This is the shape the sweep below could not see. Every component in
+    # this fixture used the default name, so a sweep that walks every
+    # `*_core.c` was registration-free over FILES and still blind to a whole
+    # SHAPE -- it went green for a release while `apply` appended a phantom
+    # `acq_create` into three of doppler's sacred files. Nothing is
+    # hand-edited here: a `create_fn` scaffold is correct as jm emits it,
+    # and `apply` must leave it alone.
+    _silent(
+        object_run,
+        root,
+        "widget",
+        None,
+        state_vars=[("n", "size_t", "4")],
+        create_fn="widget_open",
+    )
     return root
 
 
@@ -135,17 +153,61 @@ class TestApplyLeavesSacredCoreCAlone:
         text = (root / "native/src/cic/cic_core.c").read_text()
         assert "cic_decimate(cic_state_t" not in text, text
 
-    def test_every_sacred_core_c_is_byte_identical(self, tmp_path):
-        """The stronger form, and cheap: an up-to-date project's `_core.c`
-        files must ALL survive `apply` untouched. One hash per file, and it
-        covers this whole class rather than the inline case alone.
-        """
-        root = _project(tmp_path / "p")
-        _silent(apply_run, root)  # settle anything genuinely outstanding
-        before = {
+    def _sacred(self, root: Path) -> dict:
+        return {
             p: p.read_text(encoding="utf-8")
             for p in sorted((root / "native/src").rglob("*_core.c"))
         }
+
+    def test_the_first_apply_is_a_no_op_on_every_sacred_file(self, tmp_path):
+        """The FIRST `apply`, measured from the scaffold jm just wrote.
+
+        This is the one that catches repro B, and the one the original sweep
+        could not: it settled with an `apply` before snapshotting, so what it
+        compared was apply-2 against apply-1. The damage lands on apply-1 --
+        the phantom constructor is appended once and every later run finds it
+        present and stops. Idempotence is therefore satisfied BY the bug,
+        and the laundering call was the test's own blind spot.
+
+        jm's contract makes the stronger claim available for free: a freshly
+        scaffolded project is already up to date, so `apply` has nothing to
+        do and every sacred file must come out byte-identical.
+        """
+        root = _project(tmp_path / "p")
+        before = self._sacred(root)
+        assert before, "no sacred _core.c found — the sweep is not armed"
+        assert any("widget" in p.name for p in before), (
+            "the create_fn component is missing — the sweep is blind to "
+            "repro B again"
+        )
+        _silent(apply_run, root)
+        after = {p: p.read_text(encoding="utf-8") for p in before}
+        changed = [p.name for p in before if before[p] != after[p]]
+        assert not changed, f"apply rewrote sacred file(s): {changed}"
+
+    def test_apply_never_invents_a_derived_constructor(self, tmp_path):
+        """Named apart from the byte check, because this is the silent half.
+
+        A phantom `<comp>_create` beside the author's real constructor is a
+        NEW symbol: nothing collides, nothing fails to build, and dead code
+        returning an uninitialised state sits in a hand-owned file. doppler
+        only ever saw it through an unrelated bare-`calloc` ratchet.
+        """
+        root = _project(tmp_path / "p")
+        _silent(apply_run, root)
+        text = (root / "native/src/widget/widget_core.c").read_text()
+        assert "widget_create(" not in text, text
+        assert "widget_open(" in text, text
+
+    def test_every_sacred_core_c_is_byte_identical(self, tmp_path):
+        """Idempotence, kept as its own property: a second `apply` must also
+        change nothing. Weaker than the first-apply check above and retained
+        because it fails for causes that one does not -- a rewrite that only
+        appears once the tree is settled.
+        """
+        root = _project(tmp_path / "p")
+        _silent(apply_run, root)  # settle anything genuinely outstanding
+        before = self._sacred(root)
         assert before, "no sacred _core.c found — the sweep is not armed"
         _silent(apply_run, root)
         after = {p: p.read_text(encoding="utf-8") for p in before}

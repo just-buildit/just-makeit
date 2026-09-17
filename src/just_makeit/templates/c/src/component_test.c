@@ -20,7 +20,7 @@
 
 int main(void)
 {
-    /*<<component>>*/_state_t *obj = /*<<component>>*/_create(/*<<c_create_args>>*/);
+    /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
 /*<<obj_null_check>>*/
 
 /*<<getter_setter_test_c>>*/

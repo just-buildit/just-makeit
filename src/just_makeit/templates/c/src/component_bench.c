@@ -22,7 +22,7 @@ main(void)
 /*<<bench_out_decl>>*/
 /*<<bench_in_loop>>*/
 
-    /*<<component>>*/_state_t *obj = /*<<component>>*/_create(/*<<c_create_args>>*/);
+    /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
 
 /*<<bench_volatile_sink>>*/
 

@@ -35,7 +35,7 @@ main(int argc, char *argv[])
     /* --- create ---------------------------------------------------------- */
 /*<<app_create_line>>*/
     if (!state) {
-        fprintf(stderr, "error: /*<<component>>*/_create() failed\n");
+        fprintf(stderr, "error: /*<<create_name>>*/() failed\n");
 /*<<cleanup_tail_deep>>*/
         return 1;
     }

@@ -1,7 +1,7 @@
 #include "/*<<component>>*///*<<component>>*/_core.h"
 /*<<state_struct_def>>*/
 /*<<component>>*/_state_t *
-/*<<component>>*/_create(/*<<create_params>>*/)
+/*<<create_name>>*/(/*<<create_params>>*/)
 {
     /*<<component>>*/_state_t *obj = calloc(1, sizeof(*obj));
     if (!obj)
