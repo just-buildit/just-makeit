@@ -45,6 +45,7 @@ from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     class_import_line,
+    merge_doc_blocks,
     name_summary,
     ctor_demo_label,
     STUB_TARGET_WIDTH,
@@ -2672,11 +2673,12 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             for m in C.methods(cfg, obj)
             + [n for v in C.views(cfg, obj) for n in C.view_methods(v)]
         ],
-        {
-            k: v
-            for obj in objects
-            for k, v in (cfg.get(obj, {}).get("_doc_blocks", {}) or {}).items()
-        },
+        # gh-1300: merged, not spread -- a spread keeps only the last
+        # object's per-struct field docs, and the records above belong to
+        # every object.
+        merge_doc_blocks(
+            *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects)
+        ),
     )
     if _rec_block:
         parts.append(_rec_block)
@@ -2733,7 +2735,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             # block under that real name, looked up directly.
             _parent_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
             _view_blocks = _view_doc_blocks(cfg, obj, synth)
-            overlay["_doc_blocks"] = {**_view_blocks, **_parent_blocks}
+            overlay["_doc_blocks"] = merge_doc_blocks(
+                _view_blocks, _parent_blocks
+            )
             # gh-761: the reserved `_max_out` arity key is a *set*, not a
             # block, so the parent-wins merge above would drop the
             # synthetic-id entries `_view_doc_blocks` just re-keyed. Union

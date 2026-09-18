@@ -721,6 +721,156 @@ def member_doc(doc_blocks: "dict | None", name: str) -> str:
     return blk.brief if blk is not None else ""
 
 
+# gh-1300: the member docs above are keyed by bare NAME, which is right for an
+# enumerator (C makes those unique in their scope) and wrong for a struct
+# field: two unrelated structs routinely share a field name, and the first one
+# read won. The per-struct map rides the same doc-block map under one more key
+# a C identifier cannot produce.
+_STRUCT_MEMBERS_KEY = "<struct_members>"
+
+#: `struct` with an optional tag, opening a body. `typedef` is looked for
+#: separately, because it decides whether the identifier after the body names
+#: a TYPE or declares a variable.
+_STRUCT_OPEN_RE = re.compile(
+    r"\b(?P<td>typedef\s+)?struct\s+(?P<tag>\w+)?\s*\{"
+)
+
+#: What follows a typedef'd body: the type name, then `;` or `,`. A macro
+#: template's `dp_##name##_t` stops at `##` and does not match, which is the
+#: point -- that is a type jm cannot name, so it can be nobody's donor.
+_STRUCT_TYPEDEF_NAME_RE = re.compile(r"\s*(?P<name>\w+)\s*[;,]")
+
+#: `typedef struct tag name;`, the forward form jm's own state struct uses.
+_STRUCT_ALIAS_RE = re.compile(r"\btypedef\s+struct\s+(\w+)\s+(\w+)\s*;")
+
+
+def extract_struct_member_docs(
+    header_text: str,
+) -> "dict[str, dict[str, str]]":
+    r"""``{struct: {field: doc}}`` for every struct body *header_text* defines.
+
+    gh-1300. :func:`extract_member_docs` answers "is there a doc for this
+    NAME anywhere", which let doppler's ``DsssBurstReceiver.dropped`` be
+    documented as "Overrun ctr." -- the field comment on a ring buffer's
+    ``dropped`` in an unrelated, transitively included header. A field doc
+    is a fact about ONE struct, so it is keyed by that struct.
+
+    A struct is known by its tag and, when typedef'd, by its type name; the
+    forward form ``typedef struct tag name;`` aliases the name to the tag's
+    fields. Structural scanning runs on a comment/string mask, so a brace in
+    a Doxygen comment cannot end a body early. A nested struct's fields are
+    also attributed to the enclosing one -- the enclosing struct is still the
+    only one that can be asked for, so no stranger can reach them.
+
+    Examples
+    --------
+    >>> h = (
+    ...     "typedef struct {\n"
+    ...     "    size_t dropped; /**< Overrun ctr. */\n"
+    ...     "} ring_t;\n"
+    ...     "struct rx_state {\n"
+    ...     "    size_t dropped; /**< One lost burst each. */\n"
+    ...     "};\n"
+    ...     "typedef struct rx_state rx_state_t;\n"
+    ... )
+    >>> docs = extract_struct_member_docs(h)
+    >>> docs["ring_t"]["dropped"]
+    'Overrun ctr.'
+    >>> docs["rx_state_t"]["dropped"]
+    'One lost burst each.'
+    >>> sorted(docs)
+    ['ring_t', 'rx_state', 'rx_state_t']
+    """
+    from ._docsync import _code_mask, _match_brace
+
+    mask = _code_mask(header_text)
+    out: dict[str, dict[str, str]] = {}
+    for m in _STRUCT_OPEN_RE.finditer(mask):
+        open_idx = m.end() - 1
+        close_idx = _match_brace(mask, open_idx)
+        if close_idx < 0:
+            continue
+        fields = extract_member_docs(header_text[open_idx + 1 : close_idx])
+        names = [m.group("tag")] if m.group("tag") else []
+        if m.group("td"):
+            t = _STRUCT_TYPEDEF_NAME_RE.match(mask, close_idx + 1)
+            if t:
+                names.append(t.group("name"))
+        for name in names:
+            out.setdefault(name, fields)
+    for tag, name in _STRUCT_ALIAS_RE.findall(mask):
+        if tag in out:
+            out.setdefault(name, out[tag])
+    return out
+
+
+def struct_members_key() -> str:
+    """The reserved key the per-struct field-doc map rides under (gh-1300)."""
+    return _STRUCT_MEMBERS_KEY
+
+
+def merge_doc_blocks(*maps: "dict | None") -> dict:
+    """Merge doc-block maps, later wins -- except the per-struct field map.
+
+    gh-1300. Every other key is one C function's block, so later-wins is a
+    choice between two answers to one question. The struct map is the answer
+    to MANY questions under one key, and a plain ``{**a, **b}`` replaced all
+    of *a*'s structs with *b*'s: a module stub merging its objects' maps kept
+    only the last object's structs, and every record declared by an earlier
+    object lost its field docs. Unioned per struct instead.
+
+    Examples
+    --------
+    >>> k = struct_members_key()
+    >>> a = {"f": "A", k: {"s_t": {"x": "from a"}}}
+    >>> b = {"f": "B", k: {"r_t": {"y": "from b"}}}
+    >>> m = merge_doc_blocks(a, b)
+    >>> m["f"], sorted(m[k])
+    ('B', ['r_t', 's_t'])
+    """
+    out: dict = {}
+    structs: dict = {}
+    for m in maps:
+        for key, val in (m or {}).items():
+            if key == _STRUCT_MEMBERS_KEY:
+                structs.update(val)
+            else:
+                out[key] = val
+    if structs:
+        out[_STRUCT_MEMBERS_KEY] = structs
+    return out
+
+
+def struct_member_doc(
+    doc_blocks: "dict | None", struct: str, name: str
+) -> str:
+    """The doc of field *name* of *struct*, or ``""`` (gh-1300).
+
+    The field-doc lookup every struct-field face goes through. Asking with no
+    *struct* answers ``""``: a field with no known owner has no documentation
+    jm can attribute, and an undocumented member is a gap the coverage meter
+    counts, where a stranger's sentence is a wrong answer nothing counts.
+
+    Examples
+    --------
+    >>> blocks = {struct_members_key(): {"rx_t": {"dropped": "Lost bursts."}}}
+    >>> struct_member_doc(blocks, "rx_t", "dropped")
+    'Lost bursts.'
+    >>> struct_member_doc(blocks, "ring_t", "dropped")
+    ''
+    >>> struct_member_doc(blocks, "", "dropped")
+    ''
+    """
+    if not struct:
+        return ""
+    return (
+        (doc_blocks or {})
+        .get(_STRUCT_MEMBERS_KEY, {})
+        .get(struct, {})
+        .get(name, "")
+    )
+
+
 # gh-761: the arity of each `*_max_out` prototype, riding the same map for the
 # same reason the member docs above do — it is loaded from the same header at
 # the same moment, and the alternative is threading a parallel dict through

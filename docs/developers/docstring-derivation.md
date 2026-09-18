@@ -39,7 +39,18 @@ function declaration. All four of Doxygen's equivalent spellings are
 recognised — the `/** ... */` and `/*! ... */` block forms, and a run of
 `///` or `//!` lines (gh-654) — as are the trailing `///<` / `/**<`
 member docs on a struct field or enum value (gh-671). When more than one
-comment could bind, the **nearest** one wins, as in Doxygen. The Doxygen XML pipeline (`doxygen Doxyfile`
+comment could bind, the **nearest** one wins, as in Doxygen.
+
+A struct field's doc documents **that struct's** field and no other
+(gh-1300). A property and a state `get_`/`set_` accessor read the
+component's own `<comp>_state_t`; a record field reads the record's own
+struct — its `record_dtype`, or a `single` record's return type. The struct
+may be declared in the sacred header or in any project header it includes
+(gh-724), but a same-named field of some other struct is never consulted:
+where the owning struct is silent, the member gets the name-based stub, not a
+stranger's sentence. A property that forwards a sub-object's value is
+documented with the manifest `doc =` or an `@brief` on its getter.
+Enumerators are looked up by name, since C makes them unique. The Doxygen XML pipeline (`doxygen Doxyfile`
 → `xml/` output) exists independently — CI uses it to validate zero
 warnings and mkdoxy uses it to generate HTML C API docs. Neither touches
 `.pyi` generation.

@@ -30,7 +30,7 @@ from .._docstring import (
     name_summary,
     class_import_line,
     max_out_is_state_only,
-    member_doc,
+    struct_member_doc,
     render_numpy_doc,
     render_runtime_doc,
     scaffold_doc_block,
@@ -4459,7 +4459,9 @@ def make_properties_ctx(
         _pdoc = (
             p.get("doc")
             or (_pblk.brief if (_pblk and _pblk.brief) else "")
-            or member_doc(doc_blocks, pname)
+            # gh-1300: this component's own state struct, never a
+            # same-named field in whatever else its header includes.
+            or struct_member_doc(doc_blocks, f"{component}_state_t", pname)
             or name_summary(pname)
         )
         getset_entries.append(

@@ -19,9 +19,15 @@ the *file* it is declared in, so the name→file gap would have remained after
 building the name→struct mapping.
 
 The fix follows the sacred header's own project-local `#include`s, transitively
-and for member docs only — so this is not specific to records. Any surface
-gh-671 feeds (properties included) can now be documented on a struct that lives
-in a shared header.
+and for member docs only — so this is not specific to records.
+
+gh-1300 narrowed the second half of that. Following includes is right; reading
+what they hold by bare NAME was not: a property was documented by an unrelated
+struct's same-named field two headers away. A record field is now read from
+the record's OWN struct (`record_dtype`, or a `single` record's return type),
+wherever in the include graph that struct is declared -- which is also why the
+second-hop fixture below grew a second record: its `enob` used to be satisfied
+by `psd_t`, a struct the record is not.
 """
 
 from __future__ import annotations
@@ -95,6 +101,21 @@ def _record_project(tmp_path: Path) -> Path:
         ],
         single=True,
         record_name="ToneMetrics",
+    )
+    # A second record, whose struct is two headers away.
+    _quiet(
+        method_run,
+        root,
+        "tm",
+        "spectrum",
+        None,
+        "float[]",
+        "psd_t",
+        False,
+        [],
+        result_fields=[{"name": "enob", "type": "double"}],
+        single=True,
+        record_name="Spectrum",
     )
     # measure -> psd, so the second hop is exercised too.
     _write_header(
