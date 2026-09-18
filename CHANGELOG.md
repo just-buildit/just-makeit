@@ -55,6 +55,18 @@
     Deleting one real accessor there is scaffolded back, so that result is
     not vacuous.
 
+- **A composer source's `steps`/`step`/`reset` document themselves the same
+    way on the stub and in `help()`, and say what they raise** (gh-1356). The
+    two faces carried separate hand-written sentences ("Generate *n* complex
+    samples." against "steps(n) -> complex64[n] — generate n samples
+    standalone."), and neither mentioned that the first call builds the
+    generator through `bridge_fn` and can refuse. Both faces now render one
+    declaration through the numpy section builder object methods use. The
+    `Raises` section follows the generated C: `ValueError` for a negative `n`;
+    a refused build as `ValueError` with the project's reason when
+    `bridge_error_fn` is declared (gh-1307), and `RuntimeError` otherwise;
+    nothing for `reset`, which never builds.
+
 - **`jm apply` no longer strips a vendored source from a standalone object's
     `_core` library** (gh-1301). A module object's `CMakeLists.txt` had kept
     three kinds of hand edit since gh-275 and gh-271: an extra source in

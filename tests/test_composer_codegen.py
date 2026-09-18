@@ -1495,10 +1495,17 @@ class TestPyiDocstrings:
         assert "    segments : " in pyi
 
     def test_generation_method_docstrings(self):
+        # gh-1356: one description per member, shared with the runtime face
+        # -- tests/test_gh1356_composer_source_docs.py gates the equality.
         pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
-        assert '        """Generate *n* complex samples."""' in pyi
-        assert '        """Generate one complex sample."""' in pyi
-        assert '        """Reset to initial state."""' in pyi
+        assert (
+            '        """Generate the next *n* samples of this source on its'
+            " own."
+        ) in pyi
+        assert (
+            '        """Generate the next sample of this source on its own.'
+        ) in pyi
+        assert '        """Rewind the generator to sample 0.' in pyi
 
     def test_factory_docstrings(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
