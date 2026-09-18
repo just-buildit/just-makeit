@@ -22,6 +22,26 @@
     `target_compile_definitions(<comp>_core …)` is still dropped on BOTH
     paths — gh-1351.
 
+- **An undocumented method with parameters documents itself alike in a
+    module** (gh-1292). A module object's stub collapsed such a method to its
+    name (`"""Tune."""`), while the standalone stub and both `help()` texts
+    listed its `Parameters`. The module stub's declared-method path now
+    renders the section skeleton, like every other method face.
+
+    The same measurement found the runtime summary spelled `tune.` where both
+    stubs said `Tune.`, and an undocumented module free function the same
+    (`scale.` vs `Scale.`). That was the split gh-867 closed, reopened on two
+    more paths. The name-to-summary rule was written out seven times; it is
+    now `_docstring.name_summary`, and every face calls it. On doppler: two
+    free-function `help()` summaries change case; nothing else.
+
+    The parity gate never saw it because every member its fixtures build has
+    no parameter, and a brief-only docstring and a full one are the same
+    string when there is no `Parameters` block to lose. It now compares a
+    parameterised method, undocumented and authored, across all four faces
+    (both stubs and both runtime docs), plus a free function's two. Each of
+    the three changes was sabotaged separately.
+
 ## [0.76.5] — 2026-09-17
 
 ### Fixed

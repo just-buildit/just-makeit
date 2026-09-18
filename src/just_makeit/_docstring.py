@@ -693,6 +693,23 @@ def inherit_ctor_params(
     }
 
 
+def name_summary(name: str) -> str:
+    """The summary sentence for a member nothing documents: ``Tune gain.``.
+
+    One spelling for every face. It was written out seven times, and the
+    copies disagreed in the only way they could -- capitalisation: an
+    undocumented method read ``tune.`` in ``help()`` and ``Tune.`` in both
+    stubs, and a free function the same (gh-867, then gh-1292 one shape
+    over). numpydoc wants the summary capitalised and terminated.
+
+    Examples
+    --------
+    >>> name_summary("tune_gain")
+    'Tune gain.'
+    """
+    return name.replace("_", " ").capitalize() + "."
+
+
 def member_doc_key(name: str) -> str:
     """The reserved key a struct field's or enum value's doc rides under."""
     return f"{_MEMBER_KEY_PREFIX}{name}"
@@ -2122,9 +2139,13 @@ def render_numpy_doc(
         the full section skeleton with ``Input.``/``Output.`` placeholders,
         which is what a standalone object's ``.pyi`` has always done.
 
-        The two paths genuinely disagree here, and the disagreement is about
-        policy rather than layout, so it stays a caller's choice rather than
-        being silently unified. Worth settling separately.
+        Settled by gh-1292: every method face -- both stubs and both
+        runtime docs -- passes ``True``, because gh-1042's rule is that every
+        parameter in the signature has an entry, and a module object's stub
+        alone breaking it made ``help()`` list parameters the stub did not.
+        ``False`` remains for the faces that collapse on BOTH sides alike (an
+        undocumented module free function), where emitting the skeleton on
+        one face would open a divergence rather than close one.
     raises : list of tuple(str, str), optional
         ``(exception_class, description)`` the *manifest* declares this member
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
@@ -2138,7 +2159,7 @@ def render_numpy_doc(
     """
     pad = " " * indent
     if block is None and not override and not skeleton_fallback and not raises:
-        return [f'{pad}"""{name.replace("_", " ").capitalize()}."""']
+        return [f'{pad}"""{name_summary(name)}"""']
 
     lines, examples = _numpy_sections(
         block,
@@ -2432,7 +2453,7 @@ def _numpy_sections(
         # wants the summary capitalised and terminated, and gh-685 already
         # pinned that spelling as a deliberate guarantee for views. The flag
         # now controls the skeleton alone, which is what its name says.
-        summary = name.replace("_", " ").capitalize() + "."
+        summary = name_summary(name)
     # gh-652: quarantined block tags become real numpy sections. Rendered here
     # rather than in either face, so both get them from the one builder.
     tag_secs, retvals = _tag_sections(block) if block is not None else ({}, [])

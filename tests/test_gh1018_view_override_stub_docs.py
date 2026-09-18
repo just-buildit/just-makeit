@@ -205,4 +205,10 @@ class TestUndocumentedOverrideIsStillAScaffold:
         dest = _base(tmp_path, override=True)
         apply_run(dest)
         view = _class_body(_pyi(dest), "RxReal")
-        assert '"""Block."""' in view
+        # The name-derived summary, not the scaffold's own `block.` read as
+        # prose. gh-1292 gave the module stub the section skeleton every
+        # other face already rendered for an undocumented member, so the
+        # summary is now followed by `Parameters` rather than closing the
+        # docstring -- the summary line is what this pins.
+        assert '"""Block.\n' in view
+        assert '"""block.' not in view

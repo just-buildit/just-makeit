@@ -447,7 +447,9 @@ def render_method_pyi(m: dict, cdc: dict) -> list[str]:
     fixed = method_fixed_params(m)
     fixed_sig = "".join(f", {p['name']}: {_fixed_pyi(p)}" for p in fixed)
     union = codec_py_union(cdc, seq="Sequence")
-    brief = m.get("doc") or f"{name.replace('_', ' ').capitalize()}."
+    from ._docstring import name_summary
+
+    brief = m.get("doc") or name_summary(name)
     return [
         f"    def {name}(self{fixed_sig}, {disc['name']}: str,"
         f" {var['name']}: {union}) -> None:",

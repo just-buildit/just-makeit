@@ -27,6 +27,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    name_summary,
     class_import_line,
     max_out_is_state_only,
     member_doc,
@@ -1213,7 +1214,7 @@ def make_methods_ctx(
             # `**kwargs` would document the mechanism rather than the method.
             # Everything the header DOES say — extended description, Returns,
             # Examples — comes through.
-            _va_summary = _brief or f"{name.replace('_', ' ').capitalize()}."
+            _va_summary = _brief or name_summary(name)
             _va_runtime = render_runtime_doc(
                 _block, name, [], "Any", _va_summary
             )
@@ -3467,7 +3468,12 @@ def make_methods_ctx(
             _fix_doc_lines = [
                 f"{name}({', '.join(_doc_names)}) -> {_fix_ret_hint}".rstrip(),
                 "",
-                *_runtime_doc(f"{name}."),
+                # gh-1292: no default summary of its own. `f"{name}."` here
+                # outranked `_numpy_sections`' capitalised name fallback, so
+                # an undocumented method read `tune.` at runtime and `Tune.`
+                # in both stubs -- the split gh-867 closed, reopened one
+                # shape over.
+                *_runtime_doc(""),
                 *_demo(_fix_demo),
             ]
             # A METH_KEYWORDS wrapper has the 3-arg PyCFunctionWithKeywords
@@ -4450,7 +4456,7 @@ def make_properties_ctx(
             p.get("doc")
             or (_pblk.brief if (_pblk and _pblk.brief) else "")
             or member_doc(doc_blocks, pname)
-            or f"{pname.replace('_', ' ').capitalize()}."
+            or name_summary(pname)
         )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
