@@ -2247,7 +2247,10 @@ def _regenerate_module_now(
         )
     _write(
         root / "native" / "src" / cname / "CMakeLists.txt",
-        collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
+        R.with_extra_cmake(
+            collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
+            cname,
+        ),
         "update",
     )
     if _fns:
@@ -2774,7 +2777,9 @@ def run(
             "update" if core_c_path.exists() else "create",
         )
     obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
-    _write(obj_cmake_path, r(R.CMAKE_LISTS_OBJECT_CORE))
+    _write(
+        obj_cmake_path, R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp)
+    )
     # Propagate any external-library cmake blocks from sibling objects so the
     # new component picks up the same if(SOME_LIB) include/link wiring without
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).

@@ -2,6 +2,21 @@
 
 ### Added
 
+- **`<dir>_extra.cmake`: your own CMake for a generated directory**
+    (gh-1351). Every `native/src/<dir>/CMakeLists.txt` jm writes (standalone
+    object, module and module object, capsule, handle, composer) now ends with
+    `include(${CMAKE_CURRENT_LIST_DIR}/<dir>_extra.cmake OPTIONAL)`. A
+    `target_compile_definitions`, compile option or `find_package` goes there
+    instead of into the generated file, where the next `jm apply` dropped it.
+    `OPTIONAL` keeps the line inert until the file exists, so there's nothing
+    to declare. `jm regenerate`/`jm remove` keep the file: measured, the first
+    version was deleted by `regenerate`, gh-1216's failure one file type over.
+    An apply about to drop a statement jm itself never writes now says so and
+    names the hook. The warning is narrow on purpose: a changed
+    `target_link_libraries` is regeneration's business. **On doppler:** 111
+    of 120 generated CMakeLists gain the one line (the other 9 are gh-275
+    hand-owned), and there are no warnings.
+
 - **`no_generate` must say why: `no_generate_reason`** (gh-1313). An
     opt-out recorded that a module is hand-written and nothing about why, so
     "jm cannot express this shape" and "nobody migrated it yet" read the same.

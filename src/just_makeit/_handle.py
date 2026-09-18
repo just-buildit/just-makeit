@@ -34,6 +34,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from . import _capsule
 from . import _coerce
 from . import _config as C
+from . import _render as R
 from . import _enumc
 from . import _context as Ctx
 from . import _types as T
@@ -1677,7 +1678,8 @@ def render_cmake(cfg: dict, module: str) -> str:
     extra = C.handle_extra_link_libs(cfg, module)
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
 
-    return f"""if(BUILD_PYTHON)
+    return R.with_extra_cmake(
+        f"""if(BUILD_PYTHON)
 
 # {cname} — handle extension: typed `{C.handle_type_name(cfg, module)}` over \
 `{C.handle_backing(cfg, module)}` (gh-306).
@@ -1698,7 +1700,9 @@ add_custom_command(TARGET {leaf} POST_BUILD
     COMMENT "Copy {leaf} extension module")
 
 endif()
-"""
+""",
+        cname,
+    )
 
 
 # ── .pyi type stub (mirrors _capsule.render_pyi, class-shaped) ────────────────
