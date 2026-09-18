@@ -642,8 +642,21 @@ def run(root: Path) -> None:
     bs = C.build_system(cfg)
     perf = C.is_perf(cfg)
     mods = C.modules(cfg)
+    # gh-1310: a template instance is declared by its template, which has no
+    # CLI verb. Emitting `jm object` for each would round-trip into N
+    # hand-spelled components -- exactly what the template exists to remove --
+    # so instances are left out and the template is named in a NOTE instead.
+    templated = {
+        c
+        for c in C.components(cfg)
+        if isinstance(cfg.get(c), dict) and cfg[c].get(C.TEMPLATE_ORIGIN_KEY)
+    }
     module_owned = {obj for mod in mods for obj in C.module_objects(cfg, mod)}
-    standalone = [c for c in C.components(cfg) if c not in module_owned]
+    standalone = [
+        c
+        for c in C.components(cfg)
+        if c not in module_owned and c not in templated
+    ]
 
     lines: list[str] = [
         "#!/usr/bin/env sh\n",
@@ -688,6 +701,19 @@ def run(root: Path) -> None:
     if mods:
         lines.append("\n")
 
+    for tname in C.templates(cfg):
+        ids = [
+            c
+            for c in C.components(cfg)
+            if cfg[c].get(C.TEMPLATE_ORIGIN_KEY) == tname
+        ]
+        lines.append(
+            f"# NOTE: [template.{tname}] declares {', '.join(ids) or 'no instances'}"
+            " -- manifest-only, with no CLI verb.\n"
+            f"# Keep the [template.{tname}] table in {C.FILENAME} and run"
+            " `just-makeit apply` (gh-1310).\n\n"
+        )
+
     # ── standalone objects ───────────────────────────────────────────────────
     for comp in standalone:
         flags = _object_flags(cfg, comp)
@@ -699,6 +725,8 @@ def run(root: Path) -> None:
     # ── module objects ────────────────────────────────────────────────────────
     for mod in mods:
         for comp in C.module_objects(cfg, mod):
+            if comp in templated:
+                continue
             flags = _object_flags(cfg, comp, module=mod)
             lines.append(_render_cmd(["just-makeit", "object", comp], flags))
         lines.append("\n")
@@ -706,7 +734,9 @@ def run(root: Path) -> None:
     # ── methods ───────────────────────────────────────────────────────────────
     all_comps = list(standalone)
     for mod in mods:
-        all_comps += C.module_objects(cfg, mod)
+        all_comps += [
+            c for c in C.module_objects(cfg, mod) if c not in templated
+        ]
 
     method_lines: list[str] = []
     for comp in all_comps:

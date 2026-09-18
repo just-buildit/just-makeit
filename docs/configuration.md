@@ -1467,6 +1467,60 @@ in Python.
 
 ______________________________________________________________________
 
+## Type templates (`[template.<name>]`)
+
+One declaration that stamps out the same object once per element type
+(gh-1310) — for a family like a set of converters, where the siblings differ
+only in a type, a class name and a constant:
+
+```toml
+[template.f32_to_int]
+params = ["elem", "Elem", "scale"]   # the ONLY keys an instance may set
+module = "cvt"                       # instances join this module
+arg_type = "float"
+return_type = "{elem}"
+class_name = "F32To{Elem}"
+
+[[template.f32_to_int.init_params]]
+name = "scale"
+type = "float"
+default = "{scale}"
+
+[[template.f32_to_int.instances]]
+id = "f32_to_i16"
+elem = "int16_t"
+Elem = "I16"
+scale = "32768.0f"
+
+[[template.f32_to_int.instances]]
+id = "f32_to_i8"
+elem = "int8_t"
+Elem = "I8"
+scale = "128.0f"
+```
+
+Everything outside `params`, `module` and `instances` is an ordinary object
+table, repeated for each instance with `{param}` filled in.
+
+- **`params` is closed.** An instance row sets `id` and exactly those keys —
+    nothing else. That rule is what stops siblings drifting apart: an instance
+    has no way to disagree about `mutable` or grow a property the others lack. A
+    genuine one-off difference means declaring that component outside the
+    template.
+- **`{param}` fills VALUES only**, never keys or table names, so the manifest
+    parses and reads without expanding it. A slot naming no param is refused.
+- **Nothing is written per instance.** `load` expands the template and `save`
+    folds it back, so no command writes the instances out as separate tables.
+- **Instances are edited through the template.** `jm method`/`jm property`/
+    `jm error`/`jm warning` on an instance are refused before anything is
+    written. Declare the member on the template, where every instance gets it.
+- **There is no CLI verb for a template.** `jm script` names it in a NOTE
+    rather than replaying each instance as a `jm object`.
+
+What this guarantees today is that the instances' **manifests** cannot
+diverge. Each instance still has its own `_core.c`; a family whose C should be
+written once is the second half of gh-1310.
+
 ## Inspecting config
 
 ```sh
