@@ -1280,6 +1280,18 @@ def _merge_module_init_file(
     return False
 
 
+def _status_allowed(cfg: dict, rel: str) -> bool:
+    """True when *rel* matches a ``[project] status_allow`` pattern (gh-441).
+
+    One predicate for every reconcile that honours the list, so a writer that
+    re-renders a file by some other route than :func:`_overwrite_if_changed`
+    cannot quietly stop honouring it.
+    """
+    return bool(rel) and any(
+        rel == pat or fnmatch.fnmatch(rel, pat) for pat in C.status_allow(cfg)
+    )
+
+
 def _overwrite_if_changed(
     real: Path,
     temp: Path,
@@ -1308,12 +1320,8 @@ def _overwrite_if_changed(
     """
     if not real.exists() or not temp.exists():
         return False
-    if honor_status_allow and cfg is not None and rel:
-        allow_patterns = C.status_allow(cfg)
-        if any(
-            rel == pat or fnmatch.fnmatch(rel, pat) for pat in allow_patterns
-        ):
-            return False
+    if honor_status_allow and cfg is not None and _status_allowed(cfg, rel):
+        return False
     new_bytes = temp.read_bytes()
     if cfg is not None and real.suffix == ".pyi":
         try:
@@ -1351,41 +1359,79 @@ def _object_core_extra_sources(text: str, comp: str) -> list:
     return [s for s in m.group(1).split() if s != f"{comp}_core.c"]
 
 
-def _is_hand_owned_object_cmake(text: str, comp: str) -> bool:
-    """True when a per-object ``CMakeLists.txt`` carries bespoke build wiring.
+#: Build statements the manifest has no way to express. A file carrying MORE
+#: of one than jm's own render of it was given that rule by hand.
+_HAND_OWNED_CMAKE_KEYWORDS = (
+    "set_source_files_properties",
+    "add_custom_command",
+    "add_custom_target",
+)
 
-    The gh-271 reconcile re-renders a module object's per-object CMakeLists from
-    the manifest. That is safe only while the file stays within the shape jm
+
+def _is_hand_owned_object_cmake(
+    text: str, comp: str, rendered: str = ""
+) -> bool:
+    r"""True when a component's ``CMakeLists.txt`` carries bespoke build wiring.
+
+    ``jm apply`` re-renders a component's CMakeLists from the manifest — a
+    module object's per-object file (gh-271) and a standalone object's own
+    (gh-1301). That is safe only while the file stays within the shape jm
     emits; once it gains build rules the manifest cannot express — extra
     ``add_library`` sources (vendored ``.c`` compiled into ``<comp>_core``),
-    ``set_source_files_properties``, or a custom build step — re-rendering would
-    silently drop them (gh-275: doppler's ``fft_core`` compiles in pocketfft /
-    PFFFT, breaking every FFT consumer). Such a file is *hand-owned*: jm leaves
-    it untouched and ``status --check`` treats it as up to date.
+    ``set_source_files_properties``, or a custom build step — re-rendering
+    would silently drop them (gh-275: doppler's ``fft_core`` compiles in
+    pocketfft / PFFFT, breaking every FFT consumer). Such a file is
+    *hand-owned*: jm leaves it untouched and ``status --check`` treats it as
+    up to date.
 
-    Detected signals, all of which jm never generates itself:
+    Detected signals:
 
     - an ``add_library(<comp>_core OBJECT …)`` source list naming anything
       besides ``<comp>_core.c``;
-    - a ``set_source_files_properties`` / ``add_custom_command`` /
-      ``add_custom_target`` statement anywhere in the file.
+    - more ``set_source_files_properties`` / ``add_custom_command`` /
+      ``add_custom_target`` occurrences than *rendered*, jm's own render of
+      the same file.
+
+    The second is a COUNT against the render, not presence, because the
+    standalone template emits a POST_BUILD ``add_custom_command`` itself.
+    Presence was right for the module-object file only because its template
+    happened to emit none; applied to a standalone file it would call every
+    plain ``jm object`` hand-owned and freeze its glue forever (gh-1301).
+
+    Examples
+    --------
+    >>> plain = "add_library(foo_core OBJECT foo_core.c)\n"
+    >>> _is_hand_owned_object_cmake(plain, "foo")
+    False
+    >>> _is_hand_owned_object_cmake(
+    ...     "add_library(foo_core OBJECT foo_core.c vendor.c)\n", "foo")
+    True
+    >>> post = plain + "add_custom_command(TARGET foo POST_BUILD)\n"
+    >>> _is_hand_owned_object_cmake(post, "foo", rendered=post)
+    False
+    >>> _is_hand_owned_object_cmake(post, "foo", rendered=plain)
+    True
     """
     if _object_core_extra_sources(text, comp):
         return True
     return any(
-        kw in text
-        for kw in (
-            "set_source_files_properties",
-            "add_custom_command",
-            "add_custom_target",
-        )
+        text.count(kw) > rendered.count(kw)
+        for kw in _HAND_OWNED_CMAKE_KEYWORDS
     )
 
 
 def _reconcile_object_core_cmake(
     real: Path, temp: Path, comp: str, include_dirs: "list[str]"
 ) -> bool:
-    """Reconcile a non-collocated module object's ``CMakeLists.txt`` (gh-271).
+    """Reconcile a component's own ``CMakeLists.txt`` (gh-271, gh-1301).
+
+    Serves both a non-collocated module object's per-object file and a
+    standalone object's. The standalone path used to overwrite its file
+    wholesale, so the protections below existed for one of two peers: a
+    vendored source, a per-source property and an ``if(VAR)`` block all
+    survived ``jm apply`` in a module and were silently dropped standalone
+    (gh-1301). Standalone callers pass no *include_dirs* — their template
+    renders ``extra_include_dirs`` itself.
 
     A module object's per-object ``native/src/<obj>/CMakeLists.txt`` is glue,
     but ``jm apply`` historically only *added* missing link/include lines to it
@@ -1417,11 +1463,11 @@ def _reconcile_object_core_cmake(
     from ._object import _external_cmake_blocks
 
     original = real.read_text(encoding="utf-8")
+    new = temp.read_text(encoding="utf-8")
     # gh-275: never re-render a hand-owned file (vendored sources, per-source
     # build properties) — the canonical render cannot reproduce them.
-    if _is_hand_owned_object_cmake(original, comp):
+    if _is_hand_owned_object_cmake(original, comp, rendered=new):
         return False
-    new = temp.read_text(encoding="utf-8")
     # (1) re-add component extra_include_dirs as a second PUBLIC include block,
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
@@ -1860,9 +1906,19 @@ def _sync_aggregates(
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.
+        #
+        # The CMakeLists is glue with author riders — vendored sources,
+        # per-source properties, `if(VAR)` blocks — so it goes through the
+        # same reconcile as a module object's (gh-1301), not a blind
+        # overwrite.
+        _cml = f"native/src/{comp}/CMakeLists.txt"
+        if not (honor_status_allow and _status_allowed(cfg, _cml)):
+            if _reconcile_object_core_cmake(
+                root / _cml, temp_root / _cml, comp, []
+            ):
+                updated.append(root / _cml)
         for rel in (
             f"native/src/{comp}/{comp}_ext.c",
-            f"native/src/{comp}/CMakeLists.txt",
             f"src/{pkg}/{comp}.pyi",
         ):
             if _overwrite_if_changed(
