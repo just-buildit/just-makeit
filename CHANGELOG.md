@@ -15,7 +15,10 @@
     `-Wl,--gc-sections`. Header definitions are left out: they're defined by
     construction, and a C99 `inline` one has no external symbol to take.
     **On doppler:** 84 tables, and all 103 C test targets link with no
-    errors.
+    errors. The table is classified by a new `_createonly` kind, `DERIVED`:
+    `apply` rewrites it and `status` compares it, but gh-1181's
+    rebuild-from-manifest oracle skips it. It mirrors the header and
+    fragment as they stand, and those legitimately differ from a fresh build.
 
 - **`<dir>_extra.cmake`: your own CMake for a generated directory**
     (gh-1351). Every `native/src/<dir>/CMakeLists.txt` jm writes (standalone
