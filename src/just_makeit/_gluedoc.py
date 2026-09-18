@@ -592,8 +592,10 @@ def count_kwarg_name(count_name: str = "") -> str:
     return (count_name or "").strip() or COUNT_KWARG_DEFAULT
 
 
-def binding_param_docs(count_name: str = "") -> dict[str, str]:
-    """jm's default description for each synthesized binding argument.
+def binding_param_docs(
+    count_name: str = "", *, count: bool, out: bool
+) -> dict[str, str]:
+    """jm's default description for each binding argument it synthesized.
 
     Keyed by the Python name, for :func:`_docstring.render_numpy_doc`'s
     ``param_defaults``. A header ``@param`` of the same name outranks these.
@@ -604,17 +606,28 @@ def binding_param_docs(count_name: str = "") -> dict[str, str]:
     "every parameter in the signature has an entry" is the rule with no
     exceptions.
 
+    gh-1350: and for the same reason it may only carry the arguments THIS
+    method synthesized. *count* and *out* say which, and are required so no
+    caller can fall back to "all of them". Keyed by name and handed over
+    unconditionally, the map documented an author's own ``count`` or ``out``
+    parameter — a plain ``int`` on a method with no buffer — as jm's
+    generator length and ``out=`` buffer, on both faces.
+
     Examples
     --------
-    >>> sorted(binding_param_docs())
+    >>> sorted(binding_param_docs(count=True, out=True))
     ['count', 'out']
-    >>> sorted(binding_param_docs("n"))
-    ['n', 'out']
+    >>> sorted(binding_param_docs("n", count=True, out=False))
+    ['n']
+    >>> binding_param_docs(count=False, out=False)
+    {}
     """
-    return {
-        count_kwarg_name(count_name): COUNT_PARAM_DOC,
-        "out": OUT_PARAM_DOC,
-    }
+    docs: dict[str, str] = {}
+    if count:
+        docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
+    if out:
+        docs["out"] = OUT_PARAM_DOC
+    return docs
 
 
 def count_stub_default(count_default: str) -> str:

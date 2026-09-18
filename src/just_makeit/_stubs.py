@@ -2190,7 +2190,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # it an undocumented method collapsed to its name here alone, so
             # a module object's `help()` listed parameters its stub did not.
             skeleton_fallback=True,
-            param_defaults=_gluedoc.binding_param_docs(_count_kw),
+            param_defaults=_gluedoc.binding_param_docs(
+                _count_kw, count=_stub_count_arg, out=_stub_enable_out
+            ),
         )
         header = (
             f"    def {m_name}(self, {sig}) -> {ret_ann}:"
