@@ -35,6 +35,9 @@ default = "1.0"
 [module.playlist.source.generates]
 generator = "clip"
 bridge_fn = "clip_from_source"
+# ...and why it refused, when it does: a reason becomes ValueError instead of
+# a bare "clip_from_source returned NULL" RuntimeError (gh-1307).
+bridge_error_fn = "clip_why_not"
 
 # ── seam 2: a derived read-only property ──────────────────────────────────
 # Computed in C on every read, so it cannot go stale when `gain` is

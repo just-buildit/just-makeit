@@ -662,6 +662,7 @@ COMPOSER_GENERATES_KEYS = frozenset(
     {
         "generator",
         "bridge_fn",
+        "bridge_error_fn",
         "state_type",
         "steps_fn",
         "step_fn",

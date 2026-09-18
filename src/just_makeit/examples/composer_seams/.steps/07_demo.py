@@ -35,6 +35,15 @@ print(f"Clip(gain=7.0).steps(3)  -> {block}   (via clip_from_source)")
 assert isinstance(block, np.ndarray)
 assert np.allclose(block, [7 + 0j, 7 + 0j, 7 + 0j])
 
+# A bridge that refuses says why: clip_why_not's sentence arrives as a
+# ValueError, where it used to be "clip_from_source returned NULL".
+try:
+    Clip(gain=-1.0).steps(1)
+    raise AssertionError("expected the bridge to refuse")
+except ValueError as exc:
+    print(f"Clip(gain=-1.0).steps(1) -> ValueError: {exc}")
+    assert str(exc) == "a clip's gain must be >= 0"
+
 # ── the composed object-of-objects ───────────────────────────────────────
 # Track sums its sources; Mix sequences tracks and runs the backing kernel.
 track = Track.sum(Clip(gain=2.0), Clip(gain=3.0), dur=4)

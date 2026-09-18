@@ -5269,6 +5269,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
             for k in (
                 "generator",
                 "bridge_fn",
+                "bridge_error_fn",
                 "state_type",
                 "steps_fn",
                 "step_fn",
