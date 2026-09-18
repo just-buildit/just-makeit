@@ -2,6 +2,18 @@
 
 ### Added
 
+- **Type templates: `[template.<name>]`** (gh-1310, part 1). One manifest
+    declaration stamps out a component per element type. `params` is a closed
+    list, and an instance row may set only those keys (plus `id`), so siblings
+    can't diverge. `{param}` fills values only, never keys or table names.
+    `load` expands the template and `save` folds it back, so nothing is
+    written per instance. `module = "..."` lists the instances in a module
+    without naming them twice. A verb run on an instance is refused, before
+    any C is written. `jm script` names the template in a NOTE instead of
+    replaying N `jm object` lines. This covers the **manifest** half only;
+    each instance still has its own `_core.c` until part 2 (one family header,
+    `header_only` instances).
+
 - **A function the binding calls and nothing defines now fails the C test
     at link time, naming it** (gh-1361). A shared object links with undefined
     symbols, so such a function used to build cleanly and fail only at import.

@@ -225,6 +225,9 @@ def load(root: Path) -> dict:
     # replay, the handle generator, `jm bind` — and an expansion behind one
     # accessor would reach some of them and not others. That is the shape this
     # repo keeps finding a half-wired feature in.
+    # gh-1310: templates first, so an instance's own `init_groups` expand
+    # exactly as a hand-declared component's do.
+    _expand_templates(cfg)
     _expand_init_groups(cfg)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
@@ -240,6 +243,205 @@ def load(root: Path) -> dict:
     from ._extrahook import warn_unwired_hooks
 
     warn_unwired_hooks(root)
+    return cfg
+
+
+#: Marks a component `_expand_templates` created. Private, and never written
+#: back: the manifest keeps the DECLARATION -- one ``[template.X]`` and its
+#: ``instances`` rows -- and `save` folds every instance away again.
+TEMPLATE_ORIGIN_KEY = "_template"
+
+#: ``{name}`` in a template VALUE. Keys and table names never interpolate
+#: (gh-1310): the manifest has to parse, and read, without expanding it.
+_SLOT_RE = _re.compile(r"\{([A-Za-z_]\w*)\}")
+
+#: Keys a ``[template.X]`` table owns; everything else is the component body.
+_TEMPLATE_OWN_KEYS = ("params", "instances", "module")
+
+
+def templates(cfg: dict) -> "dict[str, dict]":
+    """The ``[template.X]`` tables, by name."""
+    t = cfg.get("template") or {}
+    return {k: v for k, v in t.items() if isinstance(v, dict)}
+
+
+def _fill_slots(value, row: dict, where: str, errors: "list[str]"):
+    """*value* with every ``{param}`` replaced from *row*, recursively.
+
+    Only string values are touched -- never a key -- and a slot naming
+    nothing in *row* is an error rather than left in place, because a typo
+    in a slot name would otherwise ship ``{elme}`` into C.
+    """
+    if isinstance(value, str):
+
+        def one(m):
+            name = m.group(1)
+            if name not in row:
+                errors.append(
+                    f"{where}: `{{{name}}}` is not one of its params"
+                )
+                return m.group(0)
+            return str(row[name])
+
+        return _SLOT_RE.sub(one, value)
+    if isinstance(value, dict):
+        return {
+            k: _fill_slots(v, row, f"{where}.{k}", errors)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_fill_slots(v, row, where, errors) for v in value]
+    return value
+
+
+def expand_template(name: str, spec: dict) -> "tuple[dict, list[str]]":
+    """``({instance_id: component}, errors)`` for ``[template.<name>]``.
+
+    gh-1310. One declaration, N components -- and the property that earns the
+    feature is that a sibling CANNOT diverge: ``params`` is a closed list and
+    an instance row may set exactly those keys (plus ``id``) and nothing
+    else, so there is no syntax in which one instance disagrees about
+    ``mutable`` or gains a property its siblings lack. A genuine one-off
+    difference means declaring that component outside the template.
+
+    Examples
+    --------
+    >>> comps, errs = expand_template("f32_to_int", {
+    ...     "params": ["elem", "Elem"],
+    ...     "arg_type": "float", "return_type": "{elem}",
+    ...     "class_name": "F32To{Elem}",
+    ...     "instances": [{"id": "f32_to_i16", "elem": "int16_t", "Elem": "I16"}],
+    ... })
+    >>> errs, comps["f32_to_i16"]["return_type"], comps["f32_to_i16"]["class_name"]
+    ([], 'int16_t', 'F32ToI16')
+    >>> expand_template("t", {"params": ["a"], "instances": [
+    ...     {"id": "x", "a": "1", "mutable": "true"}]})[1]  # doctest: +ELLIPSIS
+    ['[template.t] instance `x` sets `mutable`: instances may set only ...']
+    """
+    errors: list[str] = []
+    params = list(spec.get("params") or [])
+    body = {k: v for k, v in spec.items() if k not in _TEMPLATE_OWN_KEYS}
+    out: dict = {}
+    for row in spec.get("instances") or []:
+        iid = row.get("id")
+        if not iid:
+            errors.append(f"[template.{name}] an instance has no `id`")
+            continue
+        for k in row:
+            if k != "id" and k not in params:
+                errors.append(
+                    f"[template.{name}] instance `{iid}` sets `{k}`: instances"
+                    f" may set only `params` ({', '.join(params) or 'none'})."
+                    " A one-off difference means declaring this component"
+                    " outside the template."
+                )
+        for p in params:
+            if p not in row:
+                errors.append(
+                    f"[template.{name}] instance `{iid}` does not set `{p}`"
+                )
+        vals = {"id": iid, **{p: row[p] for p in params if p in row}}
+        comp = _fill_slots(
+            _copy.deepcopy(body), vals, f"[template.{name}]", errors
+        )
+        comp[TEMPLATE_ORIGIN_KEY] = name
+        out[iid] = comp
+    return out, errors
+
+
+def _refuse(errors: "list[str]") -> None:
+    """Print each template error and exit; a template that cannot expand has
+    no meaning to fall back to."""
+    for e in dict.fromkeys(errors):
+        print(f"error: {e}", file=_sys.stderr)
+    raise SystemExit(1)
+
+
+def _expand_templates(cfg: dict) -> None:
+    """Turn each ``[template.X]`` into its instances, in place (gh-1310).
+
+    Here, in `load`, for the reason `_expand_init_groups` gives: every reader
+    passes through `load`, so every downstream face -- `_object`, the stubs,
+    `status`, `apply` -- sees N ordinary components and needs no change. It is
+    recomputed on every read, so there is no materialised copy to go stale.
+    ``module = "<m>"`` on the template appends the instance ids to that
+    module's ``objects``, so they are listed once, in the instance rows.
+    """
+    errors: list[str] = []
+    for name, spec in templates(cfg).items():
+        comps, errs = expand_template(name, spec)
+        errors += errs
+        mod = spec.get("module")
+        if mod and mod not in (cfg.get("module") or {}):
+            errors.append(f"[template.{name}] module `{mod}` is not declared")
+        for iid, comp in comps.items():
+            if iid in cfg or iid in RESERVED_SECTIONS:
+                errors.append(
+                    f"[template.{name}] instance `{iid}` is also declared as a"
+                    " component; declare it once, in one place"
+                )
+                continue
+            cfg[iid] = comp
+            if mod and mod in (cfg.get("module") or {}):
+                objs = cfg["module"][mod].setdefault("objects", [])
+                if iid not in objs:
+                    objs.append(iid)
+    if errors:
+        _refuse(errors)
+
+
+def _strip_private(value):
+    """*value* without ``_``-prefixed keys, recursively: runtime state that
+    `load` or a command attaches (``_doc_blocks``, ``_group``) is not part of
+    what the manifest declares."""
+    if isinstance(value, dict):
+        return {
+            k: _strip_private(v)
+            for k, v in value.items()
+            if not str(k).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_strip_private(v) for v in value]
+    return value
+
+
+def _without_template_expansion(cfg: dict) -> dict:
+    """*cfg* with every template instance folded back into its template.
+
+    The symmetric half of `_expand_templates`: what `load` unfolds, `save`
+    folds back, so no command can write the N components out.
+
+    And it refuses, rather than drops, an instance that no longer matches
+    its template. A verb run on an instance -- ``jm method f32_to_i16 ...``
+    -- edits the expanded component; folding it back would silently discard
+    the edit. The change belongs on the template, or the component belongs
+    outside it, and only the author can say which.
+    """
+    if not templates(cfg):
+        return cfg
+    cfg = _copy.deepcopy(cfg)
+    errors: list[str] = []
+    for name, spec in templates(cfg).items():
+        fresh, _ = expand_template(name, spec)
+        mod = spec.get("module")
+        for iid, comp in fresh.items():
+            cur = cfg.get(iid)
+            if cur is None or cur.get(TEMPLATE_ORIGIN_KEY) != name:
+                continue
+            if _strip_private(cur) != _strip_private(comp):
+                errors.append(
+                    f"`{iid}` is an instance of [template.{name}], and this"
+                    " command changed it. Make the change on the template, or"
+                    " declare the component outside it."
+                )
+                continue
+            del cfg[iid]
+            if mod:
+                objs = (cfg.get("module") or {}).get(mod, {}).get("objects")
+                if isinstance(objs, list) and iid in objs:
+                    objs.remove(iid)
+    if errors:
+        _refuse(errors)
     return cfg
 
 
@@ -822,6 +1024,9 @@ def save(root: Path, cfg: dict) -> None:
     # sabotaging the writer guard and watching the suite stay green, which is
     # what a test asserting only `jm apply` could never see.
     cfg = _without_group_expansion(cfg)
+    # gh-1310: and the template expansion, after the group fold so an
+    # instance compares against its template with its groups folded too.
+    cfg = _without_template_expansion(cfg)
     # gh-1283: and the deferred version, for the same reason and in the same
     # place -- ahead of the `deferred_save` cache below, so a batched write
     # folds back too rather than persisting the resolution at scope exit.
@@ -848,7 +1053,15 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in ("project", "module", "include", "app", "enum", "codec"):
+        if key in (
+            "project",
+            "module",
+            "include",
+            "app",
+            "enum",
+            "codec",
+            "template",
+        ):
             continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
         if key in owners:
             dst = owners[key]
@@ -889,6 +1102,12 @@ def save(root: Path, cfg: dict) -> None:
         # group is referenced BY NAME from component tables in any fragment,
         # so it cannot live in one of them.
         manifest_content["group"] = cfg["group"]
+    if cfg.get("template"):
+        # gh-1310: a template stays where it was declared -- the manifest, or
+        # the fragment that owns it.
+        by_file.setdefault(owners.get("template", manifest_path), {})[
+            "template"
+        ] = cfg["template"]
     manifest_content.update(by_file.get(manifest_path, {}))
 
     _write_doc(manifest_path, manifest_content, include_list or None)
@@ -923,7 +1142,15 @@ def save(root: Path, cfg: dict) -> None:
 #: of these" is the definition, and a new section missing from the list is
 #: silently treated as an object — which is how `[[group]]` first reached
 #: `manifest_type_errors` as `cfg["group"].get(...)` on a list (gh-999).
-RESERVED_SECTIONS = ("project", "module", "app", "enum", "codec", "group")
+RESERVED_SECTIONS = (
+    "project",
+    "module",
+    "app",
+    "enum",
+    "codec",
+    "group",
+    "template",
+)
 
 
 def components(cfg: dict) -> list[str]:
@@ -974,6 +1201,21 @@ def resolve_module(
     Returns None for a standalone component — the same value ``--module``'s
     absence carried before, so the standalone paths are unchanged.
     """
+    # gh-1310: a template instance is declared by its template. A verb that
+    # adds a member to one would have its change folded away by `save` --
+    # which refuses it, but only after this verb has already written C. So
+    # refuse here, where the member-declaring verbs (method, property, error,
+    # warning) first ask about their component, before anything is written.
+    _inst = cfg.get(component)
+    if isinstance(_inst, dict) and _inst.get(TEMPLATE_ORIGIN_KEY):
+        _refuse(
+            [
+                f"`{component}` is an instance of"
+                f" [template.{_inst[TEMPLATE_ORIGIN_KEY]}]: declare the member"
+                " on the template, where every instance gets it, or declare"
+                " this component outside the template."
+            ]
+        )
     return declared or component_module(cfg, component)
 
 
@@ -1174,14 +1416,18 @@ def validate_name(name: str, kind: str) -> str | None:
     )
 
 
-#: Top-level manifest sections the name walk does not enter. ``app`` is the
-#: only one, and it is a decision rather than an oversight: ``jm app --name``
+#: Top-level manifest sections the name walk does not enter. ``template`` is
+#: covered below. ``app`` is a decision rather than an oversight: ``jm app --name``
 #: becomes a filename, a CMake target and a console script's ``prog``, all of
 #: which legitimately allow a hyphen (``my-tool``), so it is excluded from the
 #: identifier check on purpose (pinned in `tests/test_gh625_name_validation`).
 #: Reporting one under a heading that says jm will refuse it would be false —
 #: nothing refuses an app name, then or later.
-_NAME_WALK_SKIP = frozenset({"app"})
+# gh-1310: a `[template.X]` body holds `{slot}` values -- `F32To{Elem}` is not
+# an identifier and never reaches C. Its instances, which are what does, are
+# ordinary components in the same cfg by the time this walk runs, and are
+# checked there with their slots filled.
+_NAME_WALK_SKIP = frozenset({"app", "template"})
 
 #: ``*_name`` keys whose value is NOT an identifier, and so must not be held
 #: to one. The walk is deliberately inverted around this: **any** key called
