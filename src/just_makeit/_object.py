@@ -51,6 +51,8 @@ from ._docstring import (
     DoxyBlock,
     extract_doc_blocks,
     extract_member_docs,
+    extract_struct_member_docs,
+    struct_members_key,
     member_doc_key,
     header_default,
     authored_class_brief,
@@ -82,22 +84,32 @@ _LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 # Keyed on identity AND stat, because a test (or a user mid-session) can
 # rewrite a header between two applies in one process; a path-only key would
 # serve the pre-edit text and the edit would look like it did nothing.
-_MEMBER_DOC_CACHE: dict[tuple[Path, int, int], tuple[dict, str]] = {}
+_MEMBER_DOC_CACHE: dict[tuple[Path, int, int], tuple[dict, str, dict]] = {}
 
 
-def _header_member_docs(path: Path) -> tuple[dict[str, str], str]:
-    """``(member_docs, text)`` for one header, memoized on path+mtime+size."""
+def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
+    """``(member_docs, text, struct_docs)`` for one header, memoized.
+
+    Keyed on path+mtime+size. *struct_docs* is gh-1300's per-struct map,
+    parsed in the same pass so a shared header is still scanned once.
+    """
     st = path.stat()
     key = (path, st.st_mtime_ns, st.st_size)
     hit = _MEMBER_DOC_CACHE.get(key)
     if hit is None:
         body = path.read_text(encoding="utf-8", errors="replace")
-        hit = (extract_member_docs(body), body)
+        hit = (
+            extract_member_docs(body),
+            body,
+            extract_struct_member_docs(body),
+        )
         _MEMBER_DOC_CACHE[key] = hit
     return hit
 
 
-def _included_member_docs(inc_root: Path, text: str) -> dict[str, str]:
+def _included_member_docs(
+    inc_root: Path, text: str
+) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     """Member docs from the project headers *text* includes (gh-724).
 
     A struct a component returns is often declared in a *shared* header that
@@ -122,8 +134,14 @@ def _included_member_docs(inc_root: Path, text: str) -> dict[str, str]:
     The caller merges these *under* the sacred header's own, so a name declared
     in both keeps the component's own text — the same "nearest wins" rule the
     rest of derivation follows.
+
+    Returns ``(by_name, by_struct)``. *by_name* is the bare-name map above,
+    which an enumerator may use; a struct FIELD must use *by_struct*, because
+    following includes is exactly what let an unrelated struct's same-named
+    field document a property (gh-1300).
     """
     out: dict[str, str] = {}
+    structs: dict[str, dict[str, str]] = {}
     seen: set[Path] = set()
     pending = [text]
     while pending:
@@ -132,11 +150,13 @@ def _included_member_docs(inc_root: Path, text: str) -> dict[str, str]:
             if path in seen or not path.is_file():
                 continue
             seen.add(path)
-            docs, body = _header_member_docs(path)
+            docs, body, by_struct = _header_member_docs(path)
             pending.append(body)
             for name, doc in docs.items():
                 out.setdefault(name, doc)
-    return out
+            for sname, fields in by_struct.items():
+                structs.setdefault(sname, fields)
+    return out, structs
 
 
 def _load_doc_blocks(root: Path, obj: str) -> dict:
@@ -162,10 +182,27 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     #
     # gh-724: included project headers first, so the component's own header
     # overwrites them below and wins any name it declares itself.
-    for _mname, _mdoc in _included_member_docs(inc_root, text).items():
+    _inc_by_name, _inc_structs = _included_member_docs(inc_root, text)
+    for _mname, _mdoc in _inc_by_name.items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
+    # gh-1300: the per-struct map, the component's own header winning a struct
+    # name it defines. This, not the bare-name map above, is what a struct
+    # FIELD's documentation is read from.
+    #
+    # Only structs with a documented field, and only when there is one: a
+    # freshly scaffolded header must still load as an empty map (gh-666).
+    _structs = {
+        k: v
+        for k, v in {
+            **_inc_structs,
+            **extract_struct_member_docs(text),
+        }.items()
+        if v
+    }
+    if _structs:
+        out[struct_members_key()] = _structs
     for cname, block_text in raw.items():
         # strip the comp_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).

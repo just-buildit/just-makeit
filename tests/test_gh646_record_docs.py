@@ -31,6 +31,7 @@ from just_makeit import _record as R  # noqa: E402
 from just_makeit._docstring import (  # noqa: E402
     DoxyBlock,
     member_doc_key,
+    struct_members_key,
 )
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
@@ -101,11 +102,30 @@ class TestRecordShape:
         assert f.doc == "Declared."
 
     def test_a_field_falls_back_to_its_header_member_doc(self):
-        """gh-671 already parses `///<`; a record field is one more reader."""
-        m = {"result_fields": [{"name": "enob", "type": "double"}]}
-        blocks = {member_doc_key("enob"): DoxyBlock(brief="From header.")}
+        """gh-671 already parses `///<`; a record field is one more reader.
+
+        gh-1300: from the record's OWN struct -- a `single` record's return
+        type -- and not from a same-named field of any other struct.
+        """
+        m = {
+            "single": True,
+            "return_type": "tone_meas_t",
+            "result_fields": [{"name": "enob", "type": "double"}],
+        }
+        blocks = {
+            struct_members_key(): {
+                "tone_meas_t": {"enob": "From header."},
+                "psd_t": {"enob": "A stranger's."},
+            }
+        }
         (f,) = R.fields(m, blocks)
         assert f.doc == "From header."
+
+    def test_a_bare_name_match_is_not_a_field_doc(self):
+        """gh-1300: the name-keyed map belongs to enumerators, not fields."""
+        m = {"result_fields": [{"name": "enob", "type": "double"}]}
+        blocks = {member_doc_key("enob"): DoxyBlock(brief="From anywhere.")}
+        assert R.fields(m, blocks)[0].doc == ""
 
     def test_an_undocumented_field_has_no_doc(self):
         m = {"result_fields": [{"name": "enob", "type": "double"}]}

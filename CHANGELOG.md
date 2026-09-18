@@ -61,6 +61,39 @@
     (both stubs and both runtime docs), plus a free function's two. Each of
     the three changes was sabotaged separately.
 
+- **A struct field's doc now documents only that struct's field** (gh-1300).
+    A property, state accessor or record field with no authored doc took the
+    trailing `/**<` of ANY same-named field in its header or anything that
+    header includes, so doppler's `DsssBurstReceiver.dropped` read "Overrun
+    ctr." — a ring buffer's field. Now a property and a state accessor read
+    the component's own `<comp>_state_t`, a record field reads the record's
+    own struct (`record_dtype`, or a `single` record's return type), and
+    where that struct is silent the member keeps its name-based stub.
+    Enumerators still match by name, since C makes them unique.
+
+    **Measured on doppler `main`:** every record field now carries its own
+    struct's text. `ReceiverStatus.code_rate` had been reading the Dll's
+    "chips advanced per nominal chip", and `BerInterval.errors` a frame
+    meter's "frames not delivered". About 40 properties fall back to the name
+    stub. Each had been reading either a stranger (`PSD.count` read
+    CorrDetector's) or a sub-object whose value it forwards
+    (`MpskReceiver.lock` from `mpsk_rx_loops_t`), which was right only by
+    luck. A forwarded property is documented with `doc =` or a getter
+    `@brief`.
+
+    A module stub merges its objects' doc maps to render their records, and
+    the per-struct map sits under one key, so a plain `{**a, **b}` merge would
+    have kept only the LAST object's structs. On doppler that dropped all 13
+    `ReceiverStatus` field docs. `merge_doc_blocks` unions it instead.
+    `tests/test_gh1300_struct_scoped_field_docs.py`; each reader and the merge
+    were sabotaged separately.
+
+- **A parameter merely named `count` or `out` is no longer documented as
+    jm's generator length or `out=` buffer** (gh-1350). `binding_param_docs`
+    was keyed by name and handed to every method. It now takes required
+    `count` / `out` flags from the same decision that shapes the signature.
+    No change on doppler.
+
 ## [0.76.5] — 2026-09-17
 
 ### Fixed

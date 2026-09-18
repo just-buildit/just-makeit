@@ -32,7 +32,7 @@ import re
 from typing import NamedTuple
 
 from . import _types as T
-from ._docstring import member_doc
+from ._docstring import struct_member_doc
 
 
 class RecordField(NamedTuple):
@@ -168,13 +168,46 @@ def qualified_name(m: dict, component: str) -> str:
     return f"{m.get('record_module') or component}.{public_name(m)}"
 
 
+def c_struct(m: dict) -> str:
+    """The C struct *m*'s ``result_fields`` are fields OF, or ``""``.
+
+    ``record_dtype`` names the element struct outright. A ``single`` record's
+    kernel returns the struct by value, so its ``return_type`` is the struct.
+    The list-of-tuples shape has no struct at all -- its columns are written
+    to separate buffers -- so it answers ``""``.
+
+    Examples
+    --------
+    >>> c_struct({"record_dtype": "dp_tlm_rec_t"})
+    'dp_tlm_rec_t'
+    >>> c_struct({"single": True, "return_type": "struct tone_meas"})
+    'tone_meas'
+    >>> c_struct({"result_fields": [{"name": "n", "type": "int"}]})
+    ''
+    """
+    if m.get("record_dtype"):
+        return str(m["record_dtype"])
+    if m.get("single"):
+        rt = str(m.get("return_type") or "").strip()
+        return rt[len("struct ") :].strip() if rt.startswith("struct ") else rt
+    return ""
+
+
 def fields(m: dict, doc_blocks: dict | None = None) -> list[RecordField]:
-    """The record's fields, each carrying whatever documentation exists."""
+    """The record's fields, each carrying whatever documentation exists.
+
+    gh-1300: a field's fallback doc is read from the record's own struct
+    (:func:`c_struct`). It used to be any same-named field in the component's
+    header or anything it includes, so a record column could be documented
+    by an unrelated struct that happened to share the name.
+    """
+    struct = c_struct(m)
     return [
         RecordField(
             f["name"],
             f["type"],
-            str(f.get("doc") or "") or member_doc(doc_blocks, f["name"]),
+            str(f.get("doc") or "")
+            or struct_member_doc(doc_blocks, struct, f["name"]),
         )
         for f in m.get("result_fields", [])
     ]
