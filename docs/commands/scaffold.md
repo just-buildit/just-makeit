@@ -150,13 +150,14 @@ just-makeit object biquad --module filter --state "b0:double:1.0" --state "a1:do
 
 **Per-object files created** (same for both modes):
 
-| File                                   | Purpose                                         |
-| -------------------------------------- | ----------------------------------------------- |
-| `native/inc/<obj>/<obj>_core.h`        | Header: struct, inline `_step`, getters/setters |
-| `native/src/<obj>/<obj>_core.c`        | Source: create/destroy/reset/steps              |
-| `native/src/<obj>/CMakeLists.txt`      | OBJECT library + C test + bench                 |
-| `native/tests/test_<obj>_core.c`       | C test with `CHECK` macro counter               |
-| `native/benchmarks/bench_<obj>_core.c` | C benchmark                                     |
+| File                                   | Purpose                                                             |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| `native/inc/<obj>/<obj>_core.h`        | Header: struct, inline `_step`, getters/setters                     |
+| `native/src/<obj>/<obj>_core.c`        | Source: create/destroy/reset/steps                                  |
+| `native/src/<obj>/CMakeLists.txt`      | OBJECT library + C test + bench                                     |
+| `native/tests/test_<obj>_core.c`       | C test with `CHECK` macro counter                                   |
+| `native/tests/test_<obj>_symbols.c`    | Link check: every function the binding calls must resolve (gh-1361) |
+| `native/benchmarks/bench_<obj>_core.c` | C benchmark                                                         |
 
 **Additional files for standalone objects** (no `--module`):
 

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _glue
+from . import _linkcheck
 from . import _types as T
 from ._context._methods import (
     container_fn_names,
@@ -159,6 +160,7 @@ def scaffold_accessor_bodies(
         )
 
 
+@_linkcheck.after
 def run(
     root: Path,
     object_name: str,

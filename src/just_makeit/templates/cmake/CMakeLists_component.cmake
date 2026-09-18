@@ -18,7 +18,8 @@ add_custom_command(TARGET <<component>> POST_BUILD
 endif()
 
 add_executable(test_<<component>>_core
-    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c)
+    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c
+    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_symbols.c)
 target_link_libraries(test_<<component>>_core PRIVATE
     <<component>>_core
     <<extra_link_libs_block>>${JM_MATH_LIBRARY})

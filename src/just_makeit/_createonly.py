@@ -229,6 +229,11 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
     Rule(
+        "native/tests/test_*_symbols.c",
+        RECONCILED,
+        "the link-check table `apply` derives from the binding (gh-1361).",
+    ),
+    Rule(
         "native/src/app/*",
         RECONCILED,
         "`jm app`'s executable. Classified from the measurement, against the"

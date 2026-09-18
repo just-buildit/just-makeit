@@ -2,6 +2,21 @@
 
 ### Added
 
+- **A function the binding calls and nothing defines now fails the C test
+    at link time, naming it** (gh-1361). A shared object links with undefined
+    symbols, so such a function used to build cleanly and fail only at import.
+    That's how gh-1303 hid. Each component now gets a generated
+    `native/tests/test_<comp>_symbols.c`, a table taking the address of every
+    function the binding calls that its header declares without defining.
+    It's linked into the C test executable through the generated build files,
+    so no file the author owns is edited. The table uses generic function
+    pointers (ISO C allows the cast) and `__attribute__((used, retain))`.
+    Measured: `used` alone survived Debug and Release but was discarded by
+    `-Wl,--gc-sections`. Header definitions are left out: they're defined by
+    construction, and a C99 `inline` one has no external symbol to take.
+    **On doppler:** 84 tables, and all 103 C test targets link with no
+    errors.
+
 - **`<dir>_extra.cmake`: your own CMake for a generated directory**
     (gh-1351). Every `native/src/<dir>/CMakeLists.txt` jm writes (standalone
     object, module and module object, capsule, handle, composer) now ends with

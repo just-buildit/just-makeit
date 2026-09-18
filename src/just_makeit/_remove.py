@@ -164,6 +164,7 @@ def _object_paths(
         root / "native" / "inc" / obj,
         root / "native" / "src" / obj,
         root / "native" / "tests" / f"test_{obj}_core.c",
+        root / "native" / "tests" / f"test_{obj}_symbols.c",  # gh-1361
         root / "native" / "benchmarks" / f"bench_{obj}_core.c",
     ]
     if module:

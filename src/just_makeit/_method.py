@@ -44,6 +44,7 @@ from ._init import (
     standalone_extra_include,
 )
 from ._object import _regenerate_module
+from . import _linkcheck
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -994,6 +995,7 @@ def _module_record_regs(
     return out
 
 
+@_linkcheck.after
 def run(
     root: Path,
     object_name: str,

@@ -507,6 +507,20 @@ def run(
                 _exc.code if isinstance(_exc.code, int) else 1
             ) from None
 
+        # gh-1361: the link-check table is derived from the binding, and the
+        # scratch copy above swapped every unreconciled fragment for a fresh
+        # render. For a component whose fragment is one of those, derive the
+        # expected table from the REAL fragment -- the one that compiles --
+        # as `apply` itself does.
+        from . import _linkcheck
+
+        for _comp in C.components(cfg):
+            _srcs = _linkcheck.binding_sources(root, cfg, _comp)
+            if any(
+                s.relative_to(root).as_posix() in unreconciled for s in _srcs
+            ):
+                _linkcheck.write(scratch, cfg, _comp, binding_root=root)
+
         # gh-949: computed inside the temp directory's lifetime, against the
         # *real* root rather than the scratch copy. For a versioned file the
         # two are identical (that is the whole point — `apply` never touched
