@@ -32,6 +32,7 @@ only shrink.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -461,3 +462,101 @@ class TestLifecycleGlueSpecifically:
         for face in faces:
             assert "ValueError" in face["destroy"]
             assert "RuntimeError\n" not in face["destroy"]
+
+
+# ── gh-1292: a member with a PARAMETER, on all four faces ────────────────────
+#
+# Every other fixture in this file builds members with no parameter, and a
+# brief-only docstring and a full one are the same string when there is no
+# `Parameters` block to lose. So the gate reported green while a module
+# object's undocumented method collapsed to `Tune.` in its stub and listed its
+# parameters in `help()` -- and while the runtime face spelled the summary
+# `tune.` on both paths. Four faces rather than two, because the stub-vs-stub
+# comparison above could not have caught the second half at all.
+
+from test_gh642_runtime_doc_parity import _runtime_doc, _stub_doc  # noqa: E402
+
+_AUTHORED_TUNE = (
+    " * @brief Retune it.\n *\n * @param gain The new gain, linear."
+)
+
+
+def _tune_project(root: Path, module: str | None, authored: bool) -> Path:
+    new_run("p", root, [], [])
+    if module:
+        module_run(root, module)
+    object_run(root, "w", module, arg_type="float", return_type="float")
+    method_run(
+        root,
+        "w",
+        "tune",
+        module,
+        "void",
+        "void",
+        False,
+        [],
+        params=[("gain", "double", "")],
+    )
+    if authored:
+        h = next((root / "native" / "inc").rglob("w_core.h"))
+        t = h.read_text(encoding="utf-8")
+        assert t.count(" * @brief tune.") == 1, "scaffold no longer seeds it"
+        h.write_text(t.replace(" * @brief tune.", _AUTHORED_TUNE), "utf-8")
+    apply_run(root)
+    return root
+
+
+def _four_faces(root: Path, module: str | None) -> dict[str, list[str]]:
+    """``{face: doc lines}`` for `tune`, up to any runtime Examples section."""
+    pyi = (
+        root / "src" / "p" / (f"{module}/{module}.pyi" if module else "w.pyi")
+    )
+    (ext,) = [
+        p
+        for p in (root / "native" / "src").rglob("*_ext*.c")
+        if '{"tune",' in p.read_text(encoding="utf-8")
+    ]
+    runtime = _runtime_doc(ext.read_text(encoding="utf-8"), "tune")
+    assert runtime[0].startswith("tune("), runtime[0]
+    runtime = runtime[2:]
+    if "Examples" in runtime:
+        runtime = runtime[: runtime.index("Examples")]
+    stub = _stub_doc(pyi.read_text(encoding="utf-8"), "tune")
+    tag = "module" if module else "standalone"
+    return {
+        f"{tag} stub": [ln for ln in stub if ln.strip()],
+        f"{tag} runtime": [ln for ln in runtime if ln.strip()],
+    }
+
+
+@pytest.mark.parametrize(
+    "authored", [False, True], ids=["undocumented", "authored"]
+)
+def test_a_parameterised_method_documents_alike_on_all_four_faces(
+    tmp_path, authored
+):
+    faces = {
+        **_four_faces(_tune_project(tmp_path / "sa", None, authored), None),
+        **_four_faces(_tune_project(tmp_path / "mo", "m", authored), "m"),
+    }
+    reference = faces["standalone stub"]
+    # The case this exists for: the section is there to lose.
+    assert "Parameters" in reference, reference
+    divergent = {k: v for k, v in faces.items() if v != reference}
+    assert not divergent, (reference, divergent)
+
+
+def test_an_undocumented_free_function_spells_its_summary_alike(tmp_path):
+    """The same capitalisation split, on the module-function faces."""
+    from just_makeit._function import run as function_run
+
+    root = tmp_path / "p"
+    new_run("p", root, [], [])
+    module_run(root, "m")
+    function_run(root, "scale_it", "m", params=[("gain", "double")])
+    apply_run(root)
+    ext = (root / "native/src/m/m_ext.c").read_text(encoding="utf-8")
+    pyi = (root / "src/p/m/m.pyi").read_text(encoding="utf-8")
+    stub = re.search(r'def scale_it\(.*?\n    """(.*?)"""', pyi, re.S)
+    assert stub, pyi
+    assert _runtime_doc(ext, "scale_it")[0] == stub.group(1) == "Scale it."

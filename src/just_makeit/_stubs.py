@@ -45,6 +45,7 @@ from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     class_import_line,
+    name_summary,
     ctor_demo_label,
     STUB_TARGET_WIDTH,
     ClassParam,
@@ -1416,18 +1417,13 @@ def _method_doc_lines(
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
 
-    *skeleton_fallback* selects what an UNDOCUMENTED member falls back to, and
-    it is a caller's choice because the callers genuinely want different
-    things. A module OBJECT's method passes True, to match what the standalone
-    face emits for the same member -- without it an undocumented `close` read
-    `Close.` here and `close.` there, the same member capitalised differently
-    for living in a module (gh-867). A VIEW's method leaves it False: gh-685
-    pins the capitalised name stub as a deliberate guarantee, and flipping the
-    shared helper broke that test rather than the module face.
-
-    Which spelling is better is a separate and real question -- numpydoc wants
-    a capitalised summary, so both object faces are arguably wrong together
-    now. Deliberately not smuggled into a parity fix.
+    *skeleton_fallback* selects what an UNDOCUMENTED member falls back to.
+    Every method caller now passes True -- object, module object and view
+    alike -- because the runtime face of the same member always rendered the
+    section skeleton, and a stub that collapsed to the name alone was the one
+    face breaking gh-1042's "every parameter has an entry" (gh-1292). The
+    summary's spelling is a separate question, answered once by
+    `_docstring.name_summary` (gh-867).
 
     *raises* is `_context._diagnostics.raises_doc` for the method — the same
     list the standalone stub and the runtime ``PyMethodDef`` pass, because
@@ -1962,7 +1958,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             _va_doc = (
                 m.get("doc")
                 or (_blk.brief if (_blk and _blk.brief) else "")
-                or f"{m_name.replace('_', ' ').capitalize()}."
+                or name_summary(m_name)
             )
             lines += [
                 "",
@@ -2189,6 +2185,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ret_ann,
             override=m.get("doc", ""),
             raises=_raises_doc(m),
+            # gh-1292: the skeleton, as every other face of the same member
+            # renders it -- the standalone stub and BOTH runtime docs. Without
+            # it an undocumented method collapsed to its name here alone, so
+            # a module object's `help()` listed parameters its stub did not.
+            skeleton_fallback=True,
             param_defaults=_gluedoc.binding_param_docs(_count_kw),
         )
         header = (
@@ -2452,11 +2453,7 @@ def _fn_stub(fn: dict, block=None) -> str:
             block, name, py_params, ret, override=doc, indent=4
         )
         return f"{sig}\n" + "\n".join(doc_lines)
-    one_liner = (
-        doc.split("\n")[0]
-        if doc
-        else name.replace("_", " ").capitalize() + "."
-    )
+    one_liner = doc.split("\n")[0] if doc else name_summary(name)
     return f'{sig}\n    """{one_liner}"""'
 
 

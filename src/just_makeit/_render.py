@@ -1615,7 +1615,7 @@ def make_functions_ctx(
     # _docstring are leaves relative to this module, but importing _stubs at
     # module scope would put _render into the _object/_stubs import cycle.
     from ._context._parse import _build_ml_doc
-    from ._docstring import render_runtime_doc
+    from ._docstring import name_summary, render_runtime_doc
     from ._stubs import fn_py_surface
 
     wrappers: list[str] = []
@@ -1636,7 +1636,8 @@ def make_functions_ctx(
             # skeleton would *introduce* a divergence rather than close one —
             # the runtime would carry `Parameters`/`Input.` placeholders the
             # stub beside it does not. Undocumented functions are unchanged.
-            doc = _build_ml_doc([fn.get("doc", "") or f"{name}."])
+            # gh-1292: the stub's spelling, from the one helper both use.
+            doc = _build_ml_doc([fn.get("doc", "") or name_summary(name)])
         else:
             _ret_ann, _py_params, _ = fn_py_surface(fn)
             doc = _build_ml_doc(
