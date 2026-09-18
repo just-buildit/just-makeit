@@ -425,8 +425,14 @@ class TestTwoFunctions:
             encoding="utf-8"
         )
         # A function with no header block keeps the one-liner fallback --
-        # the .pyi collapses to a one-liner there too (gh-643).
-        assert '"fft_global_setup.\\n"' in ext
+        # the .pyi collapses to a one-liner there too (gh-643) -- spelled as
+        # the .pyi spells it (gh-1292: this was `fft_global_setup.`).
+        assert '"Fft global setup.\\n"' in ext
+        pyi = (two_functions / "src").rglob("*.pyi")
+        assert any(
+            '"""Fft global setup."""' in p.read_text(encoding="utf-8")
+            for p in pyi
+        )
 
 
 class TestConfig:
