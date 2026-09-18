@@ -11,6 +11,7 @@ that binding is jm's. Two things are not, and they are the interesting part:
 | seam | declared by | what you write |
 | --- | --- | --- |
 | build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<gen>_state_t *fn(const <struct> *, double)` |
+| say why that build refused (optional) | `[module.X.source.generates] bridge_error_fn` | `const char *fn(const <struct> *, double)` |
 | derive a read-only property | `[[module.X.source.computed]] fn` | `<type> fn(const <struct> *)` |
 
 Both are **straight C with no CPython in them**. jm knows their signatures
@@ -297,6 +298,9 @@ default = "1.0"
 [module.playlist.source.generates]
 generator = "clip"
 bridge_fn = "clip_from_source"
+# ...and why it refused, when it does: a reason becomes ValueError instead of
+# a bare "clip_from_source returned NULL" RuntimeError (gh-1307).
+bridge_error_fn = "clip_why_not"
 
 # ── seam 2: a derived read-only property ──────────────────────────────────
 # Computed in C on every read, so it cannot go stale when `gain` is
@@ -388,12 +392,27 @@ with neither gets no header at all, because there would be nothing to say.
 #include "playlist/playlist_bridge.h"
 
 /* Seam 1 — source config to running generator. A real one would derive
- * increments from `fs`; this one just carries the level across. */
+ * increments from `fs`; this one just carries the level across, and refuses
+ * a configuration it cannot honour. */
 clip_state_t *
 clip_from_source (const clip_t *src, double fs)
 {
   (void)fs;
+  if (src->gain < 0.0)
+    return NULL;
   return clip_create (src->gain);
+}
+
+/* ...and why. Called only after clip_from_source returned NULL, with the
+ * same arguments: a sentence here is raised as ValueError; NULL means "no
+ * reason to give" and keeps the RuntimeError. */
+const char *
+clip_why_not (const clip_t *src, double fs)
+{
+  (void)fs;
+  if (src->gain < 0.0)
+    return "a clip's gain must be >= 0";
+  return NULL;
 }
 
 /* Seam 2 — a quantity derived from the config, never stored beside it. */
@@ -410,6 +429,14 @@ The file **includes the generated header** rather than declaring anything.
 That is what makes the split safe: if the manifest renames `bridge_fn`, or a
 computed property changes type, this file stops compiling instead of quietly
 linking against a signature that no longer matches.
+
+`clip_why_not` is the optional third seam (gh-1307). A bridge returns NULL
+for configuration reasons far more often than for memory, and a bare NULL
+reached Python as `RuntimeError: clip_from_source returned NULL` whatever the
+reason. The error function is asked only after a refusal, with the same
+arguments, and its sentence is raised as `ValueError` — the category a
+refused `create()` gets. Returning NULL from it keeps the `RuntimeError`, so
+a genuine allocation failure still reads as one.
 
 And there is no CPython in it. The seams exist precisely so that the parts
 only you can write stay in plain C — the marshalling, the type objects, the
@@ -471,6 +498,15 @@ print(f"Clip(gain=7.0).steps(3)  -> {block}   (via clip_from_source)")
 assert isinstance(block, np.ndarray)
 assert np.allclose(block, [7 + 0j, 7 + 0j, 7 + 0j])
 
+# A bridge that refuses says why: clip_why_not's sentence arrives as a
+# ValueError, where it used to be "clip_from_source returned NULL".
+try:
+    Clip(gain=-1.0).steps(1)
+    raise AssertionError("expected the bridge to refuse")
+except ValueError as exc:
+    print(f"Clip(gain=-1.0).steps(1) -> ValueError: {exc}")
+    assert str(exc) == "a clip's gain must be >= 0"
+
 # ── the composed object-of-objects ───────────────────────────────────────
 # Track sums its sources; Mix sequences tracks and runs the backing kernel.
 track = Track.sum(Clip(gain=2.0), Clip(gain=3.0), dur=4)
@@ -501,6 +537,7 @@ Clip(gain=2.0).gain      -> 2.0
   after gain = 5.0       -> 10.0  (recomputed, not stored)
            .duration = 1.0 -> AttributeError (read-only)
 Clip(gain=7.0).steps(3)  -> [7.+0.j 7.+0.j 7.+0.j]   (via clip_from_source)
+Clip(gain=-1.0).steps(1) -> ValueError: a clip's gain must be >= 0
 Mix(Track.sum(2,3,dur=4)).execute(8) -> [5.+0.j 5.+0.j 5.+0.j 5.+0.j]
 mix.segments             -> 1 track(s), repeat=False, continuous=False
 composer_seams demo: PASSED

@@ -11,6 +11,7 @@ that binding is jm's. Two things are not, and they are the interesting part:
 | seam | declared by | what you write |
 | --- | --- | --- |
 | build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<gen>_state_t *fn(const <struct> *, double)` |
+| say why that build refused (optional) | `[module.X.source.generates] bridge_error_fn` | `const char *fn(const <struct> *, double)` |
 | derive a read-only property | `[[module.X.source.computed]] fn` | `<type> fn(const <struct> *)` |
 
 Both are **straight C with no CPython in them**. jm knows their signatures

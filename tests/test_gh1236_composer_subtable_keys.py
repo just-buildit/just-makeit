@@ -75,6 +75,7 @@ _REPRESENTATIVE: dict[str, object] = {
     # source.generates
     "generator": "nco",
     "bridge_fn": "wfm_bridge",
+    "bridge_error_fn": "wfm_bridge_why",
     "state_type": "nco_state_t",
     "steps_fn": "nco_steps",
     "step_fn": "nco_step",

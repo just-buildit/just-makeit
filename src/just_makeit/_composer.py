@@ -326,6 +326,14 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     ``bridge_fn``    a straight-C function ``<state_type> *fn(const <struct> *,
                      double fs)`` the project writes (its construction algorithm —
                      no CPython); jm emits the binding that calls it.
+    ``bridge_error_fn``  optional (gh-1307): ``const char *fn(const <struct> *,
+                     double fs)``, consulted only when ``bridge_fn`` returns
+                     NULL. A non-NULL string is the reason, raised as
+                     ``ValueError``; NULL keeps ``RuntimeError("<bridge_fn>
+                     returned NULL")``. It takes ``bridge_fn``'s own arguments,
+                     because "why did this call refuse" is a question about the
+                     same inputs -- a sample rate too low for the config is a
+                     reason too.
 
     Defaults (overridable): ``state_type = <generator>_state_t``,
     ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
@@ -339,6 +347,7 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     return {
         "generator": gen,
         "bridge_fn": g["bridge_fn"],
+        "bridge_error_fn": g.get("bridge_error_fn", ""),
         "state_type": g.get("state_type", f"{gen}_state_t"),
         "steps_fn": g.get("steps_fn", f"{gen}_steps"),
         "step_fn": g.get("step_fn", f"{gen}_step"),
@@ -347,6 +356,35 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "header": g.get("header", f"{gen}/{gen}_core.h"),
         "output_type": g.get("output_type", "float _Complex"),
     }
+
+
+def _bridge_refusal_c(gen: dict) -> str:
+    """The C that reports a NULL from ``bridge_fn``, indented for ensure_gen.
+
+    gh-1307. A bridge refuses for CONFIGURATION reasons -- a source with no
+    payload, a frame the type cannot carry, a sweep with no span -- far more
+    often than for memory, and every one of them used to surface as the same
+    ``RuntimeError: <bridge_fn> returned NULL``, telling the caller neither the
+    reason nor that it was their input. With ``bridge_error_fn`` declared the
+    project states the reason and it is raised as ``ValueError``, the category
+    gh-482 gave a refused ``create()``; a NULL reason keeps the old error, so a
+    bridge that genuinely failed to allocate still says so.
+    """
+    fn = gen["bridge_fn"]
+    efn = gen.get("bridge_error_fn")
+    if not efn:
+        return (
+            "            PyErr_SetString(PyExc_RuntimeError,\n"
+            f'                            "{fn} returned NULL");\n'
+        )
+    return (
+        f"            const char *why = {efn}(&self->src, self->fs);\n"
+        "            if (why)\n"
+        "                PyErr_SetString(PyExc_ValueError, why);\n"
+        "            else\n"
+        "                PyErr_SetString(PyExc_RuntimeError,\n"
+        f'                                "{fn} returned NULL");\n'
+    )
 
 
 def _source_computed(cfg: dict, module: str) -> list[dict]:
@@ -958,9 +996,7 @@ static int
     if (!self->_gen) {{
         self->_gen = {gen["bridge_fn"]}(&self->src, self->fs);
         if (!self->_gen) {{
-            PyErr_SetString(PyExc_RuntimeError,
-                            "{gen["bridge_fn"]} returned NULL");
-            return -1;
+{_bridge_refusal_c(gen)}            return -1;
         }}
     }}
     return 0;
@@ -3503,6 +3539,17 @@ def render_bridge_h(cfg: dict, module: str) -> str:
             f"const {src_struct} *, double);",
             "",
         ]
+        if gen["bridge_error_fn"]:
+            lines += [
+                f"/* Why {gen['bridge_fn']}() refused: a reason raised as"
+                " ValueError, or NULL",
+                " * for none (RuntimeError). Same arguments; called only after"
+                " it returned",
+                " * NULL (gh-1307). */",
+                f"const char *{gen['bridge_error_fn']}("
+                f"const {src_struct} *, double);",
+                "",
+            ]
     for c in computed:
         lines += [
             f"/* Computed read-only property `{c['name']}`. */",

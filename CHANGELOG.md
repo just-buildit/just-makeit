@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Added
+
+- **A composer source's bridge can say why it refused** (gh-1307).
+    `[module.X.source.generates] bridge_error_fn = "<fn>"` names a straight-C
+    `const char *fn(const <struct> *, double fs)`. It is asked only after
+    `bridge_fn` returns NULL, with the same arguments. A sentence is raised as
+    `ValueError`, the category gh-482 gave a refused `create()`; NULL keeps
+    today's `RuntimeError("<bridge_fn> returned NULL")`, so an allocation
+    failure still reads as one. The prototype is published in
+    `<mod>_bridge.h` beside `bridge_fn`'s (gh-998).
+
+    It takes the bridge's own arguments rather than just the struct, because
+    "why did this call refuse" is a question about the same inputs, and a
+    sample rate the config cannot honour is a reason too. Undeclared, the
+    generated binding is byte-identical. The `composer_seams` example now
+    refuses a negative gain and asserts the sentence arrives. Sabotaged:
+    without the branch it raises the old `RuntimeError`, and without the
+    prototype it fails to compile.
+
 ### Fixed
 
 - **`jm apply` no longer strips a vendored source from a standalone object's
