@@ -785,6 +785,8 @@ def run(
 
     _unwired = _libwiring.unwired(root, cfg)
     _dangling = _libwiring.dangling(root, cfg)
+    # gh-1313: an opt-out that does not say why, or a reason that outlived it.
+    _opt_outs = C.no_generate_findings(cfg)
     _shared = _procglobal.shared_cores(cfg)
     # Suppressed by the file, like the UNANCHORED entry beside it, and ALSO
     # per component via `CMakeLists.txt:<core>`.
@@ -865,6 +867,10 @@ def run(
         # tree that cannot build is what the author meant.
         + _n_unwired
         + len(_dangling)
+        # gh-1313: gates, and is not suppressible -- the fix is one line of
+        # TOML, and a finding that can always be cleared that cheaply has no
+        # business being waived instead.
+        + len(_opt_outs)
         # gh-1076: gates, and never suppressed — the same rule as the gh-442
         # default drift it sits beside, for the same reason. jm cannot tell
         # which side is stale, so there is no version of this that `apply`
@@ -1007,6 +1013,10 @@ def run(
                     "dangling_wiring": [
                         {"core": d.core, "targets": list(d.targets)}
                         for d in _dangling
+                    ],
+                    # gh-1313
+                    "no_generate_reason": [
+                        {"module": m, "problem": p} for m, p in _opt_outs
                     ],
                     # gh-1117: cores linked into >1 extension module, so
                     # each `.so` holds its own copy of their file-scope
@@ -1372,6 +1382,31 @@ def run(
             " — there is no\n"
             "  reading of status_allow under which an unconfigurable tree is"
             " intended."
+        )
+        print()
+
+    # gh-1313: printed on both paths, like the rest of the gating findings.
+    if _opt_outs:
+        print(
+            f"UNEXPLAINED OPT-OUT ({len(_opt_outs)}) — `no_generate` must say"
+            " why:"
+        )
+        for m, p in _opt_outs:
+            if p == "unexplained":
+                print(f"  ? [module.{m}] no_generate, and no reason given")
+            else:
+                print(
+                    f"  ? [module.{m}] no_generate_reason, but the module is"
+                    " not no_generate"
+                )
+        print(
+            '  Add `no_generate_reason = "..."` saying which it is: a shape'
+            " jm cannot\n"
+            "  express (name the issue that would change it), or a module"
+            " nobody has\n"
+            "  migrated yet. The two want opposite treatment and read the same"
+            " without it.\n"
+            "  A reason on a module that generates again is stale: delete it."
         )
         print()
 
@@ -1741,6 +1776,7 @@ def run(
         # the other side, by a consumer who could not link.
         and not _n_unwired
         and not _dangling
+        and not _opt_outs
         # gh-1076: "up to date" over a tree whose constructor the manifest
         # disagrees with is the sentence that issue is about — the exit code
         # alone would be right and unread.
@@ -1923,6 +1959,11 @@ def run(
             # the sentence below about apply is the right thing to read next.
             + (f", {_n_unwired} unwired (!)" if _n_unwired else "")
             + (f", {len(_dangling)} dangling (!)" if _dangling else "")
+            + (
+                f", {len(_opt_outs)} unexplained opt-out(s) (!)"
+                if _opt_outs
+                else ""
+            )
             + ".\n"
             # gh-1337: "never changes it" was false in the one direction
             # that matters -- gh-1294 taught apply to splice a declared

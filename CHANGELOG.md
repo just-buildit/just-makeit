@@ -2,6 +2,20 @@
 
 ### Added
 
+- **`no_generate` must say why: `no_generate_reason`** (gh-1313). An
+    opt-out recorded that a module is hand-written and nothing about why, so
+    "jm cannot express this shape" and "nobody migrated it yet" read the same.
+    `[module.X] no_generate_reason = "..."` states which. **`jm status   --check` now fails** on a `no_generate` module with no reason (or a blank
+    one), and on a reason left on a module that no longer opts out. Neither is
+    suppressible, because each is cleared by one line of TOML.
+
+    There's no grandfather list: jm can't tell a new opt-out from an old one,
+    because the key is only ever set by hand. **Adopting this release, doppler
+    needs two lines**, one each for `[module.buffer]` and `[module.stream]`.
+    `docs/configuration.md`'s CLI-coverage counts had drifted (11 🟡 and ~66 ✅
+    against a table of 16 and 91); the section now points at the table
+    instead of restating numbers.
+
 - **A composer source's bridge can say why it refused** (gh-1307).
     `[module.X.source.generates] bridge_error_fn = "<fn>"` names a straight-C
     `const char *fn(const <struct> *, double fs)`. It is asked only after

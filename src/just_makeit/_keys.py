@@ -424,6 +424,7 @@ _SHARED_MODULE_KEYS = frozenset(
         "extra_types",
         "doc",
         "no_generate",
+        "no_generate_reason",
         "reexports",
         "capsule_name",
         "functions",
