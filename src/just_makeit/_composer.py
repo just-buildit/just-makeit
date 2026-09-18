@@ -28,7 +28,14 @@ from . import _render as R
 from . import _procglobal
 from . import _enumc
 from . import _keys
-from ._docstring import ClassParam, class_docstring
+from ._context._parse import _build_ml_doc
+from ._docstring import (
+    ClassParam,
+    DoxyBlock,
+    class_docstring,
+    render_numpy_doc,
+    render_runtime_doc,
+)
 from ._pyfmt import reflow_pyi
 
 # ── C type / format helpers ──────────────────────────────────────────────────
@@ -357,6 +364,133 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "header": g.get("header", f"{gen}/{gen}_core.h"),
         "output_type": g.get("output_type", "float _Complex"),
     }
+
+
+def _source_gen_members(gen: dict) -> "list[dict]":
+    """``steps`` / ``step`` / ``reset`` on a generating source, declared once.
+
+    gh-1356. The ``.pyi`` and the runtime ``PyMethodDef`` each carried a
+    hand-written sentence per member -- ``Generate *n* complex samples.``
+    beside ``steps(n) -> complex64[n] — generate n samples standalone.`` --
+    with nothing reconciling them, and neither said what the call raises,
+    though the first ``steps()``/``step()`` builds the generator through
+    ``bridge_fn`` and that can refuse. This is the one description both faces
+    render, through the same numpy section builder object methods use
+    (gh-642), so they cannot say two things.
+
+    ``raises`` follows the generated C exactly: ``steps`` refuses a negative
+    ``n`` before anything is built, and a refused build is ``ValueError`` with
+    the project's reason when ``bridge_error_fn`` is declared (gh-1307) and
+    ``RuntimeError`` otherwise. ``reset`` never builds -- it rewinds a
+    generator that exists and is a no-op before the first call -- so it
+    raises nothing.
+    """
+    build = (
+        f"The first call builds the generator from this configuration, "
+        f"through `{gen['bridge_fn']}`; later calls continue it."
+    )
+    if gen.get("bridge_error_fn"):
+        refused = [
+            (
+                "ValueError",
+                f"If `{gen['bridge_fn']}` refuses this configuration; the "
+                "message is its reason.",
+            ),
+            (
+                "RuntimeError",
+                f"If `{gen['bridge_fn']}` fails and gives no reason.",
+            ),
+        ]
+    else:
+        refused = [
+            (
+                "RuntimeError",
+                f"If `{gen['bridge_fn']}` cannot build the generator from "
+                "this configuration.",
+            )
+        ]
+    return [
+        {
+            "name": "steps",
+            "flags": "METH_VARARGS",
+            "params": [("n", "int")],
+            "ret": "NDArray[np.complex64]",
+            "block": DoxyBlock(
+                brief="Generate the next *n* samples of this source on its "
+                "own.",
+                body=[build],
+                params=[("n", "How many samples; 0 returns an empty array.")],
+                returns="The samples, in order.",
+            ),
+            "raises": _merge_raises(
+                [("ValueError", "If `n` is negative.")] + refused
+            ),
+        },
+        {
+            "name": "step",
+            "flags": "METH_NOARGS",
+            "params": [],
+            "ret": "complex",
+            "block": DoxyBlock(
+                brief="Generate the next sample of this source on its own.",
+                body=[build],
+                returns="The sample.",
+            ),
+            "raises": refused,
+        },
+        {
+            "name": "reset",
+            "flags": "METH_NOARGS",
+            "params": [],
+            "ret": "None",
+            "block": DoxyBlock(
+                brief="Rewind the generator to sample 0.",
+                body=[
+                    "A no-op before the first `steps()`/`step()`, which "
+                    "starts from sample 0 anyway."
+                ],
+            ),
+            "raises": [],
+        },
+    ]
+
+
+def _merge_raises(entries: "list[tuple[str, str]]") -> "list[tuple[str, str]]":
+    """One ``Raises`` entry per exception, its conditions joined, in order.
+
+    >>> _merge_raises([("ValueError", "If a."), ("RuntimeError", "If b."),
+    ...                ("ValueError", "If c.")])
+    [('ValueError', 'If a. If c.'), ('RuntimeError', 'If b.')]
+    """
+    out: dict[str, list[str]] = {}
+    for exc, why in entries:
+        out.setdefault(exc, []).append(why)
+    return [(exc, " ".join(whys)) for exc, whys in out.items()]
+
+
+def _source_gen_method_rows(tname: str, gen: dict) -> str:
+    """The ``PyMethodDef`` rows for :func:`_source_gen_members` (gh-1356)."""
+    rows = []
+    for m in _source_gen_members(gen):
+        sig = f"{m['name']}({', '.join(n for n, _ in m['params'])})"
+        doc = _build_ml_doc(
+            [
+                f"{sig} -> {m['ret']}",
+                "",
+                *render_runtime_doc(
+                    m["block"],
+                    m["name"],
+                    m["params"],
+                    m["ret"],
+                    raises=m["raises"],
+                ),
+            ]
+        )
+        rows.append(
+            f'    {{"{m["name"]}", (PyCFunction){tname}_{m["name"]}, '
+            f"{m['flags']},\n     {doc}}},"
+        )
+    return "\n".join(rows)
 
 
 def _bridge_refusal_c(gen: dict) -> str:
@@ -1044,12 +1178,7 @@ static PyObject *
 }}
 
 static PyMethodDef {tname}_methods[] = {{
-    {{"steps", (PyCFunction){tname}_steps, METH_VARARGS,
-     "steps(n) -> complex64[n] — generate n samples standalone."}},
-    {{"step", (PyCFunction){tname}_step, METH_NOARGS,
-     "step() -> complex — generate one sample standalone."}},
-    {{"reset", (PyCFunction){tname}_reset, METH_NOARGS,
-     "reset() -> None — rewind the generator to sample 0."}},
+{_source_gen_method_rows(tname, gen)}
     {{NULL, NULL, 0, NULL}}
 }};
 """)
@@ -3276,15 +3405,20 @@ def render_pyi(cfg: dict, module: str) -> str:
     # and so did `synth.frq`.
     lines += [f"    {f['name']}: {_pyi_field_type(f)}" for f in src_fields]
     lines.append("    fs: float")
-    if _source_generates(cfg, module):
-        lines += [
-            "    def steps(self, n: int) -> NDArray[np.complex64]:",
-            '        """Generate *n* complex samples."""',
-            "    def step(self) -> complex:",
-            '        """Generate one complex sample."""',
-            "    def reset(self) -> None:",
-            '        """Reset to initial state."""',
-        ]
+    _gen = _source_generates(cfg, module)
+    if _gen:
+        # gh-1356: the same declaration the runtime rows render from.
+        for m in _source_gen_members(_gen):
+            args = "".join(f", {n}: {a}" for n, a in m["params"])
+            lines.append(f"    def {m['name']}(self{args}) -> {m['ret']}:")
+            lines += render_numpy_doc(
+                m["block"],
+                m["name"],
+                m["params"],
+                m["ret"],
+                indent=8,
+                raises=m["raises"],
+            )
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
         pytype = "float" if c["type"] in ("double", "float") else "int"

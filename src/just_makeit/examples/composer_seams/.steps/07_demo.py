@@ -44,6 +44,10 @@ except ValueError as exc:
     print(f"Clip(gain=-1.0).steps(1) -> ValueError: {exc}")
     assert str(exc) == "a clip's gain must be >= 0"
 
+# ...and help() says so up front: the Raises section names the ValueError
+# and where its message comes from (gh-1356).
+assert "the message is its reason" in " ".join(Clip.steps.__doc__.split())
+
 # ── the composed object-of-objects ───────────────────────────────────────
 # Track sums its sources; Mix sequences tracks and runs the backing kernel.
 track = Track.sum(Clip(gain=2.0), Clip(gain=3.0), dur=4)
