@@ -289,8 +289,18 @@ NEW_LOOP = """\
 assert OLD_LOOP in text, "steps() loop not found"
 text = text.replace(OLD_LOOP, NEW_LOOP, 1)
 
-# eof getter stub (called by the Python property)
-EOF_IMPL = """
+# eof getter: `jm property` scaffolded a marked placeholder for it (step 3);
+# fill that in rather than writing a second definition beside it.
+OLD_EOF = """\
+/* <<IMPLEMENT: q15_to_cf32_get_eof>> */
+int32_t
+q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
+{
+    (void)state;
+    return 0; /* placeholder */
+}"""
+
+NEW_EOF = """\
 int32_t
 q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
 {
@@ -300,10 +310,10 @@ q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
     off_t end = lseek((int)state->fd, 0, SEEK_END);
     lseek((int)state->fd, cur, SEEK_SET);
     return cur == end ? 1 : 0;
-}
-"""
+}"""
 
-text += EOF_IMPL
+assert OLD_EOF in text, "eof placeholder not found — was it already patched?"
+text = text.replace(OLD_EOF, NEW_EOF, 1)
 core_c.write_text(text, encoding="utf-8")
 print(f"patched  {core_c.relative_to(root)}")
 ```
@@ -375,8 +385,10 @@ state->samples_written += (uint32_t)n;   /* in cf32_to_q15_steps() */
 state->samples_read    += (uint32_t)n;   /* in q15_to_cf32_steps()  */
 ```
 
-`eof` is a **computed** property.  The patch appends `q15_to_cf32_get_eof()`
-to `_core.c`; it uses `lseek` to compare the current and end file positions:
+`eof` is a **computed** property.  `jm property` left a marked placeholder for
+`q15_to_cf32_get_eof()` in `_core.c` (it returns 0, so the project built and
+imported before this step); the patch fills it in, using `lseek` to compare the
+current and end file positions:
 
 ```c
 off_t cur = lseek(state->fd, 0, SEEK_CUR);
