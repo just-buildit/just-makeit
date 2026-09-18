@@ -752,17 +752,77 @@ def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
 _DECL_RE = re.compile(r"^[A-Za-z_][^{}]*\([^{}]*\);$")
 
 
+def _function_bodies_blanked(text: str) -> str:
+    r"""*text* with every function body's contents replaced by spaces.
+
+    A body is a ``{`` whose last significant character before it is ``)``,
+    through its matching ``}`` -- found on `_docsync`'s comment/string mask, so
+    a brace in a comment or a string literal cannot open or close one.
+    Newlines survive, so line numbers and every line outside a body are
+    unchanged. Nested bodies (a block inside a body) go with their parent.
+
+    Examples
+    --------
+    >>> print(_function_bodies_blanked(
+    ...     "static inline int f(int x)\n{\n    g(x);\n}\nint h(void);\n"
+    ... ).replace(" ", "."))
+    static.inline.int.f(int.x)
+    {
+    .........
+    }
+    int.h(void);
+    <BLANKLINE>
+    """
+    from ._docsync import _code_mask, _match_brace
+
+    mask = _code_mask(text)
+    out = list(text)
+    i = 0
+    while True:
+        m = re.compile(r"\)\s*\{").search(mask, i)
+        if not m:
+            break
+        open_idx = m.end() - 1
+        close_idx = _match_brace(mask, open_idx)
+        if close_idx < 0:
+            break
+        for k in range(open_idx + 1, close_idx):
+            if out[k] != "\n":
+                out[k] = " "
+        i = close_idx + 1
+    return "".join(out)
+
+
 def _core_h_decl_lines(text: str) -> "list[str]":
-    """Extract single-line C function prototypes from a rendered header.
+    r"""Extract single-line C function prototypes from a rendered header.
 
     A prototype contains ``(`` and ends in ``);`` on one line; struct fields
     (no ``(``), the closing ``} <comp>_state_t;``, and inline definitions
     (which carry ``{``) are excluded.  Used by ``jm apply`` to inject any
     declaration the manifest implies that the user's header is missing —
-    additively, never re-rendering the sacred struct/``step()``."""
+    additively, never re-rendering the sacred struct/``step()``.
+
+    gh-1362: only lines OUTSIDE a function body are considered. A statement
+    such as ``free(state);`` also contains ``(`` and ends in ``);``, and a
+    header-only component's render (gh-1311) is full of ``static inline``
+    bodies -- so its statements came back as "declarations". In an untouched
+    header each already appeared in the real file, inside its body, so nothing
+    was injected; the moment an author moved a body out of the header, as a
+    macro family does (gh-1310), `apply` injected its statements at file scope
+    and the header stopped compiling.
+
+    Examples
+    --------
+    >>> _core_h_decl_lines(
+    ...     "void q_destroy(q_state_t *state);\n"
+    ...     "static inline void\nq_destroy2(q_state_t *state)\n{\n"
+    ...     "    free(state);\n}\n"
+    ... )
+    ['void q_destroy(q_state_t *state);']
+    """
     return [
         line
-        for raw in text.splitlines()
+        for raw in _function_bodies_blanked(text).splitlines()
         if _DECL_RE.match(line := raw.strip())
     ]
 
