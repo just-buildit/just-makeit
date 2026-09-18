@@ -204,10 +204,11 @@ def test_the_create_only_set_is_exactly_what_is_classified(tmp_path, name):
         assert rule is not None, (
             f"{rel.as_posix()} has no rule in _createonly.RULES — classify it "
             "JM (jm's content, so it can be behind), AUTHOR (the author's, so "
-            "it cannot), PARTIAL (apply splices managed blocks into it) or "
-            "RECONCILED (apply rewrites it)."
+            "it cannot), PARTIAL (apply splices managed blocks into it), "
+            "RECONCILED (apply rewrites it) or DERIVED (apply rewrites it from "
+            "the tree's own files)."
         )
-        if rule.kind != _createonly.RECONCILED:
+        if rule.kind not in _createonly.REWRITTEN:
             declared.add(rel.as_posix())
 
     # The issue's measurement: create-only is most of the tree, not a handful

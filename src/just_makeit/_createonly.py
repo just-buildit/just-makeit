@@ -41,7 +41,7 @@ The classification is a declared judgement — it is about intent, so it must be
 :mod:`tests.test_gh949_outdated`:
 
 - the measured create-only set must be *exactly* the paths classified anything
-  other than :data:`RECONCILED`. Equality both ways, so it fails on a new
+  other than :data:`REWRITTEN` (:data:`RECONCILED` or :data:`DERIVED`). Equality both ways, so it fails on a new
   unclassified file **and** on a file quietly ceasing to be reconciled — which
   is how coverage disappears without anyone noticing;
 - a pristine project must report nothing outdated, so a wrong :data:`JM` turns
@@ -80,7 +80,20 @@ RECONCILED = "reconciled"
 drift in it. Present so the derivation gate can assert this file is *absent*
 from the create-only set, which is what proves the set was measured."""
 
-KINDS = (JM, AUTHOR, PARTIAL, RECONCILED)
+DERIVED = "derived"
+"""Not create-only either: `apply` rewrites it, and `status`'s copy/diff sees
+drift in it exactly as for :data:`RECONCILED`. The difference is its INPUTS:
+it is computed from files in the tree that are the author's -- a sacred
+header, a partially-owned binding fragment -- which legitimately differ from a
+from-scratch build. So it must follow the tree, not a fresh render, and an
+oracle comparing it against a rebuild from the manifest alone (gh-1181) would
+be asserting the sacred/glue contract away. Its own oracle is whatever it
+exists to feed: for gh-1361's link table, the linker."""
+
+KINDS = (JM, AUTHOR, PARTIAL, RECONCILED, DERIVED)
+
+#: The kinds `apply` rewrites wholesale -- everything that is NOT create-only.
+REWRITTEN = (RECONCILED, DERIVED)
 
 
 class Rule(NamedTuple):
@@ -230,8 +243,9 @@ RULES: tuple[Rule, ...] = (
     Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
     Rule(
         "native/tests/test_*_symbols.c",
-        RECONCILED,
-        "the link-check table `apply` derives from the binding (gh-1361).",
+        DERIVED,
+        "the link-check table `apply` derives from the binding and header as"
+        " they stand in the tree -- which is what compiles (gh-1361).",
     ),
     Rule(
         "native/src/app/*",
