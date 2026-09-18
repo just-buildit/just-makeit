@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` no longer strips a vendored source from a standalone object's
+    `_core` library** (gh-1301). A module object's `CMakeLists.txt` had kept
+    three kinds of hand edit since gh-275 and gh-271: an extra source in
+    `add_library(<comp>_core OBJECT …)`, a `set_source_files_properties`,
+    and an `if(VAR) … endif()` block. A standalone object's went through a
+    blind overwrite, so `apply` dropped all three, and a dropped vendored
+    source surfaced as a link error one command later. Both now share one
+    reconcile.
+
+    The hand-owned check now counts those statements against jm's own render
+    instead of testing for their presence: the standalone template emits a
+    POST_BUILD `add_custom_command` itself, so the old test would have
+    called every plain `jm object` hand-owned and frozen its glue.
+    `tests/test_gh1301_standalone_cmake_riders.py` walks every edit on both
+    paths, and a manifest change must still reach a plain file.
+
+    Not covered: a free-standing statement such as
+    `target_compile_definitions(<comp>_core …)` is still dropped on BOTH
+    paths — gh-1351.
+
 ## [0.76.5] — 2026-09-17
 
 ### Fixed
