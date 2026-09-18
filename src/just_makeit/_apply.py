@@ -3089,6 +3089,15 @@ def run(
                 indent="  ",
             )
 
+    # gh-1361: each component's link-check table, from the binding and header
+    # as they now stand. From the real tree, so `status` -- which replays this
+    # on a copy -- computes the same bytes.
+    from . import _linkcheck
+
+    for obj in C.components(cfg):
+        if _linkcheck.write(root, cfg, obj):
+            updated.append(_linkcheck.symbols_file(root, obj))
+
     print()
     total = (
         len(created)

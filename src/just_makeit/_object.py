@@ -2361,6 +2361,12 @@ def _regenerate_module_now(
         S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi_path),
         "update",
     )
+    # gh-1361: every member's link-check table, from the fragments just
+    # written.
+    from . import _linkcheck
+
+    for _obj in C.module_objects(cfg, module):
+        _linkcheck.write(root, cfg, _obj)
 
 
 def run(

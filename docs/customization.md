@@ -12,16 +12,17 @@ the manifest on every mutating command (`method`, `property`, `function`,
 `apply`), while sacred files — your algorithm — are never spliced or
 re-rendered once they exist.
 
-| File                                 | Class      | Notes                                                                        |
-| ------------------------------------ | ---------- | ---------------------------------------------------------------------------- |
-| `native/src/<obj>/<obj>_core.c`      | **sacred** | implement `step()` / `steps()` / lifecycle here; never spliced, only rebuilt |
-| `native/inc/<obj>/<obj>_core.h`      | **mixed**  | the state struct + inline `step()` are sacred; method/property decls refresh |
-| `native/src/<obj>/<obj>_ext.c`       | **glue**   | Python binding — regenerated, don't edit                                     |
-| `native/src/<module>/<module>_ext.c` | **glue**   | module binding — fully rewritten on each `object --module`                   |
-| `native/src/<obj>/CMakeLists.txt`    | **glue**   | OBJECT library + test + bench targets                                        |
-| `native/tests/test_<obj>_core.c`     | **yours**  | add assertions here; not overwritten                                         |
-| `src/<pkg>/<obj>.pyi`                | **glue**   | type stub — matches generated binding                                        |
-| `src/<pkg>/tests/test_<obj>.py`      | **yours**  | add pytest cases here; not overwritten                                       |
+| File                                 | Class      | Notes                                                                                                                                  |
+| ------------------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `native/src/<obj>/<obj>_core.c`      | **sacred** | implement `step()` / `steps()` / lifecycle here; never spliced, only rebuilt                                                           |
+| `native/inc/<obj>/<obj>_core.h`      | **mixed**  | the state struct + inline `step()` are sacred; method/property decls refresh                                                           |
+| `native/src/<obj>/<obj>_ext.c`       | **glue**   | Python binding — regenerated, don't edit                                                                                               |
+| `native/src/<module>/<module>_ext.c` | **glue**   | module binding — fully rewritten on each `object --module`                                                                             |
+| `native/src/<obj>/CMakeLists.txt`    | **glue**   | OBJECT library + test + bench targets                                                                                                  |
+| `native/tests/test_<obj>_core.c`     | **yours**  | add assertions here; not overwritten                                                                                                   |
+| `native/tests/test_<obj>_symbols.c`  | **glue**   | the address of every function the binding calls, linked into the C test so one declared and never defined fails at link time (gh-1361) |
+| `src/<pkg>/<obj>.pyi`                | **glue**   | type stub — matches generated binding                                                                                                  |
+| `src/<pkg>/tests/test_<obj>.py`      | **yours**  | add pytest cases here; not overwritten                                                                                                 |
 
 **Rule of thumb:** `_ext.c`, `.pyi`, and `CMakeLists.txt` are glue (owned by
 the generator). `_core.c` and the test files are yours. In `_core.h` the

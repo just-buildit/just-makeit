@@ -1543,6 +1543,12 @@ def run(
         root / "native" / "tests" / f"test_{comp}_core.c",
         R.render_component_test_c(ctx),
     )
+    # gh-1361: the link-check table the C test build names. Written here so
+    # the build files never name a source that does not exist; the binding
+    # writers refresh it once the calls are known.
+    from . import _linkcheck
+
+    _linkcheck.write(root, cfg, comp)
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.

@@ -202,16 +202,18 @@ class TestApplyMaintainsTheHeader:
 # The two module `<mod>_core.c` files below are still here and are not an
 # inconsistency: a module's functions get their own `<fn>.c`, materialised by
 # `apply`, so they never had gh-1294's gap.
+# gh-1361: an object component's sacred `<comp>_core.h` left this set on
+# purpose. Its link-check table (`native/tests/test_<comp>_symbols.c`) is
+# derived from the header, so a header edit that changes which called
+# functions it declares makes `apply` rewrite the table -- and `status`
+# rightly reports what apply would change. `other`/`own` carry no table.
 YOURS = {
     "README.md",
     "benchmarks/history/.gitkeep",
     "docs/api.md",
     "docs/index.md",
-    "native/inc/flag/flag_core.h",
     "native/inc/other/other_core.h",
     "native/inc/own/own_core.h",
-    "native/inc/solo/solo_core.h",
-    "native/inc/user/user_core.h",
     "native/src/other/other_core.c",
     "native/src/own/own_core.c",
     "native/src/pgdemo_lib.c",

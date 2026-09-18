@@ -425,6 +425,10 @@ def regenerate_standalone(
             encoding="utf-8",
         )
         print(f"  update  {pyi_path}")
+    # gh-1361: the link-check table follows the binding it was derived from.
+    from . import _linkcheck
+
+    _linkcheck.write(root, cfg, object_name)
 
 
 def regenerate(
