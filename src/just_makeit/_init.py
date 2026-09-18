@@ -1474,7 +1474,7 @@ def run(
     if build == "cmake":
         _write(
             root / "native" / "src" / comp / "CMakeLists.txt",
-            r(R.CMAKE_LISTS_COMPONENT),
+            R.with_extra_cmake(r(R.CMAKE_LISTS_COMPONENT), comp),
         )
 
     # C test

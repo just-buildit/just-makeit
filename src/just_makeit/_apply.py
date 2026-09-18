@@ -1335,6 +1335,15 @@ def _overwrite_if_changed(
             pass
     if real.read_bytes() == new_bytes:
         return False
+    if real.name == "CMakeLists.txt" and real.parent.parent.name == "src":
+        try:
+            _warn_dropped_cmake(
+                real,
+                real.read_text(encoding="utf-8"),
+                new_bytes.decode("utf-8"),
+            )
+        except UnicodeDecodeError:
+            pass
     real.write_bytes(new_bytes)
     return True
 
@@ -1420,6 +1429,60 @@ def _is_hand_owned_object_cmake(
     )
 
 
+#: A CMake command at the start of a line: `name(`.
+_CMAKE_CMD_RE = re.compile(r"^[ \t]*([A-Za-z_]\w*)[ \t]*\(", re.M)
+
+
+def dropped_cmake_commands(original: str, rendered: str) -> "list[str]":
+    """Commands *original* uses that jm's *rendered* replacement never does.
+
+    gh-1351, the silent half. When apply re-renders a generated CMakeLists, a
+    statement the author added is gone and nothing said so. This names the
+    ones it can be sure of: a command whose NAME appears nowhere in jm's own
+    render of the file -- ``target_compile_definitions`` in a file jm never
+    writes one into is the author's by construction. A changed
+    ``target_link_libraries`` is not reported, because jm writes those itself
+    and a manifest edit legitimately changes them.
+
+    Comments and string contents are masked first, so a command named in
+    jm's own prose -- or the author's -- is not mistaken for a call.
+
+    Examples
+    --------
+    >>> dropped_cmake_commands(
+    ...     "add_library(o_core OBJECT o_core.c)\\n"
+    ...     "target_compile_definitions(o_core PRIVATE X=1)\\n",
+    ...     "add_library(o_core OBJECT o_core.c)\\n",
+    ... )
+    ['target_compile_definitions']
+    """
+    from ._docsync import _code_mask
+
+    def names(text: str) -> "list[str]":
+        return _CMAKE_CMD_RE.findall(_code_mask(text.replace("#", "//")))
+
+    have = {n.lower() for n in names(rendered)}
+    out: list[str] = []
+    for n in names(original):
+        if n.lower() not in have and n not in out:
+            out.append(n)
+    return out
+
+
+def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
+    """Say which of the author's CMake statements apply is about to drop."""
+    dropped = dropped_cmake_commands(original, rendered)
+    if not dropped:
+        return
+    d = real.parent.name
+    _report.warn(
+        f"native/src/{d}/CMakeLists.txt is regenerated, and it carries "
+        f"{', '.join(f'{n}()' for n in dropped)} that jm does not write -- "
+        f"`jm apply` drops it. Move it into native/src/{d}/{d}_extra.cmake, "
+        "which the generated file includes and jm never touches (gh-1351)."
+    )
+
+
 def _reconcile_object_core_cmake(
     real: Path, temp: Path, comp: str, include_dirs: "list[str]"
 ) -> bool:
@@ -1485,6 +1548,7 @@ def _reconcile_object_core_cmake(
             new = new.rstrip("\n") + "\n\n" + block + "\n"
     if new == original:
         return False
+    _warn_dropped_cmake(real, original, new)
     real.write_text(new, encoding="utf-8")
     return True
 

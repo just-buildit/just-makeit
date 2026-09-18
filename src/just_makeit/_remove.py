@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from ._extrahook import HOOK_SUFFIXES as _HOOK_SUFFIXES
+from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _render as R
 from . import _stubs as S
@@ -125,8 +125,8 @@ def _rm_tree_keeping_hooks(path: Path) -> "list[Path]":
 def _rm(path: Path) -> None:
     """Delete a file or directory tree if it exists, logging what was removed.
 
-    **A hand-written hook is never deleted** (gh-1216). ``*_extra.c`` and
-    ``*_prologue.c`` are the files jm documents as "jm never creates or
+    **A hand-written hook is never deleted** (gh-1216). ``*_extra.c``,
+    ``*_prologue.c`` and ``*_extra.cmake`` (gh-1351) are the files jm documents as "jm never creates or
     modifies" — the escape hatch for a hand-written CPython type or a property
     ``value_fn`` returning ``PyObject *`` (gh-543), i.e. exactly the code that
     cannot be reproduced from the manifest. Removing the component directory

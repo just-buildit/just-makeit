@@ -903,6 +903,49 @@ def fn_c_inline_stub(
     )
 
 
+def with_extra_cmake(text: str, dirname: str) -> str:
+    r"""*text* -- a ``native/src/<dirname>/CMakeLists.txt`` -- with its hook.
+
+    gh-1351. A component's or module's own CMakeLists is glue: ``jm apply``
+    re-renders it, so a free-standing rule an author adds there --
+    ``target_compile_definitions(<comp>_core ...)``, a compile option, a
+    ``find_package`` -- is dropped by the next apply. gh-275 / gh-271 / gh-1301
+    keep three recognised shapes in place; the set of CMake statements is
+    open-ended, and every keyword added to that list freezes the file instead
+    of merging it.
+
+    So the answer is the one jm gives C: a file jm includes and never writes.
+    Every CMakeLists jm renders under ``native/src/<dirname>/`` ends by
+    including ``<dirname>_extra.cmake`` beside it. ``OPTIONAL`` makes the line
+    inert until the author creates the file, so there is nothing to detect and
+    no manifest key to set -- whether a hook exists is a fact about the
+    directory (gh-1202's lesson), and CMake is the thing that asks.
+
+    Named for the DIRECTORY, not the object: a collocated module object shares
+    its module's CMakeLists, so they share one hook and one include.
+
+    Examples
+    --------
+    >>> print(with_extra_cmake("add_library(o_core OBJECT o_core.c)\n", "o"))
+    add_library(o_core OBJECT o_core.c)
+    <BLANKLINE>
+    # Your own CMake for this directory goes in o_extra.cmake beside this
+    # file: jm includes it and never writes it (gh-1351). This file is
+    # regenerated.
+    include(${CMAKE_CURRENT_LIST_DIR}/o_extra.cmake OPTIONAL)
+    <BLANKLINE>
+    """
+    return (
+        text.rstrip("\n")
+        + "\n\n"
+        + f"# Your own CMake for this directory goes in {dirname}_extra.cmake"
+        " beside this\n"
+        "# file: jm includes it and never writes it (gh-1351). This file is\n"
+        "# regenerated.\n"
+        f"include(${{CMAKE_CURRENT_LIST_DIR}}/{dirname}_extra.cmake OPTIONAL)\n"
+    )
+
+
 def fn_c_stub(
     fn_name: str,
     params: list[tuple],

@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from . import _render as R
 from . import _procglobal
 from . import _enumc
 from . import _keys
@@ -3100,7 +3101,8 @@ def render_cmake(cfg: dict, module: str) -> str:
     inc = " ${CMAKE_SOURCE_DIR}/native/inc"
     if gen_json and jtbl.get("include_dir"):
         inc += f"\n    {jtbl['include_dir']}"
-    return f"""if(BUILD_PYTHON)
+    return R.with_extra_cmake(
+        f"""if(BUILD_PYTHON)
 
 # {cname} — composer extension for `{C.capsule_backing(cfg, module)}` (gh-287).
 # The OO types live in the .so; kernels are in the backing _core.c.
@@ -3120,7 +3122,9 @@ add_custom_command(TARGET {leaf} POST_BUILD
     COMMENT "Copy {leaf} extension module")
 
 endif()
-{_cli_cmake_block(cfg, module, link_cores, extra)}"""
+{_cli_cmake_block(cfg, module, link_cores, extra)}""",
+        cname,
+    )
 
 
 def _cli_cmake_block(

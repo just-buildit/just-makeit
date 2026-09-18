@@ -39,6 +39,14 @@ from pathlib import Path
 #: loss rather than stale output jm would fix on its own.
 HOOK_SUFFIXES = ("_extra.c", "_prologue.c")
 
+#: Every hand-written file jm reaches into a directory it regenerates, and so
+#: must never delete: the C hooks above, plus the CMake hook every generated
+#: ``native/src/<dir>/CMakeLists.txt`` includes (gh-1351). Wider than
+#: `HOOK_SUFFIXES` on purpose -- the detector below asks whether a *C* hook is
+#: ``#include``-d, a question that means nothing for a CMake file, which the
+#: generated CMakeLists reaches unconditionally with ``include(... OPTIONAL)``.
+KEPT_SUFFIXES = HOOK_SUFFIXES + ("_extra.cmake",)
+
 
 def _includes(text: str, name: str) -> bool:
     """Does *text* ``#include`` the file *name*?

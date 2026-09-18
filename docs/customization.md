@@ -59,6 +59,23 @@ them.
 | `<module>_ext_<obj>_extra.c` | after that object's fragment | a hand-owned binding for one object             |
 | `<module>_ext_extra.c`       | after all fragments          | a hand-written CPython type (see `extra_types`) |
 
+### Your own CMake: `<dir>_extra.cmake`
+
+Every `native/src/<dir>/CMakeLists.txt` jm writes is glue too, and ends by
+including one file beside it that jm never creates, modifies or deletes:
+
+```cmake
+include(${CMAKE_CURRENT_LIST_DIR}/<dir>_extra.cmake OPTIONAL)
+```
+
+Put anything the manifest cannot express there — a
+`target_compile_definitions`, a compile option, a `find_package` — rather than
+in the generated file, where the next `jm apply` would drop it (gh-1351).
+`OPTIONAL` makes the line do nothing until you create the file. It is named for
+the directory, so a module object that shares its module's directory shares its
+hook. `jm regenerate` and `jm remove` keep it, and an apply that is about to
+drop a statement jm itself never writes names it and points here.
+
 The prologue exists because the other two cannot serve the shared case: a
 helper included *after* its callers is not available to them, so two objects
 needing the same hand-written function had nowhere to put it that both
