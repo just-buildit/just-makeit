@@ -548,6 +548,10 @@ def run(root: Path) -> None:
     cfg.setdefault("module", {}).setdefault("dsp_fn", {})["no_generate"] = (
         "true"
     )
+    # gh-1313: an opt-out says why, or `jm status --check` fails.
+    cfg["module"]["dsp_fn"]["no_generate_reason"] = (
+        "demonstrates a hand-written sibling re-exported into dsp"
+    )
     cfg["module"]["dsp"]["reexports"] = {"dsp_fn": ["db10"]}
     if doppler_prefix:
         cfg["project"]["find_packages"] = ["Doppler"]

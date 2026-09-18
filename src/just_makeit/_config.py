@@ -1786,6 +1786,53 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
     return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
+def no_generate_findings(cfg: dict) -> "list[tuple[str, str]]":
+    """``(module, problem)`` for every opt-out that does not say why (gh-1313).
+
+    ``no_generate`` records THAT a module is hand-written and nothing about
+    why, and the two reasons want opposite treatment: "jm cannot express this
+    shape" is a standing decision with an issue that would change it, "nobody
+    migrated it yet" is a TODO. Read cold they are identical, so the next
+    reader re-derives the argument from the C -- which is how doppler's ring
+    buffer came to be written up in gh-1299. It is this repo's carve-out rule
+    applied to a downstream manifest: a carve-out states its reason where it
+    is made.
+
+    *problem* is:
+
+    ``"unexplained"``
+        ``no_generate`` with no ``no_generate_reason``, or a blank one.
+    ``"stale"``
+        a ``no_generate_reason`` on a module that is no longer
+        ``no_generate``. A reason that outlives its opt-out reads as a claim
+        about the module that is no longer true.
+
+    Both gate ``jm status --check`` and neither is suppressible: each is
+    cleared by writing, or deleting, one line.
+
+    Examples
+    --------
+    >>> no_generate_findings({"module": {
+    ...     "ring": {"no_generate": "true"},
+    ...     "fft": {"no_generate": "true",
+    ...             "no_generate_reason": "vendored pocketfft"},
+    ...     "dsp": {"no_generate_reason": "left behind"},
+    ... }})
+    [('dsp', 'stale'), ('ring', 'unexplained')]
+    """
+    out = []
+    for mod, data in sorted((cfg.get("module") or {}).items()):
+        if not isinstance(data, dict):
+            continue
+        reason = str(data.get("no_generate_reason") or "").strip()
+        if is_no_generate_module(cfg, mod):
+            if not reason:
+                out.append((mod, "unexplained"))
+        elif "no_generate_reason" in data:
+            out.append((mod, "stale"))
+    return out
+
+
 def module_kind(cfg: dict, module: str) -> str | None:
     """Return the module's ``kind`` discriminant, if declared.
 

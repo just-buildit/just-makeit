@@ -49,6 +49,7 @@ _REPRESENTATIVE: dict[str, object] = {
     "extra_types": ["ring_t"],
     "doc": "A ring.",
     "no_generate": "true",
+    "no_generate_reason": "hand-written: a shape jm cannot express",
     "reexports": {"sub": ["Name"]},
     "capsule_name": "p.ringcap",
     "functions": [{"name": "f", "return_type": "int"}],

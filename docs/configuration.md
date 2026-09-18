@@ -296,10 +296,17 @@ opaque capsule):
 ```toml
 [module.io]
 no_generate = "true"
+no_generate_reason = "free-function API over an opaque capsule; a handle module (gh-306) would replace it"
 ```
 
 `jm apply` emits the `add_subdirectory(native/src/io)` and otherwise leaves the
 module untouched — `io_ext.c`, `io.pyi`, and its `CMakeLists.txt` are yours.
+
+`no_generate_reason` is required: `jm status --check` fails on an opt-out that
+does not say why (gh-1313). Say which kind it is — a shape jm cannot express
+(name the issue that would change that), or a module nobody has migrated yet.
+Those want opposite treatment and look identical without a reason. A reason
+left on a module that no longer opts out fails the check too; delete it.
 Pair with [`reexports`](#modulename-keys) on a sibling module to fold its symbols
 into a generated package `__init__.py`.
 
@@ -949,6 +956,7 @@ instead of a named function body; it composes with the slot prefixes
 | `extra_include_dirs`                  | `jm module --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |
 | `extra_types`                         | `jm module --extra-types NAME` (repeatable)       | ✅ (0.13.23) |
 | `no_generate = "true"`                | (TOML only)                                       | 🟡           |
+| `no_generate_reason = "..."`          | (TOML only)                                       | 🟡           |
 | `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
 | `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
 
@@ -1008,8 +1016,11 @@ naming `uint8_t[]` for a byte buffer and this key for text.
 
 ### Counts
 
-- **✅ on main**: ~66 keys (every common path; Phase 2 stack shipped in 0.13.23)
-- **🟡 CLI flag pending**: 11 keys — rare modifiers (`opaque`, `no_ctor`, `controllable`, `init_post_parse`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
+Read the column above rather than a number here: this section used to state
+counts, and they had drifted to 11 🟡 and ~66 ✅ while the table said 16 and 91.
+
+- **✅ on main**: every common path (Phase 2 stack shipped in 0.13.23)
+- **🟡 CLI flag pending**: rare modifiers (`opaque`, `no_ctor`, `controllable`, `init_post_parse`, `default_raw`/`real_type` init-param details, `no_generate` module, `max_results` / `max_results_param`). These are foot-guns to close: TOML is the persistence layer, not the user interface. Each will get a CLI flag in Phase 3.
 
 Phase 2 acceptance bar — "every TOML field has a 'Reachable via CLI' column ✓" — is met for the common path. The remaining 🟡 rows are tracked Phase 3 work, not by-design exceptions.
 
@@ -1333,6 +1344,7 @@ The nested tables are written by `just-makeit property|method|warning <obj> --vi
 | `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                   |
 | `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                      |
 | `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory` |
+| `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)          |
 
 ### `[[module.<name>.functions]]`
 
