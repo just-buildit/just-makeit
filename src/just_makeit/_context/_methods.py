@@ -1574,7 +1574,9 @@ def make_methods_ctx(
                 _ret_ann,
                 _brief or default_summary,
                 raises=_raises_doc,
-                param_defaults=_gluedoc.binding_param_docs(_count_kw),
+                param_defaults=_gluedoc.binding_param_docs(
+                    _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                ),
             )
 
         # gh-219 follow-up: a method's primary array input is sometimes
@@ -3552,7 +3554,9 @@ def make_methods_ctx(
                     indent=8,
                     skeleton_fallback=True,
                     raises=_raises_doc,
-                    param_defaults=_gluedoc.binding_param_docs(_count_kw),
+                    param_defaults=_gluedoc.binding_param_docs(
+                        _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                    ),
                 )
             )
             + "\n"

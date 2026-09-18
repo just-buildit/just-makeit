@@ -164,10 +164,19 @@ class TestTheOnePlaceThatAnswers:
         entry; a renamed count with a `"count"`-keyed map would silently lose
         its description, which is that rule's exception reappearing.
         """
-        assert set(_gluedoc.binding_param_docs()) == {"count", "out"}
-        assert set(_gluedoc.binding_param_docs("n")) == {"n", "out"}
+        assert set(_gluedoc.binding_param_docs(count=True, out=True)) == {
+            "count",
+            "out",
+        }
+        assert set(_gluedoc.binding_param_docs("n", count=True, out=True)) == {
+            "n",
+            "out",
+        }
         assert all(
-            v.strip() for v in _gluedoc.binding_param_docs("n").values()
+            v.strip()
+            for v in _gluedoc.binding_param_docs(
+                "n", count=True, out=True
+            ).values()
         )
 
 

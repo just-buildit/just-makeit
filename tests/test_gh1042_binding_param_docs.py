@@ -36,6 +36,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -253,7 +255,7 @@ class TestPrecedence:
                 "go",
                 [("count", "int"), ("out", "ndarray | None")],
                 "ndarray",
-                param_defaults=binding_param_docs(),
+                param_defaults=binding_param_docs(count=True, out=True),
             )
         )
         assert "Authored." in out
@@ -268,11 +270,111 @@ class TestPrecedence:
                 [("x", "ndarray")],
                 "ndarray",
                 skeleton_fallback=True,
-                param_defaults=binding_param_docs(),
+                param_defaults=binding_param_docs(count=True, out=True),
             )
         )
         assert "Input." in out
 
     def test_binding_param_docs_covers_both_names(self):
-        assert set(binding_param_docs()) == {"count", "out"}
-        assert all(v.strip() for v in binding_param_docs().values())
+        assert set(binding_param_docs(count=True, out=True)) == {
+            "count",
+            "out",
+        }
+        assert all(
+            v.strip()
+            for v in binding_param_docs(count=True, out=True).values()
+        )
+
+
+# ── gh-1350: jm's text is for jm's arguments ─────────────────────────────────
+
+
+def _named_project(tmp_path: Path, module: str | None) -> Path:
+    """Plain methods whose OWN parameters are called `count` and `out`.
+
+    Neither is `variable_output`, so jm synthesizes no binding argument on
+    either -- the names are the author's. Each gets an authored `@brief`
+    because the module-aggregated stub collapses an undocumented member to
+    one line (gh-1292), which would pass this check without rendering a
+    `Parameters` section at all.
+    """
+    root = tmp_path / "demo"
+    _quiet(new_run, "demo", root)
+    if module:
+        _quiet(module_run, root, module)
+    _quiet(
+        object_run,
+        root,
+        "w",
+        module,
+        state_vars=[("n", "int", "0")],
+        arg_type="float",
+        return_type="float",
+    )
+    for name, param in (("tune", "count"), ("shift", "out")):
+        _quiet(
+            method_run,
+            root,
+            "w",
+            name,
+            module,
+            "void",
+            "void",
+            False,
+            [],
+            params=[(param, "int", "")],
+        )
+    hdr = next((root / "native" / "inc").rglob("w_core.h"))
+    t = hdr.read_text(encoding="utf-8")
+    for name in ("tune", "shift"):
+        assert f" * @brief {name}." in t, "the scaffold no longer seeds @brief"
+        t = t.replace(f" * @brief {name}.", f" * @brief Do the {name}.", 1)
+    hdr.write_text(t, encoding="utf-8")
+    _quiet(apply_run, root)
+    return root
+
+
+def _runtime_anywhere(root: Path, name: str) -> str:
+    """The runtime doc of *name*, from whichever `_ext` file binds it."""
+    hits = [
+        p
+        for p in (root / "native" / "src").rglob("*_ext*.c")
+        if f'{{"{name}",' in p.read_text(encoding="utf-8")
+    ]
+    assert len(hits) == 1, hits
+    return _runtime(root, hits[0].relative_to(root).as_posix(), name)
+
+
+_FACES = {
+    "standalone_stub": (None, lambda r, n: _stub(r, "src/demo/w.pyi", n)),
+    "standalone_runtime": (None, _runtime_anywhere),
+    "module_stub": ("m", lambda r, n: _stub(r, "src/demo/m/m.pyi", n)),
+    "module_runtime": ("m", _runtime_anywhere),
+}
+
+
+class TestAnAuthorsNameIsNotJms:
+    """gh-1350: a parameter merely NAMED `count`/`out` is the author's.
+
+    The default map was keyed by name and handed to every method, so a plain
+    `int` called `count` was documented as a generator length with an `out=`
+    buffer and a `_max_out()` sibling -- neither of which that method has --
+    on all four faces at once, so no parity check could see it.
+    """
+
+    @pytest.mark.parametrize("face", sorted(_FACES))
+    @pytest.mark.parametrize(
+        "method, param, jms",
+        [
+            ("tune", "count", "How many output samples to ask for"),
+            ("shift", "out", "Optional pre-allocated output buffer"),
+        ],
+    )
+    def test_the_param_is_not_given_jms_text(
+        self, tmp_path, face, method, param, jms
+    ):
+        module, read = _FACES[face]
+        doc = read(_named_project(tmp_path, module), method)
+        # The entry exists -- an absent section would pass the next line.
+        assert f"{param} : int" in doc, doc
+        assert jms not in doc, doc
