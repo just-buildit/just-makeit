@@ -77,7 +77,10 @@ class TestRenderCMake:
         assert "ddc_core" in s and "fir_core" in s
         assert "\n    m\n" in s  # extra_link_libs
         assert "Python3::NumPy)" in s
-        assert "if(BUILD_PYTHON)" in s and s.rstrip().endswith("endif()")
+        assert "if(BUILD_PYTHON)" in s and "\nendif()\n" in s
+        # gh-1351: the author's hook follows the guarded block, so their own
+        # rules apply whether or not the Python extension is being built.
+        assert s.index("\nendif()\n") < s.index("ddc_fn_extra.cmake OPTIONAL")
 
     def test_default_output_dir_is_module_pypath(self):
         cfg = {
