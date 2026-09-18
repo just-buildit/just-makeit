@@ -16,6 +16,7 @@ which the user implements however they like (read from state, compute, etc.).
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -56,6 +57,106 @@ def plain_accessor_decls(
             f"({object_name}_state_t *state, {disp} val);"
         )
     return decls
+
+
+_PROTO_RE = re.compile(
+    r"^(?P<ret>.*?\S)\s*\b(?P<name>[A-Za-z_]\w*)\((?P<params>.*)\);$"
+)
+
+
+def accessor_stub(decl: str) -> str:
+    """A placeholder DEFINITION for the prototype *decl* jm just declared.
+
+    gh-1303. A property backed by plain C accessors had its prototypes
+    injected and its binding wired, and no body anywhere -- so `jm property o
+    level --type double` left a project that built (a shared object links with
+    undefined symbols) and then failed ``make test`` at import with
+    ``undefined symbol: o_get_level``. Every valid CLI sequence is meant to
+    produce a green project, and `jm method` already honours that by appending
+    a no-op stub; accessors were the member kind that did not.
+
+    The body is a no-op, marked the way every jm stub is so an author (and
+    `jm regenerate`) can tell it from theirs: parameters ``(void)``-ed, and a
+    zero of the return type -- the registered zero for a known scalar, ``NULL``
+    for a pointer, a compound literal otherwise.
+
+    Examples
+    --------
+    >>> print(accessor_stub("double o_get_level(const o_state_t *state);"))
+    /* <<IMPLEMENT: o_get_level>> */
+    double
+    o_get_level(const o_state_t *state)
+    {
+        (void)state;
+        return 0.0; /* placeholder */
+    }
+    <BLANKLINE>
+    >>> print(accessor_stub(
+    ...     "const char *o_tags_key(const o_state_t *state, size_t i);"
+    ... ).splitlines()[5])
+        return NULL; /* placeholder */
+    """
+    m = _PROTO_RE.match(decl.strip())
+    if not m:
+        raise ValueError(f"not a prototype jm emits: {decl!r}")
+    ret, name, params = m["ret"], m["name"], m["params"]
+    names = [
+        re.findall(r"[A-Za-z_]\w*", p)[-1]
+        for p in params.split(",")
+        if p.strip() and p.strip() != "void"
+    ]
+    body = ["    " + " ".join(f"(void){n};" for n in names)] if names else []
+    if ret != "void":
+        if ret.endswith("*"):
+            zero = "NULL"
+        elif ret in T._CTYPE_META:
+            zero = T._CTYPE_META[ret]["zero"]
+        else:
+            zero = f"({ret}){{0}}"
+        body.append(f"    return {zero}; /* placeholder */")
+    return (
+        f"/* <<IMPLEMENT: {name}>> */\n{ret}\n{name}({params})\n{{\n"
+        + "".join(line + "\n" for line in body)
+        + "}\n"
+    )
+
+
+def scaffold_accessor_bodies(
+    root: Path, object_name: str, decls: "list[str]"
+) -> None:
+    """Append a stub for each accessor in *decls* that nothing defines yet.
+
+    "Nothing" is asked the way gh-1294's splice asks it -- the component's
+    ``_core.c``, every other ``.c`` it owns and its sacred ``_core.h``
+    (`_apply.component_core_sources`, gh-1328) -- so an accessor already
+    written ``static inline`` in the header, or in a vendored source beside
+    the core, never gets a second definition.
+
+    A header-only component (gh-1311) gets its body ``static inline`` in the
+    header, through the same `_init.append_component_body` `jm method` uses.
+    The caller writes bodies BEFORE declarations for that reason: the
+    declaration pass skips a symbol the header already defines (gh-468), and
+    a non-static prototype ahead of a ``static inline`` definition does not
+    compile.
+    """
+    from ._apply import _defines, component_core_sources
+    from ._init import append_component_body
+
+    header_only = C.is_header_only(C.load(root), object_name)
+    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    if not header_only and not core_c.exists():
+        return
+    for decl in decls:
+        name = _PROTO_RE.match(decl.strip())["name"]
+        sources = [
+            core_c.read_text(encoding="utf-8") if core_c.exists() else "",
+            *component_core_sources(root, object_name),
+        ]
+        if any(_defines(src, name) for src in sources):
+            continue
+        append_component_body(
+            root, object_name, accessor_stub(decl), header_only=header_only
+        )
 
 
 def run(
@@ -363,6 +464,11 @@ def run(
                 decls.append(
                     f"{vdisp}{fns['value_fn']}({state_t}state, size_t i);"
                 )
+        # Bodies first: a header-only component's body is a `static inline`
+        # definition in the header, and the declaration pass below skips a
+        # symbol the header already defines (gh-468) -- the other order
+        # leaves a non-static prototype the definition cannot follow.
+        scaffold_accessor_bodies(root, object_name, decls)
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")
     elif field:
@@ -371,6 +477,7 @@ def run(
             print(f"  update  {core_h}")
     elif not buf_field and not expr and not capsule:
         decls = plain_accessor_decls(object_name, prop_name, ctype, writable)
+        scaffold_accessor_bodies(root, object_name, decls)  # first; see above
         if _inject_decls_into_core_h(core_h, object_name, decls):
             print(f"  update  {core_h}")
 

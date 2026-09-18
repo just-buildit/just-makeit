@@ -215,15 +215,9 @@ def shape_module_method(tmp):
 def shape_standalone_property_computed(tmp):
     d = _pkg(tmp)
     _q(new_run, "proj", d, ["osc"], [("gain", "double", "1.0")])
+    # gh-1303: jm scaffolds the accessor's placeholder body itself now, so
+    # the untouched scaffold links -- which is the point.
     _q(property_run, d, "osc", "ready", None, "bool", False)
-    # A computed property's accessor is the user's to implement (jm only
-    # declares it), so supply a trivial body or the .so won't link.
-    core = d / "native" / "src" / "osc" / "osc_core.c"
-    core.write_text(
-        core.read_text()
-        + "\nbool osc_get_ready(const osc_state_t *state)\n"
-        + "{ (void)state; return true; }\n"
-    )
     return d, d / "src" / "proj", "osc"
 
 

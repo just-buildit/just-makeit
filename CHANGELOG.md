@@ -35,6 +35,26 @@
 
 ### Fixed
 
+- **`jm property` scaffolds the accessor body it declares** (gh-1303). A
+    computed property's getter/setter, and a container's count/key/value, were
+    declared and wired into the binding with no definition anywhere. A shared
+    object links with undefined symbols, so `jm property o level --type   double` produced a project that built and then failed its own `make test`
+    at import (`undefined symbol: o_get_level`). `docs/commands/extend.md`
+    had always said a stub was appended, like `jm method`'s; now one is: a
+    marked no-op returning zero, `static inline` in the header for a
+    header-only component. An accessor already defined in the component's
+    sources or header is never given a second definition.
+
+    That also settles what gh-1303 asked for. It withdrew a "declared, never
+    defined" status gate because the gate fired on every accessor jm left
+    unwritten. jm no longer leaves one, so gh-1294's existing machinery
+    covers accessors with no new gate: `apply` splices a missing accessor
+    back, and `status --check` fails until it does. **Changed workflow:** fill
+    in the stub; appending a second definition after `jm property` is now a
+    redefinition, just as it is after `jm method`. On doppler: no change.
+    Deleting one real accessor there is scaffolded back, so that result is
+    not vacuous.
+
 - **`jm apply` no longer strips a vendored source from a standalone object's
     `_core` library** (gh-1301). A module object's `CMakeLists.txt` had kept
     three kinds of hand edit since gh-275 and gh-271: an extra source in
