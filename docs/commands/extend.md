@@ -471,8 +471,12 @@ just-makeit property reader keywords --type dict --value-type object
 
 Like `jm method`, a computed property is **additive and splice-free**: it
 injects a `get_<prop>()` declaration into `<obj>_core.h` and appends a fresh
-stub to `<obj>_core.c` (plus `set_<prop>()` if `--writable`) for you to
-implement, then regenerates the Python getter/setter glue in `_ext.c`. With
+stub to `<obj>_core.c` (plus `set_<prop>()` if `--writable`; a container
+gets its count, key and value accessors) for you to implement, then
+regenerates the Python getter/setter glue in `_ext.c`. The stub is a marked
+no-op returning zero, so the untouched project builds, imports and passes —
+replace its body rather than writing a second definition beside it. On a
+header-only component it goes `static inline` into the header instead. With
 `--field` no stub is generated — it injects one `TYPE prop_name;` member
 directly into the state struct and auto-implements the getter as
 `return state->prop_name`. Existing `_core.c` bodies are never re-rendered.

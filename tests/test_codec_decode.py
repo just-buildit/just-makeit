@@ -29,6 +29,7 @@ from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
+from _jm_stub import drop_jm_stubs  # noqa: E402
 
 _CODEC = {
     "discriminant": "char",
@@ -183,7 +184,11 @@ def test_build_and_decode(tmp_path):
     idx = ht.rfind("#endif")
     h.write_text(ht[:idx] + _STRUCT_AND_CURSOR + "\n" + ht[idx:])
     core = d / "native/src/gizmo/gizmo_core.c"
-    core.write_text(core.read_text() + _CURSOR_IMPL)
+    # gh-1303: replace jm's placeholder for the count accessor it declared.
+    core.write_text(
+        drop_jm_stubs(core.read_text(), "gizmo_kw_count", "gizmo_kw_tag")
+        + _CURSOR_IMPL
+    )
 
     build = d / "build"
     for cmd in (

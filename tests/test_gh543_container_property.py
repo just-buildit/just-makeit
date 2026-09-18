@@ -54,6 +54,7 @@ from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
 from just_makeit._script import _property_flags
+from _jm_stub import drop_jm_stubs  # noqa: E402
 
 
 def _skip_reason():
@@ -538,8 +539,19 @@ class TestBuildAndRun:
             value_type="const char *",
         )
         src = root / "native" / "src" / "rdr"
-        with (src / "rdr_core.c").open("a", encoding="utf-8") as fh:
-            fh.write(self.CORE_IMPL)
+        # gh-1303: replace jm's placeholders, as an author would.
+        core = src / "rdr_core.c"
+        core.write_text(
+            drop_jm_stubs(
+                core.read_text(encoding="utf-8"),
+                "rdr_num_keywords",
+                "rdr_keywords_key",
+                "rdr_num_stages",
+                "rdr_stages_value",
+            )
+            + self.CORE_IMPL,
+            encoding="utf-8",
+        )
         (src / "rdr_ext_extra.c").write_text(self.EXTRA_IMPL, encoding="utf-8")
         apply_run(root)
 
