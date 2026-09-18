@@ -50,6 +50,16 @@
 
 ### Fixed
 
+- **`apply` no longer injects a header-only component's statements into
+    its header as declarations** (gh-1362). The declaration extractor accepted
+    any line holding `(` and ending in `);`, which includes `free(state);`, and a
+    header-only render (gh-1311) is full of `static inline` bodies. Untouched,
+    each statement already sat in the real header inside its body, so nothing
+    was injected. Once an author moved the bodies out, as gh-1310's family
+    macro does, `apply` wrote `q_state_t *obj = calloc(...)` and
+    `free(state);` at file scope, the header stopped compiling, and `status   --check` still exited 0. Function bodies are now blanked (on `_docsync`'s
+    comment/string mask) before matching. On doppler: no change.
+
 - **`jm property` scaffolds the accessor body it declares** (gh-1303). A
     computed property's getter/setter, and a container's count/key/value, were
     declared and wired into the binding with no definition anywhere. A shared
