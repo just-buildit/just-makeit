@@ -22,13 +22,22 @@ from pathlib import Path
 
 ARROW = "→"  # not in cp1252 -- the character that crashed upgrade
 
+# The child imports jm from this checkout, as test_cli's do: CI runs the
+# suite from source, not an install, and pytest's path is not inherited.
+SRC = Path(__file__).parent.parent / "src"
+
 
 def _run_cp1252(code: str, cwd: Path) -> subprocess.CompletedProcess:
     """Run *code* in a child whose stdio default is cp1252, stdout piped."""
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         cwd=cwd,
-        env={**os.environ, "PYTHONIOENCODING": "cp1252", "NO_COLOR": "1"},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(SRC),
+            "PYTHONIOENCODING": "cp1252",
+            "NO_COLOR": "1",
+        },
         capture_output=True,
         timeout=300,
     )
