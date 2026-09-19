@@ -90,6 +90,28 @@
 
 ### Fixed
 
+- **A generated project configures for Windows (clang-cl) the way it
+    builds** (gh-1368). Three defaults in the root `CMakeLists.txt`:
+
+    - An unset `CMAKE_BUILD_TYPE` is now `Release` on every platform. For an
+        MSVC-like compiler CMake defaulted to Debug, which defines `_DEBUG`,
+        which makes `pyconfig.h` link `python3X_d.lib`, a library only a
+        debug Python ships. `make build` and `jm build` already passed
+        Release; a bare `cmake -B build` now agrees with them.
+    - Under `WIN32`: `_CRT_SECURE_NO_WARNINGS`, `_CRT_NONSTDC_NO_DEPRECATE`
+        and `_USE_MATH_DEFINES`, as doppler's CMake does.
+    - Under clang-cl: `/clang:-fcx-limited-range`, so `_Complex` multiply
+        and divide inline instead of calling `__mulsc3`, which nothing in an
+        MSVC link defines. Complex arithmetic on Windows therefore skips C99
+        Annex G's inf/NaN corner cases; Linux and macOS are unchanged.
+    - Under MSVC with `BUILD_PYTHON`: the release C runtime (`/MD`) in every
+        configuration, so a Debug build links against the ordinary
+        `python3X.lib`. Measured in Visual Studio 2026 with clang-cl: the
+        Debug preset failed on `python312_d.lib` without it, and linked and
+        passed with it. Debug keeps `/Od` and debug info. Project-wide,
+        because the cores share the extension's DLL and two CRTs there are
+        two heaps.
+
 - **The generated root `CMakeLists.txt` no longer fails on Windows before
     compiling anything** (gh-1368). The shared and static `lib<pkg>` targets
     shared one `OUTPUT_NAME`, and on Windows the shared library's import
