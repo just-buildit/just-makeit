@@ -373,6 +373,11 @@ Commands:
     --strict-examples           Fail on an authored @code line too wide for its
                                 generated stub (else reported as a count).
                                 [project] strict_examples is the durable form.
+    --docs                      List properties and record fields whose
+                                docstring is only their name, and where each
+                                would read its text from. Read-only and never
+                                fails: whether a member deserves a sentence is
+                                yours to decide (gh-1394).
   config [key value]            Show all config keys, or get/set one value.
   bench [comp …] [OPTIONS]      Build, run C + Python benchmarks; save a dated
                                 snapshot to benchmarks/history/.
@@ -1130,6 +1135,24 @@ def main() -> None:
         # gh-1117: opt-in, because on a real multi-module project the list is
         # long and almost entirely correct.
         _shared_cores = "--shared-cores" in _args
+        # gh-1394: a documentation report, not drift. Exits 0 whatever it
+        # finds -- a ratchet here would fail a project on the day it declares
+        # a property it has not documented yet, which is the normal order of
+        # work.
+        if "--docs" in _args:
+            from . import _config as _C
+            from . import _docgaps
+
+            _root = Path.cwd()
+            _cfg = _C.load(_root)
+            if not _cfg:
+                print(
+                    f"error: no {_C.FILENAME} found in {_root}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            print(_docgaps.report(_docgaps.gaps(_root, _cfg)))
+            return
         _i = 0
         while _i < len(_args):
             if _args[_i] == "--allow":

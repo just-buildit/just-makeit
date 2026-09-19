@@ -27,10 +27,11 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    method_doc,
     name_summary,
+    property_doc,
     class_import_line,
     max_out_is_state_only,
-    struct_member_doc,
     render_numpy_doc,
     render_runtime_doc,
     scaffold_doc_block,
@@ -1177,12 +1178,19 @@ def make_methods_ctx(
         # the function actually declared, so an `fn`-overridden method finds
         # its Doxygen block under `fn`. Same fallback shape `_handle.py`
         # already uses for its own `fn`-carrying methods.
+        # gh-1396: the one chain, shared with the `.pyi` writer and with
+        # `jm status --docs`. It also drops a scaffold block, which this face
+        # did not: `_load_doc_blocks` filters those on the way in, so the two
+        # faces agreed in practice and disagreed only for a block arriving
+        # another way -- where the stub's answer (gh-666: jm's own template
+        # is not documentation) is the right one.
         _block = (doc_blocks or {}).get(c_fn) or (doc_blocks or {}).get(
             f"{component}_{name}"
         )
-        _brief = m.get("doc") or (
-            _block.brief if (_block and _block.brief) else ""
-        )
+        _brief_text, _brief_is_stub = method_doc(component, m, doc_blocks)
+        # The faces below distinguish "documented" from "fell back to the
+        # name", so keep the empty-string spelling they were written against.
+        _brief = "" if _brief_is_stub else _brief_text
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
         if m.get("varargs"):
@@ -4455,15 +4463,9 @@ def make_properties_ctx(
         # place the documentation already exists: doppler had ~518 documented
         # struct fields against 369 properties documented the redundant way,
         # the same sentence maintained twice and drifting independently.
-        _pblk = (doc_blocks or {}).get(f"{component}_get_{pname}")
-        _pdoc = (
-            p.get("doc")
-            or (_pblk.brief if (_pblk and _pblk.brief) else "")
-            # gh-1300: this component's own state struct, never a
-            # same-named field in whatever else its header includes.
-            or struct_member_doc(doc_blocks, f"{component}_state_t", pname)
-            or name_summary(pname)
-        )
+        # gh-1394: the one chain, shared with `jm status --docs`, which
+        # reports whichever properties it answers with a name stub.
+        _pdoc = property_doc(component, p, doc_blocks)[0]
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
             f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"

@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm status --docs` names the members nothing documents** (gh-1394,
+    gh-1396). Every property, record field, method and module free function
+    whose docstring is only its name, and where
+    each would read its text from. doppler's 0.77.2 bump turned 39 property
+    docstrings into name stubs and the only way to find them was to diff
+    generated output; every one had no documentation of its own, because
+    gh-1300 stopped a field inheriting a same-named field's comment from
+    another struct. Read-only and never fails: whether an undocumented
+    member deserves a sentence is the author's call. The report and the
+    binding share one precedence chain (`_docstring.property_doc`), so the
+    report cannot claim a gap jm does not generate -- `property_doc`,
+    `method_doc` and `function_doc` are those chains, each now the only copy
+    of its precedence. Class and module docs are not walked yet (gh-1396).
+
 ### Fixed
 
 - **The release's Windows smoke no longer fails on its own plumbing**

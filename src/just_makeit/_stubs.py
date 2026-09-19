@@ -46,6 +46,7 @@ from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     class_import_line,
     merge_doc_blocks,
+    method_doc,
     name_summary,
     ctor_demo_label,
     STUB_TARGET_WIDTH,
@@ -1956,11 +1957,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if _blk is not None and is_scaffold_doc(_blk, m_name):
             _blk = None
         if m.get("varargs"):
-            _va_doc = (
-                m.get("doc")
-                or (_blk.brief if (_blk and _blk.brief) else "")
-                or name_summary(m_name)
-            )
+            # gh-1396: the one chain, shared with the binding and the report.
+            _va_doc = method_doc(obj, m, doc_blocks)[0]
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
