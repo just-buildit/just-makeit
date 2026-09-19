@@ -93,7 +93,7 @@
 - **Generated files have `\n` line endings on Windows too** (gh-1368).
     jm wrote every file with `Path.write_text`, which translates `\n` to
     CRLF on Windows, so one manifest produced different bytes per platform
-    and the generated `CMakeLists.txt` failed cmake-lint (`C0327 Wrong line   ending`). All 83 writes now go through `_textio.write_text`, which is
+    and the generated `CMakeLists.txt` failed cmake-lint's `C0327` line-ending check. All 83 writes now go through `_textio.write_text`, which is
     UTF-8 and LF everywhere, and a test refuses any other write in the
     package.
 
