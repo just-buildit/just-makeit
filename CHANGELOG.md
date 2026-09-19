@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.78.0] — 2026-09-19
+
 ### Added
 
 - **`jm status --docs` names the members nothing documents** (gh-1394,
