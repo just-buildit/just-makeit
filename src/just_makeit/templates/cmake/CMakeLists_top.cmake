@@ -1,4 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
+# gh-1368: an unset build type is Release. It has to be decided BEFORE
+# project(), which is where CMake fills in its own default -- and for an
+# MSVC-like compiler (clang-cl) that default is Debug, which defines _DEBUG,
+# which makes pyconfig.h link the debug interpreter's python3X_d.lib. That
+# library ships only with a debug Python, so a bare `cmake -B build` did not
+# link. (A multi-config generator ignores this; the runtime setting below is
+# what makes its Debug link.) `make build` and `jm build` already pass Release;
+# this makes a bare configure agree with them on every platform.
+if(NOT DEFINED CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE
+      Release
+      CACHE STRING "Build type: Release, Debug, RelWithDebInfo, MinSizeRel")
+endif()
 project(
   <<project_underscore>>
   VERSION <<version>>
@@ -18,7 +31,40 @@ if(ENABLE_SIMD)
   endif()
 endif()
 
+# gh-1368: the MSVC ABI, as clang-cl builds it (cl.exe has no _Complex).
+if(WIN32)
+  # The CRT deprecates portable C99 (fopen, strncpy, localtime -> the _s forms;
+  # strdup -> _strdup) on every use, burying the real diagnostics.
+  # _USE_MATH_DEFINES exposes M_PI, which <math.h> hides there by default.
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE
+                          _USE_MATH_DEFINES)
+endif()
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+  # Without a complex-range relaxation clang lowers `_Complex` multiply and
+  # divide to compiler-rt calls (__mulsc3, __muldc3, ...) for C99 Annex G's
+  # inf/NaN corner cases, and the MSVC link has nothing that defines them:
+  # `undefined symbol: __mulsc3` after every object compiles. This is the
+  # narrowest flag that inlines them; ENABLE_SIMD's /fp:fast implies it.
+  # Spelled /clang: because clang-cl ignores a bare GCC-style flag, and guarded
+  # on the compiler ID because cl.exe rejects /clang: outright. doppler
+  # measured the same wall on the same toolchain.
+  add_compile_options(/clang:-fcx-limited-range)
+endif()
+
 option(BUILD_PYTHON "Build Python C extensions" ON)
+# gh-1368: a Python extension always uses the RELEASE C runtime (/MD) under
+# MSVC, in every configuration. The debug runtime (/MDd) makes the compiler
+# predefine _DEBUG, and pyconfig.h answers _DEBUG by linking the debug
+# interpreter's python3X_d.lib -- which only a debug Python ships, so a Debug
+# build did not link (measured in Visual Studio 2026 with clang-cl). Debug
+# keeps /Od and full debug info; only the debug CRT's heap checks go, and those
+# need a debug Python anyway. Project-wide rather than per extension: the
+# component cores are linked into the same DLL, and two CRTs in one DLL are two
+# heaps, so a buffer allocated by one and freed by the other corrupts both. Set
+# before any target exists, which is when CMake reads it.
+if(MSVC AND BUILD_PYTHON)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+endif()
 if(BUILD_PYTHON)
   find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module
                                            NumPy)
