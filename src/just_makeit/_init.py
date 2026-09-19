@@ -189,11 +189,6 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # computes the real value for any component that has one.
         "record_type_ready": "",
         "record_add_object": "",
-        # Windows CMake boilerplate is opt-in (gh-213); default off so the
-        # generated CMakeLists has no `if(WIN32 …)` block unless the project
-        # lists `windows` in [project] platforms.
-        "win_cmake_component": "",
-        "win_cmake_module": "",
         # gh-541/gh-544: destructor slots. Seeded here — the one place every
         # component render path passes through — so no path can leak a literal
         # <<destroy_*>> into generated C. The undeclared values reproduce the
@@ -1387,13 +1382,6 @@ def run(
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
     ctx["extra_ext_sources"] = ""  # populated on jm method --varargs
-    # gh-213: emit the Windows runtime-DLL CMake block only when the project
-    # targets Windows; default off leaves the component CMakeLists clean.
-    ctx.update(
-        Ctx.make_platform_ctx(
-            C.is_windows_target(cfg), component=ctx["component"]
-        )
-    )
     # extra_include_dirs is a list of CMake include dirs (literals or ${VAR}
     # references). Each dir lands on its own indented line inside the
     # target_include_directories(...) blocks; leading "\n    " puts the first

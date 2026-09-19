@@ -19,8 +19,7 @@ sudo apt-get install cmake
 # macOS
 brew install cmake
 
-# Windows (MSYS2/MinGW)
-pacman -S mingw-w64-x86_64-cmake
+# Windows: ships with Visual Studio Build Tools (see the FAQ's Windows entry)
 
 # Or let the installer handle it:
 just-makeit install-deps
@@ -134,23 +133,16 @@ the full explanation.
 
 ______________________________________________________________________
 
-## Windows: `make.exe` not found
+## Windows: `make` not found, or the wrong compiler
 
-**Symptom:** `'make' is not recognized as an internal or external command`
-on Windows.
+**Symptom:** `'make' is not recognized as an internal or external command`,
+or CMake picks `cl.exe`/MinGW and the build fails on `_Complex`.
 
-**Cause:** MinGW ships `mingw32-make.exe`, not `make.exe`.
-
-**Fix:**
-
-```sh
-# In the MinGW shell, copy the binary:
-cp "$(which mingw32-make)" "$(dirname $(which mingw32-make))/make.exe"
-```
-
-Windows is opt-in (jm targets Linux/macOS by default); scaffold a
-Windows-targeting project with `jm new --windows`. See
-[`[project] platforms`](commands/scaffold.md).
+**Fix:** install GNU make (`winget install ezwinports.make`) and run from a
+Developer PowerShell with `clang-cl` on `PATH`. The generated `Makefile`
+selects clang-cl and Ninja on Windows. See
+[Does it work on Windows?](faq.md#does-it-work-on-windows); MinGW is no
+longer supported.
 
 ______________________________________________________________________
 

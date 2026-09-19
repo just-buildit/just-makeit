@@ -156,7 +156,7 @@ ______________________________________________________________________
 
 - Python 3.9+
 - CMake ≥ 3.16
-- A C99 compiler (GCC, Clang, MSVC/MinGW)
+- A C99 compiler (GCC or Clang; on Windows, clang-cl — not MSVC's `cl.exe`)
 - NumPy (runtime, for generated projects)
 
 ______________________________________________________________________

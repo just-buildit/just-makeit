@@ -58,13 +58,3 @@ packages = [
     "python3-devel",
     "python3-numpy",
 ]
-
-[dev.msys2]
-packages = [
-    "mingw-w64-ucrt-x86_64-gcc",
-    "mingw-w64-ucrt-x86_64-cmake",
-    "mingw-w64-ucrt-x86_64-python",
-    "mingw-w64-ucrt-x86_64-python-numpy",
-    "make",
-    "pkg-config",
-]

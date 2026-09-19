@@ -130,7 +130,8 @@ def run(args: list[str]) -> None:
             mutable = True
             i += 1
         elif tok == "--windows":
-            # gh-213: opt into the Windows (MinGW) CMake boilerplate.
+            # gh-1368: retired. Accepted for one release so a script that
+            # passes it keeps working, and says why it does nothing.
             windows = True
             i += 1
         elif tok == "--c-style":
@@ -219,6 +220,15 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    if windows:
+        from . import _report
+
+        _report.warn(
+            "`jm new --windows` is retired and does nothing: a generated"
+            " project builds on Windows with clang-cl as it is (gh-1368).",
+            gates=False,
+        )
+
     _new.run(
         project,
         dest,
@@ -238,7 +248,7 @@ def run(args: list[str]) -> None:
         find_packages=find_packages or None,
         pkg_modules=pkg_modules or None,
         c_deps=c_deps or None,
-        platforms=(["linux", "macos", "windows"] if windows else None),
+        platforms=None,
         fragments=fragments,
         c_style=c_style,
     )

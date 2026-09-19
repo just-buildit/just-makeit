@@ -72,21 +72,6 @@ endif()
 
 set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
-# On Windows/MinGW, libwinpthread-1.dll has to sit next to the .pyd files so
-# Python can load them. Copy it once at configure time — per-target POST_BUILD
-# copies race on parallel builds when multiple standalone objects share
-# PYTHON_PACKAGE_DIR. (This single configure-time block is a harmless no-op off
-# Windows; the per-component opt-in lives in [project] platforms — gh-213.)
-if(WIN32
-   AND CMAKE_C_COMPILER_ID STREQUAL "GNU"
-   AND BUILD_PYTHON)
-  get_filename_component(gcc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
-  if(EXISTS "${gcc_bin}/libwinpthread-1.dll")
-    file(COPY "${gcc_bin}/libwinpthread-1.dll"
-         DESTINATION "${PYTHON_PACKAGE_DIR}")
-  endif()
-endif()
-
 # Combined C library — shared + static, no Python dependency. Component OBJECT
 # libraries are wired in via target_sources below.
 add_library(<<project_underscore>>_lib SHARED
