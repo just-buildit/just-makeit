@@ -301,7 +301,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Stopgap: 17-24 min measured, and three runs were killed at the old 30.
+    # Back to 30 once #1374 has made it fit.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -427,13 +429,25 @@ jobs:
     timeout-minutes: 10
     needs: [changes, test, examples, install-deps-smoke, coverage, lint, bench]
     if: always()
+    # Inputs as env, so the script below reads only shell variables and
+    # tests/test_ci_passed_aggregator.py can run it as-is with any results.
+    env:
+      SRC: ${{ needs.changes.outputs.src }}
+      RESULTS: ${{ join(needs.*.result, ' ') }}
     steps:
       - run: |
           # Bump-only PRs skip the matrix (src=false) — that is expected and green.
-          if [[ "${{ needs.changes.outputs.src }}" == "false" ]]; then exit 0; fi
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            exit 1
-          fi
+          if [[ "$SRC" == "false" ]]; then exit 0; fi
+          # Every required job must have SUCCEEDED or been skipped by its own
+          # `if`. This used to fail only on `failure` -- and a job that hits
+          # its timeout-minutes ends `cancelled`, so a Coverage run killed at
+          # 30 minutes merged green, gating nothing. `cancelled` is not a pass.
+          for r in $RESULTS; do
+            case "$r" in
+              success | skipped) ;;
+              *) echo "::error::a required job ended '$r'"; exit 1 ;;
+            esac
+          done
 
   trigger-mirror:
     name: Trigger docs mirror refresh
