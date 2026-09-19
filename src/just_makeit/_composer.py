@@ -3151,7 +3151,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
-#include <complex.h>
+#include "clib_common.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -4300,7 +4300,7 @@ def render_cli(cfg: dict, module: str) -> str:
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <complex.h>
+#include "clib_common.h"
 
 #include "{header}"
 

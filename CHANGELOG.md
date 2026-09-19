@@ -90,6 +90,19 @@
 
 ### Fixed
 
+- **Generated C compiles under clang-cl: complex math no longer meets
+    MSVC's `<complex.h>`** (gh-1368). There, `crealf` takes an `_Fcomplex`
+    struct and `I` is one, so jm's own `crealf(v)` and `x * I` were 154
+    errors on the first Windows run. `clib_common.h` now maps the C99 names
+    onto clang builtins under the MSVC ABI, and `cabsf`/`cargf`/`cexpf` (and
+    the `double` forms) onto real-valued libm, so no struct-typed CRT
+    function is called. It includes the platform header first, so numpy's
+    own include of it is harmless in either order. Every generator now
+    includes `"clib_common.h"` instead of `<complex.h>`, and a test refuses
+    a direct include anywhere in jm's templates and emitters. cl.exe is
+    refused with an `#error`: it has no `_Complex`. Linux and macOS are
+    unchanged.
+
 - **The generated root `CMakeLists.txt` no longer fails on Windows before
     compiling anything** (gh-1368). The shared and static `lib<pkg>` targets
     shared one `OUTPUT_NAME`, and on Windows the shared library's import

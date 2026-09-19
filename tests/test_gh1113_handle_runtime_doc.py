@@ -161,6 +161,13 @@ def test_the_emitted_doc_compiles_and_help_shows_it(tmp_path):
     }
     ext = _handle.render_ext(_cfg(args=[]), "sink", quoted)
     # Strip the parts that need the real backing library; keep the table.
+    # gh-1368: generated glue reaches complex math through clib_common.h,
+    # which a real project always has in native/inc -- render the real one.
+    from just_makeit import _render as R
+
+    (tmp_path / "clib_common.h").write_text(
+        R.render(R.CLIB_COMMON_H, {"package": "p", "PACKAGE": "P"})
+    )
     (tmp_path / "b").mkdir()
     (tmp_path / "b" / "b.h").write_text(
         "#ifndef B_H\n#define B_H\ntypedef struct b b_t;\n"
