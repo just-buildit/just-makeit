@@ -162,7 +162,8 @@ class TestItStillRunsEverythingForRealChanges:
         as success. If that ever changes, skipping the matrix makes every
         release unmergeable instead of fast."""
         text = CI.read_text(encoding="utf-8")
-        assert (
-            'if [[ "${{ needs.changes.outputs.src }}" == "false" ]]; '
-            "then exit 0; fi" in text
-        ), "ci-passed no longer treats a bump-only skip as green"
+        # Executed, not string-matched, in test_ci_passed_aggregator.py; this
+        # keeps the pointer from the fast path to the rule it depends on.
+        assert 'if [[ "$SRC" == "false" ]]; then exit 0; fi' in text, (
+            "ci-passed no longer treats a bump-only skip as green"
+        )
