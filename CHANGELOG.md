@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.77.0] — 2026-09-19
+
 ### Breaking
 
 - **MinGW is retired; Windows means clang-cl, with no flag** (gh-1368).
