@@ -2,6 +2,14 @@
 
 ### Fixed
 
+- **`upgrade`'s `complex` → `_Complex` respell no longer rewrites prose**
+    (gh-1382). It rewrote comments and string literals too, and turned the
+    comment in doppler's `dp_complex.h` explaining why the UCRT breaks
+    `float complex` into one claiming doppler writes `float _Complex`,
+    which contradicted itself. The rewrite is justified by "identical tokens
+    after preprocessing", which is true of code only, so it now touches code
+    only. That also retires the hand-written exception for `clib_common.h`.
+
 - **A generated project's shared library works on Windows** (gh-1368). The
     DLL exported nothing, since Windows exports only what is marked
     `__declspec(dllexport)`, so a C program linking `lib<pkg>` failed on

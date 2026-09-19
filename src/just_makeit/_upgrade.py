@@ -159,6 +159,42 @@ _COMPLEX_SPELLING = (
 )
 
 
+def _respell_code_only(text: str) -> str:
+    """*text* with the old complex spelling rewritten in CODE only.
+
+    gh-1382: comments and string literals are prose, and rewriting prose
+    changes what it says. doppler's `dp_complex.h` explains why the UCRT's
+    `#define complex _complex` breaks the spelling `float complex`; respelled,
+    the comment claimed doppler writes `float _Complex` -- which that macro
+    cannot touch -- and so contradicted itself. The "identical tokens after
+    preprocessing" argument that licenses this rewrite covers code tokens,
+    and nothing else.
+
+    Matches are found on `_docsync._code_mask` (same length, comments and
+    literal contents blanked) and the spans replaced in the original.
+
+    Examples
+    --------
+    >>> print(_respell_code_only(
+    ...     "/* writes float complex */ float complex x;"
+    ... ))
+    /* writes float complex */ float _Complex x;
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(text)
+    spans = []
+    for pat, repl in _COMPLEX_SPELLING:
+        for m in pat.finditer(mask):
+            # Longest first: a span inside one already taken (`double complex`
+            # inside `long double complex`) is the same rewrite, once.
+            if not any(a <= m.start() < b for a, b, _ in spans):
+                spans.append((m.start(), m.end(), repl))
+    for a, b, repl in sorted(spans, reverse=True):
+        text = text[:a] + repl + text[b:]
+    return text
+
+
 def _repair_complex_spelling(root: Path) -> "list[Path]":
     """Rewrite the pre-gh-1246 complex spelling in the project's own C.
 
@@ -166,13 +202,11 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     do -- which is the second run of this, and every run on a project
     scaffolded after gh-1246.
 
-    ``clib_common.h`` is skipped deliberately, and the reason is not
-    hypothetical: jm's render of it is already correct, and its comment
-    *quotes* the old spelling while explaining why that spelling was a
-    problem. A blanket pass rewrites that prose into a false statement --
-    `_Complex` parses fine from C++ -- which is the "generated code contains
-    prose about itself" trap. It was found by running the documented command
-    in the documented order, having verified it in the reverse one.
+    Code only (gh-1382, :func:`_respell_code_only`). That also retires the
+    special case this used to need: `clib_common.h` was skipped by name
+    because its comment QUOTES the old spelling while explaining why it was a
+    problem, and a blanket pass rewrote that prose into a false statement. A
+    comment is now never touched, in that file or any other.
     """
     changed: list[Path] = []
     for rel in _COMPLEX_DIRS:
@@ -180,7 +214,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.name == "clib_common.h":
+            if not path.is_file():
                 continue
             if path.suffix not in (".c", ".h"):
                 continue
@@ -188,9 +222,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            new = text
-            for pat, repl in _COMPLEX_SPELLING:
-                new = pat.sub(repl, new)
+            new = _respell_code_only(text)
             if new != text:
                 _textio.write_text(path, new)
                 changed.append(path)
