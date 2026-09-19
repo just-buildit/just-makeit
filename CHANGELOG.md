@@ -2,6 +2,19 @@
 
 ### Fixed
 
+- **A generated project's shared library works on Windows** (gh-1368). The
+    DLL exported nothing, since Windows exports only what is marked
+    `__declspec(dllexport)`, so a C program linking `lib<pkg>` failed on
+    every symbol. The DLL also wasn't installed, because `install()` had no
+    `RUNTIME` destination. The root `CMakeLists.txt` now sets
+    `WINDOWS_EXPORT_ALL_SYMBOLS` and installs the DLL to `bin/`. Existing
+    projects: that file is create-only, so `jm status` reports it OUTDATED.
+    `fir_filter`'s consumer now calls into **both** library flavours and
+    runs them, on every CI platform. It used to be `main() { return 0; }`
+    against the static library, which is why this passed. The release's
+    artifact smoke gains a Windows job (clang-cl; Python 3.9, 3.12 and
+    3.14) that gates publishing.
+
 - **A composer's `ranged` key is accepted again, and survives a save**
     (gh-1381). `_composer` reads `ranged` off `[module.X.source]` and
     `[module.X.segment]` to generate the fields that take a number *or* a

@@ -95,6 +95,14 @@ if(WIN32)
   set_target_properties(<<project_underscore>>_lib_static
                         PROPERTIES OUTPUT_NAME <<project_underscore>>_static)
 endif()
+# gh-1368: a Windows DLL exports only what is marked __declspec(dllexport), and
+# jm marks nothing -- so the shared library's import library was empty and a C
+# consumer linking it failed on every symbol (`undefined symbol:
+# <comp>_create`), found by the Windows artifact smoke. Exporting all is the
+# DLL equivalent of an ELF shared library's default visibility. No effect
+# elsewhere.
+set_target_properties(<<project_underscore>>_lib
+                      PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 enable_testing()
 
@@ -112,6 +120,10 @@ include(CMakePackageConfigHelpers)
 install(
   TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
   EXPORT <<project_underscore>>-targets
+  # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
+  # never installed, and a consumer linked against an import library whose
+  # DLL was not there to load.
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 

@@ -16,9 +16,9 @@ HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
 
-def _cmd(args, cwd):
+def _cmd(args, cwd, env=None):
     r = subprocess.run(
-        args, cwd=cwd, capture_output=True, text=True, timeout=600
+        args, cwd=cwd, capture_output=True, text=True, timeout=600, env=env
     )
     if r.returncode != 0:
         raise AssertionError(
@@ -63,18 +63,27 @@ def _install_smoke(proj: Path) -> None:
         "find_package will fail after prefix change or DESTDIR staging"
     )
 
-    # Step 4: build a minimal cmake consumer using find_package
+    # Step 4: a find_package consumer of EACH flavour, which calls into the
+    # library and is RUN. gh-1368: this used to be `main() { return 0; }`
+    # against the static library, which proves the headers parse and nothing
+    # else -- the Windows DLL exported no symbols at all and this stayed green
+    # on every platform. `destroy(NULL)` is documented as safe, so the call
+    # needs no constructor arguments and still crosses into the library.
     consumer = proj / "consumer_smoke"
     consumer.mkdir()
     (consumer / "smoke.c").write_text(
-        '#include "my_fir.h"\nint main(void) { return 0; }\n', encoding="utf-8"
+        '#include "my_fir.h"\n'
+        "int main(void) { fir_filter_destroy(NULL); return 0; }\n",
+        encoding="utf-8",
     )
     (consumer / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(smoke C)\n"
         "find_package(my_fir REQUIRED)\n"
-        "add_executable(smoke smoke.c)\n"
-        "target_link_libraries(smoke PRIVATE my_fir::my_fir_lib_static)\n",
+        "add_executable(smoke_static smoke.c)\n"
+        "target_link_libraries(smoke_static PRIVATE my_fir::my_fir_lib_static)\n"
+        "add_executable(smoke_shared smoke.c)\n"
+        "target_link_libraries(smoke_shared PRIVATE my_fir::my_fir_lib)\n",
         encoding="utf-8",
     )
     _cmd(
@@ -89,6 +98,19 @@ def _install_smoke(proj: Path) -> None:
         cwd=consumer,
     )
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=consumer)
+    # The shared one has to FIND its library at run time: bin/ on Windows (the
+    # DLL, installed under RUNTIME), lib*/ elsewhere.
+    env = os.environ.copy()
+    libdirs = [str(install_prefix / d) for d in ("bin", "lib", "lib64")]
+    for var in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        env[var] = os.pathsep.join(libdirs + [env.get(var, "")])
+    exe = ".exe" if os.name == "nt" else ""
+    for flavour in ("smoke_static", "smoke_shared"):
+        _cmd(
+            [str(consumer / "build" / f"{flavour}{exe}")],
+            cwd=consumer,
+            env=env,
+        )
 
     # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
     # POSIX only, as the heading says -- and said as a platform test, not as

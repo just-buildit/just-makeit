@@ -45,7 +45,11 @@ def _names(root: Path, win32: bool) -> "tuple[str, str]":
         "macro(target_include_directories)\nendmacro()\n"
         "function(set_target_properties t)\n"
         '  cmake_parse_arguments(P "" "OUTPUT_NAME" "" ${ARGN})\n'
-        "  set(_out_${t} ${P_OUTPUT_NAME} PARENT_SCOPE)\nendfunction()\n"
+        # Only a call that SETS OUTPUT_NAME records one: the block also sets
+        # other properties (WINDOWS_EXPORT_ALL_SYMBOLS), which must not blank it.
+        "  if(DEFINED P_OUTPUT_NAME)\n"
+        "    set(_out_${t} ${P_OUTPUT_NAME} PARENT_SCOPE)\n"
+        "  endif()\nendfunction()\n"
         + block
         + 'message("${_out_p_lib}|${_out_p_lib_static}")\n',
         encoding="utf-8",

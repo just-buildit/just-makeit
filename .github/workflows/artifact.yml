@@ -658,3 +658,196 @@ jobs:
           print('method docstring structure: ok')
           "
           python3 -m pytest --doctest-modules src/ -v
+
+  # gh-1368: the same artifact, on Windows, built by clang-cl. The job above is
+  # POSIX in every step (apt/brew, gcc + pkg-config + rpath, /tmp, a replayed
+  # `sh` script), so this is its Windows FORM rather than a matrix entry: the
+  # same workflow -- install the artifact, run the examples, scaffold, build,
+  # extend, install the C library and link a consumer against it. In the
+  # reusable workflow `release.yml`'s `publish` waits on, so a wheel that does
+  # not work on Windows is not published. Its first run found the DLL that
+  # exported nothing.
+  smoke-windows:
+    name: Smoke test (windows-latest, clang-cl, py${{ matrix.python-version }})
+    if: >
+      inputs.wheel-artifact != '' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The bounds jm supports plus the middle: every leg is a full Windows
+        # build, so the POSIX job's six versions would be six times the cost
+        # for the part of the matrix this job adds nothing to.
+        python-version: ["3.9", "3.12", "3.14"]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # clang-cl drives the MSVC toolchain as cl.exe does and needs its
+      # environment (INCLUDE / LIB / the linker).
+      - name: MSVC developer environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Download the built wheel
+        if: inputs.wheel-artifact != ''
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: ${{ inputs.wheel-artifact }}
+          path: dist
+
+      - name: Install just-makeit from the built wheel
+        if: inputs.wheel-artifact != ''
+        run: |
+          python -m pip install dist/*.whl numpy pytest --no-cache-dir
+          VERSION="${{ inputs.version }}"
+          if [ -n "$VERSION" ]; then
+            python -m pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+          fi
+
+      - name: Install just-makeit from PyPI (with retry)
+        if: inputs.wheel-artifact == ''
+        run: |
+          VERSION="${{ github.event.inputs.version || github.event.workflow_run.head_branch }}"
+          for i in $(seq 1 20); do
+            python -m pip install "just-makeit==${VERSION#v}" numpy pytest \
+              --no-cache-dir && break
+            echo "Not yet, retry $i/20..."
+            sleep 30
+          done
+          python -m pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+
+      # CC / CMAKE_GENERATOR for THIS step only: the examples call `cmake -B
+      # build` themselves, as a Windows user running them by hand would, and
+      # plain CMake under vcvars picks cl.exe. nco_tone and kitchen_sink link
+      # doppler, which ships no Windows build (#1377).
+      - name: Run the examples
+        env:
+          CC: clang-cl
+          CMAKE_GENERATOR: Ninja
+        run: |
+          python -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))" \
+            | tr -d '\r' | while read -r example; do
+              case "$example" in nco_tone|kitchen_sink) continue ;; esac
+              echo "=== just-makeit example $example ==="
+              just-makeit example "$example"
+            done
+
+      # From here on NO CC and NO CMAKE_GENERATOR: the generated Makefile's own
+      # Windows default (Ninja + clang-cl) is what is under test.
+      - name: Scaffold, implement and build a project
+        run: |
+          just-makeit new my_fir --object fir_filter \
+            --state "coeffs:float[16]" \
+            --state "delay:float _Complex[16]" \
+            --state "gain:float:1.0"
+          python - <<'PYEOF'
+          import pathlib, re
+          h = pathlib.Path("my_fir/native/inc/fir_filter/fir_filter_core.h")
+          impl = (
+              "fir_filter_step(fir_filter_state_t *state, float _Complex x)\n"
+              "{\n"
+              "    memmove(&state->delay[1], &state->delay[0],"
+              " 15 * sizeof(float _Complex));\n"
+              "    state->delay[0] = x;\n"
+              "    float _Complex y = 0.0f + 0.0f * I;\n"
+              "    for (int k = 0; k < 16; k++)\n"
+              "        y += state->coeffs[k] * state->delay[k];\n"
+              "    return (float _Complex)state->gain * y;\n"
+              "}"
+          )
+          rx = re.compile(
+              r"(static inline|JM_FORCEINLINE JM_HOT) float _Complex\s*\n"
+              r"fir_filter_step\(const fir_filter_state_t \*state.*?\n\}",
+              re.DOTALL,
+          )
+          text = h.read_text(encoding="utf-8")
+          m = rx.search(text)
+          assert m, "stub not found"
+          h.write_text(
+              rx.sub(m.group(1) + " float _Complex\n" + impl, text),
+              encoding="utf-8",
+          )
+          PYEOF
+          cd my_fir
+          just-makeit perf
+          make && make test
+          grep -E "^CMAKE_C_COMPILER:.*clang-cl" build/CMakeCache.txt
+          grep -E "^CMAKE_GENERATOR:.*=Ninja" build/CMakeCache.txt
+
+      - name: Add a second object and rebuild
+        working-directory: my_fir
+        run: |
+          just-makeit object gain --arg-type float --return-type float \
+            --state gain:float:1.0
+          grep "from .gain import Gain" src/my_fir/__init__.py
+          make && make test
+
+      - name: Import the extension and check the filter's output
+        working-directory: my_fir
+        run: |
+          python - <<'PYEOF'
+          import sys
+          sys.path.insert(0, "src")
+          import numpy as np
+          from my_fir import FirFilter
+
+          f = FirFilter(gain=1.0)
+          h = np.zeros(16, dtype=np.float32)
+          h[:3] = [0.25, 0.5, 0.25]
+          f.set_coeffs(h)
+          x = np.zeros(8, dtype=np.complex64)
+          x[0] = 1.0
+          y = f.steps(x)
+          assert np.allclose(y[:4].real, [0.25, 0.5, 0.25, 0.0]), y
+          print("fir_filter on Windows: ok")
+          PYEOF
+
+      # A C consumer of the INSTALLED library, both flavours, called and run.
+      # pkg-config is POSIX-only; find_package is the Windows path.
+      - name: Install the C library and link a consumer against it
+        run: |
+          cmake --install my_fir/build --prefix "$RUNNER_TEMP/fir_prefix"
+          mkdir consumer && cd consumer
+          cat > consumer.c << 'EOF'
+          #include "my_fir.h"
+          #include <math.h>
+          #include <stdio.h>
+          int main(void) {
+              fir_filter_state_t *f = fir_filter_create(1.0f);
+              float h[16] = {0};
+              h[0] = 0.25f; h[1] = 0.50f; h[2] = 0.25f;
+              fir_filter_set_coeffs(f, h);
+              float _Complex in[16] = {0}, out[16] = {0};
+              in[0] = 1.0f;
+              fir_filter_steps(f, in, out, 16);
+              int ok = fabsf(crealf(out[1]) - 0.50f) < 1e-6f;
+              fir_filter_destroy(f);
+              puts(ok ? "consumer: ok" : "consumer: WRONG OUTPUT");
+              return !ok;
+          }
+          EOF
+          cat > CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(fir_consumer C)
+          find_package(my_fir REQUIRED)
+          add_executable(consumer_shared consumer.c)
+          target_link_libraries(consumer_shared PRIVATE my_fir::my_fir_lib)
+          add_executable(consumer_static consumer.c)
+          target_link_libraries(consumer_static PRIVATE my_fir::my_fir_lib_static)
+          EOF
+          CC=clang-cl cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/fir_prefix"
+          cmake --build build
+          ./build/consumer_static.exe
+          PATH="$RUNNER_TEMP/fir_prefix/bin:$PATH" ./build/consumer_shared.exe
