@@ -55,6 +55,15 @@ foreach(lib_target <<project_underscore>>_lib
   set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME
                                                  <<project_underscore>>)
 endforeach()
+# gh-1368: one OUTPUT_NAME for both is unambiguous on Linux and macOS
+# (lib<name>.so vs lib<name>.a) and a collision on Windows, where the SHARED
+# library's import library and the STATIC library are both <name>.lib --
+# `ninja: error: multiple rules generate <name>.lib`, before any C compiles.
+# Renamed only where it has to be, as doppler's own CMake does.
+if(WIN32)
+  set_target_properties(<<project_underscore>>_lib_static
+                        PROPERTIES OUTPUT_NAME <<project_underscore>>_static)
+endif()
 
 enable_testing()
 
