@@ -90,6 +90,18 @@
 
 ### Fixed
 
+- **Every bundled example builds and passes on Windows under clang-cl, in
+    a binding CI job** (gh-1368). Their own code assumed POSIX: `*.o`,
+    `.so`, a binary with no `.exe`, a Windows path pasted into Python
+    source, `pkg-config` run by a bare name that resolves to a wrapper
+    script, and `iqfile`'s C including `<unistd.h>` (now `<io.h>` on
+    Windows, plus `<stdio.h>` for `SEEK_*`, with `O_BINARY` in its README).
+    All 113 text reads and writes in example code now pass
+    `encoding="utf-8"`, since cp1252 garbled a `—` in `full_workflow`, and
+    a test refuses one that doesn't. The new `Examples (windows-latest,   clang-cl)` job feeds `CI passed`; `nco_tone` and `kitchen_sink` are
+    deselected there until doppler ships a Windows build (#1377), via the
+    new `EXAMPLES_K` Makefile variable.
+
 - **Generated files have `\n` line endings on Windows too** (gh-1368).
     jm wrote every file with `Path.write_text`, which translates `\n` to
     CRLF on Windows, so one manifest produced different bytes per platform

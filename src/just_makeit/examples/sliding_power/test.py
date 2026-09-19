@@ -49,7 +49,7 @@ def run(root: Path) -> None:
     import re as _re
 
     header = dest / "native" / "inc" / "power_est" / "power_est_core.h"
-    text = header.read_text()
+    text = header.read_text(encoding="utf-8")
     stub_re = _re.compile(
         r"JM_FORCEINLINE JM_HOT float\s*\n"
         r"power_est_step\(const power_est_state_t \*state.*?\n\}",
@@ -68,7 +68,7 @@ def run(root: Path) -> None:
         "    return (float)(state->sum_sq * (1.0 / 64.0));\n"
         "}"
     )
-    header.write_text(stub_re.sub(impl, text))
+    header.write_text(stub_re.sub(impl, text), encoding="utf-8")
 
     # Enrich the sacred header: replace jm's trivial scaffold @brief on
     # power_est_create() with a real one-sentence summary. The header is the
@@ -78,7 +78,7 @@ def run(root: Path) -> None:
     # so both edits land on the finished header.
     from just_makeit._apply import run as apply_run
 
-    text = header.read_text()
+    text = header.read_text(encoding="utf-8")
     scaffold_re = _re.compile(
         r"/\*\*\n \* @brief Create a power_est instance\..*?"
         r"(?=power_est_state_t \*power_est_create)",
@@ -91,7 +91,7 @@ def run(root: Path) -> None:
     new_create = f"/**\n * @brief {create_brief}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     assert n == 1, "power_est_create scaffold brief not found"
-    header.write_text(text)
+    header.write_text(text, encoding="utf-8")
     apply_run(dest)
 
     env = _make_env()
@@ -152,7 +152,9 @@ print("ok")
     # so rejoin them before matching -- the assertion is about the
     # parameters, not where the line happens to break.
     pyi = flatten_signatures(
-        (dest / "src" / "my_power" / "power_est.pyi").read_text()
+        (dest / "src" / "my_power" / "power_est.pyi").read_text(
+            encoding="utf-8"
+        )
     )
     assert "class PowerEst:" in pyi
     assert "def step(self, x: complex) -> float:" in pyi

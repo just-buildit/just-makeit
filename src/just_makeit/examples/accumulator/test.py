@@ -45,7 +45,7 @@ def run(root: Path) -> None:
     new_run("my_acc", dest)
     module_run(dest, "accumulator")
 
-    toml = (dest / "just-makeit.toml").read_text()
+    toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
     assert "[module.accumulator]" in toml, "module entry missing"
     assert (dest / "src" / "my_acc" / "accumulator" / "__init__.py").exists()
 
@@ -62,7 +62,7 @@ def run(root: Path) -> None:
 
     frag_f32 = (
         dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_f32.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "AccF32Object" in frag_f32
     assert "AccCf64Object" not in frag_f32
 
@@ -79,20 +79,20 @@ def run(root: Path) -> None:
 
     frag_f32 = (
         dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_f32.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     frag_cf64 = (
         dest / "native" / "src" / "accumulator" / "accumulator_ext_acc_cf64.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "AccF32Object" in frag_f32
     assert "AccCf64Object" in frag_cf64
 
     init_py = (
         dest / "src" / "my_acc" / "accumulator" / "__init__.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "AccF32" in init_py
     assert "AccCf64" in init_py
 
-    toml = (dest / "just-makeit.toml").read_text()
+    toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
     assert '"acc_f32"' in toml
     assert '"acc_cf64"' in toml
 
@@ -160,7 +160,7 @@ def run(root: Path) -> None:
     # Verify stubs were appended to both core.c files
     core_f32 = (
         dest / "native" / "src" / "acc_f32" / "acc_f32_core.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     for name in ("get", "dump", "madd", "add2d", "madd2d"):
         assert f"<<IMPLEMENT: {name} >>" in core_f32, (
             f"stub for {name} missing from acc_f32_core.c"
@@ -168,7 +168,7 @@ def run(root: Path) -> None:
 
     core_cf64 = (
         dest / "native" / "src" / "acc_cf64" / "acc_cf64_core.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     for name in ("get", "dump", "madd", "add2d", "madd2d"):
         assert f"<<IMPLEMENT: {name} >>" in core_cf64, (
             f"stub for {name} missing from acc_cf64_core.c"
@@ -179,14 +179,14 @@ def run(root: Path) -> None:
     _cmd([sys.executable, str(STEPS / "04_patch_cf64.py")], cwd=dest)
 
     # Verify the step stubs were replaced
-    h_f32 = (
-        dest / "native" / "inc" / "acc_f32" / "acc_f32_core.h"
-    ).read_text()
+    h_f32 = (dest / "native" / "inc" / "acc_f32" / "acc_f32_core.h").read_text(
+        encoding="utf-8"
+    )
     assert "state->acc += x;" in h_f32, "acc_f32_step not patched"
 
     h_cf64 = (
         dest / "native" / "inc" / "acc_cf64" / "acc_cf64_core.h"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "state->acc += x;" in h_cf64, "acc_cf64_step not patched"
 
     # ── 5b. Enrich the headers with Doxygen, regenerate the stubs ─────────────
@@ -304,7 +304,7 @@ print("accumulator: all checks passed")
     # ── 9. Type stub checks ───────────────────────────────────────────────────
     pyi = (
         dest / "src" / "my_acc" / "accumulator" / "accumulator.pyi"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "class AccF32:" in pyi
     assert "class AccCf64:" in pyi
     assert "def step(self" in pyi

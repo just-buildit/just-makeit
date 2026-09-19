@@ -120,7 +120,9 @@ def run(root: Path) -> None:
     _cmd([sys.executable, str(STEPS / "07_demo.py")], cwd=proj)
 
     # 8. Verify module-level type stub (named conv.pyi, not __init__.pyi)
-    pyi = (proj / "src" / "iqfile" / "conv" / "conv.pyi").read_text()
+    pyi = (proj / "src" / "iqfile" / "conv" / "conv.pyi").read_text(
+        encoding="utf-8"
+    )
     assert pyi.startswith("# conv/conv.pyi")
     assert "class Cf32ToQ15:" in pyi
     assert "class Q15ToCf32:" in pyi

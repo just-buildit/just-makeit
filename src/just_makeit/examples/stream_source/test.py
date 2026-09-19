@@ -114,11 +114,15 @@ def run(root: Path) -> None:
 
     # The one flag did the work: a C iterator + stream()/__iter__ in the ext,
     # driving the built-in steps() for a source.
-    ext = (proj / "native" / "src" / "ramp" / "ramp_ext.c").read_text()
+    ext = (proj / "native" / "src" / "ramp" / "ramp_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "RampStreamIter" in ext
     assert "Ramp_stream" in ext
     assert 'PyObject_CallMethod(it->src, "steps", "n"' in ext
-    pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text()
+    pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
 
@@ -144,7 +148,9 @@ def run(root: Path) -> None:
     apply_run(proj)
 
     # The enriched summary reached the regenerated stub (not the fallback).
-    pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text()
+    pyi = (proj / "src" / "stream_source_demo" / "ramp.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class Ramp:" in pyi
     # gh-744: the summary wraps when it does not fit on one line.
     assert class_summary in flatten_prose(pyi), (

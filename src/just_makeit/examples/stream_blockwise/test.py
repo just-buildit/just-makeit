@@ -122,12 +122,16 @@ def run(root: Path) -> None:
         state_vars=[("total", "int32_t", "20"), ("pos", "int32_t", "0")],
     )
 
-    ext = (proj / "native" / "src" / "drainer" / "drainer_ext.c").read_text()
+    ext = (proj / "native" / "src" / "drainer" / "drainer_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "DrainerStreamIter" in ext
     assert "Drainer_stream" in ext
     # The producer is the variable_output method, not the built-in steps.
     assert 'PyObject_CallMethod(it->src, "run", "n"' in ext
-    pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text()
+    pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "def stream(" in pyi
     assert "def __iter__(self) -> Iterator[NDArray[np.complex64]]:" in pyi
 
@@ -154,7 +158,9 @@ def run(root: Path) -> None:
     apply_run(proj)
 
     # The enriched summary reached the regenerated stub (not the fallback).
-    pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text()
+    pyi = (proj / "src" / "stream_blockwise_demo" / "drainer.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class Drainer:" in pyi
     # gh-744: the summary wraps when it does not fit on one line.
     assert class_summary in flatten_prose(pyi), (

@@ -53,7 +53,7 @@ def run(root: Path) -> None:
     # ── 2. Create filter module ───────────────────────────────────────────────
     module_run(dest, "filter")
 
-    toml = (dest / "just-makeit.toml").read_text()
+    toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
     assert "[module.filter]" in toml, "module entry missing from toml"
     assert (dest / "src" / "my_filters" / "filter" / "__init__.py").exists()
 
@@ -71,15 +71,17 @@ def run(root: Path) -> None:
 
     frag_fir = (
         dest / "native" / "src" / "filter" / "filter_ext_fir.c"
-    ).read_text()
-    agg = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text()
+    ).read_text(encoding="utf-8")
+    agg = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "FirObject" in frag_fir
     assert "PyInit_filter" in agg
     assert "BiquadObject" not in frag_fir  # not added yet
 
     init_py = (
         dest / "src" / "my_filters" / "filter" / "__init__.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "Fir" in init_py
     assert "Biquad" not in init_py
 
@@ -103,28 +105,30 @@ def run(root: Path) -> None:
 
     frag_fir = (
         dest / "native" / "src" / "filter" / "filter_ext_fir.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     frag_biquad = (
         dest / "native" / "src" / "filter" / "filter_ext_biquad.c"
-    ).read_text()
-    agg = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text()
+    ).read_text(encoding="utf-8")
+    agg = (dest / "native" / "src" / "filter" / "filter_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "FirObject" in frag_fir
     assert "BiquadObject" in frag_biquad
     assert "PyInit_filter" in agg
 
     init_py = (
         dest / "src" / "my_filters" / "filter" / "__init__.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "Fir" in init_py
     assert "Biquad" in init_py
 
     cmake_txt = (
         dest / "native" / "src" / "filter" / "CMakeLists.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "fir_core" in cmake_txt
     assert "biquad_core" in cmake_txt
 
-    toml = (dest / "just-makeit.toml").read_text()
+    toml = (dest / "just-makeit.toml").read_text(encoding="utf-8")
     assert '"fir"' in toml
     assert '"biquad"' in toml
 
@@ -224,7 +228,9 @@ print("filter_module: all checks passed")
     # so rejoin them before matching -- the assertion is about the
     # parameters, not where the line happens to break.
     pyi = flatten_signatures(
-        (dest / "src" / "my_filters" / "filter" / "filter.pyi").read_text()
+        (dest / "src" / "my_filters" / "filter" / "filter.pyi").read_text(
+            encoding="utf-8"
+        )
     )
     assert pyi.startswith("# filter/filter.pyi")
     assert "class Fir:" in pyi

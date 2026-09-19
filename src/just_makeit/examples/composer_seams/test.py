@@ -17,6 +17,7 @@ Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/composer_seams/test.py
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -132,8 +133,10 @@ def run(root: Path) -> None:
     # substring of `test_clip_core.dir` and `bench_clip_core.dir`, and both of
     # those hold an object defining `main`.
     wanted = {"backing_core.dir", "clip_core.dir"}
+    # `.obj` under an MSVC-style compiler (gh-1368).
+    obj = ".obj" if _msvc_like(proj) else ".o"
     picked = [
-        p for p in (proj / "build").rglob("*.o") if wanted & set(p.parts)
+        p for p in (proj / "build").rglob(f"*{obj}") if wanted & set(p.parts)
     ]
     objs = sorted(str(p) for p in picked)
     assert objs, "no backing/clip objects were built"
@@ -145,17 +148,28 @@ def run(root: Path) -> None:
         not ({"test_clip_core.dir", "bench_clip_core.dir"} & set(p.parts))
         for p in picked
     ), objs
-    cc = shutil.which("cc") or shutil.which("gcc")
-    assert cc, "no C compiler"
-    exe = proj / "build" / "test_bridge"
+    # The compiler CMake chose, so the consumer and the objects it links
+    # agree on an ABI -- a bare `cc` on Windows is MinGW's, or nothing.
+    cc = _cmake_c_compiler(proj)
+    assert cc, "no C compiler recorded in CMakeCache.txt"
+    exe = (
+        proj
+        / "build"
+        / ("test_bridge.exe" if os.name == "nt" else "test_bridge")
+    )
+    # clang-cl takes -I and -o like cc does; the math library is part of the
+    # CRT there, so -lm is POSIX only.
     _cmd(
         [
             cc,
+            # ...and its flags: a --target in CFLAGS decides the objects'
+            # machine type, so the consumer must be built for the same one.
+            *_cmake_cache(proj, "CMAKE_C_FLAGS").split(),
             "-I",
             "native/inc",
             str(tests_dir / "test_bridge.c"),
             *objs,
-            "-lm",
+            *([] if _msvc_like(proj) else ["-lm"]),
             "-o",
             str(exe),
         ],
@@ -163,6 +177,25 @@ def run(root: Path) -> None:
     )
     out = _cmd([str(exe)], cwd=proj)
     assert "bridge consumer: PASSED" in out.stdout, out.stdout
+
+
+def _cmake_cache(proj: Path, key: str) -> str:
+    """*key*'s value in the project's CMakeCache.txt, or ""."""
+    cache = (proj / "build" / "CMakeCache.txt").read_text(encoding="utf-8")
+    for line in cache.splitlines():
+        if line.startswith(f"{key}:"):
+            return line.split("=", 1)[1]
+    return ""
+
+
+def _cmake_c_compiler(proj: Path) -> str:
+    """The C compiler the project was configured with."""
+    return _cmake_cache(proj, "CMAKE_C_COMPILER")
+
+
+def _msvc_like(proj: Path) -> bool:
+    """True for clang-cl / cl: `.obj` objects, no separate libm."""
+    return Path(_cmake_c_compiler(proj)).stem.lower() in ("clang-cl", "cl")
 
 
 if __name__ == "__main__":

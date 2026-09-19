@@ -179,7 +179,8 @@ def run(root: Path) -> None:
     # `cmake --build` would silently succeed without building it and
     # `ctest` would happily pass with zero registered tests. Assert.
     so_files = list((proj / "src" / "demo").glob("agc*"))
-    so_files = [p for p in so_files if p.suffix == ".so"]
+    # `.so` on Linux and macOS, `.pyd` on Windows (gh-1368).
+    so_files = [p for p in so_files if p.suffix in (".so", ".pyd")]
     assert so_files, (
         f"agc extension was not compiled into src/demo/ — "
         f"apply did not reconcile the top CMakeLists. "

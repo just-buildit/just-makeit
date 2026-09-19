@@ -26,7 +26,7 @@ stub_re = re.compile(
     re.DOTALL,
 )
 
-text = header.read_text()
+text = header.read_text(encoding="utf-8")
 if not stub_re.search(text):
     print(
         "ERROR: stub not found — already patched or file changed",
@@ -34,6 +34,6 @@ if not stub_re.search(text):
     )
     sys.exit(1)
 
-patched = stub_re.sub(impl.read_text().strip(), text)
-header.write_text(patched)
+patched = stub_re.sub(impl.read_text(encoding="utf-8").strip(), text)
+header.write_text(patched, encoding="utf-8")
 print(f"patched {header} with {impl_name}")

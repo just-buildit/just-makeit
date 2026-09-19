@@ -42,7 +42,7 @@ def _install_smoke(proj: Path) -> None:
     # Step 2: verify pkg-config file content (no cmake binary needed)
     pc_files = list(install_prefix.rglob("*.pc"))
     assert pc_files, f"No .pc file installed under {install_prefix}"
-    pc_text = pc_files[0].read_text()
+    pc_text = pc_files[0].read_text(encoding="utf-8")
     assert "Cflags:" in pc_text
     assert "Libs:" in pc_text
     assert "CMAKE_INSTALL_FULL_" not in pc_text, (
@@ -57,7 +57,7 @@ def _install_smoke(proj: Path) -> None:
     assert targets_files, (
         f"No *-targets.cmake installed under {install_prefix}"
     )
-    config_text = config_files[0].read_text()
+    config_text = config_files[0].read_text(encoding="utf-8")
     assert "PACKAGE_PREFIX_DIR" in config_text, (
         "@PACKAGE_INIT@ not present in installed config file — "
         "find_package will fail after prefix change or DESTDIR staging"
@@ -67,14 +67,15 @@ def _install_smoke(proj: Path) -> None:
     consumer = proj / "consumer_smoke"
     consumer.mkdir()
     (consumer / "smoke.c").write_text(
-        '#include "my_fir.h"\nint main(void) { return 0; }\n'
+        '#include "my_fir.h"\nint main(void) { return 0; }\n', encoding="utf-8"
     )
     (consumer / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(smoke C)\n"
         "find_package(my_fir REQUIRED)\n"
         "add_executable(smoke smoke.c)\n"
-        "target_link_libraries(smoke PRIVATE my_fir::my_fir_lib_static)\n"
+        "target_link_libraries(smoke PRIVATE my_fir::my_fir_lib_static)\n",
+        encoding="utf-8",
     )
     _cmd(
         [
@@ -90,7 +91,12 @@ def _install_smoke(proj: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=consumer)
 
     # Step 5: pkg-config smoke (Linux/macOS only — Windows has no pkg-config ABI)
-    if not shutil.which("pkg-config"):
+    # POSIX only, as the heading says -- and said as a platform test, not as
+    # "no pkg-config on PATH": a Windows runner HAS one, Strawberry Perl's
+    # pkg-config.BAT, and it fails however it is started (gh-1368). The .pc
+    # file's contents were already checked in step 2 without the binary.
+    pkg_config = shutil.which("pkg-config")
+    if os.name == "nt" or not pkg_config:
         return
     pc_dir = next(
         (p for p in install_prefix.rglob("pkgconfig") if p.is_dir()), None
@@ -100,7 +106,7 @@ def _install_smoke(proj: Path) -> None:
     env = os.environ.copy()
     env["PKG_CONFIG_PATH"] = str(pc_dir)
     r = subprocess.run(
-        ["pkg-config", "--exists", "my-fir"],
+        [pkg_config, "--exists", "my-fir"],
         env=env,
         capture_output=True,
         text=True,
@@ -108,7 +114,7 @@ def _install_smoke(proj: Path) -> None:
     )
     assert r.returncode == 0, f"pkg-config --exists my-fir failed:\n{r.stderr}"
     r = subprocess.run(
-        ["pkg-config", "--cflags", "--libs", "my-fir"],
+        [pkg_config, "--cflags", "--libs", "my-fir"],
         env=env,
         capture_output=True,
         text=True,
@@ -201,7 +207,9 @@ def run(root: Path) -> None:
     # so rejoin them before matching -- the assertion is about the
     # parameters, not where the line happens to break.
     pyi = flatten_signatures(
-        (proj / "src" / "my_fir" / "fir_filter.pyi").read_text()
+        (proj / "src" / "my_fir" / "fir_filter.pyi").read_text(
+            encoding="utf-8"
+        )
     )
     assert "class FirFilter:" in pyi
     assert "def step(self, x: complex) -> complex:" in pyi

@@ -127,13 +127,15 @@ def run(root: Path) -> None:
     )
 
     # Both classes present, one core, distinct constructors.
-    frag_acc = (
-        dest / "native" / "src" / "bank" / "bank_ext_acc.c"
-    ).read_text()
+    frag_acc = (dest / "native" / "src" / "bank" / "bank_ext_acc.c").read_text(
+        encoding="utf-8"
+    )
     frag_view = (
         dest / "native" / "src" / "bank" / "bank_ext_seededacc.c"
-    ).read_text()
-    agg = (dest / "native" / "src" / "bank" / "bank_ext.c").read_text()
+    ).read_text(encoding="utf-8")
+    agg = (dest / "native" / "src" / "bank" / "bank_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "AccObject" in frag_acc
     assert "SeededAccObject" in frag_view
     assert "self->handle = acc_create_seeded(seed);" in frag_view
@@ -149,7 +151,9 @@ def run(root: Path) -> None:
     assert "seed depth" in frag_view  # view's override doc
     assert "parent depth" in frag_acc and "parent depth" not in frag_view
     # Exactly one core lib — the view adds no new object library.
-    cmake = (dest / "native" / "src" / "bank" / "CMakeLists.txt").read_text()
+    cmake = (dest / "native" / "src" / "bank" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "acc_core" in cmake
     assert "seededacc_core" not in cmake
 
@@ -239,7 +243,9 @@ print("views_module: all checks passed")
     print(result.stdout.strip())
 
     # ── 6. One .pyi, two class blocks ────────────────────────────────────────
-    pyi = (dest / "src" / "acc_bank" / "bank" / "bank.pyi").read_text()
+    pyi = (dest / "src" / "acc_bank" / "bank" / "bank.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class Acc:" in pyi
     assert "class SeededAcc:" in pyi
     # The view's __init__ takes its own constructor param.

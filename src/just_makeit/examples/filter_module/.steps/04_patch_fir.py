@@ -5,7 +5,7 @@ import re
 import sys
 
 header = pathlib.Path("native/inc/fir/fir_core.h")
-text = header.read_text()
+text = header.read_text(encoding="utf-8")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float _Complex\s*\n"
@@ -30,5 +30,5 @@ impl = (
     "}"
 )
 replacement = m.group(1) + " float _Complex\n" + impl
-header.write_text(stub_re.sub(replacement, text))
+header.write_text(stub_re.sub(replacement, text), encoding="utf-8")
 print(f"patched {header}")

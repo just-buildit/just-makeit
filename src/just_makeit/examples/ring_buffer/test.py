@@ -245,7 +245,9 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", str(proj / "build")], proj)
 
     # ── 6. Both rings, from Python ───────────────────────────────────────
-    _cmd([sys.executable, "-c", _DEMO.format(proj=str(proj))], proj)
+    # repr(): the path becomes a Python string LITERAL in the demo source, and
+    # a Windows `C:\Users` pasted in raw is a `\U` escape (gh-1368).
+    _cmd([sys.executable, "-c", _DEMO.format(proj=repr(str(proj)))], proj)
 
 
 def _method(
@@ -276,7 +278,7 @@ def _cmd(args, cwd):
 _DEMO = """
 import sys, glob
 import numpy as np
-sys.path[:0] = glob.glob("{proj}" + "/build*/**/", recursive=True) + ["{proj}/src"]
+sys.path[:0] = glob.glob({proj} + "/build*/**/", recursive=True) + [{proj} + "/src"]
 from ringdemo.rings import Cf32Ring, Iq16Ring
 
 # ── complex64: a plain borrowed view ────────────────────────────────────

@@ -22,24 +22,24 @@ insert_re = re.compile(
     re.DOTALL,
 )
 
-htext = header.read_text()
+htext = header.read_text(encoding="utf-8")
 if "fir_filter_step_batch" in htext:
     print(f"{header}: step_batch already present, skipping")
 else:
     if not insert_re.search(htext):
         print("ERROR: insertion point not found in header", file=sys.stderr)
         sys.exit(1)
-    batch_content = batch_h.read_text().strip()
+    batch_content = batch_h.read_text(encoding="utf-8").strip()
     htext = insert_re.sub(
         lambda m: m.group(1) + "\n\n" + batch_content + "\n\n" + m.group(2),
         htext,
     )
-    header.write_text(htext)
+    header.write_text(htext, encoding="utf-8")
     print(f"patched {header}")
 
 # ── 2. Replace fir_filter_steps() in source ──────────────────────────────────
 
-ctext = core_c.read_text()
+ctext = core_c.read_text(encoding="utf-8")
 
 if "JM_DEFINE_STEPS" in ctext:
     print(f"{core_c}: JM_DEFINE_STEPS already present, skipping")
@@ -54,6 +54,6 @@ else:
             file=sys.stderr,
         )
         sys.exit(1)
-    ctext = fn_re.sub(kernel.read_text().strip(), ctext)
-    core_c.write_text(ctext)
+    ctext = fn_re.sub(kernel.read_text(encoding="utf-8").strip(), ctext)
+    core_c.write_text(ctext, encoding="utf-8")
     print(f"patched {core_c}")

@@ -19,6 +19,7 @@ Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/three_face/test.py
 """
 
+import os
 import struct
 import subprocess
 import sys
@@ -69,10 +70,12 @@ def run(root: Path) -> None:
     jm_app(proj, target="console", name="gaintool", object_="gain")
     jm_app(proj, target="pep723", name="gaintool", object_="gain")
 
-    app_c = (proj / "native" / "src" / "app" / "gaintool.c").read_text()
-    cli_py = (proj / "src" / "gaintool" / "cli.py").read_text()
-    cmake = (proj / "CMakeLists.txt").read_text()
-    pyproject = (proj / "pyproject.toml").read_text()
+    app_c = (proj / "native" / "src" / "app" / "gaintool.c").read_text(
+        encoding="utf-8"
+    )
+    cli_py = (proj / "src" / "gaintool" / "cli.py").read_text(encoding="utf-8")
+    cmake = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
+    pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
 
     # ── 3. Assert the generator produced WORKING faces (no stubs) ────────
     assert "<<IMPLEMENT" not in app_c, "C app must be fully generated, no stub"
@@ -98,14 +101,17 @@ def run(root: Path) -> None:
         "and a Python module."
     )
     header = proj / "native" / "inc" / "gain" / "gain_core.h"
-    htext = header.read_text()
+    htext = header.read_text(encoding="utf-8")
     scaffold = " * @brief Create a gain instance."
     assert scaffold in htext, "scaffold create @brief not found in header"
-    header.write_text(htext.replace(scaffold, f" * @brief {class_summary}", 1))
+    header.write_text(
+        htext.replace(scaffold, f" * @brief {class_summary}", 1),
+        encoding="utf-8",
+    )
     apply_run(proj)
 
     # The enriched summary reached the regenerated stub (not the fallback).
-    pyi = (proj / "src" / "gaintool" / "gain.pyi").read_text()
+    pyi = (proj / "src" / "gaintool" / "gain.pyi").read_text(encoding="utf-8")
     assert "class Gain:" in pyi
     # gh-744: the summary wraps when it does not fit on one line.
     assert class_summary in flatten_prose(pyi), (
@@ -143,7 +149,8 @@ def run(root: Path) -> None:
     # Faces run from src/ (where the package + cmake-built gain.so live; the
     # pep723 gaintool.py at the root would otherwise shadow the package).
     src = proj / "src"
-    exe = proj / "build" / "gaintool"
+    # `.exe` on Windows (gh-1368).
+    exe = proj / "build" / ("gaintool.exe" if os.name == "nt" else "gaintool")
     assert exe.exists(), f"C binary not built: {exe}"
 
     # Face 1 — standalone C binary.

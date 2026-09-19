@@ -94,7 +94,9 @@ def run(root: Path) -> None:
     # The Doxygen enrichment reached the stub: class summary from create()'s
     # @brief, method prose from @brief/@param/@return, and a @code block on
     # quantize() rendered as a runnable Examples doctest.
-    ema_pyi_text = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+    ema_pyi_text = (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "Exponential moving average filter" in ema_pyi_text, (
         "class @brief missing from ema.pyi"
     )
@@ -201,7 +203,7 @@ def run(root: Path) -> None:
     # step() takes a numpy array, returns int — no steps() generated
     core_h = (
         proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "const float _Complex *x, size_t x_len" in core_h, (
         "array arg not in step signature"
     )
@@ -229,7 +231,9 @@ def run(root: Path) -> None:
     # so rejoin them before matching -- the assertion is about the
     # parameters, not where the line happens to break.
     pyi = flatten_signatures(
-        (proj_buf / "src" / "my_buf" / "buf_proc.pyi").read_text()
+        (proj_buf / "src" / "my_buf" / "buf_proc.pyi").read_text(
+            encoding="utf-8"
+        )
     )
     assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi, (
         f"array-arg step stub missing or wrong:\n{pyi}"
@@ -243,7 +247,9 @@ def run(root: Path) -> None:
     # so rejoin them before matching -- the assertion is about the
     # parameters, not where the line happens to break.
     ema_pyi = flatten_signatures(
-        (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text()
+        (proj_ema / "src" / "my_arrays" / "ema.pyi").read_text(
+            encoding="utf-8"
+        )
     )
     assert "class Ema:" in ema_pyi
     assert "def step(self, x: float) -> float:" in ema_pyi
@@ -277,12 +283,16 @@ def run(root: Path) -> None:
     )
 
     # Verify ext has PyArray_EMPTY (per-call alloc) not pre-allocated buffer
-    ext = (proj_conv / "native/src/ci8_conv/ci8_conv_ext.c").read_text()
+    ext = (proj_conv / "native/src/ci8_conv/ci8_conv_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "PyArray_EMPTY" in ext, "out-type must use PyArray_EMPTY"
     assert "/ 2" in ext, "out-divisor 2 must appear in length expression"
 
     # Verify C stub has the *out parameter
-    src = (proj_conv / "native/src/ci8_conv/ci8_conv_core.c").read_text()
+    src = (proj_conv / "native/src/ci8_conv/ci8_conv_core.c").read_text(
+        encoding="utf-8"
+    )
     assert "float _Complex *out" in src, "*out param missing from stub"
     assert "const int8_t *raw" in src, "raw array param missing from stub"
 
