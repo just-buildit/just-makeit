@@ -34,6 +34,8 @@ distinctions between them are all load-bearing:
 
 from __future__ import annotations
 
+from . import _textio
+
 from . import _outbuf
 from ._types import _CTYPE_META
 
@@ -305,7 +307,7 @@ def withdraw_overridden_builtin(
             f" `jm regenerate {component}` to rebuild this component's C from"
             f" the manifest."
         )
-    core_c.write_text(text.replace(body, "", 1), encoding="utf-8")
+    _textio.write_text(core_c, text.replace(body, "", 1))
     print(f"  update  {core_c}  (withdrew the built-in {name}())")
     return True, ""
 

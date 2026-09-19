@@ -24,6 +24,8 @@ Usage
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 import sys
 from dataclasses import dataclass
@@ -190,7 +192,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
             for pat, repl in _COMPLEX_SPELLING:
                 new = pat.sub(repl, new)
             if new != text:
-                path.write_text(new, encoding="utf-8")
+                _textio.write_text(path, new)
                 changed.append(path)
     return changed
 
@@ -255,7 +257,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
         template = getattr(R, step.template_attr)
-        dest.write_text(R.render(template, ctx), encoding="utf-8")
+        _textio.write_text(dest, R.render(template, ctx))
         print(f"  create  {dest.relative_to(root)}")
 
     elif isinstance(step, AddTomlKey):
@@ -270,14 +272,14 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         gitkeep = root / "benchmarks" / "history" / ".gitkeep"
         if not gitkeep.exists():
             gitkeep.parent.mkdir(parents=True, exist_ok=True)
-            gitkeep.write_text("", encoding="utf-8")
+            _textio.write_text(gitkeep, "")
             print(f"  create  {gitkeep.relative_to(root)}")
         makefile = root / "Makefile"
         if makefile.exists():
             old = makefile.read_text(encoding="utf-8")
             new = _rewrite_makefile_bench(old)
             if new != old:
-                makefile.write_text(new, encoding="utf-8")
+                _textio.write_text(makefile, new)
                 print("  update  Makefile  (bench → just-makeit bench)")
 
     elif isinstance(step, RegenBench):
@@ -356,7 +358,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     )
                     comp_ctx["bench_destroy_stmt"] = ""
                     comp_ctx["bench_methods_timing_block"] = ""
-            bench_c.write_text(R.render(tmpl, comp_ctx), encoding="utf-8")
+            _textio.write_text(bench_c, R.render(tmpl, comp_ctx))
             print(f"  update  {bench_c.relative_to(root)}")
 
 

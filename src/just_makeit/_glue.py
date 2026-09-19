@@ -17,6 +17,8 @@ hand-written algorithm code and are only ever spliced, never re-rendered.
 
 from __future__ import annotations
 
+from . import _textio
+
 from pathlib import Path
 
 from . import _config as C
@@ -411,7 +413,7 @@ def regenerate_standalone(
 
     ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
     if ext_c.exists():
-        ext_c.write_text(R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8")
+        _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
         print(f"  update  {ext_c}")
 
     pyi_path = root / "src" / pkg / f"{object_name}.pyi"
@@ -420,9 +422,9 @@ def regenerate_standalone(
         new_pyi = R.render_component_pyi(ctx)
         # gh-428: preserve any manual_stub method's hand-written text across
         # the otherwise-blind regen above.
-        pyi_path.write_text(
+        _textio.write_text(
+            pyi_path,
             S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi_path),
-            encoding="utf-8",
         )
         print(f"  update  {pyi_path}")
     # gh-1361: the link-check table follows the binding it was derived from.

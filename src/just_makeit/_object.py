@@ -14,6 +14,8 @@ Adds a Python type to an existing project:
 
 from __future__ import annotations
 
+from . import _textio
+
 import ast as _ast
 import copy
 import re
@@ -555,9 +557,9 @@ def _copy_external_cmake_blocks(
             adapted = block.replace(old_comp, new_comp)
             existing = new_cmake_path.read_text(encoding="utf-8")
             if adapted not in existing:
-                new_cmake_path.write_text(
+                _textio.write_text(
+                    new_cmake_path,
                     existing.rstrip("\n") + "\n\n" + adapted + "\n",
-                    encoding="utf-8",
                 )
                 print(f"  update  {new_cmake_path}  (external lib block)")
             return  # one source file is enough
@@ -2770,7 +2772,7 @@ def run(
 
         h_text = core_h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
-        core_h_path.write_text(h_text, encoding="utf-8")
+        _textio.write_text(core_h_path, h_text)
     # gh-1321: the peer of the same guard in `_init.run`. A header-only
     # component has nothing out-of-line to scaffold, and writing an empty
     # `_core.c` is worse than not writing one: the CMake core library is

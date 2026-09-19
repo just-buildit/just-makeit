@@ -20,6 +20,8 @@ default = "8"
 
 from __future__ import annotations
 
+from . import _textio
+
 import copy as _copy
 import re as _re
 import sys as _sys
@@ -819,7 +821,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         text = _dump(cfg)
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
-        path.write_text(text, encoding="utf-8")
+        _textio.write_text(path, text)
         return
 
     # gh-764: the file may already say exactly this. `save` rewrites *every*
@@ -849,7 +851,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
         if _round_trips(text, cfg, include_list):
-            path.write_text(text, encoding="utf-8")
+            _textio.write_text(path, text)
             return
 
     try:
@@ -859,7 +861,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         text = _dump(cfg)
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
-        path.write_text(text, encoding="utf-8")
+        _textio.write_text(path, text)
         return
 
     # gh-698: parsing the existing file is the expensive half of a save, and
@@ -941,7 +943,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
 
     # The whole document now round-trips through tomlkit — there is no longer a
     # _dump()-generated body to staple onto a preserved header.
-    path.write_text(_tk.dumps(doc).rstrip("\n") + "\n", encoding="utf-8")
+    _textio.write_text(path, _tk.dumps(doc).rstrip("\n") + "\n")
 
 
 def _without_group_expansion(cfg: dict) -> dict:
@@ -4530,7 +4532,7 @@ def stamp_jm_version(root: Path, cfg: dict) -> str | None:
         )
     else:
         return None
-    mp.write_text(text, encoding="utf-8")
+    _textio.write_text(mp, text)
     cfg.setdefault("project", {})["jm_version"] = running
     return running
 

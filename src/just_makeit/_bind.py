@@ -30,6 +30,8 @@ Package name comes from ``pyproject.toml`` in the project root.
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 import sys
 from pathlib import Path
@@ -649,7 +651,7 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
         ext_c = root / "native" / "src" / component / f"{component}_ext.c"
         ext_c.parent.mkdir(parents=True, exist_ok=True)
         verb = "update" if ext_c.exists() else "create"
-        ext_c.write_text(text, encoding="utf-8")
+        _textio.write_text(ext_c, text)
         print(f"  {verb}  {ext_c}")
 
         pyi = root / "src" / pkg / f"{component}.pyi"
@@ -671,6 +673,6 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
                 )
             pyi.parent.mkdir(parents=True, exist_ok=True)
             verb = "update" if pyi.exists() else "create"
-            pyi.write_text(pyi_text, encoding="utf-8")
+            _textio.write_text(pyi, pyi_text)
             print(f"  {verb}  {pyi}")
     return text

@@ -8,6 +8,8 @@ scaffolds one or more empty extension modules.
 
 from __future__ import annotations
 
+from . import _textio
+
 import sys
 from pathlib import Path
 
@@ -48,7 +50,7 @@ def _make_project_ctx(
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _textio.write_text(path, content)
     print(f"  create  {path}")
 
 
@@ -190,9 +192,8 @@ def run(
     if fragments:
         globs = C._toml_string_array(["objects/*.toml", "modules/*.toml"])
         mpath = root / C.FILENAME
-        mpath.write_text(
-            f"include = {globs}\n\n" + mpath.read_text(encoding="utf-8"),
-            encoding="utf-8",
+        _textio.write_text(
+            mpath, f"include = {globs}\n\n" + mpath.read_text(encoding="utf-8")
         )
     print(f"  create  {root / C.FILENAME}")
     _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))

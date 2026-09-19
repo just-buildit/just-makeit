@@ -31,6 +31,8 @@ already cost one round of exactly that.
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -358,7 +360,7 @@ def splice_cmake_component(
         idx = text.index("\n", text.index(sub)) + 1
         text = text[:idx] + wiring + text[idx:]
     if text != original:
-        cmake_path.write_text(text, encoding="utf-8")
+        _textio.write_text(cmake_path, text)
         print(f"  update  {cmake_path}")
 
 
