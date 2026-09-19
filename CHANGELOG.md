@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.77.1] — 2026-09-19
+
 ### Fixed
 
 - **`upgrade`'s `complex` → `_Complex` respell no longer rewrites prose**
