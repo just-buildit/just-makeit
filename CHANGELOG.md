@@ -90,6 +90,15 @@
 
 ### Fixed
 
+- **The generated root `CMakeLists.txt` no longer fails on Windows before
+    compiling anything** (gh-1368). The shared and static `lib<pkg>` targets
+    shared one `OUTPUT_NAME`, and on Windows the shared library's import
+    library and the static library are both `<pkg>.lib`, so Ninja refused
+    the project: `multiple rules generate <pkg>.lib`. Under `WIN32` the
+    static library is now `<pkg>_static`, as doppler's own CMake already
+    does. Linux and macOS are unchanged. Existing projects: the root
+    `CMakeLists.txt` is create-only, so `jm status` reports it OUTDATED.
+
 - **A `static inline` declaration was taken for a definition** (gh-1310).
     `apply`'s declaration refresh skips a name the header defines inline
     (gh-133/gh-468), but its check matched any `static inline ... name(`,
