@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The release's Windows smoke no longer fails on its own plumbing**
+    (gh-1392). It asserted the installed version with
+    `pip show | grep -q`. `grep -q` exits at the first match and closes the
+    pipe: POSIX pip takes SIGPIPE and dies quietly, but Windows pip raises
+    `OSError` and exits 120, after installing correctly. It is a race
+    against pip's remaining output, so v0.77.2 failed on py3.9 while py3.12
+    and py3.14 passed the same run. The output is now read in full before
+    matching, and a test refuses any workflow that pipes a Python process
+    into `grep -q`.
+
 ## [0.77.2] — 2026-09-19
 
 The first published release since 0.77.0. It also carries the three fixes
