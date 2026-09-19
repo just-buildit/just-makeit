@@ -28,6 +28,8 @@ guard*; everything else calls the reused helpers.
 
 from __future__ import annotations
 
+from . import _textio
+
 from pathlib import Path
 from typing import NamedTuple, TYPE_CHECKING
 
@@ -2243,4 +2245,4 @@ def materialize(
                 text = text[:idx] + sub + text[idx:]
             else:
                 text += sub
-            cmake_path.write_text(text, encoding="utf-8")
+            _textio.write_text(cmake_path, text)

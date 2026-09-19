@@ -90,6 +90,13 @@
 
 ### Fixed
 
+- **Generated files have `\n` line endings on Windows too** (gh-1368).
+    jm wrote every file with `Path.write_text`, which translates `\n` to
+    CRLF on Windows, so one manifest produced different bytes per platform
+    and the generated `CMakeLists.txt` failed cmake-lint (`C0327 Wrong line   ending`). All 83 writes now go through `_textio.write_text`, which is
+    UTF-8 and LF everywhere, and a test refuses any other write in the
+    package.
+
 - **A `static inline` declaration was taken for a definition** (gh-1310).
     `apply`'s declaration refresh skips a name the header defines inline
     (gh-133/gh-468), but its check matched any `static inline ... name(`,

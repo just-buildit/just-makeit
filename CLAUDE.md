@@ -122,6 +122,7 @@ the user only writes the DSP algorithm.
 | `_libwiring.py`      | Which component cores reach `lib<pkg>.so` / `.a` — emitter and detector in one file (gh-981/gh-984)                                                                                                                                                                         |
 | `_targets.py`        | Which CMake target names are already claimed — what jm will emit, and what the project declares itself (gh-1046)                                                                                                                                                            |
 | `_builtins.py`       | Which member names an object's own generated code occupies — when a declared method may replace one, describe one, or is refused outright (gh-994/gh-996)                                                                                                                   |
+| `_textio.py`         | The one way jm writes a text file: UTF-8, `\n` line endings on every platform; `tests/test_gh1368_lf_writes.py` refuses any other write (gh-1368)                                                                                                                           |
 | `_termynal_fence.py` | Superfences formatter for animated terminal (termynal) docs blocks                                                                                                                                                                                                          |
 
 ### Template rendering

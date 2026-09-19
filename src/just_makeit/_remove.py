@@ -13,6 +13,8 @@ inferred side effect of a reconcile. Prompts for confirmation unless
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 import shutil
 import sys
@@ -199,7 +201,7 @@ def _strip_cmake_object(root: Path, obj: str) -> None:
         and f"$<TARGET_OBJECTS:{obj}_core>" not in ln
     ]
     if len(kept) != len(lines):
-        cmake.write_text("".join(kept), encoding="utf-8")
+        _textio.write_text(cmake, "".join(kept))
         print(f"  update  {cmake}")
 
 
@@ -226,7 +228,7 @@ def _strip_umbrella(root: Path, pkg: str, obj: str) -> None:
     include = f'#include "{obj}/{obj}_core.h"\n'
     text = umbrella.read_text(encoding="utf-8")
     if include in text:
-        umbrella.write_text(text.replace(include, "", 1), encoding="utf-8")
+        _textio.write_text(umbrella, text.replace(include, "", 1))
         print(f"  update  {umbrella}")
 
 
@@ -251,7 +253,7 @@ def _strip_pkg_init(root: Path, pkg: str, obj: str, Component: str) -> None:
             .replace(f"[{token}]", "[]")
         )
     if text != "".join(lines):
-        init.write_text(text, encoding="utf-8")
+        _textio.write_text(init, text)
         print(f"  update  {init}")
 
 
@@ -716,7 +718,7 @@ def _strip_decl_from_header(core_h: Path, name: str) -> bool:
         return False
     # Collapse a run of 3+ newlines left where the decl sat back to 2.
     new_text = re.sub(r"\n{3,}", "\n\n", new_text)
-    core_h.write_text(new_text, encoding="utf-8")
+    _textio.write_text(core_h, new_text)
     return True
 
 
@@ -845,7 +847,7 @@ def _regenerate_object_bindings(
     ctx["extra_include"] = standalone_extra_include(root, obj)
     ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
     if ext_c.exists():
-        ext_c.write_text(R.render(R.COMPONENT_EXT_C, ctx), encoding="utf-8")
+        _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
         print(f"  update  {ext_c}")
     pyi = root / "src" / pkg / f"{obj}.pyi"
     if pyi.exists():
@@ -853,9 +855,8 @@ def _regenerate_object_bindings(
         new_pyi = R.render_component_pyi(ctx)
         # gh-428: preserve a sibling manual_stub method's hand-written text
         # across the regen triggered by removing a different method/property.
-        pyi.write_text(
-            S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi),
-            encoding="utf-8",
+        _textio.write_text(
+            pyi, S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi)
         )
         print(f"  update  {pyi}")
     bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
@@ -865,7 +866,7 @@ def _regenerate_object_bindings(
             if C.is_no_step(cfg, obj)
             else R.COMPONENT_BENCH_C
         )
-        bench_c.write_text(R.render(tmpl, ctx), encoding="utf-8")
+        _textio.write_text(bench_c, R.render(tmpl, ctx))
         print(f"  update  {bench_c}")
 
 

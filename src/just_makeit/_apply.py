@@ -17,6 +17,8 @@ reproducible from `just-makeit.toml` (plus any hand-written `*_core.c` /
 
 from __future__ import annotations
 
+from . import _textio
+
 import contextlib
 import fnmatch
 import io
@@ -887,7 +889,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
                     # writing the header from the manifest.
                     gates=False,
                 )
-            h_path.write_text(updated, encoding="utf-8")
+            _textio.write_text(h_path, updated)
             patched.append(h_path)
     return patched
 
@@ -942,7 +944,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
             text = h_path.read_text(encoding="utf-8")
             new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
             if new != text:
-                h_path.write_text(new, encoding="utf-8")
+                _textio.write_text(h_path, new)
                 patched.append(h_path)
 
         c_path = root / "native" / "src" / comp / f"{comp}_core.c"
@@ -969,7 +971,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
                 break
             idx = new.find(f"{comp}_destroy", idx + 1)
         if new != text:
-            c_path.write_text(new, encoding="utf-8")
+            _textio.write_text(c_path, new)
             patched.append(c_path)
     return patched
 
@@ -1080,7 +1082,7 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
         return False  # mismatched sentinels — leave the file alone
 
     if new_real != real:
-        real_path.write_text(new_real, encoding="utf-8")
+        _textio.write_text(real_path, new_real)
         return True
     return False
 
@@ -1196,7 +1198,7 @@ def _splice_cmake_components(
     )
 
     if new_real != real:
-        real_path.write_text(new_real, encoding="utf-8")
+        _textio.write_text(real_path, new_real)
         return True
     return False
 
@@ -1227,7 +1229,7 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     cur = real_path.read_text(encoding="utf-8")
     fixed = ensure_dll_preamble(cur)
     if fixed != cur:
-        real_path.write_text(fixed, encoding="utf-8")
+        _textio.write_text(real_path, fixed)
         print(f"  update  {real_path}")
         changed = True
     return changed
@@ -1279,7 +1281,7 @@ def _merge_module_init_file(
     # there is one place that turns the manifest string into Python source.
     merged = _merge_module_docstring(merged, _leading_docstring(temp_text))
     if merged != existing:
-        real_path.write_text(merged, encoding="utf-8")
+        _textio.write_text(real_path, merged)
         return True
     return False
 
@@ -1553,7 +1555,7 @@ def _reconcile_object_core_cmake(
     if new == original:
         return False
     _warn_dropped_cmake(real, original, new)
-    real.write_text(new, encoding="utf-8")
+    _textio.write_text(real, new)
     return True
 
 
@@ -1681,7 +1683,7 @@ def _refresh_family_invocation(path: Path, family: "C.CoreFamily") -> bool:
         if cut == -1:
             cut = text.rfind("#endif")
         new = text[:cut] + family.invocation + "\n\n" + text[cut:]
-    path.write_text(new, encoding="utf-8")
+    _textio.write_text(path, new)
     return True
 
 
@@ -1737,7 +1739,7 @@ def _add_cmake_block_for(
     idx = real.index(sentinel)
     idx = real.index("\n", idx) + 1
     new_real = real[:idx] + block + real[idx:]
-    real_path.write_text(new_real, encoding="utf-8")
+    _textio.write_text(real_path, new_real)
     return True
 
 
@@ -1765,7 +1767,7 @@ def _add_umbrella_include(real_path: Path, temp_path: Path, comp: str) -> bool:
     if last_endif == -1:
         return False
     new_real = real[:last_endif] + include_line + "\n" + real[last_endif:]
-    real_path.write_text(new_real, encoding="utf-8")
+    _textio.write_text(real_path, new_real)
     return True
 
 
@@ -2064,7 +2066,7 @@ def _sync_aggregates(
             ):
                 _dst = temp_root / _rel
                 if _dst.exists():
-                    _dst.write_text(_render(_ctx), encoding="utf-8")
+                    _textio.write_text(_dst, _render(_ctx))
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.
@@ -2542,9 +2544,8 @@ def _splice_missing_core_definitions(
                 + "\n"
             )
         text = core_c.read_text(encoding="utf-8")
-        core_c.write_text(
-            text.rstrip("\n") + "\n\n" + "\n".join(bodies),
-            encoding="utf-8",
+        _textio.write_text(
+            core_c, text.rstrip("\n") + "\n\n" + "\n".join(bodies)
         )
         changed.append((core_c, missing))
     return changed
@@ -2585,7 +2586,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
             f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
             f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
         )
-        cmake_path.write_text(text.rstrip() + bench_block, encoding="utf-8")
+        _textio.write_text(cmake_path, text.rstrip() + bench_block)
         updated.append(cmake_path)
     return updated
 
@@ -2617,8 +2618,8 @@ def _wire_module_object(manifest: Path, mod_name: str, comp: str) -> bool:
         return False
     items = existing + [comp]
     new_list = ", ".join(f'"{x}"' for x in items)
-    manifest.write_text(
-        text[: m.start(2)] + new_list + text[m.end(2) :], encoding="utf-8"
+    _textio.write_text(
+        manifest, text[: m.start(2)] + new_list + text[m.end(2) :]
     )
     return True
 
@@ -2751,7 +2752,7 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
     manifest = root / C.FILENAME
     text = manifest.read_text(encoding="utf-8")
     if "include" not in C.load_manifest(root):
-        manifest.write_text(_INCLUDE_LINE + "\n" + text, encoding="utf-8")
+        _textio.write_text(manifest, _INCLUDE_LINE + "\n" + text)
         print(f'  update  {manifest}  (include = ["objects/*.toml"])')
 
     for comp, mod_name in module_directives:

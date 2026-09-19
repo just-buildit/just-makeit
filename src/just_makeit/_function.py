@@ -22,6 +22,8 @@ the id instead: `dsp.filters` addressed a directory `jm module` never wrote.
 
 from __future__ import annotations
 
+from . import _textio
+
 import sys
 from pathlib import Path
 from typing import Union
@@ -88,7 +90,7 @@ def _write_function_c(
         f"{stub}"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _textio.write_text(path, text)
     print(f"  create  {path}")
 
 
@@ -124,7 +126,7 @@ def _inject_into_core_h(
     else:
         marker = f"#endif /* {cname.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{decl}\n{marker}")
-    path.write_text(existing, encoding="utf-8")
+    _textio.write_text(path, existing)
     print(f"  update  {path}")
 
 
@@ -151,7 +153,7 @@ def _inject_inline_into_core_h(
     else:
         marker = f"#endif /* {cname.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{stub}\n{marker}")
-    path.write_text(existing, encoding="utf-8")
+    _textio.write_text(path, existing)
     print(f"  update  {path}")
 
 
@@ -314,9 +316,7 @@ def run(
 
             stub = I.inject_body_into_stub(stub, impl_body)
         existing = core_c.read_text(encoding="utf-8")
-        core_c.write_text(
-            existing.rstrip() + "\n\n" + stub + "\n", encoding="utf-8"
-        )
+        _textio.write_text(core_c, existing.rstrip() + "\n\n" + stub + "\n")
         print(f"  update  {core_c}")
         _inject_into_core_h(
             core_h,
