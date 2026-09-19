@@ -31,7 +31,6 @@ Two gates, because they answer different questions:
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -45,25 +44,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _capsule, _composer, _handle, _procglobal
 from just_makeit import _render as R
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
+def _cli(*args, cwd) -> JmRun:
     """Drive the real CLI — gh-975's rule. Everything this file's other
     classes assert is reachable from a private API, and all of it passed
     while the command a user runs emitted nothing."""
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 # macOS does not allow a `-shared` extension to leave the CPython symbols

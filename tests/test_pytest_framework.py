@@ -12,10 +12,8 @@ Covers:
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 
@@ -35,23 +33,12 @@ from just_makeit._config import (
 from just_makeit._init import run as init_run
 from just_makeit._new import run as new_run
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
 
 
-def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd or Path.cwd(),
-        env={**os.environ, "PYTHONPATH": str(SRC)},
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+def _cli(*args, cwd=None) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 # ── _config helpers ───────────────────────────────────────────────────────────

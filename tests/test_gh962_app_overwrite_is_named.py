@@ -25,12 +25,12 @@ what was discarded and where the logic belongs instead.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from _jmrun import JmRun, run_cli
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -38,20 +38,9 @@ SRC = Path(__file__).parent.parent / "src"
 TEMPLATES = SRC / "just_makeit" / "templates"
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        env={**os.environ, "PYTHONPATH": str(SRC)},
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 @pytest.fixture()

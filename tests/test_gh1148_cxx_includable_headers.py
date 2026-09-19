@@ -55,34 +55,23 @@ three.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
+
 
 _CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 _CXX = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
 _needs_cxx = pytest.mark.skipif(_CXX is None, reason="no C++ compiler on PATH")
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 @pytest.fixture(scope="module")

@@ -30,31 +30,19 @@ a hand-written fixture — gh-1134's own end-to-end test asserted on generated
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
+
 
 CLOBBER = "/* CLOBBERED */\n"
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _declare(root: Path, fragment: str, line: str) -> None:

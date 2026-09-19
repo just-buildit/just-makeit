@@ -6,7 +6,6 @@ command — removing the manual ``clang-format`` step doppler documents. Off by
 default, output is byte-identical, so existing projects are untouched.
 """
 
-import os
 import shutil
 import subprocess
 import sys
@@ -20,26 +19,16 @@ from just_makeit import _cfmt
 from just_makeit import _config as C
 from just_makeit._new import run as new_run
 
+from _jmrun import JmRun, run_cli
 
-SRC = Path(__file__).parent.parent / "src"
+
 _HAS_CF = shutil.which("clang-format") is not None
 _cf_only = pytest.mark.skipif(not _HAS_CF, reason="clang-format not installed")
 
 
-def _cli(*args, cwd):
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        env={**os.environ, "PYTHONPATH": str(SRC)},
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 class TestConfigGetter:

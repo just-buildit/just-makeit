@@ -46,8 +46,6 @@ covered on the day it is added rather than the day someone remembers.
 from __future__ import annotations
 
 import ast
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -58,6 +56,8 @@ sys.path.insert(0, str(SRC))
 
 from just_makeit import _coerce  # noqa: E402
 from just_makeit import _types as T  # noqa: E402
+
+from _jmrun import JmRun, run_cli
 
 #: The Python annotation each pseudo-type must present. Keyed off the same
 #: frozenset the product reads, so a new member fails here as a KeyError in
@@ -72,15 +72,9 @@ _PY_ANNOTATION = {
 _BAD_C = {t: f"{t} " for t in T.PSEUDO_TYPES}
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()"]
-        + list(args),
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def test_every_pseudo_type_has_an_expected_annotation():

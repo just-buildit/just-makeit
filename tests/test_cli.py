@@ -1,32 +1,16 @@
 """CLI dispatch tests for just-makeit."""
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
 from just_makeit._config import load as _load_cfg
 
+from _jmrun import JmRun, run_cli
 
-SRC = Path(__file__).parent.parent / "src"
 
-
-def _cli(*args, cwd=None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd or Path.cwd(),
-        env={**os.environ, "PYTHONPATH": str(SRC)},
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+def _cli(*args, cwd=None) -> JmRun:
+    # gh-1374: in THIS process. The child bought isolation only, and
+    # `run_cli` gives the same three attributes this file asserts on.
+    return run_cli(*args, cwd=cwd)
 
 
 class TestHelp:

@@ -29,6 +29,9 @@ from just_makeit._property import run as property_run
 from just_makeit._script import run as script_run
 from just_makeit._config import load, create_error, create_error_message
 
+from _jmrun import JmRun, run_cli
+
+
 _MSG = "invalid acquisition parameters: pd unreachable at this reps/cn0_dbhz"
 
 
@@ -57,26 +60,9 @@ def _init_body(project, obj="acq", Obj="Acq"):
     return ext[start : ext.index("\n}\n", start)]
 
 
-class _CliResult:
-    def __init__(self, returncode, out, err):
-        self.returncode = returncode
-        self.stdout = out
-        self.stderr = err
-
-
-def _cli(*args, cwd=None, capsys=None, monkeypatch=None) -> _CliResult:
-    """Drive the real argv parser in-process (see test_warnings for why)."""
-    from just_makeit._cli import main
-
-    monkeypatch.chdir(cwd)
-    monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
-    code = 0
-    try:
-        main()
-    except SystemExit as e:
-        code = e.code or 0
-    out, err = capsys.readouterr()
-    return _CliResult(code, out, err)
+def _cli(*args, cwd=None) -> JmRun:
+    # gh-1374: one implementation of this, in tests/_jmrun.py.
+    return run_cli(*args, cwd=cwd)
 
 
 class TestCreateErrorCodegen:
@@ -235,8 +221,6 @@ class TestCreateErrorCli:
             "--message",
             _MSG,
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         assert create_error(load(project), "acq") == "ValueError"
@@ -253,8 +237,6 @@ class TestCreateErrorCli:
             "--message",
             _MSG,
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert "including a genuine allocation failure" in r.stdout
 
@@ -265,14 +247,12 @@ class TestCreateErrorCli:
             "--message",
             "m",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "--category is required" in r.stderr
 
     def test_cli_requires_object_name(self, project, capsys, monkeypatch):
-        r = _cli("error", cwd=project, capsys=capsys, monkeypatch=monkeypatch)
+        r = _cli("error", cwd=project)
         assert r.returncode != 0
         assert "requires an object name" in r.stderr
 
@@ -286,8 +266,6 @@ class TestCreateErrorCli:
             "m",
             "--bogus",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "unexpected argument '--bogus'" in r.stderr
@@ -300,8 +278,6 @@ class TestCreateErrorCli:
             "acq",
             "--category",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "--category requires a value" in r.stderr
@@ -322,8 +298,6 @@ class TestCreateErrorCli:
             "--message",
             "bad taps",
             cwd=dest,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         ext = (dest / "native" / "src" / "filt" / "filt_ext_fir.c").read_text(
@@ -340,8 +314,6 @@ class TestCreateErrorCli:
             "--message",
             "m",
             cwd=tmp_path,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "just-makeit.toml" in r.stderr

@@ -24,12 +24,11 @@ file that gains a version copy later is covered on the day it gains it.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+
+from _jmrun import JmRun, run_cli
 
 SRC = Path(__file__).parent.parent / "src"
 TEMPLATES = SRC / "just_makeit" / "templates"
@@ -38,19 +37,9 @@ OLD = "0.1.0"
 NEW = "9.9.9"
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _bump(root: Path, to: str = NEW) -> None:

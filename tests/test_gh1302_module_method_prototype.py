@@ -34,13 +34,14 @@ call site is a second place to forget one, which is how gh-788 put the wrong
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from _jmrun import JmRun, run_cli
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -58,16 +59,9 @@ _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and any(
 )
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()"]
-        + list(args),
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-        timeout=900,
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _header(root: Path) -> Path:
