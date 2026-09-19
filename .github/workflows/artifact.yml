@@ -68,7 +68,10 @@ jobs:
           pip install dist/*.whl numpy --no-cache-dir
           VERSION="${{ inputs.version }}"
           if [ -n "$VERSION" ]; then
-            pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+            # gh-1392: read pip's output in full. `pip show | grep -q` closes
+            # the pipe under pip, which on Windows is exit 120, not SIGPIPE.
+            shown="$(pip show "just-makeit")"
+            printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
           fi
 
       - name: Install just-makeit from PyPI (with retry)
@@ -80,7 +83,8 @@ jobs:
             echo "Not yet, retry $i/20..."
             sleep 30
           done
-          pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+          shown="$(pip show "just-makeit")"          # gh-1392: not a pipe
+          printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
 
       # pytest belongs to the ENVIRONMENT, not to the steps that happen to
       # need it today. It was installed per-step (ce15733, 2026-05-16) until
@@ -712,7 +716,10 @@ jobs:
           python -m pip install dist/*.whl numpy pytest --no-cache-dir
           VERSION="${{ inputs.version }}"
           if [ -n "$VERSION" ]; then
-            python -m pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+            # gh-1392: read pip's output in full. `pip show | grep -q` closes
+            # the pipe under pip, which on Windows is exit 120, not SIGPIPE.
+            shown="$(python -m pip show "just-makeit")"
+            printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
           fi
 
       - name: Install just-makeit from PyPI (with retry)
@@ -725,7 +732,8 @@ jobs:
             echo "Not yet, retry $i/20..."
             sleep 30
           done
-          python -m pip show "just-makeit" | grep -q "Version: ${VERSION#v}"
+          shown="$(python -m pip show "just-makeit")"  # gh-1392: not a pipe
+          printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
 
       # CC / CMAKE_GENERATOR for THIS step only: the examples call `cmake -B
       # build` themselves, as a Windows user running them by hand would, and
