@@ -28,8 +28,8 @@ Commands:
     --find-package NAME         CMake `find_package(NAME REQUIRED)` (repeatable; e.g. Doppler).
     --pkg-module NAME           pkg-config module via `pkg_check_modules` (repeatable).
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
-    --windows                   Target Windows too (`[project] platforms`): emit the MinGW
-                                runtime-DLL CMake boilerplate. Off by default (Linux/macOS).
+    --windows                   Retired (gh-1368): does nothing. Windows builds with clang-cl
+                                as generated; see docs/faq.md "Does it work on Windows?".
     --c-style STYLE             Reformat generated C to the project's style after every
                                 mutating command (`[project] c_style`). Only `clang-format`
                                 is supported; seeds a `.clang-format` and runs it on native/.

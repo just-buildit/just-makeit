@@ -355,17 +355,18 @@ format char), `zero` (C zero literal), `py_type` (numpy dtype string),
 producing the PyObject\* conversion expression). Array types append `[]` to any
 scalar key; fixed-length state fields append `[N]`.
 
-### Windows (opt-in, gh-213)
+### Windows (clang-cl, gh-1368)
 
-jm itself does not test Windows — it emits CPython for MinGW/GCC, MSVC was
-never exercised, and the Windows CI was dropped. Windows support in generated
-projects is **opt-in per project** via `[project] platforms` (default
-`["linux", "macos"]`). `jm new --windows` records `platforms = [..., "windows"]`
-and emits the MinGW runtime-DLL `if(WIN32 …)` block into each component/module
-`CMakeLists.txt` (gated by `Ctx.make_platform_ctx` / `C.is_windows_target`); off
-by default that block is absent and `jm status --check` treats the absence as
-correct. The generated `Makefile` still detects `OS=Windows_NT` at make-time
-(MinGW required; MSVC rejects C99 `float _Complex`).
+A generated project builds on Windows with **clang-cl**, with no flag: it has
+C99 `_Complex` while targeting the MSVC ABI (`cl.exe` has none, and
+`clib_common.h` `#error`s on it). Gated by `Examples (windows-latest, clang-cl)` in `ci.yml`, which feeds `CI passed`. The user-facing answer is
+`docs/faq.md` "Does it work on Windows?"; the mechanics live where they act:
+the complex surface in `clib_common.h`, the CRT/define/flag defaults in the
+root `CMakeLists_top.cmake`, LF writes in `_textio`.
+
+**MinGW is retired.** `[project] platforms = [..., "windows"]` and `jm new --windows` only print a notice (`C.warn_retired_platforms`); `apply` drops
+the old per-target blocks. The `make` build backend is POSIX-only and
+`$(error)`s on Windows.
 
 ### Docker / Codespaces
 
@@ -437,8 +438,8 @@ just-buildit/.github README under "Makefile standard".
 ### CI / release
 
 - `ci.yml` — matrix (ubuntu/macos/ubuntu-arm64 × py3.9–3.14); runs
-    `jm-install-deps` then `jm-run-tests`. No Windows leg (jm itself isn't
-    tested there — see the Windows section above).
+    `jm-install-deps` then `jm-run-tests`. Windows: the examples, under
+    clang-cl, in a job that feeds `CI passed` (see the Windows section).
 - `release.yml` — tag `v*` → test matrix → build wheel → PyPI publish →
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images

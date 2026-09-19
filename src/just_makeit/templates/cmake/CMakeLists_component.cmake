@@ -6,7 +6,7 @@ target_link_libraries(<<component>> PRIVATE
     <<component>>_core
     <<extra_link_libs_block>>Python3::NumPy)
 target_include_directories(<<component>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
-<<win_cmake_component>>set_target_properties(<<component>> PROPERTIES
+set_target_properties(<<component>> PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}")
 add_custom_command(TARGET <<component>> POST_BUILD

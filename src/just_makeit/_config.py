@@ -247,6 +247,8 @@ def load(root: Path) -> dict:
     from ._keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
+    # gh-1368: a retired switch still loads; it just says it does nothing.
+    warn_retired_platforms(cfg)
     # gh-1202: a hand-written `*_extra.c` that nothing includes. Reported from
     # here for the same reason the key walk is -- `load` is the one place every
     # command passes through, and the file is invisible to every check that
@@ -4587,9 +4589,11 @@ _DEFAULT_PLATFORMS = ["linux", "macos"]
 def project_platforms(cfg: dict) -> list[str]:
     """Target platforms declared under ``[project] platforms``.
 
-    Defaults to ``["linux", "macos"]`` when unset — Windows is **opt-in**
-    (gh-213). A project targets Windows only by listing ``"windows"`` here,
-    which is what makes jm emit the MinGW runtime-DLL CMake boilerplate.
+    Defaults to ``["linux", "macos"]`` when unset. RETIRED as a switch
+    (gh-1368): it used to be how a project "targeted Windows", which meant
+    emitting MinGW runtime-DLL CMake -- dead code under clang-cl, the Windows
+    compiler jm supports, which needs no flag at all. The key is still read
+    so an existing manifest keeps loading; see `warn_retired_platforms`.
     """
     v = cfg.get("project", {}).get("platforms")
     if not isinstance(v, (list, tuple)) or not v:
@@ -4597,9 +4601,33 @@ def project_platforms(cfg: dict) -> list[str]:
     return [str(p) for p in v]
 
 
-def is_windows_target(cfg: dict) -> bool:
-    """True if the project lists ``windows`` in ``[project] platforms``."""
-    return "windows" in (p.lower() for p in project_platforms(cfg))
+#: The one notice for a retired `windows` entry, so `load` and `jm new
+#: --windows` say the same thing.
+WINDOWS_PLATFORM_RETIRED = (
+    '[project] platforms = [..., "windows"] no longer does anything: a'
+    " generated project builds on Windows with clang-cl as it is, and the"
+    " MinGW boilerplate that entry used to emit is gone (gh-1368). Remove"
+    " the entry; `jm apply` drops the old blocks from each CMakeLists.txt."
+)
+
+
+_RETIRED_PLATFORMS_SAID: "set[str]" = set()
+
+
+def warn_retired_platforms(cfg: dict) -> bool:
+    """Say so, once per process, when a manifest still lists ``windows``.
+    Advisory: the project builds either way, so nothing here should fail a
+    gate. Once, because every command loads the manifest several times --
+    the same reason `_keys.warn_unknown_keys` deduplicates."""
+    if "windows" not in (p.lower() for p in project_platforms(cfg)):
+        return False
+    if WINDOWS_PLATFORM_RETIRED in _RETIRED_PLATFORMS_SAID:
+        return False
+    _RETIRED_PLATFORMS_SAID.add(WINDOWS_PLATFORM_RETIRED)
+    from . import _report
+
+    _report.warn(WINDOWS_PLATFORM_RETIRED, gates=False)
+    return True
 
 
 _DEFAULT_BENCH_BLOCK_SIZES = [1024, 65536]

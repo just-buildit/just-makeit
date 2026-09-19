@@ -13,8 +13,7 @@ Python import path), so the templates take role-specific slots:
 - ``module_tp``          the fully-qualified ``tp_name`` prefix
 
 For a dotless id every slot equals today's value (and ``module_output_name`` is
-empty), so flat modules render byte-for-byte unchanged — the same zero-churn
-gate as ``make_platform_ctx``.
+empty), so flat modules render byte-for-byte unchanged.
 """
 
 from __future__ import annotations

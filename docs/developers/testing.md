@@ -100,7 +100,7 @@ ______________________________________________________________________
 | New flag added but Makefile/template content not asserted | Wrong content ships                         | Add a content assertion in the relevant `test_*.py`                                    |
 | `make test` runner choice                                 | Shipped wrong once (v0.11.0)                | `TestMakeTestRunner` in `test_new.py` now covers both Makefile variants and both modes |
 | Help text completeness                                    | New flags invisible in `--help`             | `test_help_mentions_flag` in `test_cli.py` (parametrized, covers every flag)           |
-| Windows-specific template paths                           | Only exercised in Docker CI                 | Docker Windows job (`docker.yml`)                                                      |
+| Windows-specific template paths                           | Wrong on Windows only                       | `Examples (windows-latest, clang-cl)` in `ci.yml`, which feeds `CI passed` (gh-1368)   |
 | `--impl` / `--replace`                                    | Intentionally not stored in TOML            | Tested in `TestImplCLI` in `test_cli.py`                                               |
 
 ______________________________________________________________________

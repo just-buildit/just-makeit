@@ -504,11 +504,10 @@ impl_file = "native/src/engine/engine_core.c::engine_step"
 Check whether the library ships a `.pc` file (`pkg_modules`), a CMake
 config (`find_packages`), or only raw headers+lib (`--extra-include-dirs`).
 
-### Windows: cmake can't find make
+### Windows
 
-MinGW is required (MSVC rejects `float _Complex`). Ensure `mingw32-make.exe`
-is on PATH and aliased as `make.exe`. The generated `Makefile` passes
-`-G "MinGW Makefiles"` automatically on `Windows_NT`.
+Build with clang-cl from a Developer PowerShell. MinGW is no longer
+supported. See [Does it work on Windows?](faq.md#does-it-work-on-windows).
 
 ### step() signature mismatch after porting
 

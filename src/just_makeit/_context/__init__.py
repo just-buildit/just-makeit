@@ -40,7 +40,6 @@ from ._destroy import (
 )
 from ._step import make_perf_ctx, make_step_ctx
 from ._stream import make_stream_ctx
-from ._platform import make_platform_ctx
 from ._modpath import make_module_ctx
 
 
@@ -73,7 +72,6 @@ __all__ = [
     "make_perf_ctx",
     "make_step_ctx",
     "make_stream_ctx",
-    "make_platform_ctx",
     "make_module_ctx",
     "_pyi_examples_block",
     "_build_no_state_init_ctx",

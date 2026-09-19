@@ -140,10 +140,8 @@ ______________________________________________________________________
 
 - Python 3.9+
 - CMake ≥ 3.16
-- A C99 compiler (GCC or Clang; Windows is opt-in via MinGW — see
-    [Windows troubleshooting](troubleshooting.md#windows-makeexe-not-found) —
-    MSVC is not supported, it rejects the C99 `_Complex` type jm generates by
-    default)
+- A C99 compiler: GCC or Clang, or on Windows **clang-cl** — see
+    [Does it work on Windows?](faq.md#does-it-work-on-windows)
 - NumPy (runtime, for generated projects)
 
 ______________________________________________________________________

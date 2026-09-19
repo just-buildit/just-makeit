@@ -212,6 +212,49 @@ Or add `--pytest-benchmark` to also generate `pytest-benchmark` bench files.
 
 ______________________________________________________________________
 
+## Does it work on Windows?
+
+Yes, with **clang-cl**, and with no flag or manifest key (gh-1368). A
+generated project builds, tests and imports on Windows exactly as generated.
+CI proves it on every pull request: every bundled example is built with
+clang-cl on `windows-latest`, and that job gates the merge.
+
+**What you need:**
+
+- **Visual Studio Build Tools** with the *Desktop development with C++*
+    workload (the MSVC libraries and Windows SDK clang-cl links against).
+- **LLVM** (`winget install LLVM.LLVM`), or Visual Studio's own *C++ Clang
+    Compiler for Windows* component. It provides `clang-cl`.
+- **CMake** and **Ninja** (both ship with Build Tools), and Python with NumPy.
+
+Run from a **Developer PowerShell**, so the MSVC environment is loaded. The
+generated `Makefile` selects clang-cl and Ninja on Windows by itself, and
+`CC` or `CMAKE_GENERATOR` override either. In the Visual Studio IDE, use a
+`CMakePresets.json` that sets `CMAKE_C_COMPILER=clang-cl` and
+`Python3_EXECUTABLE`, because the IDE does not find a venv's Python on its
+own (#1376 would generate one).
+
+**Why clang-cl and not MSVC's `cl.exe`:** jm generates C99 `float _Complex`,
+which `cl.exe` does not have at all; `clib_common.h` stops such a build with
+an `#error` naming the fix. clang-cl has `_Complex` while targeting the same
+MSVC ABI Python itself is built with.
+
+**Not supported:**
+
+- **MinGW** (gcc on Windows), retired in 0.77.0. A `"windows"` entry in
+    `platforms`, and `jm new --windows`, now only print a notice; `jm apply`
+    removes the MinGW blocks they used to emit.
+- **The `make` build backend** (`build = "make"`) is POSIX-only; use the
+    CMake backend on Windows.
+- **Windows on ARM64 natively.** The MSVC ARM64 libraries are a separate
+    Build Tools component, and CI covers x64 only.
+
+**Behaviour that differs from Linux:** complex multiply and divide are
+built with `-fcx-limited-range`, so they skip C99 Annex G's inf/NaN corner
+cases (the alternative is an MSVC link that cannot resolve `__mulsc3`).
+Python extensions always use the release C runtime (`/MD`), including in
+Debug builds, so they link against the ordinary `python3X.lib`.
+
 ## How do I ship a Python wheel with the C extension?
 
 ```sh

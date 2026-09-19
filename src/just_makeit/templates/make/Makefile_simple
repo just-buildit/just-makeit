@@ -8,13 +8,14 @@
 #   make clean       Remove build artifacts
 #   make help        Show this message
 
+# POSIX only (gh-1368). This backend drives a GCC-style `cc` directly, which
+# on Windows meant MinGW -- retired. A Windows build uses the CMake backend
+# (`build = "cmake"`), which builds with clang-cl.
 ifeq ($(OS), Windows_NT)
-SHELL  := cmd.exe
-PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python)
-else
+$(error the "make" build backend is POSIX-only; on Windows set build = "cmake" in just-makeit.toml, which builds with clang-cl (gh-1368))
+endif
 SHELL  := /bin/sh
 PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python3)
-endif
 CC     ?= cc
 CFLAGS ?= -O2 -fPIC -std=c99 -Wall
 
@@ -43,12 +44,8 @@ all: $(TARGETS)
 # ── Fixed targets ─────────────────────────────────────────────────────────────
 
 test: all $(C_TESTS)
-ifeq ($(OS), Windows_NT)
-<<ensure_pytest_win>>	<<py_test_cmd_win>>
-else
 	@for t in $(C_TESTS); do echo "--- $$t ---" && ./$$t || exit 1; done
 <<ensure_pytest_unix>>	<<py_test_cmd_unix>>
-endif
 
 # gh-832: the cmake backend has emitted a bench target per component since
 # gh-15; this one emitted the SOURCE and no rule to build it, so on a
@@ -56,11 +53,7 @@ endif
 # anything run it. Green-from-day-0 means the scaffolded file is reachable,
 # not merely present.
 bench: $(C_BENCHES)
-ifeq ($(OS), Windows_NT)
-	@for %%b in ($(C_BENCHES)) do @echo --- %%b --- && %%b || exit /b 1
-else
 	@for b in $(C_BENCHES); do echo "--- $$b ---" && ./$$b || exit 1; done
-endif
 
 just-build: all
 	mkdir -p $(JUST_BUILDIT_OUTPUT_DIR)

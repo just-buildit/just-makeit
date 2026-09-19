@@ -23,11 +23,11 @@ ______________________________________________________________________
 
 The end user needs the following tools — **just-makeit itself is not required**:
 
-| Tool           | Minimum version  | Notes                                                                      |
-| -------------- | ---------------- | -------------------------------------------------------------------------- |
-| CMake          | 3.16             | Build system; drives configure + install                                   |
-| A C99 compiler | GCC 8 / Clang 10 | `gcc` or `clang`; on Windows use MinGW/gcc — MSVC rejects `float _Complex` |
-| pkg-config     | any              | For pkg-config consumers only                                              |
+| Tool           | Minimum version  | Notes                                                                              |
+| -------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| CMake          | 3.16             | Build system; drives configure + install                                           |
+| A C99 compiler | GCC 8 / Clang 10 | `gcc` or `clang`; on Windows `clang-cl` — MSVC's `cl.exe` rejects `float _Complex` |
+| pkg-config     | any              | For pkg-config consumers only                                                      |
 
 **Linux (Debian/Ubuntu):**
 
@@ -42,11 +42,8 @@ brew install cmake pkg-config
 # gcc ships with Xcode Command Line Tools: xcode-select --install
 ```
 
-**Windows (MSYS2/MinGW):**
-
-```sh
-pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config
-```
+**Windows:** Visual Studio Build Tools (C++ workload) plus LLVM for
+`clang-cl` — see [Does it work on Windows?](faq.md#does-it-work-on-windows).
 
 ______________________________________________________________________
 

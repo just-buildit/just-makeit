@@ -381,28 +381,6 @@ PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib/$(gcc -dumpmachine)/pkgco
 - No multiarch — `CMAKE_INSTALL_LIBDIR` is just `lib`
 - CMake's `find_package` searches `$(brew --prefix)/lib/cmake` automatically
 
-### MSYS2 / Windows (UCRT64)
-
-- Always use the UCRT64 shell; MSYS shell uses a POSIX-emulation GCC
-    with an incompatible ABI
-- Prefix: `/ucrt64`; pkg-config path: `/ucrt64/lib/pkgconfig`
-- Stage runtime DLLs next to executables or add the prefix `bin/` to
-    `PATH` — Windows has no `rpath` equivalent
-- Add MSYS2 prefixes to `CMAKE_PREFIX_PATH` via filesystem probe, not
-    `$ENV{MSYSTEM}` (cmake may not inherit shell environment variables):
-
-```cmake
-foreach(_pfx /ucrt64 /mingw64 /clang64 /mingw32)
-    if(IS_DIRECTORY "${_pfx}/lib")
-        list(APPEND CMAKE_PREFIX_PATH "${_pfx}")
-    endif()
-endforeach()
-```
-
-- If `find_library` returns `NOTFOUND` after fixing cmake files, delete
-    the stale `CMakeCache.txt` and reconfigure — cached `NOTFOUND` values
-    are not automatically re-evaluated.
-
 ______________________________________________________________________
 
 ## Quick Checklist

@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Breaking
+
+- **MinGW is retired; Windows means clang-cl, with no flag** (gh-1368).
+    `[project] platforms = [..., "windows"]` and `jm new --windows` used to
+    emit MinGW runtime-DLL CMake (`-static-libgcc`, a `libwinpthread-1.dll`
+    copy) behind a GNU-compiler guard into every `CMakeLists.txt`: dead code
+    under clang-cl, which is what jm now builds and gates in CI. The key and
+    the flag still load but only print a notice, and `jm apply` removes the
+    old blocks. The generated `Makefile` now picks **clang-cl + Ninja** on
+    Windows instead of the MinGW generator; `CC` and `CMAKE_GENERATOR` still
+    override it. The `make` build backend is POSIX-only and stops with an
+    error on Windows. `bootstrap.toml` drops its `[dev.msys2]` packages.
+    See the FAQ's "Does it work on Windows?".
+
 ### Added
 
 - **Type templates: `[template.<name>]`** (gh-1310, part 1). One manifest

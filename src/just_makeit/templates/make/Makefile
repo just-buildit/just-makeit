@@ -49,11 +49,17 @@ NUMPY_HEADERS_OK     = import numpy, os, sys; sys.exit(0 if os.path.isdir(numpy.
 NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(0 if os.path.isdir(p) else 'error: numpy is installed but its C headers are missing from ' + p + ' -- cmake cannot build the extension without them. Reinstall numpy for this interpreter (gh-824).')
 
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
-# shell), force the MinGW Makefiles generator so CMake uses gcc instead of
-# MSVC.  MSVC does not support C99 float _Complex; gcc does.
+# shell), build with clang-cl and Ninja (gh-1368): clang-cl is the MSVC-ABI
+# compiler that has C99 `_Complex` -- MSVC's own cl.exe has none. It needs
+# the MSVC environment, so run from a Developer PowerShell (or after
+# vcvars64). A CC you set yourself wins; only make's built-in default is
+# replaced.
 ifeq ($(OS), Windows_NT)
-CMAKE_GENERATOR ?= MinGW Makefiles
+CMAKE_GENERATOR ?= Ninja
 CMAKE_GEN_FLAG  := -G "$(CMAKE_GENERATOR)"
+ifeq ($(origin CC),default)
+export CC := clang-cl
+endif
 else
 CMAKE_GEN_FLAG  :=
 endif

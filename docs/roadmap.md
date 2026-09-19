@@ -77,9 +77,8 @@ every language." It's the most likely headline for 1.0.
 
 ### Later — breadth and edges
 
-- **Windows parity** — the MinGW path works but has rough edges (symbol
-    visibility, DLL loading, path handling); close the gap with docs, CI
-    coverage, and a few generated-file fixes.
+- **Windows on ARM64, natively** — x64 is built and gated in CI with
+    clang-cl (gh-1368); ARM64 needs the MSVC ARM64 libraries and a runner.
 - **`--ufunc`** — expose the step function as a NumPy generalized ufunc:
     broadcasting and `out=` for filter-bank and vectorized-pipeline use.
 

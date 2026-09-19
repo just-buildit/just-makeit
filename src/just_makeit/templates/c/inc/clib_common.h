@@ -108,9 +108,9 @@ jm_cexp(double _Complex z)
  * defining `I` here would hand C++ code a macro named `I` -- which collides
  * with essentially everything.
  *
- * `_Complex` in C++ is a GNU/Clang extension. MSVC cannot do this at all;
- * jm's Windows support is MinGW-only and opt-in already (gh-213), so that
- * costs nothing new.
+ * `_Complex` in C++ is a GNU/Clang extension. MSVC's cl.exe cannot do this at
+ * all; clang-cl, the Windows compiler jm supports (gh-1368), is Clang and
+ * can.
  */
 
 /*
