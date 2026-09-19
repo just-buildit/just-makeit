@@ -5689,6 +5689,32 @@ def _dump_composer_settings(mk: str, data: dict) -> list[str]:
     return out
 
 
+def _dump_ranged(table: dict) -> "list[str]":
+    """``ranged = [{name = …, flag = …}, …]`` for a composer source/segment.
+
+    gh-1381: `_composer._ranged_map` reads it and this writer never did, so a
+    manifest saved through `_dump` -- a new file, or no tomlkit -- lost which
+    fields take a ``(lo, hi)`` pair, and the next render made them scalar.
+    """
+    rows = table.get("ranged") or []
+    if not rows:
+        return []
+    return [
+        "ranged = ["
+        + ", ".join(
+            "{ "
+            + ", ".join(
+                f"{k} = {_toml_inline_string(str(r[k]))}"
+                for k in ("name", "flag")
+                if k in r
+            )
+            + " }"
+            for r in rows
+        )
+        + "]"
+    ]
+
+
 def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     """Render a composer module's source/segment/timeline/oo/json sub-tables
     (gh-287). Each is a single TOML table; field lists are inline-table arrays
@@ -5715,6 +5741,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + ", ".join(_inline_computed(c) for c in computed)
                 + "]"
             )
+        out += _dump_ranged(src)
         out.append("")
         gen = src.get("generates")
         if gen:
@@ -5756,6 +5783,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 + ", ".join(_inline_field(f) for f in fields)
                 + "]"
             )
+        out += _dump_ranged(seg)
         out.append("")
 
     tl = data.get("timeline")

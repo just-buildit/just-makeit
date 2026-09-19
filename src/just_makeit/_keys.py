@@ -662,7 +662,20 @@ COMPOSER_FIELD_KEYS = frozenset(
 )
 COMPOSER_COMPUTED_KEYS = frozenset({"name", "type", "fn", "doc"})
 COMPOSER_SOURCE_KEYS = frozenset(
-    {"object", "struct", "type_name", "fields", "computed", "generates"}
+    {
+        "object",
+        "struct",
+        "type_name",
+        "fields",
+        "computed",
+        "generates",
+        # gh-1381: `_composer._ranged_map` reads it off source AND segment --
+        # which fields take a (lo, hi) pair. Missing here, 0.77.0 refused
+        # doppler's manifest for a key that drives six generated fields.
+        # tests/test_gh1236_composer_subtable_keys.py now records every key
+        # the renderer reads, so the next one cannot go the same way.
+        "ranged",
+    }
 )
 COMPOSER_GENERATES_KEYS = frozenset(
     {
@@ -687,6 +700,7 @@ COMPOSER_SEGMENT_KEYS = frozenset(
         "count_member",
         "flat_sources",
         "fields",
+        "ranged",  # gh-1381, as in COMPOSER_SOURCE_KEYS
     }
 )
 COMPOSER_TIMELINE_KEYS = frozenset({"type_name", "loop"})
