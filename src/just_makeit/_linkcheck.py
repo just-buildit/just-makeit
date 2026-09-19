@@ -43,6 +43,8 @@ could not link them.
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 from pathlib import Path
 
@@ -245,7 +247,7 @@ def write(
     if out.exists() and out.read_text(encoding="utf-8") == text:
         return False
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(text, encoding="utf-8")
+    _textio.write_text(out, text)
     return True
 
 

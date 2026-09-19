@@ -17,6 +17,7 @@ project already split via `split-objects` (objects out, modules inline)
 just gets its modules moved and the `modules/*.toml` glob added.
 """
 
+from . import _textio
 import sys
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def run(root: Path) -> None:
         objects_dir.mkdir(exist_ok=True)
         for comp in components:
             frag = objects_dir / f"{comp}.toml"
-            frag.write_text(C._dump({comp: manifest[comp]}), encoding="utf-8")
+            _textio.write_text(frag, C._dump({comp: manifest[comp]}))
             print(f"  create  {frag}")
 
     if modules:
@@ -65,7 +66,7 @@ def run(root: Path) -> None:
         modules_dir.mkdir(exist_ok=True)
         for mod, data in modules.items():
             frag = modules_dir / f"{mod}.toml"
-            frag.write_text(C._dump({"module": {mod: data}}), encoding="utf-8")
+            _textio.write_text(frag, C._dump({"module": {mod: data}}))
             print(f"  create  {frag}")
 
     # Rebuild the include list: keep any existing globs, add objects/ and
@@ -87,7 +88,7 @@ def run(root: Path) -> None:
         manifest_text = (
             f"include = {C._toml_string_array(globs)}\n\n" + manifest_text
         )
-    cfg_path.write_text(manifest_text, encoding="utf-8")
+    _textio.write_text(cfg_path, manifest_text)
     print(f"  update  {cfg_path}  (include = {C._toml_string_array(globs)})")
 
     print()

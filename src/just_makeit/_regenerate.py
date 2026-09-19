@@ -24,6 +24,8 @@ guarantee.
 
 from __future__ import annotations
 
+from . import _textio
+
 import sysconfig
 import sys
 from pathlib import Path
@@ -190,7 +192,7 @@ def run(
             preserved_h,
             require_static=False,
         )
-        core_h.write_text(restored, encoding="utf-8")
+        _textio.write_text(core_h, restored)
         print(f"  restore hand-written bodies in {core_h}")
     if preserved_c and core_c.exists():
         restored = _restore_c_function_bodies(
@@ -198,7 +200,7 @@ def run(
             preserved_c,
             require_static=False,
         )
-        core_c.write_text(restored, encoding="utf-8")
+        _textio.write_text(core_c, restored)
         print(f"  restore hand-written bodies in {core_c}")
 
     # gh-903: put the author's `*_max_out` declarations back, and re-derive
@@ -212,7 +214,7 @@ def run(
             core_h.read_text(encoding="utf-8"), preserved_max_out
         )
         if changed:
-            core_h.write_text(restored, encoding="utf-8")
+            _textio.write_text(core_h, restored)
             for _name in changed:
                 print(f"  keep author-owned prototype {_name}()")
             _apply.run(root)

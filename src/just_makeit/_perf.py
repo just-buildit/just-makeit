@@ -14,6 +14,7 @@ What it does, per component:
 Idempotent: running twice changes nothing.
 """
 
+from . import _textio
 import re
 import sys
 from pathlib import Path
@@ -36,7 +37,7 @@ def _patch_core_h(header: Path, comp: str) -> bool:
     )
     text = qualifier_re.sub(r"JM_FORCEINLINE JM_HOT\1", text)
     if text != original:
-        header.write_text(text, encoding="utf-8")
+        _textio.write_text(header, text)
         return True
     return False
 
@@ -69,14 +70,12 @@ def run(root: Path) -> None:
     perf_h = inc / "jm_perf.h"
     if not perf_h.exists():
         perf_h.parent.mkdir(parents=True, exist_ok=True)
-        perf_h.write_text(
-            T.render(T.JM_PERF_H, {"package": pkg}), encoding="utf-8"
-        )
+        _textio.write_text(perf_h, T.render(T.JM_PERF_H, {"package": pkg}))
         print(f"  create  {perf_h}")
 
     simd_h = inc / "jm_simd.h"
     if not simd_h.exists():
-        simd_h.write_text(T.JM_SIMD_H, encoding="utf-8")
+        _textio.write_text(simd_h, T.JM_SIMD_H)
         print(f"  create  {simd_h}")
 
     for comp in comps:

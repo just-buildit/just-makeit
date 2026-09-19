@@ -8,6 +8,7 @@ to the manifest. `[project]` and `[module.X]` stay in the manifest.
 Idempotent: a project that already has the split layout is a no-op.
 """
 
+from . import _textio
 import sys
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def run(root: Path) -> None:
     for comp in components:
         frag_path = objects_dir / f"{comp}.toml"
         frag_text = C._dump({comp: manifest[comp]})
-        frag_path.write_text(frag_text, encoding="utf-8")
+        _textio.write_text(frag_path, frag_text)
         print(f"  create  {frag_path}")
 
     # The manifest keeps whatever was NOT relocated, gains the include glob.
@@ -70,7 +71,7 @@ def run(root: Path) -> None:
         f"include = {C._toml_string_array(['objects/*.toml'])}\n\n"
         + manifest_text
     )
-    cfg_path.write_text(manifest_text, encoding="utf-8")
+    _textio.write_text(cfg_path, manifest_text)
     print(f'  update  {cfg_path}  (include = ["objects/*.toml"])')
 
     print()

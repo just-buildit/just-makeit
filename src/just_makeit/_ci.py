@@ -17,6 +17,8 @@ one (CI configs are commonly hand-tuned, so we don't clobber by default).
 
 from __future__ import annotations
 
+from . import _textio
+
 import sys
 from pathlib import Path
 
@@ -66,7 +68,7 @@ def run(root: Path, provider: str = "github", force: bool = False) -> None:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     verb = "overwrite" if dest.exists() else "create"
-    dest.write_text(content, encoding="utf-8")
+    _textio.write_text(dest, content)
     print(f"  {verb}  {dest}")
     print(
         f"Done!  {provider} CI workflow written. It runs `make && make test` "

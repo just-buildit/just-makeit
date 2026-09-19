@@ -34,6 +34,8 @@ pep723   PEP 723 inline-script.  Generates <name>.py in the project root
 
 from __future__ import annotations
 
+from . import _textio
+
 import sys
 from pathlib import Path
 
@@ -935,7 +937,7 @@ def _splice_cmake(
         if not text.endswith("\n"):
             text += "\n"
         text += "\n" + block
-    cmake.write_text(text, encoding="utf-8")
+    _textio.write_text(cmake, text)
 
 
 def _update_pyproject_scripts(
@@ -960,7 +962,7 @@ def _update_pyproject_scripts(
         doc["project"].add("scripts", _tk.table())
     dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
     doc["project"]["scripts"][name] = f"{dotted}:main"
-    pyproject.write_text(_tk.dumps(doc), encoding="utf-8")
+    _textio.write_text(pyproject, _tk.dumps(doc))
     return True
 
 
