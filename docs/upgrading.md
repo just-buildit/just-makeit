@@ -51,10 +51,10 @@ later.
 re-spelling leaves component headers that no longer parse from C++ at all,
 which is the failure gh-1148 fixed — strictly worse than where you started.
 
-`clib_common.h` itself is skipped by the re-spelling, deliberately: jm's render
-of it is already correct, and its comment *quotes* the old spelling while
-explaining why that spelling was a problem. A blanket pass would rewrite that
-prose into a false statement.
+The re-spelling touches **code only**: comments and string literals are left
+exactly as written (gh-1382). They are prose, and a comment that *quotes* the
+old spelling while explaining why it was a problem would otherwise be
+rewritten into a false statement.
 
 Then rebuild and run your tests. `complex` typed by **you** is still accepted
 everywhere jm reads a type — in `just-makeit.toml`, on the CLI, and in a header

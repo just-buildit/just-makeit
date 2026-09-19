@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -66,21 +67,27 @@ def _project(tmp_path: Path) -> Path:
     return root
 
 
-def _count(root: Path, needle: str) -> int:
-    """Occurrences in the project's own C, excluding `clib_common.h`.
+#: C comments and string literals -- prose -- for counting CODE only.
+#: Deliberately not `_docsync._code_mask`, the primitive the migration itself
+#: uses: a test that measures with the code under test's own tool is blind to
+#: exactly that tool's mistakes.
+_COMMENT = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"', re.S)
 
-    The exclusion mirrors the migration's, and it is the point rather than a
-    convenience: that file's comment quotes the old spelling while explaining
-    why it was a problem, so counting it would make "the old spelling is gone"
-    contradict `test_clib_common_h_is_left_alone` directly below. The first
-    cut of this counted it and failed for that reason.
+
+def _count(root: Path, needle: str) -> int:
+    """Occurrences in the CODE of the project's own C (gh-1382).
+
+    Comments and string literals are prose and the migration now leaves them
+    alone, so "the old
+    spelling is gone" is a claim about code -- counting comments would fail
+    on every Doxygen block the fixture's blanket reversal put the old
+    spelling into. `clib_common.h` needs no exclusion any more for the same
+    reason: its only mention of the old spelling was in a comment.
     """
     n = 0
     for path in sorted((root / "native").rglob("*")):
         if path.is_file() and path.suffix in (".c", ".h"):
-            if path.name == "clib_common.h":
-                continue
-            n += path.read_text().count(needle)
+            n += _COMMENT.sub("", path.read_text()).count(needle)
     return n
 
 
@@ -103,10 +110,11 @@ class TestItMigrates:
         in `<comp>_core.h`, which `apply` and `regenerate` both refuse."""
         root = _project(tmp_path)
         header = root / "native" / "inc" / "nco" / "nco_core.h"
-        assert _OLD in header.read_text()
+        assert _OLD in _COMMENT.sub("", header.read_text())
         _upgrade_out(root)
-        assert _OLD not in header.read_text()
-        assert _NEW in header.read_text()
+        code = _COMMENT.sub("", header.read_text())
+        assert _OLD not in code
+        assert _NEW in code
 
     def test_it_names_every_file_it_changed(self, tmp_path: Path):
         out = _upgrade_out(_project(tmp_path))
@@ -199,3 +207,38 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
             text=True,
         )
         assert r.returncode == 0, f"{name} did not compile:\n{r.stderr}"
+
+
+class TestCommentsAndStringsAreProse:
+    """gh-1382. The rewrite is licensed by "identical tokens after
+    preprocessing", which is true of code and false of prose."""
+
+    #: doppler's dp_complex.h, verbatim: the comment that 0.77.0 turned into a
+    #: self-contradiction.
+    _PROSE = (
+        "/* The UCRT's <math.h> hijacks the identifier `complex`.\n"
+        " * complex type `float complex`, which doppler writes in 196 places,"
+        " and under\n"
+        " * that macro each one becomes `float _complex`. */\n"
+    )
+
+    def test_a_comment_is_left_as_written(self, tmp_path: Path):
+        root = _project(tmp_path)
+        h = root / "native" / "inc" / "nco" / "dp_like.h"
+        h.write_text(self._PROSE + "float complex z;\n", encoding="utf-8")
+        _upgrade_out(root)
+        after = h.read_text(encoding="utf-8")
+        assert after.startswith(self._PROSE), after
+        assert "float _Complex z;" in after
+
+    def test_a_string_literal_is_left_as_written(self, tmp_path: Path):
+        root = _project(tmp_path)
+        c = root / "native" / "src" / "nco" / "msg.c"
+        c.write_text(
+            'const char *m = "needs float complex";\nfloat complex y;\n',
+            encoding="utf-8",
+        )
+        _upgrade_out(root)
+        after = c.read_text(encoding="utf-8")
+        assert '"needs float complex"' in after
+        assert "float _Complex y;" in after
