@@ -1,4 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
+# gh-1368: an unset build type is Release. It has to be decided BEFORE
+# project(), which is where CMake fills in its own default -- and for an
+# MSVC-like compiler (clang-cl) that default is Debug, which defines _DEBUG,
+# which makes pyconfig.h link the debug interpreter's python3X_d.lib. That
+# library ships only with a debug Python, so a bare `cmake -B build` did not
+# link. `make build` and `jm build` already pass Release; this makes a bare
+# configure agree with them on every platform.
+if(NOT DEFINED CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE
+      Release
+      CACHE STRING "Build type: Release, Debug, RelWithDebInfo, MinSizeRel")
+endif()
 project(
   <<project_underscore>>
   VERSION <<version>>
@@ -16,6 +28,26 @@ if(ENABLE_SIMD)
   else()
     add_compile_options(-march=native -ffast-math)
   endif()
+endif()
+
+# gh-1368: the MSVC ABI, as clang-cl builds it (cl.exe has no _Complex).
+if(WIN32)
+  # The CRT deprecates portable C99 (fopen, strncpy, localtime -> the _s forms;
+  # strdup -> _strdup) on every use, burying the real diagnostics.
+  # _USE_MATH_DEFINES exposes M_PI, which <math.h> hides there by default.
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE
+                          _USE_MATH_DEFINES)
+endif()
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+  # Without a complex-range relaxation clang lowers `_Complex` multiply and
+  # divide to compiler-rt calls (__mulsc3, __muldc3, ...) for C99 Annex G's
+  # inf/NaN corner cases, and the MSVC link has nothing that defines them:
+  # `undefined symbol: __mulsc3` after every object compiles. This is the
+  # narrowest flag that inlines them; ENABLE_SIMD's /fp:fast implies it.
+  # Spelled /clang: because clang-cl ignores a bare GCC-style flag, and guarded
+  # on the compiler ID because cl.exe rejects /clang: outright. doppler
+  # measured the same wall on the same toolchain.
+  add_compile_options(/clang:-fcx-limited-range)
 endif()
 
 option(BUILD_PYTHON "Build Python C extensions" ON)

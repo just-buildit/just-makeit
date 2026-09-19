@@ -90,6 +90,21 @@
 
 ### Fixed
 
+- **A generated project configures for Windows (clang-cl) the way it
+    builds** (gh-1368). Three defaults in the root `CMakeLists.txt`:
+
+    - An unset `CMAKE_BUILD_TYPE` is now `Release` on every platform. For an
+        MSVC-like compiler CMake defaulted to Debug, which defines `_DEBUG`,
+        which makes `pyconfig.h` link `python3X_d.lib`, a library only a
+        debug Python ships. `make build` and `jm build` already passed
+        Release; a bare `cmake -B build` now agrees with them.
+    - Under `WIN32`: `_CRT_SECURE_NO_WARNINGS`, `_CRT_NONSTDC_NO_DEPRECATE`
+        and `_USE_MATH_DEFINES`, as doppler's CMake does.
+    - Under clang-cl: `/clang:-fcx-limited-range`, so `_Complex` multiply
+        and divide inline instead of calling `__mulsc3`, which nothing in an
+        MSVC link defines. Complex arithmetic on Windows therefore skips C99
+        Annex G's inf/NaN corner cases; Linux and macOS are unchanged.
+
 - **Generated C compiles under clang-cl: complex math no longer meets
     MSVC's `<complex.h>`** (gh-1368). There, `crealf` takes an `_Fcomplex`
     struct and `I` is one, so jm's own `crealf(v)` and `x * I` were 154
