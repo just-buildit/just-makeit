@@ -1604,7 +1604,7 @@ def render_ext(
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
-#include <complex.h>
+#include "clib_common.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
