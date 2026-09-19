@@ -323,11 +323,11 @@ def run(root: Path) -> None:
     assert (proj / "docs" / "index.md").exists()
     assert (proj / "docs" / "api.md").exists()
 
-    zensical_toml = (proj / "zensical.toml").read_text()
+    zensical_toml = (proj / "zensical.toml").read_text(encoding="utf-8")
     assert "mkdocstrings" in zensical_toml
     assert 'paths = ["src"]' in zensical_toml
 
-    makefile = (proj / "Makefile").read_text()
+    makefile = (proj / "Makefile").read_text(encoding="utf-8")
     assert "coverage" in makefile
     assert "lcov" in makefile
     assert "--cov=" in makefile
@@ -336,7 +336,7 @@ def run(root: Path) -> None:
     # gain uses timeit bench (standalone python script)
     gain_bench = (
         proj / "src" / "my_dsp" / "benchmarks" / "bench_gain.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert (
         "perf_counter" in gain_bench
         or "timeit" in gain_bench
@@ -347,18 +347,20 @@ def run(root: Path) -> None:
     # ema uses pytest-benchmark (benchmark fixture, no standalone main)
     ema_bench = (
         proj / "src" / "my_dsp" / "benchmarks" / "bench_ema.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "@pytest.fixture" in ema_bench
     assert "def test_bench_step(benchmark" in ema_bench
     assert 'if __name__ == "__main__"' not in ema_bench
 
     # gain uses unittest, ema uses pytest
-    gain_test = (
-        proj / "src" / "my_dsp" / "tests" / "test_gain.py"
-    ).read_text()
+    gain_test = (proj / "src" / "my_dsp" / "tests" / "test_gain.py").read_text(
+        encoding="utf-8"
+    )
     assert "import unittest" in gain_test
 
-    ema_test = (proj / "src" / "my_dsp" / "tests" / "test_ema.py").read_text()
+    ema_test = (proj / "src" / "my_dsp" / "tests" / "test_ema.py").read_text(
+        encoding="utf-8"
+    )
     assert "import pytest" in ema_test
     assert "import unittest" not in ema_test
 
@@ -403,8 +405,10 @@ p.write_text(src)
     _enrich_headers(proj)
     apply_run(proj)
 
-    gain_pyi = (proj / "src" / "my_dsp" / "gain.pyi").read_text()
-    ema_pyi = (proj / "src" / "my_dsp" / "ema.pyi").read_text()
+    gain_pyi = (proj / "src" / "my_dsp" / "gain.pyi").read_text(
+        encoding="utf-8"
+    )
+    ema_pyi = (proj / "src" / "my_dsp" / "ema.pyi").read_text(encoding="utf-8")
     assert CLASS_SUMMARIES["gain"] in gain_pyi, "gain class @brief missing"
     assert CLASS_SUMMARIES["ema"] in ema_pyi, "ema class @brief missing"
 

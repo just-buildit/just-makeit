@@ -122,7 +122,7 @@ void q15_to_cf32_steps(q15_to_cf32_state_t *state,
 import os
 from iqfile.conv import Q15ToCf32
 
-fd = os.open("samples.q15", os.O_RDONLY)
+fd = os.open("samples.q15", os.O_RDONLY | getattr(os, "O_BINARY", 0))
 reader = Q15ToCf32(fd=fd)
 block  = reader.steps(1024)   # returns complex64 ndarray
 os.close(fd)
@@ -225,14 +225,25 @@ import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
-# ── add <unistd.h> to _core.h ─────────────────────────────────────────────
+# read()/lseek() live in <unistd.h> on POSIX and <io.h> on Windows, under the
+# same names -- so one include block, used by both files below.
+POSIX_IO = """\
+#include <stdio.h>     /* SEEK_SET/CUR/END: <io.h> lacks them */
+#include <sys/types.h> /* off_t */
+#ifdef _WIN32
+#include <io.h> /* read, lseek: the POSIX names, as the CRT spells them */
+#else
+#include <unistd.h>
+#endif"""
+
+# ── add the I/O header to _core.h ─────────────────────────────────────────
 core_h = root / "native/inc/q15_to_cf32/q15_to_cf32_core.h"
 text = core_h.read_text(encoding="utf-8")
 
 if "<unistd.h>" not in text:
     text = text.replace(
         '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include <unistd.h>',
+        '#include "clib_common.h"\n' + POSIX_IO,
         1,
     )
 
@@ -266,11 +277,11 @@ print(f"patched  {core_h.relative_to(root)}")
 core_c = root / "native/src/q15_to_cf32/q15_to_cf32_core.c"
 text = core_c.read_text(encoding="utf-8")
 
-# Add <unistd.h> if needed (steps() calls read/lseek)
+# The I/O header if needed (steps() calls read/lseek)
 if "<unistd.h>" not in text:
     text = text.replace(
         '#include "q15_to_cf32/q15_to_cf32_core.h"',
-        '#include "q15_to_cf32/q15_to_cf32_core.h"\n#include <unistd.h>',
+        '#include "q15_to_cf32/q15_to_cf32_core.h"\n' + POSIX_IO,
         1,
     )
 
@@ -368,7 +379,7 @@ construction time:
 
 ```python
 import os
-fd     = os.open("samples.q15", os.O_RDONLY)
+fd     = os.open("samples.q15", os.O_RDONLY | getattr(os, "O_BINARY", 0))
 reader = Q15ToCf32(fd=fd)
 block  = reader.steps(1024)    # reads 4 KiB, returns complex64 ndarray
 os.close(fd)

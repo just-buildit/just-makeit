@@ -213,7 +213,12 @@ EXAMPLES_IGNORE = --ignore=tests/test_examples.py
 TEST_PYTHON_CMD   = $(PYTEST) $(PYTEST_PARALLEL) -v $(EXAMPLES_IGNORE)
 TEST_CMD          = $(TEST_PYTHON_CMD)
 TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
-TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v
+# EXAMPLES_K narrows the run with pytest -k, for a platform that cannot build
+# some examples -- the Windows CI job deselects the two that need a doppler
+# build, which doppler does not publish for Windows (gh-1368). Empty = all.
+EXAMPLES_K        ?=
+TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v \
+                    $(if $(EXAMPLES_K),-k "$(EXAMPLES_K)")
 
 TEST_ALL_DEPS = test test-examples
 

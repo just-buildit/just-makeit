@@ -5,7 +5,7 @@ import re
 import sys
 
 header = pathlib.Path("native/inc/biquad/biquad_core.h")
-text = header.read_text()
+text = header.read_text(encoding="utf-8")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float\s*\n"
@@ -29,5 +29,5 @@ impl = (
     "}"
 )
 replacement = m.group(1) + " float\n" + impl
-header.write_text(stub_re.sub(replacement, text))
+header.write_text(stub_re.sub(replacement, text), encoding="utf-8")
 print(f"patched {header}")

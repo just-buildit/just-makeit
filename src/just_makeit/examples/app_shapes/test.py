@@ -72,13 +72,15 @@ def run(root: Path) -> None:
     # the kernel.
     core = bw / "native" / "src" / "scale" / "scale_core.c"
     core.write_text(
-        core.read_text().replace(
+        core.read_text(encoding="utf-8").replace(
             "out[i] = (float)in[i];", "out[i] = state->g * in[i];"
         ),
         encoding="utf-8",
     )
     jm_app(bw, target="c", name="scaletool", object_="scale")
-    app_c = (bw / "native" / "src" / "app" / "scaletool.c").read_text()
+    app_c = (bw / "native" / "src" / "app" / "scaletool.c").read_text(
+        encoding="utf-8"
+    )
     assert "scale_steps(state, inbuf, k, outbuf)" in app_c
     _build(bw)
     r = subprocess.run(
@@ -104,7 +106,9 @@ def run(root: Path) -> None:
         impl_body="float v = state->acc; state->acc += state->inc; return v;",
     )
     jm_app(gen, target="c", name="ramptool", object_="ramp")
-    app_c = (gen / "native" / "src" / "app" / "ramptool.c").read_text()
+    app_c = (gen / "native" / "src" / "app" / "ramptool.c").read_text(
+        encoding="utf-8"
+    )
     assert (
         "ramp_steps(state, outbuf, k)" in app_c and "produced < count" in app_c
     )
@@ -129,7 +133,9 @@ def run(root: Path) -> None:
         impl_body="return a + b;",
     )
     jm_app(fn, target="c", name="addtool", function_="addn")
-    app_c = (fn / "native" / "src" / "app" / "addtool.c").read_text()
+    app_c = (fn / "native" / "src" / "app" / "addtool.c").read_text(
+        encoding="utf-8"
+    )
     assert "float result = addn(a, b);" in app_c
     _build(fn)
     r = subprocess.run(
@@ -172,7 +178,9 @@ def run(root: Path) -> None:
             {"name": "info", "help": "print info"},
         ],
     )
-    app_c = (multi / "native" / "src" / "app" / "cmdtool.c").read_text()
+    app_c = (multi / "native" / "src" / "app" / "cmdtool.c").read_text(
+        encoding="utf-8"
+    )
     assert 'if (!strcmp(argv[1], "encode"))' in app_c
     _build(multi)
     exe = _exe(multi, "cmdtool")

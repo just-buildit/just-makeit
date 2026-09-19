@@ -145,7 +145,9 @@ def run(root: Path) -> None:
     _cmd([sys.executable, "-c", verify], cwd=proj)
 
     # 5. Verify type stub reflects all state (including newly added vars)
-    pyi = (proj / "src" / "my_stats" / "running_stats.pyi").read_text()
+    pyi = (proj / "src" / "my_stats" / "running_stats.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class RunningStats:" in pyi
     assert "min_val" in pyi
     assert "max_val" in pyi

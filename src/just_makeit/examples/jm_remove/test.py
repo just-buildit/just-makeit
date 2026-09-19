@@ -159,13 +159,15 @@ def run(root: Path) -> None:
     # confirms the method table was rebuilt from the updated config.
     frag_osc = (
         proj / "native" / "src" / "synth" / "synth_ext_osc.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "Osc_tune" not in frag_osc, (
         "Python binding Osc_tune must not appear in regenerated osc fragment"
     )
     # The aggregated synth_ext.c uses OscType (not OscObject) and must still
     # include the osc fragment — the object type registration must survive.
-    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text()
+    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "OscType" in ext, (
         "OscType must still be registered in aggregated ext.c"
     )
@@ -189,13 +191,15 @@ def run(root: Path) -> None:
     # rebuilt from the updated property list.
     frag_env = (
         proj / "native" / "src" / "synth" / "synth_ext_env.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert '"clipping"' not in frag_env, (
         '"clipping" PyGetSetDef entry must be gone from regenerated env fragment'
     )
     # The aggregated synth_ext.c must still register EnvType — the object
     # itself was not removed, only one property on it.
-    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text()
+    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "EnvType" in ext, (
         "EnvType must still be registered in aggregated ext.c"
     )
@@ -216,7 +220,9 @@ def run(root: Path) -> None:
     )
     # _bind_poly_detune is the C wrapper generated into ext.c; its absence
     # confirms the module was regenerated from the updated function list.
-    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text()
+    ext = (proj / "native" / "src" / "synth" / "synth_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "_bind_poly_detune" not in ext, (
         "_bind_poly_detune wrapper must be gone from ext.c"
     )
@@ -237,7 +243,9 @@ def run(root: Path) -> None:
 
     # State removal triggers regeneration of env_core.h so the struct definition
     # and the constructor signature reflect only the surviving fields.
-    core_h = (proj / "native" / "inc" / "env" / "env_core.h").read_text()
+    core_h = (proj / "native" / "inc" / "env" / "env_core.h").read_text(
+        encoding="utf-8"
+    )
     # The struct field and any constructor default for "decay" are gone.
     assert "decay" not in core_h, (
         "'decay' must not appear in regenerated env_core.h"

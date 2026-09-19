@@ -94,13 +94,13 @@ def run(root: Path) -> None:
 
     binding_c = proj / "native" / "src" / "filter" / "filter_configure_core.c"
     assert binding_c.exists(), f"Sacred binding file missing: {binding_c}"
-    bt = binding_c.read_text()
+    bt = binding_c.read_text(encoding="utf-8")
     assert "#include <Python.h>" in bt
     assert "PyObject *" in bt
     assert "IMPLEMENT" in bt
 
     ext_c = proj / "native" / "src" / "filter" / "filter_ext.c"
-    et = ext_c.read_text()
+    et = ext_c.read_text(encoding="utf-8")
     assert "extern PyObject *" in et
     assert "filter_configure(" in et
     assert "METH_VARARGS | METH_KEYWORDS" in et
@@ -108,10 +108,12 @@ def run(root: Path) -> None:
 
     cmake_t = (
         proj / "native" / "src" / "filter" / "CMakeLists.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "filter_configure_core.c" in cmake_t
 
-    pyi_t = (proj / "src" / "va_filter" / "filter.pyi").read_text()
+    pyi_t = (proj / "src" / "va_filter" / "filter.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "def configure(self, *args: Any, **kwargs: Any) -> Any" in pyi_t
     assert "def current_gain(self) -> float" in pyi_t
 
@@ -131,7 +133,9 @@ def run(root: Path) -> None:
 
     # The enrichment reached the stub: class summary from create()'s @brief,
     # and current_gain()'s @brief/@return/@code rendered as a runnable doctest.
-    pyi_enriched = (proj / "src" / "va_filter" / "filter.pyi").read_text()
+    pyi_enriched = (proj / "src" / "va_filter" / "filter.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "single-tap gain stage" in pyi_enriched, "class @brief missing"
     assert "Return the filter's current gain coefficient." in pyi_enriched, (
         "current_gain @brief missing"
@@ -212,7 +216,9 @@ def run(root: Path) -> None:
         name="filter_tool",
         object_="filter",
     )
-    app_text = (proj / "native" / "src" / "app" / "filter_tool.c").read_text()
+    app_text = (proj / "native" / "src" / "app" / "filter_tool.c").read_text(
+        encoding="utf-8"
+    )
     # filter is a scalar step() object → jm app generates a working tool:
     # a real argv parser + read→step→write loop, no <<IMPLEMENT>> stub.
     assert "<<IMPLEMENT" not in app_text

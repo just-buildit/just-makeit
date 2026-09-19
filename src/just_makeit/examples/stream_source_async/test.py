@@ -111,12 +111,16 @@ def run(root: Path) -> None:
 
     # --async-stream layers __aiter__/__anext__ (executor-backed) on top of the
     # sync iterator; the object gains tp_as_async too.
-    ext = (proj / "native" / "src" / "ramp" / "ramp_ext.c").read_text()
+    ext = (proj / "native" / "src" / "ramp" / "ramp_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "RampStreamIter_anext" in ext
     assert "run_in_executor" in ext
     assert ".tp_as_async  = &RampStreamIter_as_async," in ext
     assert ".tp_as_async  = &Ramp_as_async," in ext
-    pyi = (proj / "src" / "stream_source_async_demo" / "ramp.pyi").read_text()
+    pyi = (proj / "src" / "stream_source_async_demo" / "ramp.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "def __aiter__(self) -> AsyncIterator[NDArray[np.float32]]:" in pyi
 
     # 2. Splice in step() — the SAME .steps/02_step.c the README embeds.
@@ -151,7 +155,9 @@ def run(root: Path) -> None:
     apply_run(proj)
 
     # The enriched summary reached the regenerated stub (not the fallback).
-    pyi = (proj / "src" / "stream_source_async_demo" / "ramp.pyi").read_text()
+    pyi = (proj / "src" / "stream_source_async_demo" / "ramp.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class Ramp:" in pyi
     # gh-744: the summary wraps when it does not fit on one line.
     assert class_summary in flatten_prose(pyi), (

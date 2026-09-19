@@ -252,6 +252,48 @@ jobs:
       - name: Run example tests
         run: make test-examples
 
+  examples-windows:
+    # gh-1368: a generated project, built by clang-cl against the MSVC ABI.
+    # BINDING -- it feeds `CI passed` -- because a Windows job that can go red
+    # without blocking anything is the shape that left docker red on main for
+    # 14 runs. clang-cl, not cl.exe: MSVC's own compiler has no `_Complex`.
+    name: Examples (windows-latest, clang-cl)
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      # What CMake itself reads, so each example's plain `cmake -B build`
+      # picks up clang-cl and Ninja exactly as a Windows user's would.
+      CC: clang-cl
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # clang-cl drives the MSVC toolchain as cl.exe does and needs its
+      # environment (INCLUDE / LIB / the linker).
+      - name: MSVC developer environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install just-makeit
+        run: |
+          make tool-install
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+      # nco_tone and kitchen_sink link doppler, which publishes no Windows
+      # build; tracked in #1377.
+      - name: Run example tests
+        run: make test-examples EXAMPLES_K="not nco_tone and not kitchen_sink"
+
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
     needs: changes
@@ -427,7 +469,7 @@ jobs:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, examples, install-deps-smoke, coverage, lint, bench]
+    needs: [changes, test, examples, examples-windows, install-deps-smoke, coverage, lint, bench]
     if: always()
     # Inputs as env, so the script below reads only shell variables and
     # tests/test_ci_passed_aggregator.py can run it as-is with any results.

@@ -16,7 +16,7 @@ stub_re = re.compile(
     re.DOTALL,
 )
 
-text = header.read_text()
+text = header.read_text(encoding="utf-8")
 m = stub_re.search(text)
 if not m:
     print(
@@ -26,7 +26,11 @@ if not m:
     sys.exit(1)
 
 qualifier = m.group(1)
-replacement = impl.read_text().strip().replace("static inline", qualifier, 1)
+replacement = (
+    impl.read_text(encoding="utf-8")
+    .strip()
+    .replace("static inline", qualifier, 1)
+)
 patched = stub_re.sub(replacement, text)
-header.write_text(patched)
+header.write_text(patched, encoding="utf-8")
 print(f"patched {header}")

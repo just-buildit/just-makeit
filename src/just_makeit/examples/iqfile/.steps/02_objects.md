@@ -44,7 +44,7 @@ void q15_to_cf32_steps(q15_to_cf32_state_t *state,
 import os
 from iqfile.conv import Q15ToCf32
 
-fd = os.open("samples.q15", os.O_RDONLY)
+fd = os.open("samples.q15", os.O_RDONLY | getattr(os, "O_BINARY", 0))
 reader = Q15ToCf32(fd=fd)
 block  = reader.steps(1024)   # returns complex64 ndarray
 os.close(fd)

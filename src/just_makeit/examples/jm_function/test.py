@@ -223,7 +223,9 @@ print("jm_function: all Python checks passed")
     print(result.stdout.strip())
 
     # ── 7. Type stub sanity check. ───────────────────────────────────────
-    pyi = (dest / "src" / "my_utils" / "utils" / "utils.pyi").read_text()
+    pyi = (dest / "src" / "my_utils" / "utils" / "utils.pyi").read_text(
+        encoding="utf-8"
+    )
     assert "class Gain:" in pyi, "utils.pyi missing Gain class"
     assert "linear_to_db" in pyi, "utils.pyi missing linear_to_db"
     assert "clamp" in pyi, "utils.pyi missing clamp"

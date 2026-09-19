@@ -11,6 +11,7 @@ Skip conditions (checked once, applied to all examples):
 """
 
 import importlib.util
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,6 +25,12 @@ from test_gh1287_nested_block_comment import (
 
 # Formatting rules are cmake-format's responsibility.
 _CMAKE_LINT_DISABLED = ["C0301", "C0307"]
+# gh-1368: C0327 (line ending) is not checked on Windows. There an example's
+# OWN CMakeLists -- written by its test with Path.write_text, as a user's
+# would be -- is CRLF, which is correct for that platform. jm's generated
+# files are held to LF separately, in source, by test_gh1368_lf_writes.py.
+if os.name == "nt":
+    _CMAKE_LINT_DISABLED.append("C0327")
 
 EXAMPLES_DIR = (
     Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
