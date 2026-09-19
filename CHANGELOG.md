@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **jm no longer crashes when its output is piped or redirected on Windows**
+    (gh-1387). A Windows console is UTF-8, but a pipe or a redirect is
+    encoded in the ANSI code page (cp1252), which has no `→`, so
+    `jm upgrade > log.txt` died with `UnicodeEncodeError` between migration
+    steps. Any CI log hit it too. jm now writes UTF-8 to stdout and stderr
+    whatever the platform default, and `jm example` runs its child in UTF-8
+    mode. The first Windows release smoke found it; PR CI could not, because
+    pytest's capture is UTF-8. A test now runs jm under
+    `PYTHONIOENCODING=cp1252` on every platform.
+
 ## [0.77.1] — 2026-09-19
 
 ### Fixed

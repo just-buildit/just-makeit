@@ -10,6 +10,7 @@ test) inside a temporary directory, printing live output.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -72,7 +73,15 @@ def run(name: str | None) -> None:
     print(f"just-makeit: running example '{name}'")
     print(f"  source: {example_dir}")
     print(flush=True)
+    # gh-1387: the child writes to this process's stdout, so it must encode
+    # it as main() now does; on Windows a pipe would otherwise be cp1252.
+    # UTF-8 mode also covers what stdio does not: the `text=True` decode of
+    # every jm the example captures, and every grandchild, which inherits
+    # it. PYTHONIOENCODING too, because an inherited one outranks the mode
+    # for stdio.
     r = subprocess.run(
-        [sys.executable, str(example_dir / "test.py")], timeout=600
+        [sys.executable, str(example_dir / "test.py")],
+        timeout=600,
+        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
     )
     sys.exit(r.returncode)
