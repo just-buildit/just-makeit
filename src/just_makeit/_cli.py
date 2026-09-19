@@ -637,6 +637,10 @@ def _warn_schema() -> None:
 
 
 def main() -> None:
+    # gh-1387: before anything prints -- a pipe on Windows is cp1252.
+    from ._textio import utf8_stdio
+
+    utf8_stdio()
     args = sys.argv[1:]
     # `prog --version` is the universal idiom; alias it (and `-V`) to the
     # `version` command when given as the first/only argument.
