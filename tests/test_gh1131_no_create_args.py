@@ -122,6 +122,13 @@ def test_a_no_arg_handle_compiles_and_constructs(tmp_path):
     """
     import numpy as np
 
+    # gh-1368: generated glue reaches complex math through clib_common.h,
+    # which a real project always has in native/inc -- render the real one.
+    from just_makeit import _render as R
+
+    (tmp_path / "clib_common.h").write_text(
+        R.render(R.CLIB_COMMON_H, {"package": "p", "PACKAGE": "P"})
+    )
     (tmp_path / "b").mkdir()
     (tmp_path / "b" / "b.h").write_text(
         "#ifndef B_H\n#define B_H\ntypedef struct b b_t;\n"
