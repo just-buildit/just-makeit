@@ -1,0 +1,76 @@
+name: Windows (clang-cl)
+
+# NON-BINDING, and a MEASUREMENT (gh-1368). It runs every bundled example
+# under clang-cl, the MSVC-ABI driver, to find out what a generated project's
+# Python extensions need to build on Windows. It is not part of `CI passed`
+# (ci.yml's aggregator), so red here blocks nothing -- it exists to show the
+# walls, and a runner that cannot report bad news is worth nothing.
+#
+# It changes nothing about how jm generates: CC and CMAKE_GENERATOR are the
+# environment CMake itself reads, so each example's plain `cmake -B build`
+# picks up clang-cl + Ninja exactly as a Windows user's would.
+#
+# nco_tone and kitchen_sink need a doppler build for Windows, which does not
+# exist yet (doppler publishes Linux and macOS only), so they are deselected
+# rather than left to fail for a reason that says nothing about jm.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  examples:
+    name: Examples (windows-latest, clang-cl)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      CC: clang-cl
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # clang-cl drives the MSVC toolchain as cl.exe does and needs its
+      # environment (INCLUDE / LIB / the linker).
+      - name: MSVC developer environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Record the toolchain
+        run: |
+          clang-cl --version
+          cmake --version
+          ninja --version
+          make --version | head -1
+
+      - name: Install just-makeit
+        run: |
+          make tool-install
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+      # Every example in one pytest with no -x, so one run reports every
+      # wall rather than one per round. `-rs` prints skip reasons: a skip here
+      # would mean the harness decided there was no toolchain, which is not a
+      # result.
+      - name: Run the examples
+        run: >-
+          make test-examples
+          TEST_EXAMPLES_CMD='$(PYTEST_EXAMPLES) tests/test_examples.py -v -rs
+          -k "not nco_tone and not kitchen_sink"'
