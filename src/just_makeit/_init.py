@@ -6,6 +6,8 @@ Called by `just-makeit object` (no --module) and `just-makeit new --object`.
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 import sys
 from pathlib import Path
@@ -75,8 +77,8 @@ def append_component_body(
         return header
     if not header_only:
         path = root / "native" / "src" / component / f"{component}_core.c"
-        path.write_text(
-            path.read_text(encoding="utf-8") + "\n" + stub, encoding="utf-8"
+        _textio.write_text(
+            path, path.read_text(encoding="utf-8") + "\n" + stub
         )
         print(f"  update  {path}")
         return path
@@ -91,7 +93,7 @@ def append_component_body(
     cut = text.rfind(marker)
     if cut == -1:  # no C++ guard: fall back to the include guard's #endif
         cut = text.rfind("#endif")
-    path.write_text(text[:cut] + body + "\n" + text[cut:], encoding="utf-8")
+    _textio.write_text(path, text[:cut] + body + "\n" + text[cut:])
     print(f"  update  {path}")
     return path
 
@@ -245,7 +247,7 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
             "reached cmake as a\n  source filename."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _textio.write_text(path, content)
     print(f"  {verb}  {path}")
 
 
@@ -675,7 +677,7 @@ def _inject_decls_into_core_h(
             text = text.replace(guard, f"{block}{guard}", 1)
     if text == original:
         return False
-    path.write_text(text, encoding="utf-8")
+    _textio.write_text(path, text)
     return True
 
 
@@ -735,7 +737,7 @@ def _inject_includes_into_core_h(
             return False
     if text == original:
         return False
-    path.write_text(text, encoding="utf-8")
+    _textio.write_text(path, text)
     return True
 
 
@@ -780,7 +782,7 @@ def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
         + f"{field_indent}{field_decl.strip()}\n"
         + text[m.start() :]
     )
-    path.write_text(text, encoding="utf-8")
+    _textio.write_text(path, text)
     return True
 
 
@@ -894,9 +896,8 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     last_endif = text.rfind("#endif")
     if last_endif == -1:
         return False
-    umbrella.write_text(
-        text[:last_endif] + include_line + "\n" + text[last_endif:],
-        encoding="utf-8",
+    _textio.write_text(
+        umbrella, text[:last_endif] + include_line + "\n" + text[last_endif:]
     )
     return True
 
@@ -1051,7 +1052,7 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     # arriving at this file agree.
     text = ensure_dll_preamble(text)
 
-    init_py.write_text(text, encoding="utf-8")
+    _textio.write_text(init_py, text)
     print(f"  update  {init_py}")
 
 
@@ -1531,7 +1532,7 @@ def run(
         h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
-        h_path.write_text(h_text, encoding="utf-8")
+        _textio.write_text(h_path, h_text)
 
     # C sources (create-only — see above).
     #
@@ -1675,7 +1676,7 @@ def run(
         )
         rules = R.render(R.MAKEFILE_SIMPLE_COMPONENT, ctx)
         mf = mf.replace("# ── Fixed targets", rules + "# ── Fixed targets")
-        mf_path.write_text(mf, encoding="utf-8")
+        _textio.write_text(mf_path, mf)
         print(f"  update  {mf_path}")
 
     # just-makeit.toml

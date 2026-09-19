@@ -19,6 +19,8 @@ For fixed-output methods:
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 import sys
 from pathlib import Path
@@ -614,7 +616,7 @@ def _append_to_core_c(
     if c_fn and provided_by:
         print(f"  skip    {c_fn}() — {provided_by}")
         return
-    path.write_text(existing + "\n" + stub, encoding="utf-8")
+    _textio.write_text(path, existing + "\n" + stub)
     print(f"  update  {path}")
 
 
@@ -649,7 +651,7 @@ def _splice_varargs_source(
     )
     if new_text == text:
         return  # pattern not found, nothing to do
-    cmake_path.write_text(new_text, encoding="utf-8")
+    _textio.write_text(cmake_path, new_text)
     print(f"  update  {cmake_path}")
 
 
@@ -696,7 +698,7 @@ def _write_varargs_core_c(
         f"}}\n"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _textio.write_text(path, text)
     print(f"  create  {path}")
 
 
@@ -2042,13 +2044,13 @@ def run(
         ):
             print(f"  update  {core_h}")
         if ext_c.exists():
-            ext_c.write_text(r(R.COMPONENT_EXT_C), encoding="utf-8")
+            _textio.write_text(ext_c, r(R.COMPONENT_EXT_C))
             print(f"  update  {ext_c}")
         bench_c = (
             root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
         )
         if bench_c.exists():
-            bench_c.write_text(r(bench_c_tmpl), encoding="utf-8")
+            _textio.write_text(bench_c, r(bench_c_tmpl))
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
         if pyi_path.exists():
@@ -2056,11 +2058,11 @@ def run(
             new_pyi = R.render_component_pyi(ctx)
             # gh-428: preserve any manual_stub method's hand-written text
             # across the otherwise-blind regen above.
-            pyi_path.write_text(
+            _textio.write_text(
+                pyi_path,
                 S._splice_manual_stub_bodies(
                     cfg, old_pyi, new_pyi, path=pyi_path
                 ),
-                encoding="utf-8",
             )
             print(f"  update  {pyi_path}")
         # Surgical splice: when a varargs binding file was just added,

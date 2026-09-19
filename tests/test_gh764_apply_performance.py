@@ -220,13 +220,18 @@ class TestUnchangedFilesAreNotRewritten:
         files = _fragment_files(root)
 
         written: list[str] = []
-        real = Path.write_text
+        # gh-1368: every write jm makes goes through `_textio.write_text`
+        # (tests/test_gh1368_lf_writes.py holds that), so that is the one
+        # place to count them.
+        from just_makeit import _textio
 
-        def spy(self, *a, **kw):
-            written.append(self.name)
-            return real(self, *a, **kw)
+        real = _textio.write_text
 
-        monkeypatch.setattr(Path, "write_text", spy)
+        def spy(path, text):
+            written.append(Path(path).name)
+            return real(path, text)
+
+        monkeypatch.setattr(_textio, "write_text", spy)
 
         cfg = C.load(root)
         cfg["solo"]["mutable"] = "true"

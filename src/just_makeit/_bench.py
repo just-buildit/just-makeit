@@ -25,6 +25,8 @@ Workflow
 
 from __future__ import annotations
 
+from . import _textio
+
 import json
 import os
 import platform
@@ -419,7 +421,7 @@ def _save_snapshot(
 ) -> None:
     hdir.mkdir(parents=True, exist_ok=True)
     path = _snapshot_path(hdir, tag, is_c)
-    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    _textio.write_text(path, json.dumps(report, indent=2))
     print(f"  saved      {path.relative_to(root)}")
 
 

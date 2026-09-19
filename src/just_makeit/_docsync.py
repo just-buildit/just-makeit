@@ -32,6 +32,8 @@ the file is left untouched, so a second ``jm apply`` produces no diff.
 
 from __future__ import annotations
 
+from . import _textio
+
 import re
 from pathlib import Path
 
@@ -2489,6 +2491,6 @@ def refresh_module_fragment_docs(
                 updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:
                 if not dry_run:
-                    frag.write_text(updated, encoding="utf-8")
+                    _textio.write_text(frag, updated)
                 changed.append(frag)
     return changed

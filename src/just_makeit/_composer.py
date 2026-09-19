@@ -21,6 +21,8 @@ JSON / CLI faces land in the following slices.
 
 from __future__ import annotations
 
+from . import _textio
+
 from pathlib import Path
 
 from . import _config as C
@@ -3755,7 +3757,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
                 text = text[:idx] + sub + text[idx:]
             else:
                 text += sub
-            cmake_path.write_text(text, encoding="utf-8")
+            _textio.write_text(cmake_path, text)
 
 
 # ── generic JSON ser/de from the [[enum]] SSOT (gh-287) ──────────────────────

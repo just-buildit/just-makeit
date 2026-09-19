@@ -20,6 +20,8 @@ hand-written in ``<backing>_core.c``. This mirrors doppler's hand-written
 
 from __future__ import annotations
 
+from . import _textio
+
 from pathlib import Path
 
 from . import _coerce
@@ -542,4 +544,4 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
                 text = text[:idx] + sub + text[idx:]
             else:
                 text += sub
-            cmake_path.write_text(text, encoding="utf-8")
+            _textio.write_text(cmake_path, text)
