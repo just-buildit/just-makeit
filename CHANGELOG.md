@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+## [0.77.2] — 2026-09-19
+
+The first published release since 0.77.0. It also carries the three fixes
+listed under
+[0.77.1](https://github.com/just-buildit/just-makeit/blob/main/CHANGELOG.md#0771--2026-09-19--not-published):
+`upgrade`'s respell no longer rewrites prose (gh-1382), the generated
+shared library works on Windows (gh-1368), and a composer's `ranged` key is
+accepted (gh-1381). That version was tagged but never published: its Windows
+pre-publish smoke caught the crash fixed below.
+
 ### Fixed
 
 - **jm no longer crashes when its output is piped or redirected on Windows**
@@ -12,7 +22,10 @@
     pytest's capture is UTF-8. A test now runs jm under
     `PYTHONIOENCODING=cp1252` on every platform.
 
-## [0.77.1] — 2026-09-19
+## [0.77.1] — 2026-09-19 — not published
+
+Tagged, never on PyPI: the pre-publish Windows smoke caught gh-1387. These
+fixes ship in 0.77.2.
 
 ### Fixed
 
