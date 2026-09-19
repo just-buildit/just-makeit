@@ -62,7 +62,17 @@ def append_component_body(
     property of those two, not of this function, so it is pinned by a test
     that counts declarations rather than by a guard here that could not be
     made to fail.
+
+    gh-1310: a macro-family member gets **no** body at all. Its definitions
+    all come from the family macro, so a stub here would be a second
+    definition; the member belongs in the hand-written family header, and
+    the gh-1361 link-check test names it until it is written there. This is
+    reached from `apply`'s replay of a template's methods and properties,
+    which runs these verbs on each instance in the temp tree.
     """
+    header = root / "native" / "inc" / component / f"{component}_core.h"
+    if C.core_family(C.load(root), component) is not None:
+        return header
     if not header_only:
         path = root / "native" / "src" / component / f"{component}_core.c"
         path.write_text(
@@ -500,6 +510,8 @@ def _inject_decls_into_core_h(
     decls: "list[str]",
     skip_names: "frozenset[str] | None" = None,
     doc_members: "dict[str, str] | None" = None,
+    *,
+    family: "C.CoreFamily | None",
 ) -> bool:
     """Surgically refresh C declarations in an object's ``<comp>_core.h``.
 
@@ -528,9 +540,21 @@ def _inject_decls_into_core_h(
     line alone, leaving whatever documentation is already above it untouched,
     so re-running a command never re-stamps a skeleton over authored prose.
 
+    family — the component's `C.CoreFamily`, or None. gh-1310: a family
+    member's functions are all defined ``static inline`` by the family macro,
+    so every declaration offered is made ``static inline`` to match. Required,
+    with no default, on purpose: five of the callers are verbs that `apply`
+    replays into its temp tree, and one of them omitting it put a non-static
+    prototype into a family member's header. A forgotten argument is now a
+    ``TypeError`` rather than a header that happens to compile.
+
     Returns True if the header changed."""
     if not path.exists():
         return False
+    if family is not None:
+        from ._context._state import family_declarations
+
+        decls = [family_declarations(d.strip() + "\n").strip() for d in decls]
     text = original = path.read_text(encoding="utf-8")
     norm_text = _normalize_decl(text)
     to_insert: list[str] = []
@@ -564,7 +588,18 @@ def _inject_decls_into_core_h(
                 + r"\s*\(",
                 re.MULTILINE,
             )
-            if static_inline_pat.search(text):
+            # gh-1310: a DEFINITION, which is what the rule is about -- the
+            # first of `{` and `;` after the name decides. A macro-family
+            # member's header holds `static inline` *declarations* only (the
+            # macro defines them), and taking those for definitions froze
+            # every one of them at its first render: a template moving from
+            # `int16_t` to `int32_t` rewrote the invocation and left each
+            # prototype disagreeing with the definition it declares.
+            if any(
+                (nxt := re.search(r"[{;]", text[m_si.end() :])) is not None
+                and nxt.group(0) == "{"
+                for m_si in static_inline_pat.finditer(text)
+            ):
                 continue
             # Replace an existing prototype of the same name (a builtin
             # override or a refreshed signature). Try a single-line match
@@ -1046,6 +1081,7 @@ def run(
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
     header_only: bool = False,
+    core_family: "C.CoreFamily | None" = None,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     pytest_: bool | None = None,
@@ -1445,7 +1481,7 @@ def run(
     # methods, properties -- which is the only point at which every
     # declaration slot the header carries actually exists. Moving the
     # core inline earlier left `steps()` declared and undefined.
-    Ctx.apply_header_only(ctx, header_only)
+    Ctx.apply_header_only(ctx, header_only, core_family)
 
     print(f"just-makeit: adding component '{comp}' to project '{pkg}'")
     print()
@@ -1656,6 +1692,7 @@ def run(
         process_global_=process_global,
         opaque_state_=opaque_state,
         header_only_=header_only,
+        core_family_=core_family,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,

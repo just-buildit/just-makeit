@@ -228,6 +228,16 @@ def load(root: Path) -> dict:
     # gh-1310: templates first, so an instance's own `init_groups` expand
     # exactly as a hand-declared component's do.
     _expand_templates(cfg)
+    # gh-1310: after expansion, so a template's family keys are checked on
+    # the instances they reach, each error naming one.
+    family_errors = [
+        e
+        for comp in components(cfg)
+        if isinstance(cfg[comp], dict)
+        for e in core_family_errors(comp, cfg[comp])
+    ]
+    if family_errors:
+        _refuse(family_errors)
     _expand_init_groups(cfg)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
@@ -350,8 +360,8 @@ def expand_template(name: str, spec: dict) -> "tuple[dict, list[str]]":
 
 
 def _refuse(errors: "list[str]") -> None:
-    """Print each template error and exit; a template that cannot expand has
-    no meaning to fall back to."""
+    """Print each manifest error and exit; a template that cannot expand, or
+    a family that cannot be included, has no meaning to fall back to."""
     for e in dict.fromkeys(errors):
         print(f"error: {e}", file=_sys.stderr)
     raise SystemExit(1)
@@ -1878,6 +1888,114 @@ def is_header_only(cfg: dict, component: str) -> bool:
     detector asks whether an ``add_library(... OBJECT`` exists.
     """
     return _truthy(cfg.get(component, {}).get("header_only"))
+
+
+class CoreFamily(NamedTuple):
+    """Where a ``header_only`` component's definitions come from (gh-1310).
+
+    ``macro`` is a hand-written macro in ``header`` (under ``native/inc/``)
+    that defines every function of one component, ``static inline``, from
+    ``args``. The component's own header then carries DECLARATIONS only --
+    with their documentation -- followed by the one line
+    :attr:`invocation`, so N components that share a macro cannot differ in
+    behaviour, only in prose.
+    """
+
+    macro: str
+    args: "tuple[str, ...]"
+    header: str
+
+    @property
+    def invocation(self) -> str:
+        """The line `apply` writes into the component header.
+
+        Examples
+        --------
+        >>> CoreFamily("DECLARE_Q", ("q16", "int16_t"), "fam/q.h").invocation
+        'DECLARE_Q (q16, int16_t)'
+        """
+        return f"{self.macro} ({', '.join(self.args)})"
+
+
+#: The three keys that make a component a member of a macro family. All or
+#: none: a macro with no header cannot be included, and a header with no
+#: macro has nothing to invoke.
+CORE_FAMILY_KEYS = ("core_macro", "core_args", "core_header")
+
+_C_IDENT_RE = _re.compile(r"[A-Za-z_]\w*")
+
+
+def core_family(cfg: dict, component: str) -> "CoreFamily | None":
+    """The component's :class:`CoreFamily`, or None when it declares none.
+
+    Examples
+    --------
+    >>> core_family({"q": {"header_only": "true", "core_macro": "DECLARE_Q",
+    ...     "core_args": ["q", "int16_t"], "core_header": "fam/q.h"}}, "q")
+    CoreFamily(macro='DECLARE_Q', args=('q', 'int16_t'), header='fam/q.h')
+    >>> core_family({"q": {}}, "q") is None
+    True
+    """
+    sec = cfg.get(component, {})
+    if not sec.get("core_macro"):
+        return None
+    return CoreFamily(
+        str(sec["core_macro"]),
+        tuple(str(a) for a in sec.get("core_args") or ()),
+        str(sec.get("core_header", "")),
+    )
+
+
+def core_family_errors(name: str, sec: dict) -> "list[str]":
+    """Why *sec* cannot be a macro-family member; empty when it can.
+
+    Checked at `load` for every component, a template instance included -- a
+    template states the keys once in its body, so one wrong key is reported
+    once per instance, each naming the instance.
+
+    Examples
+    --------
+    >>> core_family_errors("q", {"core_macro": "DECLARE_Q"})  # doctest: +ELLIPSIS
+    ['`q` sets core_macro but not core_args, core_header: ...', ...]
+    >>> core_family_errors("q", {"header_only": "true",
+    ...     "core_macro": "DECLARE_Q", "core_args": ["q"],
+    ...     "core_header": "fam/q.h"})
+    []
+    """
+    present = [k for k in CORE_FAMILY_KEYS if k in sec]
+    if not present:
+        return []
+    errors: list[str] = []
+    missing = [k for k in CORE_FAMILY_KEYS if k not in sec]
+    if missing:
+        errors.append(
+            f"`{name}` sets {', '.join(present)} but not {', '.join(missing)}:"
+            " a macro family needs all three -- the macro, its arguments, and"
+            " the header under native/inc/ that defines it."
+        )
+    if not _truthy(sec.get("header_only")):
+        errors.append(
+            f'`{name}` sets {present[0]} without `header_only = "true"`: the'
+            " macro defines the component's functions `static inline`, so"
+            " there is no `_core.c` for them to live in."
+        )
+    if "core_macro" in sec and not _C_IDENT_RE.fullmatch(
+        str(sec["core_macro"])
+    ):
+        errors.append(
+            f"`{name}`: core_macro `{sec['core_macro']}` is not a C identifier"
+        )
+    args = sec.get("core_args")
+    if "core_args" in sec and not (
+        isinstance(args, list)
+        and args
+        and all(isinstance(a, str) and a.strip() for a in args)
+    ):
+        errors.append(
+            f"`{name}`: core_args must be a non-empty list of strings, one per"
+            " macro argument"
+        )
+    return errors
 
 
 def is_opaque_state(cfg: dict, component: str) -> bool:
@@ -3923,6 +4041,13 @@ def param_headers(cfg: dict, component: str) -> list[str]:
             h = mp.get("header", "")
             if h and h not in out:
                 out.append(h)
+    # gh-1310: a macro family's header is one more include the sacred header
+    # cannot parse without -- its `DECLARE_...(...)` line invokes a macro
+    # defined there. Same list, so every path that includes the headers above
+    # (both renders and both `apply` injections) includes this one too.
+    fam = core_family(cfg, component)
+    if fam and fam.header and fam.header not in out:
+        out.append(fam.header)
     return out
 
 
@@ -4949,6 +5074,7 @@ def add_component(
     process_global_: bool = False,
     opaque_state_: bool = False,
     header_only_: bool = False,
+    core_family_: "CoreFamily | None" = None,
     mutable_: bool = False,
     step_delegates_: bool = False,
     serializable_: bool = False,
@@ -5006,6 +5132,10 @@ def add_component(
         entry["opaque_state"] = "true"
     if header_only_:
         entry["header_only"] = "true"
+    if core_family_ is not None:
+        entry["core_macro"] = core_family_.macro
+        entry["core_args"] = list(core_family_.args)
+        entry["core_header"] = core_family_.header
     if step_delegates_:
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
@@ -6161,6 +6291,10 @@ def _dump(cfg: dict) -> str:
             # with no sources fails CONFIGURE -- so the project would not
             # build at all.
             "header_only",
+            # gh-1310: the same again. `core_args` is a list and is emitted
+            # below with the other arrays.
+            "core_macro",
+            "core_header",
             "step_delegates_to_steps",
             "serializable",
             "streamable",
@@ -6214,6 +6348,12 @@ def _dump(cfg: dict) -> str:
                 f'"{d}"' for d in comp_data["extra_include_dirs"]
             )
             lines.append(f"extra_include_dirs = [{inc_str}]")
+        if comp_data.get("core_args"):
+            # Arguments are C expressions, so a string literal's quotes must
+            # survive -- hence the escaping array writer, not an f-string.
+            lines.append(
+                f"core_args = {_toml_string_array(comp_data['core_args'])}"
+            )
         # Custom C bodies, as heredocs. Emitted here — after the scalar keys,
         # BEFORE any [[comp.*]] sub-table — so a C.load/C.save round-trip
         # preserves them and TOML re-parses them onto the component (not the

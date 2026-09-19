@@ -471,7 +471,9 @@ def run(
         # symbol the header already defines (gh-468) -- the other order
         # leaves a non-static prototype the definition cannot follow.
         scaffold_accessor_bodies(root, object_name, decls)
-        if _inject_decls_into_core_h(core_h, object_name, decls):
+        if _inject_decls_into_core_h(
+            core_h, object_name, decls, family=C.core_family(cfg, object_name)
+        ):
             print(f"  update  {core_h}")
     elif field:
         disp = ctype
@@ -480,7 +482,9 @@ def run(
     elif not buf_field and not expr and not capsule:
         decls = plain_accessor_decls(object_name, prop_name, ctype, writable)
         scaffold_accessor_bodies(root, object_name, decls)  # first; see above
-        if _inject_decls_into_core_h(core_h, object_name, decls):
+        if _inject_decls_into_core_h(
+            core_h, object_name, decls, family=C.core_family(cfg, object_name)
+        ):
             print(f"  update  {core_h}")
 
     # Regenerate the glue (Python getset descriptor + binding).  Module objects

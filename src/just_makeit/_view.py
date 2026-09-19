@@ -184,7 +184,9 @@ def run(
 
     core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
     proto = f"{object_name}_state_t *{create_fn}({create_params});"
-    if _inject_decls_into_core_h(core_h, object_name, [proto]):
+    if _inject_decls_into_core_h(
+        core_h, object_name, [proto], family=C.core_family(cfg, object_name)
+    ):
         print(f"  update  {core_h}")
 
     core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"

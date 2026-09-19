@@ -51,6 +51,11 @@ OBJECT_KEYS = frozenset(
         # header, so there is no `_core.c` to scaffold and the CMake
         # core library is INTERFACE rather than OBJECT.
         "header_only",
+        # gh-1310: a header_only core whose definitions come from one
+        # hand-written family macro -- see `_config.CoreFamily`.
+        "core_macro",
+        "core_args",
+        "core_header",
         "process_global",
         "serializable",
         "streamable",

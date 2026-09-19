@@ -157,6 +157,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # the project does not build at all rather than merely regenerating
         # something the manifest asked to remove.
         "header_only": C.is_header_only(cfg, comp),
+        # gh-1310: and a family member's header without it renders jm's own
+        # `static inline` bodies, each a second definition of a function the
+        # family macro defines.
+        "core_family": C.core_family(cfg, comp),
         # gh-542: replayed like every other shape key — a manifest key that
         # apply drops regenerates the very method it asked to remove.
         "no_reset": C.is_no_reset(cfg, comp),
@@ -1553,7 +1557,9 @@ def _reconcile_object_core_cmake(
     return True
 
 
-def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
+def _refresh_core_h_decls(
+    real: Path, temp: Path, comp: str, family: "C.CoreFamily | None" = None
+) -> bool:
     """Bring the real ``_core.h`` up to date with the manifest, splice-free.
 
     The temp header is freshly rendered from the manifest and carries every
@@ -1579,6 +1585,12 @@ def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
     author-written form jm reads back as a contract (gh-761's ``*_max_out``
     arity) and would otherwise flip-flop on each apply.
 
+    gh-1310: for a macro-family member (*family*) it also keeps the one
+    ``DECLARE_...(...)`` line in sync with the manifest's ``core_args`` --
+    here rather than in a writer of its own, because the line is a
+    declaration in the same sense the prototypes are: glue the manifest owns,
+    inside a header the author owns. See :func:`_refresh_family_invocation`.
+
     Returns True if the real header changed."""
     if not temp.exists():
         return False
@@ -1600,7 +1612,93 @@ def _refresh_core_h_decls(real: Path, temp: Path, comp: str) -> bool:
     from ._docstring import declared_max_outs
 
     skip = declared_max_outs(real.read_text(encoding="utf-8"))
-    return _inject_decls_into_core_h(real, comp, decls, skip_names=skip)
+    changed = _inject_decls_into_core_h(
+        real, comp, decls, skip_names=skip, family=family
+    )
+    if family is not None and _refresh_family_invocation(real, family):
+        changed = True
+    return changed
+
+
+def _refresh_family_invocation(path: Path, family: "C.CoreFamily") -> bool:
+    """Make *path* invoke ``family.macro`` exactly once, with the manifest's
+    arguments (gh-1310).
+
+    The arguments are the manifest's -- the ``instances`` row of a template
+    -- so the header must not state them a second time by hand: a changed
+    ``scale`` has to reach the C, and a hand edit to the line is a second
+    declaration of one value. The line is found on `_docsync`'s code mask, so
+    an ``@code`` example that shows the invocation is never taken for it, and
+    it may span lines. Absent, it is added where `append_component_body`
+    puts a header-only component's definitions: before the ``extern "C"``
+    close. Found more than once, nothing is touched and jm says so -- which
+    one the author meant is not something to guess.
+
+    Returns True when the file was written.
+    """
+    from ._docsync import _code_mask
+
+    text = path.read_text(encoding="utf-8")
+    mask = _code_mask(text)
+    spans = []
+    for m in re.finditer(
+        rf"^[ \t]*({re.escape(family.macro)})\s*\(", mask, re.MULTILINE
+    ):
+        depth, i = 0, m.end() - 1
+        while i < len(mask):
+            depth += {"(": 1, ")": -1}.get(mask[i], 0)
+            if depth == 0:
+                break
+            i += 1
+        if depth:
+            # Unclosed: replacing "to the close" would take the rest of the
+            # file with it.
+            _report.warn(
+                f"{path.name}: the {family.macro}( invocation never closes;"
+                " jm leaves the header alone until it does.",
+                gates=True,
+            )
+            return False
+        end = i + 1
+        while end < len(mask) and mask[end] in " \t;":
+            end += 1
+        spans.append((m.start(1), end))
+    if len(spans) > 1:
+        _report.warn(
+            f"{path.name} invokes {family.macro} {len(spans)} times; jm keeps"
+            " exactly one in sync with the manifest's core_args and cannot"
+            " tell which is meant. Remove the others.",
+            gates=True,
+        )
+        return False
+    if spans:
+        start, end = spans[0]
+        if text[start:end].rstrip() == family.invocation:
+            return False
+        new = text[:start] + family.invocation + text[end:]
+    else:
+        cut = text.rfind("#ifdef __cplusplus")
+        if cut == -1:
+            cut = text.rfind("#endif")
+        new = text[:cut] + family.invocation + "\n\n" + text[cut:]
+    path.write_text(new, encoding="utf-8")
+    return True
+
+
+def missing_family_headers(root: Path, cfg: dict) -> "list[tuple[str, str]]":
+    """``(component, header)`` for each family header that does not exist.
+
+    gh-1310. jm never writes the family header -- it is the one hand-written
+    file every member's definitions come from -- so a member declared before
+    its header exists would be a tree that does not compile. `apply` refuses
+    it, naming the file and the macro to define in it.
+    """
+    out = []
+    for comp in C.components(cfg):
+        fam = C.core_family(cfg, comp)
+        if fam and not (root / "native" / "inc" / fam.header).is_file():
+            out.append((comp, fam.header))
+    return out
 
 
 def _add_cmake_block_for(
@@ -2025,6 +2123,16 @@ def _sync_aggregates(
         core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
         if not core_h.exists():
             continue
+        # gh-1310: a macro-family member takes the FULL reconcile a standalone
+        # header gets. The measured reason the loop below is additive -- years
+        # of drift in hand-maintained module headers -- cannot apply to one:
+        # its header holds declarations only, jm wrote every one of them, and
+        # a template change has to reach them. An additive refresh would keep
+        # the `int16_t` prototypes after the family moved to `int32_t`.
+        if C.core_family(cfg, comp) is not None:
+            if _refresh_component_core_h(root, temp_root, cfg, comp):
+                updated.append(core_h)
+            continue
         # gh-1302: methods alongside gh-627's accessors. Same loop, same
         # additive rule -- `skip_names` below names every prototype offered,
         # so one the header already declares (with any signature) is left
@@ -2045,7 +2153,10 @@ def _sync_aggregates(
             for d in decls
             if re.search(r"(\w+)\s*\(", d)
         )
-        if _inject_decls_into_core_h(core_h, comp, decls, skip_names=names):
+        # Never a family member: those left the loop above.
+        if _inject_decls_into_core_h(
+            core_h, comp, decls, skip_names=names, family=None
+        ):
             updated.append(core_h)
 
     updated += _reconcile_procglobal_headers(
@@ -2224,7 +2335,9 @@ def _refresh_component_core_h(
     right. Returns True when the file changed.
     """
     rel = f"native/inc/{comp}/{comp}_core.h"
-    changed = _refresh_core_h_decls(root / rel, temp_root / rel, comp)
+    changed = _refresh_core_h_decls(
+        root / rel, temp_root / rel, comp, C.core_family(cfg, comp)
+    )
     # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each depends_on
     # entry, so opaque fields of a dependency's types compile.
     from ._init import _inject_includes_into_core_h
@@ -2730,6 +2843,22 @@ def run(
         print()
 
     cfg = C.load(root)
+    # gh-1310: a family member whose family header is missing, before anything
+    # is written -- jm cannot write that file, and every member would render
+    # an `#include` of nothing.
+    _missing = missing_family_headers(root, cfg)
+    if _missing:
+        for _comp, _hdr in _missing:
+            _fam = C.core_family(cfg, _comp)
+            print(
+                f"error: `{_comp}` takes its definitions from"
+                f" {_fam.macro}(...), and native/inc/{_hdr} does not exist."
+                f" Write it, defining {_fam.macro} with"
+                f" {len(_fam.args)} argument(s) -- jm writes each member's"
+                " declarations and the invocation, never the family header.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
     # gh-1117: refuse a `process_global` jm cannot make true, before anything
     # is written. A declaration that generated nothing and said nothing would
     # be gh-1118 in a new place -- a key read, accepted, silently doing

@@ -63,6 +63,7 @@ class TestTheRewriteIsAnnounced:
             path,
             "gain",
             ["float _Complex gain_scale(gain_state_t *state, double x);"],
+            family=None,
         )
         assert changed
         err = capsys.readouterr().err
@@ -80,6 +81,7 @@ class TestTheRewriteIsAnnounced:
             path,
             "gain",
             ["float _Complex gain_scale(gain_state_t *state, double x);"],
+            family=None,
         )
         err = capsys.readouterr().err
         assert "_core.c" in err
@@ -93,6 +95,7 @@ class TestTheRewriteIsAnnounced:
             path,
             "gain",
             ["float _Complex gain_scale(gain_state_t *state, double x);"],
+            family=None,
         )
         text = path.read_text()
         assert "double x);" in text
@@ -106,7 +109,10 @@ class TestItStaysQuietWhenNothingChanged:
         decl = (
             "float _Complex gain_scale(gain_state_t *state, float _Complex x);"
         )
-        assert _inject_decls_into_core_h(path, "gain", [decl]) is False
+        assert (
+            _inject_decls_into_core_h(path, "gain", [decl], family=None)
+            is False
+        )
         assert capsys.readouterr().err == ""
 
     def test_a_decoratively_different_decl_is_silent(self, tmp_path, capsys):
@@ -131,6 +137,7 @@ class TestItStaysQuietWhenNothingChanged:
                 "float _Complex gain_scale(gain_state_t *state, "
                 "float _Complex x);"
             ],
+            family=None,
         )
         assert path.read_text() == before
         assert capsys.readouterr().err == ""
@@ -139,7 +146,10 @@ class TestItStaysQuietWhenNothingChanged:
         """Insertion is not replacement — nothing was overwritten."""
         path = _header(tmp_path)
         assert _inject_decls_into_core_h(
-            path, "gain", ["void gain_reset(gain_state_t *state);"]
+            path,
+            "gain",
+            ["void gain_reset(gain_state_t *state);"],
+            family=None,
         )
         assert "replacing" not in capsys.readouterr().err
 
@@ -153,6 +163,7 @@ class TestItStaysQuietWhenNothingChanged:
             "gain",
             ["float _Complex gain_scale(gain_state_t *state, double x);"],
             skip_names=frozenset({"gain_scale"}),
+            family=None,
         )
         assert path.read_text() == before
         assert capsys.readouterr().err == ""

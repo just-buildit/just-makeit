@@ -1979,6 +1979,7 @@ def run(
             proto_lines,
             skip_names=_vo_skip,
             doc_members=_doc_members,
+            family=C.core_family(cfg, object_name),
         ):
             print(f"  update  {core_h_}")
     else:
@@ -2037,6 +2038,7 @@ def run(
             proto_lines,
             skip_names=_vo_skip,
             doc_members=_doc_members,
+            family=C.core_family(cfg, object_name),
         ):
             print(f"  update  {core_h}")
         if ext_c.exists():

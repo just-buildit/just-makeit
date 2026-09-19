@@ -2397,6 +2397,7 @@ def run(
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
     header_only: bool = False,
+    core_family: "C.CoreFamily | None" = None,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     variable_output: bool = False,
@@ -2480,6 +2481,7 @@ def run(
             no_state=no_state,
             no_step=no_step,
             header_only=header_only,
+            core_family=core_family,
             no_reset=no_reset,
             process_global=process_global,
             mutable=mutable,
@@ -2702,7 +2704,7 @@ def run(
     # `<<destroy_decl>>` / `<<inline_core>>` verbatim -- caught loudly by
     # gh-1199's refusal to write a file still carrying unfilled slots, which
     # is exactly the "you wired one path" mistake that gate exists for.
-    Ctx.apply_header_only(ctx, header_only)
+    Ctx.apply_header_only(ctx, header_only, core_family)
 
     # gh-170: include each depends_on component's header so opaque fields of
     # its types compile (mirrors the standalone path in _init.run). Only deps
@@ -2868,6 +2870,7 @@ def run(
         # keys one by one, so an unnamed key is silently absent rather than an
         # error, which is the same trap `_apply` and `_script` carry.
         header_only_=header_only,
+        core_family_=core_family,
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,

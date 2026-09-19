@@ -10,9 +10,19 @@
     written per instance. `module = "..."` lists the instances in a module
     without naming them twice. A verb run on an instance is refused, before
     any C is written. `jm script` names the template in a NOTE instead of
-    replaying N `jm object` lines. This covers the **manifest** half only;
-    each instance still has its own `_core.c` until part 2 (one family header,
-    `header_only` instances).
+    replaying N `jm object` lines.
+
+- **One C family for a template: `core_macro` / `core_args` /
+    `core_header`** (gh-1310, part 2). A `header_only` component can take
+    every definition from one hand-written family macro. Its header then
+    holds only `static inline` declarations, each with its doc comment,
+    followed by one `DECLARE_...(...)` line. `apply` writes that line from
+    `core_args` and keeps it in sync, through the same writer that refreshes
+    the prototypes, for standalone and module instances alike. jm writes no
+    body for a family member from any route, and `apply` refuses when the
+    family header doesn't exist. On a template, the instances' C can no
+    longer diverge, only their prose. See
+    [Type templates](docs/configuration.md).
 
 - **A function the binding calls and nothing defines now fails the C test
     at link time, naming it** (gh-1361). A shared object links with undefined
@@ -79,6 +89,13 @@
     prototype it fails to compile.
 
 ### Fixed
+
+- **A `static inline` declaration was taken for a definition** (gh-1310).
+    `apply`'s declaration refresh skips a name the header defines inline
+    (gh-133/gh-468), but its check matched any `static inline ... name(`,
+    so a header that only *declared* a function that way was frozen at its
+    first render. It now skips only when the name is followed by `{` before
+    `;`.
 
 - **`apply` no longer injects a header-only component's statements into
     its header as declarations** (gh-1362). The declaration extractor accepted
