@@ -72,6 +72,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "fields": [{"name": "freq", "type": "double"}],
     "computed": [{"name": "dur", "type": "double", "fn": "wfm_dur"}],
     "generates": {"generator": "nco", "bridge_fn": "wfm_bridge"},
+    # gh-1381: source AND segment -- which fields take a (lo, hi) pair
+    "ranged": [{"name": "freq", "flag": "WFM_RANGE_FREQ"}],
     # source.generates
     "generator": "nco",
     "bridge_fn": "wfm_bridge",
@@ -312,3 +314,62 @@ def test_a_complex_field_stays_complex_through_a_save(
     assert got.get("complex") is True
     assert got.get("c_ptr") == "sync.bits"
     assert got.get("c_len") == "sync.len"
+
+
+# ── gh-1381: every key the RENDERER reads is in the vocabulary ───────────────
+
+
+class _Recording(dict):
+    """A dict that notes every key looked up in it -- present or not."""
+
+    def __init__(self, data: dict, seen: "set[str]") -> None:
+        super().__init__(data)
+        self._seen = seen
+
+    def get(self, key, default=None):  # type: ignore[override]
+        self._seen.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        self._seen.add(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key) -> bool:
+        self._seen.add(key)
+        return super().__contains__(key)
+
+
+@pytest.mark.parametrize(
+    "tbl,accessor",
+    [("source", "composer_source"), ("segment", "composer_segment")],
+)
+def test_every_key_the_renderer_reads_is_accepted(
+    tbl: str, accessor: str, tmp_path: pathlib.Path, monkeypatch
+) -> None:
+    """gh-1381. The vocabulary above was derived from the WRITER, and the one
+    key the writer never had -- `ranged` -- was the one missing, so 0.77.0
+    refused doppler's manifest for a key `_composer` reads to generate six
+    fields. The issue asked for this direction, measured by RUNNING the
+    renderer rather than grepping it: the table's accessor hands out a dict
+    that records every key looked up, including the absent ones, which is
+    exactly how a key the fixture lacks still gets caught.
+    """
+    from just_makeit import _composer
+    from test_composer_codegen import _ranged_cfg
+
+    seen: "set[str]" = set()
+    real = getattr(C, accessor)
+    monkeypatch.setattr(
+        C, accessor, lambda cfg, module: _Recording(real(cfg, module), seen)
+    )
+    cfg = _ranged_cfg()
+    _composer.render_ext(cfg, MOD)
+    _composer.render_bridge_h(cfg, MOD)
+    _composer.composer_cli(cfg, MOD)
+    assert seen, f"the renderer read nothing through {accessor}"
+    vocab = KIND_KEYS[KIND_DICT_TABLE_VOCAB[("composer", tbl)]]
+    unknown = sorted(k for k in seen if isinstance(k, str) and k not in vocab)
+    assert not unknown, (
+        f"_composer reads [module.X.{tbl}] {unknown}, which the vocabulary "
+        "does not accept -- a manifest carrying them is refused by `upgrade`"
+    )

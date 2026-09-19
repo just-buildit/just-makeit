@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A composer's `ranged` key is accepted again, and survives a save**
+    (gh-1381). `_composer` reads `ranged` off `[module.X.source]` and
+    `[module.X.segment]` to generate the fields that take a number *or* a
+    `(lo, hi)` pair, but the key vocabulary had never listed it. 0.76.x
+    only warned; 0.77.0 refused, which blocked `jm apply` on doppler's
+    `wfm_compose`. The manifest writer had the same gap, so a save through
+    `_dump` (a new file, or no tomlkit) dropped the key and the next render
+    turned those fields scalar. Both are fixed, and a test now records every
+    key the composer renderer reads and requires each one in the vocabulary.
+
 ## [0.77.0] — 2026-09-19
 
 ### Breaking
