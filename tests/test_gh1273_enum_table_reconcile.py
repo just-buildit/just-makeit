@@ -30,9 +30,7 @@ exists.
 
 from __future__ import annotations
 
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -44,6 +42,8 @@ sys.path.insert(0, str(SRC))
 
 from just_makeit import _docsync  # noqa: E402
 
+from _jmrun import JmRun, run_cli
+
 #: `static const char *const _enum_Reader_t0[] = { ... };`
 _TABLE_RE = re.compile(
     r"^static\s+const\s+char\s*\*\s*const\s+(_enum_\w+)\s*\[\s*\]\s*=\s*\{"
@@ -53,15 +53,9 @@ _TABLE_RE = re.compile(
 _STR_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()"]
-        + list(args),
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _enum_tables(root: Path) -> dict:

@@ -36,6 +36,8 @@ from just_makeit._config import (
     warnings as cfg_warnings,
 )
 
+from _jmrun import JmRun, run_cli
+
 
 @pytest.fixture()
 def project(tmp_path):
@@ -61,23 +63,9 @@ def _init_body(project):
     return ext[start : ext.index("\n}\n", start)]
 
 
-class _CliResult:
-    def __init__(self, returncode, out, err):
-        self.returncode, self.stdout, self.stderr = returncode, out, err
-
-
-def _cli(*args, cwd=None, capsys=None, monkeypatch=None) -> _CliResult:
-    from just_makeit._cli import main
-
-    monkeypatch.chdir(cwd)
-    monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
-    code = 0
-    try:
-        main()
-    except SystemExit as e:
-        code = e.code or 0
-    out, err = capsys.readouterr()
-    return _CliResult(code, out, err)
+def _cli(*args, cwd=None) -> JmRun:
+    # gh-1374: one implementation of this, in tests/_jmrun.py.
+    return run_cli(*args, cwd=cwd)
 
 
 class TestRemoveWarning:
@@ -157,8 +145,6 @@ class TestRemoveWarning:
             "acq",
             "--force",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         assert cfg_warnings(load(project), "acq") == []
@@ -211,8 +197,6 @@ class TestRemoveError:
             "acq",
             "--force",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         assert create_error(load(project), "acq") == ""
@@ -282,8 +266,6 @@ class TestPropertyCliFlags:
             "--len-field",
             "n",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         entry = properties(load(project), "acq")[0]
@@ -301,8 +283,6 @@ class TestPropertyCliFlags:
             "--expr",
             "state->n * 2.0",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         assert properties(load(project), "acq")[0]["expr"] == "state->n * 2.0"
@@ -319,8 +299,6 @@ class TestPropertyCliFlags:
             "--type",
             "notatype",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "unsupported --type" in r.stderr
@@ -337,8 +315,6 @@ class TestPropertyCliFlags:
             "--len-field",
             "count",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "only applies alongside --buf-field" in r.stderr
@@ -357,8 +333,6 @@ class TestPropertyCliFlags:
             "--expr",
             "1+1",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "mutually exclusive" in r.stderr

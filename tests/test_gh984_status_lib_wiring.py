@@ -37,37 +37,20 @@ wrongly.
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from _jmrun import JmRun, run_cli
+
 SRC = Path(__file__).parent.parent / "src"
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        # A REPLACED environment drops COVERAGE_PROCESS_START and
-        # COVERAGE_FILE, so everything these tests drive through the CLI is
-        # instrumented and then discarded — gh-978's defect, reintroduced one
-        # layer out by a test helper rather than by the Makefile. It shows up
-        # as `codecov/patch` failing on code the suite plainly exercises, which
-        # is the signal that found it. Merge, do not replace; `NO_COLOR` and
-        # `PYTHONPATH` still win.
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 @pytest.fixture

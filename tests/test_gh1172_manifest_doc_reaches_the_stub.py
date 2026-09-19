@@ -52,8 +52,6 @@ function / module tables, which have the same exposure.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -67,24 +65,16 @@ from just_makeit import _glue  # noqa: E402
 from just_makeit import _render as R  # noqa: E402
 from just_makeit import _stubs as S  # noqa: E402
 
+from _jmrun import JmRun, run_cli
+
 MARKER = "MODOBJ_DOC marker."
 SOLO_MARKER = "SOLO_DOC marker."
 VIEW_MARKER = "VIEW_DOC marker."
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _put_object_key(root: Path, fragment: str, line: str) -> None:

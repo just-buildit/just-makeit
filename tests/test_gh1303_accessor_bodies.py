@@ -24,10 +24,8 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +40,8 @@ from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
 
+from _jmrun import JmRun, run_cli
+
 _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and any(
     shutil.which(c) for c in ("cc", "gcc", "clang")
 )
@@ -52,16 +52,9 @@ def _quiet(fn, *a, **kw):
         return fn(*a, **kw)
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-c", "from just_makeit._cli import main; main()"]
-        + list(args),
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-        timeout=900,
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _project(tmp_path: Path, shape: str) -> Path:

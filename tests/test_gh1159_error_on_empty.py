@@ -34,15 +34,13 @@ Two properties carry this file:
 
 from __future__ import annotations
 
-import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
+
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or (
     shutil.which("cc") is None and shutil.which("gcc") is None
@@ -51,19 +49,9 @@ _NO_TOOLCHAIN = shutil.which("cmake") is None or (
 MESSAGE = "length is not a whole number of blocks"
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _scaffold(tmp_path: Path, *, extra: str) -> Path:

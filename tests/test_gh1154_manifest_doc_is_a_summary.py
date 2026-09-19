@@ -50,14 +50,12 @@ described a loss which was not happening.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).parent.parent / "src"
+from _jmrun import JmRun, run_cli
+
 
 #: Two plain paragraphs. Flattens into flowing prose -- correct output, and
 #: what `group_paragraphs` is for. A finding only where a face truncates.
@@ -68,19 +66,9 @@ MULTI = '"""One paragraph.\n\nAnd a second."""'
 HEADED = '"""One paragraph.\n\nParameters\n----------\nb : int\n    A bin."""'
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 @pytest.fixture

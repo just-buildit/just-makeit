@@ -69,14 +69,14 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+from _jmrun import JmRun, run_cli
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -93,19 +93,9 @@ _SKIP_PARTS = {"build", "__pycache__", ".git"}
 _SKIP_SUFFIXES = {".pyc", ".so", ".pyd"}
 
 
-def _cli(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            *args,
-        ],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(SRC), "NO_COLOR": "1"},
-    )
+def _cli(*args, cwd) -> JmRun:
+    # gh-1374: in THIS process -- the child bought isolation only.
+    return run_cli(*args, cwd=cwd)
 
 
 def _diff(got: str, want: str, name: str) -> str:

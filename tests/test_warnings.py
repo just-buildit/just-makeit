@@ -30,6 +30,9 @@ from just_makeit._warning import run as warning_run
 from just_makeit._script import run as script_run
 from just_makeit._config import load, warnings as cfg_warnings
 
+from _jmrun import JmRun, run_cli
+
+
 _MSG = (
     "Acquisition is under-powered: pd_predicted < pd at this reps/cn0_dbhz. "
     "Raise reps or cn0_dbhz, set max_noncoh>1, or narrow doppler_uncertainty."
@@ -44,31 +47,9 @@ def project(tmp_path):
     return dest
 
 
-class _CliResult:
-    def __init__(self, returncode, out, err):
-        self.returncode = returncode
-        self.stdout = out
-        self.stderr = err
-
-
-def _cli(*args, cwd=None, capsys=None, monkeypatch=None) -> _CliResult:
-    """Drive the real argv parser in-process.
-
-    Deliberately not a subprocess: `main()` is what parses these flags, and a
-    subprocess would run it where coverage can't see it (the CLI dispatch layer
-    sits at ~53% for exactly that reason). In-process also runs ~100x faster.
-    """
-    from just_makeit._cli import main
-
-    monkeypatch.chdir(cwd)
-    monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
-    code = 0
-    try:
-        main()
-    except SystemExit as e:
-        code = e.code or 0
-    out, err = capsys.readouterr()
-    return _CliResult(code, out, err)
+def _cli(*args, cwd=None) -> JmRun:
+    # gh-1374: one implementation of this, in tests/_jmrun.py.
+    return run_cli(*args, cwd=cwd)
 
 
 def _ext_c(project, obj="acq"):
@@ -357,8 +338,6 @@ class TestWarningCli:
             "--message",
             _MSG,
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         assert "PyErr_WarnEx(PyExc_UserWarning," in _ext_c(project)
@@ -379,8 +358,6 @@ class TestWarningCli:
             "--stacklevel",
             "2",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         entry = cfg_warnings(load(project), "acq")[0]
@@ -395,16 +372,12 @@ class TestWarningCli:
             "--message",
             "m",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "--condition is required" in r.stderr
 
     def test_cli_requires_object_name(self, project, capsys, monkeypatch):
-        r = _cli(
-            "warning", cwd=project, capsys=capsys, monkeypatch=monkeypatch
-        )
+        r = _cli("warning", cwd=project)
         assert r.returncode != 0
         assert "requires an object name" in r.stderr
 
@@ -418,8 +391,6 @@ class TestWarningCli:
             "m",
             "--bogus",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "unexpected argument '--bogus'" in r.stderr
@@ -432,8 +403,6 @@ class TestWarningCli:
             "acq",
             "--condition",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "--condition requires a value" in r.stderr
@@ -451,8 +420,6 @@ class TestWarningCli:
             "--stacklevel",
             "high",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "--stacklevel requires a positive integer" in r.stderr
@@ -468,8 +435,6 @@ class TestWarningCli:
             "--category",
             "Nope",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "unsupported --category" in r.stderr
@@ -492,8 +457,6 @@ class TestWarningCli:
             "--message",
             "output clipped",
             cwd=dest,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode == 0, r.stderr
         ext = (dest / "native" / "src" / "filt" / "filt_ext_fir.c").read_text(
@@ -514,8 +477,6 @@ class TestWarningCli:
             "--after",
             "execute",
             cwd=project,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "not supported yet" in r.stderr
@@ -529,8 +490,6 @@ class TestWarningCli:
             "--message",
             "m",
             cwd=tmp_path,
-            capsys=capsys,
-            monkeypatch=monkeypatch,
         )
         assert r.returncode != 0
         assert "just-makeit.toml" in r.stderr
