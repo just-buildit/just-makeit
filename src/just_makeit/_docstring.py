@@ -710,6 +710,113 @@ def name_summary(name: str) -> str:
     return name.replace("_", " ").capitalize() + "."
 
 
+def property_doc(
+    component: str, prop: dict, doc_blocks: "dict | None"
+) -> tuple[str, bool]:
+    """A property's documentation, and whether it is only its name.
+
+    ONE chain, because there are two readers of it: the binding that emits
+    `PyGetSetDef`'s doc slot, and `jm status --docs`, which reports the
+    members that fell back to the name. A second copy of the precedence
+    would let the report disagree with what jm actually generates -- the
+    report's only value is that it does not (gh-1394).
+
+    Precedence: the manifest's ``doc`` > the getter's ``@brief`` > the
+    field's own trailing ``/**<`` in this component's state struct > the
+    name. gh-1300: the field's OWN struct, never a same-named field in
+    whatever the header includes -- that inheritance gave doppler's
+    `IMDMeasure.rbw_hz` a different record's formula.
+
+    Returns
+    -------
+    tuple of (str, bool)
+        The text, and ``True`` when it is the name-derived stub -- i.e.
+        nothing documents this property yet.
+
+    Examples
+    --------
+    >>> property_doc("psd", {"name": "nfft", "doc": "Transform length."}, {})
+    ('Transform length.', False)
+    >>> property_doc("psd", {"name": "nfft"}, {})
+    ('Nfft.', True)
+    >>> blocks = {struct_members_key(): {"psd_state_t": {"n": "Frame len."}}}
+    >>> property_doc("psd", {"name": "n"}, blocks)
+    ('Frame len.', False)
+    """
+    name = str(prop.get("name") or "")
+    block = (doc_blocks or {}).get(f"{component}_get_{name}")
+    text = (
+        str(prop.get("doc") or "")
+        or (block.brief if (block and block.brief) else "")
+        or struct_member_doc(doc_blocks, f"{component}_state_t", name)
+    )
+    return (text, False) if text else (name_summary(name), True)
+
+
+def method_doc(
+    component: str, method: dict, doc_blocks: "dict | None"
+) -> tuple[str, bool]:
+    """A method's summary, and whether it is only its name (gh-1396).
+
+    Precedence: the manifest's ``doc`` > the header block's ``@brief`` > the
+    name. The block is keyed on the **C symbol**, so an ``fn``-overridden
+    method (``name = "emit"``, ``fn = "dp_tlm_emit_checked"``) finds the
+    Doxygen written above the function actually declared.
+
+    jm's own scaffold boilerplate is not documentation -- deriving from it
+    would be no richer than the name and would break idempotence (gh-666) --
+    so a scaffold block answers like no block at all. `_load_doc_blocks`
+    already drops those on the way in; this repeats the test for blocks that
+    arrive another way, which is what the `.pyi` writer has always done.
+
+    Examples
+    --------
+    >>> method_doc("psd", {"name": "sfdr", "doc": "Spur-free range."}, {})
+    ('Spur-free range.', False)
+    >>> method_doc("psd", {"name": "sfdr"}, {})
+    ('Sfdr.', True)
+    """
+    from ._config import method_c_symbol
+
+    name = str(method.get("name") or "")
+    # ONE derivation of "which symbol does this bind", imported rather than
+    # respelled: a view signature override is DEFINED by having a different
+    # one, so a second spelling here would decide that differently.
+    block = (doc_blocks or {}).get(method_c_symbol(component, method)) or (
+        doc_blocks or {}
+    ).get(f"{component}_{name}")
+    if block is not None and is_scaffold_doc(block, name):
+        block = None
+    text = str(method.get("doc") or "") or (
+        block.brief if (block and block.brief) else ""
+    )
+    return (text, False) if text else (name_summary(name), True)
+
+
+def function_doc(fn: dict, doc_blocks: "dict | None") -> tuple[str, bool]:
+    """A module free function's summary, and whether it is only its name.
+
+    gh-1396. Precedence: the manifest's ``doc`` > the module header's block
+    for this function > the name. Keyed on the bare function name, which is
+    what a module header declares and what `_load_module_doc_blocks` returns.
+
+    Examples
+    --------
+    >>> function_doc({"name": "magnitude_db", "doc": "In dB."}, {})
+    ('In dB.', False)
+    >>> function_doc({"name": "magnitude_db"}, {})
+    ('Magnitude db.', True)
+    """
+    name = str(fn.get("name") or "")
+    block = (doc_blocks or {}).get(name)
+    if block is not None and is_scaffold_doc(block, name):
+        block = None
+    text = str(fn.get("doc") or "").split("\n")[0] or (
+        block.brief if (block and block.brief) else ""
+    )
+    return (text, False) if text else (name_summary(name), True)
+
+
 def member_doc_key(name: str) -> str:
     """The reserved key a struct field's or enum value's doc rides under."""
     return f"{_MEMBER_KEY_PREFIX}{name}"
