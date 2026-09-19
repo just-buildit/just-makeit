@@ -6,6 +6,8 @@ rendering dict.
 
 from __future__ import annotations
 
+import re
+
 from .. import _coerce
 from .._docstring import ctor_demo_label as _ctor_demo_label
 from .._docstring import (
@@ -2062,7 +2064,9 @@ _HEADER_ONLY_DEF_SLOTS = (
 )
 
 
-def apply_header_only(ctx: dict, header_only: bool) -> dict:
+def apply_header_only(
+    ctx: dict, header_only: bool, family: "object | None" = None
+) -> dict:
     """Move the core's definitions into the header as ``static inline``.
 
     gh-1311, and the peer of :func:`_apply_no_reset` in shape -- but NOT in
@@ -2120,6 +2124,8 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
     if not header_only:
         ctx.setdefault("inline_core", "")
         return ctx
+    if family is not None:
+        return _apply_core_family(ctx, family)
     lifecycle = (
         f"{L}static inline {comp}_state_t *{L}"
         f"{cname}({ctx.get('create_params', '')}){L}{{{L}"
@@ -2140,6 +2146,87 @@ def apply_header_only(ctx: dict, header_only: bool) -> dict:
         ctx[key] = ""
     for key in _HEADER_ONLY_DEF_SLOTS:
         ctx[key] = ""
+    return ctx
+
+
+#: Every slot that states a function in the header of a macro-family member:
+#: the declarations a plain component carries, plus ``step()``'s inline
+#: definition, which the family macro supplies instead.
+_FAMILY_DECL_SLOTS = (
+    "create_decl",
+    "destroy_decl",
+    *_HEADER_ONLY_DECL_SLOTS,
+    "step_impl_def",
+    "property_decls",
+    "method_decls",
+)
+
+#: A prototype, possibly spread over several lines: it starts at column 0
+#: and runs to the first ``;`` without crossing a brace or a comment.
+_PROTOTYPE_RE = re.compile(r"^[A-Za-z_][^;{}/]*\([^;{}]*\);", re.MULTILINE)
+
+
+def family_declarations(text: str) -> str:
+    r"""Every function *text* states, as a one-line ``static inline`` prototype.
+
+    gh-1310. A macro-family member's header holds no definitions -- the
+    family macro supplies every one -- so each definition jm would have
+    written loses its body, and each prototype becomes ``static inline`` to
+    match the definition it now declares (a non-static declaration ahead of a
+    ``static inline`` definition is a compile error). Doc comments are kept:
+    they document the declaration, which is what Doxygen and `_docsync` read.
+
+    One line each, because `apply` refreshes prototypes by reading them back
+    one line at a time (`_init._core_h_decl_lines`); a prototype spread over
+    several lines would be frozen at whatever the scaffold first wrote.
+
+    Examples
+    --------
+    >>> print(family_declarations(
+    ...     "/** doc */\nstatic inline int\nq_step(const q_state_t *s, float x)"
+    ...     "\n{\n    return (int)x;\n}\n"
+    ...     "void q_reset(q_state_t *s);\n"
+    ... ))
+    /** doc */
+    static inline int q_step(const q_state_t *s, float x);
+    static inline void q_reset(q_state_t *s);
+    <BLANKLINE>
+    """
+    from .._init import _function_bodies_blanked
+
+    # Bodies first, on the comment-aware mask, so a brace inside a comment or
+    # string cannot end one early; then `) {  }` collapses to `);`.
+    text = re.sub(r"\)\s*\{\s*\}", ");", _function_bodies_blanked(text))
+
+    def one_line(m: "re.Match[str]") -> str:
+        proto = " ".join(m.group(0).split())
+        proto = proto.replace("( ", "(").replace(" )", ")")
+        return (
+            proto if proto.startswith("static") else "static inline " + proto
+        )
+
+    return _PROTOTYPE_RE.sub(one_line, text)
+
+
+def _apply_core_family(ctx: dict, family) -> dict:
+    """The header of a ``header_only`` core whose definitions come from a
+    family macro (gh-1310): declarations, then one invocation line.
+
+    Unlike plain ``header_only``, jm writes NO body here -- not the lifecycle
+    and not an accessor -- because each would be a second definition of a
+    function the macro already defines. The declaration slots stay where a
+    plain component has them, so each keeps the doc comment the template
+    puts above it.
+
+    The family header's ``#include`` is not emitted here: `C.param_headers`
+    carries it, so it arrives through the same include slot, and the same
+    `apply` injection, as every other header the component needs.
+    """
+    for key in _FAMILY_DECL_SLOTS:
+        ctx[key] = family_declarations(str(ctx.get(key, "")))
+    for key in _HEADER_ONLY_DEF_SLOTS:
+        ctx[key] = ""
+    ctx["inline_core"] = f"\n{family.invocation}\n\n"
     return ctx
 
 

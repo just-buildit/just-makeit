@@ -768,7 +768,7 @@ class TestInjectDeclsStaticInline:
         path = tmp_path / "foo_core.h"
         path.write_text(self._header("square_clip"))
         decls = ["int square_clip(int x);"]
-        changed = _inject_decls_into_core_h(path, "foo", decls)
+        changed = _inject_decls_into_core_h(path, "foo", decls, family=None)
         assert not changed
         text = path.read_text()
         assert text.count("square_clip") == 1
@@ -784,7 +784,7 @@ class TestInjectDeclsStaticInline:
         path = tmp_path / "b_core.h"
         path.write_text(header)
         changed = _inject_decls_into_core_h(
-            path, "b", ["float fast_mul(float a, float b);"]
+            path, "b", ["float fast_mul(float a, float b);"], family=None
         )
         assert not changed
         assert path.read_text().count("fast_mul") == 1
@@ -796,7 +796,9 @@ class TestInjectDeclsStaticInline:
             "static inline int existing(int x) { return x; }\n"
             "#endif /* C_CORE_H */\n"
         )
-        changed = _inject_decls_into_core_h(path, "c", ["void new_fn(int x);"])
+        changed = _inject_decls_into_core_h(
+            path, "c", ["void new_fn(int x);"], family=None
+        )
         assert changed
         assert "new_fn" in path.read_text()
 
@@ -819,6 +821,7 @@ class TestInjectDeclsStaticInline:
             path,
             "util",
             ["float _Complex square_clip(float _Complex y, float lin);"],
+            family=None,
         )
         assert not changed
         assert path.read_text().count("square_clip") == 1
@@ -833,7 +836,7 @@ class TestInjectDeclsStaticInline:
             "#endif /* D_CORE_H */\n"
         )
         changed = _inject_decls_into_core_h(
-            path, "d", ["int bare_inline(int x);"]
+            path, "d", ["int bare_inline(int x);"], family=None
         )
         assert not changed
         assert path.read_text().count("bare_inline") == 1

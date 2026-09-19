@@ -1517,9 +1517,63 @@ table, repeated for each instance with `{param}` filled in.
 - **There is no CLI verb for a template.** `jm script` names it in a NOTE
     rather than replaying each instance as a `jm object`.
 
-What this guarantees today is that the instances' **manifests** cannot
-diverge. Each instance still has its own `_core.c`; a family whose C should be
-written once is the second half of gh-1310.
+That makes the instances' **manifests** unable to diverge. To make their
+**C** unable to diverge too, write it once, as a macro, and make the instances
+`header_only` members of that family.
+
+### One C family: `core_macro`
+
+```toml
+[template.f32_to_int]
+params = ["elem", "sat"]
+module = "cvt"
+header_only = "true"
+arg_type = "float"
+return_type = "{elem}"
+core_macro = "DECLARE_F32_TO_INT"            # defined in core_header
+core_args = ["{id}", "{elem}", "{sat}"]      # its arguments, per instance
+core_header = "cvt/f32_to_int.h"             # under native/inc/, yours
+```
+
+`native/inc/cvt/f32_to_int.h` is a header **you** write. It defines
+`DECLARE_F32_TO_INT(id, elem, SAT)`, which expands to every function one
+instance has (`create`, `destroy`, `reset`, `step`, `steps`, each accessor
+and method), all `static inline`. It's the same pattern as a
+`DECLARE_..._BUFFER(name, type)` macro.
+
+Each instance header then holds **declarations only**. Each one is
+`static inline` and keeps its doc comment. After them comes one line that
+supplies the definitions:
+
+```c
+/** @brief Process one input sample. ... */
+static inline int16_t f32_to_i16_step(const f32_to_i16_state_t *state, float x);
+...
+DECLARE_F32_TO_INT (f32_to_i16, int16_t, 32767.0f)
+```
+
+- **All three keys or none**, and only with `header_only = "true"`. The macro
+    defines the functions `static inline`, so there is no `_core.c`. Anything
+    else is refused when the manifest is read.
+- **jm writes no body for an instance**, at scaffold time or when `apply`
+    adds a member the template gained. A member belongs in the family header.
+    If you declare one and forget to define it, the build fails and names it
+    (the generated link-check test, gh-1361).
+- **`apply` keeps the invocation line in sync** with the instance row, the
+    same way it keeps the prototypes in sync. Change `sat` and the next
+    `apply` rewrites the line. Until then, `jm status --check` reports it. A
+    line that's missing gets added. If the macro is invoked twice, `apply`
+    leaves the header alone and warns, because it can't tell which one you
+    meant. An invocation inside a comment (a `@code` example) is never taken
+    for the real line.
+- **The family header must exist before `apply`.** jm never writes it, so
+    `apply` refuses, naming the file and the macro to define, rather than
+    writing instances that include nothing.
+
+Instances can still differ in prose, since each header's doc comments are its
+own. That's deliberate: each instance keeps its own C API page and Python
+docstrings. They can't differ in behaviour, because no instance header
+contains a definition.
 
 ## Inspecting config
 

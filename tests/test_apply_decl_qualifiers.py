@@ -98,7 +98,7 @@ def test_inject_still_replaces_genuine_signature_change(tmp_path):
     )
     # a genuinely different signature (extra param) must replace, not skip
     changed = _inject_decls_into_core_h(
-        hdr, "x", ["void x_reset(x_state_t *state, int mode);"]
+        hdr, "x", ["void x_reset(x_state_t *state, int mode);"], family=None
     )
     out = hdr.read_text(encoding="utf-8")
     assert changed

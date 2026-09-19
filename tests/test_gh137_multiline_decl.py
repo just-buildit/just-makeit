@@ -48,7 +48,7 @@ def test_multiline_decl_replaced_in_place(tmp_path):
     h = tmp_path / "x_core.h"
     h.write_text(_HEADER, encoding="utf-8")
 
-    assert _inject_decls_into_core_h(h, "x", [_GEN]) is True
+    assert _inject_decls_into_core_h(h, "x", [_GEN], family=None) is True
     text = h.read_text(encoding="utf-8")
     # Replaced, not duplicated: exactly one declaration of x_execute.
     assert _ndecls(text) == 1
@@ -66,9 +66,9 @@ def test_multiline_decl_replaced_in_place(tmp_path):
 def test_idempotent_second_inject(tmp_path):
     h = tmp_path / "x_core.h"
     h.write_text(_HEADER, encoding="utf-8")
-    _inject_decls_into_core_h(h, "x", [_GEN])
+    _inject_decls_into_core_h(h, "x", [_GEN], family=None)
     # Now the generated decl is present verbatim → no further change.
-    assert _inject_decls_into_core_h(h, "x", [_GEN]) is False
+    assert _inject_decls_into_core_h(h, "x", [_GEN], family=None) is False
 
 
 def test_skip_names_preserves_multiline_decl(tmp_path):
@@ -81,7 +81,7 @@ def test_skip_names_preserves_multiline_decl(tmp_path):
         "size_t n_in, float _Complex *out);"
     )
     changed = _inject_decls_into_core_h(
-        h, "x", [four_arg], skip_names=frozenset({"x_execute"})
+        h, "x", [four_arg], skip_names=frozenset({"x_execute"}), family=None
     )
     text = h.read_text(encoding="utf-8")
     assert changed is False
