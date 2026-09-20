@@ -1303,7 +1303,7 @@ def run(
     # Deliberately NOT the params: a param dict here is the same object that
     # reaches `method_entry`, so resolving one in place would write the
     # width back into the manifest -- the restatement this removes. An
-    # ARRAY param naming an element is gh-1411, filed rather than half-done.
+    # ARRAY param naming an element is gh-1413, filed rather than half-done.
     arg_type = _record.resolve_element(arg_type, _elem_records)
     return_type = _record.resolve_element(return_type, _elem_records)
 
