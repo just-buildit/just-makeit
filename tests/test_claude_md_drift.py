@@ -43,6 +43,8 @@ gone rather than left empty: re-introducing one should feel like a decision.
 Rule 1 covers ``_context/`` because that sub-package had gone stale the same
 way — a gate that stops at the package root teaches the tree to hide things
 one directory down.
+
+GATE: a new module in src/just_makeit/ gets a row in CLAUDE.md's table.
 """
 
 from __future__ import annotations

@@ -35,6 +35,8 @@ all.
 wrongly marked `JM` turns a brand-new project red here rather than turning
 every user's `status` into permanent noise. `test_no_rule_is_dead` stops the
 registry keeping entries for paths jm no longer emits.
+
+GATE: every `_createonly` rule matches a file some fixture really scaffolds.
 """
 
 from __future__ import annotations

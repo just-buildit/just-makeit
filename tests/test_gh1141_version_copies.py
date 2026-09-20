@@ -20,6 +20,8 @@ The coverage test here is deliberately **derived from the tree** rather than
 from a list of files: it bumps the manifest, asks the tree which files still
 carry the old string, and demands the reporter name exactly those. A generated
 file that gains a version copy later is covered on the day it gains it.
+
+GATE: every generated copy of the project version agrees with the manifest.
 """
 
 from __future__ import annotations

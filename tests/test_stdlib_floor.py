@@ -14,6 +14,8 @@ control.
 Deliberately a source scan rather than a runtime check: on 3.11+ the bare
 import succeeds, so nothing at runtime can tell the two spellings apart. The
 mistake is in the text.
+
+GATE: no test imports a module missing from jm's oldest supported Python.
 """
 
 from __future__ import annotations

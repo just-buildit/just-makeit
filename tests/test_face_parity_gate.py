@@ -27,6 +27,8 @@ one place and not its sibling fails here rather than downstream.
 `_KNOWN_DIVERGENT` is a ratchet, not an excuse: it holds what was already
 broken when the gate landed, each entry pointing at its issue, and it may
 only shrink.
+
+GATE: an object documents itself identically standalone and inside a module.
 """
 
 from __future__ import annotations

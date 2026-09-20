@@ -14,6 +14,8 @@ This gate keeps the pattern from coming back. It is registration-free: a
 new test file is covered the moment it exists, and a file that genuinely
 needs a child says so HERE, with its reason, rather than in a comment
 nobody greps.
+
+GATE: a test drives jm's CLI with run_cli, never through a child process.
 """
 
 from __future__ import annotations

@@ -33,6 +33,9 @@ other wrong — so the local copy is gone and the canonical gate is the only one
 Verified equivalent before deleting: canonical catches a `coverage-gate`
 dropped from ``GATES_DEPS``, and sees a target invoked with trailing args, in a
 ``run: |`` block, and after ``&&``, while ignoring one named in a comment.
+
+GATE: one source of truth per lint concern -- pyproject says which tool,
+      the Makefile says how, pre-commit dispatches back to it.
 """
 
 import functools

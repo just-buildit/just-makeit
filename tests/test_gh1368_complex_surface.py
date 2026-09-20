@@ -12,6 +12,8 @@ generator module, so a new emitter is covered without being listed. The
 generated-tree check runs the real scaffolding and reads what it wrote, so a
 path the scan misreads (a template assembled from pieces, say) still fails.
 Bundled examples are excluded: their C is user code.
+
+GATE: generated C reaches complex math only through clib_common.h.
 """
 
 from __future__ import annotations
