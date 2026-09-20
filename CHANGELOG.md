@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A view's field-backed properties document themselves like their parent**
+    (gh-1400). The binding derived the field's `/**< ... */` comment; the
+    `.pyi` rendered a name stub, so the two faces of one member disagreed —
+    doppler's `CellAsyncDsssReceiver.cn0_dbhz_est` read `Cached from the   winning acquisition hit.` at runtime and `Cn0 dbhz est.` in the stub. A
+    view renders as a synthetic component, and `_view_doc_blocks` re-keys the
+    parent's blocks under that name; gh-1300's per-struct field map rides a
+    reserved key whose entries are *struct* names, which no prefix filter
+    sees, so it was dropped and every lookup of `<synth>_state_t` missed. It
+    is re-keyed now, exactly as gh-761's arity set already was.
+
+- **`jm status --docs` walks a view's members** (gh-1400). It could not see
+    them at all. A view's surface is its parent's until its overlay says
+    otherwise, so it asks `_stubs.view_overlay` — the same definition the
+    stub renders from, now factored out of `make_module_pyi` rather than
+    restated. Walking the parent's list instead would miss an excluded
+    member and mis-attribute an overridden one.
+
 ## [0.78.0] — 2026-09-19
 
 ### Added
