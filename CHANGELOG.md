@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.80.0] — 2026-09-20
+
 ### Added
 
 - **Two members that speak one element, and a generated contract**
