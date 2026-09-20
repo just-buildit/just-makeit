@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A borrow honours `nogil` and `none_on_empty`** (gh-1418). Both were
+    recorded in the manifest, accepted with exit 0, and **dropped** when the
+    method was a `borrow` — and a dropped key is indistinguishable from an
+    honoured one until it deadlocks or raises.
+
+    `nogil` on a *blocking* borrow is correctness, not speed: a ring's
+    `wait(n)` sleeps until a producer supplies `n` samples, and with the GIL
+    held a Python producer thread can never run, so a threaded
+    producer/consumer hangs rather than failing. `none_on_empty` is the
+    non-blocking twin — `peek(n)` answers NULL for "not yet", which is a
+    normal answer, and it raised instead while the stub promised a
+    non-optional array.
+
+    The cause of the first was a third inline copy of the kernel-call
+    emitter, written for the borrow and never taught about `nogil`; it is
+    now one emitter with three callers, so the next shape cannot forget what
+    it never re-implements.
+
+- **`--none-on-empty`, and `jm script` emits it** (gh-1418). The key was
+    honoured and had no flag, so the shape was reachable only by hand-editing
+    the manifest; and `_script` had no emitter, so a replayed script rebuilt a
+    method that RAISES where the original returned `None` — exit 0, different
+    project.
+
 ### Added
 
 - **`make gates-index` — the obligations this repo's gates enforce**, printed

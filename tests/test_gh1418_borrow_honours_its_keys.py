@@ -194,3 +194,51 @@ class TestItIsReachableAndReplayable:
         assert _keys(proj / "objects" / "ring.toml") == _keys(
             replay / "q" / "objects" / "ring.toml"
         )
+
+
+def test_the_module_stub_agrees_with_the_standalone_one(tmp_path):
+    """The PEER producer, which the tests above never reach.
+
+    `make_module_pyi` is a second `.pyi` writer, and fixing one of the two
+    is how gh-747 happened. The face-parity gate would catch a divergence
+    only if something declared this shape, and nothing did -- so this
+    declares it.
+    """
+    root = tmp_path / "m"
+    root.mkdir()
+    assert run_cli("new", "q", cwd=root).returncode == 0
+    proj = root / "q"
+    assert run_cli("module", "buf", cwd=proj).returncode == 0
+    assert (
+        run_cli(
+            "object",
+            "ring",
+            "--module",
+            "buf",
+            "--no-state",
+            "--no-step",
+            "--init-param",
+            "n:size_t:16",
+            cwd=proj,
+        ).returncode
+        == 0
+    )
+    r = run_cli(
+        "method",
+        "ring",
+        "peek",
+        "--module",
+        "buf",
+        "--borrow",
+        "--param",
+        "n:size_t",
+        "--return-type",
+        "float _Complex",
+        "--none-on-empty",
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+
+    stub = next((proj / "src" / "q").rglob("buf.pyi"), None)
+    assert stub is not None, "no module stub was written"
+    assert "-> NDArray[np.complex64] | None:" in stub.read_text()
