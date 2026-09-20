@@ -1,0 +1,25 @@
+# Line endings, decided here rather than by whichever machine cloned.
+#
+# Git for Windows ships core.autocrlf=true, so a clone made there rewrites
+# every text file to CRLF on checkout. This repo generates and vendors shell
+# and Makefile fragments that other repos then run, and bash does not tolerate
+# CRLF: it fails with `set: pipefail: invalid option name` and `$'\r': command
+# not found`, naming neither the file nor the cause. A generator that emits
+# CRLF spreads the fault to every repo it scaffolds.
+#
+# Measured 2026-09-20 on a Windows checkout of a sibling repo -- every .sh was
+# CRLF and none of them could run, while the same commit on Linux was LF and
+# fine. Visual Studio clones into %USERPROFILE%\source\repos by default, so
+# this is a realistic way to acquire this repo rather than a hypothetical one.
+#
+# `eol=lf` overrides the cloner's autocrlf rather than asking it.
+* text=auto eol=lf
+
+# Binaries: never touched, never diffed as text.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
