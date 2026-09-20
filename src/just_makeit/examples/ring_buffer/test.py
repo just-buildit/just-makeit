@@ -41,6 +41,77 @@ CAP_CF32 = 64  # complex samples
 CAP_IQ16 = 128  # int16 storage slots == 64 samples
 
 
+#: The author's own status vocabulary. jm never sees this -- it is named in
+#: the manifest and emitted as `case` labels, which is why a row for `0` is
+#: refused: 0 is success, and a borrow only asks after a NULL.
+#:
+#: The enum goes ABOVE jm's state struct (the manifest names it before any
+#: method does); the function that reads the struct has to come BELOW it,
+#: so the two are injected separately.
+_CF32_STATUS_ENUM = """\
+#include <stddef.h>
+
+/** Why a read gave up. ONE function owns the precedence, so nothing
+    re-derives it -- the binding reads this and nothing else. */
+typedef enum {
+    CF32_OK = 0,          /* n elements are readable now             */
+    CF32_PENDING = 1,     /* fewer than n so far; nothing is wrong   */
+    CF32_TOO_LARGE = 2,   /* n exceeds capacity: never satisfiable   */
+    CF32_CLOSED = 3,      /* closed with fewer than n left: the end  */
+    CF32_WRAPS = 4        /* the span would wrap the buffer          */
+} cf32_ring_status_t;
+"""
+
+#: Its definition, in the order the binding depends on: `TOO_LARGE` before
+#: `CLOSED` before `PENDING`, because "never satisfiable" outranks "not
+#: yet" and a caller told the wrong one debugs the wrong end.
+_CF32_STATUS_FN = f"""\
+static inline cf32_ring_status_t
+cf32_ring_wait_status (const cf32_ring_state_t *state, size_t n)
+{{
+    size_t have = state->head - state->tail;
+    if (n > {CAP_CF32})
+        return CF32_TOO_LARGE;
+    if (n > have)
+        return state->closed ? CF32_CLOSED : CF32_PENDING;
+    if ((state->tail & {CAP_CF32 - 1}) + n > {CAP_CF32})
+        return CF32_WRAPS;
+    return CF32_OK;
+}}
+
+"""
+
+
+def _insert_after(path: Path, marker: str, text: str) -> None:
+    """Put *text* immediately after the line holding *marker*.
+
+    After, not before: a generated definition's return type sits on its own
+    line above its name, so inserting above the NAME lands between the two
+    and the function loses its return type.
+    """
+    s = path.read_text(encoding="utf-8")
+    i = s.index("\n", s.index(marker)) + 1
+    path.write_text(s[:i] + text + s[i:], encoding="utf-8")
+
+
+def _prepend_to_header(path: Path, text: str) -> None:
+    """Put the author's own declarations into the sacred header.
+
+    Before the method that names them, because jm renders the binding
+    against what the header declares -- the same ordering `iq16_t` needs
+    for the record ring below.
+    """
+    s = path.read_text(encoding="utf-8")
+    path.write_text(
+        s.replace(
+            '#include "clib_common.h"',
+            '#include "clib_common.h"\n\n' + text,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _patch_body(path: Path, marker: str, body: str) -> None:
     """Replace the stub body of the function whose signature holds *marker*.
 
@@ -60,6 +131,7 @@ def run(root: Path) -> None:
     from just_makeit._module import run as jm_module
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
+    from just_makeit._property import run as jm_property
 
     # ── 1. A project with one module to hold both rings ──────────────────
     jm_new("ringdemo", root / "ringdemo")
@@ -77,11 +149,34 @@ def run(root: Path) -> None:
             ("data", f"float _Complex[{CAP_CF32}]", ""),
             ("head", "size_t", "0"),
             ("tail", "size_t", "0"),
+            # gh-1418: a producer that can CLOSE is what makes end-of-stream
+            # a distinct answer from "not yet", which is the whole point of
+            # the status table below.
+            ("closed", "int", "0"),
         ],
         arg_type="void",
         return_type="float _Complex",
         no_step=True,
         header_only=True,
+    )
+    # The status enum and the function that owns the precedence are the
+    # AUTHOR's, in the sacred header, and must exist before the method that
+    # names them -- exactly as `iq16_t` does for the record ring below.
+    _prepend_to_header(
+        proj / "native/inc/cf32_ring/cf32_ring_core.h", _CF32_STATUS_ENUM
+    )
+    # gh-1426 C: a message may name a PROPERTY, and an `expr` property has
+    # no C getter at all -- its getset inlines the expression. That is the
+    # shape a header-only component over someone else's struct actually
+    # has, and it is why this is declared with `expr` rather than a field.
+    jm_property(
+        proj,
+        "cf32_ring",
+        "capacity",
+        "rings",
+        "size_t",
+        False,
+        expr=("sizeof(self->handle->data) / sizeof(self->handle->data[0])"),
     )
     _method(
         jm_method,
@@ -90,7 +185,14 @@ def run(root: Path) -> None:
         "write",
         arg_type="float _Complex[]",
         return_type="size_t",
+        # gh-1426 B: a ring is the shape that must not silently cast, copy
+        # and flatten its input -- the one path whose purpose is to avoid
+        # copies.
+        strict=True,
     )
+    # The blocking-shaped read: n elements or a typed refusal. `nogil`
+    # (gh-1418) is correctness rather than speed for a kernel that can
+    # wait -- with the GIL held a producer thread could never run.
     _method(
         jm_method,
         proj,
@@ -98,7 +200,62 @@ def run(root: Path) -> None:
         "wait",
         borrow=True,
         params=[("n", "size_t")],
+        nogil=True,
+        status_fn="cf32_ring_wait_status",
+        status_errors=[
+            {
+                "status": "CF32_TOO_LARGE",
+                "error": "ValueError",
+                # gh-1426 C: the two numbers that make the message useful.
+                # `{n}` is this method's param, `{capacity}` the property
+                # declared above.
+                "message": (
+                    "wait({n}) can never be satisfied: "
+                    "the ring holds {capacity}"
+                ),
+            },
+            {
+                "status": "CF32_CLOSED",
+                "error": "EOFError",
+                "message": "end of stream: the producer closed the ring",
+            },
+            {
+                "status": "CF32_WRAPS",
+                "error": "ValueError",
+                "message": "that span wraps; consume() first",
+            },
+        ],
     )
+    # The non-blocking twin. It shares ONE table with `wait` and differs
+    # only in the row it declines to write: `CF32_PENDING` has no row, so
+    # it falls through to `none_on_empty` and answers None (gh-1418).
+    _method(
+        jm_method,
+        proj,
+        "cf32_ring",
+        "peek",
+        borrow=True,
+        params=[("n", "size_t")],
+        none_on_empty=True,
+        status_fn="cf32_ring_wait_status",
+        status_errors=[
+            {
+                "status": "CF32_TOO_LARGE",
+                "error": "ValueError",
+                "message": (
+                    "peek({n}) can never be satisfied: "
+                    "the ring holds {capacity}"
+                ),
+            },
+            {
+                "status": "CF32_CLOSED",
+                "error": "EOFError",
+                "message": "end of stream: the producer closed the ring",
+            },
+        ],
+    )
+    # gh-1426 A: the release. Its count DEFAULTS to whatever the last
+    # borrow handed out, so the caller writes the number once.
     _method(
         jm_method,
         proj,
@@ -106,6 +263,17 @@ def run(root: Path) -> None:
         "consume",
         params=[("n", "size_t")],
         return_type="void",
+        releases=["wait", "peek"],
+    )
+    # The producer's end-of-stream signal, and a second release: it takes
+    # no count and simply invalidates whatever is outstanding.
+    _method(
+        jm_method,
+        proj,
+        "cf32_ring",
+        "close",
+        return_type="void",
+        releases=["wait", "peek"],
     )
 
     # ── 3. The integer-IQ ring ───────────────────────────────────────────
@@ -171,6 +339,9 @@ def run(root: Path) -> None:
     # There is no `_core.c` to write them into. jm's own guidance says so:
     # "Done!  Implement cf32_ring_wait() in cf32_ring_core.h".
     h = proj / "native/inc/cf32_ring/cf32_ring_core.h"
+    # The precedence function goes in first, above the kernels that use it
+    # and below the struct it reads.
+    _insert_after(h, "} cf32_ring_state_t;", "\n" + _CF32_STATUS_FN)
     _patch_body(
         h,
         "cf32_ring_write(cf32_ring_state_t *state",
@@ -182,17 +353,25 @@ def run(root: Path) -> None:
     state->head += k;
     return k;""",
     )
+    # Both reads go through the ONE status function, so the answer the
+    # binding raises on and the answer the kernel acts on cannot disagree.
     _patch_body(
         h,
         "cf32_ring_wait(cf32_ring_state_t *state",
-        f"""\
-    size_t have = state->head - state->tail;
-    size_t off = state->tail & {CAP_CF32 - 1};
-    /* Contiguous spans only. doppler double-maps so a wrapping span is still
-       contiguous; refusing is enough to show the borrow. */
-    if (n > have || off + n > {CAP_CF32})
+        """\
+    if (cf32_ring_wait_status(state, n) != CF32_OK)
         return NULL;
-    return &state->data[off];""",
+    return &state->data[state->tail & """
+        f"{CAP_CF32 - 1}];",
+    )
+    _patch_body(
+        h,
+        "cf32_ring_peek(cf32_ring_state_t *state",
+        """\
+    if (cf32_ring_wait_status(state, n) != CF32_OK)
+        return NULL;
+    return &state->data[state->tail & """
+        f"{CAP_CF32 - 1}];",
     )
     _patch_body(
         h,
@@ -200,6 +379,12 @@ def run(root: Path) -> None:
         """\
     size_t have = state->head - state->tail;
     state->tail += n < have ? n : have;""",
+    )
+    _patch_body(
+        h,
+        "cf32_ring_close(cf32_ring_state_t *state",
+        """\
+    state->closed = 1;""",
     )
 
     h = proj / "native/inc/iq16_ring/iq16_ring_core.h"
@@ -292,6 +477,63 @@ assert v.base is r, "the view must pin the object that owns the memory"
 assert not v.flags.writeable, "a consumer must not write through a borrow"
 r.consume(4)
 assert list(r.wait(4)) == [4, 5, 6, 7]
+
+# ── the count is written ONCE: consume() takes the outstanding borrow's ──
+r2 = Cf32Ring()
+r2.write(np.arange(8, dtype=np.complex64))
+v = r2.wait(5)
+r2.consume()                       # no argument: releases the 5 just lent
+assert list(r2.wait(3)) == [5, 6, 7]
+r2.consume(1)                      # ...and an explicit k < n stays legal
+assert list(r2.wait(2)) == [6, 7]
+try:
+    Cf32Ring().consume()           # nothing outstanding is a caller bug
+    raise AssertionError("a release with no borrow behind it must say so")
+except RuntimeError as e:
+    assert "no outstanding borrow" in str(e), e
+
+# ── a NULL means one of several things, and says which ──────────────────
+r3 = Cf32Ring()
+assert r3.capacity == 64, r3.capacity       # an `expr` property, inlined
+try:
+    r3.wait(99999)
+    raise AssertionError("an unsatisfiable count must be refused")
+except ValueError as e:
+    # The two numbers that make it actionable, from a param and a property.
+    assert "wait(99999)" in str(e) and "holds 64" in str(e), e
+
+# peek() shares ONE table with wait() and declines only the PENDING row,
+# so "not yet" is None rather than an exception...
+assert r3.peek(4) is None
+r3.write(np.arange(4, dtype=np.complex64))
+assert list(r3.peek(4)) == [0, 1, 2, 3]
+# ...while a row they share raises identically on both.
+try:
+    r3.peek(99999)
+    raise AssertionError("peek must refuse what it can never satisfy")
+except ValueError:
+    pass
+
+# ── end of stream is a normal event a consumer loop CATCHES ─────────────
+r3.close()                          # a second release: no count, just clears
+try:
+    r3.wait(8)
+    raise AssertionError("a closed ring must report the end of the stream")
+except EOFError as e:
+    assert "end of stream" in str(e), e
+
+# ── a strict input is refused, not quietly cast, copied and flattened ───
+r4 = Cf32Ring()
+try:
+    r4.write(np.arange(4, dtype=np.float32))
+    raise AssertionError("the wrong dtype must be refused")
+except TypeError as e:
+    assert "complex64" in str(e), e
+try:
+    r4.write(np.zeros((4, 2), dtype=np.complex64))
+    raise AssertionError("a 2-D array must not be accepted as 8 samples")
+except ValueError as e:
+    assert "1-D" in str(e), e
 
 # ── integer IQ: a borrowed RECORD (gh-1310 decision B) ──────────────────
 q = Iq16Ring()
