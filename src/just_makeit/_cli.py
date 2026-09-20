@@ -124,6 +124,10 @@ Commands:
                                 result: raise instead of returning an
                                 empty array. Pairs with --error /
                                 --error-message.
+    --none-on-empty             The opposite reading: nothing yet is a
+                                NORMAL answer, so the call returns None.
+                                On a --borrow, a NULL view means "not
+                                yet" rather than a failure.
     --pass-capacity             Append a trailing `size_t max_out` to the C
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
