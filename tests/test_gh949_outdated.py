@@ -59,8 +59,10 @@ from just_makeit import (  # noqa: E402
 )
 from just_makeit._app import run as app_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
+from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from just_makeit._recorddecl import run as record_run  # noqa: E402
 
 # Enough shapes to reach the files that exist in only some of them: the perf
 # headers, the `make` build's Makefile and absent cmake/ tree, a module
@@ -77,6 +79,11 @@ SHAPES: dict[str, dict] = {
     # and `modules/*.toml` and only a module project produces the second.
     "fragments": {"fragments": True, "module": "filter"},
     "app": {"app": True},
+    # gh-1404: a declared element with BOTH faces, which is the only shape
+    # that produces `test_<comp>_invariants.py`. Without it the rule for
+    # that file matched nothing and `test_no_rule_is_dead` said so -- the
+    # registry reading as broader coverage than the fixture could reach.
+    "element": {"element": True},
 }
 
 DERIVABLE = sorted(SHAPES)
@@ -85,6 +92,7 @@ DERIVABLE = sorted(SHAPES)
 def _scaffold(root: Path, **shape) -> Path:
     module = shape.pop("module", None)
     app = shape.pop("app", False)
+    element = shape.pop("element", False)
     perf = shape.get("perf", False)
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, **shape)
@@ -93,6 +101,25 @@ def _scaffold(root: Path, **shape) -> Path:
         object_run(root, "gain", module, perf=perf)
         if app:
             app_run(root, target="c", name="runner")
+        if element:
+            # A writer and a borrowing reader of one declared element --
+            # the pair `_invariants` generates the contract for.
+            record_run(root, "gain", "sample", [], elem_type="float")
+            method_run(
+                root, "gain", "write", module, "sample[]", "bool", False, []
+            )
+            method_run(
+                root,
+                "gain",
+                "wait",
+                module,
+                "void",
+                "sample",
+                False,
+                [],
+                params=[("n", "size_t")],
+                borrow=True,
+            )
         # Formatting is a post-command hook on the CLI dispatcher
         # (`_cli._C_EMITTING_COMMANDS`), not part of emission: `_new.run`
         # formats its own tree because the hook cannot reach a subdirectory,

@@ -2119,6 +2119,17 @@ def run(
                 ),
             )
             print(f"  update  {pyi_path}")
+        # gh-1404: the element contract, refreshed here for the same reason
+        # the `.pyi` above is -- declaring the second face of a pair is what
+        # brings the contract into existence, and waiting for an `apply` to
+        # write it would mean the CLI and the manifest path disagree about
+        # what the project contains. The gh-949 dead-rule gate found this:
+        # its fixture drives the private API and never applies, so the file
+        # was simply absent from every tree it measured.
+        from . import _invariants
+
+        if _invariants.write(root, cfg, object_name, pkg):
+            print(f"  update  {_invariants.file_for(root, pkg, object_name)}")
         # Surgical splice: when a varargs binding file was just added,
         # insert it into the Python3_add_library line in CMakeLists.txt.
         # Only varargs methods change the build-system source list; normal
