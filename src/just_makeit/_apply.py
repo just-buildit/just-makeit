@@ -526,6 +526,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             borrow=bool(m.get("borrow")),
             borrow_count=m.get("borrow_count", ""),
             borrow_writeable=bool(m.get("borrow_writeable")),
+            # gh-1418: same rule, same reason. Dropped here, `apply` would
+            # rebuild a borrow whose NULL raises one blanket ValueError
+            # again -- exit 0, and end-of-stream back to being an error.
+            status_fn=m.get("status_fn", ""),
+            status_errors=m.get("status_errors") or None,
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
             varargs=bool(m.get("varargs")),

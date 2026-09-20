@@ -901,6 +901,10 @@ _SIGNATURE_COERCIONS: dict = {
     "borrow": (bool, False),
     "borrow_count": (str, ""),
     "borrow_writeable": (bool, False),
+    # gh-1418: also part of the call -- `status_fn` is a second C symbol the
+    # binding invokes, and the rows decide which exceptions it can raise.
+    "status_fn": (str, ""),
+    "status_errors": (list, []),
     "py_return_type": (str, ""),
     "max_out": (int, 0),
     "varargs": (bool, False),
@@ -1025,6 +1029,8 @@ def run(
     borrow: bool = False,
     borrow_count: str = "",
     borrow_writeable: bool = False,
+    status_fn: str = "",
+    status_errors: list[dict] | None = None,
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -1087,6 +1093,11 @@ def run(
             "variable_output": variable_output,
             "out_type": out_type,
             "params": C.as_named_tables(params or []),
+            # gh-1418: the status table is refused from the same place, so
+            # the CLI, `apply` and a replayed script all reject the same
+            # declarations -- the divergence this issue is a catalogue of.
+            "status_fn": status_fn,
+            "status_errors": status_errors or [],
         }
     )
     if _borrow_why:
@@ -1995,6 +2006,14 @@ def run(
             method_entry["borrow_count"] = borrow_count
         if borrow_writeable:
             method_entry["borrow_writeable"] = True
+    # gh-1418: written whenever declared, INDEPENDENTLY of `borrow` above --
+    # the pair on a non-borrow is refused by `_borrow.why_not` rather than
+    # silently dropped here, and dropping it at the writer is what would
+    # make the refusal unreachable.
+    if status_fn:
+        method_entry["status_fn"] = status_fn
+    if status_errors:
+        method_entry["status_errors"] = C.as_named_tables(status_errors)
     if py_return_type:
         method_entry["py_return_type"] = py_return_type
     if max_out > 0:

@@ -3320,6 +3320,15 @@ def make_methods_ctx(
                     )
                     + f"{_p_cleanup}"
                     + "    if (!_p) {\n"
+                    # gh-1418 part 2: a NULL borrow used to mean exactly one
+                    # thing. A blocking kernel gives up for reasons the
+                    # caller must tell apart -- end of stream is what a
+                    # consumer loop CATCHES, and a Ctrl-C is not bad input --
+                    # so signals are checked first and a declared
+                    # `status_fn` maps the rest. Every row returns, so
+                    # falling through IS the fallback below: a status with no
+                    # row keeps `none_on_empty`, else the blanket raise.
+                    + _borrow.status_dispatch_c(m)
                     # A NULL borrow ALWAYS raises, declared `error` or not --
                     # there is no count to report and no empty array to hand
                     # back, so `raise_pair_of` supplies the undeclared

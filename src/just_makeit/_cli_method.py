@@ -15,6 +15,7 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
     from . import _method
+    from . import _borrow
     from . import _record
     from . import _config as C
     from . import _types as T
@@ -59,6 +60,8 @@ def run(args: list[str]) -> None:
     batch_method = False
     error_on_empty = False
     none_on_empty = False
+    status_fn = ""
+    status_errors: list[dict] = []
     doc = ""
     multi_output: list[str] = []
     method_params: list[tuple[str, str]] = []
@@ -410,6 +413,28 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             out_type = val
             i += 1
+        elif tok == "--status-fn":
+            # gh-1418: the C function that owns WHY a borrow returned NULL.
+            i += 1
+            if i >= len(remaining):
+                print("error: --status-fn requires a name", file=sys.stderr)
+                sys.exit(1)
+            status_fn = remaining[i]
+            i += 1
+        elif tok == "--status-error":
+            # Repeatable, and a colon spec rather than a family of parallel
+            # flags -- the `--result-field` precedent, and the division this
+            # project states: the CLI handles simple declarations, a colon
+            # spec handles a repeatable multi-attribute one.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --status-error requires STATUS:ExcName[:message]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            status_errors.append(_borrow.parse_status_error(remaining[i]))
+            i += 1
         elif tok == "--result-field":
             i += 1
             if i >= len(remaining):
@@ -633,6 +658,8 @@ def run(args: list[str]) -> None:
         batch=batch_method,
         error_on_empty=error_on_empty,
         none_on_empty=none_on_empty,
+        status_fn=status_fn,
+        status_errors=status_errors or None,
         no_bench=no_bench,
         py_return_type=py_return_type,
         max_out=max_out,

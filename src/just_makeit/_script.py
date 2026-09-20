@@ -307,6 +307,17 @@ def _record_flags(entry: dict) -> list[str]:
     # own docstring is about.
     if entry.get("none_on_empty"):
         parts.append(_bool_flag("--none-on-empty"))
+    # gh-1418 part 2: the table is what makes a NULL mean something, so a
+    # replay that dropped it would rebuild the method with end-of-stream
+    # raising `ValueError` again -- the same silent divergence one level up
+    # that `--none-on-empty` was missing above.
+    if entry.get("status_fn"):
+        parts.append(_flag("--status-fn", str(entry["status_fn"])))
+    for row in entry.get("status_errors", []) or []:
+        spec = f"{row.get('status', '')}:{row.get('error', '')}"
+        if row.get("message"):
+            spec += f":{row['message']}"
+        parts.append(_flag("--status-error", spec))
 
     return parts
 

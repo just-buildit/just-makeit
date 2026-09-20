@@ -11,6 +11,8 @@ test_gates_index
 test_gh1141_version_copies
 test_gh1368_complex_surface
 test_gh1374_cli_in_process
+test_gh1418_borrow_honours_its_keys
+test_gh1418_borrow_status_table
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor
