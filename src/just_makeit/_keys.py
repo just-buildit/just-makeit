@@ -91,6 +91,10 @@ OBJECT_KEYS = frozenset(
         "state",
         "methods",
         "properties",
+        # gh-1405: `[[<obj>.records]]` -- a record struct named ONCE and
+        # referenced by both directions, so a method that writes rows and one
+        # that reads them cannot describe different bytes.
+        "records",
         "init_params",
         # gh-999: `[[<obj>.init_groups]]` — one row instantiates a `[[group]]`
         # under a prefix, so a struct member repeated N times costs one row
@@ -311,6 +315,16 @@ PARAM_KEYS = frozenset(
         "role",
     }
 )
+
+#: Keys valid on a ``[[<component>.records]]`` entry (gh-1405).
+#:
+#: `name` is the C struct, declared by the AUTHOR in the sacred header -- jm
+#: never sees its definition, which is why the numpy dtype is built at runtime
+#: from `offsetof`/`sizeof` rather than from this list's order.
+RECORD_KEYS = frozenset({"name", "fields", "doc"})
+
+#: Keys valid on a ``[[<component>.records.fields]]`` row.
+RECORD_FIELD_KEYS = frozenset({"name", "type", "doc"})
 
 #: Keys valid on a ``[[<component>.properties]]`` entry.
 PROPERTY_KEYS = frozenset(
@@ -731,6 +745,8 @@ KIND_KEYS: dict[str, frozenset] = {
     "method": METHOD_KEYS,
     "param": PARAM_KEYS,
     "property": PROPERTY_KEYS,
+    "record": RECORD_KEYS,
+    "record field": RECORD_FIELD_KEYS,
     "function": FUNCTION_KEYS,
     "function param": FUNCTION_PARAM_KEYS,
     # gh-1114: the `kind`-bearing module faces. Registered here so `_check`
@@ -1099,6 +1115,16 @@ def unknown_keys(cfg: dict) -> list:
             found += _check(
                 "property", f"{name}.{entry.get('name', '?')}", entry
             )
+        # gh-1405: a named record, and the field rows inside it. Both walked,
+        # because a typo in a FIELD is the one that silently changes what the
+        # runtime dtype describes.
+        for entry in _entries(section, "records"):
+            where = f"{name}.{entry.get('name', '?')}"
+            found += _check("record", where, entry)
+            for f in _entries(entry, "fields"):
+                found += _check(
+                    "record field", f"{where}({f.get('name', '?')})", f
+                )
         for entry in _entries(section, "methods"):
             where = f"{name}.{entry.get('name', '?')}"
             found += _check("method", where, entry)

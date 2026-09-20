@@ -347,6 +347,15 @@ Commands:
   upgrade                       Migrate an older project's just-makeit.toml to the
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
+  record <obj> <Struct>         Name a C struct and its columns, once, for both
+                                directions (gh-1405). The struct is yours, in the
+                                sacred header; this says which fields are exposed
+                                and under what names. Reference it with
+                                `--arg-type '<Struct>[]'` (rows in) or
+                                `--record-dtype <Struct>` (rows out), so the two
+                                faces cannot describe different bytes.
+    --field name:type           A column; repeatable, order is the exposed order.
+    --doc TEXT                  One line describing what a row is.
   status [OPTIONS]              Show what `jm apply` would change (read-only):
                                 files it would create (missing) or rewrite from
                                 the manifest (stale). Your _core.c is never
@@ -1118,6 +1127,48 @@ def main() -> None:
         from . import _script
 
         _script.run(Path.cwd())
+
+    elif cmd == "record":
+        from . import _recorddecl
+
+        if len(args) < 3:
+            print(
+                "error: 'record' requires an object name and a record name.\n"
+                "Usage: just-makeit record <obj> <RecordStruct> "
+                "--field name:type [--field ...]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _rec_fields: list[dict] = []
+        _rec_doc = ""
+        _i = 3
+        while _i < len(args):
+            if args[_i] == "--field":
+                _i += 1
+                if _i >= len(args):
+                    print("error: --field requires name:type", file=sys.stderr)
+                    sys.exit(1)
+                try:
+                    _rec_fields.append(_recorddecl.parse_field(args[_i]))
+                except ValueError as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    sys.exit(1)
+            elif args[_i] == "--doc":
+                _i += 1
+                if _i >= len(args):
+                    print("error: --doc requires text", file=sys.stderr)
+                    sys.exit(1)
+                _rec_doc = args[_i]
+            else:
+                print(
+                    f"error: unexpected argument '{args[_i]}'",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _i += 1
+        _recorddecl.run(
+            Path.cwd(), args[1], args[2], _rec_fields, doc=_rec_doc
+        )
 
     elif cmd == "status":
         from . import _status

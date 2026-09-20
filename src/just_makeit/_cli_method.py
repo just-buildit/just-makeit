@@ -16,6 +16,7 @@ def run(args: list[str]) -> None:
         sys.exit(1)
     from . import _method
     from . import _record
+    from . import _config as C
     from . import _types as T
 
     #: The only flags a doc-only view override needs. Anything else means
@@ -427,12 +428,27 @@ def run(args: list[str]) -> None:
                     )
                     sys.exit(1)
                 elem = val[:-2]
-                if elem not in T._CTYPE_META:
+                # gh-1405: a DECLARED record is a legal element too -- rows of
+                # the author's struct, crossing as a structured array. Read
+                # from the manifest rather than a second list, so `jm record`
+                # is the only way to add one and the check cannot fall behind
+                # what the project declares.
+                _declared = C.record_names(C.load(Path.cwd()), object_name)
+                if elem not in T._CTYPE_META and elem not in _declared:
+                    _hint = (
+                        f"\nDeclared records on '{object_name}': "
+                        f"{', '.join(sorted(_declared))}"
+                        if _declared
+                        else f"\nTo pass rows of a struct, declare it first: "
+                        f"just-makeit record {object_name} {elem} "
+                        f"--field <name>:<type> ..."
+                    )
                     print(
                         f"error: --arg-type array element type '{elem}' "
                         "is not supported.\n"
                         f"Supported element types: "
-                        f"{', '.join(sorted(T._CTYPE_META))}",
+                        f"{', '.join(sorted(T._CTYPE_META))}"
+                        f"{_hint}",
                         file=sys.stderr,
                     )
                     sys.exit(1)

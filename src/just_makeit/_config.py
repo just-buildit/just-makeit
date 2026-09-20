@@ -4055,6 +4055,42 @@ def param_headers(cfg: dict, component: str) -> list[str]:
     return out
 
 
+def records(cfg: dict, component: str) -> list[dict]:
+    """The record structs *component* declares, in manifest order (gh-1405).
+
+    A record is a C struct the AUTHOR writes in the sacred header, named here
+    with its fields so jm can describe the same bytes to numpy:
+
+    .. code-block:: toml
+
+        [[ring.records]]
+        name = "iq16_t"
+        fields = [
+            { name = "i", type = "int16_t" },
+            { name = "q", type = "int16_t" },
+        ]
+
+    Declared ONCE and referenced by both directions — ``arg_type =
+    "iq16_t[]"`` on the method that writes rows, ``record_dtype = "iq16_t"``
+    on the one that reads them. That is the point: the two faces of a ring
+    buffer used to restate the columns, and a restatement is what drifts.
+    """
+    return list(cfg.get(component, {}).get("records", []))
+
+
+def record(cfg: dict, component: str, name: str) -> dict:
+    """The record *name* declared by *component*, or ``{}`` (gh-1405)."""
+    for rec in records(cfg, component):
+        if str(rec.get("name") or "") == name:
+            return dict(rec)
+    return {}
+
+
+def record_names(cfg: dict, component: str) -> set[str]:
+    """Every record struct name *component* declares (gh-1405)."""
+    return {str(r.get("name") or "") for r in records(cfg, component)} - {""}
+
+
 def properties(cfg: dict, component: str) -> list[dict]:
     """Return declared Python properties for component (empty list if none)."""
     return list(cfg.get(component, {}).get("properties", []))
