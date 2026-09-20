@@ -1226,6 +1226,7 @@ def _make_view_ctx(
             builtin_members=builtin_owned_members(root, cfg, obj),
             enums=C.enums(cfg),  # gh-1021
             records=C.records(cfg, obj),  # gh-1405
+            properties=C.properties(cfg, obj),  # gh-1426
         )
     )
     for _slot in _override_slots:
@@ -1478,6 +1479,7 @@ def build_component_ctxs(
                 builtin_members=builtin_owned_members(root, cfg, obj),
                 enums=C.enums(cfg),  # gh-1021
                 records=C.records(cfg, obj),  # gh-1405
+                properties=C.properties(cfg, obj),  # gh-1426
             )
         )
         for _slot in _override_slots:

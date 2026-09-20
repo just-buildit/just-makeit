@@ -107,7 +107,7 @@ the table would leave a borrow that declares none swallowing Ctrl-C.
 from __future__ import annotations
 
 from . import _config as C
-from ._context._diagnostics import empty_raise_c
+from ._context._diagnostics import format_raise_c, placeholders
 
 
 def is_borrow(m: dict) -> bool:
@@ -279,7 +279,88 @@ def _is_c_identifier(text: str) -> bool:
     )
 
 
-def status_dispatch_c(m: dict, state_expr: str = "self->handle") -> str:
+#: How a resolved slot reaches `PyErr_Format`. Two conversions, not one per
+#: C type: `_rc_raise_c` already established casting to the wide type rather
+#: than carrying a printf map beside `_CTYPE_META`, and the rendered text is
+#: the same either way. A `complex` slot has no scalar reading and is
+#: refused rather than given a third.
+_SLOT_CONVERSIONS = {
+    "int": ("%lld", "(long long)"),
+    "float": ("%g", "(double)"),
+}
+
+
+def _slot_for(ctype: str, expr: str) -> "tuple[str, str] | None":
+    """``(conversion, argument)`` for reading *expr* of type *ctype*."""
+    from ._types import _CTYPE_META
+
+    kind = str(_CTYPE_META.get(ctype, {}).get("kind", ""))
+    if kind not in _SLOT_CONVERSIONS:
+        return None
+    conversion, cast = _SLOT_CONVERSIONS[kind]
+    return conversion, f"{cast}{expr}"
+
+
+def _property_read(prop: dict, component: str) -> str:
+    """The C expression reading *prop*, or ``""`` if jm cannot read it here.
+
+    Only the two scalar backings: a plain accessor property reads through the
+    getter jm declared for it, and a ``field`` one reads the struct member.
+    Every other backing (`buf_field`, a codec, a container, a capsule) is a
+    value with no scalar reading, so it is refused by name rather than given
+    an expression that happens to compile.
+    """
+    name = str(prop.get("name", ""))
+    unsupported = ("buf_field", "codec", "capsule", "count_fn", "entry_fn")
+    if any(prop.get(k) for k in unsupported):
+        return ""
+    if prop.get("field"):
+        return f"self->handle->{prop['field']}"
+    return f"{component}_get_{name}(self->handle)"
+
+
+def message_slots(
+    m: dict, component: str = "", properties: "list[dict] | None" = None
+) -> "dict[str, tuple[str, str]]":
+    """What a status message's ``{name}`` slots may refer to (gh-1426 C).
+
+    Two scopes, because those are the two the author already declared and
+    jm already reads: the method's own **params** -- `{n}` is the count the
+    caller passed -- and the object's **properties**, which is where a
+    capacity lives. Both are in scope at the raise: a param is a local in
+    the wrapper, a property reads through `self->handle`.
+
+    Examples
+    --------
+    >>> slots = message_slots(
+    ...     {"name": "wait", "params": [{"name": "n", "type": "size_t"}]},
+    ...     "ring", [{"name": "capacity", "type": "size_t"}])
+    >>> slots["n"]
+    ('%lld', '(long long)n')
+    >>> slots["capacity"]
+    ('%lld', '(long long)ring_get_capacity(self->handle)')
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for p in m.get("params") or []:
+        slot = _slot_for(str(p.get("type", "")), str(p.get("name", "")))
+        if slot:
+            out[str(p.get("name", ""))] = slot
+    for prop in properties or []:
+        expr = _property_read(prop, component)
+        if not expr:
+            continue
+        slot = _slot_for(str(prop.get("type", "")), expr)
+        if slot:
+            out[str(prop.get("name", ""))] = slot
+    return out
+
+
+def status_dispatch_c(
+    m: dict,
+    state_expr: str = "self->handle",
+    component: str = "",
+    properties: "list[dict] | None" = None,
+) -> str:
     """The NULL-path dispatch for a borrow: signals, then the status table.
 
     Emitted inside the wrapper's ``if (!_p) {`` block, ahead of the fallback
@@ -332,17 +413,26 @@ def status_dispatch_c(m: dict, state_expr: str = "self->handle") -> str:
     out += (
         f"        switch ({status_fn(m)}({state_expr}, {count_param(m)})) {{\n"
     )
+    slots = message_slots(m, component, properties)
     for row in rows:
         message = str(row.get("message", "") or "").strip()
-        out += f"        case {row['status']}:\n" + empty_raise_c(
+        # gh-1426 C: `format_raise_c` falls back to `empty_raise_c` when the
+        # message references nothing, so the static case keeps exactly one
+        # spelling rather than a second that happens to agree today.
+        out += f"        case {row['status']}:\n" + format_raise_c(
             str(row["error"]),
             message or f"{name} failed ({row['status']})",
+            slots,
             indent=8,
         )
     return out + "        default: break;\n        }\n"
 
 
-def why_not(m: dict) -> str:
+def why_not(
+    m: dict,
+    component: str = "",
+    properties: "list[dict] | None" = None,
+) -> str:
     """Why this borrow declaration cannot be generated, or ``""``.
 
     Returns prose for the author, in the shape jm's other refusals use: what
@@ -407,16 +497,22 @@ def why_not(m: dict) -> str:
             f"  Declare a param of that name, or point `borrow_count` at an "
             f"existing one."
         )
-    return _why_not_status(m, str(name))
+    return _why_not_status(m, str(name), component, properties)
 
 
-def _why_not_status(m: dict, name: str) -> str:
+def _why_not_status(
+    m: dict,
+    name: str,
+    component: str = "",
+    properties: "list[dict] | None" = None,
+) -> str:
     """Why this borrow's status table cannot be generated, or ``""``.
 
     Split from :func:`why_not` only for length; it is the same refusal
     surface and is reached from there on every face.
     """
     fn, rows = status_fn(m), status_rows(m)
+    slots = message_slots(m, component, properties)
     # Each half is inert without the other, and inert is the state gh-1418
     # is about: a key recorded, accepted with exit 0, and dropped. Refusing
     # both directions is what keeps "declared" and "honoured" the same word.
@@ -478,6 +574,25 @@ def _why_not_status(m: dict, name: str) -> str:
                 f"method '{name}': `status_errors` names exception "
                 f"'{error}', which jm does not emit.\n"
                 f"  Choose one of: {supported}."
+            )
+        unknown = [
+            slot
+            for slot in placeholders(str(row.get("message", "") or ""))
+            if slot not in slots
+        ]
+        if unknown:
+            # gh-1426 C: an unresolved slot would otherwise reach the author
+            # as a literal `{capacity}` in a runtime message -- the quietest
+            # possible failure, since the raise still works and only the one
+            # number anybody wanted is missing.
+            available = ", ".join(sorted(slots)) or "(none)"
+            return (
+                f"method '{name}': `status_errors` message references "
+                f"{{{unknown[0]}}}, which is not in scope.\n"
+                f"  A message may name this method's params and this "
+                f"object's properties. Available here: {available}.\n"
+                f"  A property backed by a buffer, a codec or a capsule has "
+                f"no scalar reading and cannot be named."
             )
         if status in seen:
             # Two `case` labels of one value is a compile error in the

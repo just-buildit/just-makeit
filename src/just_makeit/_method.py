@@ -887,6 +887,7 @@ _SIGNATURE_COERCIONS: dict = {
     "out_divisor": (int, 1),
     "batch": (bool, False),
     "none_on_empty": (bool, False),
+    "strict": (bool, False),
     "error_on_empty": (bool, False),
     "result_fields": (list, []),
     "max_results": (int, 64),
@@ -1018,6 +1019,7 @@ def run(
     batch: bool = False,
     no_bench: bool = False,
     none_on_empty: bool = False,
+    strict: bool = False,
     error_on_empty: bool = False,
     result_fields: list[dict] | None = None,
     max_results: int = 64,
@@ -1082,27 +1084,6 @@ def run(
     # member list. Both are checked here rather than left to fail later as a
     # C compile error in the user's tree, where the cause is several
     # generated files away from the symptom.
-    # gh-1312: a borrow's refusals live in `_borrow.why_not` so every face
-    # asks one place and the reason reaches the author as prose rather than
-    # as a C compile error several generated files away.
-    _borrow_why = _borrow.why_not(
-        {
-            "name": method_name,
-            "borrow": borrow,
-            "borrow_count": borrow_count,
-            "variable_output": variable_output,
-            "out_type": out_type,
-            "params": C.as_named_tables(params or []),
-            # gh-1418: the status table is refused from the same place, so
-            # the CLI, `apply` and a replayed script all reject the same
-            # declarations -- the divergence this issue is a catalogue of.
-            "status_fn": status_fn,
-            "status_errors": status_errors or [],
-        }
-    )
-    if _borrow_why:
-        print(f"error: {_borrow_why}", file=sys.stderr)
-        sys.exit(1)
     if record_dtype:
         if not (variable_output or borrow):
             # gh-1310: `record_dtype` names the ELEMENT TYPE. Who owns the
@@ -1623,6 +1604,41 @@ def run(
             _norm_params.append(_entry)
     params = _norm_params
 
+    # gh-1312: a borrow's refusals live in `_borrow.why_not` so every face
+    # asks one place and the reason reaches the author as prose rather than
+    # as a C compile error several generated files away.
+    _borrow_why = _borrow.why_not(
+        {
+            "name": method_name,
+            "borrow": borrow,
+            "borrow_count": borrow_count,
+            "variable_output": variable_output,
+            "out_type": out_type,
+            # gh-1426 C: the normalised dicts. What fixed `{n}` was moving
+            # this refusal BELOW the normalisation above -- before it, the
+            # params were still CLI tuples and `as_named_tables` reduced
+            # them to names alone (it drops the rest by design, since the
+            # extra slots differ per payload), so a message slot had no type
+            # to pick a conversion from. Passing them straight is the
+            # clearer spelling of what is now the same value, not a second
+            # fix: `as_named_tables` is a no-op on dicts.
+            "params": params,
+            # gh-1418: the status table is refused from the same place, so
+            # the CLI, `apply` and a replayed script all reject the same
+            # declarations -- the divergence this issue is a catalogue of.
+            "status_fn": status_fn,
+            "status_errors": status_errors or [],
+        },
+        # gh-1426 C: the message slots resolve against THIS object's
+        # params and properties, so the refusal moved to just after
+        # `cfg` is in hand rather than splitting into a second pass.
+        object_name,
+        C.properties(cfg, object_name),
+    )
+    if _borrow_why:
+        print(f"error: {_borrow_why}", file=sys.stderr)
+        sys.exit(1)
+
     # gh-994: asked ONCE, BEFORE this command writes anything.
     #
     # The ordering is the whole correctness argument. Computed lazily at each
@@ -1920,6 +1936,9 @@ def run(
         # above are inert placeholders (a codec method has neither).
         method_entry["codec"] = codec
         method_entry["sink_fn"] = sink_fn
+    if strict:
+        # gh-1426 B: refuse rather than coerce an array input.
+        method_entry["strict"] = True
     if varargs:
         method_entry["varargs"] = True
     if manual_stub:

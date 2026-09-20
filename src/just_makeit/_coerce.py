@@ -411,6 +411,8 @@ def input_array_acq(
     arr_var: str = "in_arr",
     flags: str = "NPY_ARRAY_C_CONTIGUOUS",
     fail: str = "return NULL;",
+    strict: bool = False,
+    expect: str = "",
 ) -> str:
     """Acquire an input array as *arr_var*, C-contiguous.
 
@@ -468,7 +470,7 @@ def input_array_acq(
         # (`np.can_cast(b, a, "equiv")` is False), so the guard is exactly
         # the gh-581 rule for an `out=` buffer, one direction over: refuse
         # rather than reinterpret.
-        return (
+        head = (
             f"    PyArray_Descr *{descr} = {dtype_fn}_get_dtype();\n"
             f"    if (!{descr}) {{ {fail} }}\n"
             f"    if (!PyArray_Check({obj_var})\n"
@@ -484,15 +486,122 @@ def input_array_acq(
             f"        Py_DECREF({descr});\n"
             f"        {fail}\n"
             f"    }}\n"
-            f"    PyArrayObject *{arr_var} ="
-            f" (PyArrayObject *)PyArray_FromAny(\n"
-            f"        {obj_var}, {descr}, 0, 0, {flags}, NULL);\n"
-            f"    if (!{arr_var}) {{ {fail} }}\n"
+        )
+        if not strict:
+            return head + (
+                f"    PyArrayObject *{arr_var} ="
+                f" (PyArrayObject *)PyArray_FromAny(\n"
+                f"        {obj_var}, {descr}, 0, 0, {flags}, NULL);\n"
+                f"    if (!{arr_var}) {{ {fail} }}\n"
+            )
+        # `strict` is ONE rule, so the record path tightens alongside the
+        # scalar one. Its dtype was already exact; its SHAPE was not --
+        # `PyArray_FromAny` would still copy a 2-D or strided input flat,
+        # which is the half of the defect that is about the copy rather
+        # than the type.
+        return (
+            head
+            + _strict_rank_and_contiguity(
+                obj_var,
+                label,
+                fail,
+                extra_cleanup=f"        Py_DECREF({descr});\n",
+            )
+            + f"    Py_DECREF({descr});\n"
+            + f"    Py_INCREF({obj_var});\n"
+            + f"    PyArrayObject *{arr_var} = (PyArrayObject *){obj_var};\n"
+        )
+    if strict:
+        return _strict_acq(
+            npy_enum=npy_enum,
+            expect=expect,
+            obj_var=obj_var,
+            arr_var=arr_var,
+            fail=fail,
         )
     return (
         f"    PyArrayObject *{arr_var} = (PyArrayObject *)PyArray_FROM_OTF(\n"
         f"        {obj_var}, {npy_enum}, {flags});\n"
         f"    if (!{arr_var}) {{ {fail} }}\n"
+    )
+
+
+def _strict_rank_and_contiguity(
+    obj_var: str, label: str, fail: str, extra_cleanup: str = ""
+) -> str:
+    """Refuse a non-1-D or non-contiguous input, rather than copying it.
+
+    The half that is the same for a scalar element and a record one, so it
+    is written once. ``ValueError`` and not ``TypeError``: the *type* was
+    right and the SHAPE was not, which is the distinction a caller acts on.
+    """
+    return (
+        f"    if (PyArray_NDIM((PyArrayObject *){obj_var}) != 1\n"
+        f"        || !PyArray_IS_C_CONTIGUOUS("
+        f"(PyArrayObject *){obj_var})) {{\n"
+        f"        PyErr_Format(PyExc_ValueError,\n"
+        f'            "{label} must be a 1-D C-contiguous array"\n'
+        f'            " (got %d-D%s)",\n'
+        f"            PyArray_NDIM((PyArrayObject *){obj_var}),\n"
+        f"            PyArray_IS_C_CONTIGUOUS((PyArrayObject *){obj_var})\n"
+        f'                ? "" : ", not contiguous");\n'
+        f"{extra_cleanup}"
+        f"        {fail}\n"
+        f"    }}\n"
+    )
+
+
+def _strict_acq(
+    *, npy_enum: str, expect: str, obj_var: str, arr_var: str, fail: str
+) -> str:
+    """Acquire a scalar-element input array WITHOUT converting it (gh-1426 B).
+
+    The asymmetry this closes: jm already refuses rather than reinterprets on
+    the **output** side (`out_buffer_guard`, gh-581) and on the **record**
+    input side (the ``dtype_fn`` branch above, whose docstring gives the
+    argument). Only a scalar-element input was still handed to
+    ``PyArray_FROM_OTF``, which casts, copies and **flattens**, silently.
+
+    For a DSP ``execute()`` that is a kindness. For a ring buffer it is two
+    defects at once: a hidden allocation and copy per ``write`` on the one
+    path whose entire purpose is to avoid copies, and a ``(4, 2)`` array
+    accepted as 8 samples. So it is opt-in per method (``strict``) rather
+    than a behaviour change under everyone.
+
+    Takes a **new reference** to the caller's own array, exactly as
+    ``PyArray_FROM_OTF`` does on success -- every call site already
+    ``Py_DECREF``s what this returns, and a borrowed reference here would
+    turn that into a use-after-free on the caller's object.
+
+    Examples
+    --------
+    >>> c = _strict_acq(npy_enum="NPY_COMPLEX64", expect="complex64",
+    ...                 obj_var="in_obj", arr_var="in_arr",
+    ...                 fail="return NULL;")
+    >>> "PyArray_FROM_OTF" in c          # nothing is converted
+    False
+    >>> "Py_INCREF(in_obj)" in c         # ...but a reference is still owned
+    True
+    >>> "complex64" in c                 # the refusal names what it wanted
+    True
+    """
+    label = arr_var.removesuffix("_arr")
+    return (
+        f"    if (!PyArray_Check({obj_var})\n"
+        f"        || PyArray_TYPE((PyArrayObject *){obj_var})"
+        f" != {npy_enum}) {{\n"
+        f"        PyErr_Format(PyExc_TypeError,\n"
+        f'            "{label} must be an ndarray of dtype {expect}"\n'
+        f'            " (got %R)",\n'
+        f"        PyArray_Check({obj_var})\n"
+        f"                ? (PyObject *)PyArray_DESCR("
+        f"(PyArrayObject *){obj_var})\n"
+        f"                : (PyObject *)Py_TYPE({obj_var}));\n"
+        f"        {fail}\n"
+        f"    }}\n"
+        + _strict_rank_and_contiguity(obj_var, label, fail)
+        + f"    Py_INCREF({obj_var});\n"
+        f"    PyArrayObject *{arr_var} = (PyArrayObject *){obj_var};\n"
     )
 
 

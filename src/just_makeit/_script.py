@@ -307,6 +307,10 @@ def _record_flags(entry: dict) -> list[str]:
     # own docstring is about.
     if entry.get("none_on_empty"):
         parts.append(_bool_flag("--none-on-empty"))
+    # gh-1426 B: dropped on replay, the rebuilt method CASTS where the
+    # original refused -- exit 0, a different project.
+    if entry.get("strict"):
+        parts.append(_bool_flag("--strict"))
     # gh-1418 part 2: the table is what makes a NULL mean something, so a
     # replay that dropped it would rebuild the method with end-of-stream
     # raising `ValueError` again -- the same silent divergence one level up

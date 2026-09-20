@@ -1064,6 +1064,7 @@ def make_methods_ctx(
     enums: dict[str, list[str]] | None = None,
     module: str = "",
     records: "list[dict] | None" = None,
+    properties: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1306,6 +1307,11 @@ def make_methods_ctx(
         # both read straight off `m` by `_record`, which the .pyi writers share
         # — see the descriptor emit below.
         none_on_empty: bool = m.get("none_on_empty", False)
+        # gh-1426 B: refuse a wrong-dtype / non-1-D / strided INPUT rather
+        # than casting, copying and flattening it. The scalar path was the
+        # only array surface still converting silently -- `out=` (gh-581)
+        # and a record input already refused.
+        strict_in: bool = bool(m.get("strict"))
         # gh-1159: the other reading of an empty result. `none_on_empty`
         # says "nothing to report"; this says "the kernel REFUSED". A
         # variable_output method has no status to carry -- its one return
@@ -1672,6 +1678,11 @@ def make_methods_ctx(
             _in_acq = _coerce.input_array_acq(
                 npy_enum=arg_np,
                 dtype_fn=f"{_sid}_in" if _in_rec else "",
+                strict=strict_in,
+                # `arg_meta` is None for a RECORD element -- the author's
+                # struct is not in `_CTYPE_META`, and `expect` names a
+                # scalar dtype the record path never prints.
+                expect=str((arg_meta or {}).get("py_type", "")),
             )
             # The builder is named for the PARAM it serves, because that is
             # what `_build_params_parse` emits the call under -- the primary
@@ -3023,7 +3034,7 @@ def make_methods_ctx(
                     [{"name": "x", "type": _x_type}] if has_arg else []
                 ) + [dict(_p) for _p in params]
                 _s_parse, _p_call, _p_cleanup = _build_params_parse(
-                    _pp_params, Component, enums, records, _sid
+                    _pp_params, Component, enums, records, _sid, strict_in
                 )
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
@@ -3261,14 +3272,14 @@ def make_methods_ctx(
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    _combined, Component, enums, records, _sid
+                    _combined, Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
                 meth_flags = _kw_flags
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    params, Component, enums, records, _sid
+                    params, Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
@@ -3276,7 +3287,7 @@ def make_methods_ctx(
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    [_x_param], Component, enums, records, _sid
+                    [_x_param], Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
@@ -3328,7 +3339,9 @@ def make_methods_ctx(
                     # `status_fn` maps the rest. Every row returns, so
                     # falling through IS the fallback below: a status with no
                     # row keeps `none_on_empty`, else the blanket raise.
-                    + _borrow.status_dispatch_c(m)
+                    + _borrow.status_dispatch_c(
+                        m, component=component, properties=properties
+                    )
                     # A NULL borrow ALWAYS raises, declared `error` or not --
                     # there is no count to report and no empty array to hand
                     # back, so `raise_pair_of` supplies the undeclared

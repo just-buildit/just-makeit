@@ -60,6 +60,7 @@ def run(args: list[str]) -> None:
     batch_method = False
     error_on_empty = False
     none_on_empty = False
+    strict = False
     status_fn = ""
     status_errors: list[dict] = []
     doc = ""
@@ -413,6 +414,14 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             out_type = val
             i += 1
+        elif tok == "--strict":
+            # gh-1426 B: an array input is REFUSED when its dtype, rank
+            # or contiguity is wrong, instead of being cast, copied and
+            # flattened. For a DSP execute() the coercion is a kindness;
+            # for a ring buffer it is a hidden copy per write and a
+            # (4, 2) array accepted as 8 samples.
+            strict = True
+            i += 1
         elif tok == "--status-fn":
             # gh-1418: the C function that owns WHY a borrow returned NULL.
             i += 1
@@ -658,6 +667,7 @@ def run(args: list[str]) -> None:
         batch=batch_method,
         error_on_empty=error_on_empty,
         none_on_empty=none_on_empty,
+        strict=strict,
         status_fn=status_fn,
         status_errors=status_errors or None,
         no_bench=no_bench,

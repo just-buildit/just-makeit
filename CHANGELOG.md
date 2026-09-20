@@ -1,5 +1,46 @@
 ## [Unreleased]
 
+### Added
+
+- **A status message can say the number that makes it useful** (gh-1426 C).
+    `DP_WAIT_TOO_LARGE` is a caller bug about a specific `n` against a
+    specific capacity, and a message carrying neither sent someone to debug
+    the producer. A `status_errors` message may now name this method's
+    **params** and this object's **properties** — `wait({n}) can never be   satisfied: the ring holds {capacity}` — rendered through `PyErr_Format`.
+
+    **jm builds the format string; the author never supplies one.** Author
+    prose has every `%` doubled and only jm-inserted conversions survive.
+    Splicing author text *in* as the format is the hazard `_rc_raise_c`
+    documents: a `%` in ordinary prose ("100% full") becomes a live
+    conversion with no argument behind it, on the error path, which is the
+    path least likely to be exercised before a release.
+
+    A slot naming nothing in scope is refused, and the refusal says what
+    *is* available.
+
+- **`--strict` refuses an array input instead of coercing it** (gh-1426 B).
+    `PyArray_FROM_OTF` casts, copies and **flattens**. For a DSP `execute()`
+    that is a kindness; for a ring buffer it is a hidden allocation per
+    `write` on the one path whose purpose is to avoid copies, and a `(4, 2)`
+    array accepted as 8 samples. `TypeError` names the dtype it wanted;
+    `ValueError` names the shape, because the type was right and the shape
+    was not.
+
+    Not a new validator: jm already refused rather than reinterpreted for an
+    `out=` buffer (gh-581) and for a **record** input, whose branch says so
+    in its own docstring. Only the scalar input path still converted, so
+    this closes an asymmetry **inside one emitter** that five callers
+    already share. Opt-in, so nobody's `execute()` changes under them.
+
+### Fixed
+
+- **`apply` replays properties before methods** (gh-1426). A method may now
+    reference a property in a status message; a property never references a
+    method, so this is the dependency order rather than a preference.
+    Replayed the other way round, `apply` refused — in its scratch tree —
+    a declaration jm had itself just written and accepted, exiting 1 on a
+    project jm generated.
+
 ## [0.81.0] — 2026-09-20
 
 ### Added

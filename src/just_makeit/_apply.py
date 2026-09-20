@@ -504,6 +504,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             batch=bool(m.get("batch")),
             impl_body=m_impl,
             none_on_empty=bool(m.get("none_on_empty")),
+            strict=bool(m.get("strict")),  # gh-1426 B
             error_on_empty=bool(m.get("error_on_empty")),
             result_fields=list(m.get("result_fields", [])),
             max_results=int(m.get("max_results", 64)),
@@ -609,10 +610,16 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 dict(r) for r in _recs
             ]
             C.save(temp_root, _temp_cfg)
-        for m in C.methods(cfg, comp):
-            _replay_method(comp, mod, m)
+        # gh-1426 C: properties FIRST. A method may now reference a
+        # property in a status message (`{capacity}`), and a property
+        # never references a method -- so this is the dependency
+        # order, not a preference. Replayed the other way round the
+        # declaration is refused as out of scope in the scratch tree,
+        # while the same command succeeds against the real project.
         for p in C.properties(cfg, comp):
             _replay_property(comp, mod, p)
+        for m in C.methods(cfg, comp):
+            _replay_method(comp, mod, m)
         # gh-481. Without this replay a declared warning never reaches a fresh
         # checkout: the object is scaffolded with no warnings and nothing puts
         # them back. That is the exact failure this feature exists to fix —
