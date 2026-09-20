@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.80.1] — 2026-09-20
+
 ### Fixed
 
 - **A borrow honours `nogil` and `none_on_empty`** (gh-1418). Both were
