@@ -404,7 +404,9 @@ def _bench_todo(
     return _comment_block(body)
 
 
-def _bench_method_block(component: str, m: dict) -> str:
+def _bench_method_block(
+    component: str, m: dict, records: "list[dict] | None" = None
+) -> str:
     """Return a self-contained C bench timing block for method *m*.
 
     Returns an empty string when the method should not be benchmarked
@@ -452,8 +454,14 @@ def _bench_method_block(component: str, m: dict) -> str:
     # variable names below stay keyed on `name` (they are C identifiers in the
     # generated bench, and `fn` may repeat across methods).
     c_fn: str = m.get("fn", "") or f"{component}_{name}"
-    arg_type: str = m.get("arg_type", "void")
-    return_type: str = m.get("return_type", "float _Complex")
+    # gh-1404: the bench is a PEER of the binding's own type read below --
+    # it emits C against the same prototype, so it resolves a declared
+    # element the same way. Missed here first, and the generated benchmark
+    # would not compile: `unknown type name 'sample'`.
+    arg_type: str = _record.resolve_element(m.get("arg_type", "void"), records)
+    return_type: str = _record.resolve_element(
+        m.get("return_type", "float _Complex"), records
+    )
     batch: bool = m.get("batch", False)
     params: list[dict] = m.get("params", [])
     result_fields: list[dict] = m.get("result_fields", [])
@@ -3675,7 +3683,9 @@ def make_methods_ctx(
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
-    _method_bench_blocks = [_bench_method_block(component, m) for m in methods]
+    _method_bench_blocks = [
+        _bench_method_block(component, m, records) for m in methods
+    ]
     _filled = [b for b in _method_bench_blocks if b]
     bench_methods_timing_block = "\n" + "\n\n".join(_filled) if _filled else ""
     # gh-840: the helper and the timer locals exist to serve the timing
