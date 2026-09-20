@@ -291,19 +291,11 @@ def test_a_fresh_scaffold_is_green(tmp_path):
     assert run_cli("apply", cwd=proj).returncode == 0
     assert (proj / INV).exists()
 
-    build = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from just_makeit._cli import main; main()",
-            "build",
-        ],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    assert build.returncode == 0, build.stdout[-3000:] + build.stderr[-3000:]
+    # In THIS process (gh-1374): `run_cli` gives the same isolation as a
+    # child and the suite does not pay for ~3300 of them. cmake still runs
+    # as a child of its own -- that is jm's build, not jm's CLI.
+    build = run_cli("build", cwd=proj)
+    assert build.returncode == 0, (build.stdout + build.stderr)[-3000:]
 
     run = subprocess.run(
         [
