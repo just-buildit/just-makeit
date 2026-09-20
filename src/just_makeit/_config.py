@@ -3685,7 +3685,12 @@ def methods(cfg: dict, component: str) -> list[dict]:
 _RETURN_TYPE_EXEMPT_KEYS = ("result_fields", "codec", "manual_stub", "varargs")
 
 
-def _return_type_error(entry: dict, what: str, exempt_keys: tuple) -> str:
+def _return_type_error(
+    entry: dict,
+    what: str,
+    exempt_keys: tuple,
+    elements: "frozenset[str]" = frozenset(),
+) -> str:
     """Validate one function/method entry's ``return_type``; "" when fine.
 
     Parameters
@@ -3708,6 +3713,12 @@ def _return_type_error(entry: dict, what: str, exempt_keys: tuple) -> str:
     if not rt or any(entry.get(k) for k in exempt_keys):
         return ""
     if _T.is_supported_return_type(rt, allow_array=True):
+        return ""
+    # gh-1411: a name the component DECLARES is a legal type here. The CLI
+    # front-end learned this in gh-1405 and this gate did not, so `jm method`
+    # wrote a record reference that `jm apply` then refused -- on the very
+    # manifest it had just written.
+    if _element_base(rt) in elements:
         return ""
     help_text = _T.unsupported_return_type_help(rt)
     indented = "\n".join(f"  {line}" for line in help_text.splitlines())
@@ -3762,6 +3773,27 @@ def _result_field_errors(entry: dict, what: str) -> list[str]:
 #: rather than rejected: a false rejection of a legitimate declaration is a
 #: worse failure than the traceback this check exists to replace.
 _FOREIGN_TYPE_KEYS = ("header", "capsule", "enum")
+
+
+def _element_base(spec: str) -> str:
+    """*spec* with every trailing ``[]`` removed (gh-1411).
+
+    The manifest gate asks whether a declared ELEMENT name explains a type,
+    and a reference spells it either bare (``"iq16_t"``) or as an array
+    (``"iq16_t[]"``). Purely syntactic, like `_T.array_elem_ctype`, but kept
+    here because this module must not care whether the base is registered --
+    that is exactly the question the caller is about to answer differently.
+
+    Examples
+    --------
+    >>> _element_base("iq16_t[]"), _element_base("iq16_t")
+    ('iq16_t', 'iq16_t')
+    >>> _element_base("float _Complex[][]")
+    'float _Complex'
+    """
+    while spec.endswith("[]"):
+        spec = spec[:-2]
+    return spec
 
 
 def _usable_ctype(ctype: str) -> bool:
@@ -3885,7 +3917,9 @@ def _declared_type_error(entry: dict, what: str) -> str:
     return f"{what} has unknown type '{ctype}'.\n{indented}"
 
 
-def _arg_type_error(entry: dict, what: str) -> str:
+def _arg_type_error(
+    entry: dict, what: str, elements: "frozenset[str]" = frozenset()
+) -> str:
     """Validate one method's ``arg_type``; "" when it is usable.
 
     ``void`` is the no-input spelling and always valid. The shapes that make
@@ -3906,6 +3940,10 @@ def _arg_type_error(entry: dict, what: str) -> str:
         return ""
     ctype = entry.get("arg_type", "void")
     if ctype == "void" or _usable_ctype(ctype):
+        return ""
+    # gh-1411: as _return_type_error above -- `arg_type = "iq16_t[]"` is how
+    # rows of a declared struct cross in, and this gate refused every one.
+    if _element_base(ctype) in elements:
         return ""
     help_text = _T.unsupported_return_type_help(ctype, allow_void=True)
     indented = "\n".join(f"  {line}" for line in help_text.splitlines())
@@ -3956,8 +3994,13 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     """
     errors: list[str] = []
 
-    def _check(entry: dict, what: str, exempt: tuple) -> None:
-        err = _return_type_error(entry, what, exempt)
+    def _check(
+        entry: dict,
+        what: str,
+        exempt: tuple,
+        elements: "frozenset[str]" = frozenset(),
+    ) -> None:
+        err = _return_type_error(entry, what, exempt, elements)
         if err:
             errors.append(err)
         errors.extend(_result_field_errors(entry, what))
@@ -3966,7 +4009,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         # `KeyError: 'unsigned'` -- and under `apply`, whose replay runs
         # inside deferred-flush scopes, the traceback could be replaced
         # outright by a false error about an unrelated object.
-        err = _arg_type_error(entry, what)
+        err = _arg_type_error(entry, what, elements)
         if err:
             errors.append(err)
         errors.extend(_param_type_errors(entry, what))
@@ -3995,19 +4038,27 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             )
             if err:
                 errors.append(err)
+        # gh-1411: read from the manifest rather than a second list, so the
+        # gate cannot fall behind what the project declares -- the same rule
+        # the CLI's own hatch follows (`_cli_method.py`).
+        comp_elements = frozenset(record_names(cfg, comp))
         for m in methods(cfg, comp):
             _check(
                 m,
                 f"{comp!r} method {m.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS,
+                comp_elements,
             )
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
             for m in view_methods(v):
+                # A view is a second Python class over ONE C core, so it
+                # speaks the elements its parent component declares.
                 _check(
                     m,
                     f"{comp!r} view {vname!r} method {m.get('name', '?')!r}",
                     _RETURN_TYPE_EXEMPT_KEYS,
+                    comp_elements,
                 )
     return errors
 
