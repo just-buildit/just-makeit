@@ -1288,6 +1288,25 @@ def run(
 
     cfg = C.load(root)
 
+    # gh-1404: a declared SCALAR element's name stands for its width, so it
+    # is substituted here, ONCE, before anything reads a type. Everything
+    # below then sees an ordinary C type and needed no change -- the
+    # alternative was teaching `_CTYPE_META`, the prototype builder, the
+    # stub writers and the binding each to recognise a name.
+    #
+    # The DECLARED spelling is kept for the manifest entry: storing the
+    # resolved width there would write the element out N times again, which
+    # is the restatement the declaration exists to remove.
+    _elem_records = C.records(cfg, object_name)
+    declared_arg_type = arg_type
+    declared_return_type = return_type
+    # Deliberately NOT the params: a param dict here is the same object that
+    # reaches `method_entry`, so resolving one in place would write the
+    # width back into the manifest -- the restatement this removes. An
+    # ARRAY param naming an element is gh-1411, filed rather than half-done.
+    arg_type = _record.resolve_element(arg_type, _elem_records)
+    return_type = _record.resolve_element(return_type, _elem_records)
+
     # Resolve which component this belongs to
     # gh-963: the manifest already records which module owns this object,
     # so `--module` is a confirmation rather than the only way jm can know.
@@ -1876,8 +1895,11 @@ def run(
     # 2. Update config  (was step 3)
     method_entry: dict = {
         "name": method_name,
-        "arg_type": arg_type,
-        "return_type": return_type,
+        # gh-1404: the DECLARED spelling, which is the element's name when
+        # one was referenced. Writing the resolved width here would restate
+        # it per member, which is what `[[<obj>.records]]` exists to stop.
+        "arg_type": declared_arg_type,
+        "return_type": declared_return_type,
     }
     if doc:
         method_entry["doc"] = doc

@@ -1278,8 +1278,18 @@ def make_methods_ctx(
             pyi_lines.append(pyi)
             continue
 
-        arg_type: str = m.get("arg_type", "void")
-        return_type: str = m.get("return_type", "float _Complex")
+        # gh-1404: a declared SCALAR element's name stands for its width.
+        # Substituted HERE, in the render context, rather than in
+        # `C.methods` -- `_apply` feeds that accessor straight back into
+        # `_method.run`, so resolving there would write the width into the
+        # manifest on every apply and restate per member exactly what the
+        # declaration removed (the gh-805 shape).
+        arg_type: str = _record.resolve_element(
+            m.get("arg_type", "void"), records
+        )
+        return_type: str = _record.resolve_element(
+            m.get("return_type", "float _Complex"), records
+        )
         variable_output: bool = m.get("variable_output", False)
         batch: bool = m.get("batch", False)
         multi_output: list[str] = m.get("multi_output", [])

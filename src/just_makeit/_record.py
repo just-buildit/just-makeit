@@ -201,6 +201,89 @@ def declared(records: "list[dict] | None", name: str) -> dict:
     return {}
 
 
+def is_scalar_element(rec: dict) -> bool:
+    """True when a declared element is a SCALAR rather than a struct.
+
+    gh-1404. The two kinds are told apart by which key the declaration
+    carries, never by guessing from the name: `type` is a scalar, `fields`
+    is a struct, and `_recorddecl.run` refuses both together.
+
+    Examples
+    --------
+    >>> is_scalar_element({"name": "sample", "type": "float _Complex"})
+    True
+    >>> is_scalar_element({"name": "iq16_t", "fields": [{"name": "i"}]})
+    False
+    >>> is_scalar_element({})
+    False
+    """
+    return bool(rec.get("type")) and not rec.get("fields")
+
+
+def element_ctype(rec: dict) -> str:
+    """The C type a declared element stands for (gh-1404).
+
+    A SCALAR element's name is a jm-level alias, so it stands for its
+    declared `type`. A STRUCT element's name IS the C struct, so it stands
+    for itself -- which is why a record reference needed no resolution
+    before gh-1404 and still needs none.
+
+    Examples
+    --------
+    >>> element_ctype({"name": "sample", "type": "float _Complex"})
+    'float _Complex'
+    >>> element_ctype({"name": "iq16_t", "fields": [{"name": "i"}]})
+    'iq16_t'
+    >>> element_ctype({})
+    ''
+    """
+    if is_scalar_element(rec):
+        return str(rec["type"])
+    return str(rec.get("name") or "")
+
+
+def resolve_element(spec: str, records: "list[dict] | None") -> str:
+    """*spec* with a declared SCALAR element's name replaced by its type.
+
+    gh-1404. One substitution, applied wherever a method spells a type:
+    ``"sample[]"`` becomes ``"float _Complex[]"`` and ``"sample"`` becomes
+    ``"float _Complex"``, so every consumer downstream sees an ordinary C
+    type and needed no change. A struct element is returned untouched --
+    its name already IS the C type, and `input_record` below still has to
+    recognise it.
+
+    A name nothing declares is returned untouched too, so an ordinary
+    ``"float _Complex[]"`` passes straight through and an undeclared name
+    reaches the refusal that names the command declaring it.
+
+    Examples
+    --------
+    >>> recs = [{"name": "sample", "type": "float _Complex"},
+    ...         {"name": "iq16_t", "fields": [{"name": "i"}]}]
+    >>> resolve_element("sample[]", recs)
+    'float _Complex[]'
+    >>> resolve_element("sample", recs)
+    'float _Complex'
+    >>> resolve_element("iq16_t[]", recs)
+    'iq16_t[]'
+    >>> resolve_element("double", recs)
+    'double'
+    >>> resolve_element("", recs)
+    ''
+    """
+    if not spec:
+        return spec
+    suffix = ""
+    base = spec
+    while base.endswith("[]"):
+        base = base[:-2]
+        suffix += "[]"
+    rec = declared(records, base)
+    if not is_scalar_element(rec):
+        return spec
+    return element_ctype(rec) + suffix
+
+
 def input_record(arg_type: str, records: "list[dict] | None") -> dict:
     """The record an ARRAY *arg_type* names, or ``{}`` (gh-1405).
 

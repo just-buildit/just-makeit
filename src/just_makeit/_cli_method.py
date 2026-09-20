@@ -505,10 +505,26 @@ def run(args: list[str]) -> None:
     # gh-244: a result_fields method's --return-type names the user's record
     # struct (the buffer element type for a list, or the returned record for
     # --single), not a scalar — so it's exempt from the scalar allowlist.
-    if not T.is_supported_return_type(return_type) and not result_fields:
+    # gh-1404: a DECLARED element is a legal return type too -- it stands
+    # for the width the component declared once, which is the whole point of
+    # naming it. The sibling escape hatch `--arg-type` got in gh-1405; not
+    # giving it one here is what made `--arg-type 'sample[]'` legal beside a
+    # `--return-type sample` that was refused, for one declaration.
+    _declared_elems = C.record_names(C.load(Path.cwd()), object_name)
+    if (
+        not T.is_supported_return_type(return_type)
+        and not result_fields
+        and return_type not in _declared_elems
+    ):
+        _elem_hint = (
+            f"\nDeclared elements on '{object_name}': "
+            f"{', '.join(sorted(_declared_elems))}"
+            if _declared_elems
+            else ""
+        )
         print(
             f"error: --return-type '{return_type}' must be void or a scalar.\n"
-            f"{T.unsupported_return_type_help(return_type)}",
+            f"{T.unsupported_return_type_help(return_type)}{_elem_hint}",
             file=sys.stderr,
         )
         sys.exit(1)
