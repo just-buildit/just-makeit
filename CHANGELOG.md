@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.79.0] — 2026-09-20
+
 ### Added
 
 - **A record can cross IN, not just out** (gh-1405). jm generated a
