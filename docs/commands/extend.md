@@ -692,11 +692,19 @@ ______________________________________________________________________
 
 ## `just-makeit record`
 
-Name a C struct and its columns, once, so **both** directions can reference it.
+Name an element type once, so **both** directions can reference it. Two
+kinds, told apart by which flag you give — a struct, or a plain scalar:
 
 ```sh
 just-makeit record ring iq16_t --field i:int16_t --field q:int16_t
+just-makeit record ring sample --type "float _Complex"
 ```
+
+A scalar element's name is jm's, not C's: the element a width family carries
+is usually a bare `float _Complex` with no typedef to point at, so the name
+is an alias jm substitutes. A struct element's name **is** the C struct.
+Declaring both `--field` and `--type` is refused — they are two elements
+under one name.
 
 ```toml
 [[ring.records]]
@@ -716,6 +724,7 @@ cannot be described wrongly.
 | Flag                | Description                                                                                           |
 | ------------------- | ----------------------------------------------------------------------------------------------------- |
 | `--field name:type` | A column; repeatable, and the order given is the exposed order. The type must be a registered scalar. |
+| `--type <scalar>`   | A SCALAR element (gh-1404). Mutually exclusive with `--field`.                                        |
 | `--doc TEXT`        | One line describing what a row is.                                                                    |
 
 Re-declaring a record replaces its field list, so a column added to the struct
@@ -753,6 +762,21 @@ columns from `--result-field`, which is how every project spelled it before
 `just-makeit record` existed. That spelling is already a complete
 declaration — a name plus its columns — so nothing had to change to keep
 working (gh-1407).
+
+### The generated contract
+
+A component that declares an element with both a **writer** (`arg_type = "sample[]"`) and a **reader** (`return_type = "sample"` with `borrow` or
+`variable_output`) also gets `src/<pkg>/tests/test_<comp>_invariants.py` —
+jm's file, rewritten on every `apply`, beside your own `test_<comp>.py`
+which jm writes once and never touches again.
+
+It asserts what the family promises: *what you read is exactly what you can
+write*. The input face — the declared width is accepted, a foreign one is
+refused rather than reinterpreted — is generated always and passes on a
+fresh scaffold. The full round trip (same dtype, same rank, bytes identical)
+needs a working kernel, since a borrowing reader's stub returns `NULL`, so
+it appears once you have implemented the pair. There is no `skipif`: a test
+that passes while covering nothing is worse than one that is absent.
 
 **The length reaching C is in records, not scalars.** A two-sample write
 passes `x_len == 2`, never 4; the `2 *` factor that hand-written bindings get

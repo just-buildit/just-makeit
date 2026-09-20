@@ -1133,14 +1133,18 @@ def main() -> None:
 
         if len(args) < 3:
             print(
-                "error: 'record' requires an object name and a record name.\n"
-                "Usage: just-makeit record <obj> <RecordStruct> "
+                "error: 'record' requires an object name and an element "
+                "name.\n"
+                "Usage: just-makeit record <obj> <Element> "
+                "--type <scalar>\n"
+                "   or: just-makeit record <obj> <RecordStruct> "
                 "--field name:type [--field ...]",
                 file=sys.stderr,
             )
             sys.exit(1)
         _rec_fields: list[dict] = []
         _rec_doc = ""
+        _rec_type = ""
         _i = 3
         while _i < len(args):
             if args[_i] == "--field":
@@ -1153,6 +1157,18 @@ def main() -> None:
                 except ValueError as exc:
                     print(f"error: {exc}", file=sys.stderr)
                     sys.exit(1)
+            elif args[_i] == "--type":
+                # gh-1404: the SCALAR kind. Refused beside --field in
+                # `_recorddecl.run`, with the rest of the declaration's
+                # rules, rather than here -- `jm apply` reaches those too.
+                _i += 1
+                if _i >= len(args):
+                    print(
+                        "error: --type requires a scalar C type",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                _rec_type = args[_i]
             elif args[_i] == "--doc":
                 _i += 1
                 if _i >= len(args):
@@ -1167,7 +1183,12 @@ def main() -> None:
                 sys.exit(1)
             _i += 1
         _recorddecl.run(
-            Path.cwd(), args[1], args[2], _rec_fields, doc=_rec_doc
+            Path.cwd(),
+            args[1],
+            args[2],
+            _rec_fields,
+            doc=_rec_doc,
+            elem_type=_rec_type,
         )
 
     elif cmd == "status":

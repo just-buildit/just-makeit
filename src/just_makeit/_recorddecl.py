@@ -73,27 +73,42 @@ def run(
     fields: list[dict],
     *,
     doc: str = "",
+    elem_type: str = "",
 ) -> None:
-    """Declare record *record_name* on *object_name*.
+    """Declare element *record_name* on *object_name*.
 
     Parameters
     ----------
     root : Path
         Project root (the directory holding ``just-makeit.toml``).
     object_name : str
-        The component that speaks this record.
+        The component that speaks this element.
     record_name : str
-        The C struct's name, as the sacred header declares it.
+        The element's name. For a struct element that is the C struct's own
+        name, as the sacred header declares it; for a scalar element it is a
+        jm-level alias, because the element a ring buffer carries is usually
+        a plain ``float _Complex`` with no typedef to point at.
     fields : list of dict
-        ``{"name", "type"}`` rows, in the order they should be exposed.
+        ``{"name", "type"}`` rows, in the order they should be exposed. A
+        STRUCT element; mutually exclusive with *elem_type*.
     doc : str, optional
         One line describing what a row is.
+    elem_type : str, optional
+        A registered scalar C type. A SCALAR element; mutually exclusive
+        with *fields* (gh-1404).
 
     Notes
     -----
-    Re-declaring an existing record REPLACES its field list, so a column
-    added to the struct reaches the manifest by running the command again
-    rather than by hand-editing. Nothing else about the component changes.
+    Re-declaring an existing element REPLACES it, so a column added to the
+    struct reaches the manifest by running the command again rather than by
+    hand-editing. Nothing else about the component changes.
+
+    gh-1404 widened this from "a record" to "a named element type", because
+    the two are the same declaration: a width family states its element once
+    and every member reads it from there, whether that element happens to
+    have columns or not. The three rows of doppler's buffer family --
+    ``complex64``, ``complex128``, and a two-field ``int16`` record -- are
+    then one spelling rather than two.
     """
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -110,10 +125,31 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
-    if not fields:
+    # gh-1404: the two kinds are declared by different keys, so asking for
+    # both is asking for two elements under one name -- and asking for
+    # neither describes nothing at all.
+    if fields and elem_type:
         print(
-            "error: a record needs at least one --field name:type.\n"
-            "An empty record describes no bytes, so nothing could be "
+            "error: --field and --type are the two KINDS of element.\n"
+            "--field declares a struct's columns; --type declares a scalar.\n"
+            "Pick one.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if elem_type and elem_type not in T._CTYPE_META:
+        print(
+            f"error: --type '{elem_type}' is not a scalar jm can map to "
+            "numpy.\n"
+            f"Supported: {', '.join(sorted(T._CTYPE_META))}\n"
+            "To declare a struct's columns instead, use --field name:type.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not fields and not elem_type:
+        print(
+            "error: an element needs --type <scalar> or at least one "
+            "--field name:type.\n"
+            "An empty element describes no bytes, so nothing could be "
             "generated from it.",
             file=sys.stderr,
         )
@@ -131,7 +167,11 @@ def run(
             sys.exit(1)
         seen.add(f["name"])
 
-    entry: dict = {"name": record_name, "fields": list(fields)}
+    entry: dict = (
+        {"name": record_name, "type": elem_type}
+        if elem_type
+        else {"name": record_name, "fields": list(fields)}
+    )
     if doc:
         entry["doc"] = doc
 
@@ -146,8 +186,19 @@ def run(
     section["records"] = rows
     C.save(root, cfg)
 
+    print(f"just-makeit: element '{record_name}' on '{object_name}'")
+    if elem_type:
+        print(f"  type    {elem_type}")
+        print()
+        print(
+            f"Done!  Reference `{record_name}` from every member that speaks "
+            f"it:\n"
+            f"       --arg-type '{record_name}[]' (in) or "
+            f"--return-type {record_name} (out).\n"
+            "       Both read the width from here, so they cannot disagree."
+        )
+        return
     cols = ", ".join(f"{f['name']}:{f['type']}" for f in fields)
-    print(f"just-makeit: record '{record_name}' on '{object_name}'")
     print(f"  fields  {cols}")
     print()
     print(

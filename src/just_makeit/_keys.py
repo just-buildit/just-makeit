@@ -316,12 +316,21 @@ PARAM_KEYS = frozenset(
     }
 )
 
-#: Keys valid on a ``[[<component>.records]]`` entry (gh-1405).
+#: Keys valid on a ``[[<component>.records]]`` entry (gh-1405, gh-1404).
 #:
-#: `name` is the C struct, declared by the AUTHOR in the sacred header -- jm
-#: never sees its definition, which is why the numpy dtype is built at runtime
-#: from `offsetof`/`sizeof` rather than from this list's order.
-RECORD_KEYS = frozenset({"name", "fields", "doc"})
+#: A NAMED ELEMENT TYPE, in one of two kinds, told apart by which key it
+#: carries:
+#:
+#: - `fields` -- a STRUCT. `name` is the C struct, declared by the AUTHOR in
+#:   the sacred header; jm never sees its definition, which is why the numpy
+#:   dtype is built at runtime from `offsetof`/`sizeof` rather than from this
+#:   list's order.
+#: - `type` -- a SCALAR (gh-1404). `name` is a jm-level alias, because the
+#:   element a width family carries is usually a plain `float _Complex` with
+#:   no typedef to point at.
+#:
+#: Declaring both is refused: they are two elements under one name.
+RECORD_KEYS = frozenset({"name", "fields", "type", "doc"})
 
 #: Keys valid on a ``[[<component>.records.fields]]`` row.
 RECORD_FIELD_KEYS = frozenset({"name", "type", "doc"})

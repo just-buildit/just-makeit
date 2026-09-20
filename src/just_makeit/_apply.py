@@ -3243,6 +3243,17 @@ def run(
         if _linkcheck.write(root, cfg, obj):
             updated.append(_linkcheck.symbols_file(root, obj))
 
+    # gh-1404: the element contract between a writer and a reader. Beside
+    # the link-check table above and for the same reason -- the author's
+    # own test file is create-only, so an invariant appended there would
+    # reach a new project and never an existing one.
+    from . import _invariants
+
+    _pkg = C.project_name(cfg)
+    for obj in C.components(cfg):
+        if _invariants.write(root, cfg, obj, _pkg):
+            updated.append(_invariants.file_for(root, _pkg, obj))
+
     print()
     total = (
         len(created)

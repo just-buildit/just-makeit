@@ -310,13 +310,21 @@ def _record_decl_flags(rec: dict) -> list[str]:
     >>> _record_decl_flags({"name": "iq16_t",
     ...                     "fields": [{"name": "i", "type": "int16_t"}]})
     ['    --field i:int16_t \\\\\\n']
+    >>> _record_decl_flags({"name": "sample", "type": "double"})
+    ['    --type double \\\\\\n']
     >>> _record_decl_flags({"name": "r", "fields": [], "doc": "Rows."})
     ['    --doc Rows. \\\\\\n']
     """
-    parts = [
-        _flag("--field", f"{f['name']}:{f['type']}")
-        for f in rec.get("fields", []) or []
-    ]
+    # gh-1404: a SCALAR element declares `type`, not `fields`. Dropped here
+    # the replay would emit `just-makeit record <obj> <name>` with neither,
+    # which `_recorddecl.run` refuses outright -- a script that cannot run.
+    if rec.get("type"):
+        parts = [_flag("--type", str(rec["type"]))]
+    else:
+        parts = [
+            _flag("--field", f"{f['name']}:{f['type']}")
+            for f in rec.get("fields", []) or []
+        ]
     if rec.get("doc"):
         parts.append(_flag("--doc", str(rec["doc"])))
     return parts

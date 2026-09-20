@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Added
+
+- **Two members that speak one element, and a generated contract**
+    (gh-1404). A width family's rule is *"what you read is exactly what you
+    can write"*, and nothing tied the two faces: a `write` taking
+    `complex64` beside a `drain` returning `float64` was accepted silently.
+
+    `[[<obj>.records]]` already named a STRUCT element once for both
+    directions; it now also names a SCALAR one, which is the kind a width
+    family actually carries — `float _Complex` has no typedef to point at:
+
+    ```toml
+    [[ring.records]]
+    name = "sample"
+    type = "float _Complex"
+    ```
+
+    `just-makeit record ring sample --type "float _Complex"` declares it,
+    and a member references it by name (`arg_type = "sample[]"`,
+    `return_type = "sample"`). jm substitutes the declared width, so a
+    divergence is not refused — it is **unrepresentable**. The manifest
+    keeps the NAME; writing the width back would restate the element per
+    member, which is the drift the declaration removes.
+
+    A component with both a writer and a reader also gets
+    `src/<pkg>/tests/test_<comp>_invariants.py` — jm's file, rewritten on
+    every `apply`, beside the author's own test file which jm never
+    touches again. The input face is generated always and passes on a fresh
+    scaffold; the full round trip needs a working kernel, so it appears
+    once the pair is implemented. No `skipif` anywhere: a test that reports
+    success while covering nothing is the failure mode `_hollow` exists to
+    catch.
+
 ## [0.79.1] — 2026-09-20
 
 ### Fixed

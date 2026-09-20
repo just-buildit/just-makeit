@@ -191,6 +191,16 @@ RULES: tuple[Rule, ...] = (
         " checks precisely because it is expected to grow).",
     ),
     Rule("native/benchmarks/bench_*_core.c", AUTHOR, "the author's C bench."),
+    # gh-1404: ABOVE the author's-tests rule below, because fnmatch's `*`
+    # crosses `/` and first-match-wins -- the generated invariants would
+    # otherwise be classified as the author's and never refreshed, which is
+    # the exact wall that put them in a file of their own.
+    Rule(
+        "src/*/tests/test_*_invariants.py",
+        DERIVED,
+        "the element contract jm derives from `[[<obj>.records]]` and the"
+        " members referencing it (gh-1404). jm's, not the author's.",
+    ),
     Rule(
         "src/*/tests/*.py",
         AUTHOR,
