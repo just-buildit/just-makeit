@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.78.1] — 2026-09-19
+
 ### Changed
 
 - **`_docgaps.gaps()` drops its unused `only=` parameter.** Nothing called
