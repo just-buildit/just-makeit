@@ -18,8 +18,12 @@ declares a property it has not documented yet -- which is the normal order of
 work. `jm status --docs` asks; nothing refuses.
 
 Scope: properties, the fields of a `single` / `record_dtype` record,
-methods, and a module's free functions -- each through the one chain its
-renderers use, never a second copy of the precedence. Class and module docs
+methods, a module's free functions, and the members a VIEW carries -- each
+through the one chain its renderers use, never a second copy of the
+precedence. A view's surface is its parent's until its overlay says
+otherwise, so it is walked through `_stubs.view_overlay`, the same
+definition the stub renders from: walking the parent's list instead would
+miss an excluded member and mis-attribute an overridden one. Class and module docs
 (`[<comp>] doc`, `[module.X] doc`) are not walked yet; gh-1396 tracks that.
 """
 
@@ -40,7 +44,8 @@ class DocGap:
     component : str
         The object the member belongs to.
     kind : str
-        ``"property"``, ``"record field"``, ``"method"`` or ``"function"``.
+        ``"property"``, ``"record field"``, ``"method"``,
+        ``"function"``, ``"view property"`` or ``"view method"``.
     name : str
         The member's name.
     where : str
@@ -139,6 +144,42 @@ def gaps(root: Path, cfg: dict, only: str = "") -> list[DocGap]:
                         ),
                     )
                 )
+        # gh-1400: and its views. A view renders as a synthetic component,
+        # so its members resolve against re-keyed blocks -- ask the overlay,
+        # never the parent's list.
+        from ._stubs import view_overlay
+
+        staged = {**cfg, comp: {**cfg.get(comp, {}), "_doc_blocks": blocks}}
+        for view in C.views(cfg, comp):
+            synth, cfg_v = view_overlay(staged, comp, view)
+            vblocks = cfg_v[synth].get("_doc_blocks") or {}
+            cls = str(view.get("class_name") or synth)
+            for prop in C.properties(cfg_v, synth):
+                _, is_stub = property_doc(synth, prop, vblocks)
+                if is_stub:
+                    pname = str(prop.get("name") or "")
+                    out.append(
+                        DocGap(
+                            cls,
+                            "view property",
+                            pname,
+                            f"{comp}_state_t.{pname}'s own `/**< ... */`, "
+                            f"or `doc =` on the view's property",
+                        )
+                    )
+            for method in C.methods(cfg_v, synth):
+                _, is_stub = method_doc(synth, method, vblocks)
+                if is_stub:
+                    mname = str(method.get("name") or "")
+                    out.append(
+                        DocGap(
+                            cls,
+                            "view method",
+                            mname,
+                            f"`@brief` above {comp}_{mname}() in the sacred "
+                            f"header, or `doc =` on the view's method",
+                        )
+                    )
     for module in C.modules(cfg):
         if only and module != only:
             continue

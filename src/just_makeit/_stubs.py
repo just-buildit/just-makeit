@@ -46,6 +46,7 @@ from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     class_import_line,
     merge_doc_blocks,
+    struct_members_key,
     method_doc,
     name_summary,
     ctor_demo_label,
@@ -1503,6 +1504,20 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
             f"{synth}_{n[len(pre) :]}" if n.startswith(pre) else n
             for n in state_only
         )
+    # gh-1400: the per-struct field map rides a reserved key too, and ITS
+    # keys are struct names (`ddc_state_t`), which the prefix filter above
+    # cannot see. A view's field-backed property looked up
+    # `<synth>_state_t`, missed, and fell back to the name stub -- while the
+    # binding, which renders a view under the PARENT's name, derived the
+    # field's `/**<` comment fine. So the two faces of one member disagreed:
+    # doppler's CellAsyncDsssReceiver.cn0_dbhz_est reads "Cached from the
+    # winning acquisition hit." at runtime and "Cn0 dbhz est." in the stub.
+    structs = blocks.get(struct_members_key())
+    if structs:
+        out[struct_members_key()] = {
+            (f"{synth}_{s[len(pre) :]}" if s.startswith(pre) else s): fields
+            for s, fields in structs.items()
+        }
     return out
 
 
@@ -2557,6 +2572,134 @@ def _uses_numpy(cfg: dict, module: str) -> bool:
 # ── public entry point ────────────────────────────────────────────────────────
 
 
+def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
+    """The synthetic component a view is rendered as: ``(name, cfg)``.
+
+    gh-504 renders a view by overlaying its surface on its parent and
+    handing the result to the ordinary object path under a synthetic
+    name. Every rule in here -- which members are excluded, which are
+    overridden, whose doc blocks answer, whose `create_fn` -- was learned
+    from a bug (gh-685, gh-648, gh-1160, gh-1177, gh-761), so it exists
+    once and is CALLED rather than restated.
+
+    `jm status --docs` is the second caller (gh-1398 follow-on): a view's
+    members are the parent's until the overlay says otherwise, and a
+    report that walked the parent's list instead would miss an excluded
+    member and mis-attribute an overridden one.
+
+    Returns
+    -------
+    tuple of (str, dict)
+        The synthetic component name, and a cfg carrying it.
+    """
+    excl = C.view_exclude_properties(view)
+    excl_m = C.view_exclude_methods(view)
+    synth = f"{obj}__view_{view['class_name'].lower()}"
+    overlay = dict(cfg.get(obj, {}))
+    overlay["class_name"] = view["class_name"]
+    if view.get("init_params"):
+        # The view's constructor takes its own params (it shares the
+        # parent's state struct but builds it differently). _obj_stub
+        # prefers state_vars over init_params for __init__, so drop the
+        # inherited `state` here to make the view's init_params drive
+        # __init__ — matching the C _init that parses exactly them. An
+        # inheriting view (no own init_params) keeps `state` so its
+        # __init__ mirrors the parent's.
+        overlay["init_params"] = view["init_params"]
+        overlay.pop("state", None)
+    # gh-504: the view's surface = parent minus excludes, with the
+    # view's OWN members merged over by name (override) or appended
+    # (add) — same merge as _make_view_ctx, so the .pyi matches the C.
+    own_props = C.view_properties(view)
+    own_prop_names = {p["name"] for p in own_props}
+    overlay["properties"] = [
+        p
+        for p in C.properties(cfg, obj)
+        if p["name"] not in excl and p["name"] not in own_prop_names
+    ] + own_props
+    own_methods = C.view_methods(view)
+    own_method_names = {m["name"] for m in own_methods}
+    overlay["methods"] = [
+        m
+        for m in C.methods(cfg, obj)
+        if m["name"] not in excl_m and m["name"] not in own_method_names
+    ] + own_methods
+    # gh-685: a view's methods call the PARENT's C functions, so the
+    # parent's header blocks are theirs. _obj_stub looks blocks up as
+    # `<component>_<member>` and the component here is a synthetic
+    # name, so every lookup missed and every inherited method fell
+    # back to the name-based stub -- while the identical method on the
+    # parent, from the identical block, derived fully.
+    #
+    # Alias rather than replace: a view with its own `create_fn` has a
+    # block under that real name, looked up directly.
+    _parent_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
+    _view_blocks = _view_doc_blocks(cfg, obj, synth)
+    overlay["_doc_blocks"] = merge_doc_blocks(_view_blocks, _parent_blocks)
+    # gh-761: the reserved `_max_out` arity key is a *set*, not a
+    # block, so the parent-wins merge above would drop the
+    # synthetic-id entries `_view_doc_blocks` just re-keyed. Union
+    # both spellings instead: the view looks itself up under `synth`,
+    # while a view with its own `create_fn` still resolves the real
+    # name.
+    _arity = frozenset(
+        _view_blocks.get(max_out_arity_key()) or ()
+    ) | frozenset(_parent_blocks.get(max_out_arity_key()) or ())
+    if _arity:
+        overlay["_doc_blocks"][max_out_arity_key()] = _arity
+    # gh-648: the view's own `doc=` owns its class docstring. Every
+    # other overlay key was set and this one was not, so a view whose
+    # class-level semantics genuinely differ from its parent's --
+    # doppler's Acquisition / BurstAcquisition, MatchedDDC /
+    # MatchedDdcr: two front doors over one core -- described itself
+    # correctly at runtime (`tp_doc` reads the view `doc=`) and
+    # inherited the parent's text in the stub beside it.
+    #
+    # Absent, the parent's `doc` stays in the overlay, so a view that
+    # declares nothing is unchanged.
+    if view.get("doc"):
+        overlay["doc"] = view["doc"]
+    # gh-1160: and its `create_fn`, which was the one key still
+    # missing. `_obj_stub` resolves the constructor through
+    # `C.object_create_fn(cfg_v, synth)`, which reads this key and
+    # otherwise falls back to `<synth>_create` -- a synthetic name no
+    # header declares. So every lookup for the view's CLASS docstring
+    # missed and it fell back to the generic "<Class> component.",
+    # even though `_doc_blocks` above already carried the real block
+    # under the real name.
+    #
+    # Exactly the gh-685 bug one member up: that fixed the same miss
+    # for a view's inherited METHODS and left the constructor, which
+    # is the one member a view does not inherit.
+    # Unguarded, like the four other readers of this key: `_view`
+    # refuses a view without a `create_fn` at declaration, and
+    # `_make_view_ctx` subscripts it directly. A `.get()` here would
+    # be a fifth reader disagreeing about whether it can be absent,
+    # and the branch could never be taken.
+    overlay["create_fn"] = view["create_fn"]
+    # gh-1177: a view's PARAMS inherit from the parent's `create()`;
+    # its SUMMARY does not. The asymmetry is the whole rule, and it
+    # is not arbitrary -- the two constructors take the same argument
+    # list (that is what makes a view a view), so the parent's
+    # `@param` prose describes the view's parameters exactly. What
+    # differs is what the class IS, which is why gh-648/gh-1160 make
+    # the summary its own.
+    #
+    # Setting `create_fn` above is what exposed this. Before it, the
+    # lookup resolved `<synth>_create`, which `_view_doc_blocks`
+    # aliases to the parent's block -- so a view inherited the
+    # parent's `@param`s *and* (wrongly) its summary. Fixing the
+    # summary took the parameters with it: doppler measured 22
+    # init-param descriptions replaced by name stubs in 0.70.0, on
+    # views whose own `create_fn` carries no Doxygen.
+    overlay["_doc_blocks"] = inherit_ctor_params(
+        overlay["_doc_blocks"],
+        view["create_fn"],
+        C.object_create_fn(cfg, obj) or f"{obj}_create",
+    )
+    return synth, {**cfg, synth: overlay}
+
+
 def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     """Return the full __init__.pyi content for *module*.
 
@@ -2689,115 +2832,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         # key never reaches output — a .pyi carries no C symbols — so this reuses
         # _obj_stub unchanged.
         for view in C.views(cfg, obj):
-            excl = C.view_exclude_properties(view)
-            excl_m = C.view_exclude_methods(view)
-            synth = f"{obj}__view_{view['class_name'].lower()}"
-            overlay = dict(cfg.get(obj, {}))
-            overlay["class_name"] = view["class_name"]
-            if view.get("init_params"):
-                # The view's constructor takes its own params (it shares the
-                # parent's state struct but builds it differently). _obj_stub
-                # prefers state_vars over init_params for __init__, so drop the
-                # inherited `state` here to make the view's init_params drive
-                # __init__ — matching the C _init that parses exactly them. An
-                # inheriting view (no own init_params) keeps `state` so its
-                # __init__ mirrors the parent's.
-                overlay["init_params"] = view["init_params"]
-                overlay.pop("state", None)
-            # gh-504: the view's surface = parent minus excludes, with the
-            # view's OWN members merged over by name (override) or appended
-            # (add) — same merge as _make_view_ctx, so the .pyi matches the C.
-            own_props = C.view_properties(view)
-            own_prop_names = {p["name"] for p in own_props}
-            overlay["properties"] = [
-                p
-                for p in C.properties(cfg, obj)
-                if p["name"] not in excl and p["name"] not in own_prop_names
-            ] + own_props
-            own_methods = C.view_methods(view)
-            own_method_names = {m["name"] for m in own_methods}
-            overlay["methods"] = [
-                m
-                for m in C.methods(cfg, obj)
-                if m["name"] not in excl_m
-                and m["name"] not in own_method_names
-            ] + own_methods
-            # gh-685: a view's methods call the PARENT's C functions, so the
-            # parent's header blocks are theirs. _obj_stub looks blocks up as
-            # `<component>_<member>` and the component here is a synthetic
-            # name, so every lookup missed and every inherited method fell
-            # back to the name-based stub -- while the identical method on the
-            # parent, from the identical block, derived fully.
-            #
-            # Alias rather than replace: a view with its own `create_fn` has a
-            # block under that real name, looked up directly.
-            _parent_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
-            _view_blocks = _view_doc_blocks(cfg, obj, synth)
-            overlay["_doc_blocks"] = merge_doc_blocks(
-                _view_blocks, _parent_blocks
-            )
-            # gh-761: the reserved `_max_out` arity key is a *set*, not a
-            # block, so the parent-wins merge above would drop the
-            # synthetic-id entries `_view_doc_blocks` just re-keyed. Union
-            # both spellings instead: the view looks itself up under `synth`,
-            # while a view with its own `create_fn` still resolves the real
-            # name.
-            _arity = frozenset(
-                _view_blocks.get(max_out_arity_key()) or ()
-            ) | frozenset(_parent_blocks.get(max_out_arity_key()) or ())
-            if _arity:
-                overlay["_doc_blocks"][max_out_arity_key()] = _arity
-            # gh-648: the view's own `doc=` owns its class docstring. Every
-            # other overlay key was set and this one was not, so a view whose
-            # class-level semantics genuinely differ from its parent's --
-            # doppler's Acquisition / BurstAcquisition, MatchedDDC /
-            # MatchedDdcr: two front doors over one core -- described itself
-            # correctly at runtime (`tp_doc` reads the view `doc=`) and
-            # inherited the parent's text in the stub beside it.
-            #
-            # Absent, the parent's `doc` stays in the overlay, so a view that
-            # declares nothing is unchanged.
-            if view.get("doc"):
-                overlay["doc"] = view["doc"]
-            # gh-1160: and its `create_fn`, which was the one key still
-            # missing. `_obj_stub` resolves the constructor through
-            # `C.object_create_fn(cfg_v, synth)`, which reads this key and
-            # otherwise falls back to `<synth>_create` -- a synthetic name no
-            # header declares. So every lookup for the view's CLASS docstring
-            # missed and it fell back to the generic "<Class> component.",
-            # even though `_doc_blocks` above already carried the real block
-            # under the real name.
-            #
-            # Exactly the gh-685 bug one member up: that fixed the same miss
-            # for a view's inherited METHODS and left the constructor, which
-            # is the one member a view does not inherit.
-            # Unguarded, like the four other readers of this key: `_view`
-            # refuses a view without a `create_fn` at declaration, and
-            # `_make_view_ctx` subscripts it directly. A `.get()` here would
-            # be a fifth reader disagreeing about whether it can be absent,
-            # and the branch could never be taken.
-            overlay["create_fn"] = view["create_fn"]
-            # gh-1177: a view's PARAMS inherit from the parent's `create()`;
-            # its SUMMARY does not. The asymmetry is the whole rule, and it
-            # is not arbitrary -- the two constructors take the same argument
-            # list (that is what makes a view a view), so the parent's
-            # `@param` prose describes the view's parameters exactly. What
-            # differs is what the class IS, which is why gh-648/gh-1160 make
-            # the summary its own.
-            #
-            # Setting `create_fn` above is what exposed this. Before it, the
-            # lookup resolved `<synth>_create`, which `_view_doc_blocks`
-            # aliases to the parent's block -- so a view inherited the
-            # parent's `@param`s *and* (wrongly) its summary. Fixing the
-            # summary took the parameters with it: doppler measured 22
-            # init-param descriptions replaced by name stubs in 0.70.0, on
-            # views whose own `create_fn` carries no Doxygen.
-            overlay["_doc_blocks"] = inherit_ctor_params(
-                overlay["_doc_blocks"],
-                view["create_fn"],
-                C.object_create_fn(cfg, obj) or f"{obj}_create",
-            )
-            cfg_v = {**cfg, synth: overlay}
+            # gh-504: one definition of a view's surface, in
+            # `view_overlay`; this renders what it returns.
+            synth, cfg_v = view_overlay(cfg, obj, view)
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")
 
