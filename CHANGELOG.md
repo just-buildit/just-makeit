@@ -1,5 +1,44 @@
 ## [Unreleased]
 
+### Added
+
+- **A borrow says WHY it returned NULL** (gh-1418). A borrow reports failure
+    by returning NULL, and that is the *whole* signal — no count to inspect,
+    no rc to print. jm answered it with one blanket
+    `ValueError("<name> failed")`, which is the wrong answer for the shape a
+    borrow exists for: a blocking `wait(n)` gives up for reasons the caller
+    must tell apart. End-of-stream is what a consumer loop **catches**; a
+    Ctrl-C is not bad input.
+
+    `--status-fn` names one C function that owns the precedence, called as
+    `fn(state, <the borrow's count>)` — the count, because "this `n` can
+    never be satisfied" is a property of both. `--status-error   STATUS:ExcName[:message]` maps its answers to exceptions, repeatably.
+
+    The rows **compose with** `none_on_empty` rather than replacing it: on
+    NULL the binding checks signals, looks the status up, and a status with
+    no row falls through to `none_on_empty` if set, else to the blanket
+    raise. That is what lets one ring's blocking `wait()` and non-blocking
+    `peek()` share a single table and differ only in the row `peek` declines
+    to write.
+
+    `PyErr_CheckSignals()` is now emitted on the NULL path of **every**
+    borrow, declared table or not: a kernel that blocked with the GIL
+    released is exactly where a pending signal accumulates, and gating it
+    behind the table would leave a borrow that declares none swallowing
+    Ctrl-C.
+
+    Either key alone is inert, so `_borrow.why_not` refuses both directions —
+    along with a row for `0` (what a status function answers for *success*,
+    which a borrow only asks about after a NULL), a status mapped twice (two
+    `case` labels of one value, which would surface as a compile error in the
+    author's tree rather than a jm diagnostic), and the pair on a method that
+    is not a borrow. A key accepted and dropped is the defect this whole
+    issue is a catalogue of.
+
+- **`EOFError` and `KeyboardInterrupt` are error categories.** The two a
+    status table needs and no other shape had a use for.
+    `KeyboardInterrupt` is a `BaseException` deliberately — `except   Exception` must not swallow a Ctrl-C.
+
 ## [0.80.1] — 2026-09-20
 
 ### Fixed

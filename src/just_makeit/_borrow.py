@@ -71,9 +71,43 @@ elements to hand back (``wait(n)``). ``borrow_count`` names it; with exactly
 one param that name is obvious and is defaulted. With several it is not, and
 a wrong guess sizes a view over memory the state does not own — so it is
 required rather than inferred.
+
+Why a NULL needs a table (gh-1418 part 2)
+-----------------------------------------
+A borrow reports failure by returning NULL, and that is the *whole* signal —
+there is no count to inspect and no rc to print. jm's answer was one blanket
+``ValueError("<name> failed")``, which is wrong for the shape a borrow is
+generated for: a blocking ``wait(n)`` gives up for reasons the caller must
+tell apart. End-of-stream is not an error a consumer loop wants to catch as
+``ValueError``; a Ctrl-C is not bad input.
+
+So the author declares ``status_fn`` — one C function that owns the
+precedence — and rows mapping its result to a jm error category. Two things
+make this a table rather than a second ``error``/``error_message`` pair:
+
+- **the status function takes the borrow's count argument**, not just the
+  state, because "``n`` can never be satisfied" is a property of
+  ``(state, n)``;
+- **the table is per METHOD**, since one object may lend through two borrows
+  that read the same status differently — a blocking ``wait`` can never see
+  "pending", while for a non-blocking ``peek`` that is the normal answer.
+
+It **composes with** ``none_on_empty`` rather than replacing it: on NULL the
+binding checks signals, looks the status up, and a status with no row falls
+through to ``none_on_empty`` if set, else to today's blanket raise. That is
+what lets ``peek`` share one table with ``wait`` and differ only in the row
+it declines to write.
+
+``PyErr_CheckSignals()`` comes first and is emitted for *every* borrow,
+declared table or not. It is generic — a kernel that blocked with the GIL
+released is exactly where a pending signal accumulates — and gating it behind
+the table would leave a borrow that declares none swallowing Ctrl-C.
 """
 
 from __future__ import annotations
+
+from . import _config as C
+from ._context._diagnostics import empty_raise_c
 
 
 def is_borrow(m: dict) -> bool:
@@ -169,6 +203,145 @@ def element_type(record_dtype: object, return_type: str) -> str:
     return return_type[:-2] if return_type.endswith("[]") else return_type
 
 
+def status_fn(m: dict) -> str:
+    """Name of the C function reporting WHY a borrow returned NULL, or ``""``.
+
+    Examples
+    --------
+    >>> status_fn({"borrow": True, "status_fn": "dp_f32_wait_status"})
+    'dp_f32_wait_status'
+    >>> status_fn({"borrow": True})
+    ''
+    """
+    return str(m.get("status_fn", "") or "").strip()
+
+
+def status_rows(m: dict) -> list[dict]:
+    """The declared ``status -> exception`` rows, in declaration order.
+
+    Order is preserved rather than sorted: it is the order the cases are
+    emitted in, and an author reading the generated C beside the manifest
+    should find them in the same sequence.
+
+    Examples
+    --------
+    >>> status_rows({"status_errors": [{"status": "DP_WAIT_CLOSED",
+    ...                                 "error": "EOFError"}]})
+    [{'status': 'DP_WAIT_CLOSED', 'error': 'EOFError'}]
+    >>> status_rows({"borrow": True})
+    []
+    """
+    return list(m.get("status_errors") or [])
+
+
+def parse_status_error(spec: str) -> dict:
+    """``STATUS:ExcName[:message]`` -> a row, for ``--status-error``.
+
+    Split on the first two colons only, so a message may contain them
+    ("closed: nothing left to read"). The same shape `_record` uses for
+    ``--result-field name:type[:doc]``, and for the same reason: a repeatable
+    multi-attribute declaration is a colon spec here, never a parallel family
+    of flags.
+
+    Examples
+    --------
+    >>> parse_status_error("DP_WAIT_CLOSED:EOFError")
+    {'status': 'DP_WAIT_CLOSED', 'error': 'EOFError'}
+    >>> parse_status_error("DP_WAIT_TOO_LARGE:ValueError:n exceeds capacity")
+    {'status': 'DP_WAIT_TOO_LARGE', 'error': 'ValueError', \
+'message': 'n exceeds capacity'}
+    """
+    parts = spec.split(":", 2)
+    if len(parts) < 2:
+        raise SystemExit(
+            f"--status-error {spec!r}: expected STATUS:ExcName[:message].\n"
+            f"  STATUS is the C constant your status function returns, "
+            f"ExcName a Python exception\n"
+            f"  class (e.g. DP_WAIT_CLOSED:EOFError)."
+        )
+    row = {"status": parts[0].strip(), "error": parts[1].strip()}
+    if len(parts) == 3 and parts[2].strip():
+        row["message"] = parts[2].strip()
+    return row
+
+
+def _is_c_identifier(text: str) -> bool:
+    """Whether *text* can name a C enum constant.
+
+    Deliberately not ``str.isidentifier``: that accepts non-ASCII letters
+    Python allows and a C compiler does not, so the refusal would arrive from
+    the author's compiler instead of from jm.
+    """
+    return (
+        bool(text)
+        and not text[0].isdigit()
+        and all(c.isascii() and (c.isalnum() or c == "_") for c in text)
+    )
+
+
+def status_dispatch_c(m: dict, state_expr: str = "self->handle") -> str:
+    """The NULL-path dispatch for a borrow: signals, then the status table.
+
+    Emitted inside the wrapper's ``if (!_p) {`` block, ahead of the fallback
+    the caller supplies (``Py_RETURN_NONE`` for ``none_on_empty``, else the
+    blanket raise). Every row ``return``s, so falling out of the ``switch``
+    IS the fallback — no row for a status means "jm was told nothing about
+    this one", which is precisely when the old behaviour is still right.
+
+    ``switch`` on the call rather than a stored local: the status type is the
+    author's enum, named in a header jm never reads, so there is no type to
+    declare the local with. ``default:`` also silences ``-Wswitch`` for the
+    enumerators the table declines to handle.
+
+    The raise itself is `empty_raise_c` — the same emitter the blanket
+    refusal uses, for the reason its docstring gives: a borrow fails by
+    returning NULL and there is no code to print, so ``PyErr_SetString`` is
+    the honest form and the author's text stays an argument.
+
+    Emitted at the eight-space body indent of that block, which is where
+    `empty_raise_c` already puts its statements — so the rows and the
+    fallback beneath them line up without this reindenting a shared emitter
+    that three other shapes depend on.
+
+    Examples
+    --------
+    >>> print(status_dispatch_c({
+    ...     "name": "wait", "borrow": True, "params": [{"name": "n"}],
+    ...     "status_fn": "dp_f32_wait_status",
+    ...     "status_errors": [{"status": "DP_WAIT_CLOSED",
+    ...                        "error": "EOFError",
+    ...                        "message": "the ring closed"}]}), end="")
+            if (PyErr_CheckSignals()) return NULL;
+            switch (dp_f32_wait_status(self->handle, n)) {
+            case DP_WAIT_CLOSED:
+            PyErr_SetString(PyExc_EOFError,
+            "the ring closed");
+            return NULL;
+            default: break;
+            }
+    """
+    # gh-1418: unconditional, table or not. A borrow that blocked with the
+    # GIL released is exactly where a pending signal is waiting, and a
+    # borrow that declares no table would otherwise swallow Ctrl-C and
+    # report it as bad input.
+    out = "        if (PyErr_CheckSignals()) return NULL;\n"
+    rows = status_rows(m)
+    if not rows or not status_fn(m):
+        return out
+    name = str(m.get("name", "<method>"))
+    out += (
+        f"        switch ({status_fn(m)}({state_expr}, {count_param(m)})) {{\n"
+    )
+    for row in rows:
+        message = str(row.get("message", "") or "").strip()
+        out += f"        case {row['status']}:\n" + empty_raise_c(
+            str(row["error"]),
+            message or f"{name} failed ({row['status']})",
+            indent=8,
+        )
+    return out + "        default: break;\n        }\n"
+
+
 def why_not(m: dict) -> str:
     """Why this borrow declaration cannot be generated, or ``""``.
 
@@ -177,9 +350,22 @@ def why_not(m: dict) -> str:
     "jm will not" and "jm cannot" look alike (the ``_outbuf.why_not``
     lesson).
     """
-    if not is_borrow(m):
-        return ""
     name = m.get("name", "<method>")
+    if not is_borrow(m):
+        # gh-1418: the keys are a BORROW's, and a borrow's only failure
+        # signal is the NULL they read. Accepted on any other shape they
+        # would be recorded, exit 0, and dropped -- which is the whole
+        # finding of this issue, one shape over.
+        if status_fn(m) or status_rows(m):
+            return (
+                f"method '{name}': `status_fn` / `status_errors` describe "
+                f"why a BORROW returned NULL.\n"
+                f"  This method is not a borrow, so there is no NULL to "
+                f"explain. Declare `borrow`, or drop\n"
+                f"  the keys -- a method that reports failure another way "
+                f"uses `error` / `error_message`."
+            )
+        return ""
     params = m.get("params") or []
     if m.get("variable_output"):
         return (
@@ -221,4 +407,86 @@ def why_not(m: dict) -> str:
             f"  Declare a param of that name, or point `borrow_count` at an "
             f"existing one."
         )
+    return _why_not_status(m, str(name))
+
+
+def _why_not_status(m: dict, name: str) -> str:
+    """Why this borrow's status table cannot be generated, or ``""``.
+
+    Split from :func:`why_not` only for length; it is the same refusal
+    surface and is reached from there on every face.
+    """
+    fn, rows = status_fn(m), status_rows(m)
+    # Each half is inert without the other, and inert is the state gh-1418
+    # is about: a key recorded, accepted with exit 0, and dropped. Refusing
+    # both directions is what keeps "declared" and "honoured" the same word.
+    if rows and not fn:
+        return (
+            f"method '{name}': `status_errors` has nothing to read the "
+            f"status FROM.\n"
+            f"  Name the C function with `status_fn` -- it is called as "
+            f"`fn(state, {count_param(m)})` after a\n"
+            f"  NULL, and its return is what these rows match."
+        )
+    if fn and not rows:
+        return (
+            f"method '{name}': `status_fn` is declared and no "
+            f"`status_errors` row reads it.\n"
+            f"  jm would call '{fn}' and discard the answer. Declare a row "
+            f"(`--status-error STATUS:ExcName`),\n"
+            f"  or drop `status_fn`."
+        )
+    if fn and not _is_c_identifier(fn):
+        return (
+            f"method '{name}': `status_fn` '{fn}' is not a C function name.\n"
+            f"  It is emitted as a call in the generated binding, so it must "
+            f"be a plain identifier."
+        )
+    seen: set[str] = set()
+    for row in rows:
+        status = str(row.get("status", "") or "").strip()
+        error = str(row.get("error", "") or "").strip()
+        if not status or not error:
+            return (
+                f"method '{name}': every `status_errors` row needs both "
+                f"`status` and `error`.\n"
+                f"  Got status={status or '<missing>'!r}, "
+                f"error={error or '<missing>'!r}. The row maps one C "
+                f"constant\n  to one Python exception."
+            )
+        if not _is_c_identifier(status):
+            # The `0` case gh-1418 calls out lands here too, and says so:
+            # a status function answers 0 for SUCCESS, which cannot be the
+            # answer after a NULL, so a row for it can only ever be dead C.
+            extra = (
+                "\n  `0` is what a status function answers for SUCCESS, and "
+                "a borrow only asks after a NULL,\n  so that row could never "
+                "fire."
+                if status == "0"
+                else ""
+            )
+            return (
+                f"method '{name}': `status_errors` status '{status}' is not "
+                f"a C constant name.\n"
+                f"  It is emitted as a `case` label, so it must be the "
+                f"enumerator your status function\n"
+                f"  returns (e.g. DP_WAIT_CLOSED).{extra}"
+            )
+        if error not in C.ERROR_CATEGORIES:
+            supported = ", ".join(sorted(C.ERROR_CATEGORIES))
+            return (
+                f"method '{name}': `status_errors` names exception "
+                f"'{error}', which jm does not emit.\n"
+                f"  Choose one of: {supported}."
+            )
+        if status in seen:
+            # Two `case` labels of one value is a compile error in the
+            # author's build rather than a jm diagnostic -- and the author
+            # would be reading generated C to find out which row lost.
+            return (
+                f"method '{name}': `status_errors` maps '{status}' twice.\n"
+                f"  One status has one exception; the second row would be an "
+                f"unreachable `case` label."
+            )
+        seen.add(status)
     return ""

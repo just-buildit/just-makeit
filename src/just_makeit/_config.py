@@ -4453,6 +4453,15 @@ ERROR_CATEGORIES = frozenset(
         "BufferError",
         "NotImplementedError",
         "OSError",
+        # gh-1418: the two a borrow's status table needs, and the two no
+        # other shape had a use for. `EOFError` is the END of a stream --
+        # what a consumer loop CATCHES, which a blanket `ValueError` turned
+        # into a failure. `KeyboardInterrupt` is a `BaseException` and not
+        # an `Exception`, deliberately: `except Exception` must not swallow
+        # a Ctrl-C, and `PyExc_KeyboardInterrupt` maps 1:1 here like the
+        # rest.
+        "EOFError",
+        "KeyboardInterrupt",
     }
 )
 

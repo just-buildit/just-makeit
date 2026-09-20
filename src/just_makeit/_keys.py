@@ -242,6 +242,13 @@ METHOD_KEYS = frozenset(
         "borrow",
         "borrow_count",
         "borrow_writeable",
+        # gh-1418: WHY a borrow returned NULL. `status_fn` names the C
+        # function that owns the precedence (called with the state and the
+        # borrow's count, since "never satisfiable" is a property of both);
+        # `status_errors` maps its answers to exceptions. Inert apart, so
+        # `_borrow.why_not` refuses either alone.
+        "status_fn",
+        "status_errors",
         "py_return_type",
         "none_on_empty",
         # error translation

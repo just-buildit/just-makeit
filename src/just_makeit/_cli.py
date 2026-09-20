@@ -128,6 +128,14 @@ Commands:
                                 NORMAL answer, so the call returns None.
                                 On a --borrow, a NULL view means "not
                                 yet" rather than a failure.
+    --status-fn NAME            C function saying WHY a --borrow returned
+                                NULL. Called as fn(state, <borrow count>)
+                                after the NULL, once signals are checked.
+    --status-error SPEC         STATUS:ExcName[:message] — map one answer
+                                of --status-fn to one exception. Repeatable.
+                                A status with no row falls through to
+                                --none-on-empty, else the blanket raise, so
+                                two borrows can share one table.
     --pass-capacity             Append a trailing `size_t max_out` to the C
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
