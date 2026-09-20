@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.81.0] — 2026-09-20
+
 ### Added
 
 - **A borrow says WHY it returned NULL** (gh-1418). A borrow reports failure
