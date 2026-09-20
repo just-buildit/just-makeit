@@ -177,7 +177,14 @@ def _stub_params(
             # wrong value. The annotation widens with it, from the same
             # predicate the format char uses.
             _d = p.get("default") or ""
-            suffix = f" = {_py_default(pt, _d)}" if _d else ""
+            # gh-1426 A: a release's count defaults to the OUTSTANDING
+            # borrow's, which is a runtime value and has no literal. `...`
+            # is what a stub says for exactly that.
+            suffix = (
+                " = ..."
+                if p.get("stub_default")
+                else (f" = {_py_default(pt, _d)}" if _d else "")
+            )
             fields.append(
                 (
                     p["name"],
@@ -1131,6 +1138,14 @@ def make_methods_ctx(
 
     decl_lines: list[str] = []
     buf_fields: list[str] = []
+    # gh-1426 A: the record a release defaults its count from. One field
+    # per OBJECT, not per borrow: two borrows share one release, so what
+    # is outstanding is 'the last view handed out', whichever lent it.
+    _releases_any = any(_borrow.is_release(_m) for _m in methods)
+    if _releases_any:
+        buf_fields.append(
+            f"    size_t {_borrow.RELEASE_FIELD};  /* last borrow's count */\n"
+        )
     buf_free: list[str] = []
     buf_alloc: list[str] = []
     method_c_parts: list[str] = []
@@ -1371,6 +1386,22 @@ def make_methods_ctx(
         # param, resolved by `_borrow.count_param` so the CLI, the binding
         # and both .pyi writers ask one place. The count is cast at the C
         # level because the param may be any integer type.
+        # gh-1426 A: a release's count is optional -- omitted, it takes
+        # the outstanding borrow's. Injected HERE and not persisted: the
+        # manifest must not carry a default jm derives, and `default`
+        # is what puts the param after the `|` in the PyArg format.
+        if _borrow.is_release(m) and _borrow.release_count_param(m):
+            _rc_name = _borrow.release_count_param(m)
+            m = dict(m)
+            m["params"] = [
+                (
+                    {**_p, "default": "0", "stub_default": "..."}
+                    if _p.get("name") == _rc_name
+                    else _p
+                )
+                for _p in (m.get("params") or [])
+            ]
+            params = m["params"]
         borrow: bool = _borrow.is_borrow(m)
         borrow_writeable: bool = _borrow.is_writeable(m)
         # gh-1310: with `record_dtype` the element is the author's POD
@@ -1751,6 +1782,14 @@ def make_methods_ctx(
                 parts.append(_in_example if _in_example else "x")
             for _p in params:
                 _pt = _p["type"]
+                # gh-1426 A: a release's count resolves 0 to "the outstanding
+                # borrow", and a synthesized demo has none -- so the type's
+                # zero would generate `obj.consume(0)`, which RAISES. The
+                # example is executable prose, and this project ships no
+                # scaffold whose own doctest fails.
+                if _borrow.is_release_count(m, str(_p.get("name", ""))):
+                    parts.append("1")
+                    continue
                 if _p.get("enum"):
                     # Show a real choice: the declared default when there is
                     # one, else the enum's first (its C zero).
@@ -3363,6 +3402,10 @@ def make_methods_ctx(
                         else empty_raise_c(*raise_pair_of(m, name), indent=8)
                     )
                     + "    }\n"
+                    # gh-1426 A: remembered at the ONE place the view is
+                    # built, so a release defaults to it without anything
+                    # re-deriving the count.
+                    + (_borrow.record_count_c(m) if _releases_any else "")
                     + _borrow_view_c(
                         "_p",
                         _borrow_count_c,
@@ -3528,6 +3571,8 @@ def make_methods_ctx(
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    # gh-1426 A: after the args exist, before the call.
+                    f"{_borrow.release_resolve_c(m)}"
                     f"{ret_body}"
                     f"}}"
                 )

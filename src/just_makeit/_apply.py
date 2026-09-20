@@ -531,6 +531,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # rebuild a borrow whose NULL raises one blanket ValueError
             # again -- exit 0, and end-of-stream back to being an error.
             status_fn=m.get("status_fn", ""),
+            releases=m.get("releases") or None,  # gh-1426 A
+            release_count=m.get("release_count", ""),
             status_errors=m.get("status_errors") or None,
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
