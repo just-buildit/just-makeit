@@ -34,6 +34,8 @@ meant inserting four heading lines and moving no text. So a deleted heading is
 not a deletion, it is a **reassignment** — which is why nothing looked wrong for
 two months and why comparing against the tags, not against how complete the
 file reads, is the check that works.
+
+GATE: every tagged release has its own CHANGELOG section.
 """
 
 from __future__ import annotations

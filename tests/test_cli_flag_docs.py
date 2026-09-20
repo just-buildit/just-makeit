@@ -47,6 +47,8 @@ recognised by prefix matching (`arg.startswith("--")`) instead of an equality
 test against a literal is invisible to it. No parser does that today, and
 `test_the_scan_is_armed` is what stops the whole file from passing vacuously
 if that changes and the literal set collapses to nothing.
+
+GATE: every CLI flag is reachable in the docs.
 """
 
 # `set[str]` in an annotation is evaluated at def-time and is 3.9-hostile;

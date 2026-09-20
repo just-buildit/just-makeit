@@ -10,7 +10,8 @@
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
                 changelog-check conflict-check complex-spelling-check \
-                coverage-subprocess-check \
+                coverage-subprocess-check gates-index gates-index-update \
+                gates-declared-check \
                 doppler-pin-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
@@ -38,6 +39,7 @@ start-here: ## Start here: where the answers live, and what you still need
 	@echo "    vendored, never edited here; usage and the full contract:"
 	@echo "    https://github.com/just-buildit/just-buildit.github.io#using-standardmk"
 	@echo ""
+	@$(MAKE) -s gates-index
 	@echo "  Readiness"
 	@hook=$$(git rev-parse --git-path hooks/pre-commit 2>/dev/null); \
 	 if [ -n "$$hook" ] && [ -f "$$hook" ]; then \
@@ -144,6 +146,7 @@ CHANGELOG_BASE ?= origin/main
 # Makefile on the first run.
 lint: changelog-check
 
+# GATE: a change under src/ carries a CHANGELOG entry under [Unreleased].
 changelog-check: ## Verify a branch that changes src/ also touches CHANGELOG.md
 	@base=$$(git merge-base HEAD $(CHANGELOG_BASE) 2>/dev/null) || { \
 	    echo "changelog-check: no merge base with $(CHANGELOG_BASE) —"; \
@@ -217,3 +220,29 @@ coverage-gate: coverage-subprocess-check
 
 coverage-subprocess-check: ## Prove a CLI-driven test counts toward coverage
 	@$(COVERAGE_ENV) $(DEV_RUN) sh scripts/coverage-subprocess-check.sh
+
+# The obligations this repo's gates enforce, printed from the gates.
+#
+# A gate teaches at the moment it fires, and by then the work is done. Five
+# times in one session a change was correct and its surrounding contract was
+# not, and every one was caught late. This is the same list, up front — at
+# session start, via ~/.claude/hooks/maintainer-role.sh, which is the one
+# moment it can still change what someone does.
+#
+# DERIVED, never written: each gate declares its own obligation where it
+# lives, so a catalogue cannot drift from the gates it claims to describe.
+# Which files *could* declare one is not derivable — measured, not assumed:
+# the "scans the repo" tell picks 109 files loosely and 14 tightly, and the
+# 14 miss four of the five that actually caught something. So a human
+# declares and the RATCHET refuses shrinkage, which is this repo's idiom for
+# a judgement no predicate can make.
+lint: gates-declared-check
+
+gates-index: ## The obligations this repo's gates enforce
+	@python3 scripts/gates-index.py
+
+gates-index-update: ## Record the declared gates as the ratchet's new floor
+	@python3 scripts/gates-index.py --update
+
+gates-declared-check: ## Verify no gate has dropped its declared obligation
+	@python3 scripts/gates-index.py --check

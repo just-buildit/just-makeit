@@ -1,0 +1,16 @@
+# Gates declaring an obligation, via a `GATE:` line in their
+# module docstring. `make gates-index` prints them; this file is
+# the ratchet that keeps one from quietly dropping out.
+# Regenerate with `make gates-index-update`.
+local.mk:a change under src/ carries a CHANGELOG entry under [Unreleased].
+test_changelog_has_every_release
+test_claude_md_drift
+test_cli_flag_docs
+test_face_parity_gate
+test_gates_index
+test_gh1141_version_copies
+test_gh1368_complex_surface
+test_gh1374_cli_in_process
+test_gh949_outdated
+test_lint_ssot
+test_stdlib_floor
