@@ -251,6 +251,10 @@ METHOD_KEYS = frozenset(
         "status_errors",
         "py_return_type",
         "none_on_empty",
+        # gh-1426 B: refuse a wrong-dtype / non-1-D / strided array INPUT
+        # rather than casting, copying and flattening it silently. The
+        # scalar path was the last array surface still converting.
+        "strict",
         # error translation
         # gh-1159: on a `variable_output` method, an empty result is a
         # REFUSAL rather than an empty answer -- the sibling of

@@ -240,6 +240,126 @@ def empty_raise_c(
     )
 
 
+#: A `{name}` slot in an author's message. Only a bare identifier in braces
+#: counts, so any other brace in ordinary prose stays literal and needs no
+#: escape of its own -- an author writing `{}` or `a {b c} d` means it.
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_]\w*)\}")
+
+
+def placeholders(message: str) -> list[str]:
+    """The ``{name}`` slots *message* references, in order, without repeats.
+
+    Examples
+    --------
+    >>> placeholders("wait({n}) exceeds the capacity {capacity}")
+    ['n', 'capacity']
+    >>> placeholders("nothing to see")
+    []
+    >>> placeholders("100% full, {n} again and {n}")
+    ['n']
+    """
+    seen: list[str] = []
+    for name in _PLACEHOLDER_RE.findall(message):
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def format_raise_c(
+    category: str,
+    message: str,
+    slots: "dict[str, tuple[str, str]]",
+    indent: int = 8,
+) -> str:
+    """A raise whose message interpolates C values (gh-1426 C).
+
+    The third member of the family `_rc_raise_c` and `empty_raise_c` belong
+    to, and here for the same reason they are: everything from the raise
+    inwards is one concept. This one exists because a *static* message
+    cannot say the number that makes it useful -- "n can never be satisfied"
+    sent someone to debug the producer, where "wait(1025) can never be
+    satisfied: the ring holds 1024" would not have.
+
+    **jm builds the format string; the author never supplies one.** Author
+    prose has every ``%`` doubled, and the only conversions that survive are
+    the ones inserted here for a resolved slot. Splicing author text *in* as
+    the format is the hazard `_rc_raise_c` states at length: a ``%`` in
+    ordinary prose ("100% full") becomes a live conversion with no argument
+    behind it and ``PyErr_Format`` walks off the end of its varargs -- on the
+    error path, which is the path least likely to be exercised before a
+    release. Escaping rather than trusting is what makes an author's prose
+    ordinary text again.
+
+    With no slots referenced this delegates to `empty_raise_c`, so the simple
+    case has exactly one spelling rather than a second one that happens to
+    agree today.
+
+    Parameters
+    ----------
+    category : str
+        An `_config.ERROR_CATEGORIES` name, validated at declaration time.
+    message : str
+        The author's prose, with ``{name}`` slots.
+    slots : dict
+        ``name -> (conversion, argument expression)``, already resolved by
+        the caller -- it is the caller that knows what is in scope at the
+        point of the raise. Every name `placeholders` finds must be present;
+        a missing one is refused at declaration time, not here.
+    indent : int
+        Column for the rendered literal's continuation lines.
+
+    Examples
+    --------
+    >>> print(format_raise_c(
+    ...     "ValueError",
+    ...     "wait({n}) can never be satisfied: the ring holds {capacity}",
+    ...     {"n": ("%lld", "(long long)n"),
+    ...      "capacity": ("%lld", "(long long)ring_get_capacity(self->handle)")},
+    ...     indent=8), end="")
+            PyErr_Format(PyExc_ValueError,
+            "wait(%lld) can never be satisfied: the ring holds %lld",
+                         (long long)n,
+                         (long long)ring_get_capacity(self->handle));
+            return NULL;
+    """
+    names = placeholders(message)
+    if not names:
+        return empty_raise_c(category, message, indent=indent)
+    fmt, args, pos = "", [], 0
+    for match in _PLACEHOLDER_RE.finditer(message):
+        name = match.group(1)
+        # Literal prose between slots: every `%` doubled, so it prints as
+        # itself rather than consuming an argument that was never passed.
+        fmt += message[pos : match.start()].replace("%", "%%")
+        if name not in slots:
+            # An invariant, not an author error: the declaration faces refuse
+            # an out-of-scope slot with prose long before this. Reaching here
+            # means a RENDER path was not given the scope the declaration was
+            # checked against -- measured, by dropping `properties` from the
+            # module renderer, which produced a bare `KeyError: 'capacity'`
+            # from inside this loop. A named failure says which caller.
+            raise ValueError(
+                f"format_raise_c: no slot for {{{name}}} in "
+                f"{message!r}; in scope: {sorted(slots) or '(none)'}. "
+                f"The caller resolved fewer slots than the declaration was "
+                f"validated against."
+            )
+        conversion, expr = slots[name]
+        fmt += conversion
+        args.append(expr)
+        pos = match.end()
+    fmt += message[pos:].replace("%", "%%")
+    # Aligned under the open paren, as `_rc_raise_c`'s own varargs are.
+    pad = " " * len("        PyErr_Format(")
+    joined = f",\n{pad}".join(args)
+    return (
+        f"        PyErr_Format(PyExc_{category},\n"
+        f"{_c_string_literal(fmt, indent)},\n"
+        f"{pad}{joined});\n"
+        f"        return NULL;\n"
+    )
+
+
 def _raise_pair(m: dict, subject: str) -> "tuple[str, str]":
     """``(category, message)`` from the ``error`` / ``error_message`` pair.
 

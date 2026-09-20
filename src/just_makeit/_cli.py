@@ -128,6 +128,10 @@ Commands:
                                 NORMAL answer, so the call returns None.
                                 On a --borrow, a NULL view means "not
                                 yet" rather than a failure.
+    --strict                    Refuse an array INPUT whose dtype, rank
+                                or contiguity is wrong, instead of
+                                casting, copying and flattening it.
+                                TypeError for dtype, ValueError for shape.
     --status-fn NAME            C function saying WHY a --borrow returned
                                 NULL. Called as fn(state, <borrow count>)
                                 after the NULL, once signals are checked.
