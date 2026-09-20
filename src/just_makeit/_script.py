@@ -291,12 +291,22 @@ def _record_flags(entry: dict) -> list[str]:
     # the two together.
     if entry.get("record_dtype"):
         parts.append(_flag("--record-dtype", str(entry["record_dtype"])))
+    # `_bool_flag`, not a bare append: the raw form emitted the flag with no
+    # indent and no continuation, so it ran into whatever followed it on one
+    # line. It happened to shell-split correctly and so was never wrong, only
+    # unreadable -- and the next flag added beside it would not have been.
     if entry.get("borrow"):
-        parts.append("--borrow")
+        parts.append(_bool_flag("--borrow"))
     if entry.get("borrow_count"):
         parts.append(_flag("--borrow-count", str(entry["borrow_count"])))
     if entry.get("borrow_writeable"):
-        parts.append("--borrow-writeable")
+        parts.append(_bool_flag("--borrow-writeable"))
+    # gh-1418: the key was honoured and had no flag, so a replayed script
+    # rebuilt a method that RAISES where the original returned None -- exit
+    # 0, different project, which is the gh-490 divergence this emitter's
+    # own docstring is about.
+    if entry.get("none_on_empty"):
+        parts.append(_bool_flag("--none-on-empty"))
 
     return parts
 

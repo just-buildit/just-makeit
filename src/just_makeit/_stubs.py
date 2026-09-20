@@ -2060,11 +2060,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-1310: the element type -- `record_dtype` names it when the
             # borrow carries one. Peer of the same call in the annotation
             # chain; both go through `_borrow.element_type`.
+            # gh-1418: and `none_on_empty` makes it optional, exactly as in
+            # the peer. Kept beside that branch rather than derived twice:
+            # the two annotations are gated to agree.
             ret_ann = (
                 "NDArray[Any]"
                 if m.get("record_dtype")
                 else f"NDArray[{_np(m_ret)}]"
-            )
+            ) + (" | None" if m.get("none_on_empty") else "")
         elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m.get("status_return"):

@@ -58,6 +58,7 @@ def run(args: list[str]) -> None:
     error_message = ""
     batch_method = False
     error_on_empty = False
+    none_on_empty = False
     doc = ""
     multi_output: list[str] = []
     method_params: list[tuple[str, str]] = []
@@ -111,6 +112,15 @@ def run(args: list[str]) -> None:
         elif tok == "--error-on-empty":
             # gh-1159: an empty result is a REFUSAL, not an empty answer.
             error_on_empty = True
+            i += 1
+        elif tok == "--none-on-empty":
+            # gh-1418: the opposite reading -- nothing yet is a normal
+            # answer, so the call returns None. The key existed and was
+            # honoured, with no flag to set it: reachable only by hand-
+            # editing the manifest, which is the foot-gun this project
+            # refuses ("every shape jm supports has a command that produces
+            # it"). doppler hit exactly that adopting a non-blocking peek.
+            none_on_empty = True
             i += 1
         elif tok == "--pass-capacity":
             pass_capacity = True
@@ -622,6 +632,7 @@ def run(args: list[str]) -> None:
         impl_body=impl_body_m,
         batch=batch_method,
         error_on_empty=error_on_empty,
+        none_on_empty=none_on_empty,
         no_bench=no_bench,
         py_return_type=py_return_type,
         max_out=max_out,
