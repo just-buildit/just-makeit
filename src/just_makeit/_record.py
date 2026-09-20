@@ -193,6 +193,59 @@ def c_struct(m: dict) -> str:
     return ""
 
 
+def declared(records: "list[dict] | None", name: str) -> dict:
+    """The declared record called *name*, or ``{}`` (gh-1405)."""
+    for rec in records or []:
+        if str(rec.get("name") or "") == name:
+            return dict(rec)
+    return {}
+
+
+def input_record(arg_type: str, records: "list[dict] | None") -> dict:
+    """The record an ARRAY *arg_type* names, or ``{}`` (gh-1405).
+
+    ``"iq16_t[]"`` with ``iq16_t`` declared is rows of the author's struct
+    crossing in as a structured array. A scalar element, or a name nothing
+    declares, is not a record -- the caller then takes its ordinary path,
+    and the CLI has already refused an undeclared one with a message
+    naming the command that declares it.
+
+    Examples
+    --------
+    >>> recs = [{"name": "iq16_t", "fields": [{"name": "i", "type": "int16_t"}]}]
+    >>> input_record("iq16_t[]", recs)["name"]
+    'iq16_t'
+    >>> input_record("float[]", recs)
+    {}
+    >>> input_record("iq16_t", recs)
+    {}
+    """
+    if not arg_type.endswith("[]"):
+        return {}
+    return declared(records, arg_type[:-2])
+
+
+def declared_fields(rec: dict) -> list[RecordField]:
+    """A declared record's columns as :class:`RecordField` rows (gh-1405).
+
+    The same shape ``fields`` returns for a method's ``result_fields``, so
+    ``dtype_c`` describes an input record and an output one by one route.
+
+    Examples
+    --------
+    >>> declared_fields({"fields": [{"name": "i", "type": "int16_t"}]})
+    [RecordField(name='i', ctype='int16_t', doc='')]
+    """
+    return [
+        RecordField(
+            str(f.get("name") or ""),
+            str(f.get("type") or ""),
+            str(f.get("doc") or ""),
+        )
+        for f in rec.get("fields", [])
+    ]
+
+
 def fields(m: dict, doc_blocks: dict | None = None) -> list[RecordField]:
     """The record's fields, each carrying whatever documentation exists.
 

@@ -7,6 +7,7 @@ multiple make_*_ctx() builders.
 from __future__ import annotations
 
 from .. import _coerce
+from .. import _record
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
@@ -410,6 +411,8 @@ def _build_params_parse(
     params: list[dict],
     Component: str = "",
     enums: dict[str, list[str]] | None = None,
+    records: "list[dict] | None" = None,
+    sid_prefix: str = "",
 ) -> tuple[str, str, str]:
     """Build parse block + C call args + cleanup for a named multi-param method.
 
@@ -529,7 +532,12 @@ def _build_params_parse(
             call_args.append(f"_arg_{pname}")
         elif is_array_param_type(ptype):
             elem_ct = array_elem_ctype(ptype)
-            npy_enum = _CTYPE_TO_NPY[elem_ct]
+            # gh-1405: rows of the author's struct. The struct name IS the C
+            # element type, and there is no typenum -- the acquisition takes
+            # the record's cached descr, built from the compiler's own
+            # layout, so the bytes this reads are the bytes C wrote.
+            _rec = _record.declared(records, elem_ct)
+            npy_enum = "" if _rec else _CTYPE_TO_NPY[elem_ct]
             elem_disp = elem_ct
             obj_var = f"{pname}_obj"
             arr_var = f"{pname}_arr"
@@ -560,10 +568,14 @@ def _build_params_parse(
                     ).rstrip("\n")
                 )
             arr_acq.append(
-                f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
-                f"PyArray_FROM_OTF(\n"
-                f"        {obj_var}, {npy_enum}, {npy_flags});\n"
-                f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
+                _coerce.input_array_acq(
+                    npy_enum=npy_enum,
+                    dtype_fn=f"{sid_prefix}_{pname}" if _rec else "",
+                    obj_var=obj_var,
+                    arr_var=arr_var,
+                    flags=npy_flags,
+                    fail=f"{prior_decrefs} return NULL;".strip(),
+                ).rstrip("\n")
             )
             # gh-805 §C: an opt-in rank guard, before the length is taken —
             # `PyArray_SIZE` on a 2-D array silently yields its total element

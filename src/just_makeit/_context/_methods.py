@@ -480,9 +480,12 @@ def _bench_method_block(component: str, m: dict) -> str:
 
     if has_arg:
         arg_elem = arg_type[:-2] if is_array_arg else arg_type
-        arg_meta = _CTYPE_META[arg_elem]
+        # gh-1405: a record element has no `_CTYPE_META` row -- it is the
+        # author's struct. Its zero is the compound literal, which is what a
+        # generated benchmark needs to call the kernel with.
+        arg_meta = _CTYPE_META.get(arg_elem)
         arg_elem_disp = arg_elem
-        arg_zero = arg_meta["zero"]
+        arg_zero = arg_meta["zero"] if arg_meta else f"({arg_elem}){{0}}"
 
     if has_ret:
         ret_meta = _CTYPE_META.get(return_type)
@@ -1058,6 +1061,7 @@ def make_methods_ctx(
     builtin_members: "frozenset[str]" = frozenset(),
     enums: dict[str, list[str]] | None = None,
     module: str = "",
+    records: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1623,6 +1627,9 @@ def make_methods_ctx(
         if _stub_enable_out:
             _doc_params = _doc_params + [("out", f"{_ret_ann} | None")]
         _doc_names = [n for n, _ in _doc_params]
+        _in_acq = ""
+        _in_dtype_helper = ""
+        _in_rec: dict = {}
         if has_arg:
             _arg_elem = arg_type[:-2] if arg_type.endswith("[]") else arg_type
             # gh-139: a block method's input is `const <elem> *in`. Use the
@@ -1632,8 +1639,48 @@ def make_methods_ctx(
             # scalar `arg_disp x` decls below are only reached when arg_type is
             # not an array.)
             arg_disp = _arg_elem
-            arg_meta = _CTYPE_META[_arg_elem]
-            arg_np = _NP_ENUM[arg_meta["py_type"]]
+            # gh-1405: rows of the author's struct, not a scalar element.
+            # The struct name IS the C display, and there is no typenum --
+            # the acquisition takes the record's cached descr instead.
+            _in_rec = _record.input_record(arg_type, records)
+            if _in_rec:
+                arg_meta = None
+                arg_np = ""
+            else:
+                arg_meta = _CTYPE_META[_arg_elem]
+                arg_np = _NP_ENUM[arg_meta["py_type"]]
+            # ONE acquisition emitter for every method shape below (gh-1405).
+            # The record form needs its cached descr builder prepended to the
+            # wrapper, the way the reading side already prepends its own --
+            # the two travel together or the fragment does not compile.
+            _in_acq = _coerce.input_array_acq(
+                npy_enum=arg_np,
+                dtype_fn=f"{_sid}_in" if _in_rec else "",
+            )
+            # The builder is named for the PARAM it serves, because that is
+            # what `_build_params_parse` emits the call under -- the primary
+            # array arrives as the synthetic `x`. One per record param, so a
+            # method taking two different records gets two.
+            _in_dtype_helper = "".join(
+                _record.dtype_c(
+                    f"{_sid}_{_pn}",
+                    str(_pr.get("name") or ""),
+                    _record.declared_fields(_pr),
+                )
+                for _pn, _pr in ([("x", _in_rec)] if _in_rec else [])
+                + [
+                    (
+                        str(_p.get("name") or ""),
+                        _record.declared(
+                            records,
+                            array_elem_ctype(str(_p.get("type") or "")),
+                        ),
+                    )
+                    for _p in params
+                    if is_array_param_type(str(_p.get("type") or ""))
+                ]
+                if _pr
+            )
 
         _ndecl = len(decl_lines)
 
@@ -1726,7 +1773,7 @@ def make_methods_ctx(
                 # `out=` buffer — write in place and return it, else allocate.
                 # Always available (no knob), matching the built-in steps(x,
                 # out=) path and the variable_output out= sibling.
-                wrapper = (
+                wrapper = _in_dtype_helper + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
                     f"({Component}Object *self,"
@@ -1740,10 +1787,7 @@ def make_methods_ctx(
                     f'args, kwds, "O|O",\n'
                     f"            _kwlist, &in_obj, &out_obj))\n"
                     f"        return NULL;\n"
-                    f"    PyArrayObject *in_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
-                    f"    if (!in_arr) return NULL;\n"
+                    f"{_in_acq}"
                     f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_out_guard_in}"
@@ -1788,7 +1832,7 @@ def make_methods_ctx(
                     f" size_t n, {ret_disp} *out);"
                 )
                 # gh-222: count-driven batch generator with optional `out=`.
-                wrapper = (
+                wrapper = _in_dtype_helper + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
                     f"({Component}Object *self,"
@@ -2076,10 +2120,7 @@ def make_methods_ctx(
                     f"    PyObject *in_obj = NULL;\n"
                     f"{_out_decl}"
                     f"{_parse_call}"
-                    f"    PyArrayObject *in_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
-                    f"    if (!in_arr) return NULL;\n"
+                    f"{_in_acq}"
                     f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
                 )
                 call_data = (
@@ -2683,23 +2724,27 @@ def make_methods_ctx(
                 if record_dtype
                 else ""
             )
-            wrapper = _vo_dtype_helper + (
-                f"static PyObject *\n"
-                f"{wrapper_prefix}_{name}"
-                f"{_vo_sig}"
-                f"{{\n"
-                f"{guard}"
-                f"{parse_block}"
-                f"{_out_branch}"
-                f"{_vo_alloc}"
-                f"{_kernel_vo}"
-                f"{decref_in}"
-                f"{_vo_empty}"
-                f"{_vo_exact}"
-                f"{_none_on_empty_line if not none_on_empty else ''}"
-                f"{_vo_views}"
-                f"{_vo_return}"
-                f"}}"
+            wrapper = (
+                _in_dtype_helper
+                + _vo_dtype_helper
+                + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}"
+                    f"{_vo_sig}"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{parse_block}"
+                    f"{_out_branch}"
+                    f"{_vo_alloc}"
+                    f"{_kernel_vo}"
+                    f"{decref_in}"
+                    f"{_vo_empty}"
+                    f"{_vo_exact}"
+                    f"{_none_on_empty_line if not none_on_empty else ''}"
+                    f"{_vo_views}"
+                    f"{_vo_return}"
+                    f"}}"
+                )
             )
             _all_rts_vo = [_vo_out_elem] + list(multi_output)
             _dtype_strs_vo = [
@@ -2962,7 +3007,7 @@ def make_methods_ctx(
                     [{"name": "x", "type": _x_type}] if has_arg else []
                 ) + [dict(_p) for _p in params]
                 _s_parse, _p_call, _p_cleanup = _build_params_parse(
-                    _pp_params, Component, enums
+                    _pp_params, Component, enums, records, _sid
                 )
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
@@ -2988,10 +3033,7 @@ def make_methods_ctx(
                     f"    PyObject *in_obj = NULL;\n"
                     f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
                     f"        return NULL;\n"
-                    f"    PyArrayObject *in_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"        in_obj, {arg_np}, NPY_ARRAY_C_CONTIGUOUS);\n"
-                    f"    if (!in_arr) return NULL;\n"
+                    f"{_in_acq}"
                     f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
                 )
                 _s_ensure = (
@@ -3037,20 +3079,24 @@ def make_methods_ctx(
                 if _has_kw
                 else f"({Component}Object *self, PyObject *args)"
             )
-            wrapper = _descriptor + (
-                f"static PyObject *\n"
-                f"{wrapper_prefix}_{name}"
-                f"{_wrap_sig}\n"
-                f"{{\n"
-                f"{guard}"
-                f"{_s_parse}"
-                f"{_s_ensure}"
-                f"{_s_call}"
-                f"    PyObject *_o = PyStructSequence_New({_sid}_type);\n"
-                f"    if (!_o) return NULL;\n"
-                f"{''.join(_set_lines)}"
-                f"    return _o;\n"
-                f"}}"
+            wrapper = (
+                _in_dtype_helper
+                + _descriptor
+                + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}"
+                    f"{_wrap_sig}\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{_s_parse}"
+                    f"{_s_ensure}"
+                    f"{_s_call}"
+                    f"    PyObject *_o = PyStructSequence_New({_sid}_type);\n"
+                    f"    if (!_o) return NULL;\n"
+                    f"{''.join(_set_lines)}"
+                    f"    return _o;\n"
+                    f"}}"
+                )
             )
             _s_names = ", ".join(_f["name"] for _f in result_fields)
             _s_demo = [""]
@@ -3110,11 +3156,7 @@ def make_methods_ctx(
                     f"    PyObject *in_obj = NULL;\n"
                     f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
                     f"        return NULL;\n"
-                    f"    PyArrayObject *in_arr"
-                    f" = (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"        in_obj, {arg_np},"
-                    f" NPY_ARRAY_C_CONTIGUOUS);\n"
-                    f"    if (!in_arr) return NULL;\n"
+                    f"{_in_acq}"
                     f"    size_t n_in ="
                     f" (size_t)PyArray_SIZE(in_arr);\n"
                 )
@@ -3137,7 +3179,7 @@ def make_methods_ctx(
                         nogil,
                     )
                 )
-            wrapper = (
+            wrapper = _in_dtype_helper + (
                 f"static PyObject *\n"
                 f"{wrapper_prefix}_{name}"
                 f"({Component}Object *self, PyObject *args)\n"
@@ -3203,14 +3245,14 @@ def make_methods_ctx(
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    _combined, Component, enums
+                    _combined, Component, enums, records, _sid
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
                 meth_flags = _kw_flags
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    params, Component, enums
+                    params, Component, enums, records, _sid
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
@@ -3218,7 +3260,7 @@ def make_methods_ctx(
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
-                    [_x_param], Component, enums
+                    [_x_param], Component, enums, records, _sid
                 )
                 call_args_c = f"self->handle, {_p_call}"
                 fn_sig = _kw_sig
@@ -3413,19 +3455,23 @@ def make_methods_ctx(
             # cached descr builder is file-scope and the wrapper calls it, so
             # the two travel together or the fragment does not compile.
             wrapper = (
-                _record.dtype_c(
-                    _sid, record_dtype, _record.fields(m, doc_blocks)
+                _in_dtype_helper
+                + (
+                    _record.dtype_c(
+                        _sid, record_dtype, _record.fields(m, doc_blocks)
+                    )
+                    if (borrow and record_dtype)
+                    else ""
                 )
-                if (borrow and record_dtype)
-                else ""
-            ) + (
-                f"static PyObject *\n"
-                f"{wrapper_prefix}_{name}({fn_sig})\n"
-                f"{{\n"
-                f"{guard}"
-                f"{parse_block}"
-                f"{ret_body}"
-                f"}}"
+                + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}({fn_sig})\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{parse_block}"
+                    f"{ret_body}"
+                    f"}}"
+                )
             )
             # gh-869: `status_return` claims the whole int as a status, so
             # the binding returns None — the `.pyi` has said so since gh-432
