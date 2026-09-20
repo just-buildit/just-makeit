@@ -246,13 +246,99 @@ def declared_fields(rec: dict) -> list[RecordField]:
     ]
 
 
-def fields(m: dict, doc_blocks: dict | None = None) -> list[RecordField]:
+def column_rows(m: dict, records: "list[dict] | None" = None) -> list[dict]:
+    """The raw column rows describing *m*'s record, declaration first.
+
+    gh-1407. ``[[<obj>.records]]`` is the SSOT for a record's columns, so a
+    ``record_dtype`` naming a declared one reads them from the declaration
+    and a method's own ``result_fields`` is not consulted. Restating them
+    beside a declared name is refused at declaration time
+    (:func:`restated_columns`), so the two can never disagree here -- this
+    function decides which is authoritative, not which is present.
+
+    A ``record_dtype`` naming nothing declared keeps reading the method's
+    ``result_fields``. That is the spelling every project used before
+    gh-1405, and it is already a complete declaration: ``--record-dtype``
+    without ``--result-field`` is refused, so the name always arrives with
+    its columns.
+
+    Examples
+    --------
+    >>> iq = {"name": "i", "type": "int16_t"}
+    >>> recs = [{"name": "iq16_t", "fields": [iq]}]
+    >>> column_rows({"record_dtype": "iq16_t"}, recs)
+    [{'name': 'i', 'type': 'int16_t'}]
+    >>> n = [{"name": "n", "type": "uint64_t"}]
+    >>> column_rows({"record_dtype": "other_t", "result_fields": n}, recs)
+    [{'name': 'n', 'type': 'uint64_t'}]
+    >>> column_rows({"result_fields": n})
+    [{'name': 'n', 'type': 'uint64_t'}]
+    """
+    rec = declared(records, str(m.get("record_dtype") or ""))
+    if rec:
+        return list(rec.get("fields", []))
+    return list(m.get("result_fields", []))
+
+
+def restated_columns(m: dict, records: "list[dict] | None" = None) -> str:
+    """Why a method may not restate a declared record's columns; "" if fine.
+
+    gh-1407. ``[[<obj>.records]]`` exists because a restatement drifts, so
+    carrying ``result_fields`` beside a ``record_dtype`` that names a
+    declared record is refused rather than silently ignored -- a dropped
+    restatement looks identical to one that agrees until the day it does
+    not.
+
+    In the shape jm's other refusals use: what is wrong, and the one edit
+    that fixes it (`_borrow.why_not`).
+
+    Examples
+    --------
+    >>> iq = {"name": "i", "type": "int16_t"}
+    >>> recs = [{"name": "iq16_t", "fields": [iq]}]
+    >>> n = [{"name": "n"}]
+    >>> restated_columns({"record_dtype": "iq16_t"}, recs)
+    ''
+    >>> restated_columns({"record_dtype": "other_t", "result_fields": n}, recs)
+    ''
+    >>> print(restated_columns({"name": "read", "record_dtype": "iq16_t",
+    ...                         "result_fields": n}, recs))
+    method 'read': record 'iq16_t' already declares its columns.
+      Drop the result_fields here -- `[[<obj>.records]]` is where they live,
+      so both directions describe the same bytes. Change the columns with
+      `just-makeit record <obj> iq16_t --field <name>:<type> ...`.
+    """
+    name = str(m.get("record_dtype") or "")
+    if not name or not m.get("result_fields"):
+        return ""
+    if not declared(records, name):
+        return ""
+    return (
+        f"method {str(m.get('name') or '?')!r}: record {name!r} already"
+        " declares its columns.\n"
+        "  Drop the result_fields here -- `[[<obj>.records]]` is where they"
+        " live,\n  so both directions describe the same bytes. Change the"
+        f" columns with\n  `just-makeit record <obj> {name}"
+        " --field <name>:<type> ...`."
+    )
+
+
+def fields(
+    m: dict,
+    doc_blocks: dict | None = None,
+    records: "list[dict] | None" = None,
+) -> list[RecordField]:
     """The record's fields, each carrying whatever documentation exists.
 
     gh-1300: a field's fallback doc is read from the record's own struct
     (:func:`c_struct`). It used to be any same-named field in the component's
     header or anything it includes, so a record column could be documented
     by an unrelated struct that happened to share the name.
+
+    gh-1407: *records* lets a declared ``[[<obj>.records]]`` supply the
+    columns, so the reading face resolves them the same way the writing one
+    already does. Omitted, the method's own ``result_fields`` are used and
+    the behaviour is what it was.
     """
     struct = c_struct(m)
     return [
@@ -262,7 +348,7 @@ def fields(m: dict, doc_blocks: dict | None = None) -> list[RecordField]:
             str(f.get("doc") or "")
             or struct_member_doc(doc_blocks, struct, f["name"]),
         )
-        for f in m.get("result_fields", [])
+        for f in column_rows(m, records)
     ]
 
 
