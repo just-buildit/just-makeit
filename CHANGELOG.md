@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`jm apply` accepts a record reference `jm method` wrote** (gh-1411).
+    Shipped in 0.79.0 and measured against the released wheel:
+    `jm method ring write --arg-type 'iq16_t[]'` returned 0, and `jm apply`
+    on the manifest that command had just written returned 1 with
+    *"unknown arg_type 'iq16_t[]'"*. gh-1405's feature therefore never
+    worked on the manifest-first path — hand-write `objects/*.toml`, run
+    `apply` — which is the one its adopter uses.
+
+    Two faults behind the one symptom, each now sabotage-proven separately:
+    `_config.manifest_type_errors` had no record awareness (the CLI
+    front-end got gh-1405's escape hatch and this gate did not), and
+    `apply` never replayed the declarations into the temp tree it rebuilds
+    each component in, so a member resolved its record against a manifest
+    that had none. Records are now written there ahead of the members that
+    reference them.
+
+    `jm status --check` sits behind the same gate and was broken with it.
+
 ## [0.79.0] — 2026-09-20
 
 ### Added
