@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+### Added
+
+- **A record can cross IN, not just out** (gh-1405). jm generated a
+    structured ndarray *out* of a method (`record_dtype`) and had no way to
+    take one *in*, so the symmetric half of a ring buffer — a `write()`
+    taking exactly what `wait()` returns — could not be declared at all.
+    jm's own `ring_buffer` example carried the asymmetry.
+
+    A record is now declared ONCE per component and referenced by both
+    directions, so the two faces cannot describe different bytes:
+
+    ```toml
+    [[ring.records]]
+    name = "iq16_t"
+    fields = [{ name = "i", type = "int16_t" },
+              { name = "q", type = "int16_t" }]
+    ```
+
+    `just-makeit record <obj> <Struct> --field name:type` declares it;
+    `--arg-type 'iq16_t[]'` then takes rows of it, and the length reaching C
+    is in **records**, not scalars. The struct stays the author's — the numpy
+    dtype is built at runtime from `offsetof`/`sizeof`, so a padded struct
+    cannot be described wrongly.
+
+    **The input dtype must EQUAL the record's.** Measured on a built
+    extension: `PyArray_FromAny` accepts a same-itemsize structured dtype
+    whose fields are declared in the other order and hands C the bytes
+    unchanged, so `[('q','<i2'),('i','<i2')]` arrived with `i` and `q`
+    silently swapped. It is refused now, naming the dtype it got — gh-581's
+    rule for an `out=` buffer, one direction over.
+
+### Changed
+
+- **One emitter for acquiring an input array** (gh-1405). It was spelled
+    five times — four method shapes and the named-param path — and the
+    record form needed adding to every one of them.
+
 ## [0.78.1] — 2026-09-19
 
 ### Changed

@@ -170,6 +170,7 @@ def component_ctx(
                 else frozenset()
             ),
             enums=C.enums(cfg),  # gh-1021
+            records=C.records(cfg, object_name),  # gh-1405
         )
     )
     for _slot in _override_slots:

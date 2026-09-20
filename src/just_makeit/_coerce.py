@@ -403,6 +403,99 @@ def array_rank_guard(
     )
 
 
+def input_array_acq(
+    npy_enum: str = "",
+    dtype_fn: str = "",
+    *,
+    obj_var: str = "in_obj",
+    arr_var: str = "in_arr",
+    flags: str = "NPY_ARRAY_C_CONTIGUOUS",
+    fail: str = "return NULL;",
+) -> str:
+    """Acquire an input array as *arr_var*, C-contiguous.
+
+    ONE emitter, because this was spelled five times -- four method shapes
+    in ``_context/_methods`` (kwargs, plain, stream, list-of-records) and
+    the named-param path in ``_context/_parse`` -- and gh-1405 needed a
+    second acquisition form in every one of them. Five copies of "how does
+    an input array arrive" is how the shapes come to disagree about it.
+
+    Parameters
+    ----------
+    npy_enum : str
+        The numpy typenum for a scalar element (``NPY_FLOAT32``). Uses
+        ``PyArray_FROM_OTF``, which CASTS a compatible input.
+    dtype_fn : str
+        A record's cached descr builder (``<sid>_get_dtype``), for rows of
+        the author's struct (gh-1405). Uses ``PyArray_FromAny``, which
+        **steals** the descr reference -- what the builder's new reference
+        is for -- and requires the input to match rather than casting it:
+        a structured dtype has no meaningful cast, and quietly accepting
+        the wrong one would read every row from the wrong bytes.
+    obj_var, arr_var : str
+        The borrowed ``PyObject *`` and the ``PyArrayObject *`` to define.
+    flags : str
+        Requirement flags; an ``out`` param adds ``NPY_ARRAY_WRITEABLE``.
+    fail : str
+        What to run on failure -- a param path releases the arrays it has
+        already acquired first.
+
+    Examples
+    --------
+    >>> print(input_array_acq(npy_enum="NPY_FLOAT32"))
+        PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
+            in_obj, NPY_FLOAT32, NPY_ARRAY_C_CONTIGUOUS);
+        if (!in_arr) { return NULL; }
+    <BLANKLINE>
+    >>> acq = input_array_acq(dtype_fn="Ring_write_x")
+    >>> "PyArray_EquivTypes" in acq        # refuses, never reinterprets
+    True
+    >>> "PyArray_FromAny" in acq
+    True
+    """
+    if bool(npy_enum) == bool(dtype_fn):
+        raise ValueError(
+            "input_array_acq wants exactly one of npy_enum / dtype_fn"
+        )
+    if dtype_fn:
+        descr = f"_{arr_var.removesuffix('_arr')}_descr"
+        label = arr_var.removesuffix("_arr")
+        # The input's dtype must EQUAL the record's, not merely convert to
+        # it. Measured: `PyArray_FromAny` accepts a same-itemsize structured
+        # dtype whose fields are declared in the other order and hands C the
+        # bytes UNCHANGED -- so `[('q','<i2'),('i','<i2')]` arrived with i
+        # and q silently swapped. numpy's own equality says no to that
+        # (`np.can_cast(b, a, "equiv")` is False), so the guard is exactly
+        # the gh-581 rule for an `out=` buffer, one direction over: refuse
+        # rather than reinterpret.
+        return (
+            f"    PyArray_Descr *{descr} = {dtype_fn}_get_dtype();\n"
+            f"    if (!{descr}) {{ {fail} }}\n"
+            f"    if (!PyArray_Check({obj_var})\n"
+            f"        || !PyArray_EquivTypes("
+            f"PyArray_DESCR((PyArrayObject *){obj_var}), {descr})) {{\n"
+            f"        PyErr_Format(PyExc_TypeError,\n"
+            f'            "{label} must be an array of the declared record"\n'
+            f'            " dtype (got %R)",\n'
+            f"            PyArray_Check({obj_var})\n"
+            f"                ? (PyObject *)PyArray_DESCR("
+            f"(PyArrayObject *){obj_var})\n"
+            f"                : (PyObject *)Py_TYPE({obj_var}));\n"
+            f"        Py_DECREF({descr});\n"
+            f"        {fail}\n"
+            f"    }}\n"
+            f"    PyArrayObject *{arr_var} ="
+            f" (PyArrayObject *)PyArray_FromAny(\n"
+            f"        {obj_var}, {descr}, 0, 0, {flags}, NULL);\n"
+            f"    if (!{arr_var}) {{ {fail} }}\n"
+        )
+    return (
+        f"    PyArrayObject *{arr_var} = (PyArrayObject *)PyArray_FROM_OTF(\n"
+        f"        {obj_var}, {npy_enum}, {flags});\n"
+        f"    if (!{arr_var}) {{ {fail} }}\n"
+    )
+
+
 def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     """The ``size_t <p>_len`` line, in the unit the C kernel counts (gh-805 §C).
 

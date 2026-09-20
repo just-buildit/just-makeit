@@ -690,6 +690,64 @@ the object via the regenerate path instead.)
 
 ______________________________________________________________________
 
+## `just-makeit record`
+
+Name a C struct and its columns, once, so **both** directions can reference it.
+
+```sh
+just-makeit record ring iq16_t --field i:int16_t --field q:int16_t
+```
+
+```toml
+[[ring.records]]
+name = "iq16_t"
+fields = [
+    { name = "i", type = "int16_t" },
+    { name = "q", type = "int16_t" },
+]
+```
+
+The struct is **yours**, declared in the sacred `_core.h`; this says which
+fields are exposed to Python and under what names. jm never sees the
+definition, so the numpy dtype is built at runtime from `offsetof`/`sizeof` —
+the compiler's own layout, never numpy's packing rules, so a padded struct
+cannot be described wrongly.
+
+| Flag                | Description                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--field name:type` | A column; repeatable, and the order given is the exposed order. The type must be a registered scalar. |
+| `--doc TEXT`        | One line describing what a row is.                                                                    |
+
+Re-declaring a record replaces its field list, so a column added to the struct
+reaches the manifest by running the command again rather than by hand-editing.
+A duplicate column is refused: numpy takes the field names as a set and would
+silently drop one.
+
+### Referencing it
+
+| direction    | declaration                                      | Python                                  |
+| ------------ | ------------------------------------------------ | --------------------------------------- |
+| rows **in**  | `arg_type = "iq16_t[]"` on a method              | `write(x)` takes a 1-D structured array |
+| rows **out** | `record_dtype = "iq16_t"` with `variable_output` | `wait(n)` returns one                   |
+
+Declaring the record once is the point: a ring buffer whose `write()` takes
+exactly what `wait()` returns used to restate the columns on each face, and a
+restatement drifts — doppler measured three hand-written faces disagreeing
+about what one method returned.
+
+**The length reaching C is in records, not scalars.** A two-sample write
+passes `x_len == 2`, never 4; the `2 *` factor that hand-written bindings get
+wrong never appears.
+
+**An input's dtype must equal the record's**, and is refused otherwise —
+including a dtype with the same fields declared in the other order.
+`PyArray_FromAny` accepts that one and hands C the bytes unchanged, which
+delivered `i` and `q` transposed; there is no meaningful cast between
+structured layouts, so jm refuses rather than reinterprets (the same rule
+`out=` buffers follow).
+
+______________________________________________________________________
+
 ## `just-makeit view`
 
 ```text
