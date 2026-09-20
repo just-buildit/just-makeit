@@ -174,3 +174,23 @@ def test_an_undocumented_view_member_is_reported(tmp_path):
     assert "CellRx.snr_db (view property)" in out.stdout
     # ...and the documented one still is not listed, for either class.
     assert "cn0_dbhz" not in out.stdout
+
+
+def test_an_undocumented_view_method_is_reported(tmp_path):
+    """A view inherits its parent's methods, so it inherits the gap too."""
+    proj = _project(tmp_path)
+    r = run_cli(
+        "method",
+        "rx",
+        "tick",
+        "--arg-type",
+        "void",
+        "--return-type",
+        "void",
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+    out = run_cli("status", "--docs", cwd=proj)
+    assert out.returncode == 0, out.stderr
+    assert "CellRx.tick (view method)" in out.stdout
+    assert "rx.tick (method)" in out.stdout, "the parent's own gap too"

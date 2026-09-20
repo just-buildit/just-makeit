@@ -279,3 +279,66 @@ class TestModuleFunctions:
         )
         out = run_cli("status", "--docs", cwd=proj)
         assert "dsp.scale (function)" not in out.stdout
+
+
+class TestRecordFields:
+    """A record's columns are documented by the C struct they come from."""
+
+    def test_an_undocumented_result_field_is_reported(self, tmp_path):
+        root = tmp_path / "r"
+        root.mkdir()
+        assert (
+            run_cli(
+                "new",
+                "p",
+                "--object",
+                "meter",
+                "--arg-type",
+                "float",
+                "--return-type",
+                "float",
+                cwd=root,
+            ).returncode
+            == 0
+        )
+        proj = root / "p"
+        # The row struct is the author's, and its fields are deliberately
+        # left without `/**<` comments -- that is the gap under test.
+        header = proj / "native" / "inc" / "meter" / "meter_core.h"
+        text = header.read_text(encoding="utf-8")
+        marker = "typedef struct"
+        text = text.replace(
+            marker,
+            "typedef struct {\n"
+            "    double peak_db;\n"
+            "    double rms_db;\n"
+            "    double crest;  /**< Peak-to-RMS ratio, dB. */\n"
+            "} meter_row_t;\n\n" + marker,
+            1,
+        )
+        header.write_text(text, encoding="utf-8")
+        r = run_cli(
+            "method",
+            "meter",
+            "read",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "meter_row_t",
+            "--single",
+            "--result-field",
+            "peak_db:double",
+            "--result-field",
+            "rms_db:double",
+            "--result-field",
+            "crest:double",
+            cwd=proj,
+        )
+        assert r.returncode == 0, r.stderr
+        out = run_cli("status", "--docs", cwd=proj)
+        assert out.returncode == 0, out.stderr
+        assert "meter.read.peak_db (record field)" in out.stdout
+        assert "meter.read.rms_db (record field)" in out.stdout
+        # ...and the column the struct DOES document is not listed, so this
+        # is not passing because every field is reported blindly.
+        assert "crest" not in out.stdout

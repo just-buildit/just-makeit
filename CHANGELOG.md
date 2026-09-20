@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Changed
+
+- **`_docgaps.gaps()` drops its unused `only=` parameter.** Nothing called
+    it with a component name, so it promised a filter no caller wanted;
+    covering it would have made it look wanted. Internal — `jm status   --docs` is unchanged.
+
 ### Fixed
 
 - **A view's field-backed properties document themselves like their parent**
