@@ -107,6 +107,62 @@ class TestAMessageCanNameTheNumbers:
         assert "(long long)n," in body
         assert "(long long)ring_get_capacity(self->handle)" in body
 
+    def test_an_expr_property_inlines_rather_than_calling_a_getter(
+        self, tmp_path
+    ):
+        """An `expr` property has NO `<comp>_get_<name>` symbol.
+
+        Its getset inlines the author's expression, so assuming every
+        property is getter-backed emitted a call to a function that does
+        not exist -- `implicit declaration of f32_buffer_get_capacity`.
+
+        Found by doppler on the shape the feature is FOR: a header-only
+        component over someone else's struct is exactly where `expr`
+        properties live, so this was the common case, not a corner.
+        """
+        root = tmp_path / "w"
+        root.mkdir()
+        assert run_cli("new", "q", cwd=root).returncode == 0
+        proj = root / "q"
+        assert (
+            run_cli(
+                "object",
+                "ring",
+                "--no-state",
+                "--no-step",
+                "--init-param",
+                "n:size_t:16",
+                cwd=proj,
+            ).returncode
+            == 0
+        )
+        assert (
+            run_cli(
+                "property",
+                "ring",
+                "capacity",
+                "--type",
+                "size_t",
+                "--expr",
+                "self->handle->cap",
+                cwd=proj,
+            ).returncode
+            == 0
+        )
+        r = _borrow(
+            proj,
+            "wait",
+            "--status-error",
+            "DP_TOO_LARGE:ValueError:holds {capacity}",
+        )
+        assert r.returncode == 0, r.stderr
+
+        body = _wrapper((proj / EXT).read_text(), "wait")
+        # The expression, parenthesised as the getset parenthesises it...
+        assert "(long long)(self->handle->cap)" in body
+        # ...and NOT a call to a symbol that was never declared.
+        assert "ring_get_capacity" not in body
+
     def test_a_message_with_no_slots_still_uses_setstring(self, tmp_path):
         """One spelling of the simple case, not a second that agrees today."""
         proj = _ring(tmp_path)

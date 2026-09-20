@@ -315,6 +315,14 @@ def _record_flags(entry: dict) -> list[str]:
     # replay that dropped it would rebuild the method with end-of-stream
     # raising `ValueError` again -- the same silent divergence one level up
     # that `--none-on-empty` was missing above.
+    # gh-1426 A: dropped on replay, the rebuilt release takes a REQUIRED
+    # count where the original defaulted it -- exit 0, a different API.
+    if entry.get("releases"):
+        parts.append(
+            _flag("--releases", ",".join(str(r) for r in entry["releases"]))
+        )
+    if entry.get("release_count"):
+        parts.append(_flag("--release-count", str(entry["release_count"])))
     if entry.get("status_fn"):
         parts.append(_flag("--status-fn", str(entry["status_fn"])))
     for row in entry.get("status_errors", []) or []:

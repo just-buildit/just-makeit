@@ -249,6 +249,12 @@ METHOD_KEYS = frozenset(
         # `_borrow.why_not` refuses either alone.
         "status_fn",
         "status_errors",
+        # gh-1426 A: this method RELEASES the named borrows. Its count
+        # param then defaults to the outstanding borrow's count, and the
+        # record is cleared. `release_count` names it when there is more
+        # than one param, exactly as `borrow_count` does.
+        "releases",
+        "release_count",
         "py_return_type",
         "none_on_empty",
         # gh-1426 B: refuse a wrong-dtype / non-1-D / strided array INPUT

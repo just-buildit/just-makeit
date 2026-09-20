@@ -906,6 +906,8 @@ _SIGNATURE_COERCIONS: dict = {
     # binding invokes, and the rows decide which exceptions it can raise.
     "status_fn": (str, ""),
     "status_errors": (list, []),
+    "releases": (list, []),
+    "release_count": (str, ""),
     "py_return_type": (str, ""),
     "max_out": (int, 0),
     "varargs": (bool, False),
@@ -1033,6 +1035,8 @@ def run(
     borrow_writeable: bool = False,
     status_fn: str = "",
     status_errors: list[dict] | None = None,
+    releases: list[str] | None = None,
+    release_count: str = "",
     py_return_type: str = "",
     max_out: int = 0,
     varargs: bool = False,
@@ -1638,6 +1642,21 @@ def run(
     if _borrow_why:
         print(f"error: {_borrow_why}", file=sys.stderr)
         sys.exit(1)
+    # gh-1426 A: the release's own refusal. Asked with the object's OTHER
+    # methods, because `releases` names them -- the check the list-of-names
+    # spelling exists to make possible.
+    _release_why = _borrow.why_not_release(
+        {
+            "name": method_name,
+            "releases": releases or [],
+            "release_count": release_count,
+            "params": params,
+        },
+        C.methods(cfg, object_name),
+    )
+    if _release_why:
+        print(f"error: {_release_why}", file=sys.stderr)
+        sys.exit(1)
 
     # gh-994: asked ONCE, BEFORE this command writes anything.
     #
@@ -2029,6 +2048,15 @@ def run(
     # the pair on a non-borrow is refused by `_borrow.why_not` rather than
     # silently dropped here, and dropping it at the writer is what would
     # make the refusal unreachable.
+    if releases:
+        # gh-1426 A: the borrows this method releases. `release_count` is
+        # persisted only when DECLARED -- it is defaulted from a sole
+        # param at read time, and writing the derived value back would
+        # freeze a default the manifest leaves implicit, exactly as
+        # `borrow_count` does above.
+        method_entry["releases"] = [str(r) for r in releases]
+        if release_count:
+            method_entry["release_count"] = release_count
     if status_fn:
         method_entry["status_fn"] = status_fn
     if status_errors:

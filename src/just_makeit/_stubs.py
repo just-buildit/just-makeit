@@ -28,12 +28,12 @@ import sys as _sys
 import textwrap
 from typing import Sequence
 
+from . import _borrow
 from . import _codec as _codec
 from . import _coerce
 from . import _config as C
 from . import _gluedoc
 from . import _outbuf
-from . import _borrow
 from . import _record
 from . import _context as Ctx
 from . import _types as T
@@ -2035,6 +2035,15 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # the same predicate the format char is, so the stub cannot
             # document a call the extension refuses.
             pann = f"{p['name']}: {T.py_param_annotation(_pbase, p['type'], _pdflt)}"
+            # gh-1426 A: a release's count defaults to the OUTSTANDING
+            # borrow's -- a runtime value with no literal, so `...`. Asked of
+            # `_borrow` rather than derived here, because the peer producer
+            # in `_context/_methods` renders the same signature from the
+            # render-time context and the two must not disagree about
+            # whether this argument is required.
+            if _borrow.is_release_count(m, p["name"]):
+                param_parts.append(f"{pann} = ...")
+                continue
             # gh-240: a defaulted param renders as an optional kwarg.
             if p.get("default"):
                 # An enum default is a choice string — quote it. Everything

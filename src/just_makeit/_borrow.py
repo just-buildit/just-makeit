@@ -203,6 +203,159 @@ def element_type(record_dtype: object, return_type: str) -> str:
     return return_type[:-2] if return_type.endswith("[]") else return_type
 
 
+#: The binding-side record of the last borrow's count. Binding-side and not
+#: C-side on purpose: it exists for a Python convenience, and the ring should
+#: not pay a store on every lend to provide it.
+RELEASE_FIELD = "_jm_borrowed"
+
+
+def releases(m: dict) -> list[str]:
+    """The borrows *m* releases, in declaration order (gh-1426 A).
+
+    A borrow's contract is "valid until the author's own release call", and
+    until now jm stated that in prose and knew nothing about the call. Naming
+    it is what lets the release's count DEFAULT to the outstanding borrow's,
+    which is the whole ergonomic point: `view = buf.wait(512); buf.consume()`.
+
+    **Declared on the releasing method, listing the borrows** -- rather than
+    a bare `release = true` -- because the relationship is then checkable,
+    and because one object has two releases that differ: `consume(n)` takes a
+    count and `reset()` does not. Under a bare flag those two would have to
+    mean different things with nothing in the key saying which.
+
+    Examples
+    --------
+    >>> releases({"name": "consume", "releases": ["wait", "peek"]})
+    ['wait', 'peek']
+    >>> releases({"name": "step"})
+    []
+    """
+    return [str(r) for r in (m.get("releases") or [])]
+
+
+def is_release(m: dict) -> bool:
+    """True when *m* releases at least one borrow."""
+    return bool(releases(m))
+
+
+def release_count_param(m: dict) -> str:
+    """Name of the release's count param, or ``""`` when it takes none.
+
+    The same rule as `count_param`, deliberately worded the same way:
+    defaulted from the sole param, named with ``release_count`` when there is
+    more than one. A release that takes NO param is not an error -- that is
+    ``reset()``, which invalidates whatever is outstanding and has no count
+    to default.
+
+    Examples
+    --------
+    >>> release_count_param({"releases": ["wait"], "params": [{"name": "n"}]})
+    'n'
+    >>> release_count_param({"releases": ["wait"]})
+    ''
+    >>> release_count_param({"releases": ["wait"], "release_count": "k",
+    ...                      "params": [{"name": "k"}, {"name": "flags"}]})
+    'k'
+    """
+    declared = str(m.get("release_count", "") or "").strip()
+    if declared:
+        return declared
+    params = m.get("params") or []
+    if len(params) == 1:
+        return str(params[0].get("name", ""))
+    return ""
+
+
+def release_resolve_c(m: dict) -> str:
+    """Resolve the release's count and clear the record (gh-1426 A).
+
+    Emitted between the parse block and the call. Three shapes in one, and
+    the middle one is the feature:
+
+    - **no count param** (``reset()``): clear the record, nothing else.
+    - **omitted argument**: the parsed local is ``0`` (the render-time
+      default), so it takes the outstanding count.
+    - **nothing outstanding and no argument**: a ``RuntimeError`` naming the
+      method. The hand-written binding this replaces consumed 0 silently;
+      a release with no borrow behind it is a caller bug, and saying so is
+      kinder than a no-op that looks like it worked.
+
+    An explicit ``0`` is indistinguishable from an omitted argument here, and
+    deliberately so: releasing nothing is the same caller bug either way, and
+    a sentinel to tell them apart would buy a distinction with no behaviour
+    behind it.
+
+    **The record is cleared BEFORE the call**, not after. It is a convenience
+    default and never a check -- `consume(k)` with ``k < n`` stays legal for
+    overlapped frames -- so a failing release leaving it clear costs the next
+    bare call its default and nothing else. Clearing it after would mean
+    threading this through every return shape for that.
+
+    Examples
+    --------
+    >>> print(release_resolve_c(
+    ...     {"name": "consume", "releases": ["wait"],
+    ...      "params": [{"name": "n", "type": "size_t"}]}), end="")
+        if (!n) {
+            n = self->_jm_borrowed;
+            if (!n) {
+                PyErr_SetString(PyExc_RuntimeError,
+                    "consume() has no outstanding borrow to release; "
+                    "pass a count, or call it after a borrow");
+                return NULL;
+            }
+        }
+        self->_jm_borrowed = 0;
+    >>> print(release_resolve_c(
+    ...     {"name": "reset", "releases": ["wait"]}), end="")
+        self->_jm_borrowed = 0;
+    """
+    if not is_release(m):
+        return ""
+    count = release_count_param(m)
+    clear = f"    self->{RELEASE_FIELD} = 0;\n"
+    if not count:
+        return clear
+    name = str(m.get("name", "<method>"))
+    return (
+        f"    if (!{count}) {{\n"
+        f"        {count} = self->{RELEASE_FIELD};\n"
+        f"        if (!{count}) {{\n"
+        f"            PyErr_SetString(PyExc_RuntimeError,\n"
+        f'                "{name}() has no outstanding borrow to release; "\n'
+        f'                "pass a count, or call it after a borrow");\n'
+        f"            return NULL;\n"
+        f"        }}\n"
+        f"    }}\n" + clear
+    )
+
+
+def is_release_count(m: dict, pname: str) -> bool:
+    """Whether *pname* is the param a release defaults from (gh-1426 A).
+
+    Asked by BOTH `.pyi` writers, which is the whole reason it is a
+    function: one renders from the render-time context and the other from
+    the manifest, so a rule spelled twice is a stub that disagrees with
+    its sibling about whether an argument is required.
+
+    Examples
+    --------
+    >>> m = {"releases": ["wait"], "params": [{"name": "n"}]}
+    >>> is_release_count(m, "n"), is_release_count(m, "flags")
+    (True, False)
+    """
+    return is_release(m) and pname == release_count_param(m)
+
+
+def record_count_c(m: dict) -> str:
+    """Remember this borrow's count, for a release to default to.
+
+    Emitted once, where the view is built -- so nothing re-derives it, and a
+    borrow jm did not generate cannot be mistaken for one it did.
+    """
+    return f"    self->{RELEASE_FIELD} = (size_t)({count_param(m)});\n"
+
+
 def status_fn(m: dict) -> str:
     """Name of the C function reporting WHY a borrow returned NULL, or ``""``.
 
@@ -304,19 +457,50 @@ def _slot_for(ctype: str, expr: str) -> "tuple[str, str] | None":
 def _property_read(prop: dict, component: str) -> str:
     """The C expression reading *prop*, or ``""`` if jm cannot read it here.
 
-    Only the two scalar backings: a plain accessor property reads through the
-    getter jm declared for it, and a ``field`` one reads the struct member.
-    Every other backing (`buf_field`, a codec, a container, a capsule) is a
-    value with no scalar reading, so it is refused by name rather than given
-    an expression that happens to compile.
+    Renders the property the way its own getset does, which is the whole
+    rule: an ``expr`` property INLINES the author's expression and has no
+    ``<comp>_get_<name>`` symbol at all, so assuming every property is
+    getter-backed emitted a call to a function that does not exist. Caught by
+    doppler on the shape the feature is FOR -- a header-only component over
+    someone else's struct is exactly where `expr` properties live, so it was
+    the common case rather than a corner (gh-1426).
+
+    The parentheses around ``expr`` are the getset's, for its reason: the
+    expression is arbitrary author C, and a cast binds tighter than a
+    ternary or a comma, so an unparenthesised one would take the cast on its
+    first operand alone.
+
+    An allow-list, not a blocklist. Every other backing -- a buffer, a codec,
+    a capsule, a container -- is a value with no scalar reading, and a key
+    missing from a blocklist would be silently given the getter form rather
+    than refused (the `_CTOR_OVERRIDE_KEYS` lesson).
+
+    Examples
+    --------
+    >>> _property_read({"name": "capacity", "type": "size_t"}, "ring")
+    'ring_get_capacity(self->handle)'
+    >>> _property_read(
+    ...     {"name": "capacity", "expr": "self->handle->cap"}, "ring")
+    '(self->handle->cap)'
+    >>> _property_read({"name": "buf", "buf_field": "b"}, "ring")
+    ''
     """
-    name = str(prop.get("name", ""))
-    unsupported = ("buf_field", "codec", "capsule", "count_fn", "entry_fn")
-    if any(prop.get(k) for k in unsupported):
+    #: The backing keys a message slot can read. Anything else a property
+    #: may carry describes a value with no scalar reading.
+    readable = ("field", "expr")
+    backing = [
+        k
+        for k, v in prop.items()
+        if v
+        and k not in ("name", "type", "ctype", "doc", "writable", "mutable")
+    ]
+    if any(k not in readable for k in backing):
         return ""
+    if prop.get("expr"):
+        return f"({prop['expr']})"
     if prop.get("field"):
         return f"self->handle->{prop['field']}"
-    return f"{component}_get_{name}(self->handle)"
+    return f"{component}_get_{prop.get('name', '')}(self->handle)"
 
 
 def message_slots(
@@ -498,6 +682,82 @@ def why_not(
             f"existing one."
         )
     return _why_not_status(m, str(name), component, properties)
+
+
+def why_not_release(m: dict, methods: "list[dict] | None" = None) -> str:
+    """Why this RELEASE declaration cannot be generated, or ``""`` (gh-1426 A).
+
+    Separate from :func:`why_not` because it asks about a *relationship*: the
+    names in ``releases`` are other methods, so it needs the object's method
+    list and `why_not` does not. That is the check the list-of-names spelling
+    buys over a bare flag, and the reason the spelling was chosen.
+    """
+    named = releases(m)
+    if not named:
+        if m.get("release_count"):
+            return (
+                f"method '{m.get('name', '<method>')}': `release_count` "
+                f"names the param a RELEASE defaults from, and this method "
+                f"releases nothing.\n"
+                f"  Declare `releases` with the borrow(s) it ends, or drop "
+                f"`release_count`."
+            )
+        return ""
+    name = str(m.get("name", "<method>"))
+    if name in named:
+        return (
+            f"method '{name}': `releases` names itself.\n"
+            f"  A release ends a BORROW; a method cannot be both ends of "
+            f"that contract."
+        )
+    by_name = {str(x.get("name", "")): x for x in (methods or [])}
+    for target in named:
+        if methods is not None and target not in by_name:
+            return (
+                f"method '{name}': `releases` names '{target}', which is "
+                f"not a method of this object.\n"
+                f"  Declare it, or correct the name -- a release of nothing "
+                f"is a contract with one party."
+            )
+        if methods is not None and not is_borrow(by_name[target]):
+            return (
+                f"method '{name}': `releases` names '{target}', which is "
+                f"not a borrow.\n"
+                f"  Only a `--borrow` hands out a view that needs releasing; "
+                f"a method returning a copy\n  has nothing outstanding."
+            )
+    params = m.get("params") or []
+    declared = str(m.get("release_count", "") or "").strip()
+    if declared and declared not in [str(p.get("name", "")) for p in params]:
+        return (
+            f"method '{name}': `release_count` names '{declared}', which is "
+            f"not one of its params.\n"
+            f"  Declare a param of that name, or point `release_count` at an "
+            f"existing one."
+        )
+    if declared and params and str(params[-1].get("name", "")) != declared:
+        # Not a jm preference: the release's count becomes an OPTIONAL
+        # parameter, and a defaulted parameter cannot precede a required
+        # one -- in the generated signature, in the `.pyi`, or in Python
+        # itself. jm's own stub writer refuses the result, so the refusal
+        # belongs here where it can name the fix.
+        return (
+            f"method '{name}': `release_count` names '{declared}', which is "
+            f"not the LAST param.\n"
+            f"  A release's count is optional, and an optional parameter "
+            f"cannot come before a required one.\n"
+            f"  Declare '{declared}' last."
+        )
+    if len(params) > 1 and not declared:
+        names = ", ".join(str(p.get("name", "?")) for p in params)
+        return (
+            f"method '{name}': `releases` cannot tell which of "
+            f"{len(params)} params is the count ({names}).\n"
+            f"  Name it with `release_count`. The same rule as "
+            f"`borrow_count`: defaulted from a sole param,\n  never guessed "
+            f"among several."
+        )
+    return ""
 
 
 def _why_not_status(

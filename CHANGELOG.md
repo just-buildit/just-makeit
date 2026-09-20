@@ -2,6 +2,56 @@
 
 ### Added
 
+- **A borrow's release call can be named** (gh-1426 A). `--borrow` has always
+    stated the contract in prose — "the view is valid until the author's own
+    release call" — and known nothing about that call, so the count had to be
+    written twice: `view = buf.wait(512); buf.consume(512)`.
+
+    `--releases wait,peek` on the **consuming** method closes it. jm records
+    the count at the one place it builds the view, and the release's count
+    param defaults to it, so `buf.consume()` is enough.
+
+    Declared on the releasing method and **naming the borrows**, rather than a
+    bare `release = true`, for two reasons: a stated relationship can be
+    checked — a name that is not a method, or is a method but not a borrow, is
+    refused — and one object may have two releases that differ. `consume(n)`
+    takes a count; `reset()` takes none and simply invalidates whatever is
+    outstanding. Under a bare flag those two would have to mean different
+    things with nothing in the key saying which.
+
+    The default is a **default, never a check**: `consume(k)` with `k < n`
+    stays legal, which is what overlapped frames do. With nothing outstanding
+    and no argument, `RuntimeError` — the hand-written binding this replaces
+    consumed 0 silently, and a release with no borrow behind it is a caller
+    bug worth saying out loud.
+
+    `--release-count` names the param when there is more than one, by the
+    same rule as `--borrow-count`, plus one more it inherits from Python:
+    that param must be **last**, since an optional parameter cannot precede a
+    required one.
+
+    A borrow records its count **unconditionally** — the store follows the
+    borrow, not the release. Keyed on the release it was declaration-order
+    dependent: a borrow rendered before anything released it never learned to
+    record, and a sacred fragment only gains *missing* members, so declaring
+    the release afterwards left the field read twice, zeroed twice and
+    written never. Every `wait(n); consume()` then raised at runtime from a
+    project whose every command printed `Done!`. One store per lend removes
+    the state rather than detecting it.
+
+### Fixed
+
+- **A message slot on an `expr` property inlines it** (gh-1426). The
+    placeholder resolver assumed every property was getter-backed, but an
+    `expr` property has no `<comp>_get_<name>` symbol at all — its getset
+    inlines the author's expression — so `{capacity}` emitted a call to a
+    function that does not exist. A compile error rather than a wrong answer,
+    but a header-only component over someone else's struct is exactly where
+    `expr` properties live, so it was the common case for the feature rather
+    than a corner. Now rendered the way the getset renders it, and the
+    supported backings are an allow-list: anything else is refused rather
+    than silently given the getter form.
+
 - **A status message can say the number that makes it useful** (gh-1426 C).
     `DP_WAIT_TOO_LARGE` is a caller bug about a specific `n` against a
     specific capacity, and a message carrying neither sent someone to debug

@@ -61,6 +61,8 @@ def run(args: list[str]) -> None:
     error_on_empty = False
     none_on_empty = False
     strict = False
+    releases: list[str] = []
+    release_count = ""
     status_fn = ""
     status_errors: list[dict] = []
     doc = ""
@@ -422,6 +424,31 @@ def run(args: list[str]) -> None:
             # (4, 2) array accepted as 8 samples.
             strict = True
             i += 1
+        elif tok == "--releases":
+            # gh-1426 A: comma-separated, because it is a LIST of names
+            # and not a multi-attribute record -- `--status-error`'s
+            # colon spec would be ceremony for one field.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --releases requires borrow method name(s)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            releases = [
+                t.strip() for t in remaining[i].split(",") if t.strip()
+            ]
+            i += 1
+        elif tok == "--release-count":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --release-count requires a param name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            release_count = remaining[i]
+            i += 1
         elif tok == "--status-fn":
             # gh-1418: the C function that owns WHY a borrow returned NULL.
             i += 1
@@ -668,6 +695,8 @@ def run(args: list[str]) -> None:
         error_on_empty=error_on_empty,
         none_on_empty=none_on_empty,
         strict=strict,
+        releases=releases or None,
+        release_count=release_count,
         status_fn=status_fn,
         status_errors=status_errors or None,
         no_bench=no_bench,
