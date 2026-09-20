@@ -31,11 +31,43 @@
     silently swapped. It is refused now, naming the dtype it got — gh-581's
     rule for an `out=` buffer, one direction over.
 
+### Fixed
+
+- **The record declaration is authoritative in BOTH directions** (gh-1407).
+    gh-1405 above landed `[[<obj>.records]]` as "a record named ONCE, for
+    both directions", but only the writing half read it. `record_dtype`
+    consulted nothing: it took its columns from the method's own
+    `result_fields` — the restatement the table exists to remove — and
+    accepted a name nothing declares, for which jm then printed an invented
+    `typedef`.
+
+    The reading face now resolves its columns through the declaration, and
+    restating them beside a declared record is refused rather than ignored.
+    A dropped restatement looks identical to one that agrees, right up until
+    the day it does not.
+
+    **Nothing breaks.** `--record-dtype` without `--result-field` was
+    already refused, so every site written before `just-makeit record`
+    existed carries a full inline declaration — a name plus its columns —
+    and keeps working untouched.
+
+- **`jm script` reconstructs a record declaration** (gh-1407). It emitted no
+    `just-makeit record` command at all, so a replayed script died at the
+    first method referencing one. Emitted ahead of its referents, because
+    that is the order the refusal requires. A column's `doc =` has no
+    `--field` grammar and gets a `# NOTE:` line rather than a silently lossy
+    replay.
+
 ### Changed
 
 - **One emitter for acquiring an input array** (gh-1405). It was spelled
     five times — four method shapes and the named-param path — and the
     record form needed adding to every one of them.
+
+- **One resolver for a record's columns** (gh-1407). `_record.column_rows`
+    decides declaration-or-`result_fields` once, so the four call sites in
+    `_context/_methods` share one answer instead of four copies of the
+    precedence rule.
 
 ## [0.78.1] — 2026-09-19
 

@@ -1111,16 +1111,10 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not result_fields:
-            print(
-                f"error: --record-dtype {record_dtype} needs at least one "
-                "--result-field\n"
-                "to build the numpy dtype from -- the struct's members are "
-                "what become\n"
-                "the dtype's columns.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        # gh-1407: the "needs columns" gate moved DOWN, to where the manifest
+        # is loaded -- `[[<obj>.records]]` can supply them now, and what is
+        # declared is a property of the project rather than of this command
+        # line. It still runs before anything is written.
         if single:
             print(
                 "error: --record-dtype and --single are different results.\n"
@@ -1536,6 +1530,44 @@ def run(
     )
     if _conflict:
         print(f"error: {_conflict}", file=sys.stderr)
+        sys.exit(1)
+
+    # gh-1407: `[[<obj>.records]]` is where a declared record's columns live,
+    # so restating them on the method that reads it is refused rather than
+    # ignored. Here rather than beside the other record gates above because
+    # it is the first one that needs the manifest -- what is declared is a
+    # property of the project, not of this command line.
+    _declared_records = C.records(cfg, object_name)
+    _restated = _record.restated_columns(
+        {
+            "name": method_name,
+            "record_dtype": record_dtype,
+            "result_fields": result_fields or [],
+        },
+        _declared_records,
+    )
+    if _restated:
+        print(f"error: {_restated}", file=sys.stderr)
+        sys.exit(1)
+    # The columns have to come from somewhere: the declaration, or this
+    # command line. gh-1407 moved this down from the flag gates above so the
+    # first source can count; before that, `--record-dtype` always had to
+    # restate what `[[<obj>.records]]` already said.
+    if (
+        record_dtype
+        and not result_fields
+        and not _record.declared(_declared_records, record_dtype)
+    ):
+        print(
+            f"error: --record-dtype {record_dtype} needs at least one "
+            "--result-field\n"
+            "to build the numpy dtype from -- the struct's members are "
+            "what become\n"
+            "the dtype's columns. Or declare it once for both directions:\n"
+            f"  just-makeit record {object_name} {record_dtype} "
+            "--field <name>:<type> ...",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     print(

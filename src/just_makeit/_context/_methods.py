@@ -2719,7 +2719,7 @@ def make_methods_ctx(
             # the two travel together or the fragment does not compile.
             _vo_dtype_helper = (
                 _record.dtype_c(
-                    _sid, record_dtype, _record.fields(m, doc_blocks)
+                    _sid, record_dtype, _record.fields(m, doc_blocks, records)
                 )
                 if record_dtype
                 else ""
@@ -2786,7 +2786,7 @@ def make_methods_ctx(
             # type, because that much is derived rather than invented.
             _vo_field_doc_lines: list[str] = []
             if record_dtype:
-                _vo_flds = _record.fields(m, doc_blocks)
+                _vo_flds = _record.fields(m, doc_blocks, records)
                 _vo_field_doc_lines = ["", "Fields", "------"]
                 for _vf in _vo_flds:
                     _vo_field_doc_lines.append(
@@ -2973,7 +2973,7 @@ def make_methods_ctx(
             # two .pyi writers read too -- the descriptor emitted here and the
             # class they emit describe one type, so they derive it once.
             _rec_name = _record.public_name(m)
-            _rec_fields = _record.fields(m, doc_blocks)
+            _rec_fields = _record.fields(m, doc_blocks, records)
             _descriptor = _record.descriptor_c(
                 _sid,
                 _record.qualified_name(m, component),
@@ -3458,7 +3458,9 @@ def make_methods_ctx(
                 _in_dtype_helper
                 + (
                     _record.dtype_c(
-                        _sid, record_dtype, _record.fields(m, doc_blocks)
+                        _sid,
+                        record_dtype,
+                        _record.fields(m, doc_blocks, records),
                     )
                     if (borrow and record_dtype)
                     else ""

@@ -301,6 +301,49 @@ def _record_flags(entry: dict) -> list[str]:
     return parts
 
 
+def _record_decl_flags(rec: dict) -> list[str]:
+    """CLI flags reconstructing one ``[[<obj>.records]]`` declaration.
+
+    gh-1407. The peer of :func:`_record_flags`, which spells the record keys
+    a METHOD carries; this one spells the declaration those keys point at.
+
+    >>> _record_decl_flags({"name": "iq16_t",
+    ...                     "fields": [{"name": "i", "type": "int16_t"}]})
+    ['    --field i:int16_t \\\\\\n']
+    >>> _record_decl_flags({"name": "r", "fields": [], "doc": "Rows."})
+    ['    --doc Rows. \\\\\\n']
+    """
+    parts = [
+        _flag("--field", f"{f['name']}:{f['type']}")
+        for f in rec.get("fields", []) or []
+    ]
+    if rec.get("doc"):
+        parts.append(_flag("--doc", str(rec["doc"])))
+    return parts
+
+
+def _record_notes(rec: dict) -> list[str]:
+    """Comment lines for record keys `jm record` cannot spell (gh-1407).
+
+    ``--field`` takes ``name:type`` and nothing more (`_recorddecl.parse_field`
+    refuses a second colon), so a column's ``doc =`` has no flag. Same rule as
+    :func:`_method_notes`: where the CLI cannot express a manifest key, say so
+    rather than replay a lie.
+    """
+    out: list[str] = []
+    for f in rec.get("fields", []) or []:
+        if f.get("doc"):
+            out.append(
+                f"# NOTE: record '{rec.get('name')}' field '{f['name']}'"
+                " carries a doc,\n"
+            )
+            out.append(
+                "#       which `--field name:type` cannot spell. Re-add it"
+                " to just-makeit.toml\n#       after replaying.\n"
+            )
+    return out
+
+
 def _method_notes(m: dict) -> list[str]:
     """Comment lines for manifest keys `jm method` cannot spell (gh-1021).
 
@@ -737,6 +780,25 @@ def run(root: Path) -> None:
         all_comps += [
             c for c in C.module_objects(cfg, mod) if c not in templated
         ]
+
+    # ── records ───────────────────────────────────────────────────────────────
+    # gh-1407: BEFORE the methods, because a method referencing a declared
+    # record is refused until it exists -- `--arg-type 'iq16_t[]'` and
+    # `--record-dtype iq16_t` both consult the declaration. Emitting these
+    # after the methods, or not at all, is a script that dies on replay.
+    record_lines: list[str] = []
+    for comp in all_comps:
+        for rec in C.records(cfg, comp):
+            record_lines.extend(_record_notes(rec))
+            record_lines.append(
+                _render_cmd(
+                    ["just-makeit", "record", comp, str(rec["name"])],
+                    _record_decl_flags(rec),
+                )
+            )
+    if record_lines:
+        lines += record_lines
+        lines.append("\n")
 
     method_lines: list[str] = []
     for comp in all_comps:
