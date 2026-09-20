@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Added
+
+- **`make gates-index` — the obligations this repo's gates enforce**, printed
+    from the gates themselves. A gate teaches at the moment it fires, and by
+    then the work is done; this is the same list up front, and the
+    SessionStart hook prints it at turn zero.
+
+    Each gate declares its own rule in one line where it lives (`GATE:` in a
+    module docstring, or a `# GATE:` comment above a make target, since
+    `changelog-check` is not a pytest). `make gates-declared-check` hangs off
+    `lint` and refuses to let the set shrink.
+
+    **Which files may declare one is not derivable**, and that was measured
+    rather than assumed: the "scans the repo" tell picks 109 files loosely
+    and 14 tightly, and those 14 miss four of the five gates that actually
+    caught a real omission. Under-selection drops a rule silently, which is
+    the one failure a turn-zero index cannot have — so a human declares and
+    a ratchet holds the floor.
+
 ## [0.80.0] — 2026-09-20
 
 ### Added

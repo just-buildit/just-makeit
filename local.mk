@@ -39,6 +39,7 @@ start-here: ## Start here: where the answers live, and what you still need
 	@echo "    vendored, never edited here; usage and the full contract:"
 	@echo "    https://github.com/just-buildit/just-buildit.github.io#using-standardmk"
 	@echo ""
+	@$(MAKE) -s gates-index
 	@echo "  Readiness"
 	@hook=$$(git rev-parse --git-path hooks/pre-commit 2>/dev/null); \
 	 if [ -n "$$hook" ] && [ -f "$$hook" ]; then \
