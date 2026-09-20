@@ -30,6 +30,28 @@
     that param must be **last**, since an optional parameter cannot precede a
     required one.
 
+    A borrow records its count **unconditionally** — the store follows the
+    borrow, not the release. Keyed on the release it was declaration-order
+    dependent: a borrow rendered before anything released it never learned to
+    record, and a sacred fragment only gains *missing* members, so declaring
+    the release afterwards left the field read twice, zeroed twice and
+    written never. Every `wait(n); consume()` then raised at runtime from a
+    project whose every command printed `Done!`. One store per lend removes
+    the state rather than detecting it.
+
+### Fixed
+
+- **A message slot on an `expr` property inlines it** (gh-1426). The
+    placeholder resolver assumed every property was getter-backed, but an
+    `expr` property has no `<comp>_get_<name>` symbol at all — its getset
+    inlines the author's expression — so `{capacity}` emitted a call to a
+    function that does not exist. A compile error rather than a wrong answer,
+    but a header-only component over someone else's struct is exactly where
+    `expr` properties live, so it was the common case for the feature rather
+    than a corner. Now rendered the way the getset renders it, and the
+    supported backings are an allow-list: anything else is refused rather
+    than silently given the getter form.
+
 - **A status message can say the number that makes it useful** (gh-1426 C).
     `DP_WAIT_TOO_LARGE` is a caller bug about a specific `n` against a
     specific capacity, and a message carrying neither sent someone to debug

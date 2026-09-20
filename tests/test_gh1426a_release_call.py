@@ -126,11 +126,65 @@ class TestTheCountTravels:
         for b in ("wait", "peek"):
             assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, b)
 
-    def test_no_release_means_no_field(self, tmp_path):
-        """Nobody pays for bookkeeping they did not ask for."""
-        proj = _ring(tmp_path)
+    def test_a_borrow_records_even_before_anything_releases_it(self, tmp_path):
+        """The store follows the BORROW, not the release.
+
+        Gated on the release, declaration order decided the answer: a
+        borrow rendered before anything released it never learned to
+        record, and a sacred fragment only gains MISSING members -- so
+        declaring the release afterwards left a field read twice, zeroed
+        twice and WRITTEN NEVER. Every `wait(n); consume()` then raised at
+        runtime, from a project whose every command printed `Done!`.
+
+        Found by doppler against #1428's head. The order here is the order
+        that was broken: borrow first, release second.
+        """
+        proj = _ring(tmp_path, "wait", "peek")
+        # ...before any release exists, the borrow already records.
         src = (proj / EXT).read_text()
-        assert "_jm_borrowed" not in src
+        assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, "wait")
+        # ...and the DECLARATION is keyed the same way. The two halves are
+        # asserted together because a store without a field is not a wrong
+        # answer, it is a compile error, and a text assertion on either one
+        # alone passes happily while the generated C does not build.
+        assert "size_t _jm_borrowed;" in src
+
+        assert (
+            _release(
+                proj,
+                "consume",
+                "--param",
+                "n:size_t",
+                "--releases",
+                "wait,peek",
+            ).returncode
+            == 0
+        )
+        src = (proj / EXT).read_text()
+        for b in ("wait", "peek"):
+            assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, b)
+        assert "n = self->_jm_borrowed;" in _wrapper(src, "consume")
+
+    def test_an_object_with_no_borrow_has_no_field(self, tmp_path):
+        """One store per lend is the cost; an object that lends none pays
+        nothing."""
+        root = tmp_path / "w"
+        root.mkdir()
+        assert run_cli("new", "q", cwd=root).returncode == 0
+        proj = root / "q"
+        assert (
+            run_cli(
+                "object",
+                "ring",
+                "--no-state",
+                "--no-step",
+                "--init-param",
+                "n:size_t:16",
+                cwd=proj,
+            ).returncode
+            == 0
+        )
+        assert "_jm_borrowed" not in (proj / EXT).read_text()
 
     def test_the_release_resolves_and_clears(self, tmp_path):
         proj = _ring(tmp_path)

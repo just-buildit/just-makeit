@@ -1141,8 +1141,16 @@ def make_methods_ctx(
     # gh-1426 A: the record a release defaults its count from. One field
     # per OBJECT, not per borrow: two borrows share one release, so what
     # is outstanding is 'the last view handed out', whichever lent it.
-    _releases_any = any(_borrow.is_release(_m) for _m in methods)
-    if _releases_any:
+    #
+    # Keyed on having a BORROW, not on something releasing it. Gated on
+    # the release, DECLARATION ORDER decided the answer: a borrow
+    # rendered before anything released it never learned to record, and
+    # a sacred fragment only gains MISSING members -- so declaring the
+    # release afterwards left a field read twice, zeroed twice and
+    # written never, and every `wait(n); consume()` raised at runtime
+    # from a project whose every command printed `Done!`. One store per
+    # lend removes the state rather than detecting it (gh-1426).
+    if any(_borrow.is_borrow(_m) for _m in methods):
         buf_fields.append(
             f"    size_t {_borrow.RELEASE_FIELD};  /* last borrow's count */\n"
         )
@@ -3405,7 +3413,7 @@ def make_methods_ctx(
                     # gh-1426 A: remembered at the ONE place the view is
                     # built, so a release defaults to it without anything
                     # re-deriving the count.
-                    + (_borrow.record_count_c(m) if _releases_any else "")
+                    + _borrow.record_count_c(m)
                     + _borrow_view_c(
                         "_p",
                         _borrow_count_c,

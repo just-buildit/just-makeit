@@ -457,19 +457,50 @@ def _slot_for(ctype: str, expr: str) -> "tuple[str, str] | None":
 def _property_read(prop: dict, component: str) -> str:
     """The C expression reading *prop*, or ``""`` if jm cannot read it here.
 
-    Only the two scalar backings: a plain accessor property reads through the
-    getter jm declared for it, and a ``field`` one reads the struct member.
-    Every other backing (`buf_field`, a codec, a container, a capsule) is a
-    value with no scalar reading, so it is refused by name rather than given
-    an expression that happens to compile.
+    Renders the property the way its own getset does, which is the whole
+    rule: an ``expr`` property INLINES the author's expression and has no
+    ``<comp>_get_<name>`` symbol at all, so assuming every property is
+    getter-backed emitted a call to a function that does not exist. Caught by
+    doppler on the shape the feature is FOR -- a header-only component over
+    someone else's struct is exactly where `expr` properties live, so it was
+    the common case rather than a corner (gh-1426).
+
+    The parentheses around ``expr`` are the getset's, for its reason: the
+    expression is arbitrary author C, and a cast binds tighter than a
+    ternary or a comma, so an unparenthesised one would take the cast on its
+    first operand alone.
+
+    An allow-list, not a blocklist. Every other backing -- a buffer, a codec,
+    a capsule, a container -- is a value with no scalar reading, and a key
+    missing from a blocklist would be silently given the getter form rather
+    than refused (the `_CTOR_OVERRIDE_KEYS` lesson).
+
+    Examples
+    --------
+    >>> _property_read({"name": "capacity", "type": "size_t"}, "ring")
+    'ring_get_capacity(self->handle)'
+    >>> _property_read(
+    ...     {"name": "capacity", "expr": "self->handle->cap"}, "ring")
+    '(self->handle->cap)'
+    >>> _property_read({"name": "buf", "buf_field": "b"}, "ring")
+    ''
     """
-    name = str(prop.get("name", ""))
-    unsupported = ("buf_field", "codec", "capsule", "count_fn", "entry_fn")
-    if any(prop.get(k) for k in unsupported):
+    #: The backing keys a message slot can read. Anything else a property
+    #: may carry describes a value with no scalar reading.
+    readable = ("field", "expr")
+    backing = [
+        k
+        for k, v in prop.items()
+        if v
+        and k not in ("name", "type", "ctype", "doc", "writable", "mutable")
+    ]
+    if any(k not in readable for k in backing):
         return ""
+    if prop.get("expr"):
+        return f"({prop['expr']})"
     if prop.get("field"):
         return f"self->handle->{prop['field']}"
-    return f"{component}_get_{name}(self->handle)"
+    return f"{component}_get_{prop.get('name', '')}(self->handle)"
 
 
 def message_slots(
