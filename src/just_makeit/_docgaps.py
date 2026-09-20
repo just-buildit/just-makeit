@@ -79,7 +79,7 @@ def _module_doc_blocks(root: Path, module: str) -> dict:
     return _load_module_doc_blocks(root, module) or {}
 
 
-def gaps(root: Path, cfg: dict, only: str = "") -> list[DocGap]:
+def gaps(root: Path, cfg: dict) -> list[DocGap]:
     """Every member of *cfg* whose docstring is just its name.
 
     Parameters
@@ -88,8 +88,6 @@ def gaps(root: Path, cfg: dict, only: str = "") -> list[DocGap]:
         The project root, read for each component's sacred header.
     cfg : dict
         The loaded manifest.
-    only : str, optional
-        Restrict to one component. Empty walks them all.
 
     Returns
     -------
@@ -99,8 +97,6 @@ def gaps(root: Path, cfg: dict, only: str = "") -> list[DocGap]:
     """
     out: list[DocGap] = []
     for comp in C.components(cfg):
-        if only and comp != only:
-            continue
         blocks = _doc_blocks(root, comp)
         for prop in C.properties(cfg, comp):
             _, is_stub = property_doc(comp, prop, blocks)
@@ -181,8 +177,6 @@ def gaps(root: Path, cfg: dict, only: str = "") -> list[DocGap]:
                         )
                     )
     for module in C.modules(cfg):
-        if only and module != only:
-            continue
         fn_blocks = _module_doc_blocks(root, module)
         for fn in C.module_functions(cfg, module):
             _, is_stub = function_doc(fn, fn_blocks)
