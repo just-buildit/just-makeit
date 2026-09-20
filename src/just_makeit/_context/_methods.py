@@ -223,17 +223,25 @@ def _hoist_for_nogil(call_expr: str) -> tuple[str, str]:
     return "".join(decls), rewritten
 
 
-def _kernel_call_block(call_expr: str, nogil: bool) -> str:
-    """Emit ``size_t n_out = <call>;`` — GIL-released when *nogil*.
+def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
+    """Emit ``<decl> <var> = <call>;``, with the GIL released when *nogil*.
 
-    With *nogil*, numpy accessors are hoisted above the
-    ``Py_BEGIN_ALLOW_THREADS`` block (see :func:`_hoist_for_nogil`) so the
-    kernel runs lock-free — valid only when the object is not shared across
-    threads concurrently (one object per stream). The caller's realloc /
-    error-raising stays under the GIL, above this block.
+    THE emitter for calling the author's kernel. It was two -- one for the
+    ``size_t n_out`` shape and one for a by-value struct -- and a borrow
+    then grew a THIRD copy inline, which is the one that silently dropped
+    `nogil` (gh-1418): the key was recorded, accepted, and never read, so a
+    blocking ``wait()`` ran with the GIL held and a threaded producer could
+    not make progress. It did not fail; it hung.
+
+    Three callers, one answer, so the next shape cannot forget again.
+
+    With *nogil* the numpy accessors are hoisted above the
+    ``Py_BEGIN_ALLOW_THREADS`` block (:func:`_hoist_for_nogil`) and *var* is
+    declared outside it, so it survives to the code below. Sound only when
+    the object is not shared across threads concurrently.
     """
     if not nogil:
-        return f"    size_t n_out = {call_expr};\n"
+        return f"    {decl} {var} = {call_expr};\n"
     hoist, rewritten = _hoist_for_nogil(call_expr)
     return (
         "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
@@ -241,35 +249,21 @@ def _kernel_call_block(call_expr: str, nogil: bool) -> str:
         "     * object per stream); the kernel touches only this object's\n"
         "     * state/buffers and the caller's input. */\n"
         f"{hoist}"
-        "    size_t n_out;\n"
+        f"    {decl} {var};\n"
         "    Py_BEGIN_ALLOW_THREADS\n"
-        f"    n_out = {rewritten};\n"
+        f"    {var} = {rewritten};\n"
         "    Py_END_ALLOW_THREADS\n"
     )
+
+
+def _kernel_call_block(call_expr: str, nogil: bool) -> str:
+    """``size_t n_out = <call>;`` — the variable-output shape."""
+    return _nogil_call("size_t", "n_out", call_expr, nogil)
 
 
 def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
-    """Emit ``<ret> _r = <call>;`` for a single-record method — GIL-released
-    when *nogil* (gh-261).
-
-    Mirrors :func:`_kernel_call_block` but for a by-value struct return: ``_r``
-    is declared *outside* the ``Py_BEGIN_ALLOW_THREADS`` block so it survives to
-    the ``SET_ITEM`` loop, and numpy accessors in the call are hoisted above the
-    block (the input array stays alive — its ``Py_DECREF`` runs after, under the
-    GIL). Non-nogil reproduces the original single line by line."""
-    if not nogil:
-        return f"    {ret_disp} _r = {call_expr};\n"
-    hoist, rewritten = _hoist_for_nogil(call_expr)
-    return (
-        "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
-        "     * this object is not shared across threads concurrently (one\n"
-        "     * object per stream). */\n"
-        f"{hoist}"
-        f"    {ret_disp} _r;\n"
-        "    Py_BEGIN_ALLOW_THREADS\n"
-        f"    _r = {rewritten};\n"
-        "    Py_END_ALLOW_THREADS\n"
-    )
+    """``<ret> _r = <call>;`` — a single record returned by value (gh-261)."""
+    return _nogil_call(ret_disp, "_r", call_expr, nogil)
 
 
 # ---------------------------------------------------------------------------
@@ -1496,9 +1490,13 @@ def make_methods_ctx(
             # the borrow carries one -- `_pyi_ndarray` then yields
             # `NDArray[Any]`, the same annotation the variable-output record
             # path uses, because a record type is not in `_CTYPE_META`.
+            # gh-1418: `none_on_empty` makes NULL a normal answer, so the
+            # view is optional and the stub must say so -- a caller that
+            # cannot see `| None` writes `peek(n).mean()` and the checker
+            # agrees with them right up until it returns None.
             _ret_ann = _pyi_ndarray(
                 _borrow.element_type(record_dtype, return_type)
-            )
+            ) + (" | None" if none_on_empty else "")
         elif status_return:
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
@@ -3308,10 +3306,20 @@ def make_methods_ctx(
                 # out: a consumer holding a view into a producer's region has
                 # no business writing through it.
                 ret_body = (
-                    f"    {_borrow_elem} *_p ="
-                    f" {c_fn}({call_args_c});\n"
-                    f"{_p_cleanup}"
-                    f"    if (!_p) {{\n"
+                    # gh-1418: through the shared emitter, so `nogil` is
+                    # honoured here as everywhere else. A blocking borrow is
+                    # the shape that NEEDS it -- `wait(n)` sleeps until a
+                    # producer supplies n samples, and with the GIL held a
+                    # Python producer thread can never run, so the program
+                    # hangs rather than failing.
+                    _nogil_call(
+                        f"{_borrow_elem} *",
+                        "_p",
+                        f"{c_fn}({call_args_c})",
+                        nogil,
+                    )
+                    + f"{_p_cleanup}"
+                    + "    if (!_p) {\n"
                     # A NULL borrow ALWAYS raises, declared `error` or not --
                     # there is no count to report and no empty array to hand
                     # back, so `raise_pair_of` supplies the undeclared
@@ -3322,7 +3330,16 @@ def make_methods_ctx(
                     # `(rc=%lld)` and reads an `_rc` this shape does not have
                     # -- a borrow fails by returning NULL, and there is no
                     # code to print. Its docstring draws exactly this line.
-                    + empty_raise_c(*raise_pair_of(m, name), indent=8)
+                    # gh-1418: `none_on_empty` says NULL is a NORMAL answer,
+                    # not a failure -- the non-blocking twin of a blocking
+                    # wait, where "not yet" is what the caller asked about.
+                    # Recorded and dropped before, so a `peek()` that should
+                    # return None raised instead.
+                    + (
+                        "        Py_RETURN_NONE;\n"
+                        if none_on_empty
+                        else empty_raise_c(*raise_pair_of(m, name), indent=8)
+                    )
                     + "    }\n"
                     + _borrow_view_c(
                         "_p",
