@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.79.1] — 2026-09-20
+
 ### Fixed
 
 - **`jm apply` accepts a record reference `jm method` wrote** (gh-1411).
