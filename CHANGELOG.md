@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.82.0] — 2026-09-20
+
 ### Added
 
 - **A borrow's release call can be named** (gh-1426 A). `--borrow` has always
