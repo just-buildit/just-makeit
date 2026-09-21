@@ -148,9 +148,14 @@ class TestTheThreeStates:
         frag_toml.write_text(
             s.replace("[blk]", '[blk]\nfragment = "generated"', 1)
         )
+        # The KEY alone is not a flip -- "about to be adopted" and "adopted
+        # last month" carry the same key. The ownership token an owned
+        # render writes is what says it happened, so apply first.
+        assert run_cli("apply", cwd=proj).returncode == 0
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 0, r.stdout
-        assert "already generated" in r.stdout, r.stdout
+        assert "generated" in r.stdout, r.stdout
+        assert "would flip" not in r.stdout, r.stdout
 
 
 class TestAViewGoesWithItsParent:

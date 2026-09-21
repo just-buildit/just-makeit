@@ -2002,10 +2002,69 @@ _FRAGMENT_FILE_HEADER = """\
  * <<module>>_ext_<<frag_id>>.c — <<Component>> type for the <<module>> module.
  *
  * Included by <<module>>_ext.c (the module aggregator).
- * Hand-patches to this file are preserved across jm commands.
+<<fragment_ownership>>
  * Do NOT compile this file directly — only <<module>>_ext.c is compiled.
  */
 """
+
+#: The line that says what `apply` will do to this file (gh-1448).
+#:
+#: It was one fixed sentence -- "Hand-patches to this file are preserved"
+#: -- rendered into EVERY fragment. Once `fragment = "generated"` exists
+#: that sentence is false for an owned file: apply overwrites it, and a
+#: file promising otherwise costs its reader their work.
+_FRAGMENT_OWNERSHIP = {
+    "sacred": " * Hand-patches to this file are preserved across jm commands.",
+    "generated": (
+        " * jm regenerates this file on every apply; do not edit it.\n"
+        " * Hand-written code belongs in"
+        " <<module>>_ext_<<frag_id>>_extra.c."
+    ),
+}
+
+#: The MACHINE-READ half of an owned fragment's header: one short line,
+#: kept apart from the sentence a person reads.
+#:
+#: It records STATE, which the manifest key alone cannot: "about to be
+#: adopted" and "adopted last month" carry the same key. A file with this
+#: token was produced by an owned render, so a difference from today's
+#: render is jm's own drift and `apply` overwrites it. A file without it
+#: has never been rendered whole under the key -- the first adoption --
+#: and its body may be hand-written, so `apply` guards that transition.
+#:
+#: Why a token and not the sentence: clang-format reflows comments, and
+#: this is the fourth detector today to read formatted C (`_norm_unit`,
+#: the literal collapse and the `out=` guard each broke on GNU layout).
+#: One short line has nothing to reflow.
+#:
+#: Why it NAMES ITS FILE: new objects are made by copying a neighbour's
+#: fragment. A copied owned file carries a token naming the neighbour, so
+#: it reads as un-adopted and the first-adoption guard still applies --
+#: otherwise copy-paste would be a second road around it.
+OWNED_TOKEN_RE = re.compile(r"/\*\s*jm:generated\s+(\S+?)\s*\*/")
+
+
+def owned_token(filename: str) -> str:
+    """The token an owned render writes for *filename*."""
+    return f"/* jm:generated {filename} */"
+
+
+def is_owned_render(text: str, filename: str) -> bool:
+    """True when *text* was produced by an owned render of *filename*.
+
+    A token naming a DIFFERENT file does not count: that is a neighbour's
+    header carried over by copy-paste, not evidence of adoption.
+
+    Examples
+    --------
+    >>> is_owned_render(owned_token("m_ext_a.c") + "\\n", "m_ext_a.c")
+    True
+    >>> is_owned_render(owned_token("m_ext_b.c") + "\\n", "m_ext_a.c")
+    False
+    >>> is_owned_render("/*\\n * m_ext_a.c\\n */\\n", "m_ext_a.c")
+    False
+    """
+    return any(m.group(1) == filename for m in OWNED_TOKEN_RE.finditer(text))
 
 
 def render_module_ext_fragment(comp_ctx: dict) -> str:
@@ -2022,7 +2081,14 @@ def render_module_ext_fragment(comp_ctx: dict) -> str:
         "frag_id": comp_ctx.get("frag_id", comp_ctx["component"]),
         **comp_ctx,
     }
+    _kind = comp_ctx.get("fragment_kind", "sacred")
+    ctx["fragment_ownership"] = render(
+        _FRAGMENT_OWNERSHIP.get(_kind, _FRAGMENT_OWNERSHIP["sacred"]), ctx
+    )
     header = render(_FRAGMENT_FILE_HEADER, ctx)
+    if _kind == "generated":
+        _fname = f"{ctx['module']}_ext_{ctx['frag_id']}.c"
+        header = owned_token(_fname) + "\n" + header
     return header + render(COMPONENT_TYPE_SECTION, ctx)
 
 

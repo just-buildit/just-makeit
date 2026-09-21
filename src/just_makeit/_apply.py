@@ -173,6 +173,14 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # test passes, because they call the emitters with a cfg that HAS the
         # key. Same shape as `destroy` below and gh-542's `no_reset`.
         "process_global": _procglobal.is_process_global(cfg, comp),
+        # gh-1448: manifest-only, for the reason every key above is. Dropped
+        # here, the replayed tree renders every owned fragment SACRED -- the
+        # "Hand-patches are preserved" banner and no ownership token -- and
+        # `_sync_missing` copies that over the owned file. Both sides of a
+        # `status` diff replay the same way, so nothing reported it; the
+        # first version of the flip shipped exactly that, under a test that
+        # checked the body and not the banner.
+        "fragment": C.fragment_kind(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
@@ -1035,42 +1043,74 @@ def _owned_fragments(root: Path, cfg: dict) -> set:
 def _refuse_owned_that_would_lose(
     temp_root: Path, root: Path, owned: set
 ) -> None:
-    """Abort before overwriting an owned fragment that holds a unit the
-    render does not produce (gh-1448).
+    """Guard the FIRST whole render of an owned fragment (gh-1448).
 
-    `adopt` refuses such a flip, but the key is a TOML line and anyone can
-    write it by hand. Without this, doing so DELETES the unit on the next
-    apply, silently -- which is the one outcome the whole read-only half
-    exists to prevent, reachable by editing one line.
+    The key is a TOML line anyone can write, and on its own it cannot tell
+    "about to be adopted" from "adopted last month". The file can: an owned
+    render writes `_render.owned_token`, naming the file.
 
-    The reference is the file already rendered into *temp_root*, so this
-    costs a read rather than a second render.
+    * **Token present** -- steady state. The file came from an owned
+      render, so any difference is jm's own drift (a later release changing
+      a wrapper) and is overwritten. That is what ownership is FOR; a guard
+      here would make an owned fragment un-upgradable, which is the review's
+      first rule as written, and mine too until it was checked against a
+      release that changes a wrapper.
+    * **Token absent** -- first adoption. The body predates the key and may
+      be hand-written, so it is judged by `_adopt.flip_verdict`, THE
+      predicate `adopt --check` uses. Two of them had already drifted:
+      this guard refused only a unit that existed on disk alone, so a
+      hand-keyed `wfm_writer` was rewritten with rc 0 and lost five
+      accepted `sample_type` strings.
+
+    Anything short of `clean` refuses and nothing is written -- one refusal
+    aborts the apply, so a parent and its views are refused as a set.
+    Until `--accept` exists, only a `would flip` fragment can be adopted,
+    which on doppler is 44 of 87 with no way to lose anything.
+
+    The reference is the file already rendered into *temp_root*: a read,
+    not a second render.
     """
-    from . import _docsync
+    from . import _adopt
+    from ._render import is_owned_render
 
-    lost: list = []
+    blocked: list = []
     for rel in sorted(owned):
         dst, src = root / rel, temp_root / rel
         if not (dst.is_file() and src.is_file()):
             continue
-        ud = _docsync.fragment_unit_diff(
-            dst.read_text(encoding="utf-8"),
+        existing = dst.read_text(encoding="utf-8")
+        if is_owned_render(existing, dst.name):
+            continue
+        v = _adopt.flip_verdict(
+            rel.as_posix(),
+            "",
+            existing,
             src.read_text(encoding="utf-8"),
         )
-        if ud.only_here:
-            lost.append((rel.as_posix(), ud.only_here))
-    if not lost:
+        if v.state != "clean":
+            blocked.append(v)
+    if not blocked:
         return
-    lines = ['error: `fragment = "generated"` would delete hand-written code.']
-    for rel, units in lost:
-        lines.append(f"  {rel}")
-        for u in units:
+    lines = [
+        'error: `fragment = "generated"` on a fragment jm has never '
+        "rendered whole,",
+        "  and rendering it now would lose what is below.",
+    ]
+    for v in blocked:
+        lines.append(f"  {v.frag}")
+        for u in v.only_here:
             lines.append(f"    only here: {u}")
+        for u in v.ahead:
+            lines.append(f"    binding ahead: {u}")
+        for u in v.differing:
+            lines.append(f"    differs:   {u}")
     lines += [
         "",
-        "  These units exist in the file and not in jm's render, so",
-        "  rendering it whole loses them. Move them to the `_extra.c`",
-        "  beside the fragment, or drop the key.",
+        "  A unit only here, or a binding ahead of the manifest, would be",
+        "  deleted outright. A unit that DIFFERS may be hand-written: jm",
+        "  cannot tell that from its own older render, so it will not",
+        "  guess. Move hand-written code to the `_extra.c` beside the",
+        "  fragment, or drop the key.",
         "  `just-makeit adopt --check` reports this without writing.",
     ]
     raise SystemExit("\n".join(lines))

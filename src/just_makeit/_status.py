@@ -1573,6 +1573,27 @@ def run(
         )
         print()
 
+    # gh-1448 review, edge 3: a fragment whose header says jm regenerates it,
+    # for an object that no longer declares `fragment = "generated"`. Apply
+    # leaves it alone, so the header is false -- the "Hand-patches are
+    # preserved" lie mirrored. Reported rather than gated: it is a claim to
+    # correct, not drift between the manifest and the tree.
+    from . import _adopt as _adopt_mod
+
+    _stale_tok = _adopt_mod.stale_tokens(root, cfg)
+    if _stale_tok:
+        print(
+            f"TOKEN WITHOUT KEY ({len(_stale_tok)}) — these say jm "
+            "regenerates them, and it does not:"
+        )
+        for _p in _stale_tok:
+            print(f"  ! {_p}")
+        print(
+            '  Their object no longer declares `fragment = "generated"`.\n'
+            "  Restore the key, or delete the file and re-run `jm apply`."
+        )
+        print()
+
     # gh-806: advisory, and printed beside the orphans because they are the
     # same discovery from opposite ends — one target covers nothing because
     # its content moved, the other because it never had any.

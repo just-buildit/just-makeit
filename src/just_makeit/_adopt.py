@@ -69,6 +69,8 @@ class Verdict(NamedTuple):
 
 
 #: The states in which a fragment cannot flip unattended, WORST FIRST.
+#: `stale_token` leads: it is not a flip that might lose something, it is a
+#: file already saying something false about what apply will do to it.
 #:
 #: Order is the whole of it: an object is reported by the worst verdict
 #: among its fragments, and a refusal must dominate an acknowledgement. It
@@ -76,7 +78,7 @@ class Verdict(NamedTuple):
 #: fragment refusing, a sibling merely differing -- was reported as
 #: `needs acknowledgement`, telling a maintainer that looking would be
 #: enough when the flip would delete a member (gh-1448 review).
-_BLOCKING = ("refused", "needs_ack")
+_BLOCKING = ("stale_token", "refused", "needs_ack")
 
 
 def binding_ahead(existing: str, reference: str) -> tuple:
@@ -124,6 +126,27 @@ def _verdict(
     return Verdict(frag_rel, obj, "clean", (), (), ())
 
 
+def flip_verdict(frag_rel: str, obj: str, existing: str, reference: str):
+    """Would rendering *reference* over *existing* lose anything?
+
+    THE predicate, shared by `adopt --check` and `apply`'s first-adoption
+    guard. They were two, and had already drifted: `--check` knew about
+    `differing` units and a binding ahead of its manifest, while `apply`
+    refused only a unit that existed on disk alone -- so a hand-keyed
+    `wfm_writer` was rewritten with rc 0, losing five accepted
+    `sample_type` strings (gh-1448 review). One function cannot disagree
+    with itself.
+    """
+    ud = _docsync.fragment_unit_diff(existing, reference)
+    return _verdict(
+        frag_rel,
+        obj,
+        C.FRAGMENT_SACRED,
+        ud,
+        binding_ahead(existing, reference),
+    )
+
+
 def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
     """A `Verdict` for every module fragment, views included.
 
@@ -154,15 +177,28 @@ def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
                 continue
             rel = frag.relative_to(root).as_posix()
             existing = frag.read_text(encoding="utf-8")
-            reference = R.render_module_ext_fragment(ctx)
-            ud = _docsync.fragment_unit_diff(existing, reference)
+            # gh-1448: `generated` is judged by the TOKEN, not the key. A
+            # keyed file that has never been rendered whole has not flipped
+            # -- it is exactly the first adoption `apply` guards -- so it is
+            # evaluated like any other candidate.
+            if R.is_owned_render(existing, frag.name):
+                # Flipped: exit-neutral, so a ratchet's allow-list is
+                # "neither generated nor would flip" and the number it
+                # watches is the one that shrinks.
+                #
+                # Unless the KEY is gone: then the file claims jm
+                # regenerates it and jm does not -- the "Hand-patches are
+                # preserved" lie, mirrored (gh-1448 review, edge 3).
+                state = (
+                    "generated"
+                    if C.fragment_kind(cfg, comp) == C.FRAGMENT_GENERATED
+                    else "stale_token"
+                )
+                out.append(Verdict(rel, comp, state, (), (), ()))
+                continue
             out.append(
-                _verdict(
-                    rel,
-                    comp,
-                    C.fragment_kind(cfg, comp),
-                    ud,
-                    binding_ahead(existing, reference),
+                flip_verdict(
+                    rel, comp, existing, R.render_module_ext_fragment(ctx)
                 )
             )
     return out
@@ -195,15 +231,14 @@ def report(verdicts: list) -> int:
         states = {v.state for v in vs}
         worst = next((s for s in _BLOCKING if s in states), None)
         if worst is None:
-            label = (
-                "already generated"
-                if states == {"generated"}
-                else "would flip"
-            )
+            label = "generated" if states == {"generated"} else "would flip"
             print(f"  {label:20s} {obj}")
             continue
         blocked += 1
-        label = "REFUSES" if worst == "refused" else "needs acknowledgement"
+        label = {
+            "stale_token": "TOKEN WITHOUT KEY",
+            "refused": "REFUSES",
+        }.get(worst, "needs acknowledgement")
         print(f"  {label:20s} {obj}")
         for v in sorted(vs, key=lambda v: v.frag):
             if v.only_here or v.ahead:
@@ -223,6 +258,13 @@ def report(verdicts: list) -> int:
         print("  no module fragments in this project")
     print()
     print(f"  {len(groups) - blocked} of {len(groups)} object(s) could flip")
+    if any(v.state == "stale_token" for v in verdicts):
+        print(
+            "  TOKEN WITHOUT KEY: the file says jm regenerates it, but its\n"
+            '  object no longer declares `fragment = "generated"`, so\n'
+            "  apply leaves it alone. Restore the key, or delete the file\n"
+            "  and re-run `jm apply` to get the sacred header back."
+        )
     if blocked:
         print(
             "  A unit that exists ONLY on disk refuses the flip: the render\n"
@@ -236,3 +278,34 @@ def report(verdicts: list) -> int:
             "  change, which is why it asks rather than guesses."
         )
     return 1 if blocked else 0
+
+
+def stale_tokens(root: Path, cfg: dict) -> list:
+    """Fragments carrying an ownership token their object no longer
+    declares (gh-1448 review, edge 3).
+
+    The file says jm regenerates it; jm does not, because the key is gone.
+    That is the "Hand-patches are preserved" lie mirrored, and it costs the
+    same thing: a reader trusting the header about what apply will do.
+
+    Reads files and compares against the manifest -- no render -- so
+    `status` can ask it on every run.
+    """
+    from ._object import _view_frag_id
+
+    out: list = []
+    for mod in C.modules(cfg):
+        if C.is_no_generate_module(cfg, mod):
+            continue
+        cname = C.module_paths(mod).cname
+        for obj in C.module_objects(cfg, mod):
+            if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
+                continue
+            for fid in [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]:
+                name = f"{cname}_ext_{fid}.c"
+                f = root / "native" / "src" / cname / name
+                if f.is_file() and R.is_owned_render(
+                    f.read_text(encoding="utf-8"), name
+                ):
+                    out.append(f.relative_to(root).as_posix())
+    return out

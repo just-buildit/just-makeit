@@ -5198,6 +5198,7 @@ def add_component(
     no_step_: bool = False,
     no_reset_: bool = False,
     process_global_: bool = False,
+    fragment_: str = "",
     opaque_state_: bool = False,
     header_only_: bool = False,
     core_family_: "CoreFamily | None" = None,
@@ -5254,6 +5255,10 @@ def add_component(
         entry["no_reset"] = "true"
     if process_global_:
         entry["process_global"] = "true"
+    # gh-1448: written only when it changes something, like the
+    # opt-in group above -- an absent key IS "sacred".
+    if fragment_ == FRAGMENT_GENERATED:
+        entry["fragment"] = FRAGMENT_GENERATED
     if opaque_state_:
         entry["opaque_state"] = "true"
     if header_only_:
