@@ -181,7 +181,13 @@ JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
 #                   these need `just-makeit` itself importable from the project
 #                   env (just-buildit arrives transitively as its build dep), so
 #                   its runtime deps arrive with it.
-PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy
+# pyyaml: gh-851's pre-publish artifact gate READS `.github/workflows/`,
+# and skipped itself without it -- one of the green skips gh-1442 turned
+# up. It belongs here rather than in the dev group: this is test
+# infrastructure like pytest and numpy, not a formatter whose exact
+# version has to agree byte-for-byte across machines.
+PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
+                  --with pyyaml
 PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
                   --with just-buildit
 PYTEST          = $(PYTEST_ISOLATED) pytest
@@ -206,7 +212,34 @@ PYTEST_PARALLEL = -n auto --dist load
 # the two cannot come to disagree about what "the examples" are. Measured
 # cost of including it: 70 statements, with the reported percentage unchanged
 # at 90% either way.
-EXAMPLES_IGNORE = --ignore=tests/test_examples.py
+# Tests that need the PROJECT env, not the isolated one.
+#
+# `PYTEST` runs `uv run --no-project` deliberately, so the suite exercises
+# the installed-package path. The cost was never written down: every
+# `skipif` asking the LIVE ENVIRONMENT a question gets the ISOLATED env's
+# answer. A test gated on a dev-group tool -- mypy, ruff, clang-format,
+# cmake-lint -- therefore skips in CI and RUNS for a developer whose venv
+# is activated, which is the worst way round. 31 tests in the five files
+# below were inert on every CI run and green on every laptop (gh-1442).
+#
+# `PYTEST_EXAMPLES` is already `--no-project`-free, so they belong on it.
+#
+# ONE list, driving both the ignore and the run. The comment above used to
+# claim that and was not true: `TEST_EXAMPLES_CMD` named the file a second
+# time, so "the examples" was already two declarations that nothing held
+# equal.
+PROJECT_ENV_TESTS = tests/test_examples.py \
+                    tests/test_stub_conformance.py \
+                    tests/test_gh746_py_format_command.py \
+                    tests/test_gh746_formatter_fixed_point.py \
+                    tests/test_gh758_format_convergence.py \
+                    tests/test_cmake_lint.py \
+                    tests/test_c_style.py \
+                    tests/test_gh745_c_format_command.py \
+                    tests/test_gh958_c_style_is_outcome_neutral.py \
+                    tests/test_gh1219_impl_marker_wraps.py
+
+EXAMPLES_IGNORE = $(addprefix --ignore=,$(PROJECT_ENV_TESTS))
 
 # `test` is the default suite and, in a Python-only repo, IS the Python suite —
 # named once here rather than defined twice.
@@ -217,7 +250,7 @@ TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
 # some examples -- the Windows CI job deselects the two that need a doppler
 # build, which doppler does not publish for Windows (gh-1368). Empty = all.
 EXAMPLES_K        ?=
-TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) tests/test_examples.py -v \
+TEST_EXAMPLES_CMD = $(PYTEST_EXAMPLES) $(PROJECT_ENV_TESTS) -v \
                     $(if $(EXAMPLES_K),-k "$(EXAMPLES_K)")
 
 TEST_ALL_DEPS = test test-examples

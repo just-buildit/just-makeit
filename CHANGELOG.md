@@ -54,6 +54,47 @@
     Found by running a downstream's own lint over every example's generated
     tree, which is what gh-1443 exists to make a gate.
 
+- **31 tests that never ran in CI now run there** (gh-1442). `make test`
+    invokes pytest through `uv run --no-project`, deliberately, so the suite
+    exercises the installed-package path. The cost was never written down:
+    every `skipif` that asks the *live environment* a question gets the
+    isolated environment's answer. A test gated on a dev-group tool — mypy,
+    ruff, clang-format, cmake-lint — therefore skipped in CI and *ran* for
+    any developer with an activated venv, which is the worst way round.
+
+    Measured: 41 skips on CI against 7 on a laptop, same target, same
+    command. Among the casualties were the gh-746 gates holding generated
+    Python to the column target against ruff itself, and all 23
+    stub-conformance tests, which compile generated code and check the stub
+    against it.
+
+    The affected files move to the `PYTEST_EXAMPLES` path, which is
+    already `--no-project`-free by design. Four of them were gated on
+    `clang-format` and skipped only on **macOS** — on Linux they ran
+    against whatever clang-format the runner image happened to ship,
+    rather than the pinned one, which is the version skew
+    `[dependency-groups]` exists to prevent. The move fixes both: they
+    run everywhere, against the pin. One list drives both the ignore and the
+    run — the comment claiming that was already untrue, since the filename
+    was named a second time in `TEST_EXAMPLES_CMD`.
+
+    The `test` job also fetches tags now. Two gates ask git what has been
+    released, and a tagless clone turned both into a green skip — including
+    `test_every_tagged_release_has_a_section`, a **declared gate of this
+    repo** that had never once run in CI.
+
+- **A skip the suite has not agreed to fails the run** (gh-1442). A skip
+    reports the same green as a pass, which is how a check stops running
+    without anyone noticing. `tests/conftest.py` now carries an explicit
+    allow-list, and anything else fails and names the test and its reason.
+
+    An allow-list rather than a count: a count only says *something*
+    changed, and it drifts every time a test is added. The line it draws is
+    not "environmental" but **whether a maintainer could fix it** — AVX-512
+    is absent because the host lacks the silicon, ruff is absent because
+    nobody put it on PATH, and only the second is a gate that is not
+    running.
+
 ## [0.82.3] — 2026-09-21
 
 ### Fixed

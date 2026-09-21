@@ -327,3 +327,78 @@ def pytest_collection_modifyitems(session, config, items):
 # assert on signatures too and cannot import from `tests/`, so the one
 # implementation lives in the package beside the reflow it inverts.
 from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401
+
+
+# ── the skip gate (gh-1442) ──────────────────────────────────────────────────
+#
+# 31 tests in five files were SKIPPED on every CI run and RUN on every
+# developer laptop. `PYTEST` uses `uv run --no-project`, so a `skipif` asking
+# the live environment about a dev-group tool got the isolated env's answer --
+# while an activated `.venv` leaks PATH and imports, so the same command gave
+# the opposite answer locally. Among the casualties: the gh-746 gates holding
+# generated Python to the column target against ruff itself, and the 23
+# stub-conformance tests that compile generated code.
+#
+# They are on the `PYTEST_EXAMPLES` path now. This is what keeps them there.
+#
+# An ALLOW-LIST rather than a count: a count says "something changed" and
+# makes you go find out what, and it drifts every time a test is added. This
+# names what the suite accepts, so a new skip is a reviewable diff and
+# everything else is a failure.
+#
+# The line is not "environmental" -- it is whether a MAINTAINER COULD FIX IT.
+# AVX-512 is absent because the host lacks the silicon; ruff is absent because
+# nobody put it on PATH. The second is a gate that is not running.
+_ALLOWED_SKIPS = (
+    # A ratchet with nothing left to hold. It shrinks to empty by design.
+    "got empty parameter set",
+    # Hardware. No install fixes this.
+    "AVX-512 not available",
+    # A different linker, not a missing one: macOS is Apple ld, and the
+    # test asserts a GNU ld/lld flag SPELLING. No install changes which
+    # linker the platform has.
+    "GNU ld/lld flag spelling",
+    # test_gh1374's own subject: it must contain the spelling it hunts for.
+    "names the pattern in order to detect it",
+    "allow-listed:",
+)
+
+
+def _skip_reason(report) -> str:
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) == 3:
+        return str(longrepr[2])
+    return str(longrepr or "")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run on any skip the suite has not agreed to.
+
+    A skip reports the same green as a pass, which is how a check stops
+    running without anyone noticing -- for months, in the case this gate
+    was written for.
+    """
+    if hasattr(session.config, "workerinput"):
+        return  # an xdist worker; the controller has the aggregate
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    if tr is None:
+        return
+    unexpected = [
+        (r.nodeid, _skip_reason(r))
+        for r in tr.stats.get("skipped", [])
+        if not any(a in _skip_reason(r) for a in _ALLOWED_SKIPS)
+    ]
+    if not unexpected:
+        return
+    print("\nERROR: skips this suite has not agreed to:\n")
+    for nodeid, reason in sorted(set(unexpected)):
+        print(f"  {nodeid}\n      {reason}")
+    print(
+        "\nA skip reports the same green as a pass. If the tool is one a\n"
+        "maintainer can install, the test belongs on the PROJECT_ENV_TESTS\n"
+        "path (Makefile) where the dev group is visible -- not behind a\n"
+        "skipif. If the skip is genuinely unfixable (hardware, an empty\n"
+        "ratchet), add it to _ALLOWED_SKIPS in tests/conftest.py with the\n"
+        "reason why.\n"
+    )
+    session.exitstatus = 1
