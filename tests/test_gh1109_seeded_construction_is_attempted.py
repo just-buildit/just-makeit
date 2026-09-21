@@ -38,6 +38,13 @@ from _jmrun import JmRun, run_cli
 
 _SUMMARY = re.compile(r"^=+ (.*?) =+$", re.M)
 _COUNT = re.compile(r"(\d+) (passed|skipped|failed|error|errors)")
+#: An SGR escape, e.g. `\x1b[32m`. Stripped before `_SUMMARY` anchors
+#: (gh-1456): under FORCE_COLOR the child pytest's summary line STARTS with
+#: `\x1b[32m` and ENDS with `\x1b[0m`, so `^=+ ... =+$` matched no line,
+#: every count came back 0, and a child reporting `8 passed` read as none.
+#: `_COUNT` alone would have survived -- the escapes never split a number
+#: from its word -- so the failure was the anchor, not the count.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _pytest_counts(stdout: str) -> "dict[str, int]":
@@ -48,7 +55,7 @@ def _pytest_counts(stdout: str) -> "dict[str, int]":
     output contains ``0 tests failed out of 1``, so a plain
     ``"failed" not in stdout`` is true of no run that has ever happened.
     """
-    lines = _SUMMARY.findall(stdout)
+    lines = _SUMMARY.findall(_ANSI.sub("", stdout))
     body = lines[-1] if lines else ""
     return {kind: int(n) for n, kind in _COUNT.findall(body)}
 
@@ -179,3 +186,26 @@ class TestAgainstARealExtension:
         counts = _pytest_counts(out.stdout)
         assert counts.get("skipped", 0) > 0, out.stdout
         assert counts.get("failed", 0) == 0, out.stdout
+
+
+class TestTheSummaryParserIgnoresColour:
+    """gh-1456: a developer's `FORCE_COLOR` made this file fail while the
+    project it checks was green.
+
+    Asserted on the parser directly, with the exact bytes pytest emits
+    under `FORCE_COLOR`, so it does not depend on the environment the suite
+    happens to run in -- which is how it hid: CI sets no colour, so CI was
+    green throughout.
+    """
+
+    COLOURED = (
+        "\x1b[32m============================== \x1b[32m\x1b[1m8 passed"
+        "\x1b[0m\x1b[32m in 0.06s\x1b[0m\x1b[32m ===============================\x1b[0m\n"
+    )
+
+    def test_a_coloured_summary_is_counted(self):
+        assert _pytest_counts(self.COLOURED) == {"passed": 8}
+
+    def test_a_plain_summary_still_is(self):
+        plain = "=========== 3 passed, 1 skipped in 0.1s ===========\n"
+        assert _pytest_counts(plain) == {"passed": 3, "skipped": 1}
