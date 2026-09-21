@@ -1021,6 +1021,63 @@ def _raises(code: str) -> bool:
     )
 
 
+#: Constructs a DECLARED FEATURE puts in a wrapper, which the three axes
+#: above cannot see: `status_errors`, `strict` and `releases` all leave the
+#: METH flags, the PyArg format and the return shape identical while
+#: changing what the binding does (gh-1432).
+#:
+#: Measured: adding a `status_errors` row to the manifest and re-applying
+#: printed "Project already matches just-makeit.toml — nothing to do", the
+#: binding kept none of it, and `jm status --check` exited 0.
+#:
+#: Same rule as `_RETURN_SHAPE_MARKERS` -- presence of a construct, so a
+#: hand-written wrapper implementing the same feature carries the same
+#: marker and never reads as drift.
+_FEATURE_MARKERS = {
+    # gh-1426 A: the record a release defaults its count from.
+    "borrow-release": ("_jm_borrowed",),
+    # gh-1426 B: a strict input is refused rather than converted, and the
+    # contiguity test is the spelling no coercing wrapper has.
+    "strict-input": ("PyArray_IS_C_CONTIGUOUS",),
+}
+
+#: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
+#: labels, so comparing the set catches a row added, removed or renamed --
+#: and they are identifiers in code, not text in a string, so the mask
+#: below does not erase them and an author's wording never enters it.
+_CASE_LABEL_RE = re.compile(r"\bcase\s+([A-Za-z_]\w*)\s*:")
+
+
+def _method_feature_symbols(text: str) -> dict:
+    """Map each ``PyMethodDef`` name to the declared-feature markers it has.
+
+    The fourth axis, and the reason it exists is the three above: a
+    `status_errors` row, a `strict` flag or a `releases` list changes the
+    generated body while leaving the calling convention, the PyArg format
+    and the return shape untouched. So a manifest edit after first render
+    was silently absent from a sacred fragment -- `apply` said the project
+    already matched, and `status --check` agreed (gh-1432).
+
+    Strings and comments are masked, deliberately: a message edited in the
+    manifest is not reported here. That is a real limit and a stated one --
+    an author may legitimately word a hand-written raise differently, and
+    the false positive would be on correct code. Adding or removing a
+    message SLOT does move the raise axis, since it swaps
+    ``PyErr_SetString`` for ``PyErr_Format``.
+    """
+    out: dict = {}
+    for name, (body, _span) in _row_bodies(text).items():
+        code = _code_mask(body) if body else ""
+        found = {
+            label
+            for label, spellings in _FEATURE_MARKERS.items()
+            if any(sp in code for sp in spellings)
+        }
+        found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        out[name] = frozenset(found)
+    return out
+
+
 def _method_return_shapes(text: str) -> dict:
     """Map each ``PyMethodDef`` name to the return-shape markers it exhibits.
 
@@ -1091,6 +1148,28 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
             continue
         want = ", ".join(sorted(missing))
         note = f"{n}: the manifest's result shape needs {want}, absent here"
+        details[n] = f"{details[n]}; {note}" if n in details else note
+
+    # gh-1432: the fourth axis. `status_errors`, `strict` and `releases`
+    # change the body and NOTHING above -- same METH flags, same PyArg
+    # format, same return shape -- so a manifest edit after first render
+    # was silently absent from the fragment while `apply` reported the
+    # project already matched and `status --check` exited 0.
+    #
+    # Same direction as the two above, for the same reason: what the
+    # reference declares and the fragment lacks is a change not received;
+    # the converse is the author's body doing more, which is the point of
+    # a sacred fragment.
+    ex_feat = _method_feature_symbols(existing)
+    ref_feat = _method_feature_symbols(reference)
+    for n, markers in ref_feat.items():
+        missing = markers - ex_feat.get(n, frozenset())
+        if not missing:
+            continue
+        want = ", ".join(
+            m[5:] if m.startswith("case:") else m for m in sorted(missing)
+        )
+        note = f"{n}: the manifest declares {want}, absent here"
         details[n] = f"{details[n]}; {note}" if n in details else note
     return details
 

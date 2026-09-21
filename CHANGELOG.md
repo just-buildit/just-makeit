@@ -20,6 +20,31 @@
     workaround was to exclude the file from ruff entirely, which switched
     off the lint that had just caught an `F821` in it.
 
+- **A declared feature edited after first render is reported** (gh-1432). A
+    sacred `*_ext_<obj>.c` fragment only ever *gains* members, so a changed
+    member stays as written while the `.pyi` moves — and `_docsync` reports
+    that on three axes: the METH flags, the PyArg format, and the return
+    shape. `status_errors`, `strict` and `releases` move **none** of them:
+    same calling convention, same format, same thing comes back, different
+    body.
+
+    So a manifest edit after first render was silently absent from the
+    binding while `apply` printed *"Project already matches"* and
+    `jm status --check` exited 0. Found by doppler sabotaging its own suite
+    to prove the tests could fail — removing a `status_errors` row and
+    re-applying left everything green.
+
+    The fourth axis has the same shape as the third — presence of a
+    construct, compared in the same direction — so a hand-written wrapper
+    implementing the feature carries the marker and never reads as drift.
+    The report names what is missing (`wait: the manifest declares C, absent   here`) rather than saying something changed.
+
+    A message edited in the manifest is deliberately **not** reported:
+    strings are masked, because an author may word a hand-written raise
+    differently and the false positive would be on correct code. Adding or
+    removing a message *slot* does move the raise axis, since it swaps
+    `PyErr_SetString` for `PyErr_Format`.
+
 ## [0.82.1] — 2026-09-21
 
 ### Fixed
