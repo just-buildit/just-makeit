@@ -133,7 +133,15 @@ jobs:
             python-version: "3.9"
 
     steps:
+      # `fetch-tags` because two gates ask git what has been RELEASED, and a
+      # tagless clone turns both into a skip that reports green:
+      # `test_every_tagged_release_has_a_section` -- a DECLARED gate of this
+      # repo -- and `test_release_bump_fast_path`. Neither had ever run here
+      # (gh-1442). The suite's skip gate now fails on both, so this is what
+      # keeps it passing for the right reason rather than by exemption.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-tags: true
 
       - uses: astral-sh/setup-uv@v9.0.0
         with:
@@ -292,7 +300,14 @@ jobs:
       # nco_tone and kitchen_sink link doppler, which publishes no Windows
       # build; tracked in #1377.
       - name: Run example tests
+        # PROJECT_ENV_TESTS is narrowed to the example builds alone.
+        # gh-1442 moved five tool-gated files onto this path; running
+        # them here would put `mypy.stubtest` against a clang-cl-built
+        # extension, cmake-lint and clang-format convergence on Windows
+        # for the first time, all in the PR that moved them. Deliberately
+        # not bundled -- tracked as a follow-up on gh-1442.
         run: make test-examples EXAMPLES_K="not nco_tone and not kitchen_sink"
+          PROJECT_ENV_TESTS=tests/test_examples.py
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
