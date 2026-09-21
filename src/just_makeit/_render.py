@@ -66,7 +66,36 @@ LIBM_PREAMBLE = _load("cmake/libm.cmake")
 # LIBM_PREAMBLE: a reference without the preamble expands to nothing and
 # silently links no libm at all.
 LIBM_REF = "${JM_MATH_LIBRARY}"
-CMAKE_LISTS_TOP = _load("cmake/CMakeLists_top.cmake")
+#: gh-1452: where the root file needs libm resolved -- after `project()`,
+#: before the combined library links it. An anchor on CODE, not a marker in
+#: a comment: the first version put `#<<libm_preamble>>` in a comment and
+#: cmake-format (a pre-commit hook on this very template) joined it onto the
+#: line above. The `.replace()` then matched nothing, the preamble was never
+#: inserted, and the combined library silently linked no libm at all -- the
+#: fix doing nothing, under a green suite, until a commit reformatted it.
+_TOP_LIBM_ANCHOR = "add_library(<<project_underscore>>_lib SHARED"
+
+
+def _insert_libm_preamble(text: str) -> str:
+    """Put LIBM_PREAMBLE before the combined library, or fail at IMPORT.
+
+    Asserted rather than trusted: an insertion that silently finds nothing
+    is exactly how this shipped broken once. Failing here stops jm from
+    starting, which is the loudest place a template regression can surface.
+    """
+    if text.count(_TOP_LIBM_ANCHOR) != 1:
+        raise RuntimeError(
+            "CMakeLists_top.cmake: expected exactly one "
+            f"{_TOP_LIBM_ANCHOR!r} to anchor the libm preamble on, found "
+            f"{text.count(_TOP_LIBM_ANCHOR)}. A formatter may have reflowed "
+            "it; the combined library would otherwise link no libm (gh-1452)."
+        )
+    return text.replace(
+        _TOP_LIBM_ANCHOR, LIBM_PREAMBLE + "\n" + _TOP_LIBM_ANCHOR, 1
+    )
+
+
+CMAKE_LISTS_TOP = _insert_libm_preamble(_load("cmake/CMakeLists_top.cmake"))
 CMAKE_LISTS_MODULE = (
     LIBM_PREAMBLE + "\n" + _load("cmake/CMakeLists_module.cmake")
 )
