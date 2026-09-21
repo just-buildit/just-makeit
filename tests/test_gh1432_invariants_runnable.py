@@ -37,8 +37,6 @@ from __future__ import annotations
 
 import ast
 import builtins
-import subprocess
-import sys
 from pathlib import Path
 
 from _jmrun import run_cli
@@ -240,39 +238,47 @@ class TestItIsFormatterClean:
         proj = _project(tmp_path, real_kernels=True)
         assert _invariants(proj) in _pyfmt.generated_py_files(proj)
 
-    def test_the_linter_has_nothing_to_say_either(self, tmp_path):
-        """Formatter-clean is not enough: `ruff check --fix` also rewrites.
+    def test_one_blank_line_separates_the_imports_from_what_follows(
+        self, tmp_path
+    ):
+        """Formatter-clean is not enough: `ruff check --fix` rewrites too.
 
-        The gh-1432 pass asks only whether `ruff format` would change the
-        file, and `ruff format` accepts one blank line after the import
-        block or two. isort (`I001`) does not -- it wants the two-line gap
-        only before a `def`/`class`, and `_ELEM_DTYPE` is an assignment.
-        So the file rendered format-clean and lint-dirty, `ruff check
-        --fix` rewrote it, and `jm status --check` called jm's own file
-        STALE. doppler kept it in `extend-exclude` for exactly this, which
-        is the workaround #1436 existed to remove -- and excluding the
-        file switches off the lint that caught the `F821`.
+        `ruff format` accepts one blank line after the import block or
+        two; isort (`I001`) wants the two-line gap only before a
+        `def`/`class`, and `_ELEM_DTYPE` is an assignment. So the file
+        rendered format-clean and lint-DIRTY: `ruff check --fix` deleted
+        the line, the committed bytes stopped matching the render, and
+        `jm status --check` called jm's own file STALE. doppler kept it
+        in `extend-exclude` for exactly this -- the workaround #1436
+        existed to remove, and the one that switches off the lint that
+        caught the `F821`.
 
-        `--isolated` on purpose: the answer must not depend on jm's own
-        pyproject or on a downstream's, and `I` and `F` are the two rule
-        families this file has actually been caught by.
+        Asserted structurally rather than by shelling out to ruff. A
+        subprocess here is the wrong oracle twice over: `ruff` is not
+        importable from the interpreter that runs the suite on every CI
+        leg (it is the uv build python, not the dev venv -- measured, and
+        it is what made the first version of this gate red), and guarding
+        that with a `skipif` would leave the check silently disarmed in
+        exactly the environment it has to hold for. The rule is small
+        enough to state outright and then it is armed everywhere.
         """
         proj = _project(tmp_path, real_kernels=True)
-        r = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "ruff",
-                "check",
-                "--isolated",
-                "--select",
-                "I,F",
-                str(_invariants(proj)),
-            ],
-            capture_output=True,
-            text=True,
+        lines = _invariants(proj).read_text().split("\n")
+        last_import = max(
+            n
+            for n, ln in enumerate(lines)
+            if ln.startswith(("import ", "from "))
         )
-        assert r.returncode == 0, r.stdout + r.stderr
+        after = next(
+            n for n in range(last_import + 1, len(lines)) if lines[n].strip()
+        )
+        blanks = after - last_import - 1
+        follows_def = lines[after].startswith(("def ", "class ", "@"))
+        want = 2 if follows_def else 1
+        assert blanks == want, (
+            f"{blanks} blank line(s) after the import block before "
+            f"{lines[after]!r}; isort wants {want}"
+        )
 
 
 class TestItSaysWhatItCanFromDayOne:

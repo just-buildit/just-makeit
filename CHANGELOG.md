@@ -43,10 +43,11 @@
     file switches off the lint that caught its `F821`.
 
     One stray element in one branch: the `pytestmark` branch replaces the
-    same trailing blank and already got this right. The gate now runs the
-    **linter** over the rendered file, not only the formatter — `--isolated`,
-    so the answer does not depend on jm's pyproject or a downstream's.
-
+    same trailing blank and already got this right. The gate asserts the
+    rule directly rather than shelling out to ruff — `ruff` is not
+    importable from the interpreter that runs the suite on every CI leg,
+    and a `skipif` guarding that would leave the check disarmed in exactly
+    the environment it has to hold for.
 
 ## [0.82.2] — 2026-09-21
 
