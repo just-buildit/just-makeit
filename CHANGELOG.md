@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.83.0] — 2026-09-21
+
 ### Added
 
 - **`just-makeit adopt --check`** (gh-1448). A standalone object's
