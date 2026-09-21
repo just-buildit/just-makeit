@@ -1044,8 +1044,19 @@ def _raises(code: str) -> bool:
 #: macro at a narrow column, and a literal that stopped matching would
 #: hand the `out=` guard's contiguity test straight back to `strict-input`
 #: -- the exact misattribution this exists to end.
+#: `\s*` after the macro NAME as well as inside the parens. GNU style --
+#: which is what `c_style = "clang-format"` gives doppler -- writes
+#: `PyArray_IS_C_CONTIGUOUS (` with a space, and the first version of this
+#: pattern allowed whitespace everywhere EXCEPT there. Every fragment in a
+#: GNU-formatted project then read as missing the guard it visibly
+#: contains: 76 warnings on doppler, 74 of them false (gh-1448 review).
+#:
+#: The rewrap test that was supposed to cover this wrapped AFTER the open
+#: paren, because that is the shape I imagined rather than the one a
+#: formatter produces.
 _OUT_CONTIG_RE = re.compile(
-    r"PyArray_IS_C_CONTIGUOUS\(\s*\(\s*PyArrayObject\s*\*\s*\)\s*out_obj\s*\)"
+    r"PyArray_IS_C_CONTIGUOUS\s*\(\s*\(\s*PyArrayObject\s*\*\s*\)"
+    r"\s*out_obj\s*\)"
 )
 
 
