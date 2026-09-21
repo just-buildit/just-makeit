@@ -155,6 +155,7 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # the signature; empty otherwise, so an object without one renders
         # byte-identical. make_state_ctx overwrites it.
         "pyi_os_import": "",
+        "pyi_any_typing": "",
         "pyi_object_imports": "",
         # gh-644: the runtime class docstring. Seeded here -- the one place
         # every component render path passes through -- with the fixed text

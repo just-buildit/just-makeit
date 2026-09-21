@@ -365,4 +365,4 @@ def test_a_project_without_a_record_is_unchanged(tmp_path):
     apply_run(root)
     pyi = (root / "src/plain/widget.pyi").read_text(encoding="utf-8")
     assert "tuple[" not in pyi
-    assert pyi.startswith("from typing import Any, final")
+    assert pyi.startswith("from typing import final")

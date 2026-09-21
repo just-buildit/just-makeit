@@ -2590,6 +2590,7 @@ def make_state_ctx(
             "getter_setter_pymethoddef": "",
             "init_params_pyi": "",
             "pyi_os_import": "",
+            "pyi_any_typing": "",
             "pyi_object_imports": "",
             "pyi_param_docs": "    (none)",
             "pyi_examples": "",
@@ -3403,6 +3404,7 @@ def make_state_ctx(
         # type only), so the default is empty; the init_params branch below
         # overrides it via _CTOR_OVERRIDE_KEYS when one is declared.
         "pyi_os_import": "",
+        "pyi_any_typing": "",
         "pyi_object_imports": "",
         "pyi_param_docs": pyi_param_docs,
         "pyi_examples": pyi_examples,

@@ -2488,34 +2488,37 @@ def _fn_stub(fn: dict, block=None) -> str:
 # ── numpy import decision ─────────────────────────────────────────────────────
 
 
-def _uses_any(cfg: dict, module: str) -> bool:
-    """True if any object in this module needs ``Any`` in its stub.
+#: A ``"""..."""`` block. Stripped before asking whether the body uses a
+#: name, so a name that appears only in prose does not pull in an import
+#: that ruff would then call unused -- the opposite failure, on the same
+#: line of code.
+_DOCSTRING_RE = _re.compile(r'"""(?:.|\n)*?"""')
 
-    Two sources: a varargs/manual_stub method (gh-428), which renders as
-    ``(*args: Any, **kwargs: Any) -> Any``; and (gh-543) a container property
-    whose ``value_type`` is ``object``, which renders as ``dict[str, Any]`` /
-    ``list[Any]`` / ``tuple[Any, ...]`` because the core -- not jm -- decides
-    each value's Python type.
 
-    View properties are scanned alongside the object's own, mirroring
-    ``_uses_literal``: a container declared only on a view still lands in this
-    module's stub, and missing it would emit an undefined ``Any``.
+def _uses_any(body: str) -> bool:
+    """True if the rendered stub *body* needs ``Any`` (gh-1443).
+
+    **Asked of the rendered text, not of the declarations**, for the reason
+    `_uses_os` gives one screen down -- and here the argument is stronger
+    than "a list of surfaces goes stale". ``Any`` is the FALLBACK of both
+    type maps::
+
+        _CTYPE_TO_PY.get(ctype, "Any")
+        _CTYPE_TO_NP.get(elem, "Any")
+
+    so every C type jm does not know renders it. The set of surfaces that
+    can produce ``Any`` is therefore unbounded by construction, and no
+    enumeration of them can ever be complete.
+
+    It enumerated two -- a varargs/manual_stub method (gh-428) and an
+    ``object``-valued container property (gh-543) -- and missed the third:
+    a method over a record element annotates ``NDArray[Any]``, which is
+    doppler's ring. The stub imported ``final`` and not ``Any``, so
+    ``rings.pyi`` referenced an undefined name twice and mypy rejected it.
+    Both older sources render ``Any`` into the body too, so reading the
+    text subsumes them rather than joining them.
     """
-    for obj in C.module_objects(cfg, module):
-        for m in C.methods(cfg, obj):
-            if m.get("varargs") or m.get("manual_stub"):
-                return True
-        props = list(C.properties(cfg, obj))
-        for v in C.views(cfg, obj):
-            props += C.view_properties(v)
-        for prop in props:
-            if (
-                T.is_container_type(prop.get("type", ""))
-                and (prop.get("value_type") or T.OBJECT_VALUE_TYPE)
-                == T.OBJECT_VALUE_TYPE
-            ):
-                return True
-    return False
+    return bool(_re.search(r"\bAny\b", _DOCSTRING_RE.sub("", body)))
 
 
 def _uses_literal(cfg: dict, module: str) -> bool:
@@ -2742,7 +2745,6 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
 
     needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
-    needs_any = _uses_any(cfg, module)
     # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is
     # remembered here so the import still lands in its historical position
     # (after `Sequence`, before numpy) and no existing stub churns.
@@ -2773,20 +2775,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # Every object class is @final (a Py_TPFLAGS_DEFAULT extension type cannot
     # be subclassed), so `final` is imported whenever the module has objects.
     needs_final = bool(objects)
-    if needs_literal or needs_any or needs_stream or needs_final:
-        typing_imports = ", ".join(
-            x
-            for x in [
-                "Any" if needs_any else "",
-                "AsyncIterator" if needs_async else "",
-                "Callable" if needs_stream else "",
-                "final" if needs_final else "",
-                "Iterator" if needs_stream else "",
-                "Literal" if needs_literal else "",
-            ]
-            if x
-        )
-        parts.append(f"from typing import {typing_imports}")
+    # gh-1443: `Any` is decided from the rendered body, so the line cannot be
+    # written until the body exists. The slot keeps it in its historical
+    # position -- first import, above `Sequence` -- so no existing stub churns.
+    _typing_slot = len(parts)
     if needs_sequence:
         parts.append("from collections.abc import Sequence")
     _os_slot = len(parts)
@@ -2869,4 +2861,21 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # third surface and had no arm.
     if _uses_os("\n".join(parts[_os_slot:])):
         parts.insert(_os_slot, "import os")
+    # After `os`, so the body this reads is final. Inserting lower down does
+    # not disturb the line just placed.
+    needs_any = _uses_any("\n".join(parts[_typing_slot:]))
+    if needs_literal or needs_any or needs_stream or needs_final:
+        typing_imports = ", ".join(
+            x
+            for x in [
+                "Any" if needs_any else "",
+                "AsyncIterator" if needs_async else "",
+                "Callable" if needs_stream else "",
+                "final" if needs_final else "",
+                "Iterator" if needs_stream else "",
+                "Literal" if needs_literal else "",
+            ]
+            if x
+        )
+        parts.insert(_typing_slot, f"from typing import {typing_imports}")
     return reflow_pyi("\n".join(parts)) + "\n"
