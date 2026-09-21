@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### Added
+
+- **`just-makeit adopt --check`** (gh-1448). A standalone object's
+    `<comp>_ext.c` is glue — rendered whole on every `apply`, drift-gated,
+    fixes delivered. A module object's `<mod>_ext_<obj>.c` is the *same
+    generated wrapper code* and is sacred: created once, thereafter only
+    ever gaining missing members. So **where a wrapper lives decides
+    whether it receives fixes.**
+
+    Measured on doppler at 0.82.2: 98 fragments, 89 differing from a fresh
+    render, **62 holding no hand-written code at all** — missing the `out=`
+    contiguity guard and the gh-219 use-after-free fix among others. A 4%
+    hand-written surface freezing the other 96%.
+
+    A new object key says who owns the content:
+
+    ```toml
+    [blk]
+    fragment = "generated"   # absent (default) = "sacred", today's behaviour
+    ```
+
+    This release ships the **read-only half**: `adopt --check` reports, per
+    object, `would flip`, `needs acknowledgement` (a unit's code differs,
+    and jm cannot tell a hand-written body from a render predating a codegen
+    change) or `REFUSES` (a unit exists only on disk, so flipping would
+    delete it). It writes nothing and exits non-zero when anything cannot
+    flip unattended, so it works as a ratchet.
+
+    Read-only first because a migration you can only inspect by performing
+    it is not one anyone should be asked to perform. The verdicts come from
+    `_docsync.fragment_unit_diff`, and the reference render from the same
+    `render_module_ext_fragment` call `_docsync` already uses — not a replay
+    tree and not a second renderer.
+
+    A view has no manifest table of its own, so its fragment is governed by
+    the key on its parent and reported under it; a refusal anywhere in that
+    set refuses the parent.
+
 ### Changed
 
 - **`status` states what it observed, not why** (gh-1447). The bucket a

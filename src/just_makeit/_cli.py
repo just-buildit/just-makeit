@@ -369,6 +369,9 @@ Commands:
   upgrade                       Migrate an older project's just-makeit.toml to the
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
+  adopt --check [--module ID]   Would a module object's binding fragment be safe as jm's
+                                content? Reports, per object, `would flip`,
+                                `needs acknowledgement` or `REFUSES`. Writes nothing.
   record <obj> <Struct>         Name a C struct and its columns, once, for both
                                 directions (gh-1405). The struct is yours, in the
                                 sacred header; this says which fields are exposed
@@ -1149,6 +1152,36 @@ def main() -> None:
         from . import _script
 
         _script.run(Path.cwd())
+
+    elif cmd == "adopt":
+        # gh-1448, read-only half. `--check` is the only mode today, and it
+        # is required rather than defaulted: a command that mutates when you
+        # forget a flag is the wrong way round for one whose whole subject
+        # is files a downstream has hand-edited.
+        from . import _adopt
+        from . import _config as _C
+
+        if "--check" not in args:
+            print(
+                "error: 'adopt' currently supports only --check.\n"
+                "Usage: just-makeit adopt --check [--module <id>]\n"
+                "  Reports, per object, whether its module binding "
+                "fragment\n"
+                "  could become jm's content (gh-1448). Writes nothing.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        _mod = None
+        if "--module" in args:
+            _i = args.index("--module")
+            if _i + 1 >= len(args):
+                print("error: --module requires a module id.", file=sys.stderr)
+                sys.exit(2)
+            _mod = args[_i + 1]
+        _root = Path.cwd()
+        _cfg = _C.load(_root)
+        print('adopt --check — would `fragment = "generated"` be safe?')
+        sys.exit(_adopt.report(_adopt.survey(_root, _cfg, only_mod=_mod)))
 
     elif cmd == "record":
         from . import _recorddecl

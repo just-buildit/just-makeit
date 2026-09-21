@@ -6844,3 +6844,34 @@ def _dump_generic(name: str, value: object) -> str:
         )
     body = "\n".join(f"{k} = {_toml_value(x)}" for k, x in value.items())
     return f"[{name}]\n{body}\n"
+
+
+#: What an absent ``fragment`` key means -- today's behaviour, so a manifest
+#: that never mentions it renders exactly what it renders now (gh-1448).
+FRAGMENT_SACRED = "sacred"
+FRAGMENT_GENERATED = "generated"
+FRAGMENT_KINDS = (FRAGMENT_SACRED, FRAGMENT_GENERATED)
+
+
+def fragment_kind(cfg: dict, comp: str) -> str:
+    """Who owns ``<mod>_ext_<comp>.c``'s content (gh-1448).
+
+    The values are the words the DOCS use with users -- Sacred and Glue --
+    rather than `_createonly`'s internal `JM`/`AUTHOR`. The manifest is the
+    user's file, and its reader has the docs' model: `fragment = "jm"` makes
+    them ask "jm *what*?", while `"generated"` answers itself.
+
+    Deliberately a string, not a boolean. A flag standing in for a question
+    is a trap this repo has paid for four times (`allow_none` meaning "is
+    this a constructor", `required` meaning "is this a capsule"), and a
+    third ownership state is easy to imagine.
+
+    Examples
+    --------
+    >>> fragment_kind({}, "blk")
+    'sacred'
+    >>> fragment_kind({"blk": {"fragment": "generated"}}, "blk")
+    'generated'
+    """
+    raw = str((cfg.get(comp) or {}).get("fragment") or "").strip().lower()
+    return raw if raw in FRAGMENT_KINDS else FRAGMENT_SACRED

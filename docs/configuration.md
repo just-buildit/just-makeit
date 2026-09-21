@@ -1600,6 +1600,50 @@ just-makeit config version 0.2.0
 
 ______________________________________________________________________
 
+## Who owns a module's binding fragment
+
+A standalone object's `<comp>_ext.c` is **glue**: jm renders it whole on
+every `apply`, and `jm status --check` fails if it drifts. A module
+object's `<mod>_ext_<obj>.c` is the same generated wrapper code, and is
+**sacred** by default: created once, thereafter only ever gaining missing
+members. So where a wrapper lives decides whether it receives fixes.
+
+`fragment` on the object changes that:
+
+```toml
+[blk]
+fragment = "generated"   # absent (the default) = "sacred", today's behaviour
+```
+
+With `fragment = "generated"`, that fragment becomes jm's content like any
+other glue file. Anything hand-written belongs in the
+`<mod>_ext_<obj>_extra.c` beside it, which jm already includes.
+
+### Checking before you flip
+
+`adopt --check` answers "would this be safe", for every object at once, and
+writes nothing:
+
+```sh
+just-makeit adopt --check                 # the whole project
+just-makeit adopt --check --module dsp    # one module
+```
+
+Each object gets one of:
+
+| verdict                 | meaning                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `would flip`            | every unit matches a fresh render                                                                      |
+| `needs acknowledgement` | a unit's code differs, and jm cannot tell a hand-written body from a render predating a codegen change |
+| `REFUSES`               | a unit exists only on disk — the render does not produce it, so flipping would delete it               |
+
+It exits non-zero when anything cannot flip unattended, so it works as a
+ratchet in CI.
+
+A **view** has no manifest table of its own, so its fragment is governed by
+the key on its parent object and is reported under it. A refusal anywhere
+in that set refuses the parent.
+
 ## Reconstructing a project
 
 `just-makeit script` reads `just-makeit.toml` and prints the exact sequence of
