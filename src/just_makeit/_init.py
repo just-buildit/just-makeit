@@ -1444,22 +1444,17 @@ def run(
 
     # extra_link_on_core: propagates external includes to the OBJECT library
     # so that its header files can #include external library headers directly.
-    if extra_link_libs:
-        parts = "\n    ".join(extra_link_libs)
-        ctx["extra_link_on_core"] = (
-            f"target_link_libraries({comp}_core PUBLIC\n    {parts})\n"
-        )
-    else:
-        ctx["extra_link_on_core"] = ""
+    # gh-1432: through the shared emitter, so the keyword follows the
+    # library KIND. A header-only core is an INTERFACE library and
+    # `PUBLIC` is not merely wrong there -- CMake refuses the target.
+    ctx["extra_link_on_core"] = R.core_link_c(
+        comp, list(extra_link_libs or []), header_only, include=False
+    )
     # extra_include_dirs_on_core: PUBLIC include dirs on the OBJECT library so
     # downstream consumers (Python ext, test, bench) inherit them transitively.
-    if extra_include_dirs:
-        parts = "\n    ".join(extra_include_dirs)
-        ctx["extra_include_dirs_on_core"] = (
-            f"target_include_directories({comp}_core PUBLIC\n    {parts})\n"
-        )
-    else:
-        ctx["extra_include_dirs_on_core"] = ""
+    ctx["extra_include_dirs_on_core"] = R.core_link_c(
+        comp, list(extra_include_dirs or []), header_only, include=True
+    )
 
     # gh-1311: the core library's KIND. A header-only component has no
     # `_core.c`, and an OBJECT library with no sources fails configure --

@@ -2148,12 +2148,10 @@ def _regenerate_module_now(
             # rebuilds the collocated CMakeLists here, so it must set it too —
             # otherwise the `<<extra_link_on_object_core>>` placeholder leaks
             # into the generated CMakeLists and breaks the build.
-            extra_link_on_object_core = (
-                f"target_link_libraries({obj}_core PUBLIC\n    "
-                + "\n    ".join(_core_pub)
-                + ")\n"
-                if _core_pub
-                else ""
+            # gh-1432: the keyword follows the library KIND, through the
+            # one emitter that decides it beside `component_core_decl`.
+            extra_link_on_object_core = R.core_link_c(
+                obj, _core_pub, C.is_header_only(cfg, obj), include=False
             )
             # gh-531: the module's extra_include_dirs reach the module's own
             # core and the .so, but never reached a COLLOCATED object's core —
@@ -2161,12 +2159,8 @@ def _regenerate_module_now(
             # not compile, and the only way out was reshaping the project. They
             # are PUBLIC so test/bench inherit them transitively too.
             _coinc = C.extra_include_dirs(cfg, module) if module else []
-            extra_include_dirs_on_object_core = (
-                f"target_include_directories({obj}_core PUBLIC\n    "
-                + "\n    ".join(_coinc)
-                + ")\n"
-                if _coinc
-                else ""
+            extra_include_dirs_on_object_core = R.core_link_c(
+                obj, _coinc, C.is_header_only(cfg, obj), include=True
             )
             ctx_cmake = {
                 **ctx_,
@@ -2673,14 +2667,18 @@ def run(
         for n in C.dep_names([d for d in depends_on if C._dep_test_only(d)])
     ]
     _core_pub_libs = [lib for lib in _obj_libs if lib not in _test_only]
-    if _core_pub_libs:
-        _elibs = "\n    ".join(_core_pub_libs)
-        ctx["extra_link_on_object_core"] = (
-            f"target_link_libraries({ctx['component']}_core PUBLIC\n"
-            f"    {_elibs})\n"
-        )
-    else:
-        ctx["extra_link_on_object_core"] = ""
+    ctx["extra_link_on_object_core"] = R.core_link_c(
+        ctx["component"],
+        _core_pub_libs,
+        # gh-1432: the in-scope flag, NOT `C.is_header_only(cfg, ...)`.
+        # At object-creation the component is not in the manifest yet, so
+        # the lookup answers False and the line reverts to `PUBLIC` --
+        # the same trap `_param_headers_at_create` exists for. The sibling
+        # `object_core_decl` below reads this very variable, and the two
+        # must agree or the library is INTERFACE and its link line is not.
+        header_only,
+        include=False,
+    )
     # gh-531: same for include dirs. The module's own extra_include_dirs count
     # too — a collocated object belongs to the module, and if the module needs a
     # vendored header its objects' cores generally do as well. Without this the
@@ -2690,14 +2688,12 @@ def run(
     _all_incs = list(extra_include_dirs) + [
         d for d in _mod_incs if d not in extra_include_dirs
     ]
-    if _all_incs:
-        _eincs = "\n    ".join(_all_incs)
-        ctx["extra_include_dirs_on_object_core"] = (
-            f"target_include_directories({ctx['component']}_core PUBLIC\n"
-            f"    {_eincs})\n"
-        )
-    else:
-        ctx["extra_include_dirs_on_object_core"] = ""
+    ctx["extra_include_dirs_on_object_core"] = R.core_link_c(
+        ctx["component"],
+        _all_incs,
+        header_only,
+        include=True,
+    )
 
     # gh-1311: the core library's KIND. A header-only component has no
     # `_core.c`, and an OBJECT library with no sources fails configure.

@@ -855,6 +855,15 @@ MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
 #: confusions where jm can name the thing the author actually wanted; a key
 #: that is merely misplaced gets the generic message instead.
 HINTS: dict[tuple[str, str], str] = {
+    # gh-1432: found reaching for a way to give a header-only component a
+    # dependency. The object-level key is the one that works, and it is also
+    # the one that makes jm generate the `process_global` rendezvous -- so a
+    # module-level spelling does not merely fail to link, it silently leaves
+    # every module with its own copy of a flag that exists to be shared.
+    ("object module", "depends_on"): (
+        "declare it on the OBJECT that needs it (`[[<obj>.depends_on]]`), "
+        "which is also what generates the `process_global` rendezvous"
+    ),
     # gh-816. `check_return` raises when a `jm function` returns non-zero;
     # `status_return` is the method spelling of the same intent.
     ("method", "check_return"): (
@@ -1164,6 +1173,30 @@ def unknown_keys(cfg: dict) -> list:
             # so it is checked against that rather than skipped.
             found += _check_kind_module(mod, data)
             continue
+        # gh-1432: `depends_on` is a real key on a `kind` module and is
+        # DROPPED on an object module -- no link line, and no
+        # `process_global` rendezvous, which is the half that matters:
+        # the module then links its own copy of a flag that exists to be
+        # shared. Accepted, exit 0, and nothing generated, which is the
+        # shape gh-1418 was a catalogue of.
+        #
+        # Reported rather than given a vocabulary: an object module has no
+        # stated key set, and inventing one to hold a single finding is how
+        # a channel starts warning on valid keys -- which this module's own
+        # docstring calls worse than the silence it replaces.
+        if data.get("depends_on"):
+            found.append(
+                Unknown(
+                    kind="object module",
+                    where=mod,
+                    key="depends_on",
+                    valid_for=(
+                        "handle module",
+                        "capsule module",
+                        "composer module",
+                    ),
+                )
+            )
         for entry in _entries(data, "functions"):
             where = f"{mod}.{entry.get('name', '?')}"
             found += _check("function", where, entry)

@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A header-only component can declare a dependency** (gh-1432). gh-1311
+    made a header-only core an `INTERFACE` library; every
+    `target_link_libraries` / `target_include_directories` beside it kept
+    saying `PUBLIC`, and for an INTERFACE library `INTERFACE` is the only
+    legal keyword — so CMake refused the target and the project would not
+    configure at all.
+
+    The consequence is larger than a build error: doppler's ring is
+    header-only and reads an interrupt flag declared `process_global`, so
+    `depends_on` is not only a link line — it is what makes jm generate the
+    cross-module rendezvous. Without it a module links its own copy of a flag
+    that exists to be shared, and Ctrl-C never reaches a blocked `wait()`.
+
+    **The keyword and the library kind are one decision**, so they are now
+    decided in one place and emitted by one function with five callers. The
+    reason the two disagreed is worth naming: at *object-creation* the
+    component is not in the manifest yet, so `C.is_header_only(cfg, comp)`
+    answers `False` while the core declaration beside it, reading the
+    in-scope argument, correctly says `INTERFACE`. One file, two answers to
+    one question — the trap `_param_headers_at_create` already exists for.
+
+- **`depends_on` on an object module is reported** (gh-1432). It is a real
+    key on a `kind` module and was accepted, exit 0, and dropped on an object
+    module — no link line and no rendezvous. Now named, with the spelling
+    that works: declare it on the object that needs it. Reported rather than
+    given a key vocabulary, because an object module has no stated key set
+    and inventing one to hold a single finding is how a channel starts
+    warning on valid keys.
+
 ## [0.82.0] — 2026-09-20
 
 ### Added
