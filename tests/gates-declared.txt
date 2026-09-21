@@ -21,6 +21,7 @@ test_gh1432_invariants_runnable
 test_gh1443_stub_any_import
 test_gh1447_status_states_what_it_saw
 test_gh1448_adopt_check
+test_gh1448_adopt_flip
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor

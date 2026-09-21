@@ -1005,8 +1005,86 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
     return patched
 
 
-def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
+def _owned_fragments(root: Path, cfg: dict) -> set:
+    """Relative paths of the fragments the manifest declares as jm's.
+
+    `fragment = "generated"` on an object makes `<mod>_ext_<obj>.c` glue
+    like `<comp>_ext.c` already is for a standalone object -- rendered
+    whole here, drift-gated by `status --check`. A view has no manifest
+    table, so the key on its PARENT governs its fragment too; the id list
+    is the one `_status` already builds (gh-1448).
+    """
+    from ._object import _view_frag_id
+
+    out: set = set()
+    for mod in C.modules(cfg):
+        if C.is_no_generate_module(cfg, mod):
+            continue
+        cname = C.module_paths(mod).cname
+        for obj in C.module_objects(cfg, mod):
+            if C.fragment_kind(cfg, obj) != C.FRAGMENT_GENERATED:
+                continue
+            ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
+            for fid in ids:
+                out.add(
+                    Path("native") / "src" / cname / f"{cname}_ext_{fid}.c"
+                )
+    return out
+
+
+def _refuse_owned_that_would_lose(
+    temp_root: Path, root: Path, owned: set
+) -> None:
+    """Abort before overwriting an owned fragment that holds a unit the
+    render does not produce (gh-1448).
+
+    `adopt` refuses such a flip, but the key is a TOML line and anyone can
+    write it by hand. Without this, doing so DELETES the unit on the next
+    apply, silently -- which is the one outcome the whole read-only half
+    exists to prevent, reachable by editing one line.
+
+    The reference is the file already rendered into *temp_root*, so this
+    costs a read rather than a second render.
+    """
+    from . import _docsync
+
+    lost: list = []
+    for rel in sorted(owned):
+        dst, src = root / rel, temp_root / rel
+        if not (dst.is_file() and src.is_file()):
+            continue
+        ud = _docsync.fragment_unit_diff(
+            dst.read_text(encoding="utf-8"),
+            src.read_text(encoding="utf-8"),
+        )
+        if ud.only_here:
+            lost.append((rel.as_posix(), ud.only_here))
+    if not lost:
+        return
+    lines = ['error: `fragment = "generated"` would delete hand-written code.']
+    for rel, units in lost:
+        lines.append(f"  {rel}")
+        for u in units:
+            lines.append(f"    only here: {u}")
+    lines += [
+        "",
+        "  These units exist in the file and not in jm's render, so",
+        "  rendering it whole loses them. Move them to the `_extra.c`",
+        "  beside the fragment, or drop the key.",
+        "  `just-makeit adopt --check` reports this without writing.",
+    ]
+    raise SystemExit("\n".join(lines))
+
+
+def _sync_missing(
+    temp_root: Path, root: Path, owned: "set | None" = None
+) -> list[Path]:
     """Copy every file present in *temp_root* but missing from *root*.
+
+    *owned* is the set of relative paths the manifest declares as jm's
+    content (gh-1448). Those are OVERWRITTEN rather than skipped -- the
+    one line that made a module fragment sacred and a standalone object's
+    `_ext.c` glue, for the same generated wrapper code.
 
     Returns the created paths, relative to *root*."""
     # Stamp newly-created source files 2 s in the future so GNU Make
@@ -1021,7 +1099,7 @@ def _sync_missing(temp_root: Path, root: Path) -> list[Path]:
         if is_skipped(rel):
             continue
         dst = root / rel
-        if dst.exists():
+        if dst.exists() and not (owned and rel in owned):
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(src.read_bytes())
@@ -3093,7 +3171,9 @@ def run(
         # something the author can fix by editing a TOML line, with the
         # diagnostic jm had carefully written buried at the bottom of it.
         try:
-            created = _sync_missing(temp_root, root)
+            _owned = _owned_fragments(root, cfg)
+            _refuse_owned_that_would_lose(temp_root, root, _owned)
+            created = _sync_missing(temp_root, root, _owned)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
             # destructor to `int` when the manifest now declares it fallible.

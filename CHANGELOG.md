@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Added
+
+- **A module fragment can be jm's content** (gh-1448). `fragment =   "generated"` on an object makes `<mod>_ext_<obj>.c` glue: `apply`
+    renders it whole, and `status --check` counts a difference as drift —
+    what `<comp>_ext.c` already is for a standalone object. Absent (the
+    default) is today's behaviour exactly, so a manifest that never
+    mentions the key does not churn.
+
+    It ends an asymmetry that cost doppler 62 fragments holding no
+    hand-written code, frozen without the `out=` contiguity guard and the
+    gh-219 use-after-free fix. Where a wrapper lived decided whether it
+    received fixes.
+
+    **An apply that would delete a unit refuses instead.** `adopt --check`
+    reports such a fragment, but the key is a TOML line anyone can write,
+    and without this guard writing it deletes hand-written code silently on
+    the next apply — the one outcome the read-only half exists to prevent,
+    reachable by editing one line. The refusal names the units and points at
+    `adopt --check`.
+
 ## [0.83.0] — 2026-09-21
 
 ### Added
