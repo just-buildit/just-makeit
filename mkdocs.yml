@@ -34,6 +34,7 @@ nav:
       - Function: templates/function.md
     - Declarative scaffolding: declarative-scaffolding.md
     - Customization: customization.md
+    - Building on Windows: windows.md
     - Performance: perf.md
     - Porting guide: porting-guide.md
     - Upgrading: upgrading.md

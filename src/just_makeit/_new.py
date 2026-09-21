@@ -103,6 +103,13 @@ def run(
         # clang-tidy — and a config with nothing to run it is exactly the dead
         # file gh-941 was about. The `make` build system gets no .clang-tidy.
         _write(root / ".clang-tidy", r(T.CLANG_TIDY))
+        # gh-1376: an IDE opening the folder configures through a preset, not
+        # through the Makefile, and neither Visual Studio nor VS Code finds a
+        # venv's interpreter on its own. The preset names the project's
+        # `.venv` explicitly rather than setting Python3_ROOT_DIR, because a
+        # root dir falls back to whatever interpreter CMake finds when the
+        # venv is absent -- the wrong-numpy configure gh-814 refuses.
+        _write(root / "CMakePresets.json", T.CMAKE_PRESETS_JSON)
     else:
         _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))

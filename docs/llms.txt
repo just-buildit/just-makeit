@@ -26,6 +26,7 @@ native (C) Python extensions without hand-writing CPython glue:
 - [Decision tree](https://just-buildit.github.io/just-makeit/decision-tree/): which command for which task
 - [Quick reference](https://just-buildit.github.io/just-makeit/quick-reference/): commands and flags at a glance
 - [Configuration](https://just-buildit.github.io/just-makeit/configuration/): the `just-makeit.toml` schema
+- [Building on Windows](https://just-buildit.github.io/just-makeit/windows/): clang-cl from PowerShell or the Visual Studio IDE, through the generated CMakePresets.json
 - [Object-of-objects](https://just-buildit.github.io/just-makeit/object-of-objects/): capsule, composer, and handle generators for composing objects of objects
 
 ## Build backend (just-buildit)
