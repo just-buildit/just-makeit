@@ -186,3 +186,94 @@ class TestAViewGoesWithItsParent:
         # Reported under `blk`, the object whose key governs it.
         assert "REFUSES              blk" in r.stdout, r.stdout
         assert "dsp_ext_peek.c" in r.stdout, r.stdout
+
+
+class TestLayoutIsNotADifference:
+    """gh-1448 first review: zero of doppler's 87 fragments could flip.
+
+    `_norm_unit` collapsed runs of whitespace, which leaves the whitespace
+    that is there. doppler sets `c_style = "clang-format"` with a GNU
+    `.clang-format`, so the file on disk says ``foo (a, b)`` where jm's
+    unformatted render says ``foo(a, b)`` -- and every unit of every
+    fragment read as differing, against 46 that `jm status` calls
+    byte-identical to a fresh render.
+
+    The comparison is a TOKEN STREAM now. A formatter rewrites whitespace
+    and line breaks and cannot change tokens; string content, the one thing
+    it may re-wrap, is masked before the comparison.
+    """
+
+    def test_gnu_layout_against_the_knr_render_is_identical(self):
+        from just_makeit._docsync import fragment_unit_diff
+
+        knr = (
+            "static PyObject *\nf(PyObject *self) {\n"
+            "    if (!self->handle) {\n        foo(a, b);\n"
+            "        return NULL;\n    }\n    return g(self->handle);\n}\n"
+        )
+        gnu = (
+            "static PyObject *\nf (PyObject *self)\n{\n"
+            "  if (!self->handle)\n    {\n      foo (a, b);\n"
+            "      return NULL;\n    }\n  return g (self->handle);\n}\n"
+        )
+        d = fragment_unit_diff(gnu, knr)
+        assert d.identical == ("fn:f",), d
+        assert d.differing == (), d
+
+    def test_a_real_change_still_differs(self):
+        """The narrowing must not swallow its own subject."""
+        from just_makeit._docsync import fragment_unit_diff
+
+        a = "static PyObject *\nf(PyObject *s) {\n    return NULL;\n}\n"
+        b = "static PyObject *\nf(PyObject *s) {\n    return Py_None;\n}\n"
+        assert fragment_unit_diff(a, b).differing == ("fn:f",)
+
+    def test_two_identifiers_do_not_merge(self):
+        """Stripping whitespace outright would make `int x` == `intx`."""
+        from just_makeit._docsync import _norm_unit
+
+        assert _norm_unit("int x;") != _norm_unit("intx;")
+
+    def test_a_formatted_project_reports_would_flip(self, tmp_path):
+        """End to end, with the project's own formatter in play."""
+        proj = _project(tmp_path)
+        (proj / ".clang-format").write_text(
+            "BasedOnStyle: GNU\nColumnLimit: 79\n"
+        )
+        cfg = proj / "just-makeit.toml"
+        cfg.write_text(
+            cfg.read_text().replace(
+                "[project]", '[project]\nc_style = "clang-format"', 1
+            )
+        )
+        assert run_cli("apply", cwd=proj).returncode == 0
+        r = run_cli("adopt", "--check", cwd=proj)
+        assert r.returncode == 0, r.stdout
+        assert "would flip" in r.stdout, r.stdout
+
+
+class TestABindingAheadRefuses:
+    def test_an_undeclared_optional_arg_is_not_acknowledgeable(self):
+        """gh-1448 requirement 2: block, not warn.
+
+        Here the FILE is the superset, so re-rendering does not deliver a
+        fix -- it deletes a feature (doppler's `Resampler.execute_ctrl`
+        takes an `out=` its manifest never declared).
+        """
+        from just_makeit import _adopt
+
+        def frag(fmt):
+            return (
+                "static PyObject *\n"
+                "Obj_run(PyObject *self, PyObject *args)\n{\n"
+                f'    PyArg_ParseTuple(args, "{fmt}", &a);\n'
+                "    return NULL;\n}\n"
+                "static PyMethodDef Obj_methods[] = {\n"
+                '    {"run", (PyCFunction)Obj_run, METH_VARARGS, NULL},\n'
+                "    {NULL}\n};\n"
+            )
+
+        assert _adopt.binding_ahead(frag("OO|O"), frag("OO")) == ("run",)
+        # ...and the other direction is NOT a refusal: there the manifest
+        # is ahead, which is an ordinary undelivered fix.
+        assert _adopt.binding_ahead(frag("OO"), frag("OO|O")) == ()

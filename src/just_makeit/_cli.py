@@ -370,6 +370,7 @@ Commands:
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
   adopt --check [--module ID]   Would a module object's binding fragment be safe as jm's
+                                content? Bare `--check` covers every module.
                                 content? Reports, per object, `would flip`,
                                 `needs acknowledgement` or `REFUSES`. Writes nothing.
   record <obj> <Struct>         Name a C struct and its columns, once, for both

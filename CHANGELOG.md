@@ -38,6 +38,16 @@
     the key on its parent and reported under it; a refusal anywhere in that
     set refuses the parent.
 
+    Units are compared as **token streams**. A formatter rewrites
+    whitespace and line breaks and cannot change tokens, so a project
+    whose `c_style` output is not jm's own layout — doppler's GNU
+    `clang-format` writes `foo (a, b)` where jm renders `foo(a, b)` —
+    compares equal. Adjacent string literals collapse to one, because C
+    concatenates them and a formatter decides where to break a long
+    docstring. A member whose **binding accepts more than the manifest
+    declares** refuses rather than asking: there the file is ahead, so
+    flipping would remove a feature.
+
 ### Changed
 
 - **`status` states what it observed, not why** (gh-1447). The bucket a

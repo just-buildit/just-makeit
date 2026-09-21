@@ -2687,16 +2687,62 @@ class UnitDiff(NamedTuple):
         return self.only_here
 
 
+#: One C token: an identifier/keyword, a number, or a single punctuation
+#: character. Enough to compare code for sameness, and deliberately not a
+#: C parser -- the question is only "are these the same tokens".
+_C_TOKEN_RE = re.compile(r"[A-Za-z_]\w*|\d[\w.]*|[^\sA-Za-z_0-9]")
+
+#: A RUN of adjacent string literals, already content-masked. C
+#: concatenates them into one string, and a formatter decides where to
+#: break a long one -- clang-format re-wraps a docstring across lines, so
+#: the same text is two literals on disk and one in jm's render. Collapsing
+#: the run is what makes those compare equal; the content is masked either
+#: way, so nothing is lost by it.
+_ADJACENT_STRINGS_RE = re.compile(r'"[^"]*"(?:\s*"[^"]*")+')
+
+
 def _norm_unit(text: str) -> str:
-    """A unit's code, with comments, strings and layout taken out.
+    """A unit's code as a TOKEN STREAM, with comments and strings masked.
 
     Comments and strings go through `_code_mask` -- the masking every other
     axis in this module already uses, so a message worded differently by
-    hand does not read as a code difference. Whitespace is then collapsed,
-    because a reflow is not a change: jm's own formatter pass moves these
-    files, and counting that as "differs" would make the report noise.
+    hand does not read as a code difference.
+
+    The rest is tokenised rather than whitespace-collapsed, and that is the
+    whole of gh-1448's first review. Collapsing runs of whitespace leaves
+    the whitespace that is THERE: a project with
+    `c_style = "clang-format"` and a GNU `.clang-format` writes
+    ``foo (a, b)`` where jm's unformatted render has ``foo(a, b)``, so
+    every unit of every fragment read as differing. Zero of doppler's 87
+    could flip, against 46 that `status` calls byte-identical.
+
+    Tokenising answers the question exactly. A formatter rewrites
+    whitespace and line breaks; it cannot change the tokens, and string
+    CONTENT -- the one thing it may re-wrap -- is masked before we get
+    here. So two units with the same token stream are the same code
+    whatever either side's layout.
+
+    The alternative considered was formatting the reference through the
+    project's `c_format_command`, as `apply` does before writing. Rejected
+    for a failure mode it hides: `_cfmt` returns early when that command is
+    not on PATH, so on any machine without the formatter installed the
+    comparison would silently revert to comparing layouts -- the same bug,
+    now invisible and environment-dependent. Tokens have no such mode.
+
+    Known limit, stated rather than discovered later: a formatter
+    configured to INSERT braces (clang-format's `InsertBraces`) does change
+    the token stream, and such a unit would read as differing. That is a
+    review, not a wrong flip.
+
+    Examples
+    --------
+    >>> _norm_unit("foo(a, b);") == _norm_unit("foo (a, b) ;")
+    True
+    >>> _norm_unit("int x;") == _norm_unit("intx;")
+    False
     """
-    return " ".join(_code_mask(text).split())
+    masked = _ADJACENT_STRINGS_RE.sub('""', _code_mask(text))
+    return " ".join(_C_TOKEN_RE.findall(masked))
 
 
 def fragment_units(text: str) -> dict:

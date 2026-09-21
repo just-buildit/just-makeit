@@ -65,20 +65,56 @@ class Verdict(NamedTuple):
     state: str
     differing: tuple
     only_here: tuple
+    ahead: tuple
 
 
 #: The states in which a fragment cannot flip unattended.
 _BLOCKING = ("needs_ack", "refused")
 
 
-def _verdict(frag_rel: str, obj: str, kind: str, ud) -> Verdict:
+def binding_ahead(existing: str, reference: str) -> tuple:
+    """Members whose BINDING accepts more than the manifest declares.
+
+    gh-1448 requirement 2, and it is a REFUSAL rather than a warning: here
+    the file is the superset, so re-rendering does not deliver a fix, it
+    deletes a feature. doppler's `Resampler.execute_ctrl` takes an `out=`
+    (`"OO|O"`) its manifest never declared (`"OO"`); flipping would remove
+    it.
+
+    The direction is what the existing report already computes and does not
+    use -- `signature_drift_details` prints `binding "OO|O" vs manifest
+    "OO"` and then advises deleting the file. Same comparison, read for
+    which side is bigger.
+
+    `|` separates required from optional in a PyArg format, so it is
+    removed before comparing: what matters is the argument list, not where
+    the optional run starts.
+    """
+    ex = _docsync._method_signatures(existing)
+    ref = _docsync._method_signatures(reference)
+    out = []
+    for name, sig in ref.items():
+        if name not in ex:
+            continue
+        e_fmt = (ex[name][1] or "").replace("|", "")
+        r_fmt = (sig[1] or "").replace("|", "")
+        if e_fmt != r_fmt and e_fmt.startswith(r_fmt):
+            out.append(name)
+    return tuple(sorted(out))
+
+
+def _verdict(
+    frag_rel: str, obj: str, kind: str, ud, ahead: tuple = ()
+) -> Verdict:
     if kind == C.FRAGMENT_GENERATED:
-        return Verdict(frag_rel, obj, "generated", (), ())
-    if ud.only_here:
-        return Verdict(frag_rel, obj, "refused", ud.differing, ud.only_here)
+        return Verdict(frag_rel, obj, "generated", (), (), ())
+    if ud.only_here or ahead:
+        return Verdict(
+            frag_rel, obj, "refused", ud.differing, ud.only_here, ahead
+        )
     if ud.differing:
-        return Verdict(frag_rel, obj, "needs_ack", ud.differing, ())
-    return Verdict(frag_rel, obj, "clean", (), ())
+        return Verdict(frag_rel, obj, "needs_ack", ud.differing, (), ())
+    return Verdict(frag_rel, obj, "clean", (), (), ())
 
 
 def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
@@ -156,10 +192,15 @@ def report(verdicts: list) -> int:
         label = "REFUSES" if worst == "refused" else "needs acknowledgement"
         print(f"  {label:20s} {obj}")
         for v in sorted(vs, key=lambda v: v.frag):
-            if v.only_here:
+            if v.only_here or v.ahead:
                 print(f"      {v.frag}")
                 for u in v.only_here:
                     print(f"        only here: {u}")
+                for u in v.ahead:
+                    print(
+                        f"        binding ahead: {u} accepts more than the"
+                        " manifest declares"
+                    )
             if v.differing:
                 print(f"      {v.frag}")
                 for u in v.differing:
@@ -173,6 +214,9 @@ def report(verdicts: list) -> int:
             "  A unit that exists ONLY on disk refuses the flip: the render\n"
             "  does not produce it, so flipping would delete it. Move it to\n"
             "  the `_extra.c` beside the fragment, which is already wired.\n"
+            "  A member whose BINDING accepts more than the manifest\n"
+            "  declares refuses too: there the file is ahead, so flipping\n"
+            "  removes a feature. Declare it in the manifest first.\n"
             "  A unit that DIFFERS needs your eyes: jm cannot tell a\n"
             "  hand-written body from a render that predates a codegen\n"
             "  change, which is why it asks rather than guesses."
