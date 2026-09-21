@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.82.3] — 2026-09-21
+
 ### Fixed
 
 - **A declared feature is reported as what it is** (gh-1432,
