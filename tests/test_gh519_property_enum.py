@@ -406,7 +406,7 @@ class TestEndToEnd:
         pyi_path = project / "src" / "probe" / "rdr.pyi"
         text = pyi_path.read_text(encoding="utf-8")
         ast.parse(text)  # a stub that does not parse is not a stub
-        assert "from typing import Any, final, Literal" in text
+        assert "from typing import final, Literal" in text
         assert 'Literal["raw", "wav", "blue"]' in text
 
     def test_apply_replays_the_enum_and_is_idempotent(self, project):

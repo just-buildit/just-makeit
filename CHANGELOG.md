@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A generated stub binds every name it uses** (gh-1443). A method over a
+    record element annotates `NDArray[Any]`, and the module stub imported
+    `final` and not `Any` — so doppler's ring shape produced a `rings.pyi`
+    referencing an undefined name twice, which mypy rejects.
+
+    `_uses_any` **enumerated** the surfaces that produce `Any`: a varargs or
+    `manual_stub` method (gh-428) and an `object`-valued container property
+    (gh-543). It had no arm for a record element — and no enumeration could
+    ever have been complete, because `Any` is the *fallback* of both type
+    maps (`_CTYPE_TO_PY.get(ctype, "Any")`, `_CTYPE_TO_NP.get(elem, "Any")`),
+    so every C type jm does not know renders it. It is asked of the rendered
+    text now, exactly as `_uses_os` already was after the same class of bug
+    bit it three times.
+
+    **And the peer had the mirror defect.** The standalone template hardcoded
+    `from typing import Any, final` in its first line, so a stub that
+    referenced `Any` nowhere imported it anyway — ruff's `F401` on generated
+    code. Both faces now ask the one predicate, through the probe-render the
+    standalone path already used to decide `import os`.
+
+    Found by running a downstream's own lint over every example's generated
+    tree, which is what gh-1443 exists to make a gate.
+
 ## [0.82.3] — 2026-09-21
 
 ### Fixed

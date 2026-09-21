@@ -578,12 +578,25 @@ def render_component_pyi(ctx: dict) -> str:
     #
     # The annotation is the only thing that can need it, so a first pass with
     # the slot empty answers the question exactly, for every slot at once.
-    probe = render(COMPONENT_PYI, {**ctx, "pyi_os_import": ""})
+    # gh-1443: `Any` is decided the same way, and by the SAME predicate the
+    # module-stub peer uses. It was hardcoded into the template's first line,
+    # so a standalone stub imported it whether or not anything referenced it
+    # -- ruff's `F401` on generated code, and the exact mirror of the module
+    # peer's bug, which referenced it without importing it. Local import for
+    # the reason given at `fn_py_surface` below: `_stubs` at module scope puts
+    # `_render` into the `_object`/`_stubs` cycle.
+    from ._stubs import _uses_any
+
+    probe = render(
+        COMPONENT_PYI,
+        {**ctx, "pyi_os_import": "", "pyi_any_typing": ""},
+    )
     ctx = {
         **ctx,
         "pyi_os_import": (
             "\nimport os" if _coerce.PATH_PY_TYPE in probe else ""
         ),
+        "pyi_any_typing": "Any, " if _uses_any(probe) else "",
     }
     return reflow_pyi(render(COMPONENT_PYI, ctx))
 
