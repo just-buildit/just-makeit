@@ -39,8 +39,13 @@
     stub-conformance tests, which compile generated code and check the stub
     against it.
 
-    The five files move to the `PYTEST_EXAMPLES` path, which is already
-    `--no-project`-free by design. One list drives both the ignore and the
+    The affected files move to the `PYTEST_EXAMPLES` path, which is
+    already `--no-project`-free by design. Four of them were gated on
+    `clang-format` and skipped only on **macOS** — on Linux they ran
+    against whatever clang-format the runner image happened to ship,
+    rather than the pinned one, which is the version skew
+    `[dependency-groups]` exists to prevent. The move fixes both: they
+    run everywhere, against the pin. One list drives both the ignore and the
     run — the comment claiming that was already untrue, since the filename
     was named a second time in `TEST_EXAMPLES_CMD`.
 
