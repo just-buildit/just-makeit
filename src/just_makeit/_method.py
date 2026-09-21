@@ -2195,7 +2195,10 @@ def run(
         from . import _invariants
 
         if _invariants.write(root, cfg, object_name, pkg):
-            print(f"  update  {_invariants.file_for(root, pkg, object_name)}")
+            _inv_path = _invariants.file_for(
+                root, pkg, object_name, C.module_of(cfg, object_name) or ""
+            )
+            print(f"  update  {_inv_path}")
         # Surgical splice: when a varargs binding file was just added,
         # insert it into the Python3_add_library line in CMakeLists.txt.
         # Only varargs methods change the build-system source list; normal

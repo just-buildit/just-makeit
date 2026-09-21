@@ -296,6 +296,65 @@ def object_core_decl(component: str, header_only: bool) -> str:
     )
 
 
+def core_scope(header_only: bool) -> str:
+    """The keyword a core library's link/include lines must use (gh-1432).
+
+    gh-1311 made a header-only core an **INTERFACE** library, and every
+    `target_link_libraries` / `target_include_directories` beside it kept
+    saying ``PUBLIC``. For an INTERFACE library ``INTERFACE`` is the only
+    legal keyword -- CMake refuses the target outright -- so a header-only
+    component could not declare a dependency at all:
+
+        CMake Error: INTERFACE library can only be used with the
+        INTERFACE keyword of target_link_libraries
+
+    It is also what ``PUBLIC`` was reaching for: an INTERFACE library has
+    no build of its own, so "mine and my consumers'" and "my consumers'"
+    are the same statement.
+
+    One function because the pair is emitted from FOUR places -- the
+    `jm object` path and the `apply` rebuild, each for the collocated and
+    the standalone shape -- which is exactly the arrangement `_render`'s
+    own `component_core_decl` docstring says a gate exists to hold
+    together. The scope and the library kind are one decision, so they are
+    decided in one file.
+
+    Examples
+    --------
+    >>> core_scope(header_only=True)
+    'INTERFACE'
+    >>> core_scope(header_only=False)
+    'PUBLIC'
+    """
+    return "INTERFACE" if header_only else "PUBLIC"
+
+
+def core_link_c(
+    component: str, items: "list[str]", header_only: bool, *, include: bool
+) -> str:
+    """A core library's link or include line, or ``""`` for no items.
+
+    The emitter the four call sites share, so the keyword cannot be right
+    in one of them and wrong in the next.
+
+    Examples
+    --------
+    >>> print(core_link_c("ring", ["dep_core"], True, include=False), end="")
+    target_link_libraries(ring_core INTERFACE
+        dep_core)
+    >>> print(core_link_c("fir", ["/x"], False, include=True), end="")
+    target_include_directories(fir_core PUBLIC
+        /x)
+    >>> core_link_c("fir", [], False, include=False)
+    ''
+    """
+    if not items:
+        return ""
+    fn = "target_include_directories" if include else "target_link_libraries"
+    joined = "\n    ".join(items)
+    return f"{fn}({component}_core {core_scope(header_only)}\n    {joined})\n"
+
+
 def component_core_decl(component: str, header_only: bool) -> str:
     """The core library for a standalone or module OBJECT (gh-1311).
 

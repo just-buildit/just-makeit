@@ -15,6 +15,8 @@ test_gh1418_borrow_honours_its_keys
 test_gh1418_borrow_status_table
 test_gh1426_message_format_and_strict_input
 test_gh1426a_release_call
+test_gh1432_header_only_depends
+test_gh1432_invariants_runnable
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor

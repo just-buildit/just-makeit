@@ -292,6 +292,16 @@ class TestTheUntouchedScaffoldBuildsAndRuns:
         assert "OK" in out.stdout
 
 
+#: Signatures :class:`TestEveryCoreLibraryEmitterAgrees` knows how to drive.
+#: A `header_only` emitter whose shape is not here fails the sweep loudly --
+#: widening this is the sanctioned response, exempting the emitter is not.
+_CALLABLE_SHAPES = (
+    {"component", "header_only"},
+    {"header_only"},
+    {"component", "items", "header_only", "include"},
+)
+
+
 class TestEveryCoreLibraryEmitterAgrees:
     """Registration-free: the OBJECT/INTERFACE decision has TWO emitters.
 
@@ -330,12 +340,31 @@ class TestEveryCoreLibraryEmitterAgrees:
             # A signature this cannot drive is a FAILURE, not a skip: the
             # point of discovering by signature is that nothing falls out
             # of the sweep silently.
-            assert set(params) == {"component", "header_only"}, (
+            assert set(params) in _CALLABLE_SHAPES, (
                 f"{name}{inspect.signature(fn)} takes a shape this gate "
                 f"cannot call; widen the gate, do not exempt the emitter"
             )
             found[name] = fn
         return found
+
+    @staticmethod
+    def _call(fn, header_only: bool) -> str:
+        """Drive *fn* whatever its shape, so nothing falls out of the sweep.
+
+        gh-1432 added two emitters of the same decision that are not
+        library DECLARATIONS -- a scope keyword and the link/include line
+        that carries it. Widening here rather than exempting them is what
+        the assertion above demands, and it is the point: the decision has
+        more than one shape, and every shape has to answer the same way.
+        """
+        import inspect
+
+        shape = set(inspect.signature(fn).parameters)
+        if shape == {"component", "header_only"}:
+            return fn("ring", header_only=header_only)
+        if shape == {"header_only"}:
+            return fn(header_only=header_only)
+        return fn("ring", ["dep_core"], header_only, include=False)
 
     def test_the_sweep_is_armed(self):
         """An empty or shrinking sweep passes vacuously, so pin the floor."""
@@ -344,19 +373,30 @@ class TestEveryCoreLibraryEmitterAgrees:
 
     def test_none_emits_an_object_library_for_a_header_only_core(self):
         for name, fn in self._emitters().items():
-            out = fn("ring", header_only=True)
-            assert "add_library(ring_core INTERFACE)" in out, (name, out)
-            assert "add_library(ring_core OBJECT" not in out, (name, out)
+            out = self._call(fn, header_only=True)
+            if "add_library" in out:
+                assert "add_library(ring_core INTERFACE)" in out, (name, out)
+                assert "add_library(ring_core OBJECT" not in out, (name, out)
+                continue
+            # gh-1432: the scope family. `PUBLIC` on an INTERFACE library is
+            # not a style difference -- CMake refuses the target, so the
+            # project does not configure at all.
+            assert "INTERFACE" in out, (name, out)
+            assert "PUBLIC" not in out, (name, out)
 
     def test_every_one_still_emits_object_otherwise(self):
         """The converse, so a gate cannot be satisfied by always saying
         INTERFACE -- which would break every ordinary component."""
         for name, fn in self._emitters().items():
-            out = fn("ring", header_only=False)
-            assert "add_library(ring_core OBJECT ring_core.c)" in out, (
-                name,
-                out,
-            )
+            out = self._call(fn, header_only=False)
+            if "add_library" in out:
+                assert "add_library(ring_core OBJECT ring_core.c)" in out, (
+                    name,
+                    out,
+                )
+                assert "INTERFACE" not in out, (name, out)
+                continue
+            assert "PUBLIC" in out, (name, out)
             assert "INTERFACE" not in out, (name, out)
 
     def test_no_emitter_carries_unreachable_code(self):
