@@ -238,6 +238,48 @@ class TestItIsFormatterClean:
         proj = _project(tmp_path, real_kernels=True)
         assert _invariants(proj) in _pyfmt.generated_py_files(proj)
 
+    def test_one_blank_line_separates_the_imports_from_what_follows(
+        self, tmp_path
+    ):
+        """Formatter-clean is not enough: `ruff check --fix` rewrites too.
+
+        `ruff format` accepts one blank line after the import block or
+        two; isort (`I001`) wants the two-line gap only before a
+        `def`/`class`, and `_ELEM_DTYPE` is an assignment. So the file
+        rendered format-clean and lint-DIRTY: `ruff check --fix` deleted
+        the line, the committed bytes stopped matching the render, and
+        `jm status --check` called jm's own file STALE. doppler kept it
+        in `extend-exclude` for exactly this -- the workaround #1436
+        existed to remove, and the one that switches off the lint that
+        caught the `F821`.
+
+        Asserted structurally rather than by shelling out to ruff. A
+        subprocess here is the wrong oracle twice over: `ruff` is not
+        importable from the interpreter that runs the suite on every CI
+        leg (it is the uv build python, not the dev venv -- measured, and
+        it is what made the first version of this gate red), and guarding
+        that with a `skipif` would leave the check silently disarmed in
+        exactly the environment it has to hold for. The rule is small
+        enough to state outright and then it is armed everywhere.
+        """
+        proj = _project(tmp_path, real_kernels=True)
+        lines = _invariants(proj).read_text().split("\n")
+        last_import = max(
+            n
+            for n, ln in enumerate(lines)
+            if ln.startswith(("import ", "from "))
+        )
+        after = next(
+            n for n in range(last_import + 1, len(lines)) if lines[n].strip()
+        )
+        blanks = after - last_import - 1
+        follows_def = lines[after].startswith(("def ", "class ", "@"))
+        want = 2 if follows_def else 1
+        assert blanks == want, (
+            f"{blanks} blank line(s) after the import block before "
+            f"{lines[after]!r}; isort wants {want}"
+        )
+
 
 class TestItSaysWhatItCanFromDayOne:
     def test_a_stub_kernel_still_gets_the_input_face(self, tmp_path):

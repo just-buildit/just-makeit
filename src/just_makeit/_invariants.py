@@ -322,7 +322,15 @@ def render(
     for p in _struct:
         expr = declared_dtype_expr(recs.get(p.element, {}))
         if expr:
-            lines[-1:] = ["", f"_ELEM_DTYPE = {expr}", "", ""]
+            # ONE blank line after the import block, not two: isort (ruff
+            # `I001`) wants the two-line gap only when a `def`/`class`
+            # follows, and this is an assignment. `ruff format` accepts
+            # either spelling, so the gh-1432 formatter pass cannot see
+            # this -- but `ruff check --fix` rewrites the file, and jm
+            # then calls its own file STALE. The `pytestmark` branch
+            # below replaces the same trailing blank and already gets
+            # this right; this one carried a leading "" it did not need.
+            lines[-1:] = [f"_ELEM_DTYPE = {expr}", "", ""]
         break
     if _unseeded:
         names = ", ".join(_unseeded)
