@@ -367,7 +367,13 @@ def render(
     # answer for "nothing to say" as well as "nothing declared".
     if not any(ln.startswith("def test_") for ln in lines):
         return ""
-    return "\n".join(lines) + "\n"
+    # gh-1432: `rstrip`, because each block ends with the two blank lines
+    # PEP 8 puts BETWEEN top-level functions -- a separator used as a
+    # terminator, so the last block left the file ending `)\n\n\n`. Every
+    # formatter and `end-of-file-fixer` trims it, the committed bytes stop
+    # matching the render, and `jm status --check` calls jm's OWN file
+    # STALE: a drift gate red on a file nobody edited.
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 
 def _create_args(cfg: dict, comp: str, pkg: str, root: Path) -> str:

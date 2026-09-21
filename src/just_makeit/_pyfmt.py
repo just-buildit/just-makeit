@@ -366,12 +366,26 @@ def generated_py_files(root: Path) -> list[Path]:
     constraint gh-746 itself sets ("never hand-owned Python"), and it is the
     same reasoning that keeps ``_cfmt`` off ``native/inc/**``.
 
+    gh-1432 adds the **generated invariants tests**, which meet that bar
+    for the same reason: `_invariants.write` overwrites them whole, they
+    carry a DO NOT EDIT banner, and `jm status --check` drift-gates them.
+    Being outside this pass is what made a three-newline tail into a
+    tug-of-war -- ruff and `end-of-file-fixer` trimmed it, the bytes stopped
+    matching the render, and the drift gate went red on a file nobody had
+    touched. A downstream's workaround was to exclude the file from ruff
+    entirely, which switched off the lint that had just caught an `F821` in
+    it.
+
+    The suffix is jm's own and reserved; the user-owned sibling is
+    ``test_<comp>.py``. A hand-written file that chose this exact name
+    would be reformatted, which is the same bargain the ``.pyi`` glob makes.
+
     Sorted for a stable invocation order.
     """
     src = root / "src"
     if not src.is_dir():
         return []
-    return sorted(src.rglob("*.pyi"))
+    return sorted([*src.rglob("*.pyi"), *src.rglob("test_*_invariants.py")])
 
 
 def format_project(root: Path, cfg: dict, *, quiet: bool = False) -> None:

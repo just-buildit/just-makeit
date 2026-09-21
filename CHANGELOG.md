@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The generated invariants test is formatter-clean** (gh-1432). Each block
+    ended with the two blank lines PEP 8 puts *between* top-level functions,
+    and so did the last one — a separator used as a terminator, leaving the
+    file ending `)\n\n\n`. `ruff format` and `end-of-file-fixer` each trim
+    that tail, the committed bytes stop matching the render, and
+    `jm status --check` reports jm's **own** file STALE: a drift gate red on
+    a file nobody edited.
+
+    The render is fixed, and the file now also goes through
+    `py_format_command` alongside the `.pyi` stubs — it meets that pass's
+    stated bar (jm overwrites it whole, it carries a DO NOT EDIT banner, and
+    it is drift-gated), so any *future* style difference is covered by the
+    same symmetry that keeps the stubs stable local-vs-CI.
+
+    Worth the general fix rather than the one-line one: the downstream
+    workaround was to exclude the file from ruff entirely, which switched
+    off the lint that had just caught an `F821` in it.
+
 ## [0.82.1] — 2026-09-21
 
 ### Fixed
