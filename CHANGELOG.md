@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.84.0] — 2026-09-21
+
 ### Added
 
 - **A module fragment can be jm's content** (gh-1448). `fragment =   "generated"` on an object makes `<mod>_ext_<obj>.c` glue: `apply`
