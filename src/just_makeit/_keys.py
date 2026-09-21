@@ -56,6 +56,13 @@ OBJECT_KEYS = frozenset(
         "core_macro",
         "core_args",
         "core_header",
+        # gh-1448: who owns the per-object binding fragment's CONTENT.
+        # "sacred" (the default, and what an absent key means) is
+        # today: created once, only ever gaining missing members.
+        # "generated" makes it jm's, rendered whole on every apply
+        # and drift-gated -- what `<comp>_ext.c` already is for a
+        # standalone object, which is the asymmetry this ends.
+        "fragment",
         "process_global",
         "serializable",
         "streamable",

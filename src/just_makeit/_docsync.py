@@ -2687,16 +2687,96 @@ class UnitDiff(NamedTuple):
         return self.only_here
 
 
+#: One C token: an identifier/keyword, a number, or a single punctuation
+#: character. Enough to compare code for sameness, and deliberately not a
+#: C parser -- the question is only "are these the same tokens".
+_C_TOKEN_RE = re.compile(r"[A-Za-z_]\w*|\d[\w.]*|[^\sA-Za-z_0-9]")
+
+#: The token a content-masked string or char literal collapses to.
+_STR_TOKEN = '""'
+
+
+def _collapse_literals(tokens: list) -> list:
+    """Replace each literal with `_STR_TOKEN`, then each RUN with one.
+
+    C concatenates adjacent string literals, and a formatter decides where
+    to break a long one -- clang-format re-wraps a docstring across lines,
+    so the same text is two literals on disk and one in jm's render.
+
+    Done on the TOKEN STREAM, where a quote's role is structural: contents
+    are blanked by `_code_mask`, so a literal is exactly two consecutive
+    quote tokens and parity cannot be mistaken.
+
+    It was a regex over the masked text and that was wrong in a way a
+    fixture with one or two isolated literals cannot show. `"[^"]*"` can
+    begin at a CLOSING quote and pair it with the next OPENING one, so in::
+
+        char *k[] = { "a", "b", NULL };
+        if (s ("f32")) x = 5;
+
+    the parity slipped and everything between the real literals was eaten
+    as if it were one -- a whole `PyArg_ParseTupleAndKeywords` body and its
+    `strcmp` chain reduced to two quotes. Two fragments that differ only in
+    which `sample_type` strings they accept then compared IDENTICAL, and
+    `adopt --check` said `would flip` for a fragment whose flip deletes
+    five accepted values (gh-1448 review, doppler `wfm_writer`).
+    """
+    out: list = []
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok in ('"', "'") and i + 1 < n and tokens[i + 1] == tok:
+            if not out or out[-1] != _STR_TOKEN:
+                out.append(_STR_TOKEN)
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
 def _norm_unit(text: str) -> str:
-    """A unit's code, with comments, strings and layout taken out.
+    """A unit's code as a TOKEN STREAM, with comments and strings masked.
 
     Comments and strings go through `_code_mask` -- the masking every other
     axis in this module already uses, so a message worded differently by
-    hand does not read as a code difference. Whitespace is then collapsed,
-    because a reflow is not a change: jm's own formatter pass moves these
-    files, and counting that as "differs" would make the report noise.
+    hand does not read as a code difference.
+
+    The rest is tokenised rather than whitespace-collapsed, and that is the
+    whole of gh-1448's first review. Collapsing runs of whitespace leaves
+    the whitespace that is THERE: a project with
+    `c_style = "clang-format"` and a GNU `.clang-format` writes
+    ``foo (a, b)`` where jm's unformatted render has ``foo(a, b)``, so
+    every unit of every fragment read as differing. Zero of doppler's 87
+    could flip, against 46 that `status` calls byte-identical.
+
+    Tokenising answers the question exactly. A formatter rewrites
+    whitespace and line breaks; it cannot change the tokens, and string
+    CONTENT -- the one thing it may re-wrap -- is masked before we get
+    here. So two units with the same token stream are the same code
+    whatever either side's layout.
+
+    The alternative considered was formatting the reference through the
+    project's `c_format_command`, as `apply` does before writing. Rejected
+    for a failure mode it hides: `_cfmt` returns early when that command is
+    not on PATH, so on any machine without the formatter installed the
+    comparison would silently revert to comparing layouts -- the same bug,
+    now invisible and environment-dependent. Tokens have no such mode.
+
+    Known limit, stated rather than discovered later: a formatter
+    configured to INSERT braces (clang-format's `InsertBraces`) does change
+    the token stream, and such a unit would read as differing. That is a
+    review, not a wrong flip.
+
+    Examples
+    --------
+    >>> _norm_unit("foo(a, b);") == _norm_unit("foo (a, b) ;")
+    True
+    >>> _norm_unit("int x;") == _norm_unit("intx;")
+    False
     """
-    return " ".join(_code_mask(text).split())
+    toks = _C_TOKEN_RE.findall(_code_mask(text))
+    return " ".join(_collapse_literals(toks))
 
 
 def fragment_units(text: str) -> dict:
