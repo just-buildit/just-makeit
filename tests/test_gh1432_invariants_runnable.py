@@ -207,6 +207,38 @@ class TestTheFileCanActuallyRun:
         compile(_invariants(proj).read_text(), "test_r_invariants.py", "exec")
 
 
+class TestItIsFormatterClean:
+    """A jm-OWNED file that a formatter wants to change is a drift gate
+    red on a file nobody edited.
+
+    Each block ends with the two blank lines PEP 8 puts BETWEEN top-level
+    functions, and the last block got them too -- a separator used as a
+    terminator. `ruff format` and `end-of-file-fixer` each trim the tail,
+    the committed bytes stop matching the render, and `jm status --check`
+    calls jm's own file STALE. The downstream workaround was to exclude
+    the file from ruff, which switched off the lint that had just caught
+    an `F821` in it.
+    """
+
+    def test_it_ends_with_exactly_one_newline(self, tmp_path):
+        proj = _project(tmp_path, real_kernels=True)
+        raw = _invariants(proj).read_bytes()
+        assert raw.endswith(b"\n")
+        assert len(raw) - len(raw.rstrip(b"\n")) == 1, raw[-6:]
+
+    def test_it_is_in_the_formatter_pass(self, tmp_path):
+        """Not only correct today -- covered for any future difference.
+
+        `py_format_command` is what keeps the `.pyi` stubs stable
+        local-vs-CI, and this file is jm's outright by the same test that
+        admits them.
+        """
+        from just_makeit import _pyfmt
+
+        proj = _project(tmp_path, real_kernels=True)
+        assert _invariants(proj) in _pyfmt.generated_py_files(proj)
+
+
 class TestItSaysWhatItCanFromDayOne:
     def test_a_stub_kernel_still_gets_the_input_face(self, tmp_path):
         """The input face holds whatever the kernel does.
