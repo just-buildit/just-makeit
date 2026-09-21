@@ -181,7 +181,13 @@ JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
 #                   these need `just-makeit` itself importable from the project
 #                   env (just-buildit arrives transitively as its build dep), so
 #                   its runtime deps arrive with it.
-PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy
+# pyyaml: gh-851's pre-publish artifact gate READS `.github/workflows/`,
+# and skipped itself without it -- one of the green skips gh-1442 turned
+# up. It belongs here rather than in the dev group: this is test
+# infrastructure like pytest and numpy, not a formatter whose exact
+# version has to agree byte-for-byte across machines.
+PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
+                  --with pyyaml
 PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
                   --with just-buildit
 PYTEST          = $(PYTEST_ISOLATED) pytest

@@ -133,15 +133,20 @@ jobs:
             python-version: "3.9"
 
     steps:
-      # `fetch-tags` because two gates ask git what has been RELEASED, and a
-      # tagless clone turns both into a skip that reports green:
-      # `test_every_tagged_release_has_a_section` -- a DECLARED gate of this
-      # repo -- and `test_release_bump_fast_path`. Neither had ever run here
-      # (gh-1442). The suite's skip gate now fails on both, so this is what
-      # keeps it passing for the right reason rather than by exemption.
+      # `fetch-depth: 0` because three gates ask git what has been RELEASED,
+      # and a shallow tagless clone turns all three into a skip that reports
+      # green: `test_every_tagged_release_has_a_section` -- a DECLARED gate of
+      # this repo -- `test_release_bump_fast_path`, and gh-851's pre-publish
+      # artifact gate. None had ever run here (gh-1442).
+      #
+      # `fetch-tags: true` was tried first and is NOT enough: it fetches the
+      # tag NAMES, and a depth-1 clone still does not contain the commits they
+      # point at, so the checks went from "no release tags in this clone" to
+      # "v0.82.3 not reachable in this clone" -- a different sentence for the
+      # same green skip. The suite's skip gate caught both.
       - uses: actions/checkout@v7.0.1
         with:
-          fetch-tags: true
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v9.0.0
         with:
@@ -362,7 +367,11 @@ jobs:
     # Back to 30 once #1374 has made it fit.
     timeout-minutes: 45
     steps:
+      # Runs the same suite, so it needs the same clone -- the skip gate
+      # is not satisfied by the `test` job alone (gh-1442).
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v9.0.0
         with:

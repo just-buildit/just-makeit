@@ -61,7 +61,6 @@
     nobody put it on PATH, and only the second is a gate that is not
     running.
 
-
 ## [0.82.3] — 2026-09-21
 
 ### Fixed
