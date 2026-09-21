@@ -23,6 +23,8 @@ test_gh1447_status_states_what_it_saw
 test_gh1448_adopt_check
 test_gh1448_adopt_flip
 test_gh1448_token_survives_clang_format
+test_gh1452_consumer_links_installed_tree
+test_gh1452_libm_anchor
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor

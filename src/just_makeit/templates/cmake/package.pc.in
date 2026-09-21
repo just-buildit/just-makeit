@@ -6,5 +6,5 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: <<project>>
 Description: <<project>> C library
 Version: @PROJECT_VERSION@
-Libs: -L${libdir} -l<<project_underscore>>
+Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@
 Cflags: -I${includedir}

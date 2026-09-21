@@ -85,7 +85,34 @@ foreach(lib_target <<project_underscore>>_lib
                          $<INSTALL_INTERFACE:include>)
   set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME
                                                  <<project_underscore>>)
+  # gh-1452: libm is part of this library's LINK INTERFACE, not a private
+  # detail. jm's headers DEFINE -- `step()` is `static inline` by default,
+  # `JM_FORCEINLINE` under --perf -- so a consumer that calls it compiles the
+  # body into its OWN object, and `ld` has not resolved a consumer's undefined
+  # symbol through a dependency's NEEDED since binutils 2.22. PUBLIC puts it in
+  # the exported target's INTERFACE_LINK_LIBRARIES.
+  #
+  # Two spellings on purpose, and neither is the bare name `m`. The build
+  # interface is the resolved PATH, which no target named `m` can shadow
+  # (gh-1305). The install interface is the linker FLAG `-lm`: a path from THIS
+  # machine is wrong on the consumer's, and the bare name is worse than it
+  # looks -- CMake resolves it against the PRODUCER's targets while writing the
+  # export, so `jm module m` made it the Python module ("requires target m that
+  # is not in any export set"). A `-`-prefixed item is never a target name.
+  # Empty where there is no libm (Windows), so it guards itself.
+  if(JM_MATH_LIBRARY)
+    target_link_libraries(
+      ${lib_target} PUBLIC $<BUILD_INTERFACE:${JM_MATH_LIBRARY}>
+                           $<INSTALL_INTERFACE:-lm>)
+  endif()
 endforeach()
+# The pkg-config face of the same fact, in `Libs:` rather than `Libs.private`
+# for the same reason: it is needed to link a CONSUMER.
+if(JM_MATH_LIBRARY)
+  set(JM_PC_LIBM " -lm")
+else()
+  set(JM_PC_LIBM "")
+endif()
 # gh-1368: one OUTPUT_NAME for both is unambiguous on Linux and macOS
 # (lib<name>.so vs lib<name>.a) and a collision on Windows, where the SHARED
 # library's import library and the STATIC library are both <name>.lib --

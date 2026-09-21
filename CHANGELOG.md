@@ -65,6 +65,33 @@
     other marker was audited for the same flaw; none anchors on a literal
     paren.
 
+- **A consumer of an installed project can link it** (gh-1452). jm's
+    headers *define*: `step()` is `static inline` by default and
+    `JM_FORCEINLINE` under `--perf`, so a consumer that calls it compiles the
+    body into its own object, and anything that body calls — `powf`,
+    `fminf` — is an undefined symbol there. `ld` has not resolved a
+    consumer's symbol through a dependency's `NEEDED` since binutils 2.22, so
+    libm is part of the library's **link interface**. The generated `.pc`
+    said `Libs: -l<pkg>` and the exported targets carried no
+    `INTERFACE_LINK_LIBRARIES`, so a five-line consumer failed with
+    `undefined reference to 'powf'`, shared and static. doppler found it on
+    its published packages in clean containers.
+
+    The `.pc` now carries `-lm` in `Libs:`, and the combined library links
+    libm `PUBLIC`: the resolved path in the build interface (no target named
+    `m` can shadow it, gh-1305) and the linker flag `-lm` in the install
+    interface. Neither a path nor the bare name will do there: a path from
+    the build machine is wrong on the consumer's, and CMake resolves a bare
+    `m` against the *producer's* targets while writing the export — so
+    `jm module m` made it the Python module. Both are empty where there is
+    no libm, so Windows is unchanged.
+
+    A new gate builds a program against the **installed** tree using only
+    what `pkg-config` and `find_package` report — the check doppler was
+    missing too, since every smoke it had compiled a consumer that did not
+    touch libm. An existing project's `.pc` is reported `OUTDATED`; its root
+    `CMakeLists.txt` is not, which is gh-1459.
+
 ## [0.83.0] — 2026-09-21
 
 ### Added
