@@ -2692,13 +2692,47 @@ class UnitDiff(NamedTuple):
 #: C parser -- the question is only "are these the same tokens".
 _C_TOKEN_RE = re.compile(r"[A-Za-z_]\w*|\d[\w.]*|[^\sA-Za-z_0-9]")
 
-#: A RUN of adjacent string literals, already content-masked. C
-#: concatenates them into one string, and a formatter decides where to
-#: break a long one -- clang-format re-wraps a docstring across lines, so
-#: the same text is two literals on disk and one in jm's render. Collapsing
-#: the run is what makes those compare equal; the content is masked either
-#: way, so nothing is lost by it.
-_ADJACENT_STRINGS_RE = re.compile(r'"[^"]*"(?:\s*"[^"]*")+')
+#: The token a content-masked string or char literal collapses to.
+_STR_TOKEN = '""'
+
+
+def _collapse_literals(tokens: list) -> list:
+    """Replace each literal with `_STR_TOKEN`, then each RUN with one.
+
+    C concatenates adjacent string literals, and a formatter decides where
+    to break a long one -- clang-format re-wraps a docstring across lines,
+    so the same text is two literals on disk and one in jm's render.
+
+    Done on the TOKEN STREAM, where a quote's role is structural: contents
+    are blanked by `_code_mask`, so a literal is exactly two consecutive
+    quote tokens and parity cannot be mistaken.
+
+    It was a regex over the masked text and that was wrong in a way a
+    fixture with one or two isolated literals cannot show. `"[^"]*"` can
+    begin at a CLOSING quote and pair it with the next OPENING one, so in::
+
+        char *k[] = { "a", "b", NULL };
+        if (s ("f32")) x = 5;
+
+    the parity slipped and everything between the real literals was eaten
+    as if it were one -- a whole `PyArg_ParseTupleAndKeywords` body and its
+    `strcmp` chain reduced to two quotes. Two fragments that differ only in
+    which `sample_type` strings they accept then compared IDENTICAL, and
+    `adopt --check` said `would flip` for a fragment whose flip deletes
+    five accepted values (gh-1448 review, doppler `wfm_writer`).
+    """
+    out: list = []
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok in ('"', "'") and i + 1 < n and tokens[i + 1] == tok:
+            if not out or out[-1] != _STR_TOKEN:
+                out.append(_STR_TOKEN)
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out
 
 
 def _norm_unit(text: str) -> str:
@@ -2741,8 +2775,8 @@ def _norm_unit(text: str) -> str:
     >>> _norm_unit("int x;") == _norm_unit("intx;")
     False
     """
-    masked = _ADJACENT_STRINGS_RE.sub('""', _code_mask(text))
-    return " ".join(_C_TOKEN_RE.findall(masked))
+    toks = _C_TOKEN_RE.findall(_code_mask(text))
+    return " ".join(_collapse_literals(toks))
 
 
 def fragment_units(text: str) -> dict:

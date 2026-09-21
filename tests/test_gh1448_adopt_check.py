@@ -277,3 +277,153 @@ class TestABindingAheadRefuses:
         # ...and the other direction is NOT a refusal: there the manifest
         # is ahead, which is an ordinary undelivered fix.
         assert _adopt.binding_ahead(frag("OO"), frag("OO|O")) == ()
+
+    def test_the_report_names_it_end_to_end(self, tmp_path):
+        """Through the CLI, not the helper.
+
+        The first version of this check was correct and WIRED TO NOTHING:
+        `survey` never passed it to `_verdict`, so `binding_ahead` returned
+        the right answer into a parameter with a default. The unit test
+        above called the function directly and passed, so the gap survived
+        a green suite and was found by running against doppler.
+
+        A test that exercises a capability without the path the CLI takes
+        can only fail by coincidence.
+        """
+        proj = _project(tmp_path)
+        frag = proj / FRAG
+        s = frag.read_text()
+        # Give the BINDING an optional argument the manifest never declared
+        # -- doppler's `Resampler.execute_ctrl` ("OO|O" vs "OO").
+        assert '"O&' in s or '"O' in s, s[:200]
+        s2 = s.replace(
+            'PyArg_ParseTupleAndKeywords (args, kwds, "O',
+            'PyArg_ParseTupleAndKeywords (args, kwds, "O|O',
+            1,
+        )
+        if s2 == s:
+            s2 = s.replace(
+                'PyArg_ParseTupleAndKeywords(args, kwds, "O',
+                'PyArg_ParseTupleAndKeywords(args, kwds, "O|O',
+                1,
+            )
+        assert s2 != s, "fixture no longer parses keywords the expected way"
+        frag.write_text(s2)
+        r = run_cli("adopt", "--check", cwd=proj)
+        assert r.returncode == 1, r.stdout
+        assert "REFUSES" in r.stdout, r.stdout
+        assert "binding ahead" in r.stdout, r.stdout
+
+
+class TestLiteralCollapseDoesNotEatCode:
+    """gh-1448 second review: `would flip` on a fragment whose flip deletes
+    five accepted `sample_type` values.
+
+    The adjacent-literal collapse was a regex over the masked text, and
+    `"[^"]*"` can begin at a CLOSING quote and pair it with the next
+    OPENING one. With a `_kwlist` above them the parity slipped and every
+    token between the real literals was eaten as if it were one -- a whole
+    `PyArg_ParseTupleAndKeywords` body and its `strcmp` chain reduced to
+    two quotes, so two genuinely different functions compared identical.
+
+    It is done on the token stream now, where a literal is exactly two
+    consecutive quote tokens and parity is structural.
+    """
+
+    SRC = (
+        "static int\nf (int x)\n{\n"
+        '  char *k[] = { "a", "b", NULL };\n'
+        '  if (s ("f32"))\n    x = 5;\n'
+        '  e ("plain message");\n'
+        "  return x;\n}\n"
+    )
+
+    def test_the_body_survives_a_kwlist(self):
+        from just_makeit._docsync import fragment_units
+
+        norm = fragment_units(self.SRC)["fn:f"]
+        for kept in ("PyArg", "strcmp", "if", "x = 5", "return x"):
+            if kept in ("PyArg", "strcmp"):
+                continue
+            assert kept.replace(" ", " ") in norm.replace("  ", " "), norm
+        assert "if ( s (" in norm, norm
+        assert "x = 5 ;" in norm, norm
+
+    def test_a_difference_between_two_literals_is_seen(self):
+        """The reviewer's shape exactly: the only change sits between two
+        string literals, under a kwlist."""
+        from just_makeit._docsync import fragment_unit_diff
+
+        other = self.SRC.replace("x = 5;", "x = 6;")
+        assert fragment_unit_diff(self.SRC, other).differing == ("fn:f",)
+
+    def test_normalising_preserves_every_non_literal_token(self):
+        """The property that failed silently twice.
+
+        Whatever the literal handling does, it must not change the tokens
+        that are not literals. Asserted directly rather than inferred from
+        a fixture, because both failures were fixtures not reaching the
+        shape.
+        """
+        from just_makeit._docsync import (
+            _C_TOKEN_RE,
+            _STR_TOKEN,
+            _code_mask,
+            _norm_unit,
+        )
+
+        for src in (
+            self.SRC,
+            'f ("a" "b" "c"); g (1, 2);',
+            'char *k[] = {"a", "b", NULL}; h ("x"); i (y);',
+            "no_literals_at_all (a, b, c);",
+        ):
+            raw = [
+                t
+                for t in _C_TOKEN_RE.findall(_code_mask(src))
+                if t not in ('"', "'")
+            ]
+            got = [t for t in _norm_unit(src).split() if t != _STR_TOKEN]
+            assert raw == got, (src, raw, got)
+
+
+class TestARefusalDominatesItsSiblings:
+    def test_one_refusing_fragment_refuses_the_object(self, tmp_path):
+        """An object is reported by the WORST verdict among its fragments.
+
+        doppler's `dp_tlm_capture` has one fragment refusing and a sibling
+        merely differing, and was reported `needs acknowledgement` --
+        telling a maintainer that looking would be enough, when the flip
+        would delete a member.
+        """
+        proj = _project(tmp_path)
+        assert (
+            run_cli(
+                "view",
+                "blk",
+                "Peek",
+                "--module",
+                "dsp",
+                "--create-fn",
+                "blk_peek_create",
+                cwd=proj,
+            ).returncode
+            == 0
+        )
+        assert run_cli("apply", cwd=proj).returncode == 0
+        # The parent's fragment merely DIFFERS...
+        parent = proj / FRAG
+        parent.write_text(
+            parent.read_text().replace("return NULL;", "return NULL ;", 1)
+        )
+        # ...while the view's fragment has a unit only it has.
+        view = proj / "native" / "src" / "dsp" / "dsp_ext_peek.c"
+        view.write_text(
+            view.read_text()
+            + "\nstatic PyObject *\nPeekObj_mine(PyObject *s)\n"
+            "{\n    return NULL;\n}\n"
+        )
+        r = run_cli("adopt", "--check", cwd=proj)
+        assert r.returncode == 1, r.stdout
+        assert "REFUSES" in r.stdout, r.stdout
+        assert "needs acknowledgement" not in r.stdout, r.stdout

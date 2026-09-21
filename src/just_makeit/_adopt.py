@@ -68,8 +68,15 @@ class Verdict(NamedTuple):
     ahead: tuple
 
 
-#: The states in which a fragment cannot flip unattended.
-_BLOCKING = ("needs_ack", "refused")
+#: The states in which a fragment cannot flip unattended, WORST FIRST.
+#:
+#: Order is the whole of it: an object is reported by the worst verdict
+#: among its fragments, and a refusal must dominate an acknowledgement. It
+#: read `("needs_ack", "refused")`, so doppler's `dp_tlm_capture` -- one
+#: fragment refusing, a sibling merely differing -- was reported as
+#: `needs acknowledgement`, telling a maintainer that looking would be
+#: enough when the flip would delete a member (gh-1448 review).
+_BLOCKING = ("refused", "needs_ack")
 
 
 def binding_ahead(existing: str, reference: str) -> tuple:
@@ -146,11 +153,18 @@ def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
             if not frag.exists():
                 continue
             rel = frag.relative_to(root).as_posix()
-            ud = _docsync.fragment_unit_diff(
-                frag.read_text(encoding="utf-8"),
-                R.render_module_ext_fragment(ctx),
+            existing = frag.read_text(encoding="utf-8")
+            reference = R.render_module_ext_fragment(ctx)
+            ud = _docsync.fragment_unit_diff(existing, reference)
+            out.append(
+                _verdict(
+                    rel,
+                    comp,
+                    C.fragment_kind(cfg, comp),
+                    ud,
+                    binding_ahead(existing, reference),
+                )
             )
-            out.append(_verdict(rel, comp, C.fragment_kind(cfg, comp), ud))
     return out
 
 
