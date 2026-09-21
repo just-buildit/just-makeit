@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.82.1] — 2026-09-21
+
 ### Fixed
 
 - **The generated invariants test can run** (gh-1432). `test_<obj>_invariants.py`
