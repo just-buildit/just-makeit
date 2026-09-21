@@ -13,12 +13,36 @@
     gh-219 use-after-free fix. Where a wrapper lived decided whether it
     received fixes.
 
-    **An apply that would delete a unit refuses instead.** `adopt --check`
-    reports such a fragment, but the key is a TOML line anyone can write,
-    and without this guard writing it deletes hand-written code silently on
-    the next apply — the one outcome the read-only half exists to prevent,
-    reachable by editing one line. The refusal names the units and points at
-    `adopt --check`.
+    **The first whole render is guarded; later ones are not.** The key is a
+    TOML line anyone can write, and on its own it cannot tell "about to be
+    adopted" from "adopted last month". So an owned render writes one short
+    line recording the flip, naming its own file:
+
+    ```c
+    /* jm:generated dsp_ext_blk.c */
+    ```
+
+    A fragment without it has never been rendered whole under the key, and
+    its body may be hand-written: `apply` refuses unless `adopt --check`
+    would say `would flip`, and writes nothing. A fragment with it is jm's,
+    so a difference is jm's own drift and is overwritten — which is what
+    keeps an owned fragment **upgradable**, since the release after
+    adoption changing a wrapper would otherwise be refused too.
+
+    One predicate serves both `adopt --check` and `apply`. They were two
+    and had already drifted: `apply` refused only a unit that existed on
+    disk alone, so a hand-keyed fragment whose *body* was hand-written —
+    doppler's `wfm_writer`, `pn` — was rewritten with rc 0.
+
+    A token naming a *different* file does not count, so copying a
+    neighbour's owned fragment is not a second road around the guard. It is
+    one short line because clang-format reflows comments; a sentence would
+    have been the fourth detector today to break on GNU layout.
+
+    The header an owned fragment carries no longer says *"Hand-patches to
+    this file are preserved"* — false for a file apply overwrites — and
+    points at the `_extra.c` beside it instead. Removing the key while the
+    token remains is reported by `adopt --check` and `status` as `TOKEN   WITHOUT KEY`, since that file now makes the opposite false claim.
 
 ## [0.83.0] — 2026-09-21
 

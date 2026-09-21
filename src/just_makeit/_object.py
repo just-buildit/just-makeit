@@ -1609,15 +1609,22 @@ def build_component_ctxs(
         # gh-504: a real object's fragment id is its component name (today's
         # behaviour); a view (below) overrides it so its fragment file differs.
         ctx["frag_id"] = ctx["component"]
+        # gh-1448: who owns this fragment's content, set HERE -- the one
+        # place every render path (apply's replay, `_docsync`, `adopt`)
+        # builds its ctx from -- so no path can render the wrong banner.
+        ctx["fragment_kind"] = C.fragment_kind(cfg, obj)
         comp_ctxs.append(ctx)
         # gh-504: each view of this object becomes an extra ctx — a second
         # PyTypeObject over the same core. Collected and appended AFTER every
         # real object so the zip(object_names, comp_ctxs) pairing downstream
         # (which walks module_objects, excluding views) stays aligned.
         for view in C.views(cfg, obj):
-            view_ctxs.append(
-                _make_view_ctx(root, cfg, module, pkg, obj, view, _doc_blocks)
+            _vctx = _make_view_ctx(
+                root, cfg, module, pkg, obj, view, _doc_blocks
             )
+            # A view has no manifest table: its PARENT's key governs it.
+            _vctx["fragment_kind"] = C.fragment_kind(cfg, obj)
+            view_ctxs.append(_vctx)
     comp_ctxs.extend(view_ctxs)
     return comp_ctxs
 
@@ -2380,6 +2387,7 @@ def run(
     no_step: bool = False,
     no_reset: bool = False,
     process_global: bool = False,
+    fragment: str = "",
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
@@ -2482,6 +2490,7 @@ def run(
             core_family=core_family,
             no_reset=no_reset,
             process_global=process_global,
+            fragment=fragment,
             mutable=mutable,
             step_delegates=step_delegates,
             serializable=serializable,
@@ -2862,6 +2871,7 @@ def run(
         no_step_=no_step,
         no_reset_=no_reset,
         process_global_=process_global,
+        fragment_=fragment,
         opaque_state_=opaque_state,
         # gh-1321: the MODULE path's recorder never forwarded this, so a
         # `--header-only` module object recorded no such key -- the CMake took
