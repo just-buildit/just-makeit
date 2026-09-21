@@ -139,7 +139,10 @@ class TestAnEditedFeatureIsReported:
 
         r = run_cli("apply", cwd=proj)
         out = r.stdout + r.stderr
-        assert "declares strict-input" in out, out
+        # The sentence, not the label: "declares strict-input" named a
+        # key no manifest has. This one says what the fragment DOES.
+        assert "declares strict" in out, out
+        assert "refused rather than converted" in out, out
 
     def test_status_check_is_not_the_reporter(self, tmp_path):
         """`status` surfaces it; the drift itself is advisory.
@@ -193,3 +196,107 @@ class TestItDoesNotCryWolf:
         )
         r = run_cli("apply", cwd=proj)
         assert "no longer matches" not in (r.stdout + r.stderr)
+
+
+def _out_method(proj: Path, name: str, *extra: str) -> None:
+    """A `variable_output` method -- the shape that offers `out=`."""
+    r = run_cli(
+        "method",
+        "r",
+        name,
+        "--module",
+        "m",
+        "--arg-type",
+        "float _Complex[]",
+        "--return-type",
+        "float _Complex",
+        "--variable-output",
+        *extra,
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+
+
+class TestTheOutGuardIsNotStrict:
+    """gh-1432 / doppler#1440: one macro, two guards, one label.
+
+    `PyArray_IS_C_CONTIGUOUS` was the whole of the `strict-input` marker,
+    described as "the spelling no coercing wrapper has". jm's own `out=`
+    buffer guard has it -- so EVERY `variable_output` method offering
+    `out=` carried the marker, and 15 doppler fragments whose manifests
+    contain no `strict` anywhere were reported as declaring it.
+
+    Only the operand tells the two apart: the `out=` guard tests
+    `out_obj`, the strict refusal tests the input's own `<param>_obj`.
+    """
+
+    def test_a_method_with_out_does_not_read_as_strict(self, tmp_path):
+        proj = _project(tmp_path)
+        _out_method(proj, "run")
+        assert run_cli("apply", cwd=proj).returncode == 0
+
+        frag = proj / FRAG
+        src = frag.read_text()
+        assert "out_obj" in src, "fixture no longer renders an out= guard"
+        # An OLD fragment: rendered before gh-581's contiguity half. That
+        # is doppler's 15 fragments, reproduced rather than described.
+        stripped = "\n".join(
+            ln
+            for ln in src.splitlines()
+            if "PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj)" not in ln
+        )
+        assert stripped != src
+        frag.write_text(stripped + "\n")
+
+        out = (lambda r: r.stdout + r.stderr)(run_cli("apply", cwd=proj))
+        # The drift is REAL and must still be reported...
+        assert "no longer matches" in out, out
+        # ...but never as a manifest key this project does not have.
+        assert "strict" not in out, out
+        assert "out= guard" in out, out
+        assert "silently ignored" in out, out
+
+    def test_strict_is_still_seen_when_it_is_really_declared(self, tmp_path):
+        """The other direction: narrowing a marker must not lose its
+        real subject. A strict method's contiguity test is on the INPUT,
+        so removing the `out=` spelling leaves it standing.
+        """
+        from just_makeit import _docsync
+
+        proj = _project(tmp_path)
+        _out_method(proj, "loose")
+        _out_method(proj, "tight", "--strict")
+        assert run_cli("apply", cwd=proj).returncode == 0
+
+        feat = _docsync._method_feature_symbols((proj / FRAG).read_text())
+        assert "strict-input" in feat["tight"], feat["tight"]
+        assert "strict-input" not in feat["loose"], feat["loose"]
+        # Both offer `out=`, so both carry the guard marker.
+        assert "out-contiguity" in feat["tight"]
+        assert "out-contiguity" in feat["loose"]
+
+    def test_the_anchor_survives_a_rewrap(self, tmp_path):
+        """The operand may be wrapped away from the macro.
+
+        The fragment is clang-formatted in the PROJECT's style, so a
+        narrow column can split the guard across lines. A literal anchor
+        that stopped matching would hand the `out=` guard's contiguity
+        test back to `strict-input` -- silently restoring the bug.
+        """
+        from just_makeit import _docsync
+
+        proj = _project(tmp_path)
+        _out_method(proj, "run")
+        assert run_cli("apply", cwd=proj).returncode == 0
+
+        frag = proj / FRAG
+        src = frag.read_text()
+        wrapped = src.replace(
+            "PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj)",
+            "PyArray_IS_C_CONTIGUOUS(\n                (PyArrayObject *)\n"
+            "                    out_obj)",
+        )
+        assert wrapped != src
+        feat = _docsync._method_feature_symbols(wrapped)
+        assert "out-contiguity" in feat["run"], feat["run"]
+        assert "strict-input" not in feat["run"], feat["run"]

@@ -36,6 +36,7 @@ from . import _textio
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 from . import _config as C
 from . import _gluedoc
@@ -1033,12 +1034,78 @@ def _raises(code: str) -> bool:
 #: Same rule as `_RETURN_SHAPE_MARKERS` -- presence of a construct, so a
 #: hand-written wrapper implementing the same feature carries the same
 #: marker and never reads as drift.
+#: The contiguity half of jm's own ``out=`` buffer guard. Anchored on the
+#: ``out_obj`` OPERAND on purpose: that is the only thing telling this
+#: guard apart from the strict input refusal, which spells the same macro
+#: against the input's own ``<param>_obj``.
+#:
+#: A pattern rather than a literal because the fragment is clang-formatted
+#: in the project's own style: the operand may be wrapped away from the
+#: macro at a narrow column, and a literal that stopped matching would
+#: hand the `out=` guard's contiguity test straight back to `strict-input`
+#: -- the exact misattribution this exists to end.
+_OUT_CONTIG_RE = re.compile(
+    r"PyArray_IS_C_CONTIGUOUS\(\s*\(\s*PyArrayObject\s*\*\s*\)\s*out_obj\s*\)"
+)
+
+
+class _Feature(NamedTuple):
+    """One declared-feature marker: how to see it, and what to say.
+
+    The sentence travels WITH the spellings rather than being composed at
+    the report site, because the two can disagree -- and did. Every marker
+    was reported as "the manifest declares <label>", which is true of
+    `strict` and `releases` and false of an `out=` guard: that one is jm's
+    own, and a fragment lacking it predates it rather than contradicting a
+    manifest. doppler was sent looking for a `strict` key that was not in
+    the file (gh-1432).
+    """
+
+    spellings: tuple
+    why: str
+
+
+#: Constructs a DECLARED FEATURE puts in a wrapper, which the three axes
+#: above cannot see: `status_errors`, `strict` and `releases` all leave the
+#: METH flags, the PyArg format and the return shape identical while
+#: changing what the binding does (gh-1432).
+#:
+#: Measured: adding a `status_errors` row to the manifest and re-applying
+#: printed "Project already matches just-makeit.toml — nothing to do", the
+#: binding kept none of it, and `jm status --check` exited 0.
+#:
+#: Same rule as `_RETURN_SHAPE_MARKERS` -- presence of a construct, so a
+#: hand-written wrapper implementing the same feature carries the same
+#: marker and never reads as drift.
+#:
+#: Matched against the body with `_OUT_CONTIG` REMOVED, so a contiguity
+#: test that survives is one applied to something other than `out=`.
 _FEATURE_MARKERS = {
     # gh-1426 A: the record a release defaults its count from.
-    "borrow-release": ("_jm_borrowed",),
-    # gh-1426 B: a strict input is refused rather than converted, and the
-    # contiguity test is the spelling no coercing wrapper has.
-    "strict-input": ("PyArray_IS_C_CONTIGUOUS",),
+    "borrow-release": _Feature(
+        ("_jm_borrowed",),
+        "the manifest declares a borrow release, absent here",
+    ),
+    # gh-1426 B: a strict input is REFUSED rather than converted. The
+    # contiguity test is the marker -- but only once the `out=` guard's
+    # own contiguity test is out of the way. It is not, on its own, "the
+    # spelling no coercing wrapper has": every `variable_output` method
+    # offering `out=` carries one, which is how 15 fragments with no
+    # `strict` anywhere in their manifest were reported as declaring it.
+    "strict-input": _Feature(
+        ("PyArray_IS_C_CONTIGUOUS",),
+        "the manifest declares strict, so the input is refused rather "
+        "than converted; this fragment converts it",
+    ),
+    # gh-1432 / doppler#1440: NOT a manifest declaration -- jm's own
+    # `out=` guard, which a fragment rendered before gh-581's contiguity
+    # half simply lacks. The consequence is silent and worth naming: the
+    # marshal fills a temporary copy and the caller's buffer is untouched.
+    "out-contiguity": _Feature(
+        (_OUT_CONTIG_RE,),
+        "jm's out= guard tests C-contiguity and this fragment does not, "
+        "so a strided out= is filled through a copy and silently ignored",
+    ),
 }
 
 #: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
@@ -1068,10 +1135,19 @@ def _method_feature_symbols(text: str) -> dict:
     out: dict = {}
     for name, (body, _span) in _row_bodies(text).items():
         code = _code_mask(body) if body else ""
+        # The `out=` guard's own contiguity test is removed BEFORE the
+        # table is consulted, so a contiguity test that survives is one
+        # applied to something other than `out=` -- which is the strict
+        # input refusal and nothing else. Both guards spell the same
+        # macro; only the operand tells them apart (gh-1432).
+        rest = _OUT_CONTIG_RE.sub("", code)
         found = {
             label
-            for label, spellings in _FEATURE_MARKERS.items()
-            if any(sp in code for sp in spellings)
+            for label, feat in _FEATURE_MARKERS.items()
+            if any(
+                sp.search(code) if hasattr(sp, "search") else sp in rest
+                for sp in feat.spellings
+            )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
         out[name] = frozenset(found)
@@ -1166,10 +1242,21 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
         missing = markers - ex_feat.get(n, frozenset())
         if not missing:
             continue
-        want = ", ".join(
-            m[5:] if m.startswith("case:") else m for m in sorted(missing)
-        )
-        note = f"{n}: the manifest declares {want}, absent here"
+        # Each marker says why in its own words. Composing one sentence
+        # here made every finding read "the manifest declares <label>",
+        # which is false of a jm-owned guard -- and sent doppler looking
+        # for a `strict` key that no manifest in the report had.
+        cases = sorted(m[5:] for m in missing if m.startswith("case:"))
+        whys = [
+            _FEATURE_MARKERS[m].why
+            for m in sorted(missing)
+            if not m.startswith("case:")
+        ]
+        if cases:
+            whys.append(
+                f"the manifest declares {', '.join(cases)}, absent here"
+            )
+        note = f"{n}: {'; '.join(whys)}"
         details[n] = f"{details[n]}; {note}" if n in details else note
     return details
 
