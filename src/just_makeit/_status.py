@@ -230,6 +230,30 @@ def _unified_diff(before: bytes, after: bytes, rel_posix: str) -> str:
     )
 
 
+def _unit_line(ud) -> str:
+    """One line of what jm observed about a fragment (gh-1447).
+
+    Counts first, then the units that differ BY NAME -- which is the whole
+    of the triage doppler had to write a script to do across 52 files.
+    """
+    if ud is None:
+        return ""
+    bits = [f"{len(ud.identical)} identical"]
+    if ud.differing:
+        bits.append(f"{len(ud.differing)} differ")
+    if ud.only_here:
+        bits.append(f"{len(ud.only_here)} only here")
+    if ud.only_rendered:
+        bits.append(f"{len(ud.only_rendered)} only in the render")
+    out = f"        units: {', '.join(bits)}"
+    named = list(ud.differing) + [f"{u} (only here)" for u in ud.only_here]
+    if named:
+        shown = ", ".join(named[:6])
+        more = f", +{len(named) - 6} more" if len(named) > 6 else ""
+        out += f"\n          {shown}{more}"
+    return out
+
+
 def run(
     root: Path,
     *,
@@ -412,6 +436,10 @@ def run(
     # Kept beside `entries` rather than widened into its tuple, which
     # several call sites unpack positionally.
     unreconciled_reasons: dict[str, dict] = {}
+    # gh-1447: what jm OBSERVED about each unreconciled
+    # fragment, unit by unit. `before`/`after` are in hand
+    # where this is filled, so it costs nothing to ask.
+    unreconciled_units: dict = {}
     # gh-785: (path, lineno, message, [at-risk member names]) per `.pyi` on
     # disk that does not parse *and* holds hand-owned members. Only that
     # intersection: a broken stub with nothing hand-written in it is
@@ -618,6 +646,15 @@ def run(
                     )
                     if _why:
                         unreconciled_reasons[rel_posix] = _why
+                    # gh-1447: the four counts, whichever bucket it lands
+                    # in. The report used to assert a CAUSE it had not
+                    # established; these are what it can actually see.
+                    unreconciled_units[rel_posix] = (
+                        _docsync.fragment_unit_diff(
+                            before.decode("utf-8", "replace"),
+                            after.decode("utf-8", "replace"),
+                        )
+                    )
                 if state in ("unreconciled", "stale"):
                     *_, _detail = _docsync.init_kwargs_drift(
                         before.decode("utf-8", "replace"),
@@ -1155,6 +1192,9 @@ def run(
                 )
                 for p_, _, _, diff, _ in _actionable:
                     print(f"    ! {p_}")
+                    _ul = _unit_line(unreconciled_units.get(p_))
+                    if _ul:
+                        print(_ul)
                     for _member in sorted(unreconciled_reasons[p_]):
                         print(f"        {unreconciled_reasons[p_][_member]}")
                     if diff and show_diff:
@@ -1176,6 +1216,9 @@ def run(
                 )
                 for p_, _, _, diff, _ in _refreshable:
                     print(f"    ~ {p_}")
+                    _ul = _unit_line(unreconciled_units.get(p_))
+                    if _ul:
+                        print(_ul)
                     if diff and show_diff:
                         print(
                             "".join(
@@ -1184,9 +1227,14 @@ def run(
                         )
             if _authored:
                 print(
-                    f"  AUTHOR-OWNED ({len(_authored)}) — these differ "
-                    "because you wrote them that way.\n"
-                    "  Nothing to do; they stay unreconciled permanently."
+                    f"  UNEXPLAINED ({len(_authored)}) — these differ "
+                    "from a fresh render and jm\n"
+                    "  cannot tell why. A hand-written body reads like "
+                    "this; so does a fragment\n"
+                    "  rendered before a codegen change jm no longer has a "
+                    "marker for.\n"
+                    "  To see which: copy the file aside, delete it, `jm "
+                    "apply`, and diff."
                 )
                 # Paths stay listed. Suppressing them was the first cut, and
                 # `test_an_edited_fragment_is_reported` (gh-767) caught it:
@@ -1196,6 +1244,9 @@ def run(
                 # the reasons are the fix, and hiding evidence is not.
                 for p_, _, _, diff, _ in _authored:
                     print(f"    ! {p_}")
+                    _ul = _unit_line(unreconciled_units.get(p_))
+                    if _ul:
+                        print(_ul)
                     if diff and show_diff:
                         print(
                             "".join(

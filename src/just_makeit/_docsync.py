@@ -2660,3 +2660,93 @@ def refresh_module_fragment_docs(
                     _textio.write_text(frag, updated)
                 changed.append(frag)
     return changed
+
+
+# ── what a fragment is made of (gh-1447) ─────────────────────────────────────
+
+
+class UnitDiff(NamedTuple):
+    """How a fragment on disk compares to a fresh render, unit by unit.
+
+    The four numbers `status` had no way to print, and which doppler had to
+    write a script to obtain before it could triage 52 fragments. Per
+    fragment: 1,193 units were identical to a fresh render and ~60 were
+    hand-written -- a 4% hand-written surface freezing the other 96%.
+    """
+
+    identical: tuple
+    differing: tuple
+    only_here: tuple
+    only_rendered: tuple
+
+    @property
+    def hand_written(self) -> tuple:
+        """Units that exist only on disk -- the closest thing to evidence
+        of an author, and still only evidence: a unit jm STOPPED emitting
+        lands here too."""
+        return self.only_here
+
+
+def _norm_unit(text: str) -> str:
+    """A unit's code, with comments, strings and layout taken out.
+
+    Comments and strings go through `_code_mask` -- the masking every other
+    axis in this module already uses, so a message worded differently by
+    hand does not read as a code difference. Whitespace is then collapsed,
+    because a reflow is not a change: jm's own formatter pass moves these
+    files, and counting that as "differs" would make the report noise.
+    """
+    return " ".join(_code_mask(text).split())
+
+
+def fragment_units(text: str) -> dict:
+    """Every comparable unit of a binding fragment, keyed by name.
+
+    A unit is one wrapper FUNCTION or one dispatch TABLE -- the granularity
+    a maintainer acts at, and the granularity the question "did anyone
+    write this by hand" is actually asked at. Built from the primitives
+    this module and `_object` already use to walk these files, rather than
+    a second parser: `_extract_c_function_bodies` for the functions, and
+    the same `PyMethodDef`/`PyGetSetDef` regexes the other axes walk.
+    """
+    from ._object import _extract_c_function_bodies
+
+    units = {
+        f"fn:{name}": _norm_unit(body)
+        for name, body in _extract_c_function_bodies(
+            text, require_static=False
+        ).items()
+    }
+    mask = _code_mask(text)
+    for label, array_re in (
+        ("PyMethodDef", _METHODS_RE),
+        ("PyGetSetDef", _GETSET_RE),
+    ):
+        m = array_re.search(mask)
+        if m is None:
+            continue
+        close = _match_brace(mask, m.end() - 1)
+        if close == -1:
+            continue
+        units[f"table:{label}"] = _norm_unit(text[m.start() : close + 1])
+    return units
+
+
+def fragment_unit_diff(existing: str, reference: str) -> UnitDiff:
+    """Compare a fragment on disk with a fresh render of it.
+
+    **States what it observed, not why.** Every unit lands in exactly one
+    of four buckets, and none of them is named for a cause: `status` used
+    to sort a whole file into "you wrote them that way" by default, which
+    was false for 25 of the 43 doppler fragments it said it about
+    (gh-1447).
+    """
+    a, b = fragment_units(existing), fragment_units(reference)
+    same = sorted(k for k in a.keys() & b.keys() if a[k] == b[k])
+    diff = sorted(k for k in a.keys() & b.keys() if a[k] != b[k])
+    return UnitDiff(
+        identical=tuple(same),
+        differing=tuple(diff),
+        only_here=tuple(sorted(a.keys() - b.keys())),
+        only_rendered=tuple(sorted(b.keys() - a.keys())),
+    )
