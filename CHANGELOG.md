@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A declared feature is reported as what it is** (gh-1432,
+    doppler-dsp/doppler#1440). 0.82.2's new fourth axis produced 15
+    warnings on doppler of the form *"the manifest declares strict-input"*
+    against manifests containing no `strict` anywhere.
+
+    `strict-input`'s whole marker was `PyArray_IS_C_CONTIGUOUS`, described
+    in its own comment as *"the spelling no coercing wrapper has"*. jm's
+    own `out=` buffer guard has it — so **every** `variable_output` method
+    offering `out=` carried the marker. Measured on a fresh scaffold: a
+    method with no `strict` renders the contiguity test, and the only
+    thing telling the two guards apart is the operand. The `out=` guard
+    tests `out_obj`; the strict refusal tests the input's own
+    `<param>_obj`.
+
+    So the guard's own spelling is removed before the table is consulted,
+    and a contiguity test that survives is a strict one. Anchored as a
+    pattern, not a literal: the fragment is clang-formatted in the
+    project's style, and a rewrap that stopped matching would hand the
+    `out=` test straight back to `strict-input`.
+
+    **The drift it found was real** — those fragments predate the
+    contiguity half of the `out=` guard, so a strided `out=` is filled
+    through a copy and silently ignored. Only the label was wrong, and a
+    label naming a key the reader cannot find is worse than a vague one:
+    it sends them looking in the manifest instead of at the guard. Each
+    marker now carries its own sentence rather than having one composed
+    for it, because "the manifest declares X" is simply false of a
+    jm-owned guard that a fragment merely predates.
+
 ## [0.82.2] — 2026-09-21
 
 ### Fixed
