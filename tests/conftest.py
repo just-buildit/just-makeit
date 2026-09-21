@@ -354,6 +354,10 @@ _ALLOWED_SKIPS = (
     "got empty parameter set",
     # Hardware. No install fixes this.
     "AVX-512 not available",
+    # A different linker, not a missing one: macOS is Apple ld, and the
+    # test asserts a GNU ld/lld flag SPELLING. No install changes which
+    # linker the platform has.
+    "GNU ld/lld flag spelling",
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",
     "allow-listed:",
