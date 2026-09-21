@@ -31,6 +31,23 @@
     for it, because "the manifest declares X" is simply false of a
     jm-owned guard that a fragment merely predates.
 
+- **The generated invariants test is import-sorter-clean too** (gh-1432).
+    0.82.2 made the file `ruff format`-clean and it was still lint-dirty: jm emitted **two** blank lines between the import block
+    and the `_ELEM_DTYPE` assignment, and isort (`I001`) wants the two-line
+    gap only when a `def`/`class` follows.
+
+    `ruff format` accepts either spelling, which is why the formatter pass
+    added in 0.82.2 could not see it — but `ruff check --fix` rewrites the
+    file, the committed bytes stop matching the render, and `jm status --check` reports jm's **own** file STALE. So the downstream `ruff`
+    exclusion that 0.82.2 existed to remove had to stay, and excluding the
+    file switches off the lint that caught its `F821`.
+
+    One stray element in one branch: the `pytestmark` branch replaces the
+    same trailing blank and already got this right. The gate now runs the
+    **linter** over the rendered file, not only the formatter — `--isolated`,
+    so the answer does not depend on jm's pyproject or a downstream's.
+
+
 ## [0.82.2] — 2026-09-21
 
 ### Fixed
