@@ -148,6 +148,13 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
     for mod in C.modules(cfg):
         cname = C.module_paths(mod).cname
         for obj in C.module_objects(cfg, mod):
+            # gh-1448: `fragment = "generated"` makes this object's
+            # fragments jm's content, and `_sync_missing` now renders them
+            # whole. Leaving them here would say `apply` will not rewrite
+            # what it just did -- and a difference in one is DRIFT, which
+            # is the entire point of declaring it.
+            if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
+                continue
             frag_ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
             for frag_id in frag_ids:
                 rel = (
