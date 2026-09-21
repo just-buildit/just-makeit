@@ -180,28 +180,46 @@ class TestTheFileCanActuallyRun:
         """`_ELEM_DTYPE` was used twice and assigned never (F821)."""
         proj = _project(tmp_path, real_kernels=True)
         src = _invariants(proj).read_text()
+        # `_ELEM_DTYPE` is fine to USE -- it was never fine to use
+        # UNBOUND, which is what F821 said and what this asserts.
         assert _undefined_names(src) == set(), _undefined_names(src)
-        assert "_ELEM_DTYPE" not in src
 
-    def test_the_struct_dtype_comes_from_the_binding(self, tmp_path):
-        """Read off the reader, never restated -- the declared element is
-        declared once, and the C builds the layout from offsetof."""
+    def test_the_declared_layout_is_the_assertion(self, tmp_path):
+        """`_ELEM_DTYPE` is the DECLARED layout, and that is the point.
+
+        Reading it off the reader was tried first and does not work: the
+        reader needs data, seeding data needs the dtype, and a fresh ring
+        answers NULL -- a file that parses and cannot run, which is the
+        defect this issue is about. Only running it showed that.
+
+        Handing the declared layout to the writer makes the restatement
+        the assertion instead: the binding refuses a dtype that is not its
+        own, so a disagreement with the compiler's layout goes red here.
+        """
         proj = _project(tmp_path, real_kernels=True)
         src = _invariants(proj).read_text()
-        assert ".dtype" in src
-        assert "np.dtype([" not in src
+        assert "_ELEM_DTYPE = np.dtype([" in src
+        # ...and it is BOUND, which is the whole of the original defect.
+        assert _undefined_names(src) == set()
 
     def test_it_parses_and_compiles(self, tmp_path):
         proj = _project(tmp_path, real_kernels=True)
         compile(_invariants(proj).read_text(), "test_r_invariants.py", "exec")
 
 
-class TestItIsNotWrittenWhenItWouldSayNothing:
-    def test_a_stub_kernel_writes_no_file(self, tmp_path):
-        """Header and no tests is the hollow shape, and worse than none.
+class TestItSaysWhatItCanFromDayOne:
+    def test_a_stub_kernel_still_gets_the_input_face(self, tmp_path):
+        """The input face holds whatever the kernel does.
 
-        The struct face reads its dtype off the reader, so it needs a real
-        one -- the same condition the round trip already stated.
+        Which dtype the writer accepts is decided by the BINDING, so this
+        is true on a freshly scaffolded project -- and making it wait for
+        a real kernel would have removed the check from every new project,
+        which is the coverage this file exists to give on day one.
         """
         proj = _project(tmp_path, real_kernels=False)
-        assert not _invariants(proj).exists()
+        src = _invariants(proj).read_text()
+        assert "def test_write_speaks_iq_t" in src
+        # The ROUND TRIP still waits for a real reader: a borrowing stub
+        # returns NULL, so it would be red on a project nobody has
+        # implemented yet.
+        assert "round_trip" not in src

@@ -165,6 +165,38 @@ def _dtype_expr(rec: dict) -> str:
     return ""
 
 
+def declared_dtype_expr(rec: dict) -> str:
+    """The DECLARED layout of a struct element, as numpy source (gh-1432).
+
+    The binding builds the real dtype in C from ``offsetof``/``sizeof``, so
+    this is a second description of the same bytes -- and here that is the
+    point rather than the hazard: the generated test hands it to the
+    writer, and the binding **refuses** a dtype that is not its own. If the
+    declared layout and the compiler's disagree (padding, reordering), the
+    write is rejected and the test goes red, which is exactly the drift
+    `[[<obj>.records]]` exists to surface.
+
+    Reading it off the reader instead was tried and does not work: the
+    reader needs data, seeding data needs the dtype, and on a fresh ring
+    the read returns NULL. A file that parses and cannot run is the defect
+    this whole issue is about.
+
+    Examples
+    --------
+    >>> declared_dtype_expr({"fields": [{"name": "i", "type": "int16_t"},
+    ...                                 {"name": "q", "type": "int16_t"}]})
+    'np.dtype([("i", np.int16), ("q", np.int16)])'
+    """
+    cols = []
+    for f in _record.declared_fields(rec):
+        meta = T._CTYPE_META.get(str(f.ctype or ""), {})
+        py = str(meta.get("py_type") or "")
+        if not py:
+            return ""
+        cols.append(f'("{f.name}", {py})')
+    return f"np.dtype([{', '.join(cols)}])" if cols else ""
+
+
 def _foreign_dtype(rec: dict) -> str:
     """A dtype the element is NOT, for the refusal check.
 
@@ -282,6 +314,16 @@ def render(
         "",
         "",
     ]
+    _struct = [
+        p
+        for p in found
+        if not _record.is_scalar_element(recs.get(p.element, {}))
+    ]
+    for p in _struct:
+        expr = declared_dtype_expr(recs.get(p.element, {}))
+        if expr:
+            lines[-1:] = ["", f"_ELEM_DTYPE = {expr}", "", ""]
+        break
     if _unseeded:
         names = ", ".join(_unseeded)
         lines[-1:] = [
@@ -301,13 +343,6 @@ def render(
             continue
         seen.add(p.writer)
         rec = recs.get(p.element, {})
-        if not _record.is_scalar_element(rec) and kernel_is_stub(
-            core_c, f"{comp}_{p.reader}"
-        ):
-            # The struct face reads its dtype off the reader, so it needs a
-            # real one -- the same condition the round trip below states,
-            # and the reason both are skipped rather than emitted red.
-            continue
         lines += _input_face(
             p,
             cls,
@@ -395,10 +430,7 @@ def _input_face(
         # Reading it off the reader is the spelling `_dtype_expr`'s own
         # docstring describes, and it is why this shape is emitted only
         # when the reader's kernel is real -- exactly as the round trip is.
-        seed = [
-            f"    elem = obj.{p.reader}(4).dtype",
-            "    x = np.zeros(4, dtype=elem)",
-        ]
+        seed = ["    x = np.zeros(4, dtype=_ELEM_DTYPE)"]
     return [
         f"def test_{p.writer}_speaks_{p.element}():",
         f'    """{p.writer}() accepts the declared element, and only it."""',

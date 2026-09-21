@@ -132,6 +132,7 @@ def run(root: Path) -> None:
     from just_makeit._new import run as jm_new
     from just_makeit._object import run as jm_object
     from just_makeit._property import run as jm_property
+    from just_makeit._recorddecl import run as jm_record
 
     # ── 1. A project with one module to hold both rings ──────────────────
     jm_new("ringdemo", root / "ringdemo")
@@ -305,12 +306,26 @@ def run(root: Path) -> None:
         ),
         encoding="utf-8",
     )
+    # gh-1404/gh-1405: the element is declared ONCE and both directions
+    # reference it -- which is also what lets jm generate the contract
+    # between them (`test_iq16_ring_invariants.py`). Declared with
+    # `record`, not restated on each method, because a width family's rule
+    # is "what you read is exactly what you can write".
+    jm_record(
+        proj,
+        "iq16_ring",
+        "iq16_t",
+        [
+            {"name": "i", "type": "int16_t"},
+            {"name": "q", "type": "int16_t"},
+        ],
+    )
     _method(
         jm_method,
         proj,
         "iq16_ring",
         "write",
-        arg_type="int16_t[]",
+        arg_type="iq16_t[]",
         return_type="size_t",
     )
     _method(
@@ -320,11 +335,10 @@ def run(root: Path) -> None:
         "wait",
         borrow=True,
         params=[("n", "size_t")],
+        # The columns are NOT restated here: `[[iq16_ring.records]]`
+        # declares them once and gh-1407 refuses a second description of
+        # the same bytes.
         record_dtype="iq16_t",
-        result_fields=[
-            {"name": "i", "type": "int16_t"},
-            {"name": "q", "type": "int16_t"},
-        ],
     )
     _method(
         jm_method,
@@ -392,12 +406,17 @@ def run(root: Path) -> None:
         h,
         "iq16_ring_write(iq16_ring_state_t *state",
         f"""\
-    /* x is INTERLEAVED int16: [i0,q0,i1,q1,...]. */
-    size_t free_ = {CAP_IQ16} - (state->head - state->tail);
+    /* gh-1405: x is ROWS of the declared element, not interleaved int16 --
+       the same struct the reader hands back, so the two faces cannot
+       disagree about what one sample is. Storage stays int16: two slots
+       per sample. */
+    size_t free_ = ({CAP_IQ16} - (state->head - state->tail)) / 2;
     size_t k = x_len < free_ ? x_len : free_;
-    for (size_t i = 0; i < k; i++)
-        state->data[(state->head + i) % {CAP_IQ16}] = x[i];
-    state->head += k;
+    for (size_t i = 0; i < k; i++) {{
+        state->data[(state->head + 2 * i) % {CAP_IQ16}] = x[i].i;
+        state->data[(state->head + 2 * i + 1) % {CAP_IQ16}] = x[i].q;
+    }}
+    state->head += 2 * k;
     return k;""",
     )
     _patch_body(
@@ -422,6 +441,16 @@ def run(root: Path) -> None:
     state->tail += k;""",
     )
 
+    # ── 4b. Re-apply, now that the kernels are real ──────────────────────
+    # The element contract (`test_<obj>_invariants.py`) is generated only
+    # once the reader is more than a stub -- a borrowing stub returns NULL,
+    # so the assertions would be red on a project nobody has implemented
+    # yet. Re-applying after writing the bodies is what a user does, and it
+    # is the step that produces the file this example then RUNS.
+    from just_makeit._apply import run as jm_apply
+
+    jm_apply(proj)
+
     # ── 5. Build ─────────────────────────────────────────────────────────
     # A fresh build dir on purpose: the failure this example was written after
     # was a CONFIGURE error ($<TARGET_OBJECTS:> on an INTERFACE library), which
@@ -433,6 +462,33 @@ def run(root: Path) -> None:
     # repr(): the path becomes a Python string LITERAL in the demo source, and
     # a Windows `C:\Users` pasted in raw is a `\U` escape (gh-1368).
     _cmd([sys.executable, "-c", _DEMO.format(proj=repr(str(proj)))], proj)
+
+    # ── 7. Run the contract jm generated ─────────────────────────────────
+    # gh-1434: `test_<obj>_invariants.py` is jm's own file -- generated,
+    # marked DO NOT EDIT, and until now executed by nothing in this repo.
+    # Six defects reached a downstream through that gap (gh-1432), every
+    # one of them a file that READ fine and could not RUN. So the example
+    # that produces it also runs it.
+    inv = (
+        proj
+        / "src"
+        / "ringdemo"
+        / "rings"
+        / "tests"
+        / "test_iq16_ring_invariants.py"
+    )
+    if not inv.exists():
+        raise AssertionError(
+            f"jm generated no element contract at {inv}. The declaration "
+            "pair (a writer taking `iq16_t[]`, a reader with "
+            "`record_dtype = iq16_t`) is what produces it -- if that is "
+            "still declared, the generator stopped emitting it."
+        )
+    _cmd(
+        [sys.executable, "-m", "pytest", str(inv), "-q"],
+        proj,
+        extra_path=True,
+    )
 
 
 def _method(
@@ -448,9 +504,19 @@ def _method(
     jm_method(proj, obj, name, "rings", arg_type, return_type, False, [], **kw)
 
 
-def _cmd(args, cwd):
+def _cmd(args, cwd, extra_path: bool = False):
+    env = None
+    if extra_path:
+        # The same two places `_DEMO` puts on `sys.path`: the built
+        # extension next to its build dir, and the package source.
+        import glob
+        import os
+
+        paths = glob.glob(str(Path(cwd) / "build*/**/"), recursive=True)
+        paths.append(str(Path(cwd) / "src"))
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
     r = subprocess.run(
-        args, cwd=cwd, capture_output=True, text=True, timeout=900
+        args, cwd=cwd, capture_output=True, text=True, timeout=900, env=env
     )
     if r.returncode != 0:
         raise AssertionError(
@@ -537,7 +603,10 @@ except ValueError as e:
 
 # ── integer IQ: a borrowed RECORD (gh-1310 decision B) ──────────────────
 q = Iq16Ring()
-q.write(np.array([1, 100, 2, 101, 3, 102, 4, 103], dtype=np.int16))
+# gh-1405: rows of the DECLARED element go in, and the same element comes
+# back out -- one declaration, both directions.
+_IQ = np.dtype([("i", "<i2"), ("q", "<i2")])
+q.write(np.array([(1, 100), (2, 101), (3, 102), (4, 103)], dtype=_IQ))
 w = q.wait(3)
 assert w.dtype == np.dtype([("i", "<i2"), ("q", "<i2")]), w.dtype
 assert w.itemsize == 4, w.itemsize          # == sizeof(iq16_t)
