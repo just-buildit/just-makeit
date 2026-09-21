@@ -44,6 +44,27 @@
     points at the `_extra.c` beside it instead. Removing the key while the
     token remains is reported by `adopt --check` and `status` as `TOKEN   WITHOUT KEY`, since that file now makes the opposite false claim.
 
+### Fixed
+
+- **The `out=` guard is recognised in any house style** (gh-1448 review).
+    0.82.3's `out-contiguity` marker allowed whitespace everywhere *except*
+    between the macro name and its opening paren — the one place GNU style
+    always puts one. So on a project with `c_style = "clang-format"`, every
+    fragment read as missing a guard it visibly contains, and `apply` told
+    the author to delete it: **76 warnings on doppler, 74 of them false**,
+    each pointing at a line like
+
+    ```c
+    || !PyArray_IS_C_CONTIGUOUS ((PyArrayObject *)out_obj)
+    ```
+
+    The test meant to cover a formatter's rewrap wrapped *after* the open
+    paren — the shape imagined rather than the one a formatter produces. It
+    now checks K&R, GNU, GNU-wrapped and inner-spaced spellings, and that
+    the same body in two house styles carries the same marker set. Every
+    other marker was audited for the same flaw; none anchors on a literal
+    paren.
+
 ## [0.83.0] — 2026-09-21
 
 ### Added

@@ -300,3 +300,77 @@ class TestTheOutGuardIsNotStrict:
         feat = _docsync._method_feature_symbols(wrapped)
         assert "out-contiguity" in feat["run"], feat["run"]
         assert "strict-input" not in feat["run"], feat["run"]
+
+
+class TestTheGuardIsSeenInAnyHouseStyle:
+    """gh-1448 review: 76 warnings on doppler, 74 of them false.
+
+    The `out=` guard's marker allowed whitespace everywhere except
+    between the macro NAME and its opening paren -- which is the one
+    place GNU style always puts one. Every fragment in a project with
+    `c_style = "clang-format"` then read as MISSING a guard it visibly
+    contains, and `apply` told doppler to delete 74 correct files.
+
+    The rewrap test that was meant to cover this wrapped AFTER the open
+    paren: the shape I imagined, not the shape a formatter produces.
+    """
+
+    SPELLINGS = {
+        "knr": "PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj)",
+        "gnu": "PyArray_IS_C_CONTIGUOUS ((PyArrayObject *)out_obj)",
+        "gnu_wrapped": (
+            "PyArray_IS_C_CONTIGUOUS (\n          (PyArrayObject *)\n"
+            "            out_obj)"
+        ),
+        "inner_spaces": (
+            "PyArray_IS_C_CONTIGUOUS ( ( PyArrayObject * ) out_obj )"
+        ),
+    }
+
+    def test_every_house_style_spelling_is_recognised(self):
+        from just_makeit._docsync import _OUT_CONTIG_RE
+
+        for name, spelling in self.SPELLINGS.items():
+            assert _OUT_CONTIG_RE.search(spelling), name
+
+    def test_a_fragment_written_gnu_style_is_not_reported_missing(self):
+        """End to end on the marker: the same body in two house styles
+        must carry the same marker set."""
+        from just_makeit import _docsync
+
+        def frag(call):
+            return (
+                "static PyObject *\n"
+                "Obj_run (PyObject *self, PyObject *args)\n{\n"
+                f"    if (!{call})\n        return NULL;\n"
+                "    return NULL;\n}\n"
+                "static PyMethodDef Obj_methods[] = {\n"
+                '    {"run", (PyCFunction)Obj_run, METH_VARARGS, NULL},\n'
+                "    {NULL}\n};\n"
+            )
+
+        knr = _docsync._method_feature_symbols(frag(self.SPELLINGS["knr"]))
+        gnu = _docsync._method_feature_symbols(frag(self.SPELLINGS["gnu"]))
+        assert "out-contiguity" in knr["run"], knr
+        assert gnu["run"] == knr["run"], (gnu, knr)
+
+    def test_the_gnu_form_is_not_reported_as_drift_against_the_knr_one(self):
+        """The actual damage: `apply` said 74 correct fragments were
+        missing the guard, and told the author to delete them."""
+        from just_makeit import _docsync
+
+        def frag(call):
+            return (
+                "static PyObject *\n"
+                "Obj_run (PyObject *self, PyObject *args)\n{\n"
+                f"    if (!{call})\n        return NULL;\n"
+                "    return NULL;\n}\n"
+                "static PyMethodDef Obj_methods[] = {\n"
+                '    {"run", (PyCFunction)Obj_run, METH_VARARGS, NULL},\n'
+                "    {NULL}\n};\n"
+            )
+
+        details = _docsync.signature_drift_details(
+            frag(self.SPELLINGS["gnu"]), frag(self.SPELLINGS["knr"])
+        )
+        assert details == {}, details
