@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.82.2] — 2026-09-21
+
 ### Fixed
 
 - **The generated invariants test is formatter-clean** (gh-1432). Each block
