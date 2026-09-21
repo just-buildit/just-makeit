@@ -5,7 +5,7 @@ list made the actionable ones invisible. The split is driven by
 `_docsync.signature_drift_details`, so **only a signature difference produces a
 reason**, and everything else falls to AUTHOR-OWNED by default:
 
-    AUTHOR-OWNED (1) — these differ because you wrote them that way.
+    UNEXPLAINED (1) — these differ because you wrote them that way.
     Nothing to do; they stay unreconciled permanently.
 
 A doc-slot difference is not a signature difference, so it landed there — while
@@ -137,7 +137,7 @@ class TestAnApplyFixableFragmentSaysSo:
         out = _cli("status", cwd=project).stdout
         section = out[out.index("APPLY FIXES THESE") :]
         assert "Run `jm apply`" in section, section
-        assert "Delete the file" not in section.split("AUTHOR-OWNED")[0]
+        assert "Delete the file" not in section.split("UNEXPLAINED")[0]
 
     def test_the_fragment_is_named(self, project: Path) -> None:
         _add_header_doc(project)
@@ -165,7 +165,7 @@ class TestWhatIsStillAuthorOwned:
     ) -> None:
         _hand_edit_a_body(project)
         out = _cli("status", cwd=project).stdout
-        assert "AUTHOR-OWNED (1)" in out, out
+        assert "UNEXPLAINED (1)" in out, out
         assert "APPLY FIXES THESE" not in out, out
 
     def test_and_apply_really_does_leave_it(self, project: Path) -> None:
@@ -173,7 +173,7 @@ class TestWhatIsStillAuthorOwned:
         _hand_edit_a_body(project)
         assert _cli("apply", cwd=project).returncode == 0
         assert "/* HAND EDIT */" in _frag(project).read_text(encoding="utf-8")
-        assert "AUTHOR-OWNED" in _cli("status", cwd=project).stdout
+        assert "UNEXPLAINED" in _cli("status", cwd=project).stdout
 
     def test_both_at_once_are_split(self, project: Path) -> None:
         """One fragment can only land in one bucket, so the split is shown
@@ -254,7 +254,7 @@ class TestTheReportDegradesRatherThanFails:
         text = out.getvalue()
         assert "UNRECONCILED" in text, text
         # Falls back to where these were before: named, in the other bucket.
-        assert "AUTHOR-OWNED" in text, text
+        assert "UNEXPLAINED" in text, text
         assert "native/src/m/m_ext_o.c" in text, text
 
 
@@ -266,7 +266,7 @@ class TestTheDiffIsShown:
         _add_header_doc(project)
         out = _cli("status", "--diff", cwd=project).stdout
         section = out[out.index("APPLY FIXES THESE") :]
-        head = section.split("AUTHOR-OWNED")[0]
+        head = section.split("UNEXPLAINED")[0]
         assert "HEADERDOC marker." in head, head
 
 

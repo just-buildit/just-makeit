@@ -106,7 +106,7 @@ def test_a_hand_written_body_is_author_owned(tmp_path):
     apply_run(root)
 
     out = _report(root)
-    assert "AUTHOR-OWNED" in out, out
+    assert "UNEXPLAINED" in out, out
     assert "ACTIONABLE" not in out, (
         "a hand-edited body is being reported as an undelivered fix — the "
         "direction of the comparison is inverted:\n" + out
@@ -158,9 +158,9 @@ def test_both_kinds_are_separated_in_one_report(tmp_path):
     C.save(root, cfg)
 
     out = _report(root)
-    assert "ACTIONABLE" in out and "AUTHOR-OWNED" in out, out
+    assert "ACTIONABLE" in out and "UNEXPLAINED" in out, out
     # The actionable one must be named under ACTIONABLE, not merely present.
-    head = out[out.index("ACTIONABLE") : out.index("AUTHOR-OWNED")]
+    head = out[out.index("ACTIONABLE") : out.index("UNEXPLAINED")]
     assert "m_ext_v.c" in head, (
         f"the fragment with an undelivered fix is not under ACTIONABLE:\n{out}"
     )

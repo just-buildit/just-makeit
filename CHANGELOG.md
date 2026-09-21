@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+### Changed
+
+- **`status` states what it observed, not why** (gh-1447). The bucket a
+    fragment fell into by default asserted a cause nobody established:
+    *"these differ because you wrote them that way. Nothing to do; they stay
+    unreconciled permanently."* It was the `else` branch — neither a known
+    signature reason nor something `apply` refreshes — so every jm codegen
+    change without a marker on one of the four axes was reported to its
+    victim as their own handwriting.
+
+    Measured on doppler: of 43 fragments filed that way, **25 contained no
+    hand-written code at all**, proven by re-rendering exactly those 25 and
+    running the suite. 37 more the week before. 62 fragments a maintainer
+    was told, in as many words, to leave alone — while the fixes they were
+    missing included the `out=` contiguity guard and a use-after-free fix.
+
+    It is `UNEXPLAINED` now: *differs from a fresh render and jm cannot tell
+    why*, with the delete-and-diff recipe beside it. And it prints what jm
+    does have — per fragment, how many units are identical, how many differ,
+    how many exist only on disk, and **the names of the ones that differ**.
+    That is the triage doppler had to write a script to produce across 52
+    files.
+
+    The unit differ is built from the primitives that already walk these
+    files — `_extract_c_function_bodies` and the `PyMethodDef`/`PyGetSetDef`
+    scans — rather than a second parser, and it compares code only:
+    comments, string contents and layout are normalised out, so a reflow or
+    a differently-worded message is not a difference.
+
 ### Fixed
 
 - **A generated stub binds every name it uses** (gh-1443). A method over a
