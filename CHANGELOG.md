@@ -2,6 +2,33 @@
 
 ### Fixed
 
+- **The generated invariants test can run** (gh-1432). `test_<obj>_invariants.py`
+    is jm-owned ("DO NOT EDIT"), so a downstream cannot fix its copy — and
+    doppler's suite collected it and went red on import. Four defects, every
+    one the text-versus-execution gap:
+
+    - the **import path** said `from <pkg> import <Cls>` for an object that
+        lives in a module. The user-owned sibling gets this right, so the
+        spelling was known to jm; it now goes through
+        `_docstring.class_import_line`, the emitter the `.pyi` and the runtime
+        docstrings already share;
+    - the **location** was `src/<pkg>/tests/` rather than beside that sibling
+        in the module's own tests directory — the same mistake, on the other
+        face;
+    - **`_ELEM_DTYPE` was used and never assigned**: a `NameError` on the
+        first line that ran, and `F821` under ruff, so it could not even be
+        committed. A struct element's dtype is the *binding's*, built by the
+        generated C from `offsetof`/`sizeof`, and the line reading it off the
+        reader was never written;
+    - a **required constructor with no seed** was called anyway, where the
+        user-owned scaffold skips itself from the same predicate.
+
+    Two more surfaced while fixing them, both silent: a **header-only**
+    component keeps its kernels in the `.h`, and the stub check read only
+    `_core.c`, so every kernel read as a stub — the shape doppler actually
+    ships; and with every pair skipped the file was still written, header and
+    no tests, which is the hollow shape `_hollow.py` exists to catch.
+
 - **A header-only component can declare a dependency** (gh-1432). gh-1311
     made a header-only core an `INTERFACE` library; every
     `target_link_libraries` / `target_include_directories` beside it kept
