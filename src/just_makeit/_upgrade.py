@@ -412,6 +412,26 @@ def _where_declared(root: Path, unknown) -> str:
     return f"{frag.relative_to(root).as_posix()}: " if frag.exists() else ""
 
 
+def _rename_superseded(root: Path) -> None:
+    """Move each file jm has renamed to its new name (gh-1472).
+
+    A rename, not a re-render: the old file may carry the author's additions
+    (a ``jb.toml`` with ``[runtime.*]`` packages), and a fresh default under
+    the new name would drop them. When both names exist jm cannot tell which
+    holds the edits, so it renames nothing and says so -- the same advice
+    `apply` and `status` print, from the same function.
+    """
+    from . import _apply
+    from . import _createonly
+
+    for old, new in _createonly.superseded(root):
+        if (root / new).exists():
+            print(f"\n{_apply.superseded_advice(root, old, new)}")
+            continue
+        (root / old).rename(root / new)
+        print(f"\nrenamed {old} -> {new} (gh-935); your edits came along.")
+
+
 def _report_repairs(root: Path) -> None:
     """Run the schema-independent repairs and say what they changed.
 
@@ -420,6 +440,7 @@ def _report_repairs(root: Path) -> None:
     schema bump -- so wiring it only into the migration loop would have meant
     it never ran for anybody who was up to date, which is everybody it is for.
     """
+    _rename_superseded(root)
     fixed = _repair_complex_spelling(root)
     if not fixed:
         return

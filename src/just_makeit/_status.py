@@ -1638,6 +1638,18 @@ def run(
         )
         print()
 
+    # gh-1472: a file jm has renamed, still under its old name. `apply` holds
+    # the new one back rather than create a default beside it, so this is
+    # the one place a reader learns the rename is waiting.
+    _superseded = _createonly.superseded(root)
+    if _superseded:
+        print(f"SUPERSEDED ({len(_superseded)}) — file(s) jm has renamed:")
+        for _old, _new in _superseded:
+            print(f"  → {_old}  ({_new})")
+            print(f"    {_apply.superseded_advice(root, _old, _new)}")
+        print("  Not drift.")
+        print()
+
     # gh-785: printed on both paths and under --check. The strongest case
     # for that treatment of any section here — this is the only finding whose
     # window closes when you act on the report, because the command that

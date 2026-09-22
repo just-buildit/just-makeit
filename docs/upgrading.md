@@ -55,6 +55,13 @@ jm upgrade
 is a silent no-op, and so is every run on a project scaffolded by jm 0.74.0 or
 later.
 
+It also renames any file jm now writes under a new name — today that is
+`jb.toml`, which became `bootstrap.toml` — as a **rename**, so what you added
+to it comes along. Until you run it, `jm apply` will not create the new file
+beside the old one, and `jm status` lists the old one as SUPERSEDED. If both
+already exist (an older jm created the new one beside yours), nothing is
+renamed: merge your additions into `bootstrap.toml` and delete `jb.toml`.
+
 **Do both steps or neither.** Adopting the new `clib_common.h` without
 re-spelling leaves component headers that no longer parse from C++ at all,
 which is the failure gh-1148 fixed — strictly worse than where you started.

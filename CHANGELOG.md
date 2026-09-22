@@ -45,6 +45,16 @@
     counts now come from each file's bytes before the run and after the
     formatter. Paths are project-relative, and each is listed once. A
     rewritten fragment that already existed reads `update`, not `create`.
+- **`upgrade` renames `jb.toml` to `bootstrap.toml`; `apply` no longer
+    creates a default beside it** (gh-1472). On a project scaffolded before
+    gh-935, `apply` created a fresh `bootstrap.toml` next to the author's
+    `jb.toml`. Anything added to the old file, such as `[runtime.*]` packages,
+    was silently missing from the new one, and nothing said the old one was
+    dead. Now `apply` holds the new file back and says why, `upgrade` renames
+    the old file with its edits, and `status` lists it as SUPERSEDED (not
+    drift) until it is gone. If both files already exist, jm renames nothing
+    and says to merge by hand. The renames live in one table,
+    `_createonly.RENAMED`, which all three commands read.
 
 ## [0.86.0] — 2026-09-22
 

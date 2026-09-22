@@ -97,18 +97,22 @@ compiler, so adopt it in the same step: both or neither (see
 [Upgrading](../upgrading.md)). clang-cl rejects the old spelling outright.
 
 ```sh
-jm upgrade
+jm upgrade       # also renames jb.toml -> bootstrap.toml, edits and all
 jm status        # lists the create-only files jm ships newer as OUTDATED
 ```
+
+`jb.toml` is what jm used to call `bootstrap.toml`. `apply` does not create a
+fresh `bootstrap.toml` beside it, because a default there would silently stand
+in for anything you added to yours; it says so on every run until `upgrade`
+renames it.
 
 `apply` never rewrites a create-only file, because your edits may be in it.
 **Diff each first.** None was edited here, so each takes jm's render the same
 way — delete it, and `apply` writes today's:
 
 ```sh
-rm .gitignore Makefile Doxyfile cmake/stale.pc.in \
+rm .gitignore Makefile Doxyfile bootstrap.toml cmake/stale.pc.in \
    native/benchmarks/jm_bench.h native/inc/clib_common.h
-rm jb.toml          # renamed bootstrap.toml; step 2 created the new one
 jm apply
 ```
 

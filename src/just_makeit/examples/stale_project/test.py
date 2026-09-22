@@ -274,8 +274,11 @@ def run(root: Path) -> None:
     assert "native/inc/clib_common.h" in outdated, outdated
     for rel in outdated:
         (proj / rel).unlink()
-    # jb.toml was renamed bootstrap.toml; step 3 created the new one.
-    (proj / "jb.toml").unlink()
+    # jb.toml was renamed bootstrap.toml (gh-935). Step 3's apply held the
+    # new one back and said why; upgrade, above, moved the old one across --
+    # and, never edited here, it is OUTDATED like the rest and was just
+    # deleted, so the apply below writes today's.
+    assert not (proj / "jb.toml").exists()
     # The scaffolded C benchmarks are the AUTHOR's once written, so status
     # cannot call them behind -- but 0.33.14's time with POSIX clock_gettime,
     # which Windows lacks. Never edited here, so they take today's render,
@@ -284,6 +287,8 @@ def run(root: Path) -> None:
         if "clock_gettime" in bench.read_text(encoding="utf-8"):
             bench.unlink()
     log.jm("apply")
+
+    assert (proj / "bootstrap.toml").is_file()
 
     # ── 6. What the fragment warning means, in running code ──────────────
     # The project builds everywhere now -- and the binding 0.33.14 rendered

@@ -275,6 +275,34 @@ RULES: tuple[Rule, ...] = (
 )
 
 
+#: Files jm used to write under another name: ``(old, new)``. gh-1472.
+#:
+#: The one declaration three commands read, so they cannot disagree about a
+#: rename: `apply` does not create *new* while *old* is there (a fresh
+#: default beside the author's file silently drops whatever they added to
+#: it -- ``[runtime.*]`` packages, for ``jb.toml``); `upgrade` renames *old*
+#: to *new*, edits and all; and `status` names *old* until it is gone.
+RENAMED: "tuple[tuple[str, str], ...]" = (
+    # gh-935: the bootstrap declaration is named for what it is, not for
+    # the tool that first read it.
+    ("jb.toml", "bootstrap.toml"),
+)
+
+
+def superseded(root: Path) -> "list[tuple[str, str]]":
+    """The `RENAMED` pairs whose OLD file is still in *root*.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> superseded(d)
+    []
+    >>> _ = (d / "jb.toml").write_text("")
+    >>> superseded(d)
+    [('jb.toml', 'bootstrap.toml')]
+    """
+    return [(old, new) for old, new in RENAMED if (root / old).is_file()]
+
+
 def classify(rel_posix: str) -> Rule | None:
     """Return the first rule matching *rel_posix*, or None if unclassified.
 
