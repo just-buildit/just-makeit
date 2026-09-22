@@ -215,8 +215,8 @@ adopt --check — would `fragment = "generated"` be safe?
         differs:   fn:Fir_dealloc
         differs:   fn:Fir_decimate
         differs:   fn:Fir_init
-        differs:   fn:Fir_steps
-        differs:   table:PyMethodDef
+        adds only: fn:Fir_steps
+        adds only: table:PyMethodDef
 
   0 of 1 object(s) could flip
   A unit that exists ONLY on disk refuses the flip: the render
@@ -228,6 +228,11 @@ adopt --check — would `fragment = "generated"` be safe?
   A unit that DIFFERS needs your eyes: jm cannot tell a
   hand-written body from a render that predates a codegen
   change, which is why it asks rather than guesses.
+  `adds only`: the render keeps every token of the unit and
+  adds code (a guard, keywords) -- nothing on disk is lost.
+  `jm adopt <obj> --accept-additions` takes those; a `differs`
+  unit removes code, and is taken only by name:
+  `--accept <unit>`.
 
 $ jm apply   # exit 0
 just-makeit: applying just-makeit.toml

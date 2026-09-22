@@ -136,7 +136,10 @@ class TestTheThreeStates:
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
         assert "needs acknowledgement" in r.stdout, r.stdout
-        assert "differs:   fn:BlkObj_execute" in r.stdout, r.stdout
+        # The planted change REMOVES a guard the render has, so the render
+        # only adds to this unit: labelled as such, and still not taken
+        # without consent (`--accept-additions`).
+        assert "adds only: fn:BlkObj_execute" in r.stdout, r.stdout
         # ...and it is NOT reported as a refusal: the two are different
         # decisions and doppler asked for them to stay distinct.
         assert "REFUSES" not in r.stdout, r.stdout

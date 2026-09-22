@@ -370,9 +370,13 @@ Commands:
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
   adopt --check [--module ID]   Would a module object's binding fragment be safe as jm's
-                                content? Bare `--check` covers every module.
                                 content? Reports, per object, `would flip`,
                                 `needs acknowledgement` or `REFUSES`. Writes nothing.
+  adopt <obj>... | --module ID | --all [--accept UNIT]... [--accept-additions]
+                                Make those fragments jm's (`fragment = "generated"`)
+                                where nothing is lost: a unit that differs is taken
+                                only when accepted -- by name, or, if the render only
+                                adds code to it, by --accept-additions.
   record <obj> <Struct>         Name a C struct and its columns, once, for both
                                 directions (gh-1405). The struct is yours, in the
                                 sacred header; this says which fields are exposed
@@ -1155,34 +1159,75 @@ def main() -> None:
         _script.run(Path.cwd())
 
     elif cmd == "adopt":
-        # gh-1448, read-only half. `--check` is the only mode today, and it
-        # is required rather than defaulted: a command that mutates when you
-        # forget a flag is the wrong way round for one whose whole subject
-        # is files a downstream has hand-edited.
+        # gh-1448. `--check` reads; without it, adopt WRITES -- but only for
+        # targets named on this command line (objects, `--module`, `--all`).
+        # A command whose subject is files a downstream has hand-edited does
+        # not default to "everything".
         from . import _adopt
         from . import _config as _C
 
-        if "--check" not in args:
+        _usage = (
+            "Usage: just-makeit adopt --check [--module <id>]\n"
+            "       just-makeit adopt <obj>... | --module <id> | --all\n"
+            "                   [--accept <unit>]... [--accept-additions]"
+        )
+        _mod = None
+        _accept: set = set()
+        _objs: list = []
+        _i = 1
+        while _i < len(args):
+            _a = args[_i]
+            if _a in ("--module", "--accept"):
+                if _i + 1 >= len(args):
+                    print(
+                        f"error: {_a} requires a value.\n{_usage}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
+                if _a == "--module":
+                    _mod = args[_i + 1]
+                else:
+                    _accept.add(args[_i + 1])
+                _i += 2
+                continue
+            if _a.startswith("-") and _a not in (
+                "--check",
+                "--all",
+                "--accept-additions",
+            ):
+                print(
+                    f"error: unknown option {_a}.\n{_usage}", file=sys.stderr
+                )
+                sys.exit(2)
+            if not _a.startswith("-"):
+                _objs.append(_a)
+            _i += 1
+        _root = Path.cwd()
+        _cfg = _C.load(_root)
+        if _mod is not None and _mod not in _C.modules(_cfg):
+            print(f"error: --module: no module '{_mod}'.", file=sys.stderr)
+            sys.exit(2)
+        if "--check" in args:
+            print('adopt --check — would `fragment = "generated"` be safe?')
+            sys.exit(_adopt.report(_adopt.survey(_root, _cfg, only_mod=_mod)))
+        if not (_objs or _mod or "--all" in args):
             print(
-                "error: 'adopt' currently supports only --check.\n"
-                "Usage: just-makeit adopt --check [--module <id>]\n"
-                "  Reports, per object, whether its module binding "
-                "fragment\n"
-                "  could become jm's content (gh-1448). Writes nothing.",
+                "error: 'adopt' writes only for the objects you name.\n"
+                f"{_usage}\n"
+                "  `--check` first shows what each would do.",
                 file=sys.stderr,
             )
             sys.exit(2)
-        _mod = None
-        if "--module" in args:
-            _i = args.index("--module")
-            if _i + 1 >= len(args):
-                print("error: --module requires a module id.", file=sys.stderr)
-                sys.exit(2)
-            _mod = args[_i + 1]
-        _root = Path.cwd()
-        _cfg = _C.load(_root)
-        print('adopt --check — would `fragment = "generated"` be safe?')
-        sys.exit(_adopt.report(_adopt.survey(_root, _cfg, only_mod=_mod)))
+        print('adopt — `fragment = "generated"` where it is safe')
+        sys.exit(
+            _adopt.adopt(
+                _root,
+                _objs,
+                only_mod=_mod,
+                accept=frozenset(_accept),
+                accept_additions="--accept-additions" in args,
+            )
+        )
 
     elif cmd == "record":
         from . import _recorddecl
