@@ -7,8 +7,9 @@
     sacred header, upgraded to the current jm one command at a time. It walks
     `jm status`, `jm apply`, `jm upgrade`, receiving the `out=` contiguity fix
     its binding fragment predates (`adopt --check`, then
-    `fragment = "generated"`), and adopting the create-only files jm ships
-    newer. Then it proves the result: `status --check` clean, built, tested,
+    `fragment = "generated"`), adopting the root `CMakeLists.txt` that
+    `apply` only partly maintains (without it the project does not build on
+    Windows, gh-1471), and adopting the create-only files jm ships newer. Then it proves the result: `status --check` clean, built, tested,
     the kernel intact, and the strided `out=` that the old binding silently
     ignored now refused. It is the recipe for upgrading your own project.
 
