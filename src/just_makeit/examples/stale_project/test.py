@@ -276,6 +276,13 @@ def run(root: Path) -> None:
         (proj / rel).unlink()
     # jb.toml was renamed bootstrap.toml; step 3 created the new one.
     (proj / "jb.toml").unlink()
+    # The scaffolded C benchmarks are the AUTHOR's once written, so status
+    # cannot call them behind -- but 0.33.14's time with POSIX clock_gettime,
+    # which Windows lacks. Never edited here, so they take today's render,
+    # which times through jm_bench.h on every platform.
+    for bench in sorted((proj / "native/benchmarks").glob("bench_*_core.c")):
+        if "clock_gettime" in bench.read_text(encoding="utf-8"):
+            bench.unlink()
     log.jm("apply")
 
     # ── 6. What the fragment warning means, in running code ──────────────

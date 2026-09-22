@@ -114,6 +114,17 @@ jm apply
 
 A file you *did* edit: merge jm's version into yours by hand instead.
 
+**Your C benchmarks too, if you never touched them.** Once scaffolded,
+`native/benchmarks/bench_<obj>_core.c` is yours, so `status` cannot call it
+behind. But the ones 0.33.14 wrote time with POSIX `clock_gettime`, which
+Windows does not have, and today's time through `jm_bench.h` on every
+platform. If yours are still the scaffold, take today's the same way:
+
+```sh
+rm native/benchmarks/bench_fir_core.c native/benchmarks/bench_gain_core.c
+jm apply
+```
+
 ## 5. See the bug the warning named
 
 The project builds everywhere now. Build it and pass a **strided** `out=`

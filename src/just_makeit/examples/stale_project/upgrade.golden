@@ -200,10 +200,12 @@ warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest 
   create  Doxyfile
   create  Makefile
   create  cmake/stale.pc.in
+  create  native/benchmarks/bench_fir_core.c
+  create  native/benchmarks/bench_gain_core.c
   create  native/benchmarks/jm_bench.h
   create  native/inc/clib_common.h
 
-Done!  Materialized 6 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm adopt --check   # exit 1
