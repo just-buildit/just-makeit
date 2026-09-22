@@ -364,7 +364,8 @@ scalar key; fixed-length state fields append `[N]`.
 A generated project builds on Windows with **clang-cl**, with no flag: it has
 C99 `_Complex` while targeting the MSVC ABI (`cl.exe` has none, and
 `clib_common.h` `#error`s on it). Gated by `Examples (windows-latest, clang-cl)` in `ci.yml`, which feeds `CI passed`. The user-facing answer is
-`docs/faq.md` "Does it work on Windows?"; the mechanics live where they act:
+`docs/windows.md` (PowerShell and the Visual Studio IDE, both through the
+generated `CMakePresets.json`, gh-1376); the mechanics live where they act:
 the complex surface in `clib_common.h`, the CRT/define/flag defaults in the
 root `CMakeLists_top.cmake`, LF writes in `_textio`.
 

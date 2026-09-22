@@ -11,3 +11,5 @@ site/
 docs/doxygen/
 docs/coverage/
 .coverage
+out/
+CMakeUserPresets.json

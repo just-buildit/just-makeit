@@ -140,6 +140,12 @@ RULES: tuple[Rule, ...] = (
         " says so with status_allow, as for any other JM file.",
     ),
     Rule(".gitignore", JM, "jm's ignore set, tracking what jm builds."),
+    Rule(
+        "CMakePresets.json",
+        JM,
+        "jm's IDE configure line (gh-1376). A project's own presets belong in"
+        " CMakeUserPresets.json, which CMake reads beside it and jm ignores.",
+    ),
     Rule("Doxyfile", JM, "jm's doxygen configuration."),
     Rule("zensical.toml", JM, "jm's docs-site configuration."),
     Rule("bootstrap.toml", JM, "jm's CI bootstrap declaration."),

@@ -239,7 +239,8 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh958_c_style_is_outcome_neutral.py \
                     tests/test_gh1219_impl_marker_wraps.py \
                     tests/test_gh1448_token_survives_clang_format.py \
-                    tests/test_gh1452_consumer_links_installed_tree.py
+                    tests/test_gh1452_consumer_links_installed_tree.py \
+                    tests/test_gh1376_presets_build.py
 
 EXAMPLES_IGNORE = $(addprefix --ignore=,$(PROJECT_ENV_TESTS))
 

@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm new` writes a `CMakePresets.json`** (gh-1376), so opening a
+    generated project in Visual Studio, or in VS Code's CMake Tools, builds
+    it. The IDE configures through presets, not the Makefile, and finds no
+    venv's interpreter on its own: Visual Studio 2026 stopped at `Could NOT   find Python3`. The presets name the project's `.venv` explicitly —
+    `Python3_ROOT_DIR` would fall back to whatever interpreter CMake finds,
+    the wrong-numpy configure gh-814 refuses — and on Windows select clang-cl
+    and Ninja, with the architecture left to Visual Studio. Release, Debug
+    and RelWithDebInfo each, gated by host, building under `out/build/`
+    (ignored, and never make's `build/`).
+
+    The Makefile stays the source of truth for how a project configures: a
+    test reads the `-D` flags, compiler and generator out of the generated
+    Makefile and fails if a preset disagrees, and the presets are built,
+    tested and imported through `cmake --preset` on every CI host, the
+    Windows clang-cl job included.
+
+    The file is jm's, reported outdated by `status` like the Makefile; a
+    project's own presets go in `CMakeUserPresets.json`, which is gitignored.
+    An existing project gets the file from `jm apply`, and its `.gitignore`
+    shows outdated until it gains `out/` and `CMakeUserPresets.json`.
+
+- **Building on Windows** is a guide page: the prerequisites, the Developer
+    PowerShell route (presets, no GNU make needed) and the Visual Studio
+    route, replacing the FAQ's long answer.
+
 ## [0.84.0] — 2026-09-21
 
 ### Added

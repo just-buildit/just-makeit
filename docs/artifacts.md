@@ -53,6 +53,7 @@ mylib/
 │           └── dsp.pyi             # type stub for dsp.so
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
+├── CMakePresets.json           # IDE configure presets (see Building on Windows)
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -109,6 +110,7 @@ mylib/
 │           └── test_engine.py      # pytest
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
+├── CMakePresets.json           # IDE configure presets (see Building on Windows)
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -164,6 +166,7 @@ mylib/
 │           └── dsp.pyi             # type stub for dsp.so
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
+├── CMakePresets.json           # IDE configure presets (see Building on Windows)
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -227,6 +230,7 @@ mylib/
 │           └── dsp.pyi             # one stub for both types
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
+├── CMakePresets.json           # IDE configure presets (see Building on Windows)
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml
@@ -296,6 +300,7 @@ mylib/
 │           └── io.pyi
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
+├── CMakePresets.json           # IDE configure presets (see Building on Windows)
 ├── Makefile
 ├── pyproject.toml
 └── just-makeit.toml

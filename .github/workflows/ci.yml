@@ -311,8 +311,13 @@ jobs:
         # extension, cmake-lint and clang-format convergence on Windows
         # for the first time, all in the PR that moved them. Deliberately
         # not bundled -- tracked as a follow-up on gh-1442.
+        #
+        # gh-1376: plus the CMakePresets.json build, which on this runner
+        # drives the `windows-*` presets Visual Studio shows -- clang-cl,
+        # Ninja and the project's .venv chosen by the preset alone.
         run: make test-examples EXAMPLES_K="not nco_tone and not kitchen_sink"
-          PROJECT_ENV_TESTS=tests/test_examples.py
+          PROJECT_ENV_TESTS="tests/test_examples.py
+          tests/test_gh1376_presets_build.py"
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
