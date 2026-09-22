@@ -127,6 +127,34 @@ _SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".pyd"}
 _SKIP_PREFIXES = (".coverage.",)
 
 
+def is_build_tree(path: Path) -> bool:
+    """True when *path* is a CMake binary directory, whatever its name.
+
+    gh-1473. ``_SKIP_DIRS`` knew the name ``build`` and nothing else, so
+    every other build tree inside a project was walked, copied into the
+    status scratch and counted as manifest-owned -- 35 files became 116 with
+    one ``cmake -B build-rel`` -- and CLion's default ``cmake-build-debug``
+    is the same -- by a count that was the toolchain's rather than jm's.
+    (jm's own presets build into ``out/build/<preset>``, which was covered
+    only because one path component happens to be spelled ``build``:
+    coverage by coincidence, not by rule.)
+
+    Recognised by what it IS rather than what it is called: CMake writes
+    ``CMakeCache.txt`` at the top of every binary directory it configures,
+    and nothing else does. No list of names to keep current, and a name a
+    project picks tomorrow is covered today.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> is_build_tree(d)
+    False
+    >>> _ = (d / "CMakeCache.txt").write_text("")
+    >>> is_build_tree(d)
+    True
+    """
+    return (path / "CMakeCache.txt").is_file()
+
+
 def is_skipped(rel: Path) -> bool:
     """True when *rel* is not manifest-owned and must never be compared.
 

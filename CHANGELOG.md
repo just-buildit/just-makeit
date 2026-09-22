@@ -28,6 +28,15 @@
     so the same report put `bootstrap.toml` before `CMakePresets.json` on
     Windows and after it everywhere else. They sort by the POSIX spelling
     now. Found by the `stale_project` golden on its first clang-cl run.
+- **A build tree inside the project no longer counts as project files**
+    (gh-1473). `status` recognised a build directory only by the name
+    `build`. Any other one, such as CLion's default `cmake-build-debug` or a
+    `build-rel`, was copied into its scratch tree and counted as
+    manifest-owned: 35 files became 116 after one configure. A directory
+    holding `CMakeCache.txt` is now a build tree whatever it is called.
+    The unbuilt-source scan skips it too: a `file(GLOB` in a fetched
+    dependency's `CMakeLists.txt` there no longer turns the scan off for
+    the whole project.
 
 ## [0.86.0] — 2026-09-22
 

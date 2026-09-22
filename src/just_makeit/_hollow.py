@@ -178,6 +178,8 @@ def _build_texts(root: Path) -> list[str] | None:
     Returns ``None`` when one of them enumerates sources by wildcard, which
     makes "is this file compiled?" unanswerable by reading — see `_GLOB_HINT`.
     """
+    from . import _apply
+
     texts: list[str] = []
     for cml in sorted(root.rglob("CMakeLists.txt")):
         # gh-1031: `build/` is generated output. `vendor/` is somebody else's
@@ -199,7 +201,16 @@ def _build_texts(root: Path) -> list[str] | None:
         # The stated cost: `third_party/` and `external/` are the same
         # situation under a different name and are still read. That is a known
         # gap with an obvious fix (name them) rather than a wrong answer.
-        if {"build", "vendor"} & set(cml.relative_to(root).parts):
+        rel = cml.relative_to(root)
+        if {"build", "vendor"} & set(rel.parts):
+            continue
+        # gh-1473: a build tree under any other name -- CLion's
+        # `cmake-build-debug`, say -- holds FetchContent's `_deps/*-src`,
+        # which is somebody else's build system exactly as `vendor/` is.
+        if any(
+            _apply.is_build_tree(root.joinpath(*rel.parts[:i]))
+            for i in range(1, len(rel.parts))
+        ):
             continue
         try:
             texts.append(cml.read_text(encoding="utf-8"))
