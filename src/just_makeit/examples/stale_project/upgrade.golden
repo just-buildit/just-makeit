@@ -132,6 +132,15 @@ OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent ben
         pyproject.toml — which differ from their scaffold as soon as the
         project is real. `apply` rewrites neither kind; see docs/upgrading.md.
 
+$ jm apply   # exit 0
+just-makeit: applying just-makeit.toml
+
+warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
+  update  CMakeLists.txt
+
+Done!  Materialized 0 new file(s), patched 0 impl(s), and reconciled 1 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
 $ jm upgrade   # exit 0
 already up to date (schema 7)
 

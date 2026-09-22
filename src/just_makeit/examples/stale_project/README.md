@@ -65,6 +65,30 @@ That is a real bug, and the example shows it in running code: built at this
 point, `fir.steps(x, out=every_other_element)` returns normally and leaves
 the caller's buffer untouched.
 
+### 2b. The root `CMakeLists.txt`, which jm maintains only in part
+
+`apply` keeps the root `CMakeLists.txt`'s marked blocks current (the
+components, modules and external dependencies) and never touches the rest,
+and `jm status` does not yet compare the rest either
+([gh-1471](https://github.com/just-buildit/just-makeit/issues/1471)). So
+every fix to that template since your project was generated is missing,
+silently. Among them are the Windows ones: without them this project does not
+build under clang-cl (`ninja: error: multiple rules generate stale.lib`).
+
+Get today's version from a scratch project of the same name, merge it into
+yours, and let `apply` put the managed blocks back:
+
+```sh
+(cd /tmp && jm new stale)
+diff /tmp/stale/CMakeLists.txt CMakeLists.txt    # merge what you want
+cp /tmp/stale/CMakeLists.txt CMakeLists.txt      # here: never edited, so whole
+jm apply
+```
+
+If you added your own targets to it, merge by hand instead of copying — or
+move them to a `native/src/<dir>/<dir>_extra.cmake`, which jm includes and
+never writes.
+
 ## 3. `jm upgrade`
 
 ```sh

@@ -245,6 +245,23 @@ def run(root: Path) -> None:
     assert "C-contiguity and this fragment does not" in applied
     log.jm("status")
 
+    # ── 3b. The root CMakeLists.txt, which jm maintains only in part ─────
+    # apply splices its marked blocks (components, modules, external deps)
+    # and nothing else, and status does not compare the rest (gh-959) -- so
+    # every root-template fix since 0.33.14 is missing in silence, among them
+    # the Windows ones: without them this project does not build under
+    # clang-cl (`multiple rules generate stale.lib`, gh-1471). Today's render
+    # comes from a scratch `jm new` of the same name; merge it into yours --
+    # here, never edited, it is taken whole -- and apply re-splices the rest.
+    from just_makeit._new import run as jm_new
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        jm_new("stale", root / "fresh" / "stale")
+    shutil.copyfile(
+        root / "fresh" / "stale" / "CMakeLists.txt", proj / "CMakeLists.txt"
+    )
+    log.jm("apply")
+
     # What that warning means, in running code: built now, the old fragment
     # fills a strided out= through a temporary copy and hands the caller's
     # buffer back untouched.
