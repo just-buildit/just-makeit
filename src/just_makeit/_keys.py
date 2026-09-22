@@ -483,6 +483,8 @@ _SHARED_MODULE_KEYS = frozenset(
         "functions_in_core",
         "serializable",
         "optional_backend",
+        # gh-1463: the platforms the module's extension is built on.
+        "platforms",
         "init_params",
         "methods",
         "properties",

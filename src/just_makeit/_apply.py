@@ -37,6 +37,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _modplatforms
 from . import _procglobal
 from . import _createonly
 from . import _libwiring
@@ -343,6 +344,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             mod,
             package=C.module_package(cfg, mod),
             doc=C.module_doc(cfg, mod),
+            # gh-1463: at creation too, so a module with no members yet still
+            # renders its CMake guard in the temp tree.
+            platforms=cfg.get("module", {}).get(mod, {}).get("platforms"),
         )
 
     # After module scaffolding, copy module-level metadata (e.g.
@@ -1388,6 +1392,7 @@ def _merge_module_init_file(
     temp_path: Path,
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
+    platforms: "dict[str, tuple[str, ...] | None] | None" = None,
 ) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
@@ -1395,7 +1400,8 @@ def _merge_module_init_file(
     folded into the import block and __all__ so a no_generate sibling's
     re-exported names regenerate cleanly instead of being hand-edited glue.
     *siblings* (gh-523) are the leaf names of other modules sharing this
-    package — their exports are protected from the ``__all__`` rewrite."""
+    package — their exports are protected from the ``__all__`` rewrite.
+    *platforms* (gh-1463) guards a platform-restricted leaf's import."""
     from ._object import (
         _leading_docstring,
         _merge_module_docstring,
@@ -1403,8 +1409,10 @@ def _merge_module_init_file(
     )
 
     temp_text = temp_path.read_text(encoding="utf-8")
+    # Indentation allowed: a platform-restricted module's own line sits
+    # inside its gh-1463 guard in the temp render, and the names are the same.
     m = re.search(
-        rf"^from \.{re.escape(module)} import[ \t]*"
+        rf"^[ \t]*from \.{re.escape(module)} import[ \t]*"
         r"(\([^)]*\)|[^\n]*)[^\n]*$",
         temp_text,
         re.MULTILINE,
@@ -1418,7 +1426,12 @@ def _merge_module_init_file(
 
     existing = real_path.read_text(encoding="utf-8")
     merged = _merge_module_init(
-        existing, module, exports, reexports, siblings=siblings
+        existing,
+        module,
+        exports,
+        reexports,
+        siblings=siblings,
+        platforms=platforms,
     )
     # gh-695: carry the module docstring across too. `[module.X] doc` reached
     # this file only via the template, which apply renders into *temp* and
@@ -2060,6 +2073,7 @@ def _sync_aggregates(
                 temp_mod_init,
                 C.module_reexports(cfg, mod),
                 siblings=_pkg_siblings(cfg, mod),
+                platforms=_modplatforms.init_platforms(cfg, mod),
             ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.

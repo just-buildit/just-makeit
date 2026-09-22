@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _modplatforms
 from . import _procglobal
 from . import _context as Ctx
 from . import _stubs as S
@@ -41,6 +42,7 @@ def run(
     functions_in_core: bool = False,
     package: str = "",
     doc: str = "",
+    platforms: list[str] | None = None,
 ) -> None:
     """Scaffold module *module* under *root*.
 
@@ -48,6 +50,10 @@ def run(
     directory this module's Python artifacts (``.so``, ``.pyi``, re-export
     ``__init__.py``, tests and benchmarks) land in, instead of one named
     after the module. Empty means "a package of my own" — today's behaviour.
+
+    *platforms* (gh-1463) is ``[module.X] platforms``: the platforms the
+    module's extension is built on. It has no CLI flag; ``apply`` passes it so
+    the replayed scaffold renders the guard from its first file.
     """
     err = C.validate_module_id(module)
     if err:
@@ -91,6 +97,11 @@ def run(
     if package:
         cfg.setdefault("module", {}).setdefault(module, {})["package"] = (
             package
+        )
+    # gh-1463: seeded for the same reason -- the CMakeLists below reads it.
+    if platforms:
+        cfg.setdefault("module", {}).setdefault(module, {})["platforms"] = (
+            list(platforms)
         )
 
     pkg = C.project_name(cfg)
@@ -140,6 +151,7 @@ def run(
         "Module": Module,
         "object_list": "",
         "object_core_libs": f"{cname}_core",
+        "module_python_guard": _modplatforms.cmake_guard(cfg, module),
         "module_core_lib_block": (
             f"add_library({cname}_core OBJECT {cname}_core.c)\n"
             f"target_include_directories({cname}_core PRIVATE"
@@ -214,6 +226,8 @@ def run(
     # since both generated faces read it from there.
     if doc:
         cfg["module"][module]["doc"] = doc
+    if platforms:
+        cfg["module"][module]["platforms"] = list(platforms)
     # Optional Phase-2 metadata persisted into the [module.X] section so
     # jm apply's renderer picks them up. The renderer + dump already
     # handle these keys (gh-66 / v0.13.22 for include_dirs and link_libs;

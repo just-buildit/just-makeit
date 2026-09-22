@@ -104,11 +104,26 @@ personal build directory stay on your machine:
 A project created before the file existed gets it from `jm apply`, which adds
 missing files and changes nothing else.
 
+## A module that cannot build on Windows
+
+A module over a core that only exists on Linux and macOS (a POSIX-only
+library you guard with `if(NOT WIN32)` yourself) declares it:
+
+```toml
+[module.stream_sink]
+platforms = ["linux", "macos"]
+```
+
+On Windows its extension is not built, and its names are absent from the
+package that re-exports them, while everything else imports normally. See
+[A module built on some platforms only](configuration.md#a-module-built-on-some-platforms-only).
+
 ## Not supported
 
 - **MinGW** (gcc on Windows), retired in 0.77.0. A `"windows"` entry in
-    `platforms`, and `jm new --windows`, now only print a notice; `jm apply`
-    removes the MinGW blocks they used to emit.
+    `[project] platforms`, and `jm new --windows`, now only print a notice;
+    `jm apply` removes the MinGW blocks they used to emit. (That is not the
+    per-module key above.)
 - **The `make` build backend** (`build = "make"`) is POSIX-only, and gets no
     presets; use the CMake backend on Windows.
 - **Windows on ARM64 natively.** The MSVC ARM64 libraries are a separate

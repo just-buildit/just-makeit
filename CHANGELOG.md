@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+### Added
+
+- **`[module.X] platforms`: a module built on some platforms only**
+    (gh-1463). doppler's first Windows `make pyext` stopped at CMake's
+    generate step: a `kind = "handle"` module over a POSIX-only core named
+    `$<TARGET_OBJECTS:stream_core_obj>`, a target that does not exist on
+    Windows, in a CMakeLists jm renders unconditionally. Skipping the build
+    would not have been enough, because the owning package's generated
+    `__init__.py` imported `StreamSink` unconditionally too, so
+    `import doppler.wfm` would have failed on Windows for one class.
+
+    `platforms = ["linux", "macos"]` now scopes both faces, for every module
+    kind. The module's `if(BUILD_PYTHON)` becomes
+    `if(BUILD_PYTHON AND (<platform test>))`. Wherever its names are
+    imported into an `__init__.py` (its own, or another module's
+    `reexports`), the import and the `__all__` entry move into a block that
+    runs only on those platforms, so elsewhere the names are absent and the
+    rest of the package imports. Declared rather than inferred from the
+    missing target, which would have fixed the CMake and not the import.
+
+    A platform jm does not know is refused at load; listing all three is the
+    same as leaving the key out, so nothing churns for a manifest that never
+    writes it. The block is written as ruff formats it, and survives a
+    formatter that wraps it. On doppler's manifest, declaring the key
+    changes exactly `wfm_sink`'s CMakeLists and `doppler/wfm/__init__.py`,
+    and `status --check` stays clean.
+
 ## [0.85.0] — 2026-09-21
 
 ### Added

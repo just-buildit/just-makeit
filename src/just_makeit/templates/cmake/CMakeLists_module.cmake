@@ -1,4 +1,4 @@
-<<module_core_lib_block>>if(BUILD_PYTHON)
+<<module_core_lib_block>>if(<<module_python_guard>>)
 # <<module_comment>>
 Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c<<extra_ext_sources>>)
 target_link_libraries(<<module>> PRIVATE

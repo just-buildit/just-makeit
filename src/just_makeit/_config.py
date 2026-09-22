@@ -240,6 +240,13 @@ def load(root: Path) -> dict:
     ]
     if family_errors:
         _refuse(family_errors)
+    # gh-1463: a misspelt `[module.X] platforms` entry would drop that
+    # platform from the build in silence, so it stops here instead.
+    from . import _modplatforms
+
+    platform_errors = _modplatforms.errors(cfg)
+    if platform_errors:
+        _refuse(platform_errors)
     _expand_init_groups(cfg)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.

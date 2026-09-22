@@ -26,6 +26,7 @@ from . import _textio
 from pathlib import Path
 
 from . import _config as C
+from . import _modplatforms
 from . import _render as R
 from . import _procglobal
 from . import _enumc
@@ -3233,7 +3234,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     if gen_json and jtbl.get("include_dir"):
         inc += f"\n    {jtbl['include_dir']}"
     return R.with_extra_cmake(
-        f"""if(BUILD_PYTHON)
+        f"""if({_modplatforms.cmake_guard(cfg, module)})
 
 # {cname} — composer extension for `{C.capsule_backing(cfg, module)}` (gh-287).
 # The OO types live in the .so; kernels are in the backing _core.c.

@@ -776,6 +776,17 @@ def run(root: Path) -> None:
                 f"# CLI flag — re-add it to just-makeit.toml and run"
                 f" `just-makeit apply`.\n"
             )
+        # gh-1463: the same, for the platforms its extension is built on.
+        # Dropped in silence, the replayed project would build the module on
+        # a platform whose core does not exist.
+        declared = cfg.get("module", {}).get(mod, {}).get("platforms")
+        if declared:
+            listed = ", ".join(f'"{p}"' for p in declared)
+            lines.append(
+                f"# NOTE: [module.{mod}] platforms = [{listed}] has no\n"
+                f"# CLI flag — re-add it to just-makeit.toml and run"
+                f" `just-makeit apply`.\n"
+            )
         lines.append(
             _render_cmd(
                 ["just-makeit", "module", mod], _module_flags(cfg, mod)

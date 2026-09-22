@@ -959,12 +959,44 @@ instead of a named function body; it composes with the slot prefixes
 | `no_generate_reason = "..."`          | (TOML only)                                       | 🟡           |
 | `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
 | `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
+| `platforms = ["linux", "macos"]`      | (TOML only)                                       | 🟡           |
 
 `reexports` folds names from a *sibling* extension (typically a `no_generate`
 module whose binding/`.pyi` are hand-written) into this module's generated
 `__init__.py` — both the import block and `__all__` — so the re-export glue
 regenerates from the manifest instead of being a hand-edit `jm apply` would
 clobber. Output is single-line, matching the rest of the package.
+
+#### A module built on some platforms only
+
+`platforms` (gh-1463) names the platforms a module's extension is built on,
+from `linux`, `macos` and `windows`. Use it when the module sits on a core
+that only exists on some platforms — a POSIX-only library whose CMake target
+you define under `if(NOT WIN32)` yourself:
+
+```toml
+[module.stream_sink]
+kind = "handle"
+package = "wfm"
+extra_link_libs = ["$<TARGET_OBJECTS:stream_core_obj>"]
+platforms = ["linux", "macos"]
+```
+
+It applies to every module kind and changes two generated files:
+
+- the module's `CMakeLists.txt` builds its extension under
+    `if(BUILD_PYTHON AND (<platform test>))` instead of `if(BUILD_PYTHON)`, so
+    elsewhere nothing references the missing target;
+- wherever the module's names are imported into an `__init__.py` — its own,
+    or another module's `reexports` — the import and the names' `__all__`
+    entry move into a block that runs only on those platforms. Elsewhere the
+    names are **absent**, and the rest of the package imports normally.
+
+A platform jm does not know is refused when the manifest loads, rather than
+quietly dropped from the build. Listing all three is the same as leaving the
+key out. The key scopes the Python extension only: a plain module's C cores
+still compile everywhere, and your own `<module>_extra.cmake` runs after the
+guard, so guard anything platform-specific in it yourself.
 
 ### `[[module.<name>.functions]]` entries
 
@@ -1342,6 +1374,7 @@ The nested tables are written by `just-makeit property|method|warning <obj> --vi
 | `objects`                                                | array of strings        | Objects in declaration order                                            |
 | `functions`                                              | array                   | Module-level functions (see below)                                      |
 | `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                   |
+| `platforms`                                              | array of strings        | Build the extension on these platforms only (gh-1463)                   |
 | `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                      |
 | `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory` |
 | `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)          |

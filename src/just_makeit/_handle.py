@@ -36,6 +36,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from . import _capsule
 from . import _coerce
 from . import _config as C
+from . import _modplatforms
 from . import _render as R
 from . import _enumc
 from . import _context as Ctx
@@ -1681,7 +1682,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
 
     return R.with_extra_cmake(
-        f"""if(BUILD_PYTHON)
+        f"""if({_modplatforms.cmake_guard(cfg, module)})
 
 # {cname} — handle extension: typed `{C.handle_type_name(cfg, module)}` over \
 `{C.handle_backing(cfg, module)}` (gh-306).
