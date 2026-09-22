@@ -21,6 +21,20 @@
     the tree is still the frozen one, by its manifest's `jm_version` and a
     hash of every file, so a stray `apply` cannot quietly make it pass.
 
+- **`jm adopt <obj>` flips a module fragment to jm's content, and only
+    when nothing is lost** (gh-1448). `adopt --check` said what a flip would
+    do; the flip itself was a hand edit of the manifest plus deleting the
+    fragment. Now `jm adopt <obj>...`, `--module <id>` or `--all` does it in
+    one step: it writes `fragment = "generated"`, deletes the fragment and
+    runs `apply`. It refuses, writing nothing, for any object with a unit
+    that exists only on disk, and for any differing unit that is not
+    accepted. Accepting is done on the command line: `--accept <unit>`
+    names one, and `--accept-additions` takes every unit whose render only
+    ADDS code. For those, every token on disk survives the flip. `--check`
+    now labels those units `adds only`. On doppler that splits 235
+    differing units into 161 additions and 74 that remove code, and every
+    hand-written body on the review's list is among the 74.
+
 ### Fixed
 
 - **`status` and `apply` list files in one order on every platform.** Both

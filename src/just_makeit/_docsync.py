@@ -2823,6 +2823,35 @@ def fragment_units(text: str) -> dict:
     return units
 
 
+def render_only_adds(existing_unit: str, reference_unit: str) -> bool:
+    """True when the render holds every token of the unit on disk, in order.
+
+    Both arguments are `fragment_units` values -- normalised token streams.
+    When the one on disk is a subsequence of the render, taking the render
+    deletes nothing written there: the difference is code jm has ADDED
+    since -- a guard, a keyword list, parentheses, braces. gh-1448 measured
+    doppler's 235 differing units: 161 are this, and every unit on the
+    review's list of hand bodies a flip would lose (the ``strcmp`` sentinel,
+    ``mls_poly``'s default, the interleaver's ``ValueError``) removes code,
+    so none of them is.
+
+    Structural on purpose. A table of jm's known respellings was the
+    alternative; it only covers what someone remembered to write down, and
+    it goes stale in the direction of reporting a unit as safe.
+
+    It is not a claim that nobody edited the unit: an author who DELETED a
+    line produces the same shape. So it sorts a review, it does not replace
+    one -- `adopt` still needs ``--accept-additions`` to take these.
+
+    >>> render_only_adds("f ( a ) ;", "f ( ( a ) ) ;")
+    True
+    >>> render_only_adds("f ( a ) ; g ( ) ;", "f ( a ) ;")
+    False
+    """
+    ref = iter(reference_unit.split())
+    return all(tok in ref for tok in existing_unit.split())
+
+
 def fragment_unit_diff(existing: str, reference: str) -> UnitDiff:
     """Compare a fragment on disk with a fresh render of it.
 

@@ -6887,3 +6887,18 @@ def fragment_kind(cfg: dict, comp: str) -> str:
     """
     raw = str((cfg.get(comp) or {}).get("fragment") or "").strip().lower()
     return raw if raw in FRAGMENT_KINDS else FRAGMENT_SACRED
+
+
+def set_fragment_kind(cfg: dict, comp: str, kind: str) -> dict:
+    """Declare who owns *comp*'s module fragment (gh-1448).
+
+    The write `jm adopt` makes, and the only one: the key is the whole
+    declaration, and `apply` does the rest.
+
+    >>> set_fragment_kind({"blk": {}}, "blk", "generated")["blk"]
+    {'fragment': 'generated'}
+    """
+    if kind not in FRAGMENT_KINDS:
+        raise ValueError(f"fragment kind must be one of {FRAGMENT_KINDS}")
+    cfg.setdefault(comp, {})["fragment"] = kind
+    return cfg

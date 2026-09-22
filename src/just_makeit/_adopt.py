@@ -33,6 +33,7 @@ is also what a shrink-only ratchet in ``make lint`` reads.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import NamedTuple
 
@@ -66,6 +67,11 @@ class Verdict(NamedTuple):
     differing: tuple
     only_here: tuple
     ahead: tuple
+    #: The `differing` units whose render only ADDS code
+    #: (`_docsync.render_only_adds`): taking them deletes nothing on disk.
+    #: ``--accept-additions`` accepts exactly these; every other differing
+    #: unit must be named.
+    additions: tuple = ()
 
 
 #: The states in which a fragment cannot flip unattended, WORST FIRST.
@@ -113,16 +119,29 @@ def binding_ahead(existing: str, reference: str) -> tuple:
 
 
 def _verdict(
-    frag_rel: str, obj: str, kind: str, ud, ahead: tuple = ()
+    frag_rel: str,
+    obj: str,
+    kind: str,
+    ud,
+    ahead: tuple = (),
+    additions: tuple = (),
 ) -> Verdict:
     if kind == C.FRAGMENT_GENERATED:
         return Verdict(frag_rel, obj, "generated", (), (), ())
     if ud.only_here or ahead:
         return Verdict(
-            frag_rel, obj, "refused", ud.differing, ud.only_here, ahead
+            frag_rel,
+            obj,
+            "refused",
+            ud.differing,
+            ud.only_here,
+            ahead,
+            additions,
         )
     if ud.differing:
-        return Verdict(frag_rel, obj, "needs_ack", ud.differing, (), ())
+        return Verdict(
+            frag_rel, obj, "needs_ack", ud.differing, (), (), additions
+        )
     return Verdict(frag_rel, obj, "clean", (), (), ())
 
 
@@ -138,12 +157,20 @@ def flip_verdict(frag_rel: str, obj: str, existing: str, reference: str):
     with itself.
     """
     ud = _docsync.fragment_unit_diff(existing, reference)
+    ex_units = _docsync.fragment_units(existing)
+    ref_units = _docsync.fragment_units(reference)
+    additions = tuple(
+        u
+        for u in ud.differing
+        if _docsync.render_only_adds(ex_units[u], ref_units[u])
+    )
     return _verdict(
         frag_rel,
         obj,
         C.FRAGMENT_SACRED,
         ud,
         binding_ahead(existing, reference),
+        additions,
     )
 
 
@@ -253,7 +280,10 @@ def report(verdicts: list) -> int:
             if v.differing:
                 print(f"      {v.frag}")
                 for u in v.differing:
-                    print(f"        differs:   {u}")
+                    if u in v.additions:
+                        print(f"        adds only: {u}")
+                    else:
+                        print(f"        differs:   {u}")
     if not verdicts:
         print("  no module fragments in this project")
     print()
@@ -275,7 +305,127 @@ def report(verdicts: list) -> int:
             "  removes a feature. Declare it in the manifest first.\n"
             "  A unit that DIFFERS needs your eyes: jm cannot tell a\n"
             "  hand-written body from a render that predates a codegen\n"
-            "  change, which is why it asks rather than guesses."
+            "  change, which is why it asks rather than guesses.\n"
+            "  `adds only`: the render keeps every token of the unit and\n"
+            "  adds code (a guard, keywords) -- nothing on disk is lost.\n"
+            "  `jm adopt <obj> --accept-additions` takes those; a `differs`\n"
+            "  unit removes code, and is taken only by name:\n"
+            "  `--accept <unit>`."
+        )
+    return 1 if blocked else 0
+
+
+def adopt(
+    root: Path,
+    objs: "list[str]",
+    *,
+    only_mod: "str | None" = None,
+    accept: "frozenset[str]" = frozenset(),
+    accept_additions: bool = False,
+) -> int:
+    """Flip each target object whose fragments may flip; refuse the rest.
+
+    The write half of gh-1448. Targets are *objs*, or every object in
+    *only_mod*, or -- both empty -- every module object. Each is judged by
+    the same `flip_verdict` `--check` prints and `apply`'s first-adoption
+    guard applies, so the three cannot disagree about what is safe.
+
+    An object flips, as a SET with its views, when nothing refuses it and
+    every differing unit is consented to: named with *accept*, or -- for a
+    unit whose render only adds code -- covered by *accept_additions*.
+    Consent is this act, on this command line, never a second manifest key.
+
+    **All or nothing per object.** Nothing is written for one that does not
+    flip. For one that does: the key is written, its fragments are deleted
+    -- every unit in them was either identical to the render or accepted --
+    and `apply` renders them whole, ownership token and all. That is the
+    walkthrough `stale_project` teaches by hand, in one guarded step.
+
+    Returns the exit code: 1 when any target did not flip.
+    """
+    from . import _apply
+
+    cfg = C.load(root)
+    groups = by_object(survey(root, cfg, only_mod=only_mod))
+    for obj in objs:
+        if not C.component_module(cfg, obj):
+            print(
+                f"error: '{obj}' is not a module object -- only a module's"
+                " per-object fragment can be adopted; a standalone object's"
+                " binding is already jm's.",
+                file=sys.stderr,
+            )
+            return 2
+        if obj not in groups:
+            print(
+                f"error: '{obj}' has no binding fragment on disk; `jm apply`"
+                " creates it.",
+                file=sys.stderr,
+            )
+            return 2
+    targets = list(objs) or sorted(groups)
+
+    # A consent that matches nothing is a typo, and a typo here is a unit
+    # the author believes they accepted. Refused before anything is judged.
+    offered = {u for o in targets for v in groups[o] for u in v.differing}
+    unmatched = sorted(accept - offered)
+    if unmatched:
+        print(
+            "error: --accept names no differing unit of "
+            f"{', '.join(targets)}: {', '.join(unmatched)}.\n"
+            "  `just-makeit adopt --check` lists the units.",
+            file=sys.stderr,
+        )
+        return 2
+
+    flips: list = []
+    blocked = 0
+    for obj in targets:
+        vs = groups[obj]
+        states = {v.state for v in vs}
+        if states == {"generated"}:
+            print(f"  already jm's         {obj}")
+            continue
+        if "stale_token" in states or "refused" in states:
+            blocked += 1
+            print(f"  REFUSES              {obj}")
+            for v in vs:
+                for u in v.only_here:
+                    print(f"      {v.frag}: only here: {u}")
+                for u in v.ahead:
+                    print(f"      {v.frag}: binding ahead: {u}")
+                if v.state == "stale_token":
+                    print(f"      {v.frag}: token without key")
+            continue
+        pending = [
+            (v.frag, u)
+            for v in vs
+            for u in v.differing
+            if u not in accept and not (accept_additions and u in v.additions)
+        ]
+        if pending:
+            blocked += 1
+            print(f"  needs acknowledgement {obj}")
+            for frag, u in pending:
+                print(f"      {frag}: {u}")
+            continue
+        flips.append(obj)
+        print(f"  flips                {obj}")
+
+    if flips:
+        for obj in flips:
+            C.set_fragment_kind(cfg, obj, C.FRAGMENT_GENERATED)
+        C.save(root, cfg)
+        for obj in flips:
+            for v in groups[obj]:
+                if v.state != "generated":
+                    (root / v.frag).unlink()
+        print()
+        _apply.run(root)
+    if blocked:
+        print(
+            f"\n{blocked} object(s) not flipped; nothing was written for"
+            " them. `just-makeit adopt --check` shows each unit."
         )
     return 1 if blocked else 0
 

@@ -1677,6 +1677,39 @@ A **view** has no manifest table of its own, so its fragment is governed by
 the key on its parent object and is reported under it. A refusal anywhere
 in that set refuses the parent.
 
+Under `needs acknowledgement`, each differing unit is listed one of two
+ways:
+
+| line        | meaning                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `adds only` | the render keeps every token of the unit and adds code (a guard, keyword arguments) — nothing on disk is lost |
+| `differs:`  | the render would remove code from the unit — possibly code you wrote                                          |
+
+### Flipping
+
+`adopt` without `--check` makes the flip, for the objects you name — never
+by default:
+
+```sh
+just-makeit adopt fir                          # one object
+just-makeit adopt --module dsp                 # every object in a module
+just-makeit adopt --all                        # every module object
+just-makeit adopt fir --accept-additions       # take every `adds only` unit
+just-makeit adopt fir --accept fn:Fir_init     # take one `differs:` unit, by name
+```
+
+An object flips, together with its views, only when nothing refuses it and
+every differing unit is accepted: an `adds only` unit by `--accept-additions`
+or by name, a `differs:` unit **only** by name. For each object that
+flips, `adopt` writes `fragment = "generated"`, deletes its fragments and
+runs `apply`, which renders them whole. For an object that does not flip,
+nothing is written, and the units still waiting are listed. It exits
+non-zero if any target did not flip.
+
+Accepting is an act on the command line, not a manifest key. An `--accept`
+that names no differing unit of the targets is refused as a typo before
+anything is judged.
+
 ## Reconstructing a project
 
 `just-makeit script` reads `just-makeit.toml` and prints the exact sequence of
