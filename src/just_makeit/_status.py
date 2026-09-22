@@ -91,7 +91,11 @@ _COPY_IGNORE = shutil.ignore_patterns(
 def _walk_managed(base: Path) -> list[Path]:
     """Return manifest-owned files under *base*, as relative paths."""
     out: list[Path] = []
-    for p in sorted(base.rglob("*")):
+    # By the POSIX spelling, not the Path: a Windows path compares
+    # case-insensitively, so `sorted(paths)` put `bootstrap.toml` before
+    # `CMakePresets.json` there and after it everywhere else -- one report,
+    # two orders (found by gh-1443's stale_project golden on clang-cl).
+    for p in sorted(base.rglob("*"), key=lambda q: q.as_posix()):
         if not p.is_file():
             continue
         rel = p.relative_to(base)

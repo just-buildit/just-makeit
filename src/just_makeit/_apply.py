@@ -1136,7 +1136,9 @@ def _sync_missing(
     # newer than any pre-existing object files in the build directory.
     _future = time.time() + 2.0
     created: list[Path] = []
-    for src in sorted(temp_root.rglob("*")):
+    # Ordinal by the POSIX spelling, the same order on every platform (see
+    # `_status._walk_managed`).
+    for src in sorted(temp_root.rglob("*"), key=lambda q: q.as_posix()):
         if not src.is_file():
             continue
         rel = src.relative_to(temp_root)

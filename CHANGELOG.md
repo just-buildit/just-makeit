@@ -21,6 +21,14 @@
     the tree is still the frozen one, by its manifest's `jm_version` and a
     hash of every file, so a stray `apply` cannot quietly make it pass.
 
+### Fixed
+
+- **`status` and `apply` list files in one order on every platform.** Both
+    sorted `Path` objects, and a Windows path compares case-insensitively,
+    so the same report put `bootstrap.toml` before `CMakePresets.json` on
+    Windows and after it everywhere else. They sort by the POSIX spelling
+    now. Found by the `stale_project` golden on its first clang-cl run.
+
 ## [0.86.0] — 2026-09-22
 
 ### Added
