@@ -48,6 +48,8 @@ allowed_reason() {
         echo "the gh-1248 migration -- it must name the spelling it replaces" ;;
     tests/test_gh1248_upgrade_complex_spelling.py)
         echo "builds a pre-gh-1246 tree in order to migrate it" ;;
+    src/just_makeit/examples/stale_project/tree/*)
+        echo "a project frozen at jm 0.33.14 (gh-1443); jm upgrade respells it in the example" ;;
     *) return 1 ;;
     esac
 }
@@ -86,9 +88,10 @@ for f in src/just_makeit/_types.py src/just_makeit/_bind.py \
          src/just_makeit/templates/c/inc/clib_common.h CHANGELOG.md \
          tests/test_gh595_unknown_return_type.py \
          src/just_makeit/_upgrade.py \
-         tests/test_gh1248_upgrade_complex_spelling.py; do
-    [ -f "$f" ] || continue
-    grep -qIE "$pattern" "$f" || stale="$stale $f"
+         tests/test_gh1248_upgrade_complex_spelling.py \
+         src/just_makeit/examples/stale_project/tree; do
+    [ -e "$f" ] || continue
+    grep -rqIE "$pattern" "$f" || stale="$stale $f"
 done
 if [ -n "$stale" ]; then
     echo "ERROR: allow-list entr(ies) no longer contain the spelling:$stale"

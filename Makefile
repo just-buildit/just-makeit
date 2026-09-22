@@ -67,9 +67,11 @@ MD_EXCLUDE_RE = ^(examples/|src/just_makeit/examples/|src/just_makeit/templates/
 # tests/fixtures/doxygen holds headers whose BYTE-EXACT shape is the input to
 # the derivation corpus (gh-649), so reformatting one silently changes what the
 # parser is being asked to parse. Copied verbatim from the pre-commit mirror
-# this replaced — the file selection is behaviour, not incidental.
+# this replaced — the file selection is behaviour, not incidental. The third,
+# examples/stale_project/tree, is a project frozen at jm 0.33.14 (gh-1443):
+# reformatting it would make it a different, newer project.
 C_INCLUDE_RE  = \.(c|h|cc|cpp|hpp)$$
-C_EXCLUDE_RE  = ^(src/just_makeit/templates/|tests/fixtures/doxygen/)
+C_EXCLUDE_RE  = ^(src/just_makeit/templates/|tests/fixtures/doxygen/|src/just_makeit/examples/stale_project/tree/)
 # cmake-format runs ONLY over the CMake templates, and skips the three whose
 # leading <<placeholder>> tokens its tokenizer rejects outright.
 #

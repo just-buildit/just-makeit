@@ -1,0 +1,30 @@
+[fir]
+arg_type = "float"
+return_type = "float"
+mutable = "false"
+no_state = "false"
+no_step = "false"
+
+[[fir.state]]
+name = "scale"
+type = "float"
+default = "1.0"
+
+[[fir.methods]]
+name = "decimate"
+arg_type = "float"
+return_type = "float"
+variable_output = true
+max_out = 4096
+
+[[fir.methods]]
+name = "shape"
+arg_type = "float"
+return_type = "float _Complex"
+out_type = "float"
+
+[[fir.properties]]
+name = "scale"
+type = "float"
+writable = true
+field = true

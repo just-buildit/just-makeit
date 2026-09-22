@@ -1,0 +1,265 @@
+$ jm status   # exit 1
+warning: project generated with just-makeit 0.33.14, running <HEAD> (gh-183) — results may not reflect the pinned version.
+MISSING (8) — `jm apply` will create:
+  + .clang-tidy
+  + CMakePresets.json
+  + bootstrap.toml
+  + native/benchmarks/bench_dsp_core.c
+  + native/tests/jm_test.h
+  + native/tests/test_dsp_core.c
+  + native/tests/test_fir_symbols.c
+  + native/tests/test_gain_symbols.c
+
+STALE (9) — `jm apply` will rewrite from the manifest:
+  ~ CMakeLists.txt
+  ~ native/inc/stale.h
+  ~ native/src/dsp/CMakeLists.txt
+  ~ native/src/dsp/dsp_ext.c
+  ~ native/src/fir/CMakeLists.txt
+  ~ native/src/gain/CMakeLists.txt
+  ~ native/src/gain/gain_ext.c
+  ~ src/stale/dsp/dsp.pyi
+  ~ src/stale/gain.pyi
+  Run `jm apply` to sync.
+
+UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
+  ACTIONABLE (1) — the manifest moved and these did not, so a fix is
+  sitting undelivered. Delete the file and re-run `jm apply` to receive it
+  (any hand-written body in it is lost).
+    ! native/src/dsp/dsp_ext_fir.c
+        units: 13 identical, 5 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_steps, table:PyMethodDef
+        decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+  What apply will not do is re-render a wrapper body — those are yours, and
+  gh-770 is what keeps a hand-written one through a regeneration. So a body
+  that no longer matches the manifest is reported (see the `warning:` lines
+  above) and left alone.
+  None of this counts as drift for `--check`.
+
+OUTDATED (6) — create-only file(s) behind jm's current version:
+  ↑ .gitignore
+  ↑ Doxyfile
+  ↑ Makefile
+  ↑ cmake/stale.pc.in
+  ↑ native/benchmarks/jm_bench.h
+  ↑ native/inc/clib_common.h
+  jm owns the content of these and ships a newer one, but `apply` will NOT
+  rewrite a create-only file — adopting it is your call, and your own edits
+  to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
+
+UNWIRED (2) — component core(s) folded into no C library:
+  ⊘ dsp_core (native/src/dsp) — missing from stale_lib, stale_lib_static
+  ⊘ gain_core (native/src/gain) — missing from stale_lib_static
+  These build, and their symbols ship in neither lib<pkg>.so nor lib<pkg>.a,
+  so the installed header declares functions a C consumer cannot link. Python
+  is unaffected — the extension links each core directly — which is why this
+  goes unnoticed. `jm apply` writes the missing target_sources() line. Keep a
+  core out of the library on purpose by naming `CMakeLists.txt:<core>` in
+  [project] status_allow; naming `CMakeLists.txt` itself exempts every core,
+  for a project that links its cores its own way.
+
+summary: 40 OK, 8 missing, 9 stale, 1 unreconciled, 6 outdated, 2 unwired (!).
+Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
+
+$ jm apply   # exit 0
+warning: this project was last generated with just-makeit 0.33.14, but you are running <HEAD>. Generated glue may be incorrect.
+         Install the matching version (uvx --from 'just-makeit==0.33.14' just-makeit …) or re-apply with the current CLI to move the project forward.
+  stamp   just-makeit.toml  [project] jm_version = <HEAD>
+
+just-makeit: applying just-makeit.toml
+
+  update  native/src/dsp/dsp_ext_fir.c: docstring(s) rewritten from the header for decimate_max_out, destroy
+warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
+  create  .clang-tidy
+  create  CMakePresets.json
+  create  bootstrap.toml
+  create  native/benchmarks/bench_dsp_core.c
+  create  native/tests/jm_test.h
+  create  native/tests/test_dsp_core.c
+  create  native/tests/test_fir_symbols.c
+  create  native/tests/test_gain_symbols.c
+  update  CMakeLists.txt
+  update  native/inc/stale.h
+  update  native/src/dsp/dsp_ext.c
+  update  native/src/dsp/CMakeLists.txt
+  update  src/stale/dsp/dsp.pyi
+  update  native/src/fir/CMakeLists.txt
+  update  native/src/gain/CMakeLists.txt
+  update  native/src/gain/gain_ext.c
+  update  src/stale/gain.pyi
+  update  native/src/dsp/dsp_ext_fir.c
+
+Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
+$ jm status   # exit 0
+UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
+  ACTIONABLE (1) — the manifest moved and these did not, so a fix is
+  sitting undelivered. Delete the file and re-run `jm apply` to receive it
+  (any hand-written body in it is lost).
+    ! native/src/dsp/dsp_ext_fir.c
+        units: 13 identical, 5 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_steps, table:PyMethodDef
+        decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+  What apply will not do is re-render a wrapper body — those are yours, and
+  gh-770 is what keeps a hand-written one through a regeneration. So a body
+  that no longer matches the manifest is reported (see the `warning:` lines
+  above) and left alone.
+  None of this counts as drift for `--check`.
+
+OUTDATED (6) — create-only file(s) behind jm's current version:
+  ↑ .gitignore
+  ↑ Doxyfile
+  ↑ Makefile
+  ↑ cmake/stale.pc.in
+  ↑ native/benchmarks/jm_bench.h
+  ↑ native/inc/clib_common.h
+  jm owns the content of these and ships a newer one, but `apply` will NOT
+  rewrite a create-only file — adopting it is your call, and your own edits
+  to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
+
+SILENT (1) — benchmark(s) that record no measurement:
+  ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
+  These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
+
+OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated.
+  create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
+        jm_bench.h, jm_perf.h, the common headers — are compared against
+        this jm's render and reported as OUTDATED. NOT compared: the ones
+        whose content is yours — _core.c, your C and Python tests, README,
+        pyproject.toml — which differ from their scaffold as soon as the
+        project is real. `apply` rewrites neither kind; see docs/upgrading.md.
+
+$ jm apply   # exit 0
+just-makeit: applying just-makeit.toml
+
+warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
+  update  CMakeLists.txt
+
+Done!  Materialized 0 new file(s), patched 0 impl(s), and reconciled 1 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
+$ jm upgrade   # exit 0
+already up to date (schema 7)
+
+respelled the complex types in 4 file(s) (`complex` -> `_Complex`, gh-1246):
+  native/inc/fir/fir_core.h
+  native/src/fir/fir_core.c
+  native/tests/test_fir_core.c
+  native/tests/test_gain_core.c
+  Same type, same ABI -- identical tokens after preprocessing.
+  Rebuild and run your tests. If you adopted jm's new clib_common.h,
+  a C++11 caller can use `std::complex` again.
+
+$ jm status   # exit 0
+UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
+  ACTIONABLE (1) — the manifest moved and these did not, so a fix is
+  sitting undelivered. Delete the file and re-run `jm apply` to receive it
+  (any hand-written body in it is lost).
+    ! native/src/dsp/dsp_ext_fir.c
+        units: 13 identical, 5 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_steps, table:PyMethodDef
+        decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+  What apply will not do is re-render a wrapper body — those are yours, and
+  gh-770 is what keeps a hand-written one through a regeneration. So a body
+  that no longer matches the manifest is reported (see the `warning:` lines
+  above) and left alone.
+  None of this counts as drift for `--check`.
+
+OUTDATED (6) — create-only file(s) behind jm's current version:
+  ↑ .gitignore
+  ↑ Doxyfile
+  ↑ Makefile
+  ↑ cmake/stale.pc.in
+  ↑ native/benchmarks/jm_bench.h
+  ↑ native/inc/clib_common.h
+  jm owns the content of these and ships a newer one, but `apply` will NOT
+  rewrite a create-only file — adopting it is your call, and your own edits
+  to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
+
+SILENT (1) — benchmark(s) that record no measurement:
+  ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
+  These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
+
+OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated.
+  create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
+        jm_bench.h, jm_perf.h, the common headers — are compared against
+        this jm's render and reported as OUTDATED. NOT compared: the ones
+        whose content is yours — _core.c, your C and Python tests, README,
+        pyproject.toml — which differ from their scaffold as soon as the
+        project is real. `apply` rewrites neither kind; see docs/upgrading.md.
+
+$ jm apply   # exit 0
+just-makeit: applying just-makeit.toml
+
+warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
+  create  .gitignore
+  create  Doxyfile
+  create  Makefile
+  create  cmake/stale.pc.in
+  create  native/benchmarks/bench_fir_core.c
+  create  native/benchmarks/bench_gain_core.c
+  create  native/benchmarks/jm_bench.h
+  create  native/inc/clib_common.h
+
+Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
+$ jm adopt --check   # exit 1
+adopt --check — would `fragment = "generated"` be safe?
+  needs acknowledgement fir
+      native/src/dsp/dsp_ext_fir.c
+        differs:   fn:Fir_dealloc
+        differs:   fn:Fir_decimate
+        differs:   fn:Fir_init
+        differs:   fn:Fir_steps
+        differs:   table:PyMethodDef
+
+  0 of 1 object(s) could flip
+  A unit that exists ONLY on disk refuses the flip: the render
+  does not produce it, so flipping would delete it. Move it to
+  the `_extra.c` beside the fragment, which is already wired.
+  A member whose BINDING accepts more than the manifest
+  declares refuses too: there the file is ahead, so flipping
+  removes a feature. Declare it in the manifest first.
+  A unit that DIFFERS needs your eyes: jm cannot tell a
+  hand-written body from a render that predates a codegen
+  change, which is why it asks rather than guesses.
+
+$ jm apply   # exit 0
+just-makeit: applying just-makeit.toml
+
+  create  native/src/dsp/dsp_ext_fir.c
+
+Done!  Materialized 1 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
+$ jm adopt --check   # exit 0
+adopt --check — would `fragment = "generated"` be safe?
+  would flip           fir
+
+  1 of 1 object(s) could flip
+
+$ jm apply   # exit 0
+just-makeit: applying just-makeit.toml
+
+  create  native/src/dsp/dsp_ext_fir.c
+
+Done!  Materialized 1 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+
+$ jm status --check   # exit 0
+SILENT (1) — benchmark(s) that record no measurement:
+  ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
+  These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
+
+OK — up to date; 57 manifest-owned file(s) match; 1 silent bench.
+  create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
+        jm_bench.h, jm_perf.h, the common headers — are compared against
+        this jm's render and reported as OUTDATED. NOT compared: the ones
+        whose content is yours — _core.c, your C and Python tests, README,
+        pyproject.toml — which differ from their scaffold as soon as the
+        project is real. `apply` rewrites neither kind; see docs/upgrading.md.

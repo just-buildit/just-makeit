@@ -1,0 +1,11 @@
+include = ["objects/*.toml", "modules/*.toml"]
+
+[project]
+name = "stale"
+version = "0.1.0"
+build = "cmake"
+perf = "false"
+pytest = "false"
+pytest_benchmark = "false"
+schema = "7"
+jm_version = "0.33.14"
