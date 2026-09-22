@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.86.0] — 2026-09-22
+
 ### Added
 
 - **`[module.X] platforms`: a module built on some platforms only**
