@@ -21,6 +21,7 @@ from . import _textio
 
 import contextlib
 import fnmatch
+import hashlib
 import io
 import os
 import re
@@ -153,6 +154,84 @@ def is_build_tree(path: Path) -> bool:
     True
     """
     return (path / "CMakeCache.txt").is_file()
+
+
+def _tree_digests(root: Path) -> dict:
+    """Digest of every project file, keyed by POSIX path relative to *root*.
+
+    gh-1474: what `apply` reports is decided by comparing these with the
+    same files after it has finished -- formatter included -- rather than by
+    each write site's own idea of whether it changed something. Those ideas
+    were right about their write and wrong about the file: the gh-917
+    formatter pass rewrites a render back to the project's style, so on a
+    ``c_format_command`` project a second `apply` announced nine `update`s
+    and changed no bytes; and two modules sharing one package merged its
+    ``__init__.py`` in turn, so it was announced twice.
+
+    Taken once, before anything is written, from the same walk rules
+    `status` uses: skipped names and build trees are never descended into.
+    """
+    out: dict = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _SKIP_DIRS and not is_build_tree(base / d)
+        ]
+        for name in filenames:
+            p = base / name
+            rel = p.relative_to(root)
+            if is_skipped(rel):
+                continue
+            try:
+                out[rel.as_posix()] = hashlib.sha1(p.read_bytes()).digest()
+            except OSError:
+                continue
+    return out
+
+
+def _project_rel(root: Path, path) -> str:
+    """*path* as a POSIX path relative to *root*.
+
+    The write sites hand back both forms: `_sync_missing` its relative
+    paths, the rest ``root / rel``.
+    """
+    p = Path(path)
+    try:
+        p = p.relative_to(root)
+    except ValueError:
+        pass  # already project-relative
+    return p.as_posix()
+
+
+def _changed_report(
+    root: Path, before: dict, candidates: list
+) -> "list[tuple[str, str]]":
+    """``(verb, rel)`` for each candidate whose bytes this run changed.
+
+    *candidates* are the paths the write sites say they touched, relative or
+    under *root*, in the order they were written. Each is reported at most
+    once, project-relative: ``create`` if it did not exist before the run,
+    ``update`` if its bytes differ from *before*, and nothing if the run
+    ended where it started -- which is what a second `apply` must print.
+    """
+    out: list = []
+    seen: set = set()
+    for cand in candidates:
+        rel = _project_rel(root, cand)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        real = root / rel
+        if not real.is_file():
+            continue
+        now = hashlib.sha1(real.read_bytes()).digest()
+        if rel not in before:
+            out.append(("create", rel))
+        elif before[rel] != now:
+            out.append(("update", rel))
+    return out
 
 
 def is_skipped(rel: Path) -> bool:
@@ -3148,6 +3227,10 @@ def run(
     print(f"just-makeit: applying {C.FILENAME}")
     print()
 
+    # gh-1474: before anything below writes, so the report can be decided by
+    # the bytes each file ends with rather than by who wrote to it.
+    _before = _tree_digests(root)
+
     from . import _object as _obj_mod
 
     with tempfile.TemporaryDirectory(prefix="jm-apply-") as tmp:
@@ -3322,13 +3405,6 @@ def run(
         root, cfg, [*created, *updated, *frag_doc_updated, *bench_updated]
     )
 
-    for rel in created:
-        print(f"  create  {root / rel}")
-    for path in impl_patched:
-        print(f"  update  {path}")
-    for path in updated + bench_updated + frag_doc_updated:
-        print(f"  update  {path}")
-
     # gh-975: a splice whose anchor is gone writes nothing and says
     # "unchanged", which reads exactly like "already correct". Name it, with
     # what was not written and where the line belongs — the alternative jm
@@ -3436,19 +3512,30 @@ def run(
                 )
             )
 
-    print()
-    total = (
-        len(created)
-        + len(updated)
-        + len(bench_updated)
-        + len(frag_doc_updated)
-        + len(impl_patched)
+    # gh-1474: after the LAST write -- the formatter pass, the link-check
+    # tables, the invariants file -- each path decided by the bytes it ends
+    # with. A write the formatter undid, or a file two modules merged in
+    # turn, changed nothing and says nothing; and the summary below counts
+    # the same lines it follows, so the two cannot disagree.
+    _changed = _changed_report(
+        root,
+        _before,
+        [*created, *impl_patched, *updated, *bench_updated, *frag_doc_updated],
     )
-    if total:
-        _reconciled = len(updated) + len(bench_updated) + len(frag_doc_updated)
+    for verb in ("create", "update"):
+        for v, rel in _changed:
+            if v == verb:
+                print(f"  {verb}  {rel}")
+
+    print()
+    _impl_rels = {_project_rel(root, p) for p in impl_patched}
+    _n_created = sum(1 for v, _ in _changed if v == "create")
+    _n_impl = sum(1 for v, r in _changed if v == "update" and r in _impl_rels)
+    _reconciled = len(_changed) - _n_created - _n_impl
+    if _changed:
         print(
-            f"Done!  Materialized {len(created)} new file(s), "
-            f"patched {len(impl_patched)} impl(s), and "
+            f"Done!  Materialized {_n_created} new file(s), "
+            f"patched {_n_impl} impl(s), and "
             f"reconciled {_reconciled} wiring file(s)"
             f" from {C.FILENAME}."
         )
