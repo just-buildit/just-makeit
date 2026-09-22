@@ -605,6 +605,45 @@ def _fmt_from_import(module: str, names: list[str]) -> str:
     return f"from .{module} import {', '.join(names)}  # noqa: E402"
 
 
+def _guard_header(sub: str) -> str:
+    """The comment that names a guard block's owner (gh-1463). It is what
+    the merge finds the block by, so it is the manifest table, verbatim."""
+    return f"  # [module.{sub}] platforms"
+
+
+def _fmt_guard_block(sub: str, names: list[str], cond: str) -> str:
+    """Render a platform-guarded reexport (gh-1463), no trailing newline.
+
+    >>> print(_fmt_guard_block('sink', ['Sink'], 'X'))
+    if X:  # [module.sink] platforms
+        from .sink import Sink  # noqa: E402
+        __all__ += ["Sink"]
+    """
+    listed = ", ".join(f'"{n}"' for n in names)
+    return (
+        f"if {cond}:{_guard_header(sub)}\n"
+        f"    {_fmt_from_import(sub, names)}\n"
+        f"    __all__ += [{listed}]"
+    )
+
+
+def _guard_block_re(sub: str) -> "re.Pattern[str]":
+    """Match a whole guard block rendered by :func:`_fmt_guard_block`: its
+    header line, then every following indented line."""
+    return re.compile(
+        rf"^if [^\n]*:{re.escape(_guard_header(sub))}$(?:\n    [^\n]*)*",
+        re.MULTILINE,
+    )
+
+
+def _guard_import_re(sub: str) -> "re.Pattern[str]":
+    """The import inside *sub*'s guard block; group 1 is the statement
+    without its indent, as :func:`_parse_import_names` expects it."""
+    return re.compile(
+        rf"^    (from \.{re.escape(sub)} import[^\n]*)$", re.MULTILINE
+    )
+
+
 def _parse_all_names(body: str) -> list[str]:
     """Names listed in an ``__all__ = [...]`` body (the text between the
     brackets, as captured by :data:`_ALL_RE`).
@@ -765,6 +804,7 @@ def _merge_module_init(
     all_exports: list[str],
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
+    guards: dict[str, str] | None = None,
 ) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
@@ -809,7 +849,32 @@ def _merge_module_init(
     from .dsp import Ema, Iad, Nco  # noqa: E402
     __all__ = ["Ema", "Iad", "Nco"]
     <BLANKLINE>
+
+    *guards* (gh-1463, ``{submodule: python condition}``) marks a reexport
+    whose module is built only on some platforms. Its import moves under the
+    condition, with its names joining ``__all__`` there, so elsewhere the
+    package still imports and the name is simply absent. An unguarded line
+    for it (the file before the key was set) is replaced, not duplicated:
+
+    >>> src = ('from .dsp import Nco  # noqa: E402\\n'
+    ...        'from .sink import Sink  # noqa: E402\\n'
+    ...        '__all__ = ["Nco", "Sink"]\\n')
+    >>> cond = '__import__("sys").platform in ("linux",)'
+    >>> out = _merge_module_init(src, 'dsp', ['Nco'], {'sink': ['Sink']},
+    ...                          guards={'sink': cond})
+    >>> print(out)
+    from .dsp import Nco  # noqa: E402
+    __all__ = ["Nco"]
+    <BLANKLINE>
+    if __import__("sys").platform in ("linux",):  # [module.sink] platforms
+        from .sink import Sink  # noqa: E402
+        __all__ += ["Sink"]
+    <BLANKLINE>
+    >>> _merge_module_init(out, 'dsp', ['Nco'], {'sink': ['Sink']},
+    ...                    guards={'sink': cond}) == out
+    True
     """
+    guards = guards or {}
     import_pat = _import_re(module)
 
     m = import_pat.search(existing)
@@ -830,6 +895,10 @@ def _merge_module_init(
     # file never converges.
     protected: set[str] = set()
     for sib in siblings or []:
+        # gh-1463: a guarded sibling's names live in its guard block, never
+        # in the literal __all__, so an old unguarded line must not pin them.
+        if sib in guards:
+            continue
         sm = _import_re(sib).search(existing)
         if sm:
             protected |= set(_parse_import_names(sm.group(0)))
@@ -842,9 +911,13 @@ def _merge_module_init(
     # present in that submodule's import line, in declaration order.
     reexport_lines: dict[str, str] = {}
     reexport_names: list[str] = []
+    guarded_blocks: dict[str, str] = {}
     for sub, names in (reexports or {}).items():
         sm = _import_re(sub).search(existing)
         existing_sub = _parse_import_names(sm.group(0)) if sm else []
+        if not sm and sub in guards:
+            gm = _guard_import_re(sub).search(existing)
+            existing_sub = _parse_import_names(gm.group(1)) if gm else []
         # Authoritative within the sub too (gh-329): drop names the manifest
         # dropped from this reexport, keep surviving order, append the rest.
         declared = set(names)
@@ -856,16 +929,28 @@ def _merge_module_init(
                 sub_seen.add(n)
         if not sub_names:
             continue
+        if sub in guards:
+            guarded_blocks[sub] = _fmt_guard_block(sub, sub_names, guards[sub])
+            continue
         reexport_lines[sub] = _fmt_from_import(sub, sub_names)
         for n in sub_names:
             if n not in reexport_names:
                 reexport_names.append(n)
 
     all_names = merged + [n for n in reexport_names if n not in seen]
-    if not all_names:
+    if not all_names and not guarded_blocks:
         return existing
 
     result = existing
+
+    # gh-1463: a reexport that became guarded loses its unguarded line. jm
+    # wrote that line from this same manifest entry, so removing it is
+    # rewriting a statement jm owns (the gh-342 rule), not a sweep.
+    for sub in guarded_blocks:
+        line_and_newline = re.compile(
+            _import_re(sub).pattern + r"\n?", re.MULTILINE
+        )
+        result = line_and_newline.sub("", result, count=1)
 
     # 1. Upsert the module's own import line.
     if merged:
@@ -929,6 +1014,18 @@ def _merge_module_init(
         result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
+
+    # 4. gh-1463: each guarded reexport, as one block AFTER __all__ -- its
+    # `__all__ +=` needs the list to exist. Replaced whole when present, so
+    # a changed platform list or name set converges in one pass.
+    for sub, block in guarded_blocks.items():
+        bm = _guard_block_re(sub).search(result)
+        if bm:
+            result = result[: bm.start()] + block + result[bm.end() :]
+        else:
+            am = _ALL_RE.search(result)
+            assert am, "step 3 always leaves an __all__"
+            result = result[: am.end()] + "\n\n" + block + result[am.end() :]
     return result
 
 
@@ -2340,6 +2437,7 @@ def _regenerate_module_now(
         all_exports,
         reexports,
         siblings=package_siblings(cfg, module),
+        guards=C.reexport_guards(cfg, module),
     )
     # gh-695: and the module docstring, which the template above only supplies
     # on the create path — so a module that gained a `doc` after scaffolding

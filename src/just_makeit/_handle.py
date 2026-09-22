@@ -1680,8 +1680,17 @@ def render_cmake(cfg: dict, module: str) -> str:
     extra = C.handle_extra_link_libs(cfg, module)
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
 
+    # gh-1463: a module whose backing exists only on some platforms creates
+    # no target elsewhere. Guarding the target, not the link line, is what
+    # stops a dangling `$<TARGET_OBJECTS:...>` failing the GENERATE step on
+    # a platform that never defined it. Absent, the line is byte-identical.
+    platforms = C.module_platforms(cfg, module)
+    guard = "BUILD_PYTHON"
+    if platforms:
+        guard += f" AND ({C.platforms_cmake_condition(platforms)})"
+
     return R.with_extra_cmake(
-        f"""if(BUILD_PYTHON)
+        f"""if({guard})
 
 # {cname} — handle extension: typed `{C.handle_type_name(cfg, module)}` over \
 `{C.handle_backing(cfg, module)}` (gh-306).

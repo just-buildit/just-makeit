@@ -80,6 +80,7 @@ _REPRESENTATIVE: dict[str, object] = {
     ],
     "factories": [{"name": "from_path", "create_fn": "ring_from_path"}],
     "capsule": "p.ring",
+    "platforms": ["linux", "macos"],  # gh-1463
     # -- capsule -----------------------------------------------------------
     "destroy_fn": "ring_destroy",
     # -- composer ----------------------------------------------------------

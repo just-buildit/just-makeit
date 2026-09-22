@@ -23,6 +23,23 @@
     An existing project gets the file from `jm apply`, and its `.gitignore`
     shows outdated until it gains `out/` and `CMakeUserPresets.json`.
 
+- **A handle module can be built on some platforms only** (gh-1463).
+    `[module.X] platforms = ["linux", "macos"]` says where the module's
+    backing exists, and both faces follow from that one key. The generated
+    `CMakeLists.txt` creates the target only there, so a
+    `$<TARGET_OBJECTS:...>` naming a core that platform never defines no
+    longer fails the generate step. A package that re-exports the module
+    imports it under a `sys.platform` guard, with its names joining
+    `__all__` there, so elsewhere the package still imports and the name is
+    absent. doppler's `wfm_sink` embeds a POSIX-only NATS core, and until
+    now it stopped every Windows build of the project, not just its own.
+
+    Absent, nothing changes: the output is byte-identical. An unknown
+    platform or an empty list is refused. The key is registered on
+    `kind = "handle"` alone, the one renderer that honours it, so on
+    another kind it reports as unknown instead of building everywhere.
+    Type stubs stay platform-agnostic.
+
 - **Building on Windows** is a guide page: the prerequisites, the Developer
     PowerShell route (presets, no GNU make needed) and the Visual Studio
     route, replacing the FAQ's long answer.

@@ -1388,6 +1388,7 @@ def _merge_module_init_file(
     temp_path: Path,
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
+    guards: dict[str, str] | None = None,
 ) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
@@ -1418,7 +1419,7 @@ def _merge_module_init_file(
 
     existing = real_path.read_text(encoding="utf-8")
     merged = _merge_module_init(
-        existing, module, exports, reexports, siblings=siblings
+        existing, module, exports, reexports, siblings=siblings, guards=guards
     )
     # gh-695: carry the module docstring across too. `[module.X] doc` reached
     # this file only via the template, which apply renders into *temp* and
@@ -2060,6 +2061,7 @@ def _sync_aggregates(
                 temp_mod_init,
                 C.module_reexports(cfg, mod),
                 siblings=_pkg_siblings(cfg, mod),
+                guards=C.reexport_guards(cfg, mod),
             ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.

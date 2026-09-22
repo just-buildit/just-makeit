@@ -504,6 +504,9 @@ HANDLE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "getters",
     "factories",
     "capsule",
+    # gh-1463: handle only, because only the handle renderer honours it. On
+    # another kind it must REPORT, not pass and build everywhere (gh-1114).
+    "platforms",
 }
 CAPSULE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "create_fn",

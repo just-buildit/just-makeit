@@ -2725,6 +2725,103 @@ def handle_optional_backend(cfg: dict, module: str) -> str:
     return cfg.get("module", {}).get(module, {}).get("optional_backend", "")
 
 
+#: ``[module.X] platforms`` vocabulary (gh-1463) -> how each face asks "is
+#: this the platform?": the CMake condition, and the ``sys.platform`` value.
+#: One table, so the two faces cannot disagree about what a name means.
+MODULE_PLATFORMS: dict[str, tuple[str, str]] = {
+    "linux": ('CMAKE_SYSTEM_NAME STREQUAL "Linux"', "linux"),
+    "macos": ("APPLE", "darwin"),
+    "windows": ("WIN32", "win32"),
+}
+
+
+def module_platforms(cfg: dict, module: str) -> list[str]:
+    """Platforms a module is built on (``[module.X] platforms``, gh-1463).
+
+    Empty means every platform: the key is absent and nothing it renders
+    changes. Set, it is the author saying the module's backing exists only
+    there (doppler's ``wfm_sink`` embeds a POSIX-only NATS core), and both
+    faces follow from it: the generated ``CMakeLists.txt`` creates the
+    target only on those platforms, and a package re-exporting the module
+    imports it only there, so elsewhere the name is absent rather than
+    present and broken.
+
+    It keys on intent, not on what happens to be missing: an ``if(TARGET)``
+    inferred from ``$<TARGET_OBJECTS:...>`` would fix the CMake face alone,
+    and would silently build nothing when a target name is misspelt.
+
+    >>> cfg = {"module": {"sink": {"platforms": ["linux", "macos"]}}}
+    >>> module_platforms(cfg, "sink")
+    ['linux', 'macos']
+    >>> module_platforms({"module": {"sink": {}}}, "sink")
+    []
+    >>> module_platforms({"module": {"s": {"platforms": ["posix"]}}}, "s")
+    Traceback (most recent call last):
+    ...
+    ValueError: [module.s] platforms: 'posix' is not one of linux, macos, windows
+    """
+    raw = cfg.get("module", {}).get(module, {}).get("platforms")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            f"[module.{module}] platforms must be a non-empty list of "
+            f"{', '.join(MODULE_PLATFORMS)}; omit it for every platform"
+        )
+    for p in raw:
+        if p not in MODULE_PLATFORMS:
+            raise ValueError(
+                f"[module.{module}] platforms: {p!r} is not one of "
+                f"{', '.join(MODULE_PLATFORMS)}"
+            )
+    return list(dict.fromkeys(raw))
+
+
+def platforms_cmake_condition(platforms: list[str]) -> str:
+    """The CMake condition true on exactly *platforms*.
+
+    >>> platforms_cmake_condition(["linux", "macos"])
+    'CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE'
+    """
+    return " OR ".join(MODULE_PLATFORMS[p][0] for p in platforms)
+
+
+def platforms_py_condition(platforms: list[str]) -> str:
+    """The Python expression true on exactly *platforms*.
+
+    ``__import__("sys")`` rather than a module-level ``sys``: the generated
+    ``__init__.py`` deletes its own ``_sys`` after the DLL-directory block,
+    and a guard must not depend on what the rest of the file imports. The
+    trailing comma keeps a single platform a TUPLE -- ``in ("linux")`` would
+    be a substring test that ``"lin"`` passes.
+
+    >>> platforms_py_condition(["linux", "macos"])
+    '__import__("sys").platform in ("linux", "darwin",)'
+    >>> platforms_py_condition(["linux"])
+    '__import__("sys").platform in ("linux",)'
+    """
+    names = "".join(f'"{MODULE_PLATFORMS[p][1]}", ' for p in platforms)
+    return f'__import__("sys").platform in ({names.rstrip()})'
+
+
+def reexport_guards(cfg: dict, module: str) -> dict[str, str]:
+    """``{submodule: python condition}`` for each of *module*'s reexports
+    whose source module declares ``platforms`` (gh-1463) -- the input
+    ``_object._merge_module_init`` guards those imports with.
+
+    >>> cfg = {"module": {"wfm": {"reexports": {"sink": ["S"], "rd": ["R"]}},
+    ...                   "sink": {"platforms": ["linux"]}, "rd": {}}}
+    >>> reexport_guards(cfg, "wfm")
+    {'sink': '__import__("sys").platform in ("linux",)'}
+    """
+    out: dict[str, str] = {}
+    for sub in module_reexports(cfg, module):
+        plats = module_platforms(cfg, sub)
+        if plats:
+            out[sub] = platforms_py_condition(plats)
+    return out
+
+
 # The package / header / depends_on / extra_link_libs keys behave exactly as
 # their capsule twins; expose handle-named aliases so the generator reads a
 # consistent ``handle_*`` surface (and a future schema split stays cheap).
