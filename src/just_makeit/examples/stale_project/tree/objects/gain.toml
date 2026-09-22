@@ -1,0 +1,11 @@
+[gain]
+arg_type = "float"
+return_type = "float"
+mutable = "false"
+no_state = "false"
+no_step = "false"
+
+[[gain.state]]
+name = "level"
+type = "float"
+default = "1.0"

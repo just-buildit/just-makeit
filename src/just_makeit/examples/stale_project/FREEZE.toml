@@ -1,0 +1,28 @@
+# gh-1443 Gate B: a project that exists to be OLD.
+#
+# `tree/` was generated once, by the released just-makeit below, and is never
+# regenerated or re-frozen: the golden growing is the record of every guard
+# added since, and re-freezing would throw that away. If it ever becomes
+# unwieldy, freeze a SECOND project beside it and keep both.
+#
+# Why this version: it is the last release before 0.33.15 added the
+# C-contiguity half of the `out=` guard (gh-581) -- the shape that reached
+# doppler as doppler#1440 -- and it still applies under the current jm.
+jm_version = "0.33.14"
+frozen_on = "2026-09-22"
+
+# Run in an empty directory with `just-makeit==0.33.14` installed. The
+# resulting `stale/` is `tree/`, minus `compile_commands.json` (git-ignored by
+# the project itself, so no real project commits it), plus ONE hand edit: the
+# author's kernel in native/inc/fir/fir_core.h's `fir_step`
+# (`return x * state->scale;`), because a real project has real code in its
+# sacred files and an upgrade must leave it alone.
+commands = [
+    "just-makeit new stale --object gain --state level:float:1.0 --arg-type float --return-type float",
+    "just-makeit module dsp",
+    "just-makeit object fir --module dsp --state scale:float:1.0 --arg-type float --return-type float",
+    "just-makeit method fir decimate --module dsp --arg-type float --return-type float --variable-output --max-out 4096",
+    "just-makeit method fir shape --module dsp --arg-type float --out-type float",
+    "just-makeit property fir scale --module dsp --type float --field --writable",
+    "just-makeit function energy --module dsp --return-type double --param n:int --out-param y:float[]",
+]

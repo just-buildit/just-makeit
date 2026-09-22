@@ -65,6 +65,7 @@ GALLERY = {
     "ring_buffer": "Ring buffer",
     "errors_warnings": "Errors and warnings",
     "composer_seams": "Composer seams",
+    "stale_project": "Upgrading an old project",
     "kitchen_sink": "Kitchen sink",
 }
 

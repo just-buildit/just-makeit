@@ -1,5 +1,13 @@
 # Upgrading an existing project
 
+!!! tip "A worked upgrade, end to end"
+
+    [Upgrading an old project](examples/stale_project.md) takes a project
+    jm 0.33.14 generated to the current jm one command at a time — `status`,
+    `apply`, `upgrade`, receiving a fix a binding fragment is missing, adopting
+    the files jm ships newer — and proves the result builds and runs. This page
+    covers `jm upgrade`, one of those steps.
+
 When a new version of `just-makeit` ships features that change the project
 scaffold — new files, new `just-makeit.toml` keys, new build targets — existing
 projects do not automatically get those additions. The upgrade system handles

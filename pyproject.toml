@@ -59,7 +59,11 @@ pure = true
 
 [tool.ruff]
 line-length = 79
-extend-exclude = ["src/just_makeit/templates/"]
+# gh-1443: a project frozen at jm 0.33.14 -- its bytes are the test.
+extend-exclude = [
+    "src/just_makeit/templates/",
+    "src/just_makeit/examples/stale_project/tree/",
+]
 
 [tool.ruff.lint]
 per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }

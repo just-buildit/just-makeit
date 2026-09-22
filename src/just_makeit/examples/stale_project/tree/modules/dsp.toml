@@ -1,0 +1,15 @@
+[module.dsp]
+objects = ["fir"]
+
+[[module.dsp.functions]]
+name = "energy"
+return_type = "double"
+
+[[module.dsp.functions.params]]
+name = "n"
+type = "int"
+
+[[module.dsp.functions.params]]
+name = "y"
+type = "float[]"
+out = true
