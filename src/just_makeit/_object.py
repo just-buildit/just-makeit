@@ -27,6 +27,7 @@ from typing import Iterator
 from . import _color as Color
 from . import _config as C
 from ._docstring import class_import_line
+from . import _modplatforms
 from . import _procglobal
 from . import _context as Ctx
 from . import _record
@@ -765,6 +766,7 @@ def _merge_module_init(
     all_exports: list[str],
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
+    platforms: "dict[str, tuple[str, ...] | None] | None" = None,
 ) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
@@ -778,6 +780,11 @@ def _merge_module_init(
     ``no_generate`` sibling regenerate cleanly instead of being clobbered.
     Output is single-line canonical, matching jm's existing ``__init__.py``
     glue, so adding the key never reflows a project's other modules.
+
+    *platforms* (gh-1463, from :func:`_modplatforms.init_platforms`) maps each
+    owned leaf to the platforms its module is built on; the merge below runs
+    unaware of it, and :func:`_modplatforms.guard_init` then moves each
+    restricted leaf's import and names into a platform-guarded block.
 
     >>> src = ('# dsp/__init__.py\\n'
     ...        'from .dsp import Nco  # noqa: E402\\n'
@@ -863,7 +870,7 @@ def _merge_module_init(
 
     all_names = merged + [n for n in reexport_names if n not in seen]
     if not all_names:
-        return existing
+        return _modplatforms.guard_init(existing, platforms or {})
 
     result = existing
 
@@ -929,7 +936,7 @@ def _merge_module_init(
         result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
-    return result
+    return _modplatforms.guard_init(result, platforms or {})
 
 
 _NORMALIZE_WS_RE = re.compile(r"\s+")
@@ -2106,6 +2113,7 @@ def _regenerate_module_now(
         "module_comment": module_comment,
         "object_core_libs": object_core_libs,
         "module_core_lib_block": module_core_lib_block,
+        "module_python_guard": _modplatforms.cmake_guard(cfg, module),
         "extra_link_libs_block": extra_link_libs_block,
         "extra_include_dirs_block": inc_dirs_extra,
         "extra_ext_sources": extra_ext_sources,
@@ -2340,6 +2348,7 @@ def _regenerate_module_now(
         all_exports,
         reexports,
         siblings=package_siblings(cfg, module),
+        platforms=_modplatforms.init_platforms(cfg, module),
     )
     # gh-695: and the module docstring, which the template above only supplies
     # on the create path — so a module that gained a `doc` after scaffolding

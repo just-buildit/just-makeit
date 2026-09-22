@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import _coerce
 from . import _config as C
+from . import _modplatforms
 from . import _render as R
 from . import _procglobal
 from . import _types as T
@@ -391,7 +392,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
 
     return R.with_extra_cmake(
-        f"""if(BUILD_PYTHON)
+        f"""if({_modplatforms.cmake_guard(cfg, module)})
 
 # {cname} — capsule extension for `{C.capsule_backing(cfg, module)}` (gh-286).
 # State is an opaque PyCapsule; the kernel bodies live in the backing _core.c.

@@ -56,6 +56,7 @@ _REPRESENTATIVE: dict[str, object] = {
     "functions_in_core": "true",
     "serializable": "true",
     "optional_backend": "true",
+    "platforms": ["linux", "macos"],
     "init_params": [{"name": "n", "type": "int"}],
     "properties": [{"name": "pr", "type": "int"}],
     "enums": {"mode": ["a", "b"]},
