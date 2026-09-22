@@ -75,6 +75,7 @@ just-makeit: applying just-makeit.toml
 
   update  native/src/dsp/dsp_ext_fir.c: docstring(s) rewritten from the header for decimate_max_out, destroy
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
+warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   create  .clang-tidy
   create  CMakePresets.json
   create  native/benchmarks/bench_dsp_core.c
@@ -92,7 +93,6 @@ warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest 
   update  native/src/gain/gain_ext.c
   update  src/stale/gain.pyi
   update  native/src/dsp/dsp_ext_fir.c
-warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
 
 Done!  Materialized 7 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
@@ -145,8 +145,8 @@ $ jm apply   # exit 0
 just-makeit: applying just-makeit.toml
 
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
-  update  CMakeLists.txt
 warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
+  update  CMakeLists.txt
 
 Done!  Materialized 0 new file(s), patched 0 impl(s), and reconciled 1 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
