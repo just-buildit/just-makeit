@@ -245,7 +245,7 @@ def run(root: Path) -> None:
     assert "C-contiguity and this fragment does not" in applied
     log.jm("status")
 
-    # ── 3b. The root CMakeLists.txt, which jm maintains only in part ─────
+    # ── 4. The root CMakeLists.txt, which jm maintains only in part ──────
     # apply splices its marked blocks (components, modules, external deps)
     # and nothing else, and status does not compare the rest (gh-959) -- so
     # every root-template fix since 0.33.14 is missing in silence, among them
@@ -262,18 +262,30 @@ def run(root: Path) -> None:
     )
     log.jm("apply")
 
-    # What that warning means, in running code: built now, the old fragment
-    # fills a strided out= through a temporary copy and hands the caller's
+    # ── 5. jm upgrade, and the create-only files jm ships newer ──────────
+    # One step, because they go together: upgrade respells `complex` as
+    # `_Complex` (gh-1246), which only the NEW clib_common.h reads everywhere
+    # -- both or neither. clang-cl rejects the old spelling outright.
+    log.jm("upgrade")
+    # status names the create-only files OUTDATED. apply never rewrites one:
+    # yours to adopt. Diff each first -- none was edited here, so each takes
+    # jm's render the same way, by deleting it and letting apply write today's.
+    outdated = re.findall(r"^  ↑ (\S+)$", log.jm("status"), re.MULTILINE)
+    assert "native/inc/clib_common.h" in outdated, outdated
+    for rel in outdated:
+        (proj / rel).unlink()
+    # jb.toml was renamed bootstrap.toml; step 3 created the new one.
+    (proj / "jb.toml").unlink()
+    log.jm("apply")
+
+    # ── 6. What the fragment warning means, in running code ──────────────
+    # The project builds everywhere now -- and the binding 0.33.14 rendered
+    # fills a strided out= through a temporary copy, handing the caller's
     # buffer back untouched.
     before = _build_and_demo(proj, "build-before")
     assert "ACCEPTED" in before and "0.0" in before, before
 
-    # ── 4. jm upgrade: the migrations the schema carries ─────────────────
-    # Here, the `complex` -> `_Complex` respelling (gh-1246). It goes with
-    # adopting the new clib_common.h in step 6 -- both or neither.
-    log.jm("upgrade")
-
-    # ── 5. Receive the fix the binding fragment is missing ────────────────
+    # ── 7. Receive the fix the binding fragment is missing ────────────────
     # A module object's fragment is sacred: apply only ever ADDS to it, so a
     # fix to a member it already has never arrives. adopt --check says which
     # units differ from today's render; nobody wrote code in this one, so the
@@ -287,19 +299,7 @@ def run(root: Path) -> None:
     _set_object_key(proj / "objects/fir.toml", "fir", 'fragment = "generated"')
     log.jm("apply")
 
-    # ── 6. Adopt the create-only files jm ships newer ────────────────────
-    # status names them OUTDATED. apply never rewrites one: yours to adopt.
-    # Diff each first -- none was edited here, so each takes jm's render the
-    # same way, by deleting it and letting apply write today's.
-    outdated = re.findall(r"^  ↑ (\S+)$", log.jm("status"), re.MULTILINE)
-    assert outdated, "status reported nothing OUTDATED on a 0.33.14 project"
-    for rel in outdated:
-        (proj / rel).unlink()
-    # jb.toml was renamed bootstrap.toml; step 3 created the new one.
-    (proj / "jb.toml").unlink()
-    log.jm("apply")
-
-    # ── 7. Done: nothing behind, and it builds and runs ───────────────────
+    # ── 8. Done: nothing behind, and it builds and runs ───────────────────
     log.jm("status", "--check")
     after = _build_and_demo(proj, "build")
     assert "REFUSED" in after and _OUT_REFUSED in after, after
