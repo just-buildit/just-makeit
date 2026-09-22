@@ -301,12 +301,26 @@ def run(root: Path) -> None:
         "upgrade.golden says nothing -- blanked, or the tree is no longer "
         "stale"
     )
+    import difflib
+
+    diff = "".join(
+        difflib.unified_diff(
+            golden.splitlines(keepends=True),
+            report.splitlines(keepends=True),
+            "upgrade.golden",
+            "this run",
+        )
+    )
     assert report == golden, (
-        "What upgrading the frozen 0.33.14 project prints changed. If the "
-        "release means it (a guard added on purpose), regenerate with "
-        "JM_UPDATE_STALE_GOLDEN=1 make test-examples "
-        "EXAMPLES_K=stale_project and let the diff be reviewed; otherwise it "
-        "is a regression an upgrading project would meet."
+        diff
+        + "\n"
+        + (
+            "What upgrading the frozen 0.33.14 project prints changed. If the "
+            "release means it (a guard added on purpose), regenerate with "
+            "JM_UPDATE_STALE_GOLDEN=1 make test-examples "
+            "EXAMPLES_K=stale_project and let the diff be reviewed; otherwise it "
+            "is a regression an upgrading project would meet."
+        )
     )
 
 
