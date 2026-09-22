@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.85.0] — 2026-09-21
+
 ### Added
 
 - **`jm new` writes a `CMakePresets.json`** (gh-1376), so opening a
