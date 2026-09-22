@@ -1,0 +1,5 @@
+acc_bank	ruff check	src/acc_bank/bank/tests/test_acc.py E401
+acc_bank	ruff check	src/acc_bank/bank/tests/test_acc.py F401
+acc_bank	ruff format	src/acc_bank/bank/bank.pyi
+acc_bank	ruff format	src/acc_bank/bank/benchmarks/bench_acc.py
+acc_bank	ruff format	src/acc_bank/bank/tests/test_acc.py

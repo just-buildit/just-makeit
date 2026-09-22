@@ -1,0 +1,49 @@
+kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_config_core.c
+kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_resamp_core.c
+kitchen_sink	re-apply writes	update just-makeit.toml
+kitchen_sink	re-apply writes	update pyproject.toml
+kitchen_sink	re-apply writes	update src/kitchen_sink/cli.py
+kitchen_sink	ruff check	src/kitchen_sink/benchmarks/bench_tone.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_config.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_config.py F841
+kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_lfo.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_resamp.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_resamp.py F841
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_config.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_config.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_config.py F841
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_gain.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_gain.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_lfo.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_lfo.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_meter.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_meter.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_mixer.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_mixer.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_mixer.py F841
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_resamp.py E401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_resamp.py F401
+kitchen_sink	ruff check	src/kitchen_sink/dsp/tests/test_resamp.py F841
+kitchen_sink	ruff check	src/kitchen_sink/tests/test_tone.py E401
+kitchen_sink	ruff check	src/kitchen_sink/tests/test_tone.py F401
+kitchen_sink	ruff format	src/kitchen_sink/__init__.py
+kitchen_sink	ruff format	src/kitchen_sink/benchmarks/bench_tone.py
+kitchen_sink	ruff format	src/kitchen_sink/cli.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_config.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_gain.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_lfo.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_meter.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_mixer.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/benchmarks/bench_resamp.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/dsp.pyi
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_config.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_gain.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_lfo.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_meter.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_mixer.py
+kitchen_sink	ruff format	src/kitchen_sink/dsp/tests/test_resamp.py
+kitchen_sink	ruff format	src/kitchen_sink/tests/test_tone.py
+kitchen_sink	ruff format	src/kitchen_sink/tone.pyi
+kitchen_sink	status --check	SILENT
+kitchen_sink	status --check	UNEXPLAINED OPT-OUT

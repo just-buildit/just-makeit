@@ -1,0 +1,6 @@
+evlog	ruff check	src/evlog/tests/test_collector.py E401
+evlog	ruff check	src/evlog/tests/test_collector.py F401
+evlog	ruff format	src/evlog/__init__.py
+evlog	ruff format	src/evlog/benchmarks/bench_collector.py
+evlog	ruff format	src/evlog/collector.pyi
+evlog	ruff format	src/evlog/tests/test_collector.py

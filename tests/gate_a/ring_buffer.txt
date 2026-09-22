@@ -1,0 +1,17 @@
+ringdemo	re-apply warns	warning ~: native/benchmarks/bench_cf32_ring_core.c
+ringdemo	re-apply warns	warning ~: native/benchmarks/bench_iq16_ring_core.c
+ringdemo	ruff check	src/ringdemo/rings/benchmarks/bench_cf32_ring.py F401
+ringdemo	ruff check	src/ringdemo/rings/benchmarks/bench_cf32_ring.py F841
+ringdemo	ruff check	src/ringdemo/rings/benchmarks/bench_iq16_ring.py F401
+ringdemo	ruff check	src/ringdemo/rings/benchmarks/bench_iq16_ring.py F841
+ringdemo	ruff check	src/ringdemo/rings/tests/test_cf32_ring.py E401
+ringdemo	ruff check	src/ringdemo/rings/tests/test_cf32_ring.py F401
+ringdemo	ruff check	src/ringdemo/rings/tests/test_cf32_ring.py F841
+ringdemo	ruff check	src/ringdemo/rings/tests/test_iq16_ring.py E401
+ringdemo	ruff check	src/ringdemo/rings/tests/test_iq16_ring.py F401
+ringdemo	ruff check	src/ringdemo/rings/tests/test_iq16_ring.py F841
+ringdemo	ruff format	src/ringdemo/rings/benchmarks/bench_cf32_ring.py
+ringdemo	ruff format	src/ringdemo/rings/benchmarks/bench_iq16_ring.py
+ringdemo	ruff format	src/ringdemo/rings/rings.pyi
+ringdemo	ruff format	src/ringdemo/rings/tests/test_cf32_ring.py
+ringdemo	ruff format	src/ringdemo/rings/tests/test_iq16_ring.py

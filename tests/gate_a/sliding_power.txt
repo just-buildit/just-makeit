@@ -1,0 +1,6 @@
+my_power	ruff check	src/my_power/tests/test_power_est.py E401
+my_power	ruff check	src/my_power/tests/test_power_est.py F401
+my_power	ruff format	src/my_power/__init__.py
+my_power	ruff format	src/my_power/benchmarks/bench_power_est.py
+my_power	ruff format	src/my_power/power_est.pyi
+my_power	ruff format	src/my_power/tests/test_power_est.py

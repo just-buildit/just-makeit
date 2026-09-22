@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+import _downstream_gates
 from just_makeit._build import run_generated_pytest
 from test_gh1287_nested_block_comment import (
     assert_no_nested_block_comments,
@@ -105,6 +106,9 @@ def test_example(example_dir, tmp_path):
     # emit is covered as soon as an example exercises it.
     assert_no_nested_block_comments(tmp_path)
     _generated_pytest_check(tmp_path)
+    # gh-1443 Gate A: last, because a re-apply is one of its checks and must
+    # not change what the checks above were run against.
+    _downstream_gates.check(example_dir.name, tmp_path)
 
 
 def _generated_pytest_check(root: Path) -> None:

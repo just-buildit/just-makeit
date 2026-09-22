@@ -1,0 +1,3 @@
+delay_line_demo	ruff format	src/delay_line_demo/__init__.py
+delay_line_demo	ruff format	src/delay_line_demo/benchmarks/bench_delay_line.py
+delay_line_demo	ruff format	src/delay_line_demo/delay_line.pyi

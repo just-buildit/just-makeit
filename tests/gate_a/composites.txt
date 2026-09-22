@@ -1,0 +1,2 @@
+composites	ruff check	src/composites/ring.pyi F401
+composites	status --check	UNWIRED

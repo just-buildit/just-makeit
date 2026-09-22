@@ -1,0 +1,7 @@
+stream_source_demo	ruff check	src/stream_source_demo/benchmarks/bench_ramp.py F401
+stream_source_demo	ruff check	src/stream_source_demo/tests/test_ramp.py E401
+stream_source_demo	ruff check	src/stream_source_demo/tests/test_ramp.py F401
+stream_source_demo	ruff format	src/stream_source_demo/__init__.py
+stream_source_demo	ruff format	src/stream_source_demo/benchmarks/bench_ramp.py
+stream_source_demo	ruff format	src/stream_source_demo/ramp.pyi
+stream_source_demo	ruff format	src/stream_source_demo/tests/test_ramp.py
