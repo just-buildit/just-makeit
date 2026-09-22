@@ -84,14 +84,20 @@ def _frozen() -> str:
     """The version the tree was frozen at, after proving it still is."""
     from just_makeit import _config as C
 
-    freeze = C.tomllib.loads((HERE / "FREEZE.toml").read_text())
-    manifest = C.tomllib.loads((TREE / "just-makeit.toml").read_text())
+    freeze = C.tomllib.loads(
+        (HERE / "FREEZE.toml").read_text(encoding="utf-8")
+    )
+    manifest = C.tomllib.loads(
+        (TREE / "just-makeit.toml").read_text(encoding="utf-8")
+    )
     assert manifest["project"]["jm_version"] == freeze["jm_version"], (
         "stale_project/tree was re-stamped -- an `apply` ran over it. Restore "
         "it with `git checkout`; it is never regenerated."
     )
     recorded = {}
-    for line in (HERE / "tree.sha256").read_text().splitlines():
+    for line in (
+        (HERE / "tree.sha256").read_text(encoding="utf-8").splitlines()
+    ):
         digest, rel = line.split(maxsplit=1)
         recorded[rel[2:] if rel.startswith("./") else rel] = digest
     actual = {
@@ -157,6 +163,10 @@ class _Log:
             .replace(str(self.proj), ".")
             .replace(self.version, "<HEAD>")
         )
+        if os.sep != "/":
+            # jm prints paths the way the platform spells them; the golden is
+            # one file for every platform.
+            norm = norm.replace(os.sep, "/")
         self.parts.append(f"$ jm {' '.join(args)}   # exit {code}\n{norm}")
         return text
 
@@ -202,10 +212,12 @@ def _set_object_key(path: Path, table: str, line: str) -> None:
     Appending would land it inside the last sub-table (``[[fir.properties]]``
     here), where jm reads it as a property key and says it has no effect.
     """
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     header = f"[{table}]\n"
     assert text.count(header) == 1, text
-    path.write_text(text.replace(header, header + line + "\n"))
+    path.write_text(
+        text.replace(header, header + line + "\n"), encoding="utf-8"
+    )
 
 
 def run(root: Path) -> None:
@@ -271,10 +283,9 @@ def run(root: Path) -> None:
     assert "REFUSED" in after and _OUT_REFUSED in after, after
 
     # The author's kernel came through every step untouched.
-    assert (
-        "return x * state->scale;"
-        in (proj / "native/inc/fir/fir_core.h").read_text()
-    )
+    assert "return x * state->scale;" in (
+        proj / "native/inc/fir/fir_core.h"
+    ).read_text(encoding="utf-8")
 
     # ── the regression half: what every step printed ─────────────────────
     report = log.report()
