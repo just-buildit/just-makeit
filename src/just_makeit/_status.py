@@ -74,7 +74,7 @@ from ._apply import _SKIP_DIRS
 
 # Directories/files never copied into the scratch tree (build artefacts,
 # VCS, caches) — not manifest-owned, and copying them only slows status.
-_COPY_IGNORE = shutil.ignore_patterns(
+_COPY_IGNORE_NAMES = shutil.ignore_patterns(
     *_SKIP_DIRS,
     "*.so",
     "*.pyd",
@@ -86,6 +86,19 @@ _COPY_IGNORE = shutil.ignore_patterns(
     ".coverage",
     ".coverage.*",
 )
+
+
+def _COPY_IGNORE(directory: str, names: list) -> set:
+    """`copytree` ignore: the fixed names above, plus any build tree.
+
+    gh-1473: a build tree is recognised by `_apply.is_build_tree`, not by
+    its name, so `cmake-build-debug` and `build-rel` stay out of the
+    scratch -- and so out of every count `_walk_managed` makes from it.
+    """
+    ignored = set(_COPY_IGNORE_NAMES(directory, names))
+    return ignored | {
+        n for n in names if _apply.is_build_tree(Path(directory) / n)
+    }
 
 
 def _walk_managed(base: Path) -> list[Path]:
