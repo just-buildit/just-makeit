@@ -33,6 +33,7 @@ from .._types import (
     array_elem_ctype,
     is_string_enum_type,
     string_enum_choices,
+    string_enum_constants,
     parse_array_type,
     is_valid_type,
     scalar_py_annotation,
@@ -215,6 +216,9 @@ def _build_no_state_init_ctx(
 
     arr_ip: list[tuple[str, str, int, str]] = []
     str_enum_ip: list[tuple[str, list[str], str]] = []
+    # gh-1450: the C constant each choice binds to, when its `[[enum]]`
+    # declares `enumerators`; absent, the choice's position is the value.
+    _str_enum_consts: dict = {}
     scalar_ip: list[tuple] = []
     # gh-515: "path" is a pseudo-type — deliberately absent from _CTYPE_META —
     # so it must be classified before any `_CTYPE_META[ct]` lookup can run.
@@ -367,6 +371,7 @@ def _build_no_state_init_ctx(
                     )
         elif is_string_enum_type(ct):
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
+            _str_enum_consts[name] = string_enum_constants(ct)
         elif ct == "path":
             path_ip.append(name)
         elif ct == "bytes":
@@ -883,10 +888,13 @@ def _build_no_state_init_ctx(
             local_lines.append(f'    const char *{name}_str = "{sdflt}";')
             parse_args.append(f"&{name}_str")
             enum_lines = [f"    int {name} = 0;"]
+            _consts = _str_enum_consts.get(name)
             for i, choice in enumerate(choices):
                 kw = "if" if i == 0 else "else if"
+                val = _consts[i] if _consts else i
                 enum_lines.append(
-                    f'    {kw} (strcmp({name}_str, "{choice}") == 0) {name} = {i};'
+                    f'    {kw} (strcmp({name}_str, "{choice}") == 0)'
+                    f" {name} = {val};"
                 )
             choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
             enum_lines += [

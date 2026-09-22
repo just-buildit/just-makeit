@@ -488,6 +488,34 @@ list in one place. Value order is the C integer value, so **append only; never
 reorder**. Referring to an undeclared enum is an error. (Requires schema 7;
 run `jm upgrade`.)
 
+#### When the C values are not `0..n-1` — `enumerators`
+
+A C enum with a sentinel at `-1`, a gap, or a first value other than `0`
+cannot be bound by position. Name each choice's C constant, in the same
+order as `values`:
+
+```toml
+[[enum]]
+name = "level"
+values      = ["auto",     "debug",     "info",     "warn"]
+enumerators = ["LVL_AUTO", "LVL_DEBUG", "LVL_INFO", "LVL_WARN"]
+```
+
+Every path a choice crosses then carries the constant, not the index:
+constructor params, properties, method and function params, handle and
+composer fields, and a C app's choice flags. The generated tables spell the
+constants by name, so the C compiler checks each one, and a renamed constant
+fails the build instead of shifting a meaning. Every negative value is legal:
+a string is looked up as an index first, and only that index can signal "not
+found". A value that is none of the constants raises `ValueError` when read
+back.
+
+Each name must be a C identifier visible where the binding compiles, which
+is the component's header. There must be exactly one per value. The same
+list also attaches each constant's `///<` doc to its choice in the
+docstrings. Worked end to end:
+[Binding a C enum whose values are not 0..n-1](examples/enum_constants.md).
+
 ______________________________________________________________________
 
 ## Module-function param types

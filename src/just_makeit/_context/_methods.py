@@ -9,6 +9,7 @@ import re
 
 from .. import _codec as _codec
 from .. import _coerce
+from .. import _enumc
 from .. import _borrow
 from .. import _outbuf
 from .. import _record
@@ -3944,40 +3945,15 @@ def make_enum_tables_ctx(
 def _render_enum_tables(
     Component: str, used: list[str], enums: dict[str, list[str]]
 ) -> str:
-    """Emit the ``_enum_index_<Component>`` helper + one table per enum in
-    *used* (first-reference order).
+    """The ``_enum_index_<Component>`` helper + one table per enum in *used*.
 
-    Reuses the composer's enum SSOT verbatim — ``_composer._ENUM_INDEX_FN``
-    for the lookup body and the same "order is the C int" table layout as
-    :func:`_handle.render_enum_tables` — only renaming the symbols into this
-    type's namespace (see :func:`_enum_symbols`).
-
-    gh-519 wrote this for properties alone; gh-1021 gave method PARAMETERS
-    the same feature and they land in an earlier slot, so the tables serve
-    both and the name no longer says "property". See
-    :func:`make_enum_tables_ctx` for why they are emitted once, together.
+    `_enumc.render_tables` in this type's namespace. This was a second copy
+    of it -- byte-identical, which is the only reason gh-1450's constant
+    tables did not reach objects through one and not the other.
     """
-    from .._composer import _ENUM_INDEX_FN
-
-    index_fn, _ = _enum_symbols(Component, "")
-    parts = [
-        "/* gh-519: strcmp for the enum lookup below. Python.h already",
-        " * pulls in <string.h>, but the include is explicit so the block",
-        " * stands on its own wherever it is spliced. */",
-        "#include <string.h>",
-        "",
-        _ENUM_INDEX_FN.replace(
-            "_enum_index(const char", f"{index_fn}(const char"
-        ),
-    ]
-    for name in used:
-        _, table = _enum_symbols(Component, name)
-        items = "".join(f'    "{v}",\n' for v in enums[name])
-        parts.append(f"static const char *const {table}[] = {{")
-        parts.append(items + "    NULL,")
-        parts.append("};")
-        parts.append("")
-    return "\n".join(parts)
+    return _enumc.render_tables(
+        used, enums, prefix=Component, include_string_h=True
+    )
 
 
 def _property_enum(
@@ -4335,45 +4311,22 @@ def make_properties_ctx(
             _enum_symbols(Component, p_enum) if p_enum else ("", "")
         )
 
-        def _decode(acc: str, _t: str = enum_table) -> str:
-            """PyObject* expression for the value at accessor *acc*."""
-            if _t:
-                return f"PyUnicode_FromString({_t}[{acc}])"
-            return meta["to_py"](acc)
-
-        _n_choices = len(enums[p_enum]) if p_enum else 0
-
         def _decode_stmts(
             acc: str,
             _t: str = enum_table,
-            _n: int = _n_choices,
             _e: str = p_enum,
             _p: str = pname,
         ) -> str:
             """Statements ending in a ``return`` that decode *acc*.
 
-            gh-519: the enum form is range-checked before it indexes the
-            table. C owns the stored value — it is typically decoded from an
-            external source such as a file header — so an unknown code is
-            reachable input, not an internal invariant. Indexing blind read
-            past the table (at ``_n`` exactly, the NULL terminator, giving
-            ``PyUnicode_FromString(NULL)``), which surfaced as a garbage
-            string, a UnicodeDecodeError, or a crash depending on what
-            followed in memory. A bounds check turns that into an actionable
-            Python error naming the offending value.
+            gh-519: an enum is checked before it becomes a string -- C owns
+            the stored value, often decoded from an external source, so an
+            unknown one is reachable input. `_enumc.decode_c` is the one
+            emitter for that, shared with every other face (gh-1450).
             """
             if not _t:
                 return f"    return {meta['to_py'](acc)};\n"
-            return (
-                f"    long _v = (long)({acc});\n"
-                f"    if (_v < 0 || _v >= {_n}) {{\n"
-                f"        PyErr_Format(PyExc_ValueError,\n"
-                f'            "{_p} holds out-of-range {_e} value %ld"\n'
-                f'            " (valid: 0..{_n - 1})", _v);\n'
-                f"        return NULL;\n"
-                f"    }}\n"
-                f"    return PyUnicode_FromString({_t}[_v]);\n"
-            )
+            return _enumc.decode_c(_p, _e, acc, enums, prefix=Component) + "\n"
 
         if p.get("capsule"):
             # gh-788 gap 4: the PRODUCING side of gh-432. That issue taught
@@ -4548,7 +4501,6 @@ def make_properties_ctx(
                 # the consolidation must not quietly move it onto a shorter
                 # message. Its `Component` prefix is the object-scoped
                 # namespace; see `_enumc.symbols`.
-                from .. import _enumc
 
                 parse_block = (
                     "    const char *v_str = NULL;\n"

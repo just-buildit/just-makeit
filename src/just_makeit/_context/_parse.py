@@ -35,7 +35,9 @@ def enum_symbols(Component: str, name: str) -> tuple[str, str]:
 
     Returns ``(index_fn, table)``.
     """
-    return (f"_enum_index_{Component}", f"_enum_{Component}_{name}")
+    from .. import _enumc
+
+    return _enumc.symbols(Component, name)
 
 
 def capsule_new_c(

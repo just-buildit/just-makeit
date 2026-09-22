@@ -34,6 +34,20 @@
     now labels those units `adds only`. On doppler that splits 235
     differing units into 161 additions and 74 that remove code, and every
     hand-written body on the review's list is among the 74.
+- **An `[[enum]]` can bind a C enum whose values are not `0..n-1`**
+    (gh-1450). A choice used to reach C as its **position**. So a C API with
+    a sentinel at `-1`, a gap, or a first value of `1` was bound to the wrong
+    constant, with no diagnostic. And `-1` could not be passed at all,
+    because the lookup spent every negative value on "not found". The
+    `enumerators` list, until now read only for docstrings, names each
+    choice's C constant. When it is set, every face binds to it:
+    constructor params, properties, method and function params, handle and
+    composer fields, composer defaults and JSON, and a C app's choice flags.
+    The generated tables spell the constants by name, so the compiler checks
+    them. The lookup's result is an index, and only that index signals a
+    miss. Without `enumerators`, every table renders byte-for-byte as before.
+    New example: `enum_constants` (*Binding a C enum whose values are not
+    0..n-1* in the gallery).
 
 ### Fixed
 
@@ -50,6 +64,13 @@
     `malloc.perturb`: before the fix a `bool` input counted 50000 of 50000
     set where the same flags as `uint8` counted 10.
 
+
+- **A composer's enum getters and JSON check the stored value** (gh-1450).
+    The source and segment getters and the state-row getter indexed the
+    choice table with whatever C held, reading past it for any value outside
+    it. There were five spellings of int-to-string across the faces. There
+    is now one, `_enumc.decode_c`, which refuses an unknown value with
+    `ValueError`, the way object properties and handle fields already did.
 - **`status` and `apply` list files in one order on every platform.** Both
     sorted `Path` objects, and a Windows path compares case-insensitively,
     so the same report put `bootstrap.toml` before `CMakePresets.json` on

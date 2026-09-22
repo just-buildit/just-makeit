@@ -932,11 +932,14 @@ static int
                 result="_i",
                 fail="return -1;",
             )
+            # gh-1450: checked, and searched when the enum binds C
+            # constants -- this indexed the table blind.
+            _dec = _enumc.decode_c(n, e, f"self->src.{n}", C.enums(cfg))
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    return PyUnicode_FromString(_enum_{e}[self->src.{n}]);
+{_dec}
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -1353,9 +1356,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
 
     def _default(f):
         if _field_is_enum(f):
-            values = enums.get(f["enum"], [])
-            d = f.get("default", "")
-            return str(values.index(d)) if d in values else "0"
+            return _enumc.default_c(f["enum"], f.get("default", ""), enums)
         if f.get("default") not in (None, ""):
             return f["default"]
         return "0"
@@ -1555,11 +1556,14 @@ static int
                 result="_i",
                 fail="return -1;",
             )
+            # gh-1450: checked, and searched when the enum binds C
+            # constants -- this indexed the table blind.
+            _dec = _enumc.decode_c(n, e, f"self->{n}", C.enums(cfg))
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    return PyUnicode_FromString(_enum_{e}[self->{n}]);
+{_dec}
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -2929,17 +2933,17 @@ def _settings_getset_c(
             ' "composer already closed");\n'
         )
         if ename:
-            _, tab = _enumc.symbols(prefix, ename)
+            # gh-1450: the one int -> string emitter, so a constant-bound
+            # enum is searched here too.
             get_body = (
-                f"    int _v = (int){st['getter_fn']}(self->state);\n"
-                f"    if (_v < 0 || (size_t)_v >= "
-                f"(sizeof({tab}) / sizeof({tab}[0])) - 1) {{\n"
-                f"        PyErr_Format(PyExc_ValueError,\n"
-                f'            "{n}: backing returned %d, which names no'
-                f' choice", _v);\n'
-                f"        return NULL;\n"
-                f"    }}\n"
-                f"    return PyUnicode_FromString({tab}[_v]);\n"
+                _enumc.decode_c(
+                    n,
+                    ename,
+                    f"{st['getter_fn']}(self->state)",
+                    enums,
+                    prefix=prefix,
+                )
+                + "\n"
             )
             set_conv = _enumc.validate_c(
                 n,
@@ -3892,7 +3896,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             e = f["enum"]
             src_ser.append(
                 f'        cJSON_AddStringToObject(so, "{n}", '
-                f"_enum_{e}[src->{n}]);"
+                f"{_enumc.name_expr(e, f'src->{n}', C.enums(cfg))});"
             )
         elif f.get("bytes"):
             # gh-1184: `src->bits` / `src->n_bits` were HARDCODED here, so a
@@ -3915,12 +3919,15 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             )
     src_ser_s = "\n".join(src_ser)
 
+    def _seg_enum_name(f: dict) -> str:
+        return _enumc.name_expr(f["enum"], "g->" + f["name"], C.enums(cfg))
+
     seg_ser = "\n".join(
         _ser_ranged("sj", "g", f["name"], f["_ranged"])
         if f.get("_ranged")
         else (
             f'        cJSON_AddStringToObject(sj, "{f["name"]}", '
-            f"_enum_{f['enum']}[g->{f['name']}]);"
+            f"{_seg_enum_name(f)});"
             if f.get("enum")
             else f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
             f"(double)g->{f['name']});"
