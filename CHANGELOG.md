@@ -37,6 +37,14 @@
     The unbuilt-source scan skips it too: a `file(GLOB` in a fetched
     dependency's `CMakeLists.txt` there no longer turns the scan off for
     the whole project.
+- **`apply` reports a file only when it actually changed** (gh-1474).
+    Each step used to report what it had written, and the project's own
+    formatter then put some of those files back exactly as they were. On a
+    copy of doppler, a second `apply` printed nine `update` lines (one file
+    twice) and changed nothing. The `create`/`update` lines and the `Done!`
+    counts now come from each file's bytes before the run and after the
+    formatter. Paths are project-relative, and each is listed once. A
+    rewritten fragment that already existed reads `update`, not `create`.
 
 ## [0.86.0] — 2026-09-22
 

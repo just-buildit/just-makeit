@@ -246,9 +246,9 @@ adopt --check — would `fragment = "generated"` be safe?
 $ jm apply   # exit 0
 just-makeit: applying just-makeit.toml
 
-  create  native/src/dsp/dsp_ext_fir.c
+  update  native/src/dsp/dsp_ext_fir.c
 
-Done!  Materialized 1 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+Done!  Materialized 0 new file(s), patched 0 impl(s), and reconciled 1 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm status --check   # exit 0
