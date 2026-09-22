@@ -186,8 +186,13 @@ def _cmd(args, cwd) -> str:
 
 
 def _build_and_demo(proj: Path, build: str) -> str:
-    """Configure fresh, build, run the C tests, and run the Python demo."""
-    bdir = proj / build
+    """Configure fresh, build, run the C tests, and run the Python demo.
+
+    The build tree goes BESIDE the project, not in it: `jm status` counts
+    every file under the project, and a build tree's file count is the
+    toolchain's, not jm's -- the golden would differ between machines.
+    """
+    bdir = proj.parent / build
     _cmd(
         [
             "cmake",
