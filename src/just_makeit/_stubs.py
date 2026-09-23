@@ -44,9 +44,11 @@ from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    CLASS_INDENT,
     authored_doc_lines,
     authored_docstring,
     authored_param_docs,
+    docstring_body,
     class_import_line,
     merge_doc_blocks,
     struct_members_key,
@@ -1434,12 +1436,7 @@ def class_runtime_doc(
         warns=warns,
         enum_choices=enum_choices,
     ).split("\n")
-    out = [lines[0].lstrip()[3:]] + [
-        ln[4:] if ln.startswith("    ") else ln for ln in lines[1:-1]
-    ]
-    while out and not out[-1].strip():
-        out.pop()
-    return out
+    return docstring_body(lines, CLASS_INDENT)
 
 
 def _method_doc_lines(

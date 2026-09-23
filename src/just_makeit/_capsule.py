@@ -30,6 +30,8 @@ from . import _modplatforms
 from . import _render as R
 from . import _procglobal
 from . import _types as T
+from ._context._modpath import module_docstring_lines, module_m_doc
+from ._context._parse import _build_ml_doc
 
 # ── small type helpers ───────────────────────────────────────────────────────
 
@@ -303,8 +305,8 @@ _get_wrap(PyObject *cap)
     fn_names = _fn_list(cfg, module)
     rows = []
     for fn in fn_names:
-        sig = _fn_signature(cfg, module, fn)
-        rows.append(f'    {{"{fn}", _fn_{fn}, METH_VARARGS,\n     "{sig}"}},')
+        doc_c = _fn_doc_c(cfg, module, fn)
+        rows.append(f'    {{"{fn}", _fn_{fn}, METH_VARARGS,\n     {doc_c}}},')
     method_table = "\n".join(rows)
 
     parts.append(f"""static PyMethodDef _methods[] = {{
@@ -313,7 +315,7 @@ _get_wrap(PyObject *cap)
 }};
 
 static struct PyModuleDef _moduledef = {{
-    PyModuleDef_HEAD_INIT, "{module}", NULL, -1, _methods,
+    PyModuleDef_HEAD_INIT, "{module}", {module_m_doc(cfg, module)}, -1, _methods,
     NULL, NULL, NULL, NULL
 }};
 
@@ -344,6 +346,65 @@ def _capsule_init_body(cfg: dict, module: str) -> str:
         "    PyObject *m = PyModule_Create(&_moduledef);\n"
         "    if (!m) return NULL;\n" + rz + "    return m;\n"
     )
+
+
+def _fn_doc_lines(cfg: dict, module: str, fn: str) -> list[str]:
+    """Free function *fn*'s authored docstring, as the ``.pyi`` carries it.
+
+    ``[]`` when the manifest documents nothing about it -- the stub then
+    keeps its ``...`` body and the method table its `_fn_signature` line, so
+    a capsule module with no ``doc`` renders byte-identically.
+
+    gh-1499: every ``doc`` a capsule module accepts was read by nothing. A
+    method's documents ``<backing>_<name>``; a property's documents both
+    ``<backing>_get_<name>`` and the setter, which are the one property
+    split in two; an init param's needs a ``Parameters`` section on
+    ``<backing>_create``, so it takes the numpy render with the signature
+    line as its summary. The runtime ``ml_doc`` is derived from these lines,
+    so the two faces are one text.
+    """
+    from ._docstring import (
+        authored_doc_lines,
+        authored_docstring,
+        render_numpy_doc,
+    )
+
+    backing = C.capsule_backing(cfg, module)
+    mod = cfg.get("module", {}).get(module, {})
+    if fn == f"{backing}_create":
+        ips = list(mod.get("init_params", []))
+        pdocs = {p["name"]: str(p["doc"]) for p in ips if p.get("doc")}
+        if not pdocs:
+            return []
+        return render_numpy_doc(
+            None,
+            fn,
+            [(p["name"], _pyi_scalar(p["type"])) for p in ips],
+            "Any",
+            override=_fn_signature(cfg, module, fn),
+            param_docs=pdocs,
+            indent=4,
+        )
+    doc = ""
+    for m in C.module_methods(cfg, module):
+        if fn == f"{backing}_{m['name']}":
+            doc = str(m.get("doc") or "")
+    for p in C.module_properties(cfg, module):
+        if fn in (f"{backing}_get_{p['name']}", f"{backing}_set_{p['name']}"):
+            doc = str(p.get("doc") or "")
+    lines = authored_doc_lines(doc)
+    return authored_docstring(lines, 4) if lines else []
+
+
+def _fn_doc_c(cfg: dict, module: str, fn: str) -> str:
+    """*fn*'s ``ml_doc`` literal: its authored docstring, else the one-line
+    signature the table has always carried (gh-1499)."""
+    from ._docstring import docstring_body
+
+    lines = _fn_doc_lines(cfg, module, fn)
+    if not lines:
+        return f'"{_fn_signature(cfg, module, fn)}"'
+    return _build_ml_doc(docstring_body(lines, 4))
 
 
 def _fn_signature(cfg: dict, module: str, fn: str) -> str:
@@ -433,9 +494,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     """Render a thin ``<leaf>.pyi`` for a capsule module.
 
     Signatures only: the create / execute / reset / destroy / get_ / set_ free
-    functions over the opaque capsule handle. Rich numpy docstrings are a
-    header-derived follow-up (the same synthesis jm applies to object methods);
-    this stub keeps the public surface typed and importable in the meantime.
+    functions over the opaque capsule handle. A function the manifest
+    documents carries its ``doc`` as its docstring (gh-1499, `_fn_doc_lines`);
+    the rest keep a ``...`` body, so an undocumented module is unchanged.
     """
     backing = C.capsule_backing(cfg, module)
     init_params = C.module_init_params(cfg, module)
@@ -448,12 +509,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         "# PyCapsule rather than a Python type; the handle is created by",
         f"# {backing}_create and consumed by the other {backing}_* functions.",
         "# The handle (a `state` argument) is an opaque PyCapsule, typed `Any`.",
+        # gh-1499: `[module.X] doc`, the module's docstring; `render_ext`
+        # puts the same text in `m_doc`.
+        *module_docstring_lines(cfg, module),
         "from typing import Any",
         "",
         "import numpy as np",
         "from numpy.typing import NDArray",
         "",
     ]
+
+    def _def(fn: str, head: str) -> None:
+        """``head ...`` -- or *head* over the function's authored docstring."""
+        doc = _fn_doc_lines(cfg, module, fn)
+        lines.extend([head, *doc] if doc else [f"{head} ..."])
 
     # The opaque capsule handle is `Any` — a named module-level alias (e.g.
     # `GADGETState = Any`) would read to stubtest as a runtime constant the C
@@ -463,32 +532,40 @@ def render_pyi(cfg: dict, module: str) -> str:
     ctor_args = ", ".join(
         f"{n}: {_pyi_scalar(t)}" for (n, t, _d) in init_params
     )
-    lines.append(f"def {backing}_create({ctor_args}) -> {state_t}: ...")
+    _def(
+        f"{backing}_create", f"def {backing}_create({ctor_args}) -> {state_t}:"
+    )
 
     for m in C.module_methods(cfg, module):
         name = m["name"]
         if m.get("arg_type"):
-            lines.append(
+            _def(
+                f"{backing}_{name}",
                 f"def {backing}_{name}(state: {state_t}, "
-                "x: NDArray[Any], out: NDArray[Any]) -> NDArray[Any]: ..."
+                "x: NDArray[Any], out: NDArray[Any]) -> NDArray[Any]:",
             )
         else:
-            lines.append(
-                f"def {backing}_{name}(state: {state_t}) -> None: ..."
+            _def(
+                f"{backing}_{name}",
+                f"def {backing}_{name}(state: {state_t}) -> None:",
             )
 
-    lines.append(f"def {backing}_destroy(state: {state_t}) -> None: ...")
+    _def(
+        f"{backing}_destroy",
+        f"def {backing}_destroy(state: {state_t}) -> None:",
+    )
 
     for p in C.module_properties(cfg, module):
         pn, pt = p["name"], p["type"]
-        lines.append(
-            f"def {backing}_get_{pn}(state: {state_t}) -> {_pyi_scalar(pt)}:"
-            " ..."
+        _def(
+            f"{backing}_get_{pn}",
+            f"def {backing}_get_{pn}(state: {state_t}) -> {_pyi_scalar(pt)}:",
         )
         if p.get("writable"):
-            lines.append(
+            _def(
+                f"{backing}_set_{pn}",
                 f"def {backing}_set_{pn}(state: {state_t}, "
-                f"value: {_pyi_scalar(pt)}) -> None: ..."
+                f"value: {_pyi_scalar(pt)}) -> None:",
             )
     lines.append("")
     # gh-747: same door as every other `.pyi` producer. No capsule module in

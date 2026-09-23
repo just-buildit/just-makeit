@@ -80,7 +80,7 @@ class TestTheRowReachesTheType:
 
     def test_the_flags_and_doc_are_the_declared_ones(self) -> None:
         c = _composer.render_composer_type(_with(DRAWS), "wfm_compose")
-        assert 'METH_NOARGS, "Per-instance draw records."' in c, c
+        assert 'METH_NOARGS, "Per-instance draw records.\\n"' in c, c
 
     def test_a_row_with_no_doc_gets_null(self) -> None:
         c = _composer.render_composer_type(
@@ -96,7 +96,8 @@ class TestTheRowReachesTheType:
             _with({**DRAWS, "doc": "draws() -> list\nThe records."}),
             "wfm_compose",
         )
-        assert '"draws() -> list\\nThe records."' in c, c
+        # gh-1499: one literal per line, the layout every runtime doc uses.
+        assert '"draws() -> list\\n"\n     "The records.\\n"' in c, c
 
     def test_it_lands_before_the_sentinel(self) -> None:
         c = _composer.render_composer_type(_with(DRAWS), "wfm_compose")
@@ -116,7 +117,9 @@ class TestItIsTypedToo:
         pyi = _composer.render_pyi(_with(DRAWS), "wfm_compose")
         assert "    def draws(self) -> list[dict[str, object]]:" in pyi, pyi
 
-    def test_the_first_doc_line_becomes_the_docstring(self) -> None:
+    def test_the_doc_becomes_the_docstring(self) -> None:
+        # gh-1499: the whole `doc`, not its first line; the multi-line case
+        # is held by test_gh1499_kind_verbatim_doc.
         pyi = _composer.render_pyi(_with(DRAWS), "wfm_compose")
         assert '"""Per-instance draw records."""' in pyi, pyi
 

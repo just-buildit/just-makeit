@@ -480,9 +480,16 @@ burn-down number.
 
 A `doc` on an object, a view, a method, a property, a module, a module
 function, a state field, an init param, or a method or function param renders
-**verbatim**, identically in the `.pyi` stub and in `help()` at runtime. (The
-`handle`, `capsule` and `composer` module kinds do not follow this rule yet:
-see gh-1499.)
+**verbatim**, identically in the `.pyi` stub and in `help()` at runtime. So
+does every `doc` a `handle`, `capsule` or `composer` module accepts: the
+module itself, a method, a getter field, a create arg, a factory and its
+params, a property, a composer source or segment field, a computed property,
+an extra method, a serializer and a setting.
+
+A handle getter's own `doc` documents the property only when the getter has
+exactly one field. On a struct getter backing several properties it is
+refused, because it documents none of them: put the text on each field's
+`doc` instead.
 
 ```toml
 doc = """

@@ -565,10 +565,11 @@ class TestSourceComputed:
         assert (
             "PyLong_FromSize_t((size_t)wfm_source_n_samples(&self->src))" in s
         )
-        # read-only: NULL setter + the doc string in the getset row
+        # read-only: NULL setter + the doc string in the getset row, laid
+        # out by the one runtime-doc emitter (gh-1499: it was pasted raw).
         assert (
             '{"n_samples", (getter)Synth_get_n_samples, NULL,'
-            ' "One full pass of a bits pattern, in samples.", NULL},' in s
+            ' "One full pass of a bits pattern, in samples.\\n", NULL},' in s
         )
         # no setter function generated
         assert "Synth_set_n_samples" not in s
@@ -589,8 +590,15 @@ class TestSourceComputed:
         assert '#include "wfm_compose/wfm_compose_bridge.h"' in ext
 
     def test_pyi_declares_readonly_property(self):
+        # gh-1499: a documented one is a read-only property carrying its
+        # `doc` -- an annotation has nowhere to put one. An undocumented one
+        # keeps the annotation (test_double_computed_maps_to_float_pyi).
         pyi = _composer.render_pyi(_computed_cfg(), "wfm_compose")
-        assert "    n_samples: int" in pyi
+        assert (
+            "    @property\n"
+            "    def n_samples(self) -> int:\n"
+            '        """One full pass of a bits pattern, in samples."""\n'
+        ) in pyi
         # absent without the table
         assert "n_samples" not in _composer.render_pyi(_cfg(), "wfm_compose")
 

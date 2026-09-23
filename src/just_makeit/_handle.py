@@ -43,7 +43,9 @@ from . import _context as Ctx
 from . import _types as T
 from . import _procglobal
 from ._context import _diagnostics
+from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
+from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
 from ._context._parse import capsule_new_c as _capsule_new_c
 
 if TYPE_CHECKING:
@@ -1073,6 +1075,40 @@ def _emit_factory(cfg: dict, module: str, f: dict) -> str:
 """
 
 
+def _factory_doc_lines(cfg: dict, module: str, f: dict) -> list[str]:
+    """A factory function's docstring, as the ``.pyi`` carries it (indent 4).
+
+    gh-1499: the factory's ``doc`` and its ``init_params``' ``doc`` were
+    accepted by `_keys` and read by nothing -- both faces said ``"Construct a
+    <T> via <create_fn>."`` whatever the author wrote. The two shapes are a
+    module function's (`_stubs._fn_stub`): a documented parameter needs a
+    ``Parameters`` section to live in, so it takes the numpy render; a
+    ``doc`` alone renders as written; neither keeps the historical line, so a
+    factory that declares no doc does not change. `render_ext` derives the
+    ``ml_doc`` from these same lines.
+    """
+    from ._docstring import render_numpy_doc
+
+    tname = C.handle_type_name(cfg, module)
+    default = f"Construct a {tname} via {f['create_fn']}."
+    ips = list(f.get("init_params", []))
+    pdocs = {a["name"]: str(a["doc"]) for a in ips if a.get("doc")}
+    if pdocs:
+        return render_numpy_doc(
+            None,
+            f["name"],
+            [(a["name"], _pyi_arg_ann(a)) for a in ips],
+            tname,
+            override=default,
+            authored_doc=str(f.get("doc") or ""),
+            param_docs=pdocs,
+            indent=4,
+        )
+    return authored_docstring(
+        authored_doc_lines(str(f.get("doc") or "")) or [default], 4
+    )
+
+
 def render_factories(cfg: dict, module: str) -> str:
     """All factory functions for *module* (empty when none are declared)."""
     return "\n".join(
@@ -1141,6 +1177,30 @@ def _decode_field_stmts(f: dict, scalar: bool, enums: dict) -> str:
     # so an enum bound to C constants is searched rather than indexed here
     # as everywhere else.
     return _enumc.decode_c(f["name"], f["enum"], acc, enums)
+
+
+def _field_doc(cfg: dict, module: str, g: dict, f: dict) -> str:
+    """The manifest ``doc`` a decoded-getter property renders, or ``""``.
+
+    gh-1499. A field's own ``doc`` documents its property. A getter-level
+    ``doc`` documents the property only when the getter has exactly one field
+    -- the rule the header ``@brief`` already follows here (gh-374), and for
+    the same reason: a struct getter backing N properties has no one member
+    its text belongs to. Declared there it is REFUSED rather than dropped;
+    both keys were accepted by `_keys` and read by nothing, and silently
+    picking one field, or copying the text onto all of them, would each
+    document something the author did not write.
+    """
+    fields = g.get("fields", [])
+    if g.get("doc") and len(fields) != 1:
+        raise ValueError(
+            f"handle '{C.handle_type_name(cfg, module)}': the getter "
+            f"'{g.get('fn') or '(per-field)'}' has a `doc` but backs "
+            f"{len(fields)} properties, so it documents none of them -- "
+            f"move the text to each field's own `doc`."
+        )
+    own = f.get("doc") or (g.get("doc") if len(fields) == 1 else "")
+    return str(own or "")
 
 
 def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
@@ -1231,6 +1291,9 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # A field naming a `writable_fn` also emits a (setter) slot calling
             # set_fn(self->h, v) with v coerced from the PyObject (#311).
             set_fn = f.get("writable_fn")
+            # gh-1499: the property's `doc`, the text `render_pyi` puts on the
+            # same member. NULL (as before) when none is declared.
+            _doc_c = authored_c_doc(_field_doc(cfg, module, g, f))
             if set_fn:
                 fmt = _scalar_fmt(f["type"])
                 funcs.append(f"""static int
@@ -1254,12 +1317,12 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
 """)
                 rows.append(
                     f'    {{"{n}", (getter){tname}_get_{n}, '
-                    f"(setter){tname}_set_{n}, NULL, NULL}},"
+                    f"(setter){tname}_set_{n}, {_doc_c}, NULL}},"
                 )
             else:
                 rows.append(
                     f'    {{"{n}", (getter){tname}_get_{n}, '
-                    f"NULL, NULL, NULL}},"
+                    f"NULL, {_doc_c}, NULL}},"
                 )
 
     # gh-794: `_capsule` — the handle lending its opaque pointer, borrowed.
@@ -1450,12 +1513,15 @@ static PyObject *
         # methods that have nothing to say, which is the drift this whole
         # feature exists to close.
         if _block is not None or _override or _raises:
+            # gh-1499: `doc` is the author's text, laid out as written --
+            # `override` alone is wrapped as if it were a header `@brief`.
             _lines = render_runtime_doc(
                 _block,
                 m["name"],
                 _face.py_params,
                 _face.ann,
                 override=_override,
+                authored_doc=_override,
                 raises=_raises,
             )
         else:
@@ -1555,7 +1621,8 @@ static PyTypeObject {type_obj} = {{
     .tp_dealloc   = (destructor){tname}_dealloc,
     .tp_getset    = {getset_name},
     .tp_methods   = {tname}_methods,
-    .tp_doc       = PyDoc_STR("{tname} — handle over `{C.handle_backing(cfg, module)}`."),
+    .tp_doc       = PyDoc_STR(
+        {_class_doc_c(cfg, module, doc_blocks)}),
 }};
 """
 
@@ -1616,10 +1683,15 @@ def render_ext(
     factories = C.handle_factories(cfg, module)
     if factories:
         parts.append(render_factories(cfg, module))
+        from ._docstring import docstring_body
+
+        # gh-1499: the stub's docstring, derived -- one text, both faces.
         _fn_entries = "".join(
             f'    {{"{f["name"]}", (PyCFunction){leaf}_{f["name"]},'
             f" METH_VARARGS,\n"
-            f'     "Construct a {tname} via {f["create_fn"]}."}},\n'
+            f"     "
+            f"{_build_ml_doc(docstring_body(_factory_doc_lines(cfg, module, f), 4))}"
+            f"}},\n"
             for f in factories
         )
         parts.append(
@@ -1633,7 +1705,7 @@ def render_ext(
         _m_methods = "NULL"
 
     parts.append(f"""static struct PyModuleDef _moduledef = {{
-    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, {_m_methods},
+    PyModuleDef_HEAD_INIT, "{leaf}", {module_m_doc(cfg, module)}, -1, {_m_methods},
     NULL, NULL, NULL, NULL
 }};
 
@@ -1740,6 +1812,37 @@ def _method_block(
     return parse_doxygen_block(raw, name)
 
 
+def _class_doc_lines(
+    cfg: dict, module: str, doc_blocks: "dict[str, str] | None"
+) -> list[str]:
+    """The handle class's docstring, as the ``.pyi`` carries it.
+
+    One call for both faces (gh-1499): `render_pyi` splices these lines into
+    the class body and `_class_doc_c` derives ``tp_doc`` from them. ``tp_doc``
+    was a fixed ``"<T> — handle over `<backing>`."`` sentence while the stub
+    carried the summary and a ``Parameters`` block, so ``help(T)`` and the
+    ``.pyi`` described two different classes and a ``create_args`` doc had no
+    runtime face at all.
+    """
+    return _pyi_class_docstring(
+        C.handle_type_name(cfg, module),
+        C.handle_create_args(cfg, module),
+        C.enums(cfg),
+        _method_block(doc_blocks or {}, C.handle_create_fn(cfg, module), None),
+    )
+
+
+def _class_doc_c(
+    cfg: dict, module: str, doc_blocks: "dict[str, str] | None"
+) -> str:
+    """``tp_doc`` for the handle type: the stub's class docstring, derived."""
+    from ._docstring import CLASS_INDENT, docstring_body
+
+    return _build_ml_doc(
+        docstring_body(_class_doc_lines(cfg, module, doc_blocks), CLASS_INDENT)
+    )
+
+
 def _pyi_class_docstring(
     tname: str,
     create_args: list[dict[str, object]],
@@ -1783,9 +1886,13 @@ def _pyi_class_docstring(
             else:
                 type_line += f', default ``"{dv}"``'
         notes: list[str] = []
+        # gh-1499: a create_arg's manifest `doc`, as written, outranks the
+        # header `@param` -- the order an object's init param has (gh-1493).
+        # It was accepted by `_keys` and read by nothing.
+        authored = "\n".join(authored_doc_lines(str(a.get("doc") or "")))
         pdesc = create_block.param_desc(n) if create_block else None
-        if pdesc:
-            notes.append(pdesc)
+        if authored or pdesc:
+            notes.append(authored or pdesc)
         if a.get("enum"):
             choices = enum_reg.get(a["enum"], [])
             if choices:
@@ -1992,6 +2099,9 @@ def render_pyi(
         "#",
         f"# Generated by just-makeit (gh-306). `{tname}` is a typed CPython",
         f"# class over an opaque {C.handle_type(cfg, module)} resource handle.",
+        # gh-1499: `[module.X] doc`, the module's docstring, as a plain
+        # module renders it; `render_ext` puts the same text in `m_doc`.
+        *module_docstring_lines(cfg, module),
         "from __future__ import annotations",
         "",
         "from typing import Any, final",
@@ -2008,13 +2118,9 @@ def render_pyi(
 
     # Class-level docstring: summary + body from the create_fn's Doxygen (when
     # the backing header documents it), then a Parameters block (defaults + enum
-    # choices + any header @param prose).
-    create_block = _method_block(
-        doc_blocks, C.handle_create_fn(cfg, module), None
-    )
-    lines.extend(
-        _pyi_class_docstring(tname, create_args, enum_reg, create_block)
-    )
+    # choices + any header @param prose). `tp_doc` is derived from the same
+    # lines (gh-1499).
+    lines.extend(_class_doc_lines(cfg, module, doc_blocks))
 
     # __init__ from create_args (docstring lives on the class above).
     init_params = []
@@ -2066,6 +2172,7 @@ def render_pyi(
                     _face.py_params,
                     ann,
                     override=_override,
+                    authored_doc=_override,
                     indent=8,
                     raises=_raises,
                 )
@@ -2094,7 +2201,13 @@ def render_pyi(
                 doc = _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
             lines.append("    @property")
             lines.append(f"    def {f['name']}(self) -> {ann}:")
-            lines.append(f'        """{doc}"""')
+            # gh-1499: a manifest `doc` outranks both, laid out as written;
+            # `render_getsets` puts the same text on the runtime getset.
+            authored = authored_doc_lines(_field_doc(cfg, module, g, f))
+            if authored:
+                lines.extend(authored_docstring(authored, 8))
+            else:
+                lines.append(f'        """{doc}"""')
             if f.get("writable_fn"):
                 lines.append(f"    @{f['name']}.setter")
                 lines.append(
@@ -2145,7 +2258,7 @@ def render_pyi(
         ips = list(f.get("init_params", []))
         sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
-        lines.append(f'    """Construct a {tname} via {f["create_fn"]}."""')
+        lines.extend(_factory_doc_lines(cfg, module, f))
         lines.append("")
 
     # gh-623: a path annotates `str | os.PathLike`, which needs `import os`.

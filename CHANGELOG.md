@@ -73,6 +73,25 @@
     order and runs before gh-1474's byte-derived report, which decides what
     it says; a real change to the app is still reported, with its warning.
 
+- **A `doc` on a `handle`, `capsule` or `composer` module renders as you
+    write it too** (gh-1499). gh-1493's rule stopped at the object faces.
+    Of the `doc` keys those three kinds accept, most were read by nothing:
+    the module, a handle's create args, getters and factories, and every
+    capsule `doc`. A handle method's was reflowed. A composer field's kept
+    its TOML table's indent in the stub and was `NULL` at runtime. A
+    computed property's was pasted into C raw, so a two-line one did not
+    compile. An extra method's stub kept only the first line. Each now
+    renders line for line on both faces, with the runtime text derived from
+    the stub's. A handle's `help(T)` now shows the same summary and
+    `Parameters` as its `.pyi`, where it used to be a fixed one-liner. A
+    getter `doc` on a struct getter backing several properties documents
+    none of them, so it is refused, naming each field's own `doc` as the
+    fix. Two object-face gaps the stricter gate exposed are fixed as well:
+    a property's runtime doc, and a module's `doc`, now go through
+    `inspect.cleandoc` like every other face. Out of scope and filed: the
+    kind tables jm accepts and never renders (gh-1517), and composer
+    `extra_methods`, which compile on no path (gh-1516).
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed

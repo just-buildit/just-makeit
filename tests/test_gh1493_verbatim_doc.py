@@ -75,19 +75,40 @@ FACES = [
 ]
 
 
+def _split(line: str) -> "tuple[int, str]":
+    """``(indent, text)`` with a docstring's own quotes removed."""
+    body = line.lstrip(" ")
+    text = body.removeprefix('r"""').removeprefix('"""').removesuffix('"""')
+    return len(line) - len(body), text
+
+
 def _contains_block(text: str, lines: "list[str]") -> bool:
-    """*lines*, consecutive, in *text* -- ignoring each line's indentation
-    (a Parameters entry indents its description) and a docstring's own
-    quotes (the first line follows the opening one), never its breaks."""
-    have = [
-        ln.strip().removeprefix('r"""').removeprefix('"""').removesuffix('"""')
-        for ln in text.split("\n")
-    ]
-    want = [ln.strip() for ln in lines]
-    return any(
-        have[i : i + len(want)] == want
-        for i in range(len(have) - len(want) + 1)
-    )
+    """*lines*, consecutive, in *text*, each at the indent the author gave it.
+
+    The block may sit at any depth -- a Parameters entry indents its
+    description, a method docstring sits eight deep, and a docstring's first
+    line follows its own quotes -- but every line keeps its indent RELATIVE to
+    the block's first line. gh-1499: this compared stripped lines, so a doc
+    whose continuation lines kept an indented TOML table's indent (raw text,
+    never through `inspect.cleandoc`) read as verbatim here and was not.
+    """
+    have = [_split(ln) for ln in text.split("\n")]
+    for i in range(len(have) - len(lines) + 1):
+        seg = have[i : i + len(lines)]
+        if [t.strip() for _, t in seg] != [ln.strip() for ln in lines]:
+            continue
+        ind0, t0 = seg[0]
+        base = ind0 + len(t0) - len(t0.lstrip()) - _lead(lines[0])
+        if all(
+            not want.strip() or ind + _lead(t) == base + _lead(want)
+            for (ind, t), want in zip(seg, lines)
+        ):
+            return True
+    return False
+
+
+def _lead(s: str) -> int:
+    return len(s) - len(s.lstrip(" "))
 
 
 def _add(path: Path, anchor: str, text: str) -> None:
