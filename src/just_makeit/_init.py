@@ -1266,6 +1266,16 @@ def run(
             serializable=serializable,
         )
     )
+    # gh-1509: the C triplet that binding calls, declared in the sacred
+    # header and defined in `_core.c` -- a working one when every field's
+    # bytes are its value, a refusing stub otherwise.
+    ctx.update(
+        Ctx.make_serializable_core_ctx(
+            ctx["component"],
+            serializable,
+            Ctx.state_blob_fields(vars_, opaque_fields, array_args),
+        )
+    )
     # No properties exist at creation time (jm property adds them later) —
     # still call this so property_stubs_pyi resolves to "" rather than
     # leaving <<property_stubs_pyi>> unrendered in the fresh .pyi (gh-446).

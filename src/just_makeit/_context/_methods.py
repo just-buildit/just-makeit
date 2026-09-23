@@ -761,6 +761,142 @@ def serializable_triplet_parts(
     return c_funcs, pmd, pyi
 
 
+def state_blob_fields(
+    state_vars, opaque_fields=(), array_args=()
+) -> "list[str] | None":
+    """The state fields a scaffolded blob can copy byte for byte, or None.
+
+    gh-1509. A field qualifies when its bytes ARE its value: a scalar jm
+    knows (every ``_CTYPE_META`` kind but ``str``, which is a pointer) or a
+    fixed-length ``T[N]`` array of one. Anything else -- a ``const char *``,
+    an ``array_args`` buffer the struct points at, an ``opaque_fields``
+    member whose type jm never sees -- owns memory elsewhere, and copying its
+    bytes would copy an address. One such field makes the whole answer None,
+    because serializing the others and dropping it would lose state silently.
+
+    Examples
+    --------
+    >>> state_blob_fields([("ph", "double", "0.0"), ("taps", "float[4]", "")])
+    ['ph', 'taps']
+    >>> state_blob_fields([("name", "const char *", "NULL")]) is None
+    True
+    >>> state_blob_fields([("g", "float", "0")], [("h", "void *")]) is None
+    True
+    >>> state_blob_fields([])
+    []
+    """
+    if opaque_fields or array_args:
+        return None
+    names = []
+    for name, ctype, *_ in state_vars:
+        parsed = T.parse_array_type(ctype)
+        elem = parsed[0] if parsed else ctype
+        meta = T._CTYPE_META.get(elem)
+        if meta is None or meta["kind"] == "str":
+            return None
+        names.append(name)
+    return names
+
+
+def make_serializable_core_ctx(
+    component: str, serializable: bool, fields: "list[str] | None"
+) -> dict:
+    """The C triplet a ``serializable`` object's binding calls (gh-1509).
+
+    gh-400 generates the Python ``state_bytes``/``get_state``/``set_state``
+    over three C functions and, until gh-1509, left all three to the author
+    -- undeclared, so the scaffold jm had just written failed to compile on
+    implicit declaration. They are now scaffolded like every other function
+    the binding calls: prototypes in the sacred ``_core.h``
+    (``serializable_decls``) and bodies in ``_core.c``
+    (``serializable_impls``), which a header-only core carries inline.
+
+    What the bodies do depends on *fields* (:func:`state_blob_fields`):
+
+    - a list: a working implementation. The blob is the listed fields packed
+      in declaration order, so ``set_state(get_state())`` round-trips. It
+      covers the state declared when jm wrote it; a field added later has to
+      be added by hand, which the comment above the functions says.
+    - None: a stub that refuses. ``state_bytes`` is 0 and ``set_state``
+      returns -1, which the binding raises as ``ValueError`` -- loud, where a
+      silent empty blob would restore nothing and report success.
+
+    The slots are empty for an object that is not serializable, so every
+    other scaffold renders byte-identically.
+
+    Examples
+    --------
+    >>> ctx = make_serializable_core_ctx("q", False, [])
+    >>> ctx["serializable_decls"], ctx["serializable_impls"]
+    ('', '')
+    >>> print(make_serializable_core_ctx("q", True, ["x"])[
+    ...     "serializable_decls"].strip())
+    /** @brief Bytes in the blob q_get_state() writes. */
+    size_t q_state_bytes(const q_state_t *state);
+    <BLANKLINE>
+    /** @brief Write the state into @p blob. */
+    void q_get_state(const q_state_t *state, void *blob);
+    <BLANKLINE>
+    /** @brief Restore the state; nonzero rejects @p blob. */
+    int q_set_state(q_state_t *state, const void *blob);
+    """
+    if not serializable:
+        return {"serializable_decls": "", "serializable_impls": ""}
+    c, st = component, f"{component}_state_t"
+    decls = (
+        f"\n\n/** @brief Bytes in the blob {c}_get_state() writes. */"
+        f"\nsize_t {c}_state_bytes(const {st} *state);"
+        f"\n\n/** @brief Write the state into @p blob. */"
+        f"\nvoid {c}_get_state(const {st} *state, void *blob);"
+        f"\n\n/** @brief Restore the state; nonzero rejects @p blob. */"
+        f"\nint {c}_set_state({st} *state, const void *blob);"
+    )
+    if fields is None:
+        head = (
+            "/* <<IMPLEMENT: serialize the state (gh-400). A field of this\n"
+            " * struct owns memory outside it, so jm cannot copy its bytes.\n"
+            " * Until this is written, set_state() raises ValueError. >> */\n"
+        )
+        size = "    (void)state;\n    return 0;\n"
+        get = "    (void)state;\n    (void)blob;\n"
+        put = "    (void)state;\n    (void)blob;\n    return -1;\n"
+    else:
+        head = (
+            "/* The state blob: the fields below, packed in declaration\n"
+            " * order (gh-400). jm wrote this from the state declared when\n"
+            " * the object was scaffolded -- a field added since must be\n"
+            " * added here too. */\n"
+        )
+        if fields:
+            size = "    return {};\n".format(
+                " + ".join(f"sizeof(state->{f})" for f in fields)
+            )
+            get = "    unsigned char *p = blob;\n" + "".join(
+                f"    memcpy(p, &state->{f}, sizeof(state->{f}));\n"
+                f"    p += sizeof(state->{f});\n"
+                for f in fields
+            )
+            put = (
+                "    const unsigned char *p = blob;\n"
+                + "".join(
+                    f"    memcpy(&state->{f}, p, sizeof(state->{f}));\n"
+                    f"    p += sizeof(state->{f});\n"
+                    for f in fields
+                )
+                + "    return 0;\n"
+            )
+        else:
+            size = "    (void)state;\n    return 0;\n"
+            get = "    (void)state;\n    (void)blob;\n"
+            put = "    (void)state;\n    (void)blob;\n    return 0;\n"
+    impls = (
+        f"\n\n{head}size_t\n{c}_state_bytes(const {st} *state)\n{{\n{size}}}"
+        f"\n\nvoid\n{c}_get_state(const {st} *state, void *blob)\n{{\n{get}}}"
+        f"\n\nint\n{c}_set_state({st} *state, const void *blob)\n{{\n{put}}}"
+    )
+    return {"serializable_decls": decls, "serializable_impls": impls}
+
+
 def _max_out_doc(
     component, name, count_param, max_out_const, block_of, c_fn=""
 ):
@@ -3791,9 +3927,11 @@ def make_methods_ctx(
             )
 
     # ── serializable: generate the state-blob binding (gh-400) ──────────────
-    # Calls the hand-written C triplet (size_t <c>_state_bytes(const T*); void
+    # Calls the C triplet (size_t <c>_state_bytes(const T*); void
     # <c>_get_state(const T*, void*); int <c>_set_state(T*, const void*)) — the
-    # elastic / pure-transducer face, sibling to reset.
+    # elastic / pure-transducer face, sibling to reset. An object's scaffold
+    # declares and defines it (gh-1509, make_serializable_core_ctx); a handle
+    # module's is the author's.
     if serializable:
         _c_funcs, _pmd, _pyi = serializable_triplet_parts(
             component, Component, wrapper_prefix

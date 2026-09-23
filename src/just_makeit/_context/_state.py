@@ -2059,6 +2059,7 @@ _HEADER_ONLY_DECL_SLOTS = (
     "builtin_reset_decl",
     "steps_c_decl",
     "getter_setter_decls",
+    "serializable_decls",
 )
 
 #: Definition slots, in the order the header should carry them.
@@ -2068,6 +2069,7 @@ _HEADER_ONLY_DEF_SLOTS = (
     "reset_c_close",
     "steps_c_impl",
     "getter_setter_impls",
+    "serializable_impls",
 )
 
 

@@ -43,7 +43,7 @@ extern "C" {
 
 /*<<steps_c_decl>>*/
 
-/*<<getter_setter_decls>>*/
+/*<<getter_setter_decls>>*//*<<serializable_decls>>*/
 
 /*<<property_decls>>*/
 /*<<method_decls>>*//*<<inline_core>>*/

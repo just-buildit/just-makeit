@@ -18,4 +18,4 @@
 /*<<reset_c_open>>*//*<<reset_assignments>>*//*<<reset_c_close>>*/
 /*<<steps_c_impl>>*/
 
-/*<<getter_setter_impls>>*/
+/*<<getter_setter_impls>>*//*<<serializable_impls>>*/
