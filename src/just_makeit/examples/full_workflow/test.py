@@ -293,6 +293,15 @@ def run(root: Path) -> None:
     )
     proj = root / "my_dsp"
 
+    # 1b. The test style is a PROJECT setting, and step 2 switches it to
+    # pytest. A scaffolded test is jm's while it carries its
+    # `# jm:generated` line (gh-1489), so gain's would follow the switch.
+    # Deleting that line makes it ours, and it stays unittest.
+    gain_test_py = proj / "src" / "my_dsp" / "tests" / "test_gain.py"
+    lines = gain_test_py.read_text(encoding="utf-8").splitlines(True)
+    assert lines[0] == "# jm:generated test_gain.py\n", lines[0]
+    gain_test_py.write_text("".join(lines[1:]), encoding="utf-8")
+
     # 2. Add ema component with pytest + pytest-benchmark style
     jm_init(
         proj,
