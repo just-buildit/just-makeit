@@ -3,12 +3,13 @@
 Run standalone:  python src/<<package>>/benchmarks/bench_<<component>>.py
 Or via make:     make bench
 """
+
 import time
 import numpy as np
 
 from <<package>> import <<Component>>
 
-REPS      = 1_000
+REPS = 1_000
 <<bench_block_consts>>
 
 

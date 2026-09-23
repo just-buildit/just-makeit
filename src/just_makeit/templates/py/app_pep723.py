@@ -27,11 +27,15 @@ def _make_parser() -> argparse.ArgumentParser:
         description="<<project>>: <<Component>>-powered stream tool.",
     )
     p.add_argument(
-        "--input", "-i", default=None,
+        "--input",
+        "-i",
+        default=None,
         help="input file (default: stdin)",
     )
     p.add_argument(
-        "--output", "-o", default=None,
+        "--output",
+        "-o",
+        default=None,
         help="output file (default: stdout)",
     )
 <<argparse_state_args>>

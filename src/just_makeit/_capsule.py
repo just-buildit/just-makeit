@@ -572,8 +572,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     # doppler overflows today, so this is prevention rather than a fix —
     # which is exactly why it was the half most likely to be left out.
     from ._pyfmt import reflow_pyi
+    from ._stubs import prune_stub_imports
 
-    return reflow_pyi("\n".join(lines))
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 # ── materialization (driven by jm apply's _replay) ───────────────────────────

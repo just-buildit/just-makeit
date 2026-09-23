@@ -551,6 +551,35 @@ def unfilled_slots(text: str) -> "set[str]":
 _RENDER_SWEEPS = 8
 
 
+def render_scaffold_py(template: str, ctx: dict) -> str:
+    """Render a scaffolded Python test or benchmark (gh-1478).
+
+    The templates import numpy (and the pytest face, pytest)
+    unconditionally, and a ``void``-argument or ``--no-step`` object's file
+    then never names it: ruff's ``F401`` on a fresh scaffold. Whether the
+    file needs each is asked of the rendered text, the way the stubs decide
+    ``os``/``Any``/numpy, rather than of a list of the shapes that happen to
+    use arrays today. The blank lines the snippets met with are then laid
+    out by :func:`_pyfmt.py_blank_lines`.
+
+    >>> render_scaffold_py("import numpy as np\\nx = 1\\n", {})
+    'x = 1\\n'
+    >>> render_scaffold_py("import numpy as np\\nx = np.ones(1)\\n", {})
+    'import numpy as np\\nx = np.ones(1)\\n'
+    """
+    from ._pyfmt import py_blank_lines
+
+    text = render(template, ctx)
+    for line, name in (
+        ("import numpy as np", "np"),
+        ("import pytest", "pytest"),
+    ):
+        without = text.replace(f"{line}\n", "", 1)
+        if not re.search(rf"\b{name}\.", without):
+            text = without
+    return py_blank_lines(text)
+
+
 def render(template: str, ctx: dict) -> str:
     """Substitute every ``<<key>>`` in *template* from *ctx*, to a fixed point.
 
@@ -616,11 +645,24 @@ def render_component_pyi(ctx: dict) -> str:
     # peer's bug, which referenced it without importing it. Local import for
     # the reason given at `fn_py_surface` below: `_stubs` at module scope puts
     # `_render` into the `_object`/`_stubs` cycle.
-    from ._stubs import _uses_any
+    # gh-1478: numpy too, by the predicate the module peer asks -- the
+    # template imported it unconditionally, an `F401` on every no-step stub.
+    # The empty constructor also rendered `(self, )`, which ruff rewrites.
+    from ._stubs import _uses_any, numpy_imports
 
+    params = ctx.get("init_params_pyi", "")
+    ctx = {
+        **ctx,
+        "init_self_params_pyi": f"self, {params}" if params else "self",
+    }
     probe = render(
         COMPONENT_PYI,
-        {**ctx, "pyi_os_import": "", "pyi_any_typing": ""},
+        {
+            **ctx,
+            "pyi_os_import": "",
+            "pyi_any_typing": "",
+            "pyi_numpy_imports": "",
+        },
     )
     ctx = {
         **ctx,
@@ -628,6 +670,9 @@ def render_component_pyi(ctx: dict) -> str:
             "\nimport os" if _coerce.PATH_PY_TYPE in probe else ""
         ),
         "pyi_any_typing": "Any, " if _uses_any(probe) else "",
+        "pyi_numpy_imports": "".join(
+            f"\n{line}" for line in numpy_imports(probe)
+        ),
     }
     return reflow_pyi(render(COMPONENT_PYI, ctx))
 

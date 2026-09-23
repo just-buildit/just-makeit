@@ -275,7 +275,7 @@ def test_command_app_generates_dispatch(tmp_path: Path):
     # Python: subparsers + per-command fns + set_defaults dispatch.
     assert 'add_subparsers(dest="command", required=True)' in cli
     assert 'sub.add_parser("encode"' in cli
-    assert 'p_encode.add_argument("--rate"' in cli
+    assert 'p_encode.add_argument(\n        "--rate",' in cli
     assert "set_defaults(_fn=_cmd_encode)" in cli
     # Manifest round-trips the commands.
     got = C.app_commands(C.load(proj))
@@ -408,7 +408,7 @@ def test_sample_type_dtype_output_python(tmp_path: Path):
     jm_app(proj, target="console", name="tool", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
     cli = (proj / "src/proj/cli.py").read_text()
-    assert "choices=['cf32', 'cf64', 'ci32', 'ci16', 'ci8']" in cli
+    assert 'choices=["cf32", "cf64", "ci32", "ci16", "ci8"]' in cli
     assert "_a = (_iq * _sc).astype(_dt)" in cli
     import py_compile
 
@@ -442,9 +442,9 @@ def test_output_axes_python(tmp_path: Path):
     jm_app(proj, target="console", name="tool", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
     cli = (proj / "src/proj/cli.py").read_text()
-    assert "choices=['raw', 'csv']" in cli
-    assert "choices=['le', 'be']" in cli
-    assert '"--record", type=str' in cli
+    assert 'choices=["raw", "csv"]' in cli
+    assert 'choices=["le", "be"]' in cli
+    assert '"--record",\n        type=str,' in cli
     assert 'if args.file_type == "csv":' in cli
     assert 'if args.endian == "be":' in cli
     assert "_a = _a.byteswap()" in cli
