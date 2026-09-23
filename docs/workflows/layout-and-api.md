@@ -2,45 +2,61 @@
 
 ## Project layout (full)
 
-After scaffolding with one object and running `just-makeit perf`:
+After scaffolding with one object and running `just-makeit perf`. The tag on
+each file is who owns it, which decides what `jm apply` does to it; the five
+kinds are defined in [the edit lifecycle](edit-lifecycle.md#who-owns-each-file).
 
 ```text
 my_dsp/
-├── CMakeLists.txt
-├── Makefile
-├── just-makeit.toml
-├── pyproject.toml
+├── just-makeit.toml                    [yours]     the manifest
+├── objects/
+│   └── gain.toml                       [yours]     gain's manifest table
+├── pyproject.toml                      [yours]
+├── README.md                           [yours]
+├── CMakeLists.txt                      [shared]    jm splices its marked blocks
+├── CMakePresets.json                   [versioned] cmake --preset release|debug|…
+├── Makefile                            [versioned] make · make test · make bench
+├── bootstrap.toml                      [versioned] toolchain declaration for CI
+├── .clang-tidy  .gitignore  Doxyfile  zensical.toml          [versioned]
 ├── cmake/
-│   └── my-dsp.pc.in                    # pkg-config template
+│   ├── my-dsp.pc.in                    [versioned] pkg-config template
+│   └── my_dsp-config.cmake.in          [versioned] find_package template
+├── docs/                               [yours]     index.md, api.md
+├── benchmarks/history/                 [yours]     saved `jm bench` results
 ├── native/
-│   ├── benchmarks/
-│   │   └── bench_gain_core.c           # C benchmark
 │   ├── inc/
-│   │   ├── clib_common.h               # common C99 types
-│   │   ├── pyex_common.h               # Python extension includes
-│   │   ├── my_dsp.h                    # umbrella header
-│   │   ├── jm_perf.h                   # JM_FORCEINLINE / JM_HOT / JM_UNROLL …
-│   │   ├── jm_simd.h                   # width-portable SIMD macros
+│   │   ├── my_dsp.h                    [jm]        umbrella header
+│   │   ├── clib_common.h               [versioned] common C99 types
+│   │   ├── pyex_common.h               [versioned] Python extension includes
+│   │   ├── jm_perf.h                   [versioned] JM_FORCEINLINE / JM_HOT / …
+│   │   ├── jm_simd.h                   [versioned] width-portable SIMD macros
 │   │   └── gain/
-│   │       └── gain_core.h             # object API  ← implement step() here
+│   │       └── gain_core.h             [yours]     state struct + step()  ← implement
 │   ├── src/
+│   │   ├── my_dsp_lib.c                [yours]     libmy_dsp root: my_dsp_version()
 │   │   └── gain/
-│   │       ├── CMakeLists.txt
-│   │       ├── gain_core.c             # steps() loop + any multi-sample logic
-│   │       └── gain_ext.c              # Python binding  ← do not edit
-│   └── tests/
-│       └── test_gain_core.c            # CTest lifecycle test
+│   │       ├── CMakeLists.txt          [jm]
+│   │       ├── gain_core.c             [yours]     create/destroy/steps/methods
+│   │       └── gain_ext.c              [jm]        Python binding  ← do not edit
+│   ├── tests/
+│   │   ├── jm_test.h                   [versioned] test macros
+│   │   ├── test_gain_core.c            [yours]     CTest lifecycle test
+│   │   └── test_gain_symbols.c         [derived]   links every function the binding calls
+│   └── benchmarks/
+│       ├── jm_bench.h                  [versioned] portable timer
+│       └── bench_gain_core.c           [yours]     C benchmark
 └── src/
     └── my_dsp/
-        ├── __init__.py
-        ├── gain.pyi                    # type stub
-        ├── benchmarks/
-        │   ├── __init__.py
-        │   └── bench_gain.py           # perf_counter benchmark script
-        └── tests/
-            ├── __init__.py
-            └── test_gain.py            # pytest
+        ├── __init__.py                 [shared]    jm keeps the re-exports current
+        ├── gain.pyi                    [jm]        type stub
+        ├── benchmarks/bench_gain.py    [yours]
+        └── tests/test_gain.py          [yours]     pytest
 ```
+
+`[yours]` files are created once and then only gain what is missing — a
+declaration or a stub for a new method. `[jm]` files are rewritten on every
+`apply`. `[versioned]` files are jm's but written once; a newer jm reports
+them as OUTDATED in `jm status`.
 
 ______________________________________________________________________
 

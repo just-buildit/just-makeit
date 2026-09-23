@@ -692,6 +692,31 @@ no-op before a release, or to see what changed after a manual edit to
 
 ______________________________________________________________________
 
+## `just-makeit adopt`
+
+Make a module object's binding fragment (`<mod>_ext_<obj>.c`) jm's content,
+so every future binding fix reaches it on `apply`. Writes
+`fragment = "generated"` only where nothing of yours would be lost. Why and
+when: [Who owns a module's binding fragment](../configuration.md#who-owns-a-modules-binding-fragment).
+
+```sh
+just-makeit adopt --check                  # what each object would do; writes nothing
+just-makeit adopt fir                      # flip one object (and its views)
+just-makeit adopt --module dsp             # every object in a module
+just-makeit adopt fir --accept-additions   # also take units the render only adds to
+```
+
+| Flag                               | Description                                                                                                                                                             |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--check`                          | Report per object — `would flip`, `needs acknowledgement`, `REFUSES` — and write nothing. Exits non-zero when anything cannot flip unattended.                          |
+| `<obj>…` / `--module ID` / `--all` | The objects to flip. There is no default: without one, `adopt` writes nothing.                                                                                          |
+| `--accept UNIT`                    | Take one differing unit (`fn:Fir_init`, `table:PyMethodDef`, as `--check` prints them) by name. Repeatable. A name that matches no differing unit is refused as a typo. |
+| `--accept-additions`               | Take every unit `--check` labels `adds only`: the render keeps every token of it and adds code, so nothing on disk is lost.                                             |
+
+An object flips only when nothing refuses it and every differing unit is
+accepted; otherwise nothing is written for it. A unit that exists only on
+disk always refuses — move it to the `_extra.c` beside the fragment.
+
 ## `just-makeit script`
 
 Print a shell script to stdout that fully reconstructs the current project

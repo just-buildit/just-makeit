@@ -91,25 +91,49 @@ ______________________________________________________________________
 
 ### Command flow
 
+Every command enters at `_cli.py:main()` and dispatches to one module. Which
+modules, grouped by what they do — `just-makeit --help` is the list of
+record, and the module table in the repo's `CLAUDE.md` says what each file
+owns:
+
 ```
-just-makeit <cmd>
-    └── _cli.py:main()
-            ├── new       → _new.run()
-            │                  └── _object.run(module=None)  ← if --object given
-            │                       └── _init.run()           ← standalone path
-            ├── object    → _object.run()
-            │                  ├── module=None  → _init.run()   (standalone)
-            │                  └── module=name  → in-module path
-            ├── module    → _module.run()
-            ├── method/property/function → _method.*/_property.*/_function.*
-            ├── add       → _add.run()
-            ├── perf      → _perf.run()
-            ├── apply     → _apply.run()        (sacred/glue materialize)
-            ├── regenerate→ _regenerate.run()   (delete + re-apply a component)
-            ├── remove    → _remove.run()
-            ├── bind      → _bind.run()
-            └── build/test/dry-run → _build.*
+just-makeit <cmd>  →  _cli.py:main()
+  scaffold     new → _new · object → _object · module → _module
+               function → _function · view → _view · app → _app
+               bind → _bind (derive a manifest from a C header)
+  extend       method → _method · property → _property · add → _add
+               record → _recorddecl · error → _error · warning → _warning
+               perf → _perf · remove → _remove
+  reconcile    apply → _apply · regenerate → _regenerate · status → _status
+               adopt → _adopt · upgrade → _upgrade
+               migrate-to-fragments → _migrate · split-objects → _split_objects
+  build & run  build / test / dry-run → _build · bench → _bench
+               example → _example · ci → _ci · install-deps → _scripts
+  inspect      script → _script · config / version → _cli itself
 ```
+
+### The apply model
+
+`_apply.run()` is the reconciler everything else leans on, and it works the
+same way every time:
+
+1. **Replay** the whole manifest into a temporary tree — every object,
+    module and function re-scaffolded from scratch by the same writers the
+    CLI verbs use, so the render cannot disagree with a fresh `jm new`.
+1. **Reconcile** that render into the real tree, file by file, by the kind
+    `_createonly.classify` gives it: *jm's* files are overwritten, *shared*
+    ones have their marked blocks spliced, the *author's* only gain what is
+    missing, and *versioned* ones are left alone (the user-facing table is
+    in [the edit lifecycle](../workflows/edit-lifecycle.md#who-owns-each-file)).
+1. **Refresh** what depends on the author's own files — docstrings from the
+    header's Doxygen (`_docsync`), the link-check tables (`_linkcheck`) — and
+    run the project's formatter over what was written.
+
+`status` is the same replay run against a **copy** of the project, followed
+by a diff: whatever `apply` would change is what is behind. That is why the
+two cannot disagree about drift, and why anything `apply` fails to reconcile
+is also invisible to `status` unless it is compared explicitly (the
+UNRECONCILED and OUTDATED sections exist for exactly those files).
 
 ### Templates and rendering
 
@@ -125,14 +149,18 @@ under `templates/`, not a Python string constant.
 
 ### Config (`_config.py` + `just-makeit.toml`)
 
-`just-makeit.toml` is the source of truth for scaffolded state. It records:
+`just-makeit.toml` is the source of truth for scaffolded state: `[project]`,
+one table per object (`[<comp>]`, usually in `objects/<comp>.toml`), one per
+module (`[module.<name>]`, in `modules/`), and the shared declarations —
+`[[enum]]`, `[codec.<name>]`, `[app]`. The schema is
+[Configuration](../configuration.md); `_keys.py` is what refuses a key no
+table accepts.
 
-- `[project]` — name, version, build system, perf flag
-- `[<comp>]` — state vars, arg/return types, for each standalone object
-- `[module.<name>]` — objects list for each module
-
-`_config.py` provides typed accessors (`components()`, `modules()`,
-`module_objects()`, `state_vars()`, `arg_type()`, …).
+`_config.py` is the only reader and writer. It merges the fragments on
+`load` and routes each table back to its file on `save`, and every other
+module asks it through typed accessors (`components()`, `modules()`,
+`module_objects()`, `state_vars()`, `enums()`, …) rather than indexing the
+dict.
 
 ______________________________________________________________________
 

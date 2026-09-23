@@ -2,16 +2,41 @@
 
 `just-makeit.toml` is the manifest. Every CLI verb (`object`, `method`,
 `add`, …) writes to it, then materializes files. You can also edit the TOML by
-hand. The verbs treat your files differently — this is the
-**sacred/glue contract**:
+hand. Either way, `jm apply` renders the whole project from the manifest into
+a scratch tree and reconciles it into yours — and what it does to each file
+depends on who owns it. That is the **sacred/glue contract**.
 
-| File                   | Class                                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`         | **Glue** — always regenerated from the manifest; never hand-edited                                                                                                                                                                                                                                                                 |
-| `src/<pkg>/<comp>.pyi` | **Glue** — always regenerated                                                                                                                                                                                                                                                                                                      |
-| `CMakeLists.txt`       | **Glue** — regenerated, but a rule the manifest cannot express survives: an extra source in `<comp>_core`'s `add_library` or a per-source property leaves the file untouched, and an `if(VAR) … endif()` block is carried across. Anything else goes in `<dir>_extra.cmake` beside it, which the file includes and jm never writes |
-| `<comp>_core.c`        | **Sacred** — created once; a structural change rebuilds it via `jm regenerate`, which lifts your hand-written bodies out and splices them back in by function name (`--discard` for a clean reset instead)                                                                                                                         |
-| `<comp>_core.h`        | The state struct + inline `step()` are **sacred**; method/property *declarations* refresh from the TOML                                                                                                                                                                                                                            |
+## Who owns each file
+
+| Kind               | What `apply` does                                                                                                                                                            | Examples                                                                                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Yours** (sacred) | Creates it once. After that it only **adds** what the manifest declares and the file lacks — a declaration in `_core.h`, a stub in `_core.c`. Never rewrites what you wrote. | `<comp>_core.h` (the state struct and inline `step()`), `<comp>_core.c`, your C and Python tests and benchmarks, `objects/<comp>.toml`, `pyproject.toml`, `README.md` |
+| **jm's** (glue)    | Rewrites it from the manifest on every run; `status --check` fails when it drifts. Never hand-edit it.                                                                       | `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, `native/inc/<pkg>.h`, a component's `CMakeLists.txt`                                                                          |
+| **Shared**         | Splices jm's marked blocks in and keeps everything else.                                                                                                                     | the root `CMakeLists.txt`, `src/<pkg>/__init__.py`, a module object's `<mod>_ext_<obj>.c`                                                                             |
+| **Versioned**      | jm's content, but written once. A newer jm ships a newer one, which `jm status` reports as OUTDATED; you adopt it deliberately ([Upgrading](../upgrading.md)).               | `Makefile`, `CMakePresets.json`, `clib_common.h`, `jm_test.h`, `jm_bench.h`, `bootstrap.toml`, `.gitignore`                                                           |
+| **Derived**        | Rewritten, but from *your* files rather than the manifest.                                                                                                                   | `native/tests/test_<comp>_symbols.c` — links every function the binding calls, so a declared-but-undefined one fails `make test` by name                              |
+
+The full tree, with every file tagged: [Project layout](layout-and-api.md#project-layout-full).
+
+Three of these have more to them:
+
+- **A component's `CMakeLists.txt`** is regenerated, but a rule the manifest
+    cannot express survives: an extra source in `<comp>_core`'s
+    `add_library` or a per-source property leaves the file untouched, and an
+    `if(VAR) … endif()` block is carried across. Anything else goes in
+    `<dir>_extra.cmake` beside it, which the file includes and jm never
+    writes.
+- **`<comp>_core.c`** is never rewritten by `apply`. A *structural* change
+    rebuilds it with `jm regenerate`, which lifts your hand-written bodies out
+    and splices them back in by function name (`--discard` for a clean reset
+    instead).
+- **A module object's `<mod>_ext_<obj>.c`** is shared so it can hold
+    hand-written bindings — which also means a later jm's fix to a wrapper
+    never reaches it. `fragment = "generated"` makes it jm's, and
+    `jm adopt <obj>` makes that switch only when nothing of yours would be
+    lost ([Who owns a module's binding fragment](../configuration.md#who-owns-a-modules-binding-fragment)).
+
+## The loop
 
 The additive verbs never touch an existing body in place — they only inject
 what's missing:
@@ -35,11 +60,13 @@ So the flow is:
 1. **Apply / regenerate** — `jm apply` refreshes the glue and injects missing
     declarations; a structural change (new state field, changed signature)
     needs `jm regenerate` to rebuild the object.
-1. **Implement** — fill in the new `step()`/`steps()`/method body in `_core.c`.
+1. **Implement** — fill in `step()` in `_core.h`, and a new method's body
+    in `_core.c`.
 1. **Test** — `make test`.
 1. **Iterate** — back to step 1.
 
-You only ever own `_core.c` and the TOML.
+What you own is the manifest, your kernels (`step()` in the header,
+everything else in `_core.c`) and your tests; the C↔Python seam is jm's.
 
 When you change a *signature* in TOML (an arg type, a method's return type),
 or add a state field, the structure of the object changed — rebuild it from
