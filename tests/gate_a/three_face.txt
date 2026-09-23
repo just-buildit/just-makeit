@@ -1,8 +1,0 @@
-gaintool	ruff check	src/gaintool/tests/test_gain.py E401
-gaintool	ruff check	src/gaintool/tests/test_gain.py F401
-gaintool	ruff format	gaintool.py
-gaintool	ruff format	src/gaintool/__init__.py
-gaintool	ruff format	src/gaintool/benchmarks/bench_gain.py
-gaintool	ruff format	src/gaintool/cli.py
-gaintool	ruff format	src/gaintool/gain.pyi
-gaintool	ruff format	src/gaintool/tests/test_gain.py
