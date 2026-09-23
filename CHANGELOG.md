@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.87.0] — 2026-09-23
+
 ### Added
 
 - **Example: upgrading an old project** (`stale_project`, gh-1443). A real
