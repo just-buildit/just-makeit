@@ -637,7 +637,7 @@ def param_name_clash(
     --------
     >>> ps = [("x", "float[]"), ("x_len", "size_t")]
     >>> param_name_clash("x_len", ps)
-    "'x_len' is the length jm passes to C for array param 'x'"
+    "'x_len' is the length jm passes to C for array param 'x'; name it 'x_nbits' or 'x_count' instead"
     >>> param_name_clash("out", [("out", "float[]")]) is None
     True
     >>> param_name_clash("out", [("out", "int")], outbuf=True) is None
@@ -665,7 +665,11 @@ def param_name_clash(
                     if suffix == "_len"
                     else "a local jm marshals"
                 )
-                return f"'{name}' is {what} for array param '{other}'"
+                # The rename advice matches gh-1002's init-param refusal.
+                return (
+                    f"'{name}' is {what} for array param '{other}';"
+                    f" name it '{other}_nbits' or '{other}_count' instead"
+                )
     if outbuf and (
         name in OUTBUF_LOCALS
         or any(_numbered(name, stem) for stem in _OUTBUF_NUMBERED)
