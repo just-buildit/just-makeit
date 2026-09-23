@@ -219,6 +219,20 @@ def run(
 
     cfg = C.load(root)
 
+    # gh-1517: a kind module exists but is not in `modules()` (that lists the
+    # object-group modules), so it used to fall through to "not found" and the
+    # advice to `jm module` a second, conflicting module of the same name.
+    kind = C.module_kind(cfg, module)
+    if kind in ("handle", "capsule", "composer"):
+        print(
+            f"error: module '{module}' is a `kind = \"{kind}\"` module; jm "
+            f"generates module-level functions on a plain module only.\n"
+            f"Declare them on one: `just-makeit module <name>`, then "
+            f"`just-makeit function <fn> --module <name>`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     if module not in C.modules(cfg):
         print(
             f"error: module '{module}' not found. "

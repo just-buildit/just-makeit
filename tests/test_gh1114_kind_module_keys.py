@@ -320,18 +320,6 @@ def _every_handle_key_module():
                 "depends_on": [
                     {"name": "b", "link": True, "test_only": False}
                 ],
-                "init_params": [
-                    {
-                        "name": "p",
-                        "type": "path",
-                        "default": "x",
-                        "enum": "e",
-                        "capsule": "c",
-                        "header": "h",
-                        "doc": "d",
-                        "kwonly": True,
-                    }
-                ],
                 "create_args": [
                     {
                         "name": "path",
@@ -345,19 +333,6 @@ def _every_handle_key_module():
                     }
                 ],
                 "create_post": [{"fn": "f", "when": "w", "arg": "a"}],
-                "properties": [
-                    {
-                        "name": "g",
-                        "type": "double",
-                        "writable": True,
-                        "doc": "d",
-                        "enum": "e",
-                        "getter": "gg",
-                        "setter": "ss",
-                        "fn": "f",
-                    }
-                ],
-                "functions": [{"name": "f", "params": []}],
                 "methods": [
                     {
                         "name": "drain",
@@ -416,6 +391,50 @@ def _every_handle_key_module():
     }
 
 
+def _every_capsule_table_key_module():
+    """The capsule face's `init_params` and `properties` rows, every key.
+
+    gh-1517: these rows lived on the handle above until the handle stopped
+    accepting either table (no generator read them there). Moved rather than
+    deleted: they are the only fixture use of the `kind init_param` and
+    `kind property` vocabularies, so dropping them would disarm this gate for
+    every key in both.
+    """
+    return {
+        "project": {"name": "p"},
+        "module": {
+            "cap": {
+                "kind": "capsule",
+                "backing": "c",
+                "init_params": [
+                    {
+                        "name": "p",
+                        "type": "path",
+                        "default": "x",
+                        "enum": "e",
+                        "capsule": "c",
+                        "header": "h",
+                        "doc": "d",
+                        "kwonly": True,
+                    }
+                ],
+                "properties": [
+                    {
+                        "name": "g",
+                        "type": "double",
+                        "writable": True,
+                        "doc": "d",
+                        "enum": "e",
+                        "getter": "gg",
+                        "setter": "ss",
+                        "fn": "f",
+                    }
+                ],
+            }
+        },
+    }
+
+
 def test_every_vocabulary_key_is_exercised_by_a_fixture():
     """Delete any handle key from the vocabulary and this goes red.
 
@@ -424,6 +443,7 @@ def test_every_vocabulary_key_is_exercised_by_a_fixture():
     project started warning about a key that works.
     """
     assert _msgs(_every_handle_key_module()) == []
+    assert _msgs(_every_capsule_table_key_module()) == []
 
 
 # ── gh-1137: the keys with a REFUSAL behind them ─────────────────────────────

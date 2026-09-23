@@ -155,20 +155,23 @@ class TestScope:
 
         The false-positive risk it was protecting against is real and is now
         handled by giving the face a vocabulary rather than by skipping it.
-        `out_len_fn` is a handle METHOD key, so it is still a finding on a
-        module-level free function -- the same reading a plain module gets.
+        `arg_type` is a capsule-method spelling, so on a handle METHOD row it
+        is a finding. (This used a module-level `functions` row until
+        gh-1517, which refuses that table on every kind module outright.)
         """
         cfg = {
             "module": {
                 "dev": {
                     "kind": "handle",
-                    "functions": [{"name": "f", "out_len_fn": "n"}],
+                    "methods": [
+                        {"name": "f", "fn": "dev_f", "arg_type": "float"}
+                    ],
                 }
             }
         }
         msgs = _msgs(cfg)
         assert len(msgs) == 1, msgs
-        assert "out_len_fn" in msgs[0]
+        assert "arg_type" in msgs[0]
 
     def test_a_handle_modules_own_keys_are_not_findings(self):
         """The other half, and the one that matters more: a correct handle
