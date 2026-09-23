@@ -355,27 +355,11 @@ def shape_module_async_stream(tmp):
 
 
 def shape_module_serializable(tmp):
-    d, so, leaf = _mod(tmp, serializable=True)
-    # serializable generates the state-blob binding but calls a hand-written
-    # triplet (gh-400) the user declares in the sacred header and implements.
-    _append_header(
-        d,
-        "gizmo",
-        "size_t gizmo_state_bytes(const gizmo_state_t *s);\n"
-        "void gizmo_get_state(const gizmo_state_t *s, char *out);\n"
-        "int gizmo_set_state(gizmo_state_t *s, const char *in);",
-    )
-    _append_core(
-        d,
-        "gizmo",
-        "size_t gizmo_state_bytes(const gizmo_state_t *s)\n"
-        "{ (void)s; return sizeof(double); }\n"
-        "void gizmo_get_state(const gizmo_state_t *s, char *out)\n"
-        "{ *(double *)out = s->gain; }\n"
-        "int gizmo_set_state(gizmo_state_t *s, const char *in)\n"
-        "{ s->gain = *(const double *)in; return 0; }",
-    )
-    return d, so, leaf
+    # serializable generates the state-blob binding over the C triplet
+    # (gh-400), which the scaffold now declares and defines itself (gh-1509):
+    # nothing is appended by hand, so this shape also holds that the fresh
+    # tree builds as written.
+    return _mod(tmp, serializable=True)
 
 
 # ── methods ─────────────────────────────────────────────────────────────────
