@@ -14,6 +14,7 @@ from .. import _borrow
 from .. import _outbuf
 from .. import _record
 from .. import _types as T
+from .._builtins import result_local
 from ._types import _py_default
 from .. import _gluedoc
 from .._types import (
@@ -3497,12 +3498,13 @@ def make_methods_ctx(
                     f", &out{i + 1}" for i in range(len(multi_output))
                 )
                 if ret_meta:
+                    _res = result_local(params)
                     call_line = (
-                        f"    {ret_disp} y ="
+                        f"    {ret_disp} {_res} ="
                         f" {c_fn}"
                         f"({call_args_c}{extra_call});\n"
                     )
-                    py_primary = ret_meta["to_py"]("y")
+                    py_primary = ret_meta["to_py"](_res)
                 else:
                     call_line = f"    {c_fn}({call_args_c}{extra_call});\n"
                     py_primary = "Py_None"
@@ -3569,9 +3571,11 @@ def make_methods_ctx(
                     f"    return _out;\n"
                 )
             elif ret_meta:
-                ret_expr = ret_meta["to_py"]("y")
+                # gh-1512: `y` unless a param already took it.
+                _res = result_local(params)
+                ret_expr = ret_meta["to_py"](_res)
                 ret_body = (
-                    f"    {ret_disp} y ="
+                    f"    {ret_disp} {_res} ="
                     f" {c_fn}({call_args_c});\n"
                     f"{_p_cleanup}"
                     f"    return {ret_expr};\n"

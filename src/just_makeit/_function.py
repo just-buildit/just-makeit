@@ -31,6 +31,7 @@ from typing import Union
 from . import _config as C
 from . import _record
 from . import _render as T
+from ._builtins import require_param_names
 from ._object import _regenerate_module
 
 # A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
@@ -207,6 +208,13 @@ def run(
                 }
             }
         }
+    )
+    # gh-1512: the same refusal as `jm method` -- a param named after a C
+    # identifier the generated wrapper declares does not compile.
+    require_param_names(
+        f"function '{fn_name}'",
+        params,
+        outbuf=bool(variable_output or out_type),
     )
 
     cfg_path = root / C.FILENAME

@@ -45,7 +45,10 @@ __all__ = [
     "builtin_owned_members",
     "is_builtin_symbol",
     "overridden_builtin_slots",
+    "param_name_clash",
+    "require_param_names",
     "reserved_python_members",
+    "result_local",
 ]
 
 #: For each built-in that a declared method can genuinely *replace*, the
@@ -527,3 +530,189 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
     for name in absorbable_members(cfg, component):
         taken.pop(name, None)
     return taken
+
+
+# -- gh-1512: the C identifiers a binding declares beside a user's params ---
+#
+# The member names above are one namespace a declaration can collide with.
+# The other is inside each generated wrapper: a method's `--param y:double`
+# is parsed into a C local called `y`, and the wrapper jm writes around it
+# declares locals of its own. When the two agree on a name the tree does not
+# compile -- `redefinition of 'y'` -- and `jm method` had exited 0.
+#
+# Measured over every param-bearing binding shape (object and module-object
+# methods, module functions, init params; scalar, array, variable-output,
+# out-param, borrow, nogil, status-return, error-negative), the collisions
+# fall into five groups, each answered by the cheapest rule that holds:
+#
+# - `y`, a method wrapper's scalar result, is RENAMED to `_y` when a param
+#   takes the name (:func:`result_local`). It is the one plausible param name
+#   in the set, and renaming only on collision leaves every existing wrapper
+#   byte-identical -- doppler keeps its method fragments as owned units, and
+#   an unconditional rename would drift every one of them.
+# - The wrapper's own C signature (`self`, `args`, `kwds`) and `tp_init`'s
+#   keyword table (`kwlist`) are refused.
+# - Every other local jm declares in a wrapper starts with `_` (`_kwlist`,
+#   `_cap`, `_dims`, ...), so a leading underscore is refused outright: one
+#   rule that also covers a local added later.
+# - An array param `x` is marshalled through `x_obj` / `x_arr` / `x_raw` and
+#   reaches C with a derived `x_len`, so a sibling named one of those is
+#   refused. A scalar param derives nothing.
+# - An out-buffer wrapper (`variable_output` or `out_type`) declares `out`,
+#   `n_out`, `out_obj`, `out_arr`, `arr<N>` and `v<N>`, and a multi-output one
+#   `out1..outN`; those are refused on those shapes ONLY. doppler's
+#   `cvt.int_to_bin` has an out-param called `out`, which is legal on a shape
+#   that declares no `out` of its own.
+#
+# `tests/test_gh1512_param_local_names.py` renders the shapes with sentinel
+# param names and requires every identifier a wrapper declares to be claimed
+# by one of these rules, so a local added later cannot arrive unreserved.
+
+#: The C parameters of every generated wrapper, `tp_init` included, and the
+#: one unprefixed local `tp_init` declares (its keyword table).
+WRAPPER_SIGNATURE = frozenset({"self", "args", "kwds", "kwlist"})
+
+#: Locals an out-buffer wrapper declares beside the user's params. Plus two
+#: numbered families, one per output: `arr<N>` and `v<N>`.
+OUTBUF_LOCALS = frozenset({"out", "n_out", "out_obj", "out_arr"})
+_OUTBUF_NUMBERED = ("arr", "v")
+
+#: What jm appends to an ARRAY param's name: the locals it marshals the array
+#: through, and the length it passes to C.
+ARRAY_PARAM_SUFFIXES = ("_obj", "_arr", "_raw", "_len")
+
+
+def _param_name_type(param) -> "tuple[str, str]":
+    """``(name, type)`` of a CLI tuple, a `FnParam`, or a manifest table."""
+    if isinstance(param, dict):
+        return str(param.get("name", "")), str(param.get("type", ""))
+    return str(param[0]), (str(param[1]) if len(param) > 1 else "")
+
+
+def result_local(params) -> str:
+    """The C name a method wrapper stores its scalar result in.
+
+    ``y`` unless a param already is ``y``; then ``_y``, which no param can be
+    (a leading underscore is refused by :func:`param_name_clash`).
+
+    >>> result_local([("x", "double")])
+    'y'
+    >>> result_local([{"name": "y", "type": "double"}])
+    '_y'
+    """
+    names = {_param_name_type(p)[0] for p in params or ()}
+    return "_y" if "y" in names else "y"
+
+
+def param_name_clash(
+    name: str,
+    params,
+    *,
+    outbuf: bool = False,
+    multi_output: bool = False,
+) -> "str | None":
+    """Why *name* cannot be a param of this binding, or ``None``.
+
+    Parameters
+    ----------
+    name
+        The declared param name.
+    params
+        Every param of the same binding (CLI tuples, `FnParam`s or manifest
+        tables), *name*'s own entry included: the siblings decide which
+        derived names are taken.
+    outbuf
+        The binding writes a jm-allocated output buffer (`variable_output`
+        or `out_type`).
+    multi_output
+        The binding returns extra outputs through `out1..outN`.
+
+    Returns
+    -------
+    str or None
+        The reason, phrased to follow "collides with the generated C
+        binding:"; ``None`` when the name is free.
+
+    Examples
+    --------
+    >>> ps = [("x", "float[]"), ("x_len", "size_t")]
+    >>> param_name_clash("x_len", ps)
+    "'x_len' is the length jm passes to C for array param 'x'; name it 'x_nbits' or 'x_count' instead"
+    >>> param_name_clash("out", [("out", "float[]")]) is None
+    True
+    >>> param_name_clash("out", [("out", "int")], outbuf=True) is None
+    False
+    >>> param_name_clash("y", [("y", "double")]) is None
+    True
+    """
+    if name in WRAPPER_SIGNATURE:
+        return (
+            f"'{name}' is a C parameter of the wrapper jm generates"
+            " (self, args, kwds) or its keyword table (kwlist)"
+        )
+    if name.startswith("_"):
+        return (
+            f"'{name}' starts with '_', the namespace jm's generated locals"
+            " use"
+        )
+    for other, otype in map(_param_name_type, params or ()):
+        if other == name or not otype.endswith("[]"):
+            continue
+        for suffix in ARRAY_PARAM_SUFFIXES:
+            if name == other + suffix:
+                what = (
+                    "the length jm passes to C"
+                    if suffix == "_len"
+                    else "a local jm marshals"
+                )
+                # The rename advice matches gh-1002's init-param refusal.
+                return (
+                    f"'{name}' is {what} for array param '{other}';"
+                    f" name it '{other}_nbits' or '{other}_count' instead"
+                )
+    if outbuf and (
+        name in OUTBUF_LOCALS
+        or any(_numbered(name, stem) for stem in _OUTBUF_NUMBERED)
+    ):
+        return (
+            f"'{name}' is a local of the output buffer this binding allocates"
+        )
+    if multi_output and _numbered(name, "out"):
+        return f"'{name}' is one of the extra outputs this binding returns"
+    return None
+
+
+def _numbered(name: str, stem: str) -> bool:
+    """``name`` is ``stem`` followed by digits only (``arr0``, ``out12``)."""
+    return name.startswith(stem) and name[len(stem) :].isdigit()
+
+
+def require_param_names(
+    owner: str,
+    params,
+    *,
+    outbuf: bool = False,
+    multi_output: bool = False,
+) -> None:
+    """Exit 1 when a param of *owner* collides with a name jm's C declares.
+
+    Called by every command that renders a binding from params -- `jm
+    method`, `jm function`, and object creation for its init params --
+    before any C is written, so `apply`'s replay meets the same refusal as
+    the command line.
+    """
+    import sys
+
+    for param in params or ():
+        name = _param_name_type(param)[0]
+        why = param_name_clash(
+            name, params, outbuf=outbuf, multi_output=multi_output
+        )
+        if why:
+            print(
+                f"error: {owner}: param '{name}' collides with the"
+                f" generated C binding: {why}.\n  Rename the param; the"
+                " wrapper jm would write around it does not compile.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
