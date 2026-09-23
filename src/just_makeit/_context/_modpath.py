@@ -10,10 +10,12 @@ Python import path), so the templates take role-specific slots:
                          ``from .<leaf> import``
 - ``module_pypath``      the package path (``dsp/filters``) — output directory
 - ``module_output_name`` ``\\n    OUTPUT_NAME <leaf>`` only when nested
-- ``module_tp``          the fully-qualified ``tp_name`` prefix
+- ``module_tp``          the fully-qualified ``tp_name`` prefix: the
+                         importable package (``pkg.dsp.filters``)
 
-For a dotless id every slot equals today's value (and ``module_output_name`` is
-empty), so flat modules render byte-for-byte unchanged.
+For a dotless id every slot but ``module_tp`` collapses to the bare name (and
+``module_output_name`` is empty). ``module_tp`` never does: a type's
+``__module__`` must name a module Python can import (gh-1486).
 """
 
 from __future__ import annotations
@@ -49,9 +51,16 @@ def make_module_ctx(
         "module_output_name": (
             f"\n    OUTPUT_NAME {mp.leaf}" if nested else ""
         ),
-        # tp_name stays bare (cname) for flat modules — matching today — and
-        # becomes the full dotted import path when nested.
-        "module_tp": f"{pkg}.{mp.id}" if (nested and pkg) else mp.cname,
+        # gh-1486: the dotted package the module's classes are imported
+        # from, `package` override included -- `__module__` is read from
+        # `tp_name`, and pickle imports it to find the class. This was the
+        # bare cname for a flat module, which named a module that does not
+        # exist (`dsp.Fir` for `demo.dsp.Fir`), so no class pickled.
+        "module_tp": (
+            f"{pkg}.{(package or mp.pypath).replace('/', '.')}"
+            if pkg
+            else mp.cname
+        ),
         "module_docstring_py": docstring_py,
         "module_doc_c": doc_c,
     }

@@ -189,6 +189,23 @@
     being refused. A hand-written state entry with no `default` also
     crashed `apply` with `KeyError`; it now takes the zero `--state` would.
 
+- **Every generated class names a module Python can import, so it pickles**
+    (gh-1486). A type's `__module__` is the part of its `tp_name` before the
+    last dot, and jm wrote `"<comp>.<Comp>"` for a standalone object and
+    `"<module>.<Comp>"` for a flat module's. `Gain.__module__` was `'gain'`,
+    and `pickle.dumps(Gain)` failed because `gain` cannot be imported. So
+    did any instance whose reduction names its type. Every type a
+    component's binding emits now uses one prefix: `<pkg>.<comp>` for a
+    standalone object, and `<pkg>.<module>` for a module object (dotted when
+    nested, and the `package` it is re-exported from when one is set). That
+    covers the class, a view, a stream iterator and a `single` record,
+    whose default `__module__` was the bare component too
+    (`--record-module` still overrides it). A standalone object's `_ext.c`
+    picks this up on the next `apply`. A module object's existing binding
+    fragment keeps the old name until you run `jm adopt <obj>`. A new test
+    builds a tree with each shape, imports every class, and pickles it and
+    a `serializable` instance.
+
 - **A fresh scaffold's Python is clean under `ruff check` and `ruff format`**
     (gh-1478). Every scaffold failed both on its first commit: `E401` and
     `F401` from the generated test's one-line import of `contextlib` and

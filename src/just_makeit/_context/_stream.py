@@ -250,7 +250,7 @@ static PyObject *
 
 {async_iter_funcs}static PyTypeObject {iter_ty} = {{
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "{component}.{iter_t}",
+    .tp_name      = "<<module_tp>>.{iter_t}",
     .tp_basicsize = sizeof({iter_t}),
     .tp_dealloc   = (destructor){iter_t}_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
