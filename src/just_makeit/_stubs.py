@@ -2614,27 +2614,80 @@ def _uses_os(body: str) -> bool:
     return _coerce.PATH_PY_TYPE in body
 
 
-def _uses_numpy(cfg: dict, module: str) -> bool:
-    """Return True if any object in this module uses numpy (steps or arrays)."""
-    for obj in C.module_objects(cfg, module):
-        at = C.arg_type(cfg, obj)
-        rt = C.return_type(cfg, obj)
-        # Any non-void arg/return → steps() uses NDArray
-        if at not in ("void",) or rt not in ("void",):
-            return True
-        for m in C.methods(cfg, obj):
-            if m.get("variable_output"):
-                return True
-            for p in m.get("params", []):
-                if p["type"].endswith("[]"):
-                    return True
-    for fn in C.module_functions(cfg, module):
-        if fn.get("out_type"):
-            return True
-        for p in fn.get("params", []):
-            if p["type"].endswith("[]"):
-                return True
-    return False
+def numpy_imports(body: str) -> "list[str]":
+    """The numpy import lines the rendered stub *body* needs (gh-1478).
+
+    Asked of the rendered text, like :func:`_uses_os` and :func:`_uses_any`
+    and for the same reason. This used to be a list of the declarations that
+    can reach numpy -- non-void step types, array params, variable output --
+    and the standalone peer did not ask at all: it imported both names
+    unconditionally, so every ``--no-step`` object's stub carried two
+    ``F401`` findings for ruff. Docstrings are ignored: a doctest that
+    spells ``np.zeros`` needs numpy at run time, not in the stub.
+
+    >>> numpy_imports("    def f(self) -> int: ...")
+    []
+    >>> numpy_imports("    def f(self) -> NDArray[np.float32]: ...")
+    ['import numpy as np', 'from numpy.typing import NDArray']
+    >>> numpy_imports("    def f(self) -> NDArray[Any]: ...")
+    ['from numpy.typing import NDArray']
+    """
+    code = _DOCSTRING_RE.sub("", body)
+    out = []
+    if _re.search(r"\bnp\.", code):
+        out.append("import numpy as np")
+    if _re.search(r"\bNDArray\b", code):
+        out.append("from numpy.typing import NDArray")
+    return out
+
+
+def prune_stub_imports(lines: "list[str]") -> "list[str]":
+    """*lines* without the numpy imports and ``Any`` the stub never names.
+
+    gh-1478. The ``handle``, ``capsule`` and ``composer`` stub writers start
+    from a fixed import block, so a module whose surface never reaches numpy
+    (or ``Any``) shipped an ``F401`` for ruff. They are asked the same two
+    questions, of the same rendered text, as the object stubs:
+    :func:`numpy_imports` and :func:`_uses_any`.
+
+    >>> prune_stub_imports([
+    ...     "from typing import Any, final",
+    ...     "import numpy as np",
+    ...     "from numpy.typing import NDArray",
+    ...     "def f(x: int) -> NDArray[Any]: ...",
+    ... ])  # doctest: +NORMALIZE_WHITESPACE
+    ['from typing import Any, final',
+     'from numpy.typing import NDArray',
+     'def f(x: int) -> NDArray[Any]: ...']
+    >>> prune_stub_imports(["from typing import Any", "def f() -> int: ..."])
+    ['def f() -> int: ...']
+    """
+    body = "\n".join(
+        ln for ln in lines if not ln.startswith(("import ", "from "))
+    )
+    need = set(numpy_imports(body))
+    any_used = _uses_any(body)
+    out = []
+    for ln in lines:
+        if ln in _NUMPY_IMPORT_LINES and ln not in need:
+            continue
+        if ln.startswith("from typing import ") and not any_used:
+            names = [
+                n.strip()
+                for n in ln[len("from typing import ") :].split(",")
+                if n.strip() != "Any"
+            ]
+            if not names:
+                continue
+            ln = "from typing import " + ", ".join(names)
+        out.append(ln)
+    return out
+
+
+_NUMPY_IMPORT_LINES = (
+    "import numpy as np",
+    "from numpy.typing import NDArray",
+)
 
 
 # ── public entry point ────────────────────────────────────────────────────────
@@ -2796,7 +2849,6 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     mp = C.module_paths(module)
     out_pkg = C.module_package(cfg, module) or mp.pypath
 
-    needs_numpy = _uses_numpy(cfg, module)
     needs_literal = _uses_literal(cfg, module)
     # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is
     # remembered here so the import still lands in its historical position
@@ -2835,9 +2887,6 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     if needs_sequence:
         parts.append("from collections.abc import Sequence")
     _os_slot = len(parts)
-    if needs_numpy:
-        parts.append("import numpy as np")
-        parts.append("from numpy.typing import NDArray")
     functions = C.module_functions(cfg, module)
     # gh-384: header Doxygen for free functions, stashed transiently on cfg by
     # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
@@ -2912,6 +2961,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # rendered body is what gets asked. A list of surfaces that can carry a
     # path is a list that goes stale, and it did — a method parameter was the
     # third surface and had no arm.
+    parts[_os_slot:_os_slot] = numpy_imports("\n".join(parts[_os_slot:]))
     if _uses_os("\n".join(parts[_os_slot:])):
         parts.insert(_os_slot, "import os")
     # After `os`, so the body this reads is final. Inserting lower down does

@@ -35,9 +35,9 @@ _SET_VAL: dict[str, tuple[str, str]] = {
     "bool": ("true", "True"),
     "float": ("2.0f", "2.0"),
     "double": ("2.0", "2.0"),
-    "float _Complex": ("2.0f + 0.0f * I", "1.0+0.0j"),
-    "double _Complex": ("2.0 + 0.0 * I", "1.0+0.0j"),
-    "long double _Complex": ("2.0L + 0.0L * I", "1.0+0.0j"),
+    "float _Complex": ("2.0f + 0.0f * I", "1.0 + 0.0j"),
+    "double _Complex": ("2.0 + 0.0 * I", "1.0 + 0.0j"),
+    "long double _Complex": ("2.0L + 0.0L * I", "1.0 + 0.0j"),
 }
 
 #: Every integer type. The round-trip only needs a value that survives it.
@@ -104,6 +104,22 @@ def _py_default(ctype: str, default: str) -> str:
     return strip_c_literal_suffix(default) if default.strip() else "..."
 
 
+def _py_eq(lhs: str, rhs: str) -> str:
+    """A generated test's equality assertion, spelled the way ruff accepts.
+
+    ``x == True`` is ruff's ``E712`` (gh-1478): a ``bool`` state field's
+    default and sample value render as the singletons, which compare by
+    identity.
+
+    >>> _py_eq("obj.get_on()", "True")
+    'obj.get_on() is True'
+    >>> _py_eq("obj.get_k()", "3")
+    'obj.get_k() == 3'
+    """
+    op = "is" if rhs in ("True", "False", "None") else "=="
+    return f"{lhs} {op} {rhs}"
+
+
 def _py_sample_val(meta: dict, ctype: str = "") -> str:
     """Return a Python test set-value for the given type metadata.
 
@@ -115,7 +131,7 @@ def _py_sample_val(meta: dict, ctype: str = "") -> str:
     if ctype:
         return _SET_VAL.get(ctype, _SET_VAL_DEFAULT)[1]
     if meta["kind"] == "complex":
-        return "1.0+0.0j"
+        return "1.0 + 0.0j"
     if meta["kind"] == "float":
         return "2.0"
     return "2"

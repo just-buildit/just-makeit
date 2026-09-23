@@ -2272,8 +2272,9 @@ def render_pyi(
     # it a long signature stays long — doppler's `sample_clock.pyi:69` was a
     # 97-column `def track(...)` that splits cleanly at its top-level commas.
     from ._pyfmt import reflow_pyi
+    from ._stubs import prune_stub_imports
 
-    return reflow_pyi("\n".join(lines))
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 # ── materialization (driven by jm apply's _replay; mirrors _capsule) ──────────

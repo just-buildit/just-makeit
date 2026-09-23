@@ -7,7 +7,5 @@ stale	ruff check	src/stale/tests/test_gain.py F401
 stale	ruff format	src/stale/__init__.py
 stale	ruff format	src/stale/benchmarks/bench_gain.py
 stale	ruff format	src/stale/dsp/benchmarks/bench_fir.py
-stale	ruff format	src/stale/dsp/dsp.pyi
 stale	ruff format	src/stale/dsp/tests/test_fir.py
-stale	ruff format	src/stale/gain.pyi
 stale	ruff format	src/stale/tests/test_gain.py

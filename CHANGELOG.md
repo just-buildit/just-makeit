@@ -189,6 +189,26 @@
     being refused. A hand-written state entry with no `default` also
     crashed `apply` with `KeyError`; it now takes the zero `--state` would.
 
+- **A fresh scaffold's Python is clean under `ruff check` and `ruff format`**
+    (gh-1478). Every scaffold failed both on its first commit: `E401` and
+    `F401` from the generated test's one-line import of `contextlib` and
+    `math`, `F841` and `E712` in some shapes, and `ruff format` rewriting
+    `__init__.py`, the `.pyi`, the benchmark and the test. Stubs now import
+    numpy only when their text names it (both stub generators, one predicate),
+    and a scaffolded test or benchmark drops a numpy or pytest import it never
+    uses. Blank lines between stub members follow ruff's stub layout, and
+    between the snippets of a test or benchmark follow PEP 8, in one pass each
+    rather than in each of the emitters. A `bool` field is asserted with `is`,
+    the benchmark's constants are no longer column-aligned, and a no-step
+    benchmark times construction instead of building an object it never uses.
+    The unittest face of a blockwise test no longer imports pytest, which is
+    what its shim exists to avoid. The app scripts (`console`, `pep723`) are
+    laid out the way ruff keeps them, and a `--record` JSON dump no longer runs
+    past the line. Twenty-four scaffold shapes are held to ruff with no
+    ratchet, and the Gate A ratchet loses every ruff line but
+    `stale_project`'s, whose frozen 0.33-era test and benchmark files are the
+    author's and are never rewritten.
+
 ### Changed
 
 - **The scaffolded Python test follows the constructor** (gh-1489).

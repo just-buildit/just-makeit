@@ -50,12 +50,11 @@ def _block_const(n: int) -> str:
 def _block_consts(sizes: "list[int]") -> str:
     """Render the ``BLOCK_*`` constant assignments block (no trailing NL).
 
-    The ``=`` columns are aligned to the widest name so the default
-    [1024, 65536] reproduces the historical two-line block exactly.
+    One space either side of ``=``: the columns used to be aligned to the
+    widest name, which every formatter a project runs (ruff, black) undoes,
+    so a scaffold's first ``ruff format`` rewrote the file (gh-1478).
     """
-    names = [_block_const(n) for n in sizes]
-    width = max(len(nm) for nm in names) + 1
-    return "\n".join(f"{nm:<{width}}= {n:_}" for nm, n in zip(names, sizes))
+    return "\n".join(f"{_block_const(n)} = {n:_}" for n in sizes)
 
 
 def _block_reps_div(n: int) -> int:
@@ -160,12 +159,18 @@ def _bench_timed_lines(
         div = _block_reps_div(n)
         scale, unit = _block_unit(n)
         label = label_tmpl.format(lbl=lbl)
-        msa = "" if is_void_return else f"  ({{{const} / dt / 1e6:.1f}} MSa/s)"
+        # The rate is its own statement so the print stays inside 79
+        # columns: a longer line is one `ruff format` splits (gh-1478).
+        msa = "" if is_void_return else "  ({msa:.1f} MSa/s)"
         if with_buffer:
             out.append(f"    {var} = np.ones({const}, dtype={in_np_dtype})\n")
         out.append(
             f'    dt = _bench("{label}", {call.format(arg=arg)},'
             f" reps=max(1, REPS // {div}))\n"
+        )
+        if msa:
+            out.append(f"    msa = {const} / dt / 1e6\n")
+        out.append(
             f"    print(f\"  {{'{label}':<22}} {{dt * {scale}:9.3f}}"
             f' {unit}{msa}")\n'
         )

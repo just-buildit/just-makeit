@@ -2852,7 +2852,7 @@ def run(
     _py_ctx = {**ctx, "module": _out_pkg.replace("/", ".")}
 
     def r_py(tmpl):
-        return R.render(tmpl, _py_ctx)
+        return R.render_scaffold_py(tmpl, _py_ctx)
 
     tests_init = pkg_mod_dir / "tests" / "__init__.py"
     if not tests_init.exists():

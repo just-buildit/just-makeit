@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from . import _textio
 
+import json
 import sys
 from pathlib import Path
 
@@ -181,6 +182,18 @@ def _extra_flags(flags: list[dict] | None) -> list[dict]:
 
 
 # ── Python argparse generation ───────────────────────────────────────────────
+def _pystr(value: str) -> str:
+    """*value* as a double-quoted Python literal, the spelling ruff keeps.
+
+    ``repr`` single-quotes, and ``ruff format`` rewrites every one of them
+    on a project's first run (gh-1478).
+
+    >>> _pystr("fast")
+    '"fast"'
+    """
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _argparse_block(flags: list[dict]) -> str:
     """Build p.add_argument(...) lines for each flag, indented 4 sp."""
     lines = []
@@ -190,11 +203,12 @@ def _argparse_block(flags: list[dict]) -> str:
             # choice flag: argparse choices=[...], string-valued
             dflt = f["default"] if f["default"] in chs else chs[0]
             helptext = _flag_help(f["name"], f["help"], dflt)
-            choices_lit = ", ".join(repr(c) for c in chs)
+            choices_lit = ", ".join(_pystr(c) for c in chs)
             lines.append(
                 f"    p.add_argument(\n"
-                f'        "--{f["name"]}", choices=[{choices_lit}],'
-                f" default={dflt!r},\n"
+                f'        "--{f["name"]}",\n'
+                f"        choices=[{choices_lit}],\n"
+                f"        default={_pystr(dflt)},\n"
                 f'        help="{helptext}",\n'
                 f"    )"
             )
@@ -209,10 +223,12 @@ def _argparse_block(flags: list[dict]) -> str:
         elif pytype in ("float", "int", "complex"):
             spec = f"default={pydef}"  # bare numeric literal
         else:
-            spec = f"default={pydef!r}"  # quoted string
+            spec = f"default={_pystr(pydef)}"  # quoted string
         lines.append(
             f"    p.add_argument(\n"
-            f'        "--{f["name"]}", type={pytype}, {spec},\n'
+            f'        "--{f["name"]}",\n'
+            f"        type={pytype},\n"
+            f"        {spec},\n"
             f'        help="{helptext}",\n'
             f"    )"
         )
@@ -260,12 +276,11 @@ _PY_PACK_WRITE = (
     "            for _z in out:\n"
     '                _lines.append("%0.17g,%0.17g" % (_z.real, _z.imag))\n'
     "        else:\n"
-    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
-    '                   "ci8": 127.0}[_st]\n'
+    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0, "ci8": 127.0}[_st]\n'
     "            for _z in out:\n"
-    '                _lines.append("%d,%d" % (\n'
-    "                    int(min(max(_z.real, -1.0), 1.0) * _sc),\n"
-    "                    int(min(max(_z.imag, -1.0), 1.0) * _sc)))\n"
+    "                _re = int(min(max(_z.real, -1.0), 1.0) * _sc)\n"
+    "                _im = int(min(max(_z.imag, -1.0), 1.0) * _sc)\n"
+    '                _lines.append("%d,%d" % (_re, _im))\n'
     '        _buf = ("\\n".join(_lines) + "\\n").encode() if _lines else b""\n'
     "    else:\n"
     '        if _st == "cf32":\n'
@@ -277,10 +292,8 @@ _PY_PACK_WRITE = (
     "            _iq[0::2] = out.real\n"
     "            _iq[1::2] = out.imag\n"
     "            _iq = np.clip(_iq, -1.0, 1.0)\n"
-    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0,\n'
-    '                   "ci8": 127.0}[_st]\n'
-    '            _dt = {"ci32": np.int32, "ci16": np.int16,\n'
-    '                   "ci8": np.int8}[_st]\n'
+    '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0, "ci8": 127.0}[_st]\n'
+    '            _dt = {"ci32": np.int32, "ci16": np.int16, "ci8": np.int8}[_st]\n'
     "            _a = (_iq * _sc).astype(_dt)\n"
     '        if args.endian == "be":\n'
     "            _a = _a.byteswap()\n"
@@ -308,7 +321,8 @@ def _py_io_loop(
             [
                 create,
                 "    out = np.asarray(\n"
-                f"        obj.steps(args.count), dtype={_np_dtype(ret_t)}\n"
+                "        obj.steps(args.count),\n"
+                f"        dtype={_np_dtype(ret_t)},\n"
                 "    )",
                 _PY_PACK_WRITE,
             ]
@@ -318,8 +332,10 @@ def _py_io_loop(
             [
                 _py_read(_np_dtype_of(arg_t)),
                 create,
-                "    out = np.asarray("
-                f"obj.steps(data), dtype={_np_dtype_of(ret_t)})",
+                "    out = np.asarray(\n"
+                "        obj.steps(data),\n"
+                f"        dtype={_np_dtype_of(ret_t)},\n"
+                "    )",
                 _PY_PACK_WRITE,
             ]
         )
@@ -328,9 +344,10 @@ def _py_io_loop(
             [
                 _py_read(_np_dtype(arg_t)),
                 create,
-                f"    out = np.array(\n"
-                f"        [obj.step(x) for x in data], dtype={_np_dtype(ret_t)}\n"
-                f"    )",
+                "    out = np.array(\n"
+                "        [obj.step(x) for x in data],\n"
+                f"        dtype={_np_dtype(ret_t)},\n"
+                "    )",
                 _PY_WRITE,
             ]
         )
@@ -339,7 +356,10 @@ def _py_io_loop(
             [
                 _py_read(_np_dtype_of(arg_t)),
                 create,
-                f"    out = np.asarray(obj.steps(data), dtype={_np_dtype_of(ret_t)})",
+                "    out = np.asarray(\n"
+                "        obj.steps(data),\n"
+                f"        dtype={_np_dtype_of(ret_t)},\n"
+                "    )",
                 _PY_WRITE,
             ]
         )
@@ -351,9 +371,10 @@ def _py_io_loop(
         return "\n".join(
             [
                 create,
-                f"    out = np.asarray(\n"
-                f"        obj.steps(args.count), dtype={_np_dtype(ret_t)}\n"
-                f"    )",
+                "    out = np.asarray(\n"
+                "        obj.steps(args.count),\n"
+                f"        dtype={_np_dtype(ret_t)},\n"
+                "    )",
                 _PY_WRITE,
             ]
         )
@@ -735,12 +756,21 @@ def _py_record_block(flags: list[dict], name: str, version: str) -> str:
     for f in flags:
         if f.get("choices") or f["type"] in _C_REC_FMT:
             fields.append(f'"{f["name"]}": args.{f["name"]}')
-    body = ", ".join(fields)
+    # One key per line with a trailing comma: the layout ruff keeps at any
+    # width, where the one-line dict ran past it (gh-1478).
+    body = "".join(f"                    {fl},\n" for fl in fields)
     return (
         "    if args.record:\n"
         "        import json\n"
+        "\n"
         '        with open(args.record, "w") as _rf:\n'
-        f"            json.dump({{{body}}}, _rf, indent=2)"
+        "            json.dump(\n"
+        "                {\n"
+        f"{body}"
+        "                },\n"
+        "                _rf,\n"
+        "                indent=2,\n"
+        "            )"
     )
 
 
@@ -1170,10 +1200,14 @@ def _py_subparsers(commands: list[dict]) -> str:
             elif pytype in ("float", "int", "complex"):
                 dr = pydef
             else:
-                dr = repr(pydef)
+                dr = _pystr(pydef)
             lines.append(
-                f'    {var}.add_argument("--{f["name"]}", type={pytype}, '
-                f'default={dr}, help="{f["help"] or f["name"]}")'
+                f"    {var}.add_argument(\n"
+                f'        "--{f["name"]}",\n'
+                f"        type={pytype},\n"
+                f"        default={dr},\n"
+                f'        help="{f["help"] or f["name"]}",\n'
+                f"    )"
             )
         lines.append(f"    {var}.set_defaults(_fn=_cmd_{c['name']})")
     return "\n".join(lines)
