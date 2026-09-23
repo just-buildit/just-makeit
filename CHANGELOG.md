@@ -135,6 +135,21 @@
     identifier a wrapper declares to be claimed by the rule, so a local
     added later cannot arrive unreserved.
 
+### Changed
+
+- **The scaffolded Python test follows the constructor** (gh-1489).
+    `src/<pkg>/tests/test_<comp>.py` was written once against the
+    constructor as `jm new` saw it, so an init param added later left every
+    test calling the old signature (5 of 5 failing with `TypeError`) and
+    `status` could not say so. The file is now born carrying gh-1448's
+    ownership token, `# jm:generated test_<comp>.py`: while that line is
+    there `apply` renders it whole and `status --check` reports its drift.
+    Delete the line and the file is yours; jm never writes it again. `apply`
+    refuses, writing nothing, rather than delete a test function it does not
+    generate. A project scaffolded before this has no token, and its tests
+    are untouched. The `enum_constants` example no longer tells readers to
+    delete the test.
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed

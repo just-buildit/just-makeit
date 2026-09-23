@@ -296,7 +296,7 @@ def render(
         "",
         "DO NOT EDIT: `just-makeit apply` rewrites this file. It is jm's,",
         "not yours -- your own tests belong beside it in",
-        f"test_{comp}.py, which jm writes once and never touches again.",
+        f"test_{comp}.py, once you delete its `# jm:generated` line.",
         "",
         "What you read is exactly what you can write. Both faces take their",
         f"element from ONE `[[{comp}.records]]` declaration, so this asserts",

@@ -164,9 +164,13 @@ def run(root: Path) -> None:
     with open(proj / "objects" / "gate.toml", "a", encoding="utf-8") as f:
         f.write(GATE_TOML)
     # The Python test was scaffolded for the constructor `jm new` wrote; this
-    # one takes `level`. Never edited, so it takes today's render.
-    (proj / "src/levels/tests/test_gate.py").unlink()
+    # one takes `level`. It still carries its ownership token, so `apply`
+    # renders it for the new constructor (gh-1489) -- no delete step.
     _jm(proj, "apply")
+    test_py = (proj / "src/levels/tests/test_gate.py").read_text(
+        encoding="utf-8"
+    )
+    assert "Gate(threshold=20)" not in test_py, "the test kept the old ctor"
 
     # ── 3. The binding spells constants, never an index ──────────────────
     ext = (proj / "native/src/gate/gate_ext.c").read_text(encoding="utf-8")

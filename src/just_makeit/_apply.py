@@ -1254,6 +1254,112 @@ def _refuse_owned_that_would_lose(
     raise SystemExit("\n".join(lines))
 
 
+def _owned_tests(temp_root: Path, root: Path) -> set:
+    """Scaffolded Python tests that still carry jm's ownership token.
+
+    gh-1489. `jm new` / `jm object` write ``tests/test_<comp>.py`` against
+    the constructor as it is then. It was create-only, so a later init
+    param left it calling the old signature -- 5 of 5 tests failing -- and
+    `status` could not say so, because a file the author owns is expected
+    to differ from its render.
+
+    The file is now born with `_render.owned_token`, the gh-1448 mechanism
+    rather than a second one: while the token names the file, the file is
+    jm's and `apply` renders it whole. Deleting the token makes it the
+    author's, and this never selects it again. A project scaffolded before
+    the token existed has none, so nothing here touches its tests.
+
+    Read from the REAL tree: the token records the file's state, and the
+    render always carries one.
+    """
+    from ._render import is_owned_render
+
+    out: set = set()
+    for src in temp_root.glob("src/**/tests/test_*.py"):
+        rel = src.relative_to(temp_root)
+        dst = root / rel
+        if dst.is_file() and is_owned_render(
+            dst.read_text(encoding="utf-8"), dst.name
+        ):
+            out.add(rel)
+    return out
+
+
+def _test_units(text: str) -> "set[str] | None":
+    """The test functions *text* defines, qualified by class; None if unparsable.
+
+    >>> sorted(_test_units("class T:\\n  def test_a(self): pass\\n"
+    ...                    "def test_b(): pass\\ndef helper(): pass\\n"))
+    ['T.test_a', 'test_b']
+    >>> _test_units("def (") is None
+    True
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    out: set = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test"):
+            out.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            for sub in node.body:
+                if isinstance(sub, ast.FunctionDef) and sub.name.startswith(
+                    "test"
+                ):
+                    out.add(f"{node.name}.{sub.name}")
+    return out
+
+
+def _refuse_owned_test_that_would_lose(
+    temp_root: Path, root: Path, owned: set
+) -> None:
+    """Refuse to render an owned test over a test only the disk has (gh-1489).
+
+    The unit is a TEST FUNCTION. A difference inside one is overwritten:
+    the file says jm regenerates it, and an older render of the same test
+    is exactly the drift ownership exists to fix. A test the render does
+    not produce at all is different -- the likeliest reading is one the
+    author added without deleting the token, and rendering would delete it
+    with rc 0. jm cannot tell that from a test an older shape rendered
+    (a `reset` since declared away), so it refuses and says both ways out,
+    the same stance `_refuse_owned_that_would_lose` takes for a fragment.
+
+    An owned file that no longer parses is refused too: it was edited, and
+    there is no telling what by.
+    """
+    blocked: list = []
+    for rel in sorted(owned):
+        dst, src = root / rel, temp_root / rel
+        if not src.is_file():
+            continue
+        have = _test_units(dst.read_text(encoding="utf-8"))
+        want = _test_units(src.read_text(encoding="utf-8")) or set()
+        if have is None:
+            blocked.append((rel, ["(does not parse)"]))
+        elif have - want:
+            blocked.append((rel, sorted(have - want)))
+    if not blocked:
+        return
+    lines = [
+        "error: rendering these jm-owned tests would delete a test jm does",
+        "  not generate:",
+    ]
+    for rel, units in blocked:
+        lines.append(f"  {rel.as_posix()}")
+        lines += [f"    only here: {u}" for u in units]
+    lines += [
+        "",
+        "  If you wrote it, the file is yours now: delete its",
+        "  `# jm:generated` line and jm will never write it again.",
+        "  If jm generated it for a shape the object no longer has, delete",
+        "  the test and re-run `just-makeit apply`.",
+    ]
+    raise SystemExit("\n".join(lines))
+
+
 def _sync_missing(
     temp_root: Path, root: Path, owned: "set | None" = None
 ) -> list[Path]:
@@ -3371,7 +3477,9 @@ def run(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
-            created = _sync_missing(temp_root, root, _owned)
+            _tests = _owned_tests(temp_root, root)
+            _refuse_owned_test_that_would_lose(temp_root, root, _tests)
+            created = _sync_missing(temp_root, root, _owned | _tests)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
             # destructor to `int` when the manifest now declares it fallible.

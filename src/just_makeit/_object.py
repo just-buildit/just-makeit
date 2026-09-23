@@ -2861,7 +2861,11 @@ def run(
         if C.is_pytest_benchmark(cfg)
         else R.MODULE_BENCH_PY
     )
-    _write(pkg_mod_dir / "tests" / f"test_{comp}.py", r_py(test_py_tmpl))
+    # gh-1489: born owned, as the standalone test is (`_init`).
+    _write(
+        pkg_mod_dir / "tests" / f"test_{comp}.py",
+        R.owned_test(r_py(test_py_tmpl), f"test_{comp}.py"),
+    )
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
