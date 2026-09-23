@@ -136,6 +136,17 @@ def _make_component_ctx(component: str) -> dict[str, str]:
         # the `<<depends_includes>>` slot from leaking on paths that have no
         # dependency info to inject.
         "depends_includes": "",
+        # gh-1486: the Python module every type this component emits is
+        # imported from -- the prefix of its `tp_name`, which is where
+        # `__module__` comes from and so what pickle imports to find the
+        # class. A standalone object's `.so` is `<pkg>/<component>.so`, so
+        # the default names that. It is written as two nested slots rather
+        # than a value because the package is not known here; `render`
+        # sweeps to a fixed point, and every render path sets `package`. A
+        # module object's ctx replaces this wholesale with
+        # `make_module_ctx`'s value, which is the package its class is
+        # re-exported from.
+        "module_tp": "<<package>>.<<component>>",
         # Stream-generator slots (gh-201). Default empty so every render path
         # has them — a non-streamable object renders byte-identical, and the
         # streamable paths overwrite these via Ctx.make_stream_ctx.

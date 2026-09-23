@@ -2237,7 +2237,7 @@ class TestMethodSingleRecord:
             record_name="ToneMetrics",
         )
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
-        assert '"tm.ToneMetrics"' in ext  # chosen name
+        assert '"p.tm.ToneMetrics"' in ext  # chosen name
         assert '"tm.ToneMeas"' not in ext  # not the derived name
 
     def test_record_name_round_trips_and_survives_apply(self, tmp_path):
@@ -2270,7 +2270,7 @@ class TestMethodSingleRecord:
         (dest / "native/src/tm/tm_ext.c").unlink()
         apply_run(dest)
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
-        assert '"tm.ToneMetrics"' in ext
+        assert '"p.tm.ToneMetrics"' in ext
 
     def test_record_module_qualifies_structseq_module(self, tmp_path):
         # gh-261 item 2: record_module sets the structseq __module__ to the
@@ -2301,11 +2301,14 @@ class TestMethodSingleRecord:
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
         # __module__ is everything before the last dot of the desc name.
         assert '"my_pkg.dsp.ToneMetrics"' in ext
-        assert '"tm.ToneMetrics"' not in ext  # not the component name
+        assert (
+            '"p.tm.ToneMetrics"' not in ext
+        )  # the override replaces the default
 
-    def test_record_module_unset_keeps_component_name(self, tmp_path):
-        # No record_module -> historic behaviour (component-qualified), so
-        # existing projects are byte-identical.
+    def test_record_module_unset_names_the_import_path(self, tmp_path):
+        # gh-1486: no record_module -> the module the object is imported
+        # from (`p.tm`), the prefix the class's own tp_name carries. It was
+        # the bare component (`tm`), a module that does not exist.
         dest = tmp_path / "p"
         new_run("p", dest)
         object_run(
@@ -2329,7 +2332,7 @@ class TestMethodSingleRecord:
             record_name="ToneMetrics",
         )
         ext = (dest / "native/src/tm/tm_ext.c").read_text("utf-8")
-        assert '"tm.ToneMetrics"' in ext
+        assert '"p.tm.ToneMetrics"' in ext
 
     def test_record_module_round_trips_and_survives_apply(self, tmp_path):
         dest = tmp_path / "p"

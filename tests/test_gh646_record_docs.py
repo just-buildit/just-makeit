@@ -160,15 +160,16 @@ class TestRuntimeFace:
             record_name="ToneMetrics",
             record_doc="Tone measurement results.",
         )
-        assert '"meas.ToneMetrics", "Tone measurement results."' in _ext_c(
-            root
+        assert (
+            '"demo.meas.ToneMetrics", "Tone measurement results."'
+            in _ext_c(root)
         )
 
     def test_no_null_docs_remain(self, tmp_path):
         """The reported symptom, asserted directly."""
         c = _ext_c(_project(tmp_path, record_name="ToneMetrics"))
         assert '{"enob", NULL}' not in c
-        assert '"meas.ToneMetrics", NULL' not in c
+        assert '"demo.meas.ToneMetrics", NULL' not in c
 
     def test_an_undocumented_record_still_gets_the_synopsis(self, tmp_path):
         root = _project(
@@ -177,7 +178,7 @@ class TestRuntimeFace:
             result_fields=[{"name": "enob", "type": "double"}],
         )
         c = _ext_c(root)
-        assert '"meas.ToneMetrics", "ToneMetrics(enob)"' in c
+        assert '"demo.meas.ToneMetrics", "ToneMetrics(enob)"' in c
         # ...and an undocumented FIELD keeps NULL rather than inventing prose.
         assert '{"enob", NULL}' in c
 

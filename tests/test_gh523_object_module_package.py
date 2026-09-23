@@ -281,15 +281,28 @@ def test_module_without_package_renders_unchanged(tmp_path):
 def test_packaged_and_plain_differ_only_in_the_python_destination(tmp_path):
     """Byte-for-byte guard: the ONLY generated difference between a module
     with `package = "wfm"` and the same module without it is the Python
-    destination — the C sources are identical."""
+    destination. The C sources are identical except for the one line that
+    NAMES that destination: the class's `tp_name`, whose prefix is its
+    `__module__` and so must be the package it is imported from (gh-1486).
+    """
     packaged = _project(tmp_path / "a", PACKAGED_TOML)
     plain = _project(tmp_path / "b", PLAIN_TOML)
 
     def _c_files(root):
         return {
-            str(p.relative_to(root)): p.read_bytes()
+            str(p.relative_to(root)): p.read_text(encoding="utf-8")
             for p in sorted((root / "native").rglob("*"))
             if p.is_file() and p.suffix in (".c", ".h")
         }
 
-    assert _c_files(packaged) == _c_files(plain)
+    a, b = _c_files(packaged), _c_files(plain)
+    assert a.keys() == b.keys()
+    frag = "native/src/wfm_reader/wfm_reader_ext_wfm_reader.c"
+    for path in a:
+        if path != frag:
+            assert a[path] == b[path], path
+    packaged_tp = '.tp_name      = "probe.wfm.Reader",'
+    plain_tp = '.tp_name      = "probe.wfm_reader.Reader",'
+    assert a[frag].count(packaged_tp) == 1, a[frag]
+    assert b[frag].count(plain_tp) == 1, b[frag]
+    assert a[frag].replace(packaged_tp, plain_tp) == b[frag]

@@ -158,14 +158,23 @@ def public_name(m: dict) -> str:
     return "".join(w.capitalize() for w in base.split("_") if w) or "Record"
 
 
-def qualified_name(m: dict, component: str) -> str:
+def qualified_name(m: dict) -> str:
     """The dotted name the structseq reports as ``type(r).__name__``.
 
-    A manifest ``record_module`` (gh-261) qualifies the record with the
-    project's import path (``doppler.measure.ToneMetrics``); otherwise the C
-    component name stands in.
+    A manifest ``record_module`` (gh-261) names the module outright
+    (``doppler.measure.ToneMetrics``). Otherwise the record is qualified by
+    the module its binding's classes are imported from: the ``module_tp``
+    slot the class's own ``tp_name`` uses (gh-1486), left for ``render`` to
+    fill because the package is not known here. It was the bare C component
+    name, which ``__module__`` then reported and pickle could not import.
+
+    >>> qualified_name({"record_name": "Tone"})
+    '<<module_tp>>.Tone'
+    >>> qualified_name({"record_name": "Tone", "record_module": "p.dsp"})
+    'p.dsp.Tone'
     """
-    return f"{m.get('record_module') or component}.{public_name(m)}"
+    module = m.get("record_module") or "<<module_tp>>"
+    return f"{module}.{public_name(m)}"
 
 
 def c_struct(m: dict) -> str:
