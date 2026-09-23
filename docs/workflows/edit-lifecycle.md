@@ -20,6 +20,11 @@ The full tree, with every file tagged: [Project layout](layout-and-api.md#projec
 
 Four of these have more to them:
 
+- **The root `CMakeLists.txt`** keeps your targets, so a later jm's fix to
+    the part of the template outside its marked blocks never reaches it.
+    `jm status` names each one it lacks under `ROOT CMAKE`, with what breaks
+    without it, and `jm status --diff` shows the file against today's render
+    to merge from.
 - **A component's `CMakeLists.txt`** is regenerated, but a rule the manifest
     cannot express survives: an extra source in `<comp>_core`'s
     `add_library` or a per-source property leaves the file untouched, and an

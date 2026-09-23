@@ -34,6 +34,11 @@ the files `apply` *merges* rather than overwrites (the package
               renders but whose content is the author's (`_core.c`, your C
               tests, README) are excluded — they differ from their scaffold
               the moment the project is real.
+  - ROOT CMAKE — (gh-1459, gh-1471) a fix the root CMakeLists.txt
+              template carries outside jm's marked blocks that the
+              project's file lacks. The file is the author's there, so
+              `apply` never adds it; one line per fix, never counted,
+              and `--diff` prints the file against today's render.
   - NOTE    — (gh-921) a method sets `pass_capacity` while its header still
               declares `max_out(state)`, so the exact allocation the opt-in
               asks for is not the one generated. Not a file `apply` would
@@ -404,6 +409,26 @@ def run(
         if not _is_allowed(v.rel, allow_patterns)
     ]
 
+    # gh-1459/gh-1471: the root template's fixes outside jm's managed blocks
+    # that the project's root CMakeLists.txt lacks. Static and computed from
+    # the real file, like the version drift above -- `apply` never writes
+    # there, which is the whole finding. Suppressed by the file or per fix
+    # (`CMakeLists.txt:<key>`), on gh-984's reasoning: allowing the file
+    # would silence every future fix too.
+    from . import _rootcmake
+
+    root_fixes = [
+        (
+            f,
+            _is_allowed("CMakeLists.txt", allow_patterns)
+            or _is_allowed(f"CMakeLists.txt:{f.key}", allow_patterns),
+        )
+        for f in _rootcmake.missing(root)
+    ]
+    # Today's render of that file, read inside the replay's lifetime below,
+    # for `--diff`: the text to merge from.
+    root_render: "bytes | None" = None
+
     # gh-1142: `<comp>_procglobal.h` still on disk for a component that no
     # longer declares `process_global` — the converse of gh-1140, and the same
     # static shape again. Reported, never deleted: `apply` deletes nothing
@@ -594,6 +619,11 @@ def run(
             (p, a, _is_allowed(p, allow_patterns))
             for (p, a) in _createonly.missing_anchors(root, replay_root)
         ]
+        # gh-1459: the replay's root file is jm's current render of this
+        # project's, managed blocks included -- the text `--diff` offers.
+        if show_diff and root_fixes:
+            _rr = replay_root / "CMakeLists.txt"
+            root_render = _rr.read_bytes() if _rr.is_file() else None
 
         for rel in _walk_managed(scratch):
             real = root / rel
@@ -1061,6 +1091,19 @@ def run(
                         {"path": p, "allowed": a}
                         for (p, a) in outdated_entries
                     ],
+                    # gh-1459/gh-1471: root-template fixes the project's
+                    # root CMakeLists.txt lacks. Reported, never counted, on
+                    # `outdated`'s reasoning: the file is the author's.
+                    "root_cmake": [
+                        {
+                            "fix": f.key,
+                            "issue": f.issue,
+                            "platform": f.platform,
+                            "missing": f.missing,
+                            "allowed": a,
+                        }
+                        for (f, a) in root_fixes
+                    ],
                     # gh-975: a splice anchor jm renders and the file lacks,
                     # so the wiring it carries was never written. Counted,
                     # unlike `outdated` above — see `drift_count`.
@@ -1395,6 +1438,33 @@ def run(
             "  to it are here too. Diff before replacing; see"
             " docs/upgrading.md. Not counted."
         )
+        print()
+
+    # gh-1459/gh-1471: printed regardless of --check, for OUTDATED's reason
+    # -- a reader running `status --check` before an upgrade must not see OK
+    # and conclude the root file has nothing to receive. Not counted: the
+    # file is the author's, and `apply` will not write these.
+    if root_fixes:
+        print(
+            f"ROOT CMAKE ({len(root_fixes)}) — fixes jm's root CMakeLists.txt "
+            "template carries that yours lacks:"
+        )
+        for f, al in root_fixes:
+            tag = " [status_allow]" if al else ""
+            where = "" if f.platform == "all" else f" [{f.platform}]"
+            print(f"  ↑ {f.key} ({f.issue}){where}: {f.missing}{tag}")
+        print(
+            "  Outside its marked blocks the root CMakeLists.txt is yours, so"
+            " `apply` will\n"
+            "  not add these. `jm status --diff` prints it against today's"
+            " render to merge\n"
+            "  from. A fix you do not want: name it in [project] status_allow"
+            " as\n"
+            "  `CMakeLists.txt:<fix>`. Not counted."
+        )
+        if root_render is not None:
+            _real = (root / "CMakeLists.txt").read_bytes()
+            print(_unified_diff(_real, root_render, "CMakeLists.txt"), end="")
         print()
 
     # gh-975: printed on both paths for OUTDATED's reason, and counted for the
@@ -1938,7 +2008,7 @@ def run(
         # `unreconciled` beside it, for the same gh-767 reason.
         _out = (
             f"; {len(outdated_entries)} outdated" if outdated_entries else ""
-        )
+        ) + (f"; {len(root_fixes)} root-cmake" if root_fixes else "")
         # gh-975: only an allowed one reaches this branch — an unsuppressed
         # anchor gap gates and never gets here. Named anyway, on gh-767's
         # rule: exempt from the gate is not the same as in sync, and this
@@ -2068,6 +2138,8 @@ def run(
                 if outdated_entries
                 else ""
             )
+            # gh-1459: beside `outdated`, for its reason.
+            + (f", {len(root_fixes)} root-cmake" if root_fixes else "")
             # gh-975: with the gating mark, unlike `outdated` above it — this
             # one fails `--check` and `jm apply` does not clear it.
             + (

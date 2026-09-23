@@ -406,7 +406,9 @@ Commands:
                                 suppress a DROPPED symbol on that path.
     --json                      Emit a structured report ({path, state, allowed,
                                 dropped_symbols}).
-    --diff                      Print a unified diff per stale file.
+    --diff                      Print a unified diff per stale file (and the
+                                root CMakeLists.txt vs today's render when
+                                ROOT CMAKE reports a fix it lacks).
     --shared-cores              List component cores statically linked into more
                                 than one extension module — each .so holds its
                                 own copy of their file-scope state (gh-1117).

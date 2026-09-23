@@ -47,6 +47,20 @@ OUTDATED (6) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
+ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+  ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
+  ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
+  ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
+  ↑ runtime-dest (gh-1368) [Windows]: install(TARGETS) has no RUNTIME DESTINATION, so the DLL is never installed beside its import library
+  ↑ build-type (gh-1368) [Windows (clang-cl)]: no default CMAKE_BUILD_TYPE before project(), so a bare configure is Debug and links the debug interpreter's python3X_d.lib
+  ↑ msvc-runtime (gh-1368) [Windows (clang-cl)]: CMAKE_MSVC_RUNTIME_LIBRARY is not pinned to the release CRT, so a Debug build links python3X_d.lib, which only a debug Python ships
+  ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
+  ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
+  Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
+  not add these. `jm status --diff` prints it against today's render to merge
+  from. A fix you do not want: name it in [project] status_allow as
+  `CMakeLists.txt:<fix>`. Not counted.
+
 UNWIRED (2) — component core(s) folded into no C library:
   ⊘ dsp_core (native/src/dsp) — missing from stale_lib, stale_lib_static
   ⊘ gain_core (native/src/gain) — missing from stale_lib_static
@@ -63,7 +77,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 6 outdated, 2 unwired (!).
+summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 6 outdated, 8 root-cmake, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -124,6 +138,20 @@ OUTDATED (6) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
+ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+  ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
+  ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
+  ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
+  ↑ runtime-dest (gh-1368) [Windows]: install(TARGETS) has no RUNTIME DESTINATION, so the DLL is never installed beside its import library
+  ↑ build-type (gh-1368) [Windows (clang-cl)]: no default CMAKE_BUILD_TYPE before project(), so a bare configure is Debug and links the debug interpreter's python3X_d.lib
+  ↑ msvc-runtime (gh-1368) [Windows (clang-cl)]: CMAKE_MSVC_RUNTIME_LIBRARY is not pinned to the release CRT, so a Debug build links python3X_d.lib, which only a debug Python ships
+  ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
+  ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
+  Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
+  not add these. `jm status --diff` prints it against today's render to merge
+  from. A fix you do not want: name it in [project] status_allow as
+  `CMakeLists.txt:<fix>`. Not counted.
+
 SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
@@ -133,7 +161,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 8 root-cmake.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones

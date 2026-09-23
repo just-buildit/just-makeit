@@ -243,16 +243,21 @@ def run(root: Path) -> None:
     applied = log.jm("apply")
     assert f"generated with just-makeit {frozen}" in applied
     assert "C-contiguity and this fragment does not" in applied
-    log.jm("status")
+    # status names, under ROOT CMAKE, each root-template fix this project's
+    # root CMakeLists.txt lacks (gh-1459, gh-1471) -- apply splices only the
+    # marked blocks, so none of them arrived.
+    root_fixes = re.findall(
+        r"^  ↑ (\S+) \(gh-\d+\)", log.jm("status"), re.MULTILINE
+    )
+    assert {"libm", "static-name"} <= set(root_fixes), root_fixes
 
     # ── 4. The root CMakeLists.txt, which jm maintains only in part ──────
-    # apply splices its marked blocks (components, modules, external deps)
-    # and nothing else, and status does not compare the rest (gh-959) -- so
-    # every root-template fix since 0.33.14 is missing in silence, among them
-    # the Windows ones: without them this project does not build under
-    # clang-cl (`multiple rules generate stale.lib`, gh-1471). Today's render
-    # comes from a scratch `jm new` of the same name; merge it into yours --
-    # here, never edited, it is taken whole -- and apply re-splices the rest.
+    # Outside its marked blocks the file is the author's, so apply will not
+    # add those fixes; among them are the Windows ones, without which this
+    # project does not build under clang-cl (`multiple rules generate
+    # stale.lib`). `jm status --diff` shows the file against today's render;
+    # here, never edited, it is taken whole from a scratch `jm new` of the
+    # same name, and apply re-splices the managed blocks.
     from just_makeit._new import run as jm_new
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -270,7 +275,9 @@ def run(root: Path) -> None:
     # status names the create-only files OUTDATED. apply never rewrites one:
     # yours to adopt. Diff each first -- none was edited here, so each takes
     # jm's render the same way, by deleting it and letting apply write today's.
-    outdated = re.findall(r"^  ↑ (\S+)$", log.jm("status"), re.MULTILINE)
+    status = log.jm("status")
+    assert "ROOT CMAKE" not in status, status
+    outdated = re.findall(r"^  ↑ (\S+)$", status, re.MULTILINE)
     assert "native/inc/clib_common.h" in outdated, outdated
     for rel in outdated:
         (proj / rel).unlink()
