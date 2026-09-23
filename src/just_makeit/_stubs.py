@@ -128,7 +128,7 @@ def _py(ctype: str) -> str:
         npt = _CTYPE_TO_NP.get(elem, "Any")
         return f"NDArray[{npt}]"
     if ctype.startswith("string_enum:"):
-        choices = ctype[len("string_enum:") :].split(",")
+        choices = T.string_enum_choices(ctype)
         return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
     if ctype == "path":
         # gh-623: the binding coerces with PyUnicode_FSConverter, so a Path is
@@ -1073,7 +1073,7 @@ def _build_class_docstring(
         # a parameter's description is free prose — so this is where a reader
         # already looks for "what may I pass", and it renders in every
         # consumer rather than needing one to understand a custom heading.
-        choices = enum_choices.get(ctype)
+        choices = enum_choices.get(C.enum_doc_key(ctype))
         if choices:
             # The blank line is required: reST does not read a bullet
             # list that butts against the paragraph above it, so

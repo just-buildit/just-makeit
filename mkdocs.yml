@@ -86,6 +86,7 @@ nav:
     - Composites: examples/composites.md
     - Views: examples/views_module.md
     - Record shapes: examples/record_shapes.md
+    - C enum constants: examples/enum_constants.md
     - Ring buffer: examples/ring_buffer.md
     - Errors and warnings: examples/errors_warnings.md
     - Composer seams: examples/composer_seams.md

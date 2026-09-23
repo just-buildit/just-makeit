@@ -1113,7 +1113,7 @@ def _decode_field(f: dict, scalar: bool) -> str:
     return _to_py(f["type"], acc)
 
 
-def _decode_field_stmts(f: dict, scalar: bool, n_choices: int) -> str:
+def _decode_field_stmts(f: dict, scalar: bool, enums: dict) -> str:
     """Statements ending in a ``return`` that decode one field (gh-521).
 
     Every non-enum transform is the historical one-line
@@ -1131,24 +1131,16 @@ def _decode_field_stmts(f: dict, scalar: bool, n_choices: int) -> str:
     than raising. The check turns an unsupported code into a ValueError the
     caller can act on, which is the same distinction gh-514 was about.
 
-    ``n_choices`` is the enum's length from the ``[[enum]]`` SSOT; a
-    non-positive value means the enum could not be resolved, in which case the
-    unchecked form is kept rather than emitting a check that rejects
-    everything.
+    *enums* is the ``[[enum]]`` registry. An enum it cannot resolve keeps
+    the unchecked form rather than emitting a check that rejects everything.
     """
-    if not f.get("enum") or f.get("expr") or n_choices <= 0:
+    if not f.get("enum") or f.get("expr") or not enums.get(f["enum"]):
         return f"    return {_decode_field(f, scalar)};"
     acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
-    return (
-        f"    long _v = (long)({acc});\n"
-        f"    if (_v < 0 || _v >= {n_choices}) {{\n"
-        f"        PyErr_Format(PyExc_ValueError,\n"
-        f'            "{f["name"]} holds out-of-range {f["enum"]} value %ld"\n'
-        f'            " (valid: 0..{n_choices - 1})", _v);\n'
-        f"        return NULL;\n"
-        f"    }}\n"
-        f"    return PyUnicode_FromString(_enum_{f['enum']}[_v]);"
-    )
+    # gh-1450: one emitter for int -> choice string, shared by every face,
+    # so an enum bound to C constants is searched rather than indexed here
+    # as everywhere else.
+    return _enumc.decode_c(f["name"], f["enum"], acc, enums)
 
 
 def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
@@ -1228,13 +1220,12 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
                 f_scalar = scalar
             # gh-521: the enum decode is range-checked, so the body is built
             # as statements rather than a single return expression.
-            _n_choices = len(_enum_reg.get(f.get("enum") or "", ()))
             funcs.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
 {fetch}
-{_decode_field_stmts(f, f_scalar, _n_choices)}
+{_decode_field_stmts(f, f_scalar, _enum_reg)}
 }}
 """)
             # A field naming a `writable_fn` also emits a (setter) slot calling

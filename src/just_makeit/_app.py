@@ -139,6 +139,9 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
                         "help": "",
                         "ctor": True,
                         "choices": T.string_enum_choices(ct),
+                        # gh-1450: what create() is handed for each choice,
+                        # when its `[[enum]]` names C constants.
+                        "constants": T.string_enum_constants(ct),
                     }
                 )
             else:
@@ -367,7 +370,13 @@ def _ctor_c_args(flags: list[dict], parsed: bool) -> str:
         if not f["ctor"]:
             continue
         if parsed and f["type"] in _C_PARSE:
-            parts.append(f["name"])
+            # gh-1450: a choice flag's local is its INDEX (that is what
+            # --record prints through), so a constant-bound one maps it.
+            parts.append(
+                f"jm_values_{f['name']}[{f['name']}]"
+                if f.get("constants")
+                else f["name"]
+            )
         else:
             parts.append(f"/* {f['name']}= */{f['default']}")
     return ", ".join(parts)
@@ -756,6 +765,13 @@ def _c_choice_parsers(flags: list[dict]) -> str:
             f"static int\njm_parse_{f['name']}(const char *s)\n{{\n"
             f"{body}    return -1;\n}}"
         )
+        if f.get("constants"):
+            # gh-1450: the parser returns an INDEX; this is what create()
+            # is handed for it (see `_ctor_c_args`).
+            vals = ", ".join(f["constants"])
+            out.append(
+                f"static const int jm_values_{f['name']}[] = {{{vals}}};"
+            )
     return "\n\n".join(out)
 
 

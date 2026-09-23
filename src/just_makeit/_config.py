@@ -2879,8 +2879,33 @@ def enums(cfg: dict) -> dict[str, list[str]]:
     for e in cfg.get("enum", []):
         name = e.get("name")
         if name:
-            out[name] = list(e.get("values", []))
+            out[name] = EnumChoices(
+                e.get("values", []), e.get("enumerators") or None
+            )
     return out
+
+
+class EnumChoices(list):
+    """An ``[[enum]]``'s choices, carrying the C constant each binds to.
+
+    gh-1450. The contract was *"order IS the C int"*, so a C API whose
+    constants are not ``0..n-1`` -- a leading ``X_AUTO = -1``, a gap, a start
+    at 1 -- could not be bound, and was bound WRONG without a diagnostic:
+    the index went to a function typed as the author's enum. ``enumerators``
+    (gh-901, until now read for docstrings alone) already names each
+    choice's C constant; an enum that declares it now binds to it, and every
+    table jm emits spells the constants by name, so the C compiler checks
+    them and a renamed one fails the build instead of shifting a meaning.
+
+    A list, so every face that reads choices is unchanged; the constants
+    ride on the registry every face already takes, so a face cannot bind an
+    enum without them. ``constants`` is ``None`` for an enum that declares
+    none -- position is then the C int, exactly as before.
+    """
+
+    def __init__(self, values, constants=None) -> None:
+        super().__init__(values)
+        self.constants = list(constants) if constants else None
 
 
 def codecs(cfg: dict) -> dict:
@@ -2911,7 +2936,9 @@ def resolve_enum_type(cfg: dict, ptype: str) -> str:
             f"parameter type '{ptype}' references an undefined [[enum]] "
             f"'{name}'; declared enums: {known}"
         )
-    return "string_enum:" + ",".join(registry[name])
+    from ._types import make_string_enum
+
+    return make_string_enum(registry[name], registry[name].constants)
 
 
 def object_ref_capsule_prop(cfg: dict, component: str) -> dict:
@@ -3175,6 +3202,17 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     return (f"{comp}_state_t *", capsule, f"{comp}/{comp}_core.h", cls)
 
 
+def enum_doc_key(ptype: str) -> str:
+    """The `enum_choice_docs` key for a parameter type: its choices only.
+
+    >>> enum_doc_key("string_enum:auto=X_AUTO,f32=X_F32")
+    'string_enum:auto,f32'
+    """
+    from ._types import string_enum_choices
+
+    return "string_enum:" + ",".join(string_enum_choices(ptype))
+
+
 def enum_choice_docs(
     cfg: dict, doc_blocks: "dict | None"
 ) -> "dict[str, list[tuple[str, str]]]":
@@ -3233,7 +3271,11 @@ def enum_choice_docs(
         enumerators = list(e.get("enumerators", []))
         if not values or not enumerators:
             continue
-        spec = "string_enum:" + ",".join(values)
+        # Keyed by the CHOICES alone: the constants (gh-1450) are what the
+        # binding hands C, not what a reader is told, and an inline
+        # `string_enum:` with the same choices documents the same way. A
+        # lookup normalises its key with `enum_doc_key`.
+        spec = enum_doc_key("string_enum:" + ",".join(values))
         if spec in seen:
             out.pop(spec, None)
             continue
@@ -4000,6 +4042,30 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     'det' method 'scan': result field 'idx' has unknown type 'wat_t'.
     """
     errors: list[str] = []
+
+    # gh-1450: `enumerators` binds each choice to a C constant, so a list
+    # that does not line up with `values` would bind choices to the wrong
+    # constants -- a silent shift, the exact failure it exists to end.
+    for e in cfg.get("enum", []):
+        values, consts = e.get("values", []), e.get("enumerators")
+        if not consts:
+            continue
+        where = f"[[enum]] '{e.get('name')}'"
+        if len(consts) != len(values):
+            errors.append(
+                f"{where}: {len(consts)} enumerators for {len(values)}"
+                " values -- one C constant per choice, in the same order."
+            )
+        bad = [c for c in consts if not _re.fullmatch(r"[A-Za-z_]\w*", str(c))]
+        if bad:
+            errors.append(
+                f"{where}: enumerators must be C identifiers: {bad}."
+            )
+        eq = [v for v in values if "=" in str(v) or "," in str(v)]
+        if eq:
+            errors.append(
+                f"{where}: a choice cannot contain '=' or ',': {eq}."
+            )
 
     def _check(
         entry: dict,

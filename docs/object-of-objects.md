@@ -156,7 +156,8 @@ behind them hand-written.
 ### 2.3 The enum SSOT
 
 A top-level `[[enum]]` block names a string-enum once; the order **is** the C
-int (append-only):
+int (append-only), unless the enum names its C constants with `enumerators`
+([Named enums](types.md#when-the-c-values-are-not-0n-1-enumerators)):
 
 ```toml
 [[enum]]

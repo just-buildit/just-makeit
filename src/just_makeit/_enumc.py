@@ -58,7 +58,8 @@ from __future__ import annotations
 #: The shared string-enum → index lookup, as C.
 #:
 #: Order **is** the C int — the ``[[enum]]`` SSOT contract, which is why that
-#: list is append-only. Every face indexes the same tables the same way, so a
+#: list is append-only — unless the enum declares ``enumerators``: then the
+#: lookup's result is an index into a table of those constants (gh-1450). Every face indexes the same tables the same way, so a
 #: value's integer meaning cannot differ between a property, a method
 #: parameter, a module function and a handle constructor.
 _INDEX_FN_TEMPLATE = "\n".join(
@@ -149,8 +150,133 @@ def render_tables(
         parts.append(f"static const char *const {table}[] = {{")
         parts.append(items + "    NULL,")
         parts.append("};")
+        consts = constants_of(enums, name)
+        if consts:
+            # gh-1450: the C value of each choice, by NAME -- the compiler
+            # checks every one, so a renamed constant fails the build rather
+            # than shifting what a string means -- and the reverse lookup,
+            # as a function so it can stand where an expression must.
+            # `static inline`: a face that never decodes leaves it unused,
+            # and an unused plain `static` function warns.
+            parts.append(f"static const int {table}_c[] = {{")
+            parts.append("".join(f"    {c},\n" for c in consts) + "};")
+            parts += [
+                "static inline const char *",
+                f"{table}_name(long v)",
+                "{",
+                f"    for (int j = 0; j < {len(consts)}; j++)",
+                f"        if ({table}_c[j] == v)",
+                f"            return {table}[j];",
+                "    return NULL;",
+                "}",
+            ]
         parts.append("")
     return "\n".join(parts)
+
+
+def constants_of(
+    enums: "dict[str, list[str]] | None", name: str
+) -> "list[str] | None":
+    """The C constant each of *name*'s choices binds to, or ``None``.
+
+    Read off the registry (`_config.EnumChoices`), which every face already
+    takes -- so no face can emit an enum without its constants. ``None``
+    means position is the C int, the contract before gh-1450.
+    """
+    return getattr((enums or {}).get(name), "constants", None)
+
+
+def default_c(
+    ename: str, choice: str, enums: "dict[str, list[str]] | None"
+) -> str:
+    """The C value of a manifest default *choice*, written at codegen time.
+
+    Its constant when the enum binds constants (gh-1450), else its
+    position. A default naming no choice falls back to the first, as the
+    composer's segment defaults always have.
+
+    >>> default_c("k", "b", {"k": ["a", "b"]})
+    '1'
+    >>> default_c("k", "zz", {"k": ["a", "b"]})
+    '0'
+    """
+    values = list((enums or {}).get(ename, []))
+    i = values.index(choice) if choice in values else 0
+    consts = constants_of(enums, ename)
+    return consts[i] if consts else str(i)
+
+
+def name_expr(
+    ename: str,
+    acc: str,
+    enums: "dict[str, list[str]] | None",
+    *,
+    prefix: str = "",
+) -> str:
+    """A C expression for the choice string of the int at *acc*.
+
+    For a context that needs an EXPRESSION -- a serializer's
+    ``cJSON_AddStringToObject(obj, key, <here>)``. Indexing is exact only
+    while position is the C int; with constants (gh-1450) it is the
+    ``<table>_name`` lookup :func:`render_tables` emits, which yields
+    ``NULL`` for a value that is none of the choices.
+
+    >>> name_expr("kind", "g->kind", {"kind": ["a"]})
+    '_enum_kind[g->kind]'
+    """
+    _, table = symbols(prefix, ename)
+    if constants_of(enums, ename):
+        return f"{table}_name({acc})"
+    return f"{table}[{acc}]"
+
+
+def decode_c(
+    pname: str,
+    ename: str,
+    acc: str,
+    enums: "dict[str, list[str]] | None",
+    *,
+    prefix: str = "",
+    indent: str = "    ",
+) -> str:
+    """Statements ending in a ``return``: the C int at *acc* as its string.
+
+    The reverse of :func:`validate_c`, and the one emitter for it. There were
+    four: an object property and a handle field range-checked the int, and
+    both composer getters indexed the table blind -- reading past it on any
+    value C held outside it. C owns the stored value (it is often decoded
+    from a file), so an unknown one is input, not an invariant.
+
+    With constants (gh-1450) the table is SEARCHED, since a value is no
+    longer an index; without, it is range-checked and indexed, byte-for-byte
+    what the checked faces emitted before.
+    """
+    _, table = symbols(prefix, ename)
+    choices = (enums or {}).get(ename, [])
+    n = len(choices)
+    if constants_of(enums, ename):
+        return (
+            f"{indent}long _v = (long)({acc});\n"
+            f"{indent}const char *_s = {table}_name(_v);\n"
+            f"{indent}if (!_s) {{\n"
+            f"{indent}    PyErr_Format(PyExc_ValueError,\n"
+            f'{indent}        "{pname} holds {ename} value %ld, which is none'
+            f' of"\n'
+            f'{indent}        " its choices", _v);\n'
+            f"{indent}    return NULL;\n"
+            f"{indent}}}\n"
+            f"{indent}return PyUnicode_FromString(_s);"
+        )
+    return (
+        f"{indent}long _v = (long)({acc});\n"
+        f"{indent}if (_v < 0 || _v >= {n}) {{\n"
+        f"{indent}    PyErr_Format(PyExc_ValueError,\n"
+        f'{indent}        "{pname} holds out-of-range {ename} value %ld"\n'
+        f'{indent}        " (valid: 0..{n - 1})", _v);\n'
+        f"{indent}    return NULL;\n"
+        f"{indent}}}\n"
+        f"{indent}return PyUnicode_FromString({table}[_v]);"
+    )
 
 
 def choices_suffix(ename: str, enums: "dict[str, list[str]] | None") -> str:
@@ -235,12 +361,19 @@ def validate_c(
     var = result or f"_arg_{pname}"
     expr = src or pname
     suffix = choices_suffix(ename, enums)
-    return (
-        f"{indent}int {var} = {index_fn}({table}, {expr});\n"
-        f"{indent}if ({var} < 0) {{\n"
+    # gh-1450: with constants, the lookup's result is an INDEX and never a
+    # value, so its -1 cannot collide with a legal constant -- every
+    # negative one is reachable. The value is read from the table after.
+    idx = f"{var}_i" if constants_of(enums, ename) else var
+    out = (
+        f"{indent}int {idx} = {index_fn}({table}, {expr});\n"
+        f"{indent}if ({idx} < 0) {{\n"
         f"{indent}    PyErr_Format(PyExc_ValueError,\n"
         f"{indent}        \"invalid {pname} '%s'{suffix}\","
         f" {expr});{cleanup}\n"
         f"{indent}    {fail}\n"
         f"{indent}}}"
     )
+    if idx != var:
+        out += f"\n{indent}int {var} = {table}_c[{idx}];"
+    return out

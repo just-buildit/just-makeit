@@ -62,6 +62,7 @@ GALLERY = {
     "composites": "Composites",
     "views_module": "Views",
     "record_shapes": "Record shapes",
+    "enum_constants": "C enum constants",
     "ring_buffer": "Ring buffer",
     "errors_warnings": "Errors and warnings",
     "composer_seams": "Composer seams",

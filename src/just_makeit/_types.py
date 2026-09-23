@@ -1036,8 +1036,57 @@ def is_string_enum_type(ptype: str) -> bool:
 
 
 def string_enum_choices(ptype: str) -> list[str]:
-    """Return the ordered choice list from a 'string_enum:a,b,...' type."""
-    return ptype[len("string_enum:") :].split(",")
+    """Return the ordered choice list from a 'string_enum:a,b,...' type.
+
+    A choice may carry the C constant it binds to, ``auto=X_AUTO``
+    (gh-1450); the constant is not part of the choice.
+
+    >>> string_enum_choices("string_enum:a,b")
+    ['a', 'b']
+    >>> string_enum_choices("string_enum:auto=X_AUTO,f32=X_F32")
+    ['auto', 'f32']
+    """
+    return [
+        c.split("=", 1)[0] for c in ptype[len("string_enum:") :].split(",")
+    ]
+
+
+def string_enum_constants(ptype: str) -> "list[str] | None":
+    """The C constant each choice binds to, or ``None`` (gh-1450).
+
+    ``None`` is the contract every enum had before: the choice's POSITION is
+    the C int. A spec carries constants only when its ``[[enum]]`` declared
+    ``enumerators`` -- see :func:`make_string_enum`.
+
+    >>> string_enum_constants("string_enum:a,b") is None
+    True
+    >>> string_enum_constants("string_enum:auto=X_AUTO,f32=X_F32")
+    ['X_AUTO', 'X_F32']
+    """
+    parts = ptype[len("string_enum:") :].split(",")
+    if not any("=" in p for p in parts):
+        return None
+    return [p.split("=", 1)[1] for p in parts]
+
+
+def make_string_enum(
+    choices: "list[str]", constants: "list[str] | None" = None
+) -> str:
+    """The ``string_enum:`` spec for *choices*, carrying *constants* if any.
+
+    The one writer of the spelling :func:`string_enum_choices` and
+    :func:`string_enum_constants` read.
+
+    >>> make_string_enum(["a", "b"])
+    'string_enum:a,b'
+    >>> make_string_enum(["auto", "f32"], ["X_AUTO", "X_F32"])
+    'string_enum:auto=X_AUTO,f32=X_F32'
+    """
+    if constants:
+        return "string_enum:" + ",".join(
+            f"{c}={k}" for c, k in zip(choices, constants)
+        )
+    return "string_enum:" + ",".join(choices)
 
 
 def is_enum_ref(ptype: str) -> bool:

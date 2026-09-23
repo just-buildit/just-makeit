@@ -149,7 +149,10 @@ class TestSourceType:
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
-        assert "PyUnicode_FromString(_enum_wfm_type[self->src.type])" in s
+        # gh-1450: through `_enumc.decode_c` -- range-checked, where this
+        # getter used to index the table blind.
+        assert "long _v = (long)(self->src.type);" in s
+        assert "PyUnicode_FromString(_enum_wfm_type[_v])" in s
         # writable enum setter validates
         assert "Synth_set_snr_mode" in s
         # scalar getter coerces
@@ -254,7 +257,9 @@ class TestSegmentType:
         assert "_enum_index(_enum_gap_noise, _s)" in s
         assert "invalid gap_noise" in s
         # getset round-trips the string
-        assert "PyUnicode_FromString(_enum_gap_noise[self->gap_noise])" in s
+        # gh-1450: through `_enumc.decode_c`, range-checked.
+        assert "long _v = (long)(self->gap_noise);" in s
+        assert "PyUnicode_FromString(_enum_gap_noise[_v])" in s
         assert "Segment_set_gap_noise" in s
 
     def test_enum_segment_field_generic_json(self):
