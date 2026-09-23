@@ -48,7 +48,7 @@ New object? Its `step()` shape and state come next under
 | Delete generated code **and** its wiring          | [`jm remove <kind> <name>`](commands/extend.md#removing-a-method-or-property)                                                                                    |
 | Reconstruct the CLI history from TOML             | [`jm script`](commands/build.md#just-makeit-script)                                                                                                              |
 | Upgrade an old project's schema                   | [`jm upgrade`](upgrading.md)                                                                                                                                     |
-| Hand a module object's binding to jm              | [`jm adopt`](configuration.md#who-owns-a-modules-binding-fragment) (`--check` first)                                                                             |
+| Hand a module object's binding to jm              | [`jm adopt`](commands/build.md#just-makeit-adopt) (`--check` first)                                                                                              |
 
 ______________________________________________________________________
 
