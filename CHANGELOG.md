@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.87.1] — 2026-09-23
+
 ### Fixed
 
 - **The CTOR check compares the constructor an object actually binds**
@@ -12,6 +14,21 @@
     unchecked. The check now reads `create_name`. Before the fix 4 of the 6
     new cases fail (stateful and `no_state` objects alike); after it they
     and the existing gh-1076 suite pass, and doppler's false finding clears.
+
+### Docs
+
+- **The scaffold-to-build loop, and who owns each file** (#1485). The
+    Workflows overview opens with the loop -- describe, generate, implement,
+    build and test -- each stage linking to the page that covers it. The edit
+    lifecycle's ownership table now has jm's five kinds (yours, jm's, shared,
+    versioned, derived) instead of two, and no longer says you own only
+    `_core.c` and the manifest. The project-layout tree is regenerated from
+    a real scaffold with every file tagged by owner, and
+    `tests/test_docs_layout_tree.py` holds it to a real scaffold and to
+    `_createonly`'s classification. Also: a `jm adopt` command reference,
+    `jm status` and `jm adopt` rows in the decision tree, and the developer
+    guide's command flow (all 32 commands) with a section on how `apply` and
+    `status` work.
 
 ## [0.87.0] — 2026-09-23
 
