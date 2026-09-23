@@ -1599,7 +1599,12 @@ def run(
 
     _write(root / "src" / pkg / f"{comp}.pyi", R.render_component_pyi(ctx))
     _write(root / "src" / pkg / "tests" / "__init__.py", R.TESTS_INIT_PY)
-    _write(root / "src" / pkg / "tests" / f"test_{comp}.py", r(pytest_tmpl))
+    # gh-1489: born owned -- `apply` keeps it in step with the constructor
+    # until the author deletes the token and takes it over.
+    _write(
+        root / "src" / pkg / "tests" / f"test_{comp}.py",
+        R.owned_test(r(pytest_tmpl), f"test_{comp}.py"),
+    )
 
     # Python benchmark
     benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"

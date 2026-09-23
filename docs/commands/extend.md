@@ -773,8 +773,9 @@ working (gh-1407).
 
 A component that declares an element with both a **writer** (`arg_type = "sample[]"`) and a **reader** (`return_type = "sample"` with `borrow` or
 `variable_output`) also gets `src/<pkg>/tests/test_<comp>_invariants.py` —
-jm's file, rewritten on every `apply`, beside your own `test_<comp>.py`
-which jm writes once and never touches again.
+jm's file, rewritten on every `apply`, beside `test_<comp>.py` — which
+is jm's too until you delete its `# jm:generated` line, and never written
+again after that.
 
 It asserts what the family promises: *what you read is exactly what you can
 write*. The input face — the declared width is accepted, a foreign one is

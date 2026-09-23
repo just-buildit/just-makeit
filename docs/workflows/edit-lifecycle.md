@@ -18,7 +18,7 @@ depends on who owns it. That is the **sacred/glue contract**.
 
 The full tree, with every file tagged: [Project layout](layout-and-api.md#project-layout-full).
 
-Three of these have more to them:
+Four of these have more to them:
 
 - **A component's `CMakeLists.txt`** is regenerated, but a rule the manifest
     cannot express survives: an extra source in `<comp>_core`'s
@@ -35,6 +35,15 @@ Three of these have more to them:
     never reaches it. `fragment = "generated"` makes it jm's, and
     `jm adopt <obj>` makes that switch only when nothing of yours would be
     lost ([Who owns a module's binding fragment](../configuration.md#who-owns-a-modules-binding-fragment)).
+- **The scaffolded Python test** `src/<pkg>/tests/test_<comp>.py` is born
+    **jm's**: its first line is `# jm:generated test_<comp>.py`, and while
+    that line is there `apply` rewrites the file, so a constructor that
+    gains a parameter reaches the test instead of leaving it calling the old
+    signature. Delete the line and the file is yours: jm never writes it
+    again — so delete it *before* adding a test of your own, or `apply`
+    replaces the file (`status --check` shows the difference first). A
+    project scaffolded before this has no such line, and its tests stay
+    yours.
 
 ## The loop
 

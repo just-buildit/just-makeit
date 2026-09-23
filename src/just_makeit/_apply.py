@@ -1254,6 +1254,45 @@ def _refuse_owned_that_would_lose(
     raise SystemExit("\n".join(lines))
 
 
+def _owned_tests(temp_root: Path, root: Path) -> set:
+    """Scaffolded Python tests that still carry jm's ownership token.
+
+    gh-1489. `jm new` / `jm object` write ``tests/test_<comp>.py`` against
+    the constructor as it is then. It was create-only, so a later init
+    param left it calling the old signature -- 5 of 5 tests failing -- and
+    `status` could not say so, because a file the author owns is expected
+    to differ from its render.
+
+    The file is now born with `_render.owned_token`, the gh-1448 mechanism
+    rather than a second one: while the token names the file, the file is
+    jm's and `apply` renders it whole. Deleting the token makes it the
+    author's, and this never selects it again. A project scaffolded before
+    the token existed has none, so nothing here touches its tests.
+
+    No guard beside it, deliberately, and for gh-1448's reason: a token
+    present is steady state, and any difference is jm's own drift. A
+    refusal to delete a test the render no longer produces was tried and
+    measured -- declaring `no_reset` removes the `test_reset` jm itself
+    rendered, and the refusal made that manifest change un-appliable.
+    `status --check` reports an edit to an owned test before `apply`
+    overwrites it, and the file's header says jm regenerates it.
+
+    Read from the REAL tree: the token records the file's state, and the
+    render always carries one.
+    """
+    from ._render import is_owned_render
+
+    out: set = set()
+    for src in temp_root.glob("src/**/tests/test_*.py"):
+        rel = src.relative_to(temp_root)
+        dst = root / rel
+        if dst.is_file() and is_owned_render(
+            dst.read_text(encoding="utf-8"), dst.name
+        ):
+            out.add(rel)
+    return out
+
+
 def _sync_missing(
     temp_root: Path, root: Path, owned: "set | None" = None
 ) -> list[Path]:
@@ -3371,7 +3410,8 @@ def run(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
-            created = _sync_missing(temp_root, root, _owned)
+            _tests = _owned_tests(temp_root, root)
+            created = _sync_missing(temp_root, root, _owned | _tests)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
             # destructor to `int` when the manifest now declares it fallible.

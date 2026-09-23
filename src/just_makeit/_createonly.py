@@ -207,6 +207,18 @@ RULES: tuple[Rule, ...] = (
         "the element contract jm derives from `[[<obj>.records]]` and the"
         " members referencing it (gh-1404). jm's, not the author's.",
     ),
+    # gh-1489: ABOVE the author's-tests rule for the same first-match reason.
+    # Born carrying the ownership token, and `apply` renders it whole while
+    # the token is there -- so `status`'s copy/diff sees its drift. Once the
+    # author deletes the token (or on a project scaffolded before it) apply
+    # never writes it; classified here all the same, which only means it is
+    # never reported OUTDATED -- the safe direction for a file that is theirs.
+    Rule(
+        "src/*/tests/test_*.py",
+        RECONCILED,
+        "the scaffolded test, jm's while it carries `# jm:generated` and the"
+        " author's once they delete it (gh-1489).",
+    ),
     Rule(
         "src/*/tests/*.py",
         AUTHOR,

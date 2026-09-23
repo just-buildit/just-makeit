@@ -60,12 +60,11 @@ return_type = "int"
 params = [{ name = "level", type = "int", enum = "level" }]
 ```
 
-The constructor now takes `level`, so the Python test `jm new` scaffolded
-for the old one no longer fits. You never edited it, so delete it and let
-`apply` write today's:
+The constructor now takes `level`. The Python test `jm new` scaffolded
+still carries its `# jm:generated` line, so it is jm's, and `apply` renders
+it again for the new constructor:
 
 ```sh
-rm src/levels/tests/test_gate.py
 jm apply
 ```
 

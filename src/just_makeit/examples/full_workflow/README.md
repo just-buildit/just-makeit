@@ -62,6 +62,12 @@ just-makeit new my_dsp \
     --state gain:float:1.0
 cd my_dsp
 
+# The test style is a project setting, and `--pytest` below switches it.
+# gain's scaffolded test is jm's while its first line is
+# `# jm:generated test_gain.py`, so it would follow the switch. Delete that
+# line to make the file yours, and it stays unittest.
+sed -i '1d' src/my_dsp/tests/test_gain.py
+
 # Component 2: ema — pytest tests, pytest-benchmark benchmarks
 just-makeit object ema \
     --arg-type float \

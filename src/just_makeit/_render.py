@@ -2094,12 +2094,54 @@ _FRAGMENT_OWNERSHIP = {
 #: fragment. A copied owned file carries a token naming the neighbour, so
 #: it reads as un-adopted and the first-adoption guard still applies --
 #: otherwise copy-paste would be a second road around it.
-OWNED_TOKEN_RE = re.compile(r"/\*\s*jm:generated\s+(\S+?)\s*\*/")
+#:
+#: gh-1489: the same token marks the scaffolded Python test, in the one
+#: comment syntax Python has. The `#` form is anchored to a whole line: a
+#: test that merely MENTIONS the token in a string or a docstring is not
+#: evidence that jm rendered it.
+OWNED_TOKEN_RE = re.compile(
+    r"/\*\s*jm:generated\s+(\S+?)\s*\*/|^#\s*jm:generated\s+(\S+)\s*$",
+    re.MULTILINE,
+)
+
+#: The sentence a person reads under the token in a scaffolded test
+#: (gh-1489) -- the `.py` counterpart of `_FRAGMENT_OWNERSHIP["generated"]`.
+OWNED_TEST_NOTE = (
+    "# jm regenerates this file on apply while the line above is here.\n"
+    "# To make it yours, delete that line: jm then never writes it again.\n"
+)
 
 
 def owned_token(filename: str) -> str:
-    """The token an owned render writes for *filename*."""
+    """The token an owned render writes for *filename*.
+
+    A C comment for a C file, a ``#`` line for a Python one (gh-1489).
+
+    >>> owned_token("m_ext_a.c")
+    '/* jm:generated m_ext_a.c */'
+    >>> owned_token("test_gain.py")
+    '# jm:generated test_gain.py'
+    """
+    if filename.endswith(".py"):
+        return f"# jm:generated {filename}"
     return f"/* jm:generated {filename} */"
+
+
+def owned_test(text: str, filename: str) -> str:
+    """*text*, a scaffolded Python test, born owned by jm (gh-1489).
+
+    The token leads the file, then `OWNED_TEST_NOTE`. While the token names
+    this file, `apply` renders it whole -- so a constructor that gains a
+    parameter reaches the test instead of leaving it calling the old one.
+    Deleting the token hands the file to its author for good.
+
+    >>> print(owned_test("import unittest\\n", "test_g.py"), end="")
+    # jm:generated test_g.py
+    # jm regenerates this file on apply while the line above is here.
+    # To make it yours, delete that line: jm then never writes it again.
+    import unittest
+    """
+    return owned_token(filename) + "\n" + OWNED_TEST_NOTE + text
 
 
 def is_owned_render(text: str, filename: str) -> bool:
@@ -2116,8 +2158,18 @@ def is_owned_render(text: str, filename: str) -> bool:
     False
     >>> is_owned_render("/*\\n * m_ext_a.c\\n */\\n", "m_ext_a.c")
     False
+
+    The Python form counts only as a whole line (gh-1489):
+
+    >>> is_owned_render(owned_token("test_g.py") + "\\n", "test_g.py")
+    True
+    >>> is_owned_render('x = "# jm:generated test_g.py"\\n', "test_g.py")
+    False
     """
-    return any(m.group(1) == filename for m in OWNED_TOKEN_RE.finditer(text))
+    return any(
+        (m.group(1) or m.group(2)) == filename
+        for m in OWNED_TOKEN_RE.finditer(text)
+    )
 
 
 def render_module_ext_fragment(comp_ctx: dict) -> str:
