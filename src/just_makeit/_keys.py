@@ -479,17 +479,21 @@ _SHARED_MODULE_KEYS = frozenset(
         "no_generate_reason",
         "reexports",
         "capsule_name",
-        "functions",
         "functions_in_core",
         "serializable",
         "optional_backend",
         # gh-1463: the platforms the module's extension is built on.
         "platforms",
-        "init_params",
         "methods",
-        "properties",
     }
 )
+# gh-1517: `functions`, `init_params` and `properties` were shared here, and
+# six of the nine (kind, table) pairs that made were read by no generator: a
+# correct row validated and vanished. Each face now names only what it reads
+# (measured with a real `apply`, `tests/test_gh1517_...`), and HINTS below
+# says which table the refused one is spelled as on that face. `functions`
+# is on none of them: module-level functions are a plain module's, and on a
+# kind module `apply` failed with advice to create a second module.
 
 HANDLE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "handle_type",
@@ -513,7 +517,8 @@ CAPSULE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "create_error",
     "create_error_message",
     "type_name",
-    "getters",
+    "init_params",
+    "properties",
 }
 # gh-1190: `methods` comes OUT for a composer. `_composer.py` never reads a
 # methods table — declaring one passed `unknown_keys` in silence and generated
@@ -533,7 +538,6 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     "json",
     "cli",
     "serializers",
-    "getters",
     "type_name",
     "create_fn",
     # gh-1126: post-construction settings.
@@ -634,33 +638,24 @@ KIND_INIT_PARAM_KEYS = frozenset(
 #: absent from here is not walked, which is why `_kind_tables` reports one it
 #: does not know rather than passing it silently -- an unwalked table is the
 #: state this whole issue is about.
+#: gh-1517: an entry here is a promise that a row in that table is RENDERED,
+#: and `tests/test_gh1517_kind_tables_honoured_or_refused.py` holds it by
+#: applying one sample row per entry and finding it in the output. Row
+#: vocabulary for a table the face refuses is dead weight -- its rows were
+#: validated and then ignored, which read as if they did something -- so a
+#: refused table has no entry.
 KIND_TABLE_VOCAB = {
     ("handle", "methods"): "handle method",
     ("capsule", "methods"): "capsule method",
-    ("composer", "methods"): "composer method",
     ("handle", "getters"): "kind getter",
-    ("capsule", "getters"): "kind getter",
-    ("composer", "getters"): "kind getter",
     ("handle", "factories"): "kind factory",
     ("handle", "create_args"): "kind create_arg",
     ("handle", "create_post"): "kind create_post",
-    ("handle", "properties"): "kind property",
     ("capsule", "properties"): "kind property",
-    ("composer", "properties"): "kind property",
-    ("handle", "init_params"): "kind init_param",
     ("capsule", "init_params"): "kind init_param",
-    ("composer", "init_params"): "kind init_param",
     ("composer", "extra_methods"): "composer extra_method",
     ("composer", "serializers"): "kind serializer",
     ("composer", "settings"): "kind setting",
-    # A `kind`-bearing module may also carry module-level free functions,
-    # and they are the SAME shape as a plain module's -- so they reuse the
-    # object face's vocabulary rather than getting a near-copy. Found by
-    # running the checker over the suite: without this the table had no
-    # vocabulary and was reported as an unknown key on two real projects.
-    ("handle", "functions"): "function",
-    ("capsule", "functions"): "function",
-    ("composer", "functions"): "function",
     ("handle", "depends_on"): "kind depends_on",
     ("capsule", "depends_on"): "kind depends_on",
     ("composer", "depends_on"): "kind depends_on",
@@ -913,6 +908,39 @@ HINTS: dict[tuple[str, str], str] = {
         "a capsule/composer method declares one `arg_type` / `return_type` "
         "pair, not an argument list"
     ),
+    # gh-1517: tables a face accepted and no generator read. Each hint names
+    # the table that face DOES read for the same intent.
+    ("handle module", "properties"): (
+        "a handle's properties come from `[[module.X.getters]]`: one row per C "
+        "getter, each exposing its `fields` as properties"
+    ),
+    ("handle module", "init_params"): (
+        "a handle's constructor arguments are `[[module.X.create_args]]`"
+    ),
+    ("capsule module", "getters"): (
+        "a capsule exposes state through `[[module.X.properties]]`, a "
+        "`get_<name>` / `set_<name>` pair per row"
+    ),
+    ("composer module", "getters"): (
+        "a composer's read-only derived values are "
+        "`[[module.X.source.computed]]` rows; its stored ones are "
+        "`source.fields` / `segment.fields`"
+    ),
+    ("composer module", "properties"): (
+        "a composer's attributes are its `source.fields` / `segment.fields`, "
+        "and a derived read-only one is a `[[module.X.source.computed]]` row"
+    ),
+    ("composer module", "init_params"): (
+        "a composer is constructed from its segments; a scalar the backing "
+        "takes after `create_fn` is a `[[module.X.settings]]` row"
+    ),
+    **{
+        (f"{_k} module", "functions"): (
+            "jm generates module-level functions on a plain module only; "
+            "declare them on one (`jm module <name>`, then `jm function`)"
+        )
+        for _k in ("handle", "capsule", "composer")
+    },
 }
 
 

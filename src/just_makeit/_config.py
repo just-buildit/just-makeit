@@ -1270,8 +1270,20 @@ def module_of(cfg: dict, obj: str) -> str:
 
 
 def module_functions(cfg: dict, module: str) -> list[dict]:
-    """Return the module-level function entries for module as [{"name":..., "doc":...}, ...]."""
-    return list(cfg.get("module", {}).get(module, {}).get("functions", []))
+    """Return the module-level function entries for module as [{"name":..., "doc":...}, ...].
+
+    A ``kind`` module has none (gh-1517). jm generates module-level functions
+    on a plain module only; on a handle / capsule / composer module the table
+    is refused by `_keys` with that advice, and answering it here as well is
+    what keeps every reader -- `apply`'s replay, the stubs, the bench and the
+    docs -- from routing the rows through a plain module's scaffold that a kind
+    module never has. The rows themselves stay in the manifest: the dumper
+    reads the table directly, so the author's declaration is never lost.
+    """
+    data = cfg.get("module", {}).get(module, {})
+    if data.get("kind") in ("handle", "capsule", "composer"):
+        return []
+    return list(data.get("functions", []))
 
 
 def add_module_function(cfg: dict, module: str, fn: dict) -> dict:

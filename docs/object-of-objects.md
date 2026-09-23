@@ -756,6 +756,13 @@ ______________________________________________________________________
 | `depends_on`      | `[{name, link=true}, …]` — cores linked onto the `.so`                 |
 | `extra_link_libs` | non-core link targets (e.g. `"m"`, a vendored json lib)                |
 
+Module-level `[[module.X.functions]]` are a plain module's. On any of the three
+kinds the table is refused with a warning, and `jm function --module` on one
+exits naming the plain-module route. Each face reads only the tables listed for
+it below; one that belongs to another face (a handle `properties`, a capsule
+`getters`, a composer `init_params`, ...) warns and names the table that face
+reads instead.
+
 **Capsule only:** `[[module.X.init_params]]` (`name`/`type`/`default?`),
 `[[module.X.methods]]` (`name`, `arg_type?`, `return_type?`, `caller_out?`,
 `nogil?`), `[[module.X.properties]]` (`name`/`type`/`writable?`).

@@ -29,6 +29,7 @@ test_gh1448_token_survives_clang_format
 test_gh1452_consumer_links_installed_tree
 test_gh1452_libm_anchor
 test_gh1463_module_platforms
+test_gh1491_writable_array_param
 test_gh1499_kind_verbatim_doc
 test_gh949_outdated
 test_lint_ssot

@@ -92,6 +92,20 @@
     kind tables jm accepts and never renders (gh-1517), and composer
     `extra_methods`, which compile on no path (gh-1516).
 
+- **A kind module's table is rendered, or it is refused** (gh-1517). Six
+    tables validated and generated nothing: `properties` and `init_params`
+    on a handle, `getters` on a capsule, and `getters`, `properties` and
+    `init_params` on a composer. A correct row vanished with no warning.
+    Each is now out of that face's accepted keys, and the warning names the
+    table the face does read (`getters` fields for a handle's properties,
+    `create_args` for its constructor, and so on); the rows stay in the
+    manifest. `functions` on any kind module made `apply` exit 1 with advice
+    to `jm module` a second, conflicting module. It is now refused with a
+    warning, `apply` completes, and `jm function --module <kind module>`
+    exits naming the plain-module route. A new gate applies one sample row
+    per table in `_keys.KIND_TABLE_VOCAB` and requires it in the output, so
+    a table added there without a generator fails.
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed
