@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The CTOR check compares the constructor an object actually binds**
+    (gh-1494). An object's `create_fn` override is published to the
+    context as `create_name`, but the check read `create_fn`, a key that is
+    never set, so it always compared `<comp>_create`. An object that keeps a
+    public `<comp>_create` of its own shape and binds Python through another
+    function got unsuppressible CTOR drift that wasn't drift (doppler's
+    `burst_acq`, doppler-dsp/doppler#1479), and a drifted override went
+    unchecked. The check now reads `create_name`. Before the fix 4 of the 6
+    new cases fail (stateful and `no_state` objects alike); after it they
+    and the existing gh-1076 suite pass, and doppler's false finding clears.
+
 ## [0.87.0] — 2026-09-23
 
 ### Added
