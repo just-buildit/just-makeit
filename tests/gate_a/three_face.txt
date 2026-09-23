@@ -1,5 +1,3 @@
-gaintool	re-apply writes	update gaintool.py
-gaintool	re-apply writes	update just-makeit.toml
 gaintool	ruff check	src/gaintool/tests/test_gain.py E401
 gaintool	ruff check	src/gaintool/tests/test_gain.py F401
 gaintool	ruff format	gaintool.py

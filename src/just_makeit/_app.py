@@ -1410,7 +1410,15 @@ def run(
     flags: list[dict] | None = None,
     commands: list[dict] | None = None,
     argc_argv: bool = False,
-) -> None:
+) -> list[Path]:
+    """Scaffold (or re-scaffold) the project's app from ``[app]``.
+
+    Returns every path this run wrote, whether or not its bytes changed.
+    `apply` replays this verb and decides what to report by comparing those
+    paths' bytes before and after (gh-1474, gh-1477), so a second apply over
+    an unchanged app prints nothing; `jm app` itself reports each write as it
+    happens.
+    """
     if cfg is None:
         cfg_path = root / C.FILENAME
         if not cfg_path.exists():
@@ -1469,7 +1477,12 @@ def run(
         if name is None:
             name = pkg
         C.set_app(cfg, target, name)
-        for c in commands or []:
+        # gh-1477: over a snapshot. `apply` replays with the manifest's own
+        # `[[app.commands]]` list, which `add_app_command` rewrites in place
+        # (`cmds[:] = ...`), so iterating it directly re-appended each entry
+        # while walking it and reversed the order on every apply -- a real
+        # rewrite of the app source, announced as discarded edits.
+        for c in list(commands or []):
             C.add_app_command(cfg, c)
         eff_cmds = C.app_commands(cfg)
         if not eff_cmds:
@@ -1504,7 +1517,8 @@ def run(
         # Persist + merge flags before codegen so stored [[app.flags]] from
         # prior runs are reflected in the generated parsers (reproducible).
         C.set_app(cfg, target, name, object_=object_, module=module)
-        for f in flags or []:
+        # gh-1477: over a snapshot, for the reason given for commands above.
+        for f in list(flags or []):
             C.add_app_flag(cfg, f)
         ctx = _build_ctx(
             cfg,
@@ -1528,7 +1542,7 @@ def run(
     if target == "c":
         # Only the C target adds an add_executable() that can clash with a
         # module/component CMake target; console/pep723 faces don't (gh-184).
-        _run_c(
+        written = _run_c(
             root,
             ctx,
             name,
@@ -1537,7 +1551,7 @@ def run(
             _exe_target(name, cfg, root),
         )
     elif target == "console":
-        _run_console(
+        written = _run_console(
             root,
             ctx,
             name,
@@ -1546,12 +1560,13 @@ def run(
             module=C.app_config(cfg).get("module") or None,
         )
     else:
-        _run_pep723(root, ctx, name, pep_tmpl)
+        written = _run_pep723(root, ctx, name, pep_tmpl)
 
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
     print()
     _print_summary(target, root, name, pkg)
+    return [*written, root / C.FILENAME]
 
 
 def _run_c(
@@ -1561,7 +1576,7 @@ def _run_c(
     link_target: str,
     tmpl: str = R.APP_MAIN_C,
     exe_target: str | None = None,
-) -> None:
+) -> list[Path]:
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     main_c = app_dir / f"{name}.c"
@@ -1608,6 +1623,7 @@ def _run_c(
     if cmake.exists():
         _splice_cmake(cmake, name, link_target, exe_target)
         print(f"  update  {cmake}")
+        return [main_c, cmake]
     else:
         out_name = (
             f"\n    set_target_properties({tgt} PROPERTIES OUTPUT_NAME {name})"
@@ -1619,6 +1635,7 @@ def _run_c(
             f"    add_executable({tgt} native/src/app/{name}.c){out_name}\n"
             f"    target_link_libraries({tgt} PRIVATE {link_target})"
         )
+        return [main_c]
 
 
 def _run_console(
@@ -1628,7 +1645,7 @@ def _run_console(
     pkg: str,
     tmpl: str = R.APP_CONSOLE_CLI,
     module: str | None = None,
-) -> None:
+) -> list[Path]:
     # gh-187: scope the console module under its owning subpackage when the app
     # is built from a module object/function, so it never collides with a
     # `src/<pkg>/cli.py` already used by a `cli` subpackage.
@@ -1646,12 +1663,13 @@ def _run_console(
     updated = _update_pyproject_scripts(root, name, pkg, module)
     if updated:
         print(f"  update  {root / 'pyproject.toml'}")
-    else:
-        print(
-            f"  note: add to pyproject.toml manually:\n"
-            f"    [project.scripts]\n"
-            f'    {name} = "{dotted}:main"'
-        )
+        return [cli_py, root / "pyproject.toml"]
+    print(
+        f"  note: add to pyproject.toml manually:\n"
+        f"    [project.scripts]\n"
+        f'    {name} = "{dotted}:main"'
+    )
+    return [cli_py]
 
 
 def _run_pep723(
@@ -1661,6 +1679,7 @@ def _run_pep723(
     # Same pair as above: the guard, and the verb read before the write.
     _verb = "update" if script.exists() else "create"
     _write_guarded(script, R.render(tmpl, ctx), _verb)
+    return [script]
 
 
 def _print_summary(target: str, root: Path, name: str, pkg: str) -> None:

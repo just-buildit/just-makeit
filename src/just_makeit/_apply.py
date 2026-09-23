@@ -215,12 +215,16 @@ def _changed_report(
     once, project-relative: ``create`` if it did not exist before the run,
     ``update`` if its bytes differ from *before*, and nothing if the run
     ended where it started -- which is what a second `apply` must print.
+
+    A candidate :func:`is_skipped` excludes is never reported: *before* has no
+    digest for it, so it would read as ``create`` on every run. The manifest
+    is the one a write site hands back (gh-1477: the app replay saves it).
     """
     out: list = []
     seen: set = set()
     for cand in candidates:
         rel = _project_rel(root, cand)
-        if rel in seen:
+        if rel in seen or is_skipped(Path(rel)):
             continue
         seen.add(rel)
         real = root / rel
@@ -3542,15 +3546,50 @@ def run(
                 )
             )
 
+    # gh-184: re-materialise the recorded app, not a default one. Passing
+    # the [app] record's target/name/object keeps `jm apply` from rewriting
+    # it to <project>/<first object>.
+    #
+    # gh-1477: BEFORE the report, with the verb's own progress captured, so
+    # its writes are reported by the bytes they leave like every other write
+    # here. It ran after the summary and printed its own unconditional
+    # `update` lines, so an unchanged app project announced three rewrites on
+    # every apply. Its warning that edits were discarded goes to stderr and
+    # is not captured: it fires only when the bytes really differ.
+    app_written: list = []
+    _app_rec = C.app_config(cfg)
+    if _app_rec:
+        from . import _app
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            app_written = _app.run(
+                root,
+                cfg,
+                target=_app_rec.get("target", "c"),
+                name=_app_rec.get("name"),
+                object_=_app_rec.get("object"),
+                function_=_app_rec.get("function"),
+                module=_app_rec.get("module"),
+                flags=_app_rec.get("flags"),
+                commands=_app_rec.get("commands"),
+            )
+
     # gh-1474: after the LAST write -- the formatter pass, the link-check
-    # tables, the invariants file -- each path decided by the bytes it ends
-    # with. A write the formatter undid, or a file two modules merged in
-    # turn, changed nothing and says nothing; and the summary below counts
+    # tables, the invariants file, the app -- each path decided by the bytes
+    # it ends with. A write the formatter undid, or a file two modules merged
+    # in turn, changed nothing and says nothing; and the summary below counts
     # the same lines it follows, so the two cannot disagree.
     _changed = _changed_report(
         root,
         _before,
-        [*created, *impl_patched, *updated, *bench_updated, *frag_doc_updated],
+        [
+            *created,
+            *impl_patched,
+            *updated,
+            *bench_updated,
+            *frag_doc_updated,
+            *app_written,
+        ],
     )
     for verb in ("create", "update"):
         for v, rel in _changed:
@@ -3604,22 +3643,3 @@ def run(
     # doppler months was correct, printed every run, and indistinguishable
     # from the dozen advisory ones around it.
     _report.trailer()
-
-    if C.app_config(cfg):
-        from . import _app
-
-        # gh-184: re-materialise the recorded app, not a default one. Passing
-        # the [app] record's target/name/object keeps `jm apply` from rewriting
-        # it to <project>/<first object>.
-        _app_rec = C.app_config(cfg)
-        _app.run(
-            root,
-            cfg,
-            target=_app_rec.get("target", "c"),
-            name=_app_rec.get("name"),
-            object_=_app_rec.get("object"),
-            function_=_app_rec.get("function"),
-            module=_app_rec.get("module"),
-            flags=_app_rec.get("flags"),
-            commands=_app_rec.get("commands"),
-        )
