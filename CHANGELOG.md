@@ -157,6 +157,22 @@
     `cat >> just-makeit.toml` block before the first command that needs
     it; the replayed manifest is byte-identical to the original.
 
+- **`jm status` names each root-template fix your root `CMakeLists.txt`
+    lacks** (gh-1459, gh-1471). `apply` splices only the root file's marked
+    blocks, so every fix jm made to the rest of the template reached a new
+    project and never an existing one, and `status --check` said nothing:
+    gh-1452's `libm` link (a C consumer through `find_package` failed to
+    link) and gh-1368's Windows defaults (an upgraded project did not build
+    under clang-cl at all). A new `ROOT CMAKE` section lists each one the
+    file lacks, what breaks without it and where: `libm`, `static-name`,
+    `export-all`, `runtime-dest`, `build-type`, `msvc-runtime`,
+    `complex-range`, `win-defines`. The file stays yours -- `apply` writes
+    nothing new, the section is never counted, and `CMakeLists.txt:<fix>` in
+    `status_allow` declines one. It reads the file as CMake commands, so a
+    formatter's layout or your own equivalent spelling is not reported.
+    `jm status --diff` now also prints the root file against today's render,
+    the text to merge from.
+
 ### Changed
 
 - **The scaffolded Python test follows the constructor** (gh-1489).

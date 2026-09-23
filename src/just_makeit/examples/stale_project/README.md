@@ -43,7 +43,8 @@ jm status
 It exits 1 and sorts what is behind into kinds, each with what to do about
 it: files the manifest implies that are **missing** or **stale**, a binding
 fragment that is **unreconciled**, create-only files that are **outdated**,
-and C cores that are **unwired** from the C library. Keep this output — every
+C cores that are **unwired** from the C library, and fixes to the root
+`CMakeLists.txt` template that yours lacks (**root cmake**). Keep this output — every
 step below answers one of its sections.
 
 ## 2. `jm apply`
@@ -68,21 +69,32 @@ Hold that thought — step 5 shows what it means, and step 6 fixes it.
 
 `apply` keeps the root `CMakeLists.txt`'s marked blocks current (the
 components, modules and external dependencies) and never touches the rest,
-and `jm status` does not yet compare the rest either
-([gh-1471](https://github.com/just-buildit/just-makeit/issues/1471)). So
-every fix to that template since your project was generated is missing,
-silently. Among them are the Windows ones: without them this project does not
-build under clang-cl (`ninja: error: multiple rules generate stale.lib`).
+because the rest is where your own targets go. So no fix jm has made to that
+template since your project was generated has arrived. `jm status` names each
+one under `ROOT CMAKE`, with what breaks without it:
 
-Get today's version from a scratch project of the same name, merge it into
-yours, and let `apply` put the managed blocks back:
+```
+ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+  ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
+  ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
+  ...
+```
+
+Most of them are Windows fixes, and without them this project does not build
+under clang-cl. `jm status --diff` prints your file against today's render,
+so you can see what to merge. This project's file was never edited, so take
+today's whole, from a scratch project of the same name, and let `apply` put
+the managed blocks back:
 
 ```sh
+jm status --diff                                 # what to merge
 (cd /tmp && jm new stale)
-diff /tmp/stale/CMakeLists.txt CMakeLists.txt    # merge what you want
 cp /tmp/stale/CMakeLists.txt CMakeLists.txt      # here: never edited, so whole
 jm apply
 ```
+
+A fix you have decided against goes in `[project] status_allow` as
+`CMakeLists.txt:<fix>`, e.g. `CMakeLists.txt:complex-range`.
 
 If you added your own targets to it, merge by hand instead of copying — or
 move them to a `native/src/<dir>/<dir>_extra.cmake`, which jm includes and
