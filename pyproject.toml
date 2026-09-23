@@ -19,8 +19,15 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 keywords = [
-    "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
-    "code-generation", "numpy", "packaging", "wheel",
+    "c-extension",
+    "cmake",
+    "pep517",
+    "build-backend",
+    "scaffolding",
+    "code-generation",
+    "numpy",
+    "packaging",
+    "wheel",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -57,6 +64,17 @@ jm-docker-e2e = "just_makeit._scripts:docker_e2e"
 # verbatim (keeping those .c/.h files) and compile nothing.
 pure = true
 
+[tool.tombi.format.rules]
+line-width = 79
+indent-width = 4
+
+# No schema-driven formatting. With schemas on, tombi SORTS arrays and tables
+# it has a schema for -- `dependencies`, `classifiers`, the dev group, the
+# order of `[build-system]` -- rewriting authored order and separating
+# comments from the entries they explain. Layout, not opinion.
+[tool.tombi.schema]
+enabled = false
+
 [tool.ruff]
 line-length = 79
 # gh-1443: a project frozen at jm 0.33.14 -- its bytes are the test.
@@ -66,7 +84,9 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = ["E402"] }
+per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_makeit/examples/*" = [
+    "E402"
+] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -86,7 +106,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
-
 
 [dependency-groups]
 # This group is the single source of truth for DEV TOOL VERSIONS. The Makefile
@@ -115,6 +134,14 @@ dev = [
     # so this move changes no formatting output on day one.
     "clang-format==22.1.8",
     "cmakelang==0.6.13",
+    # The TOML formatter: wraps at the house 79 columns and normalises layout
+    # (config in [tool.tombi] above). Chosen over taplo, which ships no
+    # aarch64 Linux wheel -- it failed to build here and on the arm CI legs.
+    # Ruff does not format TOML: `ruff format x.toml` exits 0 having done
+    # nothing, which is the shape of a gate that checks nothing.
+    # Gated to >=3.10 (tombi's floor) like mdformat above; `make lint-tombi`
+    # self-skips where it is absent, and the CI lint job enforces it.
+    "tombi==1.5.5; python_version >= '3.10'",
     # mdformat's plugins were previously unpinned pre-commit
     # `additional_dependencies`, which is how the env drifted to
     # mdformat-mkdocs 5.1.4 while the config still claimed 1.0.0. Gated to

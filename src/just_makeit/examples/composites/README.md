@@ -126,8 +126,8 @@ fn = "ringbuf_stats"
 out = "ringbuf_stats_t"
 cache = false
 fields = [
-  { name = "used", from = "used", type = "size_t" },
-  { name = "fill_fraction", type = "double", expr = "self->capacity ? (double)tmp.used / (double)self->capacity : 0.0" },
+    { name = "used", from = "used", type = "size_t" },
+    { name = "fill_fraction", type = "double", expr = "self->capacity ? (double)tmp.used / (double)self->capacity : 0.0" },
 ]
 
 [[module.ring.getters]]

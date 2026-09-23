@@ -1,5 +1,5 @@
 [project]
-name    = "<<project_underscore>>"
+name = "<<project_underscore>>"
 version = "<<version>>"
 
 [tools.install-deps]

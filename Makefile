@@ -42,6 +42,7 @@ BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 DEV_RUN    = $(UV) run --group dev
 RUFF       = $(DEV_RUN) ruff
 MDFORMAT   = $(DEV_RUN) mdformat
+TOMBI      = $(DEV_RUN) tombi
 ZENSICAL   = $(DEV_RUN) zensical
 PRE_COMMIT = $(DEV_RUN) pre-commit
 SYNC_CMD   = $(UV) sync --group dev
@@ -83,6 +84,12 @@ C_EXCLUDE_RE  = ^(src/just_makeit/templates/|tests/fixtures/doxygen/|src/just_ma
 # `.cmake.in` is deliberately included: it IS CMake, and formats cleanly.
 CMAKE_INCLUDE_RE = ^src/just_makeit/templates/cmake/.*\.cmake(\.in)?$$
 CMAKE_EXCLUDE_RE = CMakeLists_(component|module|object_core)\.cmake
+# TOML tombi owns: every tracked .toml, templates included -- their
+# <<placeholders>> sit inside strings, so each template is valid TOML as it
+# stands and is held to the same layout as its render (which gh-1443 Gate A
+# checks in every example). The one tree it must not touch is stale_project,
+# frozen at jm 0.33.14: reformatting it would make it a different project.
+TOML_EXCLUDE_RE = ^src/just_makeit/examples/stale_project/tree/
 
 # ── lint-<tool> dispatch ─────────────────────────────────────────────────────
 # LINT_TOOLS stamps out one `lint-<tool>` target each; .pre-commit-config.yaml
@@ -103,14 +110,14 @@ CMAKE_EXCLUDE_RE = CMakeLists_(component|module|object_core)\.cmake
 # makefiles, which meant a raw `clang-format -i` on generated C was silently
 # ALLOWED while `ruff check .` was denied. In a repo whose entire C surface is
 # generated, that is the ungated command that matters most.
-LINT_TOOLS   = ruff ruff-format mdformat clang-format cmake-format \
+LINT_TOOLS   = ruff ruff-format mdformat tombi clang-format cmake-format \
                sync-version assemble-examples
 # `format` is the auto-fixer, so sync-version is deliberately NOT here: it
 # exits 1 when it rewrites bootstrap.toml (pre-commit's "re-stage me" convention),
 # and a fixer that fails because it fixed something is a trap. assemble-examples
 # returns 0 either way, and must stay LAST for the same reason it is last in
 # the hook config -- it inlines scripts ruff-format may have just rewrapped.
-FORMAT_TOOLS = ruff-format ruff mdformat clang-format cmake-format \
+FORMAT_TOOLS = ruff-format ruff mdformat tombi clang-format cmake-format \
                assemble-examples
 
 CLANG_FORMAT = $(DEV_RUN) clang-format
@@ -128,6 +135,20 @@ define LINT_clang-format
     | grep -E '$(C_INCLUDE_RE)' \
     | grep -Ev '$(C_EXCLUDE_RE)' \
     | xargs -r $(CLANG_FORMAT) -i
+endef
+
+# tombi needs Python >=3.10, so it self-skips on a 3.9 env exactly as mdformat
+# does. `--offline`: tombi otherwise fetches JSON schemas from the network, and a
+# formatter whose output can depend on a download is not a gate. (Schemas are
+# also switched off in [tool.tombi.schema], so this is belt and braces.)
+define LINT_tombi
+@if $(TOMBI) --version >/dev/null 2>&1; then \
+    git ls-files '*.toml' \
+        | grep -Ev '$(TOML_EXCLUDE_RE)' \
+        | xargs -r $(TOMBI) format --offline --quiet; \
+else \
+    echo "tombi unavailable (needs Python >=3.10) — skipping"; \
+fi
 endef
 
 define LINT_cmake-format

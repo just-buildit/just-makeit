@@ -17,3 +17,14 @@ command = "make just-build"
 
 [tool.pytest.ini_options]
 testpaths = ["src"]
+
+# TOML layout, for `tombi format` or an editor running tombi's language
+# server: 79 columns, 4-space indent. Schemas are off so tombi never sorts
+# your dependencies, classifiers or tables -- it lays out, it does not
+# reorder. Everything jm writes into this project already passes it.
+[tool.tombi.format.rules]
+line-width = 79
+indent-width = 4
+
+[tool.tombi.schema]
+enabled = false

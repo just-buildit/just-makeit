@@ -63,6 +63,14 @@ repos:
         pass_filenames: false
         types: [markdown]
 
+      # TOML, through the same dispatch -- see LINT_tombi for its scope.
+      - id: tombi
+        name: tombi
+        entry: make -s lint-tombi
+        language: system
+        pass_filenames: false
+        types: [toml]
+
       # These two were the last hooks running a tool from an upstream mirror
       # rather than through make. That put their versions in a `rev:` instead
       # of the dev group, and — because the make-ssot hook derives its map
