@@ -2953,6 +2953,35 @@ def resolve_enum_type(cfg: dict, ptype: str) -> str:
     return make_string_enum(registry[name], registry[name].constants)
 
 
+def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
+    """*params* with each ``enum:<name>`` type resolved, for rendering.
+
+    The creation path's counterpart of :func:`_init_param_type` (gh-1489).
+    ``jm object --init-param level:enum:level`` hands the generators the
+    tuple ``parse_init_param_flag`` produced, which still carries the
+    reference: the renderer has no ``[[enum]]`` registry and keys
+    ``_CTYPE_META`` on the type. Resolution is for the RENDER only -- the
+    caller persists the unresolved tuples, so the manifest keeps
+    ``type = "enum:level"`` exactly as a hand-written table would, and
+    ``jm script`` replays the reference rather than its expansion.
+
+    An undefined enum name exits with :func:`resolve_enum_type`'s message,
+    before anything is written.
+
+    >>> cfg = {"enum": [{"name": "lvl", "values": ["a", "b"]}]}
+    >>> resolve_init_param_tuples(cfg, [("x", "enum:lvl", "b"), ("n", "int")])
+    [('x', 'string_enum:a,b', 'b'), ('n', 'int')]
+    """
+    out: list[tuple] = []
+    for p in params:
+        try:
+            out.append((p[0], resolve_enum_type(cfg, p[1]), *p[2:]))
+        except ValueError as exc:
+            print(f"error: --init-param '{p[0]}': {exc}", file=_sys.stderr)
+            _sys.exit(1)
+    return out
+
+
 def object_ref_capsule_prop(cfg: dict, component: str) -> dict:
     """The property row publishing *component*'s capsule, or ``{}``.
 

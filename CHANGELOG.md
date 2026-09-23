@@ -135,6 +135,28 @@
     identifier a wrapper declares to be claimed by the rule, so a local
     added later cannot arrive unreserved.
 
+- **`--init-param` takes an enum type** (gh-1489).
+    `--init-param level:enum:level:b` and `mode:string_enum:a,b:a` were
+    refused as "unsupported type 'enum'", because the flag split on every
+    `:` and both types carry one of their own. A hand-written
+    `[[obj.init_params]]` table accepted them, and `docs/types.md` showed
+    the CLI spelling, so the documented form failed. It now parses (with a
+    default, `required`, or neither) on `jm object`, a module object and
+    `jm view`, persists the reference (`type = "enum:level"`) rather than
+    its expansion, and renders byte-identical glue to the manifest path.
+    An undefined enum is refused before anything is written, and the
+    unsupported-type message now lists the enum forms and points a C
+    typedef at the manifest's `c_type`.
+
+- **`jm script` rebuilds a project whose constructor takes an enum**
+    (gh-1489). It replayed `type = "enum:level"` as its expansion
+    (`--init-param level:string_enum:a,b:b`), which `jm object` refused,
+    and never emitted the `[[enum]]` table, which has no CLI verb, so a
+    replayed `enum:` reference was undefined. The script now replays the
+    declared reference and re-declares every `[[enum]]` table through a
+    `cat >> just-makeit.toml` block before the first command that needs
+    it; the replayed manifest is byte-identical to the original.
+
 ### Changed
 
 - **The scaffolded Python test follows the constructor** (gh-1489).

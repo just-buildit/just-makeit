@@ -601,20 +601,21 @@ for the full semantics.
 
 ### `[[<component>.init_params]]` entries
 
-| TOML field                                                             | CLI flag                                                                | Status                      |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------- |
-| `name`, `type`, `default`                                              | `jm object --init-param name:type[:default]` (repeatable)               | ✅                          |
-| `optional = true`                                                      | `jm object --init-param 'name:type[]:optional'`                         | ✅ (syntax extension)       |
-| `default_raw = "<C constant>"` (a default jm must not evaluate)        | (TOML only)                                                             | ✅ (gh-1099)                |
-| `real_type`, `real_create_fn`, `create_fn`                             | (TOML only)                                                             | 🟡                          |
-| `capsule = "<name>"`, `header = "path/hdr.h"`                          | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`          | ✅ (0.47.0)                 |
-| `object = "<comp>[.<Class>]"` (derives `type`/`capsule`/`header`)      | `jm object --init-param 'name:object:<comp>[.<Class>][:optional]'`      | ✅ (gh-1224)                |
-| `required = false` on a capsule param (nullable handle)                | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'` | ✅ (gh-805 §H)              |
-| `derived = "<name>"` (name a 1-D array's length parameter)             | (TOML only)                                                             | ✅ (gh-900)                 |
-| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)              | (TOML only)                                                             | ✅ (gh-1097)                |
-| `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                             | ✅ (gh-1096)                |
-| `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                             | ✅ (gh-1105)                |
-| compose with `[[state]]`                                               | `--init-param + --state` together                                       | ✅ (0.13.23) (gate dropped) |
+| TOML field                                                             | CLI flag                                                                     | Status                      |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------- |
+| `name`, `type`, `default`                                              | `jm object --init-param name:type[:default]` (repeatable)                    | ✅                          |
+| `optional = true`                                                      | `jm object --init-param 'name:type[]:optional'`                              | ✅ (syntax extension)       |
+| `type = "enum:<name>"` / `type = "string_enum:a,b"`                    | `jm object --init-param 'name:enum:<name>[:default]'` (or `string_enum:a,b`) | ✅ (gh-1489)                |
+| `default_raw = "<C constant>"` (a default jm must not evaluate)        | (TOML only)                                                                  | ✅ (gh-1099)                |
+| `real_type`, `real_create_fn`, `create_fn`                             | (TOML only)                                                                  | 🟡                          |
+| `capsule = "<name>"`, `header = "path/hdr.h"`                          | `jm object --init-param 'name:type:capsule:<name>[:<header>]'`               | ✅ (0.47.0)                 |
+| `object = "<comp>[.<Class>]"` (derives `type`/`capsule`/`header`)      | `jm object --init-param 'name:object:<comp>[.<Class>][:optional]'`           | ✅ (gh-1224)                |
+| `required = false` on a capsule param (nullable handle)                | `jm object --init-param 'name:type:capsule:<name>[:<header>]:optional'`      | ✅ (gh-805 §H)              |
+| `derived = "<name>"` (name a 1-D array's length parameter)             | (TOML only)                                                                  | ✅ (gh-900)                 |
+| `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)              | (TOML only)                                                                  | ✅ (gh-1097)                |
+| `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                                  | ✅ (gh-1096)                |
+| `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                                  | ✅ (gh-1105)                |
+| compose with `[[state]]`                                               | `--init-param + --state` together                                            | ✅ (0.13.23) (gate dropped) |
 
 #### `example_value` — constructing a required param in generated tests
 

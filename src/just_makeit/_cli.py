@@ -84,6 +84,8 @@ Commands:
                                       Optional array form: name:type[]:optional[:create_fn]
                                       Required scalar form: name:type:required (no default;
                                       omitting it raises TypeError, not a late MemoryError).
+                                      Enum form: name:enum:<enum>[:default] (a declared
+                                      [[enum]]) or name:string_enum:a,b[:default].
                                       Capsule form: name:ctype:capsule:<capsule-name>[:header]
                                       — construct from a handle another module published
                                       (e.g. 'tlm:dp_tlm_t *:capsule:doppler.telemetry.tlm:

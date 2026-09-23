@@ -172,9 +172,14 @@ def _object_flags(
         val = f"{name}:{typ}:{default}" if default else f"{name}:{typ}"
         parts.append(_flag("--state", val))
 
-    for p in C.init_params(cfg, comp):
-        spec = _init_param_spec(C.init_param_tuple_to_dict(p))
-        parts.append(_flag("--init-param", spec))
+    # gh-1489: the DECLARED tables, not `C.init_params`. That accessor
+    # resolves `enum:<name>` to its `string_enum:` expansion for the
+    # renderer, so projecting its tuples back replayed `type = "enum:level"`
+    # as `level:string_enum:a,b` -- a script that rebuilds the project with
+    # the enum's values copied inline and its [[enum]] table no longer
+    # referenced by anything.
+    for p in cfg.get(comp, {}).get("init_params", []):
+        parts.append(_flag("--init-param", _init_param_spec(p)))
 
     at = C.arg_type(cfg, comp)
     if at != "float _Complex":
@@ -785,6 +790,17 @@ def run(root: Path) -> None:
 
     if version != "0.1.0":
         lines.append(f"just-makeit config version {version}\n\n")
+
+    # gh-1489: [[enum]] has no CLI verb, and every `enum:<name>` a later
+    # command replays -- an `--init-param`, a function `--param` -- is
+    # refused as an undefined enum unless the table is already declared. So
+    # it is re-declared here, BEFORE any command that references it, through
+    # the manifest's own writer rather than a second TOML spelling.
+    if cfg.get("enum"):
+        lines.append(
+            f"cat >> {C.FILENAME} <<'EOF'\n\n"
+            f"{C._dump_generic('enum', cfg['enum'])}EOF\n\n"
+        )
 
     # ── modules ──────────────────────────────────────────────────────────────
     for mod in mods:
