@@ -931,6 +931,7 @@ way.
 | `doc = "..."`                          | `jm method --doc "text"`                                     | ✅           |
 | `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                      | ✅ (0.49.0)  |
 | `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                   | ✅           |
+| `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)      | ✅           |
 | `varargs = true`                       | `jm method --varargs`                                        | ✅           |
 | `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)       | ✅ (0.14.2)  |
 | `variable_output = true`               | `jm method --variable-output`                                | ✅           |

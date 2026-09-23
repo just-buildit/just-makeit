@@ -67,7 +67,7 @@ def run(args: list[str]) -> None:
     status_errors: list[dict] = []
     doc = ""
     multi_output: list[str] = []
-    method_params: list[tuple[str, str]] = []
+    method_params: list[tuple[str, str, str, bool]] = []
     out_type: str | None = None
     out_divisor: int = 1
     max_out: int = 0
@@ -310,7 +310,12 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             multi_output.append(val)
             i += 1
-        elif tok in ("--param", "--extra-arg"):
+        elif tok in ("--param", "--extra-arg", "--out-param"):
+            # gh-1491: `--out-param name:T[]` is the caller's buffer to write
+            # into, as on `jm function` -- a non-const pointer in the
+            # prototype, and a binding that refuses any array it cannot hand
+            # over as the caller's own memory.
+            is_out_flag = tok == "--out-param"
             i += 1
             if i >= len(remaining):
                 print(f"error: {tok} requires name:type", file=sys.stderr)
@@ -346,6 +351,14 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            if is_out_flag and not T.is_array_param_type(ptype):
+                print(
+                    f"error: --out-param '{pname}' must be an array type"
+                    f" (got '{ptype}'); --out-param only applies to writable"
+                    f" array params.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if pdefault and (
                 T.is_array_param_type(ptype)
                 or T._CTYPE_META.get(ptype, {}).get("parse_type")
@@ -365,7 +378,7 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            method_params.append((pname, ptype, pdefault))
+            method_params.append((pname, ptype, pdefault, is_out_flag))
             i += 1
         elif tok == "--out-divisor":
             i += 1

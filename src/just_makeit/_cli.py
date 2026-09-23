@@ -186,7 +186,11 @@ Commands:
                                 exclusive with --arg-type, --param and
                                 --variable-output.
     --extra-arg name:type       Synonym for --param; repeatable.
-    --manual-stub               This method's binding is hand-written in a sacred
+    --out-param name:type[]     Writable array param the kernel fills (drops
+                                const); the caller's array must match the dtype
+                                exactly, be C-contiguous and writable, or the
+                                call raises TypeError. Repeatable.
+    --manual-stub              This method's binding is hand-written in a sacred
                                 _ext_<obj>_extra.c fragment. jm declares nothing
                                 for it and preserves its .pyi placeholder verbatim.
     --status-return             The int return carries ONLY status (0 = ok): the

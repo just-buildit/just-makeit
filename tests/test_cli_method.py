@@ -101,20 +101,31 @@ class TestCliMethod:
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--param", "n:int"])
             _, kwargs = mock_run.call_args
-            assert ("n", "int", "") in kwargs.get("params", [])
+            assert ("n", "int", "", False) in kwargs.get("params", [])
 
     def test_param_valid_array(self):
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--param", "coeffs:float[]"])
             _, kwargs = mock_run.call_args
-            assert ("coeffs", "float[]", "") in kwargs.get("params", [])
+            assert ("coeffs", "float[]", "", False) in kwargs.get("params", [])
 
     def test_scalar_default_parsed(self):
-        # gh-240: `name:type=default` → 3-tuple carrying the default.
+        # gh-240: `name:type=default` → the tuple carries the default.
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--param", "gain:double=1.5"])
             _, kwargs = mock_run.call_args
-            assert ("gain", "double", "1.5") in kwargs.get("params", [])
+            assert ("gain", "double", "1.5", False) in kwargs.get("params", [])
+
+    def test_out_param_marks_the_tuple_writable(self):
+        # gh-1491: the 4th slot is what `_method.run` records as `out`.
+        with patch("just_makeit._method.run") as mock_run:
+            _run(["fir", "execute", "--out-param", "buf:float[]"])
+            _, kwargs = mock_run.call_args
+            assert ("buf", "float[]", "", True) in kwargs.get("params", [])
+
+    def test_out_param_on_a_scalar_exits(self):
+        with pytest.raises(SystemExit):
+            _run(["fir", "execute", "--out-param", "n:int"])
 
     def test_default_on_array_exits(self):
         with pytest.raises(SystemExit):
@@ -146,7 +157,7 @@ class TestCliMethod:
         with patch("just_makeit._method.run") as mock_run:
             _run(["fir", "execute", "--extra-arg", "dump_now:bool"])
             _, kwargs = mock_run.call_args
-            assert ("dump_now", "bool", "") in kwargs.get("params", [])
+            assert ("dump_now", "bool", "", False) in kwargs.get("params", [])
 
     def test_extra_arg_bad_format_exits(self):
         with pytest.raises(SystemExit):

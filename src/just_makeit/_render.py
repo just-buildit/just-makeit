@@ -21,6 +21,7 @@ from ._types import (
     array_elem_ctype,
     is_array_param_type,
     parse_out_type,
+    param_writable,
 )
 from . import _coerce
 from . import _config as C
@@ -1259,7 +1260,7 @@ def _build_params_parse(
             prior_decrefs = "".join(
                 f" Py_DECREF({a});" for a in arr_names
             ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
-            is_out = bool(p.get("out"))
+            is_out = param_writable(p)
             npy_flags = (
                 "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE"
                 if is_out

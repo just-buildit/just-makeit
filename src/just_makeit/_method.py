@@ -91,7 +91,7 @@ def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
 
 
 def _max_out_count_param(
-    arg_type: str, params: list[tuple[str, str]] | None
+    arg_type: str, params: list | None
 ) -> "tuple[str, str | None]":
     """gh-607: the count parameter ``*_max_out()`` takes, mirroring the
     shape's own kernel count argument — the same value the binding is about
@@ -107,7 +107,8 @@ def _max_out_count_param(
     params = params or []
     if arg_type != "void":
         return ", size_t n_in", "n_in"
-    for pn, pt in params:
+    for p in params:
+        pn, pt = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
         if T.is_array_param_type(pt):
             return f", size_t {pn}_len", f"{pn}_len"
     if not params:
@@ -121,7 +122,7 @@ def _methods_c_stub_variable(
     arg_type: str,
     return_type: str,
     multi_output: list[str],
-    params: list[tuple[str, str]] | None = None,
+    params: list | None = None,
     out_type: str | None = None,
     max_out: int = 0,
     pass_capacity: bool = False,
@@ -155,19 +156,10 @@ def _methods_c_stub_variable(
         step_param = f", const {arg_disp} *in, size_t n_in"
         suppress_in = "    (void)in; (void)n_in;"
     elif params:
-        p_parts: list[str] = []
-        suppress_parts: list[str] = []
-        for pn, pt in params:
-            if T.is_array_param_type(pt):
-                elem_disp = T.array_elem_ctype(pt)
-                p_parts.append(f"const {elem_disp} *{pn}")
-                p_parts.append(f"size_t {pn}_len")
-                suppress_parts += [f"(void){pn};", f"(void){pn}_len;"]
-            else:
-                p_parts.append(f"{pt} {pn}")
-                suppress_parts.append(f"(void){pn};")
-        step_param = ", " + ", ".join(p_parts)
-        suppress_in = "    " + " ".join(suppress_parts)
+        # gh-1491: through the one expansion, so a writable (`out`) array
+        # param loses its `const` here exactly as it does in the header.
+        step_param = ", " + ", ".join(T.c_param_parts(params))
+        suppress_in = "    " + " ".join(T.c_param_suppress(params))
     else:
         step_param = ", size_t n"
         suppress_in = "    (void)n;"
@@ -329,7 +321,7 @@ def _methods_c_stub_fixed(
     arg_type: str,
     return_type: str,
     multi_output: list[str] | None = None,
-    params: list[tuple[str, str]] | None = None,
+    params: list | None = None,
     out_type: str | None = None,
     batch: bool = False,
     borrow: bool = False,
@@ -366,15 +358,14 @@ def _methods_c_stub_fixed(
     # green from day one" means the scaffold builds before the author has
     # written a line of it.
     if borrow:
-        parts = T.c_param_parts(
-            ([("x", arg_type)] if has_arg else []) + list(params)
-        )
+        _bp = ([("x", arg_type)] if has_arg else []) + list(params)
+        parts = T.c_param_parts(_bp)
         sep = ", " + ", ".join(parts) if parts else ""
+        # The companion of the expansion, not a third copy of it: unpacking
+        # each param as `(name, _)` suppressed a dict param's KEYS
+        # (`(void)name;`) and never an array's `_len`.
         sup = "    (void)state;" + "".join(
-            f" (void){pname};"
-            for pname, _ in (
-                ([("x", arg_type)] if has_arg else []) + list(params)
-            )
+            f" {s}" for s in T.c_param_suppress(_bp)
         )
         return (
             f"/* <<IMPLEMENT: {name} (borrowed view) >> */\n"
@@ -709,7 +700,7 @@ def _build_method_prototype(
     return_type: str,
     variable_output: bool,
     multi_output: list[str],
-    params: list[tuple[str, str]],
+    params: list,
     out_type: str | None = None,
     pass_capacity: bool = False,
     count_default: str = "",
@@ -1605,6 +1596,9 @@ def run(
             _entry = {"name": _p[0], "type": _p[1]}
             if len(_p) > 2 and _p[2]:
                 _entry["default"] = _p[2]
+            # gh-1491: the CLI's `--out-param` rides in a 4th slot.
+            if len(_p) > 3 and _p[3]:
+                _entry["out"] = True
             _norm_params.append(_entry)
     params = _norm_params
 
@@ -1748,7 +1742,7 @@ def run(
                 method_name,
                 arg_type,
                 return_type,
-                params=[(p["name"], p["type"]) for p in params],
+                params=params,
                 c_fn=fn,
             )
         elif result_fields and not _record.is_record_array(
@@ -1760,7 +1754,7 @@ def run(
                 arg_type,
                 return_type,
                 max_results,
-                params=[(p["name"], p["type"]) for p in params],
+                params=params,
                 c_fn=fn,
             )
         elif variable_output:
@@ -1770,7 +1764,7 @@ def run(
                 arg_type,
                 return_type,
                 multi_output,
-                params=[(p["name"], p["type"]) for p in params],
+                params=params,
                 # gh-788: the record struct IS the output element, so it
                 # reaches the stub the same way `out_type` does — one
                 # substitution, and the `dp_tlm_rec_t *out` parameter, the
@@ -1788,9 +1782,10 @@ def run(
                 arg_type,
                 return_type,
                 multi_output,
-                # The C stub signature ignores the optional `default` (a
-                # binding concern); project to (name, type) (gh-240).
-                [(p["name"], p["type"]) for p in params],
+                # The full dicts, not a (name, type) projection: `default`
+                # is a binding concern the expansion ignores (gh-240), but
+                # `out` is a C one -- it drops the `const` (gh-1491).
+                params,
                 out_type,
                 batch=batch,
                 borrow=borrow,
@@ -1847,7 +1842,7 @@ def run(
             return_type,
             variable_output,
             multi_output,
-            [(p["name"], p["type"]) for p in params],
+            params,
             out_type,
             pass_capacity=pass_capacity,
             batch=batch,

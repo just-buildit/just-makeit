@@ -26,6 +26,7 @@ from .._types import (
     is_array_param_type,
     array_elem_ctype,
     c_param_parts,
+    param_writable,
 )
 from .._docstring import (
     method_doc,
@@ -2057,14 +2058,9 @@ def make_methods_ctx(
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             elif has_params:
-                _vp_parts: list[str] = []
-                for _p in params:
-                    if is_array_param_type(_p["type"]):
-                        _e = array_elem_ctype(_p["type"])
-                        _vp_parts.append(f"const {_e} *{_p['name']}")
-                        _vp_parts.append(f"size_t {_p['name']}_len")
-                    else:
-                        _vp_parts.append(f"{_p['type']} {_p['name']}")
+                # gh-1491: the one expansion, which knows a writable (`out`)
+                # array param is not `const`.
+                _vp_parts = c_param_parts(params)
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({component}_state_t *state{_moc_decl});\n"
@@ -2095,13 +2091,7 @@ def make_methods_ctx(
                         p_parts.append("size_t x_len")
                     else:
                         p_parts.append(f"{arg_disp} x")
-                for p in params:
-                    if is_array_param_type(p["type"]):
-                        e_disp = array_elem_ctype(p["type"])
-                        p_parts.append(f"const {e_disp} *{p['name']}")
-                        p_parts.append(f"size_t {p['name']}_len")
-                    else:
-                        p_parts.append(f"{p['type']} {p['name']}")
+                p_parts += c_param_parts(params)
                 c_param_str = ", ".join(p_parts)
                 decl_lines.append(
                     f"{ret_disp} {c_fn}"
@@ -2235,8 +2225,11 @@ def make_methods_ctx(
                         _pb_lines += [
                             f"    PyArrayObject *{_pn}_arr = NULL;",
                         ]
+                        # gh-1491: the cast matches the prototype, which
+                        # `c_param_parts` makes non-const for an `out` param.
+                        _pe_q = "" if param_writable(_p) else "const "
                         _cd_parts.append(
-                            f"(const {_pe_disp} *)PyArray_DATA({_pn}_arr)"
+                            f"({_pe_q}{_pe_disp} *)PyArray_DATA({_pn}_arr)"
                         )
                         _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
                         _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
@@ -2302,17 +2295,41 @@ def make_methods_ctx(
                     "        return NULL;\n"
                 )
                 _conv_lines: list[str] = []
+                # Arrays acquired so far, released on every early return --
+                # the second array's failure used to leak the first.
+                _held: list[str] = []
                 for _p in params:
                     _pn = _p["name"]
                     _pt = _p["type"]
                     if is_array_param_type(_pt):
                         _pe = array_elem_ctype(_pt)
                         _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
+                        _release = " ".join(f"Py_DECREF({a});" for a in _held)
+                        _flags = "NPY_ARRAY_C_CONTIGUOUS"
+                        if param_writable(_p):
+                            # gh-1491: the caller's buffer, so it must be
+                            # handed over as-is. Without the guard numpy
+                            # substitutes a cast / contiguous / writable copy,
+                            # the kernel fills that, and the caller's array is
+                            # never touched -- the gh-581 shape, on the one
+                            # array-param path that never learned `out`.
+                            _conv_lines.append(
+                                _coerce.out_buffer_guard(
+                                    f"{_pn}_obj",
+                                    _pe_np,
+                                    label=_pn,
+                                    decrefs=_release,
+                                ).rstrip("\n")
+                            )
+                            _flags += " | NPY_ARRAY_WRITEABLE"
                         _conv_lines += [
                             f"    {_pn}_arr = (PyArrayObject *)PyArray_FROM_OTF(",
-                            f"        {_pn}_obj, {_pe_np}, NPY_ARRAY_C_CONTIGUOUS);",
-                            f"    if (!{_pn}_arr) return NULL;",
+                            f"        {_pn}_obj, {_pe_np}, {_flags});",
+                            f"    if (!{_pn}_arr) {{ {_release} return NULL; }}"
+                            if _release
+                            else f"    if (!{_pn}_arr) return NULL;",
                         ]
+                        _held.append(f"{_pn}_arr")
                     elif "parse_type" in _CTYPE_META.get(_pt, {}):
                         _pm = _CTYPE_META[_pt]
                         _pt_disp = _pt
