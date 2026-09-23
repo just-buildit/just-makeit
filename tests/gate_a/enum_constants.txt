@@ -1,0 +1,11 @@
+levels	re-apply warns	warning ~: native/benchmarks/bench_gate_core.c
+levels	ruff check	src/levels/benchmarks/bench_gate.py F401
+levels	ruff check	src/levels/benchmarks/bench_gate.py F841
+levels	ruff check	src/levels/gate.pyi F401
+levels	ruff check	src/levels/tests/test_gate.py E401
+levels	ruff check	src/levels/tests/test_gate.py F401
+levels	ruff check	src/levels/tests/test_gate.py F841
+levels	ruff format	src/levels/__init__.py
+levels	ruff format	src/levels/benchmarks/bench_gate.py
+levels	ruff format	src/levels/gate.pyi
+levels	ruff format	src/levels/tests/test_gate.py
