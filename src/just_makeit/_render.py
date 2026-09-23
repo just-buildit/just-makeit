@@ -1659,13 +1659,20 @@ def _py_wrapper_for_function(
             f"    Py_RETURN_NONE;"
         )
     elif ret_meta:
-        # gh-353: a path arg borrows a PyBytes that the C call copies, so the
-        # path XDECREF in `cleanup` must run AFTER the call, not before. Capture
-        # the C result into a temp, clean up, then convert + return. (Without a
-        # path arg `cleanup` is array-only and order is immaterial — the legacy
-        # one-line form is kept so enum-free output is byte-identical.)
-        _has_path = any(p["type"] == "path" for p in params)
-        if _has_path and cleanup:
+        # Everything in `cleanup` releases something the C call is still
+        # READING, so it runs after the call: capture the result into a temp,
+        # clean up, then convert + return -- the order every other branch
+        # here already has.
+        #
+        # gh-353 found this for a `path` arg (a PyBytes borrow the call reads)
+        # and fixed that case alone, on the premise that array cleanup order
+        # is immaterial. It is not (gh-1490): when the caller's array needs a
+        # cast or is not contiguous, PyArray_FROM_OTF returns a TEMPORARY that
+        # holds the only reference, and a Py_DECREF before the call frees the
+        # very buffer the call reads -- an access violation on Windows, a
+        # silent wrong answer on Linux. With no cleanup at all (scalar-only
+        # params) the one-line form is kept, so that output is unchanged.
+        if cleanup:
             _rt_disp = return_type
             ret_line = (
                 f"    {_rt_disp} _r = {fn_name}({call_args});\n"
@@ -1674,7 +1681,7 @@ def _py_wrapper_for_function(
             )
         else:
             ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
-            ret_line = f"{cleanup}    return {ret_expr};"
+            ret_line = f"    return {ret_expr};"
     else:
         call_line = (
             f"    {fn_name}({call_args});" if params else f"    {fn_name}();"
