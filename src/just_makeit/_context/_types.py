@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    bool_default_py,
     is_c_only_default,
     string_default_literal,
     strip_c_literal_suffix,
@@ -82,9 +83,10 @@ def _py_default(ctype: str, default: str) -> str:
         # default falls through to the generic branch below, which passes
         # the C/TOML spelling `true`/`false` straight into generated Python,
         # a NameError (`true` is not a Python name).
-        if not default.strip():
+        if not default.strip() or is_c_only_default(ctype, default):
+            # gh-1506: `FLAG_ON` is C, like gh-1488's `LVL_INFO`.
             return "..."
-        return "True" if default.strip().lower() == "true" else "False"
+        return bool_default_py(default)
     if is_c_only_default(ctype, default):
         # gh-1488: a header constant (`LVL_INFO`, `M_PI`) is C, and Python
         # has no name for it -- the float branch below used to make it

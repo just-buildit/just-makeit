@@ -9,6 +9,16 @@
 
 ### Fixed
 
+- **A bool state default that is a header constant is left to C on every
+    Python face** (gh-1506). gh-1488 gave every other type this treatment;
+    the bool branch of both `_py_default` peers mapped any spelling but
+    `true` to `False`, so `--state on:bool:FLAG_ON` wrote `on: bool = False`
+    in both `.pyi` writers and `G(on=False)` in the test, overriding the C
+    default rather than exercising it. It is now `...`, the keyword is
+    omitted and the docstring names `FLAG_ON`. The same branch also restated
+    the literal `1` as `False`; the bool literals are one shared set now, the
+    one the init-param refusal already accepted.
+
 - **A method's writable array param is the caller's buffer on every face**
     (gh-1491). `out = true` / `mutable = true` on a method param was
     accepted and then mostly ignored: every prototype still declared it
@@ -23,6 +33,7 @@
     Before this it replayed them as `--param`, so a rebuilt project got the
     buffer back `const` and read-only. The module-function path the issue
     names was already guarded (gh-581), and a compiled test now covers it.
+
 - **A manifest `doc` renders as you write it, on every face** (gh-1493).
     The same `doc` was treated four ways: kept whole on a module and an init
     param, flattened into one reflowed paragraph on an object, a method and a

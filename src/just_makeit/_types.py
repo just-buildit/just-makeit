@@ -463,7 +463,7 @@ def default_type_error(ctype: str, default: str) -> str:
     if ctype == "bool":
         # `bool`'s kind is "int", so this must dispatch on the concrete ctype
         # — the same reason gh-610 gave for the branch in `_py_default`.
-        if default.strip().lower() in ("true", "false", "0", "1"):
+        if default.strip().lower() in BOOL_LITERALS:
             return ""
         return f"default `{default}` is not a bool. Write `true` or `false`."
     if _C_NUMERIC_LITERAL.match(default):
@@ -483,6 +483,21 @@ def default_type_error(ctype: str, default: str) -> str:
     )
 
 
+#: The spellings of a ``bool`` default Python can restate, lower-cased.
+#: One set for the init-param refusal (:func:`default_type_error`), the
+#: C-only predicate and both ``_py_default`` peers (gh-1506).
+BOOL_LITERALS = ("true", "false", "0", "1")
+
+
+def bool_default_py(default: str) -> str:
+    """``True`` / ``False`` for a bool literal in :data:`BOOL_LITERALS`.
+
+    >>> bool_default_py("TRUE"), bool_default_py("1"), bool_default_py("0")
+    ('True', 'True', 'False')
+    """
+    return "True" if default.strip().lower() in ("true", "1") else "False"
+
+
 def is_c_only_default(ctype: str, default: str) -> bool:
     """True when a numeric *default* is C that Python cannot spell.
 
@@ -496,8 +511,9 @@ def is_c_only_default(ctype: str, default: str) -> bool:
     reads the value back from the object instead of restating it.
 
     The predicate is the numeric-literal pattern :func:`default_type_error`
-    already accepts, so "a literal" means one thing in both places. ``bool``,
-    ``const char *`` and the complex kinds are never C-only: each ``_py_default``
+    already accepts, so "a literal" means one thing in both places; for
+    ``bool`` it is :data:`BOOL_LITERALS`. ``const char *`` and the complex
+    kinds are never C-only: each ``_py_default``
     peer spells them without reading the text as a number.
 
     Examples
@@ -512,9 +528,18 @@ def is_c_only_default(ctype: str, default: str) -> bool:
     (False, False)
     >>> is_c_only_default("const char *", "NULL")
     False
+
+    gh-1506: a ``bool`` default is C-only when it is not one of the
+    :data:`BOOL_LITERALS` -- ``FLAG_ON`` was read as ``False`` on every
+    Python face while C wrote the constant.
+
+    >>> is_c_only_default("bool", "FLAG_ON"), is_c_only_default("bool", "1")
+    (True, False)
     """
-    if not default.strip() or ctype == "bool":
+    if not default.strip():
         return False
+    if ctype == "bool":
+        return default.strip().lower() not in BOOL_LITERALS
     meta = _CTYPE_META.get(ctype)
     if meta is None or meta["kind"] not in ("int", "float"):
         return False
