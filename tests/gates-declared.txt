@@ -2,6 +2,7 @@
 # module docstring. `make gates-index` prints them; this file is
 # the ratchet that keeps one from quietly dropping out.
 # Regenerate with `make gates-index-update`.
+local.mk:a branch never edits a CHANGELOG section that already shipped.
 local.mk:a change under src/ carries a CHANGELOG entry under [Unreleased].
 test_changelog_has_every_release
 test_claude_md_drift
@@ -11,6 +12,8 @@ test_gates_index
 test_gh1141_version_copies
 test_gh1368_complex_surface
 test_gh1374_cli_in_process
+test_gh1376_cmake_presets
+test_gh1376_presets_build
 test_gh1418_borrow_honours_its_keys
 test_gh1418_borrow_status_table
 test_gh1426_message_format_and_strict_input
@@ -25,6 +28,7 @@ test_gh1448_adopt_flip
 test_gh1448_token_survives_clang_format
 test_gh1452_consumer_links_installed_tree
 test_gh1452_libm_anchor
+test_gh1463_module_platforms
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor

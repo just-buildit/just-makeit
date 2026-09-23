@@ -9,7 +9,8 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check conflict-check complex-spelling-check \
+                changelog-check changelog-sections-check conflict-check \
+                complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
                 doppler-pin-check
@@ -174,6 +175,23 @@ changelog-check: ## Verify a branch that changes src/ also touches CHANGELOG.md
 	 echo "  release is a promotion rather than an archaeology exercise."; \
 	 echo "  A purely internal change still gets one honest line."; \
 	 exit 1
+
+# gh-1438: changelog-check asks whether a branch touched CHANGELOG.md, so an
+# entry put inside an already-released section passed it. This asks where the
+# edit landed: every section that existed at the merge base, except
+# [Unreleased], must be unchanged. A release passes with no carve-out, because
+# the section it renames [Unreleased] to is new at HEAD. The logic is a script
+# so tests/test_gh1438_changelog_sections.py can run it on seeded histories.
+lint: changelog-sections-check
+
+# GATE: a branch never edits a CHANGELOG section that already shipped.
+changelog-sections-check: ## Verify a branch edits no already-released CHANGELOG section
+	@base=$$(git merge-base HEAD $(CHANGELOG_BASE) 2>/dev/null) || { \
+	    echo "changelog-sections-check: no merge base with $(CHANGELOG_BASE) -"; \
+	    echo "  fetch it (CI needs fetch-depth: 0) or set CHANGELOG_BASE."; \
+	    exit 1; \
+	 }; \
+	 python3 scripts/changelog_sections_check.py "$$base"
 
 # gh-974: a merge-conflict marker that reached the published docs site and sat
 # there for ten days and a release. The check lives in a script rather than in
