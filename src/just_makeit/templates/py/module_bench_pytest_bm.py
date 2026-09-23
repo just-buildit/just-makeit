@@ -2,6 +2,7 @@
 
 Run: pytest src/<<package>>/<<module>>/benchmarks/bench_<<component>>.py --benchmark-only
 """
+
 import pytest
 import numpy as np
 
