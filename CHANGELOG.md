@@ -119,6 +119,22 @@
     `composer_seams` example builds `Mix.total_samples()` this way and calls
     it from Python.
 
+- **A param named after one of the wrapper's own C identifiers no longer
+    writes a tree that does not compile** (gh-1512). `jm method w m --param   y:double` exited 0 and generated `double y = w_m(self->handle, y);`
+    beside the parsed `y`: `redefinition of 'y'`. Measured over every
+    param-bearing binding shape, the same held for the wrapper's signature
+    (`self`, `args`, `kwds`), `tp_init`'s `kwlist`, every `_`-prefixed
+    local, an array param's derived `x_obj`/`x_arr`/`x_raw`/`x_len`, and an
+    out-buffer wrapper's `out`, `n_out`, `out_obj`, `out_arr`, `arr<N>`,
+    `v<N>` and `out<N>`. The result local now moves to `_y` when a param is
+    `y`, which leaves every other wrapper byte-identical; the rest are
+    refused before any C is written, for a method, a module function and an
+    init param, on the CLI and on `apply` alike. `out` stays legal where the
+    shape declares none of its own, as doppler's `cvt.int_to_bin` needs. A
+    test renders every shape with sentinel names and requires each C
+    identifier a wrapper declares to be claimed by the rule, so a local
+    added later cannot arrive unreserved.
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed

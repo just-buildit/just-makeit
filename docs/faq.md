@@ -122,6 +122,25 @@ calls it as `obj.flush()`.
 
 ______________________________________________________________________
 
+## Which param names can't I use?
+
+A param becomes a C local in the wrapper jm generates, beside jm's own, so a
+few names are refused before anything is written (gh-1512):
+
+- `self`, `args`, `kwds` and `kwlist`: the wrapper's C signature.
+- Any name starting with `_`: the namespace jm's own locals use.
+- `x_obj`, `x_arr`, `x_raw`, `x_len` beside an **array** param `x`: jm
+    marshals `x` through the first three and passes `x_len` to C.
+- On a `--variable-output` / `--out-type` method or function only: `out`,
+    `n_out`, `out_obj`, `out_arr`, `arr<N>`, `v<N>`; on a `--multi-output`
+    one, `out<N>`.
+
+`y` is fine: when a param takes it, the wrapper moves its own result to
+`_y`. The same rule holds for method params, module-function params and init
+params, on the command line and in a hand-written manifest.
+
+______________________________________________________________________
+
 ## How do I add a struct field without making it a state variable?
 
 State variables (declared with `--state`) get a constructor parameter,

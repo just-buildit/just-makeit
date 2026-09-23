@@ -19,7 +19,7 @@ from . import _context as Ctx
 from . import _render as R
 from . import _types as T
 from ._docstring import class_import_line
-from ._builtins import overridden_builtin_slots
+from ._builtins import overridden_builtin_slots, require_param_names
 from . import _docstring
 from ._docstring import scaffold_doc_block
 
@@ -1129,6 +1129,9 @@ def run(
             }
         }
     )
+    # gh-1512: `tp_init` parses init params beside its own C signature, so
+    # they are held to the same names as a method's params.
+    require_param_names(f"object '{component}'", init_params)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

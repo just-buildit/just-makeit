@@ -38,6 +38,7 @@ from . import _init
 from ._builtins import (
     builtin_method_names,
     is_builtin_symbol,
+    require_param_names,
     reserved_python_members,
     withdraw_overridden_builtin,
 )
@@ -1073,6 +1074,15 @@ def run(
                 ]
             }
         }
+    )
+    # gh-1512: a param named after a C identifier the wrapper declares
+    # (`self`, `_kwlist`, an array's `x_len`, ...) does not compile. Refused
+    # here, before the binding is rendered, for the CLI and `apply` alike.
+    require_param_names(
+        f"method '{method_name}'",
+        params,
+        outbuf=bool(variable_output or out_type),
+        multi_output=bool(multi_output),
     )
     # gh-788: `record_dtype` is only meaningful as the element type of a
     # variable-output result, and the dtype cannot be built without the
