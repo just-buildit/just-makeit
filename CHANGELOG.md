@@ -106,6 +106,19 @@
     per table in `_keys.KIND_TABLE_VOCAB` and requires it in the output, so
     a table added there without a generator fails.
 
+- **A composer's `extra_methods` compiles through `jm apply`** (gh-1516).
+    gh-1190's escape hatch was gated on rendered text and never built, and
+    both halves failed a compiler. `apply` never emitted the `#include` of
+    `<cname>_ext_extra.c`, because it asked its pristine replay tree whether
+    the author's file existed. And even included, the `PyMethodDef` row
+    named a function declared only further down, so it was `undeclared here`.
+    Now a declared row always includes the file (a missing one fails the
+    build naming it, and apply order stops mattering), `apply` also reads a
+    row-less `_ext_extra.c` from the real project, and jm forward-declares
+    each row's `fn` with the signature its `flags` imply. The
+    `composer_seams` example builds `Mix.total_samples()` this way and calls
+    it from Python.
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed

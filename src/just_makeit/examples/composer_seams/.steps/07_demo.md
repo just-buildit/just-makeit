@@ -12,6 +12,8 @@ Clip(gain=7.0).steps(3)  -> [7.+0.j 7.+0.j 7.+0.j]   (via clip_from_source)
 Clip(gain=-1.0).steps(1) -> ValueError: a clip's gain must be >= 0
 Mix(Track.sum(2,3,dur=4)).execute(8) -> [5.+0.j 5.+0.j 5.+0.j 5.+0.j]
 mix.segments             -> 1 track(s), repeat=False, continuous=False
+mix.total_samples()      -> 4   (_ext_extra.c)
+  over tracks of 3 and 5 -> 8
 composer_seams demo: PASSED
 ```
 

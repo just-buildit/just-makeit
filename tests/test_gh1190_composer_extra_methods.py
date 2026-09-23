@@ -165,12 +165,21 @@ class TestTheHandWrittenFileIsIncludedAndUntouched:
             assert '#include "wfm_compose_ext_extra.c"' in ext, ext
             assert "jm never modifies" in ext, ext
 
-    def test_it_is_not_included_when_absent(self) -> None:
+    def test_it_is_not_included_when_nothing_asks_for_it(self) -> None:
         """A composer that needs no hook gains nothing — including a file that
         is not there is a compile error, not a no-op."""
-        td, ext, _ = self._materialize(_with(DRAWS), False)
+        td, ext, _ = self._materialize(_cfg(), False)
         with td:
             assert "wfm_compose_ext_extra.c" not in ext, ext
+
+    def test_a_declared_row_includes_it_even_before_it_exists(self) -> None:
+        """gh-1516: the row's `fn` lives nowhere else, so the build fails
+        without the file either way; the include makes the error name the
+        file to write, and the binding stops depending on whether the author
+        wrote it before or after `apply`."""
+        td, ext, _ = self._materialize(_with(DRAWS), False)
+        with td:
+            assert '#include "wfm_compose_ext_extra.c"' in ext, ext
 
     def test_jm_never_writes_it(self) -> None:
         td, _, extra = self._materialize(_with(DRAWS), True)

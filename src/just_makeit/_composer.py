@@ -1953,6 +1953,63 @@ def _extra_method_rows(cfg: dict, module: str, type_name: str) -> str:
     return "".join(rows)
 
 
+def _extra_method_params(flags: str) -> str:
+    """The C parameter list CPython calls a method with, given its *flags*.
+
+    Only the calling-convention bits change the signature; ``METH_CLASS`` /
+    ``METH_STATIC`` / ``METH_COEXIST`` change what ``self`` is, not its C
+    type, so they fall through to the two-pointer form.
+
+    >>> _extra_method_params("METH_NOARGS")
+    'PyObject *, PyObject *'
+    >>> _extra_method_params("METH_VARARGS | METH_KEYWORDS")
+    'PyObject *, PyObject *, PyObject *'
+    >>> _extra_method_params("METH_FASTCALL")
+    'PyObject *, PyObject *const *, Py_ssize_t'
+    """
+    bits = {b.strip() for b in flags.split("|")}
+    if "METH_FASTCALL" in bits:
+        if "METH_METHOD" in bits:
+            return (
+                "PyObject *, PyTypeObject *, PyObject *const *, Py_ssize_t,"
+                " PyObject *"
+            )
+        if "METH_KEYWORDS" in bits:
+            return "PyObject *, PyObject *const *, Py_ssize_t, PyObject *"
+        return "PyObject *, PyObject *const *, Py_ssize_t"
+    if "METH_KEYWORDS" in bits:
+        return "PyObject *, PyObject *, PyObject *"
+    return "PyObject *, PyObject *"
+
+
+def _extra_method_protos(cfg: dict, module: str) -> str:
+    """Forward prototypes for every `extra_methods` row's ``fn`` (gh-1516).
+
+    The rows sit in each type's ``PyMethodDef`` table, which is rendered with
+    the type -- ABOVE the ``#include`` of ``<cname>_ext_extra.c``, which has
+    to come after the types so a hand-written method can call them. Without
+    a declaration the row names a function its compiler has not seen yet.
+    The signature follows from ``flags``, so jm can declare it; ``static``
+    matches a definition written with or without the keyword.
+    """
+    seen: list[str] = []
+    lines = []
+    for m in extra_methods(cfg, module):
+        fn = m["fn"]
+        if fn in seen:
+            continue
+        seen.append(fn)
+        params = _extra_method_params(m.get("flags") or "METH_NOARGS")
+        lines.append(f"static PyObject *{fn}({params});")
+    if not lines:
+        return ""
+    return (
+        "\n/* extra_methods (gh-1190): defined in the hand-written"
+        " _ext_extra.c,\n * included after the types; declared here for the"
+        " method tables. */\n" + "\n".join(lines) + "\n"
+    )
+
+
 def _default_extra_type(cfg: dict, module: str) -> str:
     """Which type an `extra_methods` row attaches to when it does not say.
 
@@ -3109,11 +3166,21 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # several callers render for comparison rather than to write; without it
     # the include is simply not emitted, which is the same answer as "the file
     # is not there".
+    #
+    # gh-1516: a declared `extra_methods` row includes it unconditionally.
+    # Its `fn` is defined nowhere else, so without the file the build fails
+    # either way -- and "playlist_ext_extra.c: No such file" names the fix,
+    # where an undefined static named only the function. It also makes the
+    # binding independent of whether the author wrote the file before or
+    # after the `apply` that declared the row.
     _extra_c = f"{mp.cname}_ext_extra.c"
     _extra_include = (
         f'\n#include "{_extra_c}"  /* hand-written — jm never modifies */\n'
-        if root is not None
-        and (root / "native" / "src" / mp.cname / _extra_c).exists()
+        if extra_methods(cfg, module)
+        or (
+            root is not None
+            and (root / "native" / "src" / mp.cname / _extra_c).exists()
+        )
         else ""
     )
 
@@ -3177,6 +3244,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 
 #include "{header}"
 {gen_includes}{json_includes}{rt_includes}{serializer_includes}""",
+        _extra_method_protos(cfg, module),
         render_enum_tables(cfg, module),
         render_range_helper(cfg, module),
         render_source_type(cfg, module),
@@ -3767,11 +3835,19 @@ def render_bridge_h(cfg: dict, module: str) -> str:
     return "\n".join(lines)
 
 
-def materialize(cfg: dict, root: Path, module: str) -> None:
+def materialize(
+    cfg: dict, root: Path, module: str, project_root: "Path | None" = None
+) -> None:
     """Write a composer module's generated files into *root* and wire the top
     ``CMakeLists.txt`` ``add_subdirectory``. Mirrors the capsule materializer:
     the binding / CMake / ``.pyi`` are glue the apply pass syncs onto the real
-    project."""
+    project.
+
+    *project_root* is the real project when *root* is apply's pristine replay
+    tree: whether ``<cname>_ext_extra.c`` exists is a fact about the author's
+    tree, which the replay never contains (gh-1516; ``_handle.materialize``
+    takes the same argument for gh-374). It defaults to *root* for a direct
+    materialize."""
     from ._init import _write
 
     pkg = C.project_name(cfg)
@@ -3789,7 +3865,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
         )
     _write(
         root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
-        render_ext(cfg, module, root),
+        render_ext(cfg, module, project_root or root),
     )
     _write(
         root / "native" / "src" / mp.cname / "CMakeLists.txt",

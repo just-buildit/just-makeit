@@ -59,6 +59,16 @@ default = "4"
 
 [module.playlist.oo]
 composer_type_name = "Mix"
+
+# ── a method jm cannot express ────────────────────────────────────────────
+# The body is hand-written CPython in native/src/playlist/playlist_ext_extra.c;
+# this row is what gives it a place on Mix and a line in the .pyi.
+[[module.playlist.extra_methods]]
+name = "total_samples"
+fn = "Mix_total_samples"
+flags = "METH_NOARGS"
+doc = "Samples the whole spec lasts: the sum of every track's dur."
+returns = "int"
 """
 
 
