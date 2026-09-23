@@ -40,10 +40,12 @@ What is deliberately *not* touched
 
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 from . import _config as C
@@ -242,6 +244,264 @@ def reflow_docstring_open(
     ]
 
 
+# The last line of a `def` whose whole body is `...`: a one-line stub
+# (`def f(self) -> int: ...`) or the closing line of a wrapped one
+# (`    ) -> int: ...`).
+_STUB_DEF_END_RE = re.compile(r"^[ ]*(?:(?:async\s+)?def\b.*|\).*):\s*\.\.\.$")
+_DEF_START_RE = re.compile(r"^[ ]*(?:async\s+)?def\b")
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _decorated_def(lines: "list[str]", n: int) -> bool:
+    """Whether *lines[n]* starts a ``def``, directly or under decorators.
+
+    A decorated CLASS does not count: ruff keeps its blank line after a stub
+    ``def`` (``@final`` over a record type after a module function).
+    """
+    for line in lines[n:]:
+        body = line.lstrip(" ")
+        if not body.startswith("@"):
+            return body.startswith(("def ", "async def "))
+    return False
+
+
+def stub_blank_lines(lines: "list[str]") -> "list[str]":
+    """Lay out the blank lines between a stub's members the way ruff does.
+
+    gh-1478. A ``.pyi`` is jm's alone and ``status --check`` compares it
+    byte-for-byte, so a project that runs ``ruff format`` (most do) must find
+    it already formatted -- otherwise the formatter rewrites it on the first
+    commit and ``status`` calls jm's own file stale (the gh-1432 class).
+    Stub files have their own blank-line rules, and the emitters -- eight
+    modules concatenating snippets -- each got them slightly wrong: two blank
+    lines between methods, one after a ``: ...`` body.
+
+    The rules, each measured against jm's pinned ruff:
+
+    * never more than ONE blank line between two statements, nor at the end;
+    * NONE after a ``def`` whose body is ``...`` when the next member at the
+      same indent is another ``def``, decorated or not -- a property's
+      getter and setter, and a run of ``@property`` stubs, included;
+    * exactly one after a class docstring (ruff inserts it before an
+      attribute, and keeps it before anything else).
+
+    The interior of a docstring is never touched. Idempotent, like every
+    pass here: the output is its own fixed point.
+
+    >>> stub_blank_lines([
+    ...     "class A:",
+    ...     "    def __init__(self) -> None: ...",
+    ...     "",
+    ...     "    def f(self) -> int:",
+    ...     '        \"\"\"F.\"\"\"',
+    ...     "",
+    ...     "",
+    ...     "    @property",
+    ...     "    def g(self) -> int: ...",
+    ...     "    @property",
+    ...     "    def h(self) -> int: ...",
+    ... ])  # doctest: +NORMALIZE_WHITESPACE
+    ['class A:',
+     '    def __init__(self) -> None: ...',
+     '    def f(self) -> int:',
+     '        \"\"\"F.\"\"\"',
+     '',
+     '    @property',
+     '    def g(self) -> int: ...',
+     '    @property',
+     '    def h(self) -> int: ...']
+    """
+    out: "list[str]" = []
+    in_doc = ""
+    blanks = 0
+    class_doc = False  # the docstring being read is a class's
+    after_class_doc = False  # ...and it has just closed
+    for n, line in enumerate(lines):
+        if in_doc:
+            out.append(line)
+            if in_doc in line:
+                in_doc = ""
+                after_class_doc = class_doc
+            continue
+        if not line.strip():
+            blanks += 1
+            continue
+        prev = len(out) - 1
+        keep = min(blanks, 1)
+        if after_class_doc:
+            keep = 1
+        elif prev >= 0 and _STUB_DEF_END_RE.match(out[prev]):
+            same_indent = _indent(line) == _indent(out[_def_line(out, prev)])
+            if same_indent and _decorated_def(lines, n):
+                keep = 0
+        if prev >= 0:
+            out.extend([""] * keep)
+        elif blanks:
+            out.extend([""] * blanks)
+        blanks = 0
+        after_class_doc = False
+        header = out[prev].lstrip(" ") if prev >= 0 else ""
+        out.append(line)
+        is_doc = line.lstrip(" ").lstrip("r").startswith(_TRIPLE)
+        class_doc = is_doc and header.startswith("class ") and not keep
+        opener = next((q for q in _TRIPLE if line.count(q) % 2), "")
+        if opener:
+            in_doc = opener
+        elif class_doc:
+            after_class_doc = True
+    # One trailing newline at most: a producer that appended a spacer after
+    # its last member left a blank line at the end of the file.
+    out.extend([""] * min(blanks, 1))
+    return out
+
+
+def _def_line(lines: "list[str]", end: int) -> int:
+    """Index of the ``def`` line of the signature ending at *lines[end]*."""
+    i = end
+    while i > 0 and not _DEF_START_RE.match(lines[i]):
+        i -= 1
+    return i
+
+
+_BLOCK_START = ("def ", "async def ", "class ", "@")
+
+
+def _continuation_rows(text: str) -> "set[int] | None":
+    """The 0-based rows of *text* that continue a logical line.
+
+    Everything after the first physical line of a statement -- the inside
+    of a bracket, of a triple-quoted string, of a backslash continuation --
+    is the statement's own business, and a layout pass must neither count
+    its blank lines nor add any. ``tokenize`` is the one reader that gets
+    f-string braces and string brackets right. ``None`` when *text* does not
+    tokenize; the caller then leaves it alone.
+    """
+    rows: "set[int]" = set()
+    first = None
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.NL, tokenize.COMMENT) and first is None:
+                continue
+            if tok.type in (tokenize.INDENT, tokenize.DEDENT):
+                continue
+            if tok.type in (tokenize.NEWLINE, tokenize.ENDMARKER):
+                if first is not None:
+                    rows.update(range(first, tok.end[0]))
+                first = None
+                continue
+            if first is None:
+                first = tok.start[0]  # 1-based: the row after it is `first`
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return rows
+
+
+def py_blank_lines(text: str) -> str:
+    """Lay out the blank lines of a scaffolded ``.py`` file per PEP 8.
+
+    gh-1478. jm's tests and benchmarks are assembled from snippets, each
+    carrying its own leading newlines, and whether a slot rendered empty
+    decided how many met: top-level functions one blank line apart in the
+    pytest face, three blank lines where an empty benchmark block sat, two
+    between methods where an optional test was dropped. ``ruff format``
+    rewrote every one on a project's first commit.
+
+    A post-pass for the reason :mod:`_pyfmt` gives for stubs: the snippets
+    come from dozens of emitters, and one layout rule covers all of them,
+    including the next one. The rules are PEP 8's, which every formatter
+    agrees on:
+
+    * two blank lines before a top-level ``def``/``class``/decorator (and
+      above a comment block sitting directly on one), and before the first
+      top-level statement after a function or class body;
+    * one before a method, none before the first or after a decorator;
+    * none opening a block, at most one inside a body, at most two at
+      module level, and one newline at the end of the file.
+
+    Only the first line of a statement is laid out; the inside of a bracket
+    or a string is returned as it was. Idempotent.
+
+    >>> src = "import os\\ndef f():\\n\\n    pass\\ndef g():\\n    pass\\n\\n"
+    >>> print(py_blank_lines(src), end="")
+    import os
+    <BLANKLINE>
+    <BLANKLINE>
+    def f():
+        pass
+    <BLANKLINE>
+    <BLANKLINE>
+    def g():
+        pass
+    >>> py_blank_lines(py_blank_lines(src)) == py_blank_lines(src)
+    True
+    """
+    inside = _continuation_rows(text)
+    if inside is None:
+        return text
+    lines = text.split("\n")
+    out: "list[str]" = []
+    blanks = 0
+    top = ""  # the last statement at column 0
+    prev = ""  # the last statement or comment line
+    for row, line in enumerate(lines):
+        if row in inside:
+            out.extend([""] * blanks)
+            blanks = 0
+            out.append(line)
+            continue
+        if not line.strip():
+            blanks += 1
+            continue
+        indent = _indent(line)
+        body = line.lstrip(" ")
+        if not out:
+            keep = 0
+        elif indent == 0 and _opens_toplevel_block(lines, row):
+            keep = 0 if prev.startswith("@") else 2
+        elif indent == 0 and _indent(prev) > 0:
+            keep = 2
+        elif indent == 0:
+            keep = min(blanks, 2)
+        elif prev.rstrip().endswith(":") and indent > _indent(prev):
+            keep = 0
+        elif (
+            indent == 4
+            and top.startswith("class ")
+            and body.startswith(_BLOCK_START)
+        ):
+            keep = 0 if prev.lstrip().startswith("@") else 1
+        else:
+            keep = min(blanks, 1)
+        out.extend([""] * keep)
+        out.append(line)
+        blanks = 0
+        prev = line
+        if indent == 0 and not body.startswith(("#", "@")):
+            top = body
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+def _opens_toplevel_block(lines: "list[str]", i: int) -> bool:
+    """Whether column-0 *lines[i]* begins a ``def``/``class``.
+
+    A decorator does, and so does a comment sitting directly on one (no
+    blank line between): PEP 8's two blank lines go above the comment.
+    """
+    for line in lines[i:]:
+        if not line.strip() or _indent(line):
+            return False
+        if line.startswith(_BLOCK_START):
+            return True
+        if not line.startswith("#"):
+            return False
+    return False
+
+
 def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
     """Reflow every overlong signature and one-line docstring in a stub.
 
@@ -261,8 +521,9 @@ def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
     -------
     str
         The same source with overlong ``def``/``class`` headers broken across
-        lines and overlong one-line docstrings wrapped. The interior of a
-        multi-line docstring is returned untouched.
+        lines, overlong one-line docstrings wrapped, and the blank lines
+        between members laid out by :func:`stub_blank_lines`. The interior
+        of a multi-line docstring is returned untouched.
     """
     out: list[str] = []
     in_doc = ""
@@ -286,7 +547,7 @@ def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
                 out.extend(doc)
                 continue
         out.extend(reflow_line(line, width))
-    return "\n".join(out)
+    return "\n".join(stub_blank_lines(out))
 
 
 def flatten_prose(text: str) -> str:

@@ -3727,7 +3727,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     lines.append("")
     # gh-744: the third stub producer, reflowed like the other two
     # (`_render.render_component_pyi`, `_stubs.make_module_pyi`).
-    return reflow_pyi("\n".join(lines))
+    from ._stubs import prune_stub_imports
+
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 def render_bridge_h(cfg: dict, module: str) -> str:

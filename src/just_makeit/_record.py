@@ -667,7 +667,12 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
         for f in documented:
             lines.append(f"    {f.name} : {T.scalar_py_annotation(f.ctype)}")
             lines.append(f"        {f.doc}")
-    lines.append('    """')
+    if documented or "\n" in doc:
+        lines.append('    """')
+    else:
+        # A one-line docstring closes on its own line; ruff joins it
+        # otherwise (gh-1478).
+        lines[-1] += '"""'
     for f in flds:
         ann = T.scalar_py_annotation(f.ctype)
         lines.append("")

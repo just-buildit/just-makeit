@@ -1,6 +1,1 @@
 my_utils	re-apply warns	warning ~: native/benchmarks/bench_utils_core.c — records no measurement; jm scaffolded it for this module's 2 function(s) and only you know what to time
-my_utils	ruff check	src/my_utils/utils/tests/test_gain.py E401
-my_utils	ruff check	src/my_utils/utils/tests/test_gain.py F401
-my_utils	ruff format	src/my_utils/utils/benchmarks/bench_gain.py
-my_utils	ruff format	src/my_utils/utils/tests/test_gain.py
-my_utils	ruff format	src/my_utils/utils/utils.pyi

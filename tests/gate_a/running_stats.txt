@@ -1,6 +1,0 @@
-my_stats	ruff check	src/my_stats/tests/test_running_stats.py E401
-my_stats	ruff check	src/my_stats/tests/test_running_stats.py F401
-my_stats	ruff format	src/my_stats/__init__.py
-my_stats	ruff format	src/my_stats/benchmarks/bench_running_stats.py
-my_stats	ruff format	src/my_stats/running_stats.pyi
-my_stats	ruff format	src/my_stats/tests/test_running_stats.py

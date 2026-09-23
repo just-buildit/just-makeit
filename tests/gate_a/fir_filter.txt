@@ -1,6 +1,0 @@
-my_fir	ruff check	src/my_fir/tests/test_fir_filter.py E401
-my_fir	ruff check	src/my_fir/tests/test_fir_filter.py F401
-my_fir	ruff format	src/my_fir/__init__.py
-my_fir	ruff format	src/my_fir/benchmarks/bench_fir_filter.py
-my_fir	ruff format	src/my_fir/fir_filter.pyi
-my_fir	ruff format	src/my_fir/tests/test_fir_filter.py

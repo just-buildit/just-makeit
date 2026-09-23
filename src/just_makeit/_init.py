@@ -979,6 +979,8 @@ def ensure_dll_preamble(text: str) -> str:
     True
     >>> out.endswith("from .a import A  # noqa: E402" + chr(10))
     True
+    >>> out.startswith(head + chr(10) + "import os")  # gh-1478
+    True
     >>> ensure_dll_preamble(out) == out            # idempotent
     True
     >>> two = ensure_dll_preamble(out + "from .b import B" + chr(10))
@@ -990,8 +992,11 @@ def ensure_dll_preamble(text: str) -> str:
     if "add_dll_directory" not in text:
         from ._object import _leading_docstring
 
-        doc = _leading_docstring(text)
-        rest = text[len(doc) :].lstrip("\n")
+        # One blank line between the docstring and the preamble, whatever
+        # the docstring carried: ruff format requires it (gh-1478).
+        doc = _leading_docstring(text).rstrip("\n")
+        doc = f"{doc}\n\n" if doc else ""
+        rest = text[len(_leading_docstring(text)) :].lstrip("\n")
         text = f"{doc}{dll_preamble()}\n{rest}"
     # Annotating is a SEPARATE question from inserting: a project that already
     # had the preamble gains a second re-export the next time an object is
@@ -1607,7 +1612,9 @@ def run(
     # until the author deletes the token and takes it over.
     _write(
         root / "src" / pkg / "tests" / f"test_{comp}.py",
-        R.owned_test(r(pytest_tmpl), f"test_{comp}.py"),
+        R.owned_test(
+            R.render_scaffold_py(pytest_tmpl, ctx), f"test_{comp}.py"
+        ),
     )
 
     # Python benchmark
@@ -1616,7 +1623,7 @@ def run(
         _write(benchmarks_init, "")
     _write(
         root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
-        r(bench_py_tmpl),
+        R.render_scaffold_py(bench_py_tmpl, ctx),
     )
 
     # Benchmark history dir — dated snapshots committed to git

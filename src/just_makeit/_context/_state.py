@@ -41,6 +41,7 @@ from ._types import (
     _NP_DTYPE_ENUM,
     _c_set_val,
     _py_default,
+    _py_eq,
     _py_sample_val,
 )
 
@@ -1508,11 +1509,11 @@ def _build_no_state_init_ctx(
         "bench_destroy_stmt": f"    {component}_destroy(obj);",
         "getter_setter_test_py": (
             test_obj
-            + "\n        pass  # no auto-state; add assertions for your fields"
+            + "\n        assert obj is not None  # no auto-state; add yours here"
         ),
         "reset_test_py": (
             test_obj
-            + "\n        pass  # no auto-state; add assertions for your reset"
+            + "\n        assert obj is not None  # no auto-state; add yours here"
         ),
     }
 
@@ -3311,10 +3312,12 @@ def make_state_ctx(
             ]
         else:
             gs_lines += (
-                [f"        assert obj.get_{name}() == {iv}"] if _known else []
+                [f"        assert {_py_eq(f'obj.get_{name}()', iv)}"]
+                if _known
+                else []
             ) + [
                 f"        obj.set_{name}({sv})",
-                f"        assert obj.get_{name}() == {sv}",
+                f"        assert {_py_eq(f'obj.get_{name}()', sv)}",
             ]
     for name, elem_ct, size in array_info:
         np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
@@ -3325,9 +3328,13 @@ def make_state_ctx(
             f"        _got = obj.get_{name}()",
             "        assert _got[0] == _approx(1)",
             f"        _view = obj.get_{name}_view()",
-            "        assert not _view.flags['WRITEABLE']",
+            '        assert not _view.flags["WRITEABLE"]',
             "        assert _view[0] == _approx(1)",
         ]
+    if len(gs_lines) == 1:
+        # gh-1478: no accessor to round-trip (every field a buffer or
+        # opaque), and a body that only builds `obj` is ruff's `F841`.
+        gs_lines.append("        assert obj is not None")
     getter_setter_test_py = "\n".join(gs_lines)
 
     # ── PYTEST: reset_test_py ────────────────────────────────────────────
@@ -3360,7 +3367,9 @@ def make_state_ctx(
                 f"        assert obj.get_{name}() == _approx({iv})"
             )
         else:
-            rs_lines.append(f"        assert obj.get_{name}() == {iv}")
+            rs_lines.append(
+                f"        assert {_py_eq(f'obj.get_{name}()', iv)}"
+            )
     for name, elem_ct, _ in array_info:
         rs_lines.append(f"        assert obj.get_{name}()[0] == _approx(0)")
     reset_test_py = "\n".join(rs_lines)
