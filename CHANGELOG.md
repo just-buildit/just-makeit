@@ -37,11 +37,25 @@
 
 ### Fixed
 
+- **A module function no longer frees its array before the C call reads it**
+    (gh-1490). A scalar-returning function with an array parameter ran its
+    cleanup first: when numpy had to cast the caller's array (a `bool` array
+    to `uint8_t[]`, a float array, a strided view), `PyArray_FROM_OTF`
+    returned a temporary, the `Py_DECREF` freed it, and the call read freed
+    memory. Downstream it was an access violation on Windows one run in
+    three on seeded inputs (doppler-dsp/doppler#1477), and a silent wrong
+    answer on Linux. The result is captured, then cleaned up, then
+    converted, the form gh-353 gave `path` args alone. A function with only
+    scalar parameters renders unchanged. Proved with glibc's
+    `malloc.perturb`: before the fix a `bool` input counted 50000 of 50000
+    set where the same flags as `uint8` counted 10.
+
 - **`status` and `apply` list files in one order on every platform.** Both
     sorted `Path` objects, and a Windows path compares case-insensitively,
     so the same report put `bootstrap.toml` before `CMakePresets.json` on
     Windows and after it everywhere else. They sort by the POSIX spelling
     now. Found by the `stale_project` golden on its first clang-cl run.
+
 - **A build tree inside the project no longer counts as project files**
     (gh-1473). `status` recognised a build directory only by the name
     `build`. Any other one, such as CLion's default `cmake-build-debug` or a
@@ -51,6 +65,7 @@
     The unbuilt-source scan skips it too: a `file(GLOB` in a fetched
     dependency's `CMakeLists.txt` there no longer turns the scan off for
     the whole project.
+
 - **`apply` reports a file only when it actually changed** (gh-1474).
     Each step used to report what it had written, and the project's own
     formatter then put some of those files back exactly as they were. On a
@@ -59,6 +74,7 @@
     counts now come from each file's bytes before the run and after the
     formatter. Paths are project-relative, and each is listed once. A
     rewritten fragment that already existed reads `update`, not `create`.
+
 - **`upgrade` renames `jb.toml` to `bootstrap.toml`; `apply` no longer
     creates a default beside it** (gh-1472). On a project scaffolded before
     gh-935, `apply` created a fresh `bootstrap.toml` next to the author's
