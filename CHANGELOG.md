@@ -34,6 +34,7 @@
     now labels those units `adds only`. On doppler that splits 235
     differing units into 161 additions and 74 that remove code, and every
     hand-written body on the review's list is among the 74.
+
 - **An `[[enum]]` can bind a C enum whose values are not `0..n-1`**
     (gh-1450). A choice used to reach C as its **position**. So a C API with
     a sentinel at `-1`, a gap, or a first value of `1` was bound to the wrong
