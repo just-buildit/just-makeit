@@ -914,7 +914,10 @@ def _py_default_stub(ctype: str, default: str) -> str:
         # gh-610: "bool" isn't in kind_map (it falls to the generic "int"
         # bucket below), so the C/TOML spelling `true`/`false` passed
         # straight through into generated Python — a NameError.
-        return "True" if default.strip().lower() == "true" else "False"
+        # gh-1506: a header constant is `...`, as for every other type.
+        if T.is_c_only_default(ctype, default):
+            return "..."
+        return T.bool_default_py(default)
     # gh-1488: the peer's answer for a header constant, from the same
     # predicate -- a stub cannot name `LVL_INFO` any more than a test can.
     if T.is_c_only_default(ctype, default):

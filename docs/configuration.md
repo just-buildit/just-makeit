@@ -716,7 +716,9 @@ the C faces compile against it. Python cannot spell it, so the stub signature
 says `threshold: int = ...`, generated construction calls leave it out (the
 binding's default, the constant, applies), the reset test compares against
 the value read back from a fresh object, and the docstring names the constant
-(`threshold : int, default LVL_INFO`).
+(`threshold : int, default LVL_INFO`). A `bool` field is the same: any
+default other than `true`/`false`/`0`/`1` (`--state on:bool:FLAG_ON`) is
+treated as a constant.
 
 #### Naming what the constructor declares
 

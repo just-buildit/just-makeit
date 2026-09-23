@@ -31,8 +31,12 @@ from _jmrun import run_cli
 from test_gh1109_seeded_construction_is_attempted import _pytest_counts
 
 #: One integer and one floating constant: the float branch of `_py_default`
-#: appended `.0` to whatever it was given, so it failed differently.
-_INT_C, _FLOAT_C = "GATE_LEVEL", "GATE_SCALE"
+#: appended `.0` to whatever it was given, so it failed differently. And a
+#: bool (gh-1506): its branch mapped any non-`true` spelling to `False`, so
+#: the constant never leaked by name -- the stub stated a WRONG default
+#: instead. It is defined as 1, so every face that still says `False`
+#: disagrees with what C seeds.
+_INT_C, _FLOAT_C, _BOOL_C = "GATE_LEVEL", "GATE_SCALE", "GATE_ON"
 _STATE = (
     "--state",
     f"threshold:int:{_INT_C}",
@@ -40,8 +44,16 @@ _STATE = (
     f"scale:double:{_FLOAT_C}",
     "--state",
     "n:int:3",
+    "--state",
+    f"on:bool:{_BOOL_C}",
+    "--state",
+    "off:bool:0",
+    "--state",
+    "lit:bool:1",
 )
-_DEFINES = f"#define {_INT_C} 20\n#define {_FLOAT_C} 2.5\n"
+_DEFINES = (
+    f"#define {_INT_C} 20\n#define {_FLOAT_C} 2.5\n#define {_BOOL_C} 1\n"
+)
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or (
     shutil.which("cc") is None and shutil.which("gcc") is None
@@ -100,7 +112,11 @@ def test_no_generated_python_names_the_constant(
     }
     assert {".pyi", "tests", "benchmarks"} <= kinds, files
     for path in files:
-        leaked = _python_names(path.read_text("utf-8")) & {_INT_C, _FLOAT_C}
+        leaked = _python_names(path.read_text("utf-8")) & {
+            _INT_C,
+            _FLOAT_C,
+            _BOOL_C,
+        }
         assert not leaked, f"{path.relative_to(root)} names {leaked}"
 
 
@@ -120,6 +136,34 @@ def test_the_stub_documents_the_constant_by_name(
     assert f"scale : float, default {_FLOAT_C}" in stub
     assert "threshold: int = ..." in stub
     assert "n: int = 3" in stub
+    # gh-1506: the bool constant is `...` and named in prose, like the rest;
+    # a numeric bool literal is still restated, as the value it means.
+    assert "on: bool = ..." in stub
+    assert f"on : bool, default {_BOOL_C}" in stub
+    assert "off: bool = False" in stub
+    # `1` is a literal the init-param rule accepts; both peers read any
+    # non-`true` spelling as False, so it was restated inverted.
+    assert "lit: bool = True" in stub
+
+
+@pytest.mark.parametrize("shape", ["standalone", "module"])
+def test_no_python_face_restates_a_bool_constant_as_a_literal(
+    tmp_path: Path, shape: str
+) -> None:
+    """gh-1506: the bool leak was a WRONG literal, not the constant's name,
+    so the name-walk above cannot see it. Every construction call and
+    signature must leave `on` to the binding's own default."""
+    root = _scaffold(tmp_path, shape)
+    files = [
+        p
+        for p in (root / "src").rglob("*")
+        if p.suffix in (".py", ".pyi") and "Gate" in p.read_text("utf-8")
+    ]
+    assert len(files) >= 3, files
+    for path in files:
+        text = path.read_text("utf-8")
+        assert "on=False" not in text, path.relative_to(root)
+        assert "on: bool = False" not in text, path.relative_to(root)
 
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
