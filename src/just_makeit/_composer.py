@@ -31,10 +31,14 @@ from . import _render as R
 from . import _procglobal
 from . import _enumc
 from . import _keys
+from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import (
     ClassParam,
     DoxyBlock,
+    authored_c_doc,
+    authored_doc_lines,
+    authored_docstring,
     class_docstring,
     render_numpy_doc,
     render_runtime_doc,
@@ -953,7 +957,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         elif f.get("bytes"):
             _p, _l = buffer_members(f)
@@ -977,7 +981,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         elif f.get("complex"):
             _p, _l = buffer_members(f)
@@ -1003,7 +1007,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         elif f.get("_ranged"):
             # scalar, or (lo, hi) when the field's ranged bit is set.
@@ -1038,7 +1042,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         else:
             ctype = f["type"]
@@ -1073,7 +1077,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
 
     # fs getset (always present).
@@ -1103,8 +1107,9 @@ static int
     for c in _source_computed(cfg, module):
         n, ct = c["name"], c["type"]
         to_py = _to_py_scalar(ct, f"{c['fn']}(&self->src)")
-        doc = c.get("doc", "")
-        doc_c = f'"{doc}"' if doc else "NULL"
+        # gh-1499: this pasted the `doc` raw, so a two-line one was an
+        # unterminated C string and the module did not compile.
+        doc_c = authored_c_doc(str(c.get("doc") or ""))
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -1541,7 +1546,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
             continue
         if _field_is_enum(f):
@@ -1577,7 +1582,7 @@ static int
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
-                f"(setter){tname}_set_{n}, NULL, NULL}},"
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
             continue
         store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
@@ -1597,7 +1602,7 @@ static int
 }}""")
         getset_rows.append(
             f'    {{"{n}", (getter){tname}_get_{n}, '
-            f"(setter){tname}_set_{n}, NULL, NULL}},"
+            f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
         )
 
     # Feature 4 — flat single-source accessors: a segment built from exactly one
@@ -1621,7 +1626,8 @@ static int
     return PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "{n}");
 }}""")
         getset_rows.append(
-            f'    {{"{n}", (getter){tname}_flat_{n}, NULL, NULL, NULL}},'
+            f'    {{"{n}", (getter){tname}_flat_{n}, NULL, '
+            f"{_field_doc_c(f)}, NULL}},"
         )
 
     parts.append("\n".join(getset_fns))
@@ -1891,10 +1897,14 @@ def render_serializers(
     return _s;
 }}
 """)
-        rows.append(
-            f'    {{"{name}", {fnref},\n'
-            f'     {flags}, "{name}(...) -> {returns}"}},\n'
+        # gh-1499: a declared `doc` is the method's docstring on both
+        # faces; without one each keeps the line it always had.
+        _doc_c = (
+            authored_c_doc(str(s["doc"]))
+            if s.get("doc")
+            else f'"{name}(...) -> {returns}"'
         )
+        rows.append(f'    {{"{name}", {fnref},\n     {flags}, {_doc_c}}},\n')
     return "\n".join(funcs), "".join(rows)
 
 
@@ -1934,8 +1944,8 @@ def _extra_method_rows(cfg: dict, module: str, type_name: str) -> str:
         if (m.get("type") or _default_extra_type(cfg, module)) != type_name:
             continue
         flags = m.get("flags") or "METH_NOARGS"
-        doc = m.get("doc") or ""
-        _doc_c = _c_string(doc) if doc else "NULL"
+        # gh-1499: laid out as written, the text the stub carries.
+        _doc_c = authored_c_doc(str(m.get("doc") or ""))
         rows.append(
             f'    {{"{m["name"]}", (PyCFunction)(void (*)(void)){m["fn"]},\n'
             f"     {flags}, {_doc_c}}},\n"
@@ -1953,10 +1963,14 @@ def _default_extra_type(cfg: dict, module: str) -> str:
     return C.composer_oo(cfg, module).get("composer_type_name", "Composer")
 
 
-def _c_string(text: str) -> str:
-    """*text* as a C string literal, newlines escaped."""
-    body = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    return f'"{body}"'
+def _field_doc_c(f: dict) -> str:
+    """A source / segment field's getset doc: its manifest ``doc``, or NULL.
+
+    gh-1499. The field's ``doc`` reached the stub, as the class docstring's
+    ``Parameters`` entry, and never the runtime: every field getset carried
+    ``NULL``, so ``help(Synth.freq)`` was empty beside a documented stub.
+    """
+    return authored_c_doc(str(f.get("doc") or ""))
 
 
 def render_composer_type(cfg: dict, module: str) -> str:
@@ -2989,7 +3003,8 @@ def _settings_getset_c(
         )
         table.append(
             f'    {{"{n}", (getter){cname}_get_{n},'
-            f" (setter){cname}_set_{n}, NULL, NULL}},\n"
+            f" (setter){cname}_set_{n},"
+            f" {authored_c_doc(str(st.get('doc') or ''))}, NULL}},\n"
         )
     return "".join(fns), "".join(table)
 
@@ -3187,7 +3202,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 }};
 
 static struct PyModuleDef _moduledef = {{
-    PyModuleDef_HEAD_INIT, "{leaf}", NULL, -1, _methods,
+    PyModuleDef_HEAD_INIT, "{leaf}", {module_m_doc(cfg, module)}, -1, _methods,
     NULL, NULL, NULL, NULL
 }};
 """)
@@ -3341,8 +3356,12 @@ def _pyi_doc_lines(
         # at CLASS_DESC_WIDTH; gh-744's measured case was a 695-column
         # manifest `doc =` on doppler's `background` field.
         notes: list[str] = []
-        if f.get("doc"):
-            notes.append(f["doc"])
+        # gh-1499: through `inspect.cleandoc`, as an object's init param is
+        # (`_stubs._pdesc`) -- this passed it raw, so the continuation lines
+        # of a doc in an indented TOML table kept that indent.
+        authored = "\n".join(authored_doc_lines(str(f.get("doc") or "")))
+        if authored:
+            notes.append(authored)
         if f.get("enum"):
             choices = enum_reg.get(f["enum"], [])
             if choices:
@@ -3382,6 +3401,9 @@ def render_pyi(cfg: dict, module: str) -> str:
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
+        # gh-1499: `[module.X] doc`, the module's docstring; `render_ext`
+        # puts the same text in `m_doc`.
+        *module_docstring_lines(cfg, module),
         "from __future__ import annotations",
         f"from typing import {typing_imports}",
         # gh-560: every composer type is a C type with its own instance layout,
@@ -3429,7 +3451,18 @@ def render_pyi(cfg: dict, module: str) -> str:
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
         pytype = "float" if c["type"] in ("double", "float") else "int"
-        lines.append(f"    {c['name']}: {pytype}")
+        # gh-1499: a documented one is a read-only property carrying its
+        # `doc`, the text its getset has at runtime; an attribute cannot
+        # hold one. Undocumented, it keeps the annotation it always had.
+        authored = authored_doc_lines(str(c.get("doc") or ""))
+        if authored:
+            lines += [
+                "    @property",
+                f"    def {c['name']}(self) -> {pytype}:",
+                *authored_docstring(authored, 8),
+            ]
+        else:
+            lines.append(f"    {c['name']}: {pytype}")
     lines += ["", "@disjoint_base", f"class {seg_t}:"]
     lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
     lines += [
@@ -3498,6 +3531,21 @@ def render_pyi(cfg: dict, module: str) -> str:
                         "requested count.",
                     ),
                 ),
+                # gh-1499: a setting is a keyword of `__init__` like the
+                # three above, and its `doc` is read on the getset beside
+                # it -- this is its stub face. None of them were listed.
+                *[
+                    ClassParam(
+                        f"{st['name']} : "
+                        f"{'str' if st.get('enum') else 'int'}, optional",
+                        tuple(
+                            ["\n".join(authored_doc_lines(str(st["doc"])))]
+                            if st.get("doc")
+                            else []
+                        ),
+                    )
+                    for st in C.composer_settings(cfg, module)
+                ],
             ],
         ),
         f"    segments: list[{seg_t}]",
@@ -3536,8 +3584,9 @@ def render_pyi(cfg: dict, module: str) -> str:
             f"    def {_em['name']}(self{_sig})"
             f" -> {_em.get('returns') or 'None'}:"
         )
-        _d = (_em.get("doc") or "").splitlines()
-        lines.append(f'        """{_d[0]}"""' if _d else "        ...")
+        # gh-1499: the whole `doc`, as written -- this kept its first line.
+        _d = authored_doc_lines(str(_em.get("doc") or ""))
+        lines.extend(authored_docstring(_d, 8) if _d else ["        ..."])
     if C.composer_stream(cfg, module).get("stream"):
         rt_arg = (
             ", realtime: float = ..."
@@ -3579,7 +3628,13 @@ def render_pyi(cfg: dict, module: str) -> str:
         ret = s.get("returns", "str")
         lines += [
             f"    def {s['name']}(self{sig}) -> {ret}:",
-            f'        """Serialise as {s["name"]}."""',
+            # gh-1499: a declared `doc`, as written; `render_serializers`
+            # puts the same text in the method's `ml_doc`.
+            *authored_docstring(
+                authored_doc_lines(str(s.get("doc") or ""))
+                or [f"Serialise as {s['name']}."],
+                8,
+            ),
         ]
     lines += [
         "    def close(self) -> None:",

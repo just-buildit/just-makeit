@@ -39,9 +39,8 @@ def make_module_ctx(
     # so `[module.X] doc` is the only place an author can say what it is for.
     # Absent, each falls back to exactly what it rendered before.
     Module_t = "".join(w.title() for w in mp.cname.split("_"))
-    _doc = (doc or "").strip()
-    docstring_py = _py_docstring(_doc) if _doc else ""
-    doc_c = _c_doc_literal(_doc) if _doc else f'"{Module_t} module."'
+    docstring_py, doc_c = module_doc_faces(doc)
+    doc_c = doc_c or f'"{Module_t} module."'
     nested = bool(mp.parents)
     return {
         "module": mp.cname,
@@ -56,6 +55,74 @@ def make_module_ctx(
         "module_docstring_py": docstring_py,
         "module_doc_c": doc_c,
     }
+
+
+def module_doc_faces(doc: str) -> "tuple[str, str]":
+    """``[module.X] doc`` as its two faces: a Python docstring and a C literal.
+
+    ``("", "")`` when there is no doc, so each caller keeps its own fallback
+    -- a plain module's ``m_doc`` has always said ``"<Module> module."``, and
+    a ``kind`` module's has always been ``NULL``. The text is laid out by
+    `_docstring.authored_doc_lines`, the one rule a manifest ``doc`` follows
+    on every face (gh-1493); this used ``str.strip()``, which kept the indent
+    of an indented TOML table's continuation lines. gh-1499 made it the one
+    reader for the ``kind``-bearing modules too, which had no module doc on
+    either face.
+
+    Examples
+    --------
+    >>> module_doc_faces("")
+    ('', '')
+    >>> py, c = module_doc_faces('''Gain control.
+    ...     Second line.''')
+    >>> py
+    '\"\"\"Gain control.\\nSecond line.\"\"\"\\n\\n'
+    >>> print(c)
+    "Gain control.\\n"
+         "Second line.\\n"
+    """
+    from .._docstring import authored_doc_lines
+
+    text = "\n".join(authored_doc_lines(doc))
+    if not text:
+        return "", ""
+    return _py_docstring(text), _c_doc_literal(text)
+
+
+def module_docstring_lines(cfg: dict, module: str) -> "list[str]":
+    """A ``kind`` module's docstring as ``.pyi`` lines, blank line included.
+
+    ``[]`` when the module declares no ``doc``, so a stub that never had one
+    is byte-identical. The handle, capsule and composer stubs all splice
+    this in ahead of their imports (gh-1499).
+
+    Examples
+    --------
+    >>> module_docstring_lines({"module": {"m": {"doc": "One.\\nTwo."}}}, "m")
+    ['\"\"\"One.', 'Two.\"\"\"', '']
+    >>> module_docstring_lines({"module": {"m": {}}}, "m")
+    []
+    """
+    py, _ = module_doc_faces(C.module_doc(cfg, module))
+    return py.rstrip("\n").split("\n") + [""] if py else []
+
+
+def module_m_doc(cfg: dict, module: str) -> str:
+    """A ``kind`` module's ``m_doc``: its ``doc`` as a C literal, else ``NULL``.
+
+    The runtime peer of `module_docstring_lines` (gh-1499). ``NULL`` is what
+    every ``kind`` module emitted before, so one without a ``doc`` does not
+    change.
+
+    Examples
+    --------
+    >>> module_m_doc({"module": {"m": {}}}, "m")
+    'NULL'
+    >>> print(module_m_doc({"module": {"m": {"doc": "One."}}}, "m"))
+    "One.\\n"
+    """
+    _, c = module_doc_faces(C.module_doc(cfg, module))
+    return c or "NULL"
 
 
 def _py_docstring(text: str) -> str:
@@ -81,8 +148,8 @@ def _c_doc_literal(text: str) -> str:
     may contain quotes or backslashes -- all of which are a compile error if
     pasted raw into ``.m_doc``.
     """
-    out = []
-    for i, line in enumerate(text.splitlines() or [""]):
-        esc = line.replace("\\", "\\\\").replace('"', '\\"')
-        out.append(f'"{esc}\\n"' if i else f'"{esc}\\n"')
-    return "\n     ".join(out)
+    # gh-1499: the one multi-line C docstring emitter; this was a second copy
+    # of it, byte-for-byte the same output.
+    from ._parse import _build_ml_doc
+
+    return _build_ml_doc(text.splitlines() or [""])

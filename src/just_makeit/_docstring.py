@@ -746,7 +746,11 @@ def property_doc(
     name = str(prop.get("name") or "")
     block = (doc_blocks or {}).get(f"{component}_get_{name}")
     text = (
-        str(prop.get("doc") or "")
+        # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
+        # returned raw, so the runtime getset kept an indented TOML table's
+        # continuation indent while the stub beside it did not -- found when
+        # the gh-1493 gate learned to compare indentation.
+        "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
         or (block.brief if (block and block.brief) else "")
         or struct_member_doc(doc_blocks, f"{component}_state_t", name)
     )
@@ -2002,6 +2006,66 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
         + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
         + [f'{pad}"""']
     )
+
+
+def docstring_body(lines: "Sequence[str]", indent: int) -> "list[str]":
+    """The text of a stub docstring, as the runtime ``__doc__`` carries it.
+
+    *lines* is a docstring as the ``.pyi`` builders emit it -- delimiters
+    included, every line indented by *indent* -- and the result is its body:
+    no delimiters, no indent, trailing blank lines dropped. It is what lets a
+    runtime face be *derived from* the stub face rather than rebuilt beside it
+    (gh-642's rule), so the two cannot say different things; gh-1499 needed it
+    for three module kinds at once, and `_stubs.class_runtime_doc` had the one
+    inline copy.
+
+    The dedent is safe because the builders fix the shape: line 0 opens with
+    ``\"\"\"`` at *indent*, and every other non-blank line carries at least
+    *indent*. A one-line ``\"\"\"text\"\"\"`` docstring is its text.
+
+    Examples
+    --------
+    >>> docstring_body(['    \"\"\"One.\"\"\"'], 4)
+    ['One.']
+    >>> docstring_body(['    \"\"\"One.', '', '      Two.', '    \"\"\"'], 4)
+    ['One.', '', '  Two.']
+    >>> docstring_body(['r\"\"\"A \\\\b.\"\"\"'], 0)
+    ['A \\\\b.']
+    """
+    first = lines[0][indent:]
+    first = first[1:] if first.startswith("r") else first
+    first = first[3:]
+    if len(lines) == 1:
+        return [first[:-3]]
+    out = [first] + [ln[indent:] for ln in lines[1:-1]]
+    while out and not out[-1].strip():
+        out.pop()
+    return out
+
+
+def authored_c_doc(text: str) -> str:
+    """A manifest ``doc`` as the C literal a runtime docstring slot takes.
+
+    gh-1499: the handle, capsule and composer generators each had their own
+    way of pasting a ``doc`` into a ``PyMethodDef`` / ``PyGetSetDef`` /
+    ``m_doc`` slot -- or none. One of them (a composer ``computed`` property)
+    pasted it raw, so a two-line ``doc`` was an unterminated string literal
+    and a module that did not compile. The layout is `authored_doc_lines`'s,
+    the escaping is `_context._parse._build_ml_doc`'s (which splits and
+    escapes every line), and an empty ``doc`` is ``NULL``, which is what
+    every one of those slots means by "no docstring".
+
+    Examples
+    --------
+    >>> authored_c_doc("")
+    'NULL'
+    >>> print(authored_c_doc('Say "hi".'))
+    "Say \\"hi\\".\\n"
+    """
+    from ._context._parse import _build_ml_doc
+
+    lines = authored_doc_lines(text)
+    return _build_ml_doc(lines) if lines else "NULL"
 
 
 def wrap_summary(text: str, width: int = DOC_WIDTH) -> list[str]:
