@@ -23,6 +23,7 @@
     Before this it replayed them as `--param`, so a rebuilt project got the
     buffer back `const` and read-only. The module-function path the issue
     names was already guarded (gh-581), and a compiled test now covers it.
+
 - **A manifest `doc` renders as you write it, on every face** (gh-1493).
     The same `doc` was treated four ways: kept whole on a module and an init
     param, flattened into one reflowed paragraph on an object, a method and a
@@ -49,6 +50,18 @@
     construction call leaves the keyword out so the binding's own default
     runs, the reset test reads the declared value back from a fresh object,
     and the docstring still names the constant.
+
+- **A second `apply` on an unchanged `[app]` project writes nothing**
+    (gh-1477). `apply` replays `jm app` from `[app]`, handing it the
+    manifest's own `[[app.commands]]` / `[[app.flags]]` list, which the
+    replay rewrote in place while walking it: the order flipped on every
+    apply, so a multi-command app's dispatch really was rewritten and
+    reported as edits "just discarded". The replay also ran after `apply`'s
+    summary and printed its own unconditional `update` lines, so every app
+    project announced the app source, the manifest and `CMakeLists.txt` or
+    `pyproject.toml` as rewritten on every run. It now keeps the declared
+    order and runs before gh-1474's byte-derived report, which decides what
+    it says; a real change to the app is still reported, with its warning.
 
 ## [0.87.1] — 2026-09-23
 
