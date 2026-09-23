@@ -899,6 +899,22 @@ _CTYPE_TO_NPY: dict[str, str] = {
 
 SUPPORTED_ARRAY_CTYPES: frozenset[str] = frozenset(_CTYPE_TO_NPY)
 
+#: Element type -> NPY enum for a FIXED-length state array ``T[N]``, whose
+#: getter hands the field out as an ndarray.
+#:
+#: The array-parameter table plus the two elements a fixed state array has
+#: always accepted beyond it: ``int`` (its width is fixed by the struct, so
+#: the platform-width objection to ``int[]`` params does not apply) and
+#: ``long double _Complex``. Derived rather than restated: it was a second
+#: hand-written copy in ``_context/_types.py`` that lacked ``size_t`` and
+#: ``ptrdiff_t``, so ``--state n:size_t[2]`` -- a documented array element --
+#: crashed the scaffold with ``KeyError: 'size_t'`` (gh-1514).
+STATE_ARRAY_NPY: dict[str, str] = {
+    **_CTYPE_TO_NPY,
+    "int": "NPY_INT",
+    "long double _Complex": "NPY_CLONGDOUBLE",
+}
+
 # C type -> canonical dtype name (reverse of the ctype column in _ARRAY_DTYPE).
 _CTYPE_TO_DTYPE: dict[str, str] = {
     c_type: dtype for dtype, (c_type, _) in _ARRAY_DTYPE.items()
@@ -1260,6 +1276,115 @@ def parse_array_type(ctype: str) -> tuple[str, int] | None:
 def is_valid_type(ctype: str) -> bool:
     """Return True for scalar types in _CTYPE_META or array types like float[64]."""
     return ctype in _CTYPE_META or parse_array_type(ctype) is not None
+
+
+def state_default(ctype: str) -> str:
+    """The default a state field takes when its declaration names none.
+
+    ``""`` for a fixed array (always zero-initialised), the registered zero
+    literal for a scalar, and ``""`` for an unregistered spelling, which
+    :func:`state_type_error` refuses before anything renders it. Shared by
+    the ``--state`` flag and a manifest ``[[<obj>.state]]`` entry, whose
+    ``default`` key the manifest writer already treats as optional.
+
+    >>> state_default("double"), state_default("float[8]")
+    ('0.0', '')
+    """
+    if parse_array_type(ctype) is not None:
+        return ""
+    return _CTYPE_META.get(ctype, {}).get("zero", "")
+
+
+#: Types registered in ``_CTYPE_META`` that a STATE field may not have,
+#: scalar or as the element of a fixed ``T[N]``, and why (gh-1514).
+#:
+#: A string has no lifetime story in a state struct. The binding parses it
+#: with ``s``/``z``, which hands over a pointer into the caller's ``str``;
+#: storing it leaves the struct pointing at freed memory the moment that
+#: string is collected. The scaffold made it worse on every face: the C test
+#: assigned an integer (``-Wint-conversion``, an error on GCC 14+), and the
+#: getter passed a ``NULL`` default to ``PyUnicode_FromString``, which
+#: segfaulted the generated Python suite. ``docs/types.md`` has always said
+#: this type is legal as an init-param and not as a state field; nothing
+#: enforced it.
+_STATE_REFUSED: dict[str, str] = {
+    "const char *": (
+        "a string has no lifetime in a state struct: the binding would store"
+        " a pointer into the caller's Python str. Take it as an init param"
+        " (--init-param NAME:'const char *') and keep what create() derives"
+        " from it in state, or declare an opaque field (`opaque = true` on"
+        ' the [[<obj>.state]] entry, e.g. type = "char *") and strdup/free'
+        " it in your _core.c create()/destroy()."
+    ),
+}
+
+
+def state_type_error(name: str, ctype: str) -> str | None:
+    """Why *ctype* cannot be the type of state field *name*; ``None`` if it can.
+
+    The one answer every path that declares state asks -- ``--state`` on
+    ``new``/``object``/``add``, and a manifest ``[[<obj>.state]]`` entry
+    reaching :func:`just_makeit._context._state.make_state_ctx` through
+    ``apply`` -- so the CLI and the manifest cannot disagree about what a
+    state field may be.
+
+    A scalar must be registered in ``_CTYPE_META``; a fixed array ``T[N]``
+    must have an element in ``STATE_ARRAY_NPY``, because its getter hands
+    the field out as an ndarray of that dtype. On top of that, the types in
+    ``_STATE_REFUSED`` are registered (they are legal elsewhere) but refused
+    here, as a scalar and as an element alike, with the reason and what to
+    write instead.
+
+    Parameters
+    ----------
+    name : str
+        The state field's name, used only in the message.
+    ctype : str
+        The declared type spelling, e.g. ``"double"`` or ``"float[64]"``.
+
+    Returns
+    -------
+    str or None
+        A complete, actionable error message, or ``None`` when the type is
+        a legal state type.
+
+    Examples
+    --------
+    >>> state_type_error("g", "double") is None
+    True
+    >>> state_type_error("taps", "size_t[4]") is None
+    True
+    >>> print(state_type_error("w", "unsigned").splitlines()[0])
+    unsupported type 'unsigned' for state field 'w'.
+    >>> state_type_error("name", "const char *").split(":")[0]
+    "state field 'name' cannot be 'const char *'"
+    >>> state_type_error("names", "const char *[2]").split(":")[0]
+    "state field 'names' cannot be 'const char *[2]'"
+    >>> print(state_type_error("flags", "bool[4]").splitlines()[0])
+    'bool' is not a fixed state-array element (state field 'flags').
+    """
+    arr = parse_array_type(ctype)
+    elem = arr[0] if arr is not None else ctype
+    if elem in _STATE_REFUSED:
+        return (
+            f"state field '{name}' cannot be '{ctype}': {_STATE_REFUSED[elem]}"
+        )
+    if arr is not None and elem not in STATE_ARRAY_NPY:
+        legal = ", ".join(sorted(STATE_ARRAY_NPY))
+        return (
+            f"'{elem}' is not a fixed state-array element "
+            f"(state field '{name}').\n"
+            f"Element types: {legal}\n"
+            f"For flags, use uint8_t[N] and read each byte as a bool."
+        )
+    if is_valid_type(ctype):
+        return None
+    legal = ", ".join(sorted(set(_CTYPE_META) - set(_STATE_REFUSED)))
+    return (
+        f"unsupported type '{ctype}' for state field '{name}'.\n"
+        f"State types: {legal}\n"
+        f"Array syntax: type[N]  e.g. float[64]"
+    )
 
 
 # The Python *builtin* a scalar C value crosses back as. A scalar getter

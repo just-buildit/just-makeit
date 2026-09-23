@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    STATE_ARRAY_NPY,
     bool_default_py,
     is_c_only_default,
     string_default_literal,
@@ -15,22 +16,9 @@ from .._types import (
 )
 
 # Maps scalar element type → NumPy C-API enum (for fixed-size array state).
-_NP_DTYPE_ENUM: dict[str, str] = {
-    "float": "NPY_FLOAT",
-    "double": "NPY_DOUBLE",
-    "int": "NPY_INT",
-    "int8_t": "NPY_INT8",
-    "int16_t": "NPY_INT16",
-    "int32_t": "NPY_INT32",
-    "int64_t": "NPY_INT64",
-    "uint8_t": "NPY_UINT8",
-    "uint16_t": "NPY_UINT16",
-    "uint32_t": "NPY_UINT32",
-    "uint64_t": "NPY_UINT64",
-    "float _Complex": "NPY_COMPLEX64",
-    "double _Complex": "NPY_COMPLEX128",
-    "long double _Complex": "NPY_CLONGDOUBLE",
-}
+# The table lives in _types, beside the array-parameter one it extends
+# (gh-1514: this was a hand-kept copy that drifted from it).
+_NP_DTYPE_ENUM: dict[str, str] = STATE_ARRAY_NPY
 
 #: Smoke-test set-values per ctype, as ``(C literal, Python literal)``.
 #:

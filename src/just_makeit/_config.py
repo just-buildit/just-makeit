@@ -4610,8 +4610,10 @@ def set_create_error(
 
 
 def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
+    # `default` is optional in a hand-written entry -- the writer below omits
+    # it when absent -- and takes the value `--state name:type` would.
     return [
-        (s["name"], s["type"], s["default"])
+        (s["name"], s["type"], s.get("default", _T.state_default(s["type"])))
         for s in cfg.get(component, {}).get("state", [])
         if not s.get("opaque")
     ]

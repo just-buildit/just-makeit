@@ -173,6 +173,22 @@
     `jm status --diff` now also prints the root file against today's render,
     the text to merge from.
 
+- **Every state type scaffolds green, or is refused before anything is
+    written** (gh-1514). `--state name:'const char *':NULL` was accepted and
+    the project failed three ways: the C test assigned an integer to the
+    pointer (an error on GCC 14+), the getter passed the `NULL` default to
+    `PyUnicode_FromString` and segfaulted the Python suite, and the setter
+    stored a pointer into the caller's `str`. `docs/types.md` already said a
+    string is not a state type; `--state`, `jm add` and a manifest
+    `[[<obj>.state]]` entry now refuse it with what to write instead (an init
+    param, or an `opaque` field you `strdup`). Measuring every registered
+    type found two more: `--state n:size_t[2]`, a documented array element,
+    crashed the scaffold with `KeyError: 'size_t'` because fixed state arrays
+    read a hand-kept NumPy table that had drifted (it is now derived from
+    the array-param one), and `bool[4]` crashed the same way instead of
+    being refused. A hand-written state entry with no `default` also
+    crashed `apply` with `KeyError`; it now takes the zero `--state` would.
+
 ### Changed
 
 - **The scaffolded Python test follows the constructor** (gh-1489).

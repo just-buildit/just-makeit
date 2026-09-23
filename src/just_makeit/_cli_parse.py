@@ -27,14 +27,10 @@ def parse_state_flag(
         )
         sys.exit(1)
     name, ctype = parts[0], parts[1]
-    if not T.is_valid_type(ctype):
-        supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-        print(
-            f"error: unsupported type '{ctype}'.\n"
-            f"Scalar types: {supported}\n"
-            f"Array syntax: type[N]  e.g. float[64]",
-            file=sys.stderr,
-        )
+    # gh-1514: the same answer apply's make_state_ctx gives a manifest entry.
+    why = T.state_type_error(name, ctype)
+    if why is not None:
+        print(f"error: {why}", file=sys.stderr)
         sys.exit(1)
     arr = T.parse_array_type(ctype)
     if arr is not None:
@@ -46,7 +42,7 @@ def parse_state_flag(
             )
         default = ""
     else:
-        default = parts[2] if len(parts) == 3 else T._CTYPE_META[ctype]["zero"]
+        default = parts[2] if len(parts) == 3 else T.state_default(ctype)
     return (name, ctype, default), i + 1
 
 

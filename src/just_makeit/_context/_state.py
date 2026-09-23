@@ -35,9 +35,7 @@ from .._types import (
     string_enum_choices,
     string_enum_constants,
     parse_array_type,
-    is_valid_type,
     scalar_py_annotation,
-    SUPPORTED_TYPES,
 )
 from ._types import (
     _NP_DTYPE_ENUM,
@@ -2706,11 +2704,10 @@ def make_state_ctx(
     if roles is None:
         roles = {}
     for name, ct, _ in state_vars:
-        if not is_valid_type(ct):
-            supported = ", ".join(sorted(SUPPORTED_TYPES))
-            raise ValueError(
-                f"unsupported type '{ct}' for '{name}'. Supported: {supported}"
-            )
+        # gh-1514: one answer for the CLI flag and the manifest entry.
+        why = T.state_type_error(name, ct)
+        if why is not None:
+            raise ValueError(why)
 
     scalar_vars = [
         (n, ct, dflt) for n, ct, dflt in state_vars if ct in _CTYPE_META
