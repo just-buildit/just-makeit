@@ -81,6 +81,7 @@ def test_the_ratchet_refuses_new_findings_and_stale_lines(
     ratchets = tmp_path_factory.mktemp("gate_a")
     monkeypatch.setattr(G, "RATCHET_DIR", ratchets)
     monkeypatch.setattr(G, "UPDATE", False)
+    monkeypatch.setattr(G, "SHRINK", True)
     found = G.findings(root)
 
     (ratchets / "ex.txt").write_text("".join(f"{f}\n" for f in found))
@@ -108,6 +109,7 @@ def test_a_line_about_a_file_this_run_lacks_is_not_gone(
     ratchets = tmp_path_factory.mktemp("gate_a")
     monkeypatch.setattr(G, "RATCHET_DIR", ratchets)
     monkeypatch.setattr(G, "UPDATE", False)
+    monkeypatch.setattr(G, "SHRINK", True)
     found = G.findings(root)
     elsewhere = [
         "p\truff check\tsrc/p/tests/test_tone.py F401",

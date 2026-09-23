@@ -35,6 +35,14 @@ from _jmrun import run_cli
 
 RATCHET_DIR = Path(__file__).parent / "gate_a"
 UPDATE = os.environ.get("JM_GATE_A_UPDATE") == "1"
+#: The shrink half -- "a recorded finding that no longer happens must be
+#: deleted" -- runs where the ratchet was RECORDED: a Linux environment with
+#: doppler, CI's `Examples (ubuntu-latest)` leg. Elsewhere a finding can vanish
+#: because the environment differs, not because anything was fixed:
+#: without doppler, kitchen_sink scaffolds no `tone`, and its `__init__.py`
+#: -- which exists either way -- is then ruff-clean. "No NEW finding" runs
+#: everywhere; that is the regression half.
+SHRINK = os.environ.get("JM_GATE_A_SHRINK") == "1"
 
 # A section header in `jm status` output: `STALE (2) — ...`.
 _SECTION = re.compile(r"^([A-Z][A-Z-]+(?: [A-Z-]+)*) \(\d+\)", re.M)
@@ -152,7 +160,9 @@ def check(name: str, root: Path) -> None:
         else set()
     )
     new = sorted(got - allowed)
-    gone = sorted(f for f in allowed - got if _applies(f, root))
+    gone = (
+        sorted(f for f in allowed - got if _applies(f, root)) if SHRINK else []
+    )
     msg = []
     if new:
         msg.append(

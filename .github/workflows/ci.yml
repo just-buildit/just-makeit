@@ -263,6 +263,10 @@ jobs:
         run: make install-deps-dev
 
       - name: Run example tests
+        # gh-1443 Gate A's shrink half runs on the leg its ratchet was
+        # recorded on (see tests/_downstream_gates.py, SHRINK).
+        env:
+          JM_GATE_A_SHRINK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         run: make test-examples
 
   examples-windows:
