@@ -3185,9 +3185,12 @@ def make_state_ctx(
         for name, ct, dflt in ctor_scalars
     )
 
+    # gh-1488: a header constant is documented by its C name. The signature
+    # beside it says `...`, and the prose is where a reader learns what that
+    # stands for; "default ..." would say nothing at all.
     pyi_param_docs = "\n".join(
         f"    {name} : {scalar_py_annotation(ct)},"
-        f" default {_py_default(ct, dflt)}\n"
+        f" default {dflt.strip() if T.is_c_only_default(ct, dflt) else _py_default(ct, dflt)}\n"
         f"        {name} state variable."
         for name, ct, dflt in ctor_scalars
     )
@@ -3198,11 +3201,17 @@ def make_state_ctx(
 
     # ── Shared: create args ──────────────────────────────────────────────
 
+    # gh-1488: a field whose default is a header constant is left out of the
+    # call, so the binding's own default -- the constant -- is what runs. Every
+    # state-var parameter is optional, which is what makes omitting one exact
+    # rather than a guess; restating it wrote `Gate(threshold=LVL_INFO)`, a
+    # NameError in the test, the benchmark and the doctest alike.
     py_create_args = ", ".join(
         py_arr_args
         + [
             f"{name}={_py_default(ct, dflt)}"
             for name, ct, dflt in ctor_scalars
+            if not T.is_c_only_default(ct, dflt)
         ]
     )
 
@@ -3252,10 +3261,13 @@ def make_state_ctx(
         meta = _CTYPE_META[ct]
         iv = _py_default(ct, dflt)
         sv = _py_sample_val(meta, ct)
+        # gh-1488: a header constant has no Python value to compare against.
+        # `test_reset` still pins it, by reading it back from the object.
+        _known = _assert_initial and not T.is_c_only_default(ct, dflt)
         if meta["kind"] == "float":
             gs_lines += (
                 [f"        assert obj.get_{name}() == _approx({iv})"]
-                if _assert_initial
+                if _known
                 else []
             ) + [
                 f"        obj.set_{name}({sv})",
@@ -3263,9 +3275,7 @@ def make_state_ctx(
             ]
         else:
             gs_lines += (
-                [f"        assert obj.get_{name}() == {iv}"]
-                if _assert_initial
-                else []
+                [f"        assert obj.get_{name}() == {iv}"] if _known else []
             ) + [
                 f"        obj.set_{name}({sv})",
                 f"        assert obj.get_{name}() == {sv}",
@@ -3287,6 +3297,15 @@ def make_state_ctx(
     # ── PYTEST: reset_test_py ────────────────────────────────────────────
 
     rs_lines = [f"        obj = {Component}({py_create_args})"]
+    # gh-1488: what "the declared default" is, for a field declared with a
+    # header constant, is only knowable at runtime -- so read it off the fresh
+    # object before the setters below overwrite it. Omitted from the call, the
+    # constant is what the constructor used, so this is the constant.
+    _c_only = [
+        name for name, ct, dflt in scalar_vars if T.is_c_only_default(ct, dflt)
+    ]
+    for name in _c_only:
+        rs_lines.append(f"        _{name}0 = obj.get_{name}()")
     for name, ct, _ in scalar_vars:
         rs_lines.append(
             f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct], ct)})"
@@ -3299,7 +3318,7 @@ def make_state_ctx(
     rs_lines.append("        obj.reset()")
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
-        iv = _py_default(ct, dflt)
+        iv = f"_{name}0" if name in _c_only else _py_default(ct, dflt)
         if meta["kind"] == "float":
             rs_lines.append(
                 f"        assert obj.get_{name}() == _approx({iv})"
@@ -3541,8 +3560,17 @@ def make_state_ctx(
                     raw_dflt or _sv_dflt.get(n, "") or _CTYPE_META[ct]["zero"]
                 )
                 _ip_c.append(_ex or dflt)
+                # gh-1488: a state default borrowed from a header constant
+                # seeds the C call as written; Python cannot spell it, and
+                # this parameter is required, so it takes the type's zero --
+                # the seed it would have had with no state default at all.
+                _py_dflt = (
+                    _CTYPE_META[ct]["zero"]
+                    if T.is_c_only_default(ct, dflt)
+                    else dflt
+                )
                 # gh-610: keyword construction, immune to a kwlist reorder.
-                _ip_py.append(f"{n}={_ex or _py_default(ct, dflt)}")
+                _ip_py.append(f"{n}={_ex or _py_default(ct, _py_dflt)}")
             _aa_c = ["NULL, 0" for _ in array_args]
             _aa_py = [
                 f"{aname}=np.zeros(1, dtype="

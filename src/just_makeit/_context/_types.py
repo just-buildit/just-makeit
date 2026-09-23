@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .._types import (
     _CTYPE_META,
+    is_c_only_default,
     string_default_literal,
     strip_c_literal_suffix,
 )
@@ -84,6 +85,12 @@ def _py_default(ctype: str, default: str) -> str:
         if not default.strip():
             return "..."
         return "True" if default.strip().lower() == "true" else "False"
+    if is_c_only_default(ctype, default):
+        # gh-1488: a header constant (`LVL_INFO`, `M_PI`) is C, and Python
+        # has no name for it -- the float branch below used to make it
+        # `M_PI.0`, a SyntaxError. `...` is the answer `default_raw` already
+        # gives for the same value, and every caller reads it as "no literal".
+        return "..."
     if kind == "float":
         s = default.rstrip("fF")
         if "." not in s and "e" not in s.lower():

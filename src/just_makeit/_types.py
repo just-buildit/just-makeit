@@ -483,6 +483,44 @@ def default_type_error(ctype: str, default: str) -> str:
     )
 
 
+def is_c_only_default(ctype: str, default: str) -> bool:
+    """True when a numeric *default* is C that Python cannot spell.
+
+    gh-1488. A **state** default is not refused the way an init-param's is
+    (:func:`default_type_error`): ``--state threshold:int:LVL_INFO`` is the
+    ordinary way to seed a field from a header constant, and the C faces --
+    the reset body, the binding's local, the C test -- all compile against it.
+    Only the Python faces cannot say it, so each asks this one question and
+    answers without the value: the signature says ``...``, a construction
+    call omits the keyword (the binding's own default applies), and a test
+    reads the value back from the object instead of restating it.
+
+    The predicate is the numeric-literal pattern :func:`default_type_error`
+    already accepts, so "a literal" means one thing in both places. ``bool``,
+    ``const char *`` and the complex kinds are never C-only: each ``_py_default``
+    peer spells them without reading the text as a number.
+
+    Examples
+    --------
+    >>> is_c_only_default("int", "LVL_INFO")
+    True
+    >>> is_c_only_default("double", "M_PI")
+    True
+    >>> is_c_only_default("uint64_t", "0U"), is_c_only_default("float", "1.5f")
+    (False, False)
+    >>> is_c_only_default("int", ""), is_c_only_default("bool", "true")
+    (False, False)
+    >>> is_c_only_default("const char *", "NULL")
+    False
+    """
+    if not default.strip() or ctype == "bool":
+        return False
+    meta = _CTYPE_META.get(ctype)
+    if meta is None or meta["kind"] not in ("int", "float"):
+        return False
+    return not _C_NUMERIC_LITERAL.match(default)
+
+
 def c_param_names(params) -> list[str]:
     """The identifiers :func:`c_param_parts` declares, in the same order.
 

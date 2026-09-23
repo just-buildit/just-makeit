@@ -710,6 +710,14 @@ which fell back to the type's zero.
 `const char *` is exempt: its value *is* text. `bool` accepts `true`/`false`
 (and `0`/`1`) and says so in its own words when it does not.
 
+A **state** field's `default` is different: it may be a header constant
+(`--state threshold:int:LVL_INFO`), because every state field is optional and
+the C faces compile against it. Python cannot spell it, so the stub signature
+says `threshold: int = ...`, generated construction calls leave it out (the
+binding's default, the constant, applies), the reset test compares against
+the value read back from a fresh object, and the docstring names the constant
+(`threshold : int, default LVL_INFO`).
+
 #### Naming what the constructor declares
 
 jm derives the `create()` prototype from `init_params`, and two parts of it
