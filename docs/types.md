@@ -121,6 +121,12 @@ Notes:
     state fields (no lifetime story) or step inputs (no per-sample
     semantics). If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
+    `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
+    it, as a scalar and as a `T[N]` element, and say so.
+
+- A fixed state array `T[N]` takes the array element types above plus
+    `int` and `long double _Complex`, whose width the struct fixes. `bool[N]`
+    is refused: use `uint8_t[N]`.
 
 - `long double _Complex` is truncated to `double _Complex` at the
     Python boundary; not legal as an array element (no contiguous
