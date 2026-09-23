@@ -158,7 +158,9 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
         rendered = ctx.get("create_params")
         if not rendered:
             continue
-        create_fn = ctx.get("create_fn") or f"{comp}_create"
+        # `create_name`, not `create_fn`: the context publishes an object's
+        # override under that key and never sets `create_fn` (gh-1494).
+        create_fn = ctx.get("create_name") or f"{comp}_create"
         declared = declared_params(root, comp, create_fn)
         if declared is None:
             continue
