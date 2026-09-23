@@ -1,0 +1,10 @@
+studio	ruff check	src/studio/benchmarks/bench_clip.py F401
+studio	ruff check	src/studio/playlist/playlist.pyi F401
+studio	ruff check	src/studio/tests/test_clip.py E401
+studio	ruff check	src/studio/tests/test_clip.py F401
+studio	ruff format	src/studio/__init__.py
+studio	ruff format	src/studio/benchmarks/bench_clip.py
+studio	ruff format	src/studio/clip.pyi
+studio	ruff format	src/studio/playlist/playlist.pyi
+studio	ruff format	src/studio/tests/test_clip.py
+studio	status --check	UNWIRED

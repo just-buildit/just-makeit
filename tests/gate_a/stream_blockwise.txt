@@ -1,0 +1,7 @@
+stream_blockwise_demo	ruff check	src/stream_blockwise_demo/benchmarks/bench_drainer.py F401
+stream_blockwise_demo	ruff check	src/stream_blockwise_demo/tests/test_drainer.py E401
+stream_blockwise_demo	ruff check	src/stream_blockwise_demo/tests/test_drainer.py F401
+stream_blockwise_demo	ruff format	src/stream_blockwise_demo/__init__.py
+stream_blockwise_demo	ruff format	src/stream_blockwise_demo/benchmarks/bench_drainer.py
+stream_blockwise_demo	ruff format	src/stream_blockwise_demo/drainer.pyi
+stream_blockwise_demo	ruff format	src/stream_blockwise_demo/tests/test_drainer.py

@@ -1,0 +1,13 @@
+fresh/stale	re-apply	exit 1
+stale	re-apply warns	warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
+stale	ruff check	src/stale/dsp/tests/test_fir.py E401
+stale	ruff check	src/stale/dsp/tests/test_fir.py F401
+stale	ruff check	src/stale/tests/test_gain.py E401
+stale	ruff check	src/stale/tests/test_gain.py F401
+stale	ruff format	src/stale/__init__.py
+stale	ruff format	src/stale/benchmarks/bench_gain.py
+stale	ruff format	src/stale/dsp/benchmarks/bench_fir.py
+stale	ruff format	src/stale/dsp/dsp.pyi
+stale	ruff format	src/stale/dsp/tests/test_fir.py
+stale	ruff format	src/stale/gain.pyi
+stale	ruff format	src/stale/tests/test_gain.py

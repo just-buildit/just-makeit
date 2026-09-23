@@ -1,0 +1,9 @@
+my_acc	ruff check	src/my_acc/accumulator/tests/test_acc_cf64.py E401
+my_acc	ruff check	src/my_acc/accumulator/tests/test_acc_cf64.py F401
+my_acc	ruff check	src/my_acc/accumulator/tests/test_acc_f32.py E401
+my_acc	ruff check	src/my_acc/accumulator/tests/test_acc_f32.py F401
+my_acc	ruff format	src/my_acc/accumulator/accumulator.pyi
+my_acc	ruff format	src/my_acc/accumulator/benchmarks/bench_acc_cf64.py
+my_acc	ruff format	src/my_acc/accumulator/benchmarks/bench_acc_f32.py
+my_acc	ruff format	src/my_acc/accumulator/tests/test_acc_cf64.py
+my_acc	ruff format	src/my_acc/accumulator/tests/test_acc_f32.py

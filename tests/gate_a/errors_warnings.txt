@@ -1,0 +1,7 @@
+budget	ruff check	src/budget/tests/test_allocator.py E401
+budget	ruff check	src/budget/tests/test_allocator.py E712
+budget	ruff check	src/budget/tests/test_allocator.py F401
+budget	ruff format	src/budget/__init__.py
+budget	ruff format	src/budget/allocator.pyi
+budget	ruff format	src/budget/benchmarks/bench_allocator.py
+budget	ruff format	src/budget/tests/test_allocator.py

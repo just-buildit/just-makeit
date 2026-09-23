@@ -1,0 +1,10 @@
+iqfile	ruff check	src/iqfile/conv/benchmarks/bench_q15_to_cf32.py F401
+iqfile	ruff check	src/iqfile/conv/tests/test_cf32_to_q15.py E401
+iqfile	ruff check	src/iqfile/conv/tests/test_cf32_to_q15.py F401
+iqfile	ruff check	src/iqfile/conv/tests/test_q15_to_cf32.py E401
+iqfile	ruff check	src/iqfile/conv/tests/test_q15_to_cf32.py F401
+iqfile	ruff format	src/iqfile/conv/benchmarks/bench_cf32_to_q15.py
+iqfile	ruff format	src/iqfile/conv/benchmarks/bench_q15_to_cf32.py
+iqfile	ruff format	src/iqfile/conv/conv.pyi
+iqfile	ruff format	src/iqfile/conv/tests/test_cf32_to_q15.py
+iqfile	ruff format	src/iqfile/conv/tests/test_q15_to_cf32.py

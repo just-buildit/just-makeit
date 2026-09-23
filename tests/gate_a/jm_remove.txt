@@ -1,0 +1,9 @@
+my_synth	re-apply warns	warning !: native/benchmarks/bench_synth_core.c
+my_synth	re-apply warns	warning !: native/tests/test_synth_core.c
+my_synth	re-apply writes	update native/inc/my_synth.h
+my_synth	ruff check	src/my_synth/synth/tests/test_env.py E401
+my_synth	ruff check	src/my_synth/synth/tests/test_env.py F401
+my_synth	ruff format	src/my_synth/synth/benchmarks/bench_env.py
+my_synth	ruff format	src/my_synth/synth/synth.pyi
+my_synth	ruff format	src/my_synth/synth/tests/test_env.py
+my_synth	status --check	UNBUILT

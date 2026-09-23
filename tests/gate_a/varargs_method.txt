@@ -1,0 +1,9 @@
+va_filter	re-apply writes	update CMakeLists.txt
+va_filter	re-apply writes	update just-makeit.toml
+va_filter	re-apply writes	update native/src/app/filter_tool.c
+va_filter	ruff check	src/va_filter/tests/test_filter.py E401
+va_filter	ruff check	src/va_filter/tests/test_filter.py F401
+va_filter	ruff format	src/va_filter/__init__.py
+va_filter	ruff format	src/va_filter/benchmarks/bench_filter.py
+va_filter	ruff format	src/va_filter/filter.pyi
+va_filter	ruff format	src/va_filter/tests/test_filter.py
