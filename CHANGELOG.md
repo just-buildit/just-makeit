@@ -18,6 +18,17 @@
     section duplicates. The `handle`, `capsule` and `composer` module kinds
     are not covered yet (gh-1499).
 
+- **A state default that is a header constant no longer breaks the
+    generated Python** (gh-1488). `--state threshold:int:LVL_INFO` compiled
+    on every C face, but the Python faces restated the constant verbatim:
+    `Gate(threshold=LVL_INFO)` in the test, the benchmark and the doctest,
+    `threshold: int = LVL_INFO` in both `.pyi` writers, and `M_PI.0` (a
+    SyntaxError) for a floating field. A fresh project's suite failed five
+    tests with `NameError`. Now the stub signature says `...`, a
+    construction call leaves the keyword out so the binding's own default
+    runs, the reset test reads the declared value back from a fresh object,
+    and the docstring still names the constant.
+
 ## [0.87.1] — 2026-09-23
 
 ### Fixed

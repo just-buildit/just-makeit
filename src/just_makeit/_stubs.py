@@ -915,6 +915,10 @@ def _py_default_stub(ctype: str, default: str) -> str:
         # bucket below), so the C/TOML spelling `true`/`false` passed
         # straight through into generated Python — a NameError.
         return "True" if default.strip().lower() == "true" else "False"
+    # gh-1488: the peer's answer for a header constant, from the same
+    # predicate -- a stub cannot name `LVL_INFO` any more than a test can.
+    if T.is_c_only_default(ctype, default):
+        return "..."
     # gh-1271: the peer had a `str` branch and this one did not, so a
     # `const char *` default fell through to the integer bucket below and
     # reached the stub as the C token -- `dataset: str = NULL`, a NameError.
@@ -1148,7 +1152,14 @@ def _build_class_docstring(
                 )
             else:
                 py_t = _CTYPE_TO_PY.get(ctype, "Any")
-                py_d = _py_default_stub(ctype, dflt)
+                # gh-1488: a header constant is documented by its C name, as
+                # the standalone peer in `_context/_state.py` does -- the
+                # signature says `...`, and this is where that is explained.
+                py_d = (
+                    dflt.strip()
+                    if T.is_c_only_default(ctype, dflt)
+                    else _py_default_stub(ctype, dflt)
+                )
                 # gh-1493: the field's manifest `doc`, as written.
                 sdoc = "\n".join(
                     authored_doc_lines((state_docs or {}).get(name, ""))
@@ -1652,10 +1663,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # reason — a positional example rots silently on any reorder.
         ", ".join(_ctor_arg(p) for p in ip)
         if ip
+        # gh-1488: a header-constant field is omitted, so the binding's
+        # own default runs -- the peer of `_context/_state.py`'s call.
         else (
             ", ".join(
                 f"{n}={_py_default_stub(ct, dflt)}"
                 for n, ct, dflt in scalar_vars
+                if not T.is_c_only_default(ct, dflt)
             )
             if (scalar_vars and not no_state)
             else ""
