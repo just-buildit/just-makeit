@@ -1,4 +1,11 @@
-"""gh-1154 / gh-1164: what the renderer does to a manifest `doc`, per shape.
+"""gh-1154 / gh-1164 / gh-1493: what the renderer does to a manifest `doc`.
+
+**Superseded in part by gh-1493**, which made every face render a ``doc``
+verbatim: nothing below is truncated or flattened any more, so the only
+finding left is a ``doc`` carrying a numpy section heading -- it now lays out
+correctly and jm's GENERATED section follows it, so the docstring has two
+(kind ``duplicated``). The history below is why the finding is shaped the way
+it is; the tests assert today's rule.
 
 gh-1153 made a `[[module.X.functions]]` `doc` survive the manifest round-trip.
 The renderer half stayed broken, and gh-1154 gated on it with a single rule --
@@ -57,12 +64,12 @@ import pytest
 from _jmrun import JmRun, run_cli
 
 
-#: Two plain paragraphs. Flattens into flowing prose -- correct output, and
-#: what `group_paragraphs` is for. A finding only where a face truncates.
+#: Two plain paragraphs: the author's text, rendered as written (gh-1493), and
+#: never a finding.
 MULTI = '"""One paragraph.\n\nAnd a second."""'
 
-#: A numpy section heading and its rule. This is the shape that reflows into
-#: wreckage, so it is a finding wherever the value is flattened.
+#: A numpy section heading and its rule: laid out as written, and followed by
+#: the section jm generates -- the one finding left (`duplicated`).
 HEADED = '"""One paragraph.\n\nParameters\n----------\nb : int\n    A bin."""'
 
 
@@ -132,7 +139,7 @@ def _found(root: Path) -> dict:
     from just_makeit import _docstring as D
 
     return {
-        d.where: d.kind for d in D.manifest_docs_with_paragraphs(C.load(root))
+        d.where: d.kind for d in D.manifest_docs_with_sections(C.load(root))
     }
 
 
@@ -169,14 +176,11 @@ class TestTheRulesMatchTheArtefacts:
             assert marker in init, f"{marker!r} missing from __init__.py"
             assert marker in ext, f"{marker!r} missing from .m_doc"
 
-    def test_a_module_function_doc_is_truncated_in_the_stub_only(
+    def test_a_module_function_doc_reaches_both_faces_whole(
         self, project: Path
     ) -> None:
-        """Rule 2. The `.pyi` keeps paragraph 1; the extension keeps it all.
-
-        The asymmetry is the finding: reporting it as a flat "only the summary
-        survives" was wrong about the runtime face too.
-        """
+        """gh-1493: the `.pyi` used to keep paragraph 1 while the extension
+        kept it all. Both faces now carry the whole doc."""
         _add_doc(
             project,
             "modules/dsp.toml",
@@ -189,25 +193,31 @@ class TestTheRulesMatchTheArtefacts:
             encoding="utf-8"
         )
         assert "Sum line." in pyi
-        assert "PARA_TWO is dropped." not in pyi, pyi
-        assert "PARA_TWO is dropped." in ext, "runtime face lost it too"
+        assert "PARA_TWO is dropped." in pyi, pyi
+        assert "PARA_TWO is dropped." in ext, "runtime face lost it"
 
-    def test_a_method_doc_is_flattened_and_a_heading_becomes_wreckage(
+    def test_a_method_doc_heading_renders_verbatim_and_is_duplicated(
         self, project: Path
     ) -> None:
-        """Rule 3, and the justification for gating on the rule not the break.
+        """The one finding left, measured on the face.
 
-        Plain paragraphs flatten into readable prose. A numpy heading flattens
-        into `Parameters ---------- b : int A bin.` -- immediately above the
-        real `Parameters` section jm generates.
+        The heading now keeps its own line (it used to reflow into
+        `Parameters ---------- b : int` prose) -- and jm still emits its own
+        generated `Parameters` after it, so the docstring has two. Anchored on
+        the literal lines: comparing whitespace-normalised text, as this
+        test once did, reads the old wreckage and the new layout the same.
         """
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
         assert _cli("apply", cwd=project).returncode == 0
         pyi = (project / "src" / "pp" / "eng.pyi").read_text(encoding="utf-8")
-        assert "Parameters ---------- b : int" in " ".join(pyi.split()), pyi
-        # ...and jm's own generated section is still emitted after it, which
-        # is what makes the flattened copy a duplicate rather than a doc.
-        assert "\n        Parameters\n        ----------\n" in pyi, pyi
+        authored = (
+            "\n        Parameters\n        ----------\n        b : int\n"
+        )
+        exec_doc = pyi[pyi.index("def exec(") :]
+        exec_doc = exec_doc[: exec_doc.index('"""', exec_doc.index('"""') + 3)]
+        assert authored in exec_doc, exec_doc
+        heading = "\n        Parameters\n        ----------\n"
+        assert exec_doc.count(heading) == 2, exec_doc
 
 
 class TestTheDetector:
@@ -217,13 +227,11 @@ class TestTheDetector:
         _add_doc(project, "modules/dsp.toml", "[module.dsp]", HEADED)
         assert _found(project) == {}
 
-    def test_a_module_function_reports_on_the_paragraph_break(
-        self, project: Path
-    ) -> None:
+    def test_plain_paragraphs_are_never_a_finding(self, project: Path) -> None:
+        """gh-1493: the module function's stub no longer truncates, so a
+        paragraph break is just the author's text."""
         _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
-        assert _found(project) == {
-            "module.dsp.functions.fmap.doc": "truncated"
-        }
+        assert _found(project) == {}
 
     def test_plain_paragraphs_are_not_a_finding_where_they_flatten(
         self, project: Path
@@ -237,22 +245,24 @@ class TestTheDetector:
         _add_doc(project, "objects/eng.toml", "[eng]", MULTI)
         assert _found(project) == {}
 
-    def test_a_section_rule_is_a_finding_in_every_flattened_shape(
+    def test_a_section_rule_is_a_finding_wherever_jm_generates_sections(
         self, project: Path
     ) -> None:
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
         _add_doc(project, "objects/eng.toml", 'name = "span"', HEADED)
         _add_doc(project, "objects/eng.toml", "[eng]", HEADED)
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         assert _found(project) == {
-            "eng.doc": "flattened",
-            "eng.methods.exec.doc": "flattened",
-            "eng.properties.span.doc": "flattened",
+            "eng.doc": "duplicated",
+            "eng.methods.exec.doc": "duplicated",
+            "eng.properties.span.doc": "duplicated",
+            "module.dsp.functions.fmap.doc": "duplicated",
         }
 
     def test_it_names_entries_readably(self, project: Path) -> None:
         """An index would not tell a reader which method it is."""
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         assert set(_found(project)) == {
             "eng.methods.exec.doc",
             "module.dsp.functions.fmap.doc",
@@ -286,7 +296,7 @@ class TestTheDetector:
         from just_makeit import _docstring as D
 
         assert (
-            D.manifest_docs_with_paragraphs(
+            D.manifest_docs_with_sections(
                 {"eng": {"_doc_blocks": {"x": {"doc": HEADED}}}}
             )
             == []
@@ -295,7 +305,7 @@ class TestTheDetector:
 
 class TestBothReporters:
     def test_apply_warns_and_names_the_header(self, project: Path) -> None:
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         out = _cli("apply", cwd=project)
         assert out.returncode == 0, out.stdout
         assert "module.dsp.functions.fmap.doc" in out.stdout
@@ -303,28 +313,28 @@ class TestBothReporters:
         assert "@code" in out.stdout, out.stdout
 
     def test_status_reports_and_check_fails(self, project: Path) -> None:
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         assert _cli("apply", cwd=project).returncode == 0
         out = _cli("status", cwd=project)
         assert "DOC (1)" in out.stdout, out.stdout
         assert "doc-overflow (!)" in out.stdout, out.stdout
         assert _cli("status", "--check", cwd=project).returncode == 1
 
-    def test_each_kind_states_its_own_mechanism(self, project: Path) -> None:
-        """One wrong sentence for every shape is what gh-1164 reported. The
-        two kinds must not print the same claim."""
+    def test_the_finding_states_todays_mechanism(self, project: Path) -> None:
+        """gh-1164 was one wrong sentence for every shape. After gh-1493 the
+        sentence must describe the duplication -- and must not still claim
+        a flattening or a truncation that no longer happens."""
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
         assert _cli("apply", cwd=project).returncode == 0
         out = _cli("status", cwd=project).stdout
-        assert "dropped from the `.pyi`" in out, out
-        assert "flattened into ONE paragraph" in out, out
+        assert "both appear" in out, out
+        assert "flattened" not in out and "dropped from the" not in out, out
 
     def test_status_allow_suppresses_one_entry(self, project: Path) -> None:
         """A project that has decided to live with one keeps the gate on the
         rest."""
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', MULTI)
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         p = project / "just-makeit.toml"
         p.write_text(
             p.read_text(encoding="utf-8").replace(

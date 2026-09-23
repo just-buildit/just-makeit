@@ -37,6 +37,9 @@ from .._docstring import (
     render_runtime_doc,
     scaffold_doc_block,
     summary_docstring,
+    authored_doc_lines,
+    authored_docstring,
+    authored_param_docs,
 )
 
 from .._gluedoc import glue_methods, max_out_method
@@ -1651,6 +1654,8 @@ def make_methods_ctx(
                 param_defaults=_gluedoc.binding_param_docs(
                     _count_kw, count=_stub_count_arg, out=_stub_enable_out
                 ),
+                authored_doc=m.get("doc") or "",
+                param_docs=authored_param_docs(m),
             )
 
         # gh-219 follow-up: a method's primary array input is sometimes
@@ -3724,6 +3729,8 @@ def make_methods_ctx(
                     param_defaults=_gluedoc.binding_param_docs(
                         _count_kw, count=_stub_count_arg, out=_stub_enable_out
                     ),
+                    authored_doc=m.get("doc") or "",
+                    param_docs=authored_param_docs(m),
                 )
             )
             + "\n"
@@ -4620,7 +4627,14 @@ def make_properties_ctx(
             "",
             "    @property",
             f"    def {pname}(self) -> {py_t}:",
-            *summary_docstring(_pdoc, indent=8),
+            # gh-1493: a manifest `doc` as written -- the runtime face beside
+            # this already kept it whole, so the two disagreed. A header or
+            # struct-field doc is still a summary for jm to wrap.
+            *(
+                authored_docstring(authored_doc_lines(p["doc"]), 8)
+                if p.get("doc")
+                else summary_docstring(_pdoc, indent=8)
+            ),
         ]
         if writable:
             pyi_block += [

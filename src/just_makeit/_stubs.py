@@ -44,6 +44,9 @@ from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    authored_doc_lines,
+    authored_docstring,
+    authored_param_docs,
     class_import_line,
     merge_doc_blocks,
     struct_members_key,
@@ -1028,7 +1031,9 @@ def _build_class_docstring(
     init_params: list,
     import_line: str,
     py_create_args: str,
+    state_docs: "dict[str, str] | None" = None,
     brief: str = "",
+    authored: "list[str] | None" = None,
     custom_reset: bool = False,
     create_blk=None,
     raises: "Sequence[tuple[str, str]]" = (),
@@ -1067,7 +1072,10 @@ def _build_class_docstring(
             else f"{name} constructor parameter."
         )
         hdr = create_blk.param_desc(name) if create_blk else None
-        desc = manifest_doc or hdr or stub
+        # gh-1493: an init param's manifest `doc` through the one rule,
+        # `inspect.cleandoc` -- it was passed raw, so an indented TOML
+        # table's continuation lines kept their indent.
+        desc = "\n".join(authored_doc_lines(manifest_doc)) or hdr or stub
         # gh-901: an enum's per-choice `///<` docs, as a definition list under
         # the parameter they belong to. numpydoc has no `Choices` section, and
         # a parameter's description is free prose — so this is where a reader
@@ -1141,10 +1149,14 @@ def _build_class_docstring(
             else:
                 py_t = _CTYPE_TO_PY.get(ctype, "Any")
                 py_d = _py_default_stub(ctype, dflt)
+                # gh-1493: the field's manifest `doc`, as written.
+                sdoc = "\n".join(
+                    authored_doc_lines((state_docs or {}).get(name, ""))
+                )
                 params.append(
                     ClassParam(
                         f"{name} : {py_t}, default {py_d}",
-                        (f"{name} state variable.",),
+                        (sdoc or f"{name} state variable.",),
                     )
                 )
 
@@ -1158,6 +1170,7 @@ def _build_class_docstring(
         """
         return class_docstring(
             summary,
+            authored=authored or (),
             params=params,
             raises=raises,
             warns=warns,
@@ -1271,6 +1284,7 @@ def class_docstring_block(
     *,
     doc_blocks: dict | None = None,
     manifest_doc: str = "",
+    state_docs: "dict[str, str] | None" = None,
     custom_reset: bool = False,
     create_fn: str | None = None,
     raises: "Sequence[tuple[str, str]]" = (),
@@ -1312,6 +1326,10 @@ def class_docstring_block(
             import_line,
             py_create_args,
             brief=brief,
+            state_docs=state_docs,
+            # gh-1493: the manifest `doc` is laid out as written; a header's
+            # `@brief` (the fallback above) is still jm's to wrap.
+            authored=authored_doc_lines(manifest_doc),
             custom_reset=custom_reset,
             create_blk=create_blk,
             raises=raises,
@@ -1358,6 +1376,7 @@ def class_runtime_doc(
     *,
     doc_blocks: dict | None = None,
     manifest_doc: str = "",
+    state_docs: "dict[str, str] | None" = None,
     custom_reset: bool = False,
     create_fn: str | None = None,
     raises: "Sequence[tuple[str, str]]" = (),
@@ -1394,6 +1413,7 @@ def class_runtime_doc(
         py_create_args,
         doc_blocks=doc_blocks,
         manifest_doc=manifest_doc,
+        state_docs=state_docs,
         custom_reset=custom_reset,
         create_fn=create_fn,
         raises=raises,
@@ -1417,6 +1437,8 @@ def _method_doc_lines(
     raises: "list[tuple[str, str]] | None" = None,
     skeleton_fallback: bool = False,
     param_defaults: "dict[str, str] | None" = None,
+    param_docs: "dict[str, str] | None" = None,
+    authored_doc: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
 
@@ -1446,6 +1468,8 @@ def _method_doc_lines(
         raises=raises,
         skeleton_fallback=skeleton_fallback,
         param_defaults=param_defaults,
+        param_docs=param_docs,
+        authored_doc=authored_doc,
     )
 
 
@@ -1665,6 +1689,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         py_create_args,
         doc_blocks=doc_blocks,
         manifest_doc=cfg.get(obj, {}).get("doc", ""),
+        state_docs=C.state_docs(cfg, obj),
         custom_reset=bool(ip) or no_reset,
         create_fn=C.object_create_fn(cfg, obj),
         raises=_raises,
@@ -2210,6 +2235,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             _py_params,
             ret_ann,
             override=m.get("doc", ""),
+            authored_doc=m.get("doc", ""),
+            param_docs=authored_param_docs(m),
             raises=_raises_doc(m),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
@@ -2474,15 +2501,27 @@ def _fn_stub(fn: dict, block=None) -> str:
     # synthesize the full numpy docstring (brief + params + a runnable Examples
     # doctest from @code), same as object methods. With no block, keep the
     # historical one-line stub so a manifest-only/scaffold rebuild is unchanged.
-    if block is not None:
+    # gh-1493: a param's manifest `doc` needs a Parameters section to live
+    # in, so a documented param takes the full render even with no header.
+    pdocs = authored_param_docs(fn)
+    if block is not None or pdocs:
         from ._docstring import render_numpy_doc
 
         doc_lines = render_numpy_doc(
-            block, name, py_params, ret, override=doc, indent=4
+            block,
+            name,
+            py_params,
+            ret,
+            authored_doc=doc,
+            param_docs=pdocs,
+            indent=4,
         )
         return f"{sig}\n" + "\n".join(doc_lines)
-    one_liner = doc.split("\n")[0] if doc else name_summary(name)
-    return f'{sig}\n    """{one_liner}"""'
+    # gh-1493: the manifest `doc` as written. This cut it to its first LINE,
+    # while the runtime face beside it kept the whole text -- one function,
+    # two answers. A one-line doc keeps its one-line stub.
+    lines = authored_doc_lines(doc) or [name_summary(name)]
+    return "\n".join([sig, *authored_docstring(lines, 4)])
 
 
 # ── numpy import decision ─────────────────────────────────────────────────────

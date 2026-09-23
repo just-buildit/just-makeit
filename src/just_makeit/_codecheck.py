@@ -202,3 +202,118 @@ def report(root: Path, cfg: dict, *, limit: int = 5) -> int:
         "statement, or move the note\n  to a prose line above the `>>>`."
     )
     return len(found)
+
+
+# ── manifest `doc` lines (gh-1493) ────────────────────────────────────────────
+#
+# A manifest `doc` renders verbatim: jm does not re-wrap an authored line, so
+# one too wide for its stub lands in the `.pyi` as written -- and, like an
+# `@code` line, passes silently unless something says so. Same design as
+# `scan` above, for the same reasons: read the emitted stub rather than
+# predict it, and attribute each over-wide line back to the `doc` that wrote
+# it by its text. Kept apart from `scan` because `status --strict-examples`
+# gates on that count, and a doc line is not an example.
+
+
+@dataclass(frozen=True)
+class DocOverflow:
+    """One manifest ``doc`` line that will not fit its generated docstring."""
+
+    where: str  # the manifest path of the `doc`, e.g. `eng.methods.exec.doc`
+    line: str  # the offending line, verbatim
+    columns: int  # what it will occupy in the stub
+    budget: int  # what it must fit in
+
+    def describe(self) -> str:
+        """A one-line report naming the ``doc``, the overflow and the target."""
+        return (
+            f"{self.where}: line will be {self.columns} columns in the stub; "
+            f"wrap at <= {self.budget}.\n    {self.line}"
+        )
+
+
+def _manifest_doc_sources(cfg: dict) -> "dict[str, str]":
+    """Each authored ``doc`` line -> where that ``doc`` is declared.
+
+    The walk is `_docstring.manifest_docs_with_sections`'s: any key named
+    ``doc``, anywhere, skipping jm's own ``_``-prefixed transients -- so a
+    table that gains a ``doc`` is covered the day it does.
+    """
+    from ._docstring import authored_doc_lines
+
+    src: "dict[str, str]" = {}
+
+    def walk(node: object, path: "tuple[str, ...]") -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key.startswith("_"):
+                    continue
+                if key == "doc" and isinstance(value, str):
+                    where = ".".join(path + ("doc",))
+                    for ln in authored_doc_lines(value):
+                        if ln.strip():
+                            src.setdefault(ln.strip(), where)
+                else:
+                    walk(value, path + (str(key),))
+        elif isinstance(node, list):
+            for item in node:
+                name = item.get("name") if isinstance(item, dict) else None
+                walk(item, path + ((str(name),) if name else ()))
+
+    walk(cfg, ())
+    return src
+
+
+def scan_docs(
+    root: Path, cfg: dict, width: int = STUB_TARGET_WIDTH
+) -> "list[DocOverflow]":
+    """Every manifest ``doc`` line that overflows in a generated stub.
+
+    Measured on the emitted ``.pyi``. The first line of a docstring carries
+    the opening quotes, so they are part of what it occupies and are stripped
+    only for the lookup.
+    """
+    sources = _manifest_doc_sources(cfg)
+    out: "list[DocOverflow]" = []
+    for stub in sorted((root / "src").rglob("*.pyi")):
+        for raw in stub.read_text(encoding="utf-8").split("\n"):
+            line = raw.rstrip()
+            if len(line) <= width:
+                continue
+            text = line.strip()
+            for q in ('r"""', '"""'):
+                text = text.removeprefix(q)
+            text = text.removesuffix('"""')
+            where = sources.get(text)
+            if where is None:
+                continue
+            out.append(
+                DocOverflow(
+                    where, text, len(line), width - (len(line) - len(text))
+                )
+            )
+    return out
+
+
+def report_docs(root: Path, cfg: dict, *, limit: int = 5) -> int:
+    """Print a warning per over-wide manifest ``doc`` line; return the count.
+
+    Same shape as `report`: the listing truncates at *limit*, the total never
+    does.
+    """
+    found = scan_docs(root, cfg)
+    if not found:
+        return 0
+    print(
+        f"\nWARNING: {len(found)} manifest `doc` line(s) will exceed 79 "
+        f"columns in the generated stub."
+    )
+    for ov in found[:limit]:
+        print(f"  {ov.describe()}")
+    if len(found) > limit:
+        print(f"  ... and {len(found) - limit} more.")
+    print(
+        "  A `doc` renders as written (gh-1493), so jm never re-wraps it: "
+        "break the\n  line in the manifest."
+    )
+    return len(found)

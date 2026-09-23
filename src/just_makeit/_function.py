@@ -377,6 +377,12 @@ def run(
             # 5th tuple element is "" for non-enum params.
             if len(p) > 4 and p[4]:
                 entry["enum"] = p[4]
+            # gh-1493: the param's manifest `doc` (6th element). There is no
+            # CLI flag for it, so only `apply`'s replay passes one -- and
+            # without it the replayed manifest had none, so the stub and the
+            # binding rendered from that manifest dropped it.
+            if len(p) > 5 and p[5]:
+                entry["doc"] = p[5]
             _entries.append(entry)
         fn_entry["params"] = _entries
     if return_type != "void":

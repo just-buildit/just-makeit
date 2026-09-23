@@ -1767,7 +1767,12 @@ def make_functions_ctx(
     # _docstring are leaves relative to this module, but importing _stubs at
     # module scope would put _render into the _object/_stubs import cycle.
     from ._context._parse import _build_ml_doc
-    from ._docstring import name_summary, render_runtime_doc
+    from ._docstring import (
+        authored_doc_lines,
+        authored_param_docs,
+        name_summary,
+        render_runtime_doc,
+    )
     from ._stubs import fn_py_surface
 
     wrappers: list[str] = []
@@ -1782,19 +1787,29 @@ def make_functions_ctx(
         # (gh-384). The manifest `doc` stays the summary override; it is passed
         # to the renderer rather than replacing it.
         _blk = (doc_blocks or {}).get(name)
-        if _blk is None:
+        # gh-1493: the manifest `doc` and each param's, as written -- the stub
+        # beside this renders from the same inputs (`_stubs._fn_stub`).
+        _pdocs = authored_param_docs(fn)
+        if _blk is None and not _pdocs:
             # No header block: keep the historical one-liner. `_fn_stub`
             # collapses to a one-liner here too, so rendering the section
             # skeleton would *introduce* a divergence rather than close one —
             # the runtime would carry `Parameters`/`Input.` placeholders the
             # stub beside it does not. Undocumented functions are unchanged.
             # gh-1292: the stub's spelling, from the one helper both use.
-            doc = _build_ml_doc([fn.get("doc", "") or name_summary(name)])
+            doc = _build_ml_doc(
+                authored_doc_lines(fn.get("doc", "")) or [name_summary(name)]
+            )
         else:
             _ret_ann, _py_params, _ = fn_py_surface(fn)
             doc = _build_ml_doc(
                 render_runtime_doc(
-                    _blk, name, _py_params, _ret_ann, fn.get("doc", "")
+                    _blk,
+                    name,
+                    _py_params,
+                    _ret_ann,
+                    authored_doc=fn.get("doc", ""),
+                    param_docs=_pdocs,
                 )
             )
         # gh-238: a function with params is positional-or-keyword

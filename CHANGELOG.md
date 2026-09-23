@@ -12,6 +12,21 @@
     unchecked. The check now reads `create_name`. Before the fix 4 of the 6
     new cases fail (stateful and `no_state` objects alike); after it they
     and the existing gh-1076 suite pass, and doppler's false finding clears.
+- **A manifest `doc` renders as you write it, on every face** (gh-1493).
+    The same `doc` was treated four ways: kept whole on a module and an init
+    param, flattened into one reflowed paragraph on an object, a method and a
+    property's stub, cut to its first LINE in a module function's stub, and
+    dropped entirely on a state field, a method param and a function param.
+    A property and a module function also showed different text in the
+    `.pyi` and in `help()`. Now a `doc` renders line for line, identically in
+    both, with `inspect.cleandoc` as the only normalisation: the text may
+    start on the `"""` line, and an indented table's continuation indent is
+    removed. A param or state `doc` becomes its `Parameters` entry, ahead of
+    the header's `@param`. jm never re-wraps an authored line; `apply` names
+    one too wide for its stub instead. `status`'s `DOC` finding now reports
+    only a `doc` carrying a numpy section heading, which jm's generated
+    section duplicates. The `handle`, `capsule` and `composer` module kinds
+    are not covered yet (gh-1499).
 
 ## [0.87.0] — 2026-09-23
 

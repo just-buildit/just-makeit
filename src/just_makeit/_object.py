@@ -1374,6 +1374,7 @@ def _make_view_ctx(
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
                 manifest_doc=view.get("doc", ""),
+                state_docs=C.state_docs(cfg, obj),
                 custom_reset=bool(_vinit) or C.is_no_reset(cfg, obj),
                 create_fn=view["create_fn"],
             )
@@ -1589,6 +1590,7 @@ def build_component_ctxs(
                 ctx.get("py_create_args", ""),
                 doc_blocks=_doc_blocks,
                 manifest_doc=cfg.get(obj, {}).get("doc", ""),
+                state_docs=C.state_docs(cfg, obj),
                 custom_reset=bool(C.init_params(cfg, obj))
                 or C.is_no_reset(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),

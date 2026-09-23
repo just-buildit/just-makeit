@@ -1920,6 +1920,90 @@ def _wrap(text: str, width: int = DOC_WIDTH) -> list[str]:
     return lines
 
 
+def authored_doc_lines(text: str) -> "list[str]":
+    r"""The lines an authored docstring renders as: exactly its own (gh-1493).
+
+    A manifest ``doc`` -- or any text a caller hands the builders as
+    ``override`` rather than a header's ``@brief`` -- is the author's layout,
+    and the one normalisation applied is ``inspect.cleandoc``, Python's own
+    docstring rule and the one ``help()`` uses. It drops leading and trailing
+    blank lines and removes common indentation IGNORING the first line, so a
+    doc whose text starts on the opening ``\"\"\"`` line renders the same as
+    one that starts on the next -- ``textwrap.dedent`` would keep the indent
+    of an indented TOML table's continuation lines.
+
+    No reflow, no joining of wrapped lines, no flattening of paragraphs, no
+    truncation. It was all four, by face: the same ``doc`` was kept whole on
+    a module, flattened on an object, a method and a property's stub, cut to
+    its first LINE in a module function's stub, and dropped on a state field
+    and a param. Width is the author's too: a line too wide is theirs to
+    rewrap, never jm's.
+
+    Examples
+    --------
+    >>> authored_doc_lines("First.\n    Second.\n\n    Third.\n    ")
+    ['First.', 'Second.', '', 'Third.']
+    >>> authored_doc_lines("\nThis is an example.\nIt has two lines.\n")
+    ['This is an example.', 'It has two lines.']
+    >>> authored_doc_lines("   ")
+    []
+    """
+    import inspect
+
+    text = inspect.cleandoc(text or "")
+    return text.split("\n") if text else []
+
+
+def authored_param_docs(entry: dict) -> "dict[str, str]":
+    """``{param name: its manifest doc}`` for a method or function entry.
+
+    gh-1493: `doc` on a param was accepted by `_keys` and read by nothing.
+    ``extra_args`` is the synonym `_cli` documents for ``params``, so both
+    are read.
+
+    Examples
+    --------
+    >>> authored_param_docs({"params": [{"name": "k", "doc": "Gain."},
+    ...                                 {"name": "x"}]})
+    {'k': 'Gain.'}
+    """
+    rows = list(entry.get("params") or []) + list(
+        entry.get("extra_args") or []
+    )
+    return {
+        str(r["name"]): str(r["doc"])
+        for r in rows
+        if isinstance(r, dict) and r.get("name") and r.get("doc")
+    }
+
+
+def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
+    """A docstring, delimiters included, laid out from authored *lines*.
+
+    The one layout for text `authored_doc_lines` produced (gh-1493): each
+    line as written, indented, with a blank line left blank rather than
+    padded. One line keeps the one-line shape ``\"\"\"text\"\"\"`` that
+    `summary_docstring` gives a summary that fits -- so a one-line manifest
+    ``doc`` renders exactly as it did -- but is never wrapped, because an
+    authored line's width is its author's.
+
+    Examples
+    --------
+    >>> authored_docstring(["One."], 4)
+    ['    \"\"\"One.\"\"\"']
+    >>> authored_docstring(["One.", "", "Two."], 4)
+    ['    \"\"\"One.', '', '    Two.', '    \"\"\"']
+    """
+    pad = " " * indent
+    if len(lines) == 1:
+        return [f'{pad}"""{lines[0]}"""']
+    return (
+        [f'{pad}"""{lines[0]}']
+        + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
+        + [f'{pad}"""']
+    )
+
+
 def wrap_summary(text: str, width: int = DOC_WIDTH) -> list[str]:
     """Soft-wrap a docstring summary, paying for the opening ``\"\"\"``.
 
@@ -2089,6 +2173,7 @@ class ClassParam(NamedTuple):
 def class_docstring(
     summary: str,
     *,
+    authored: "Sequence[str]" = (),
     body: "Sequence[str]" = (),
     params: "Sequence[ClassParam]" = (),
     raises: "Sequence[tuple[str, str]]" = (),
@@ -2129,6 +2214,12 @@ def class_docstring(
         ``(warning_category, description)`` construction may emit, from
         ``[[<obj>.warnings]]`` (gh-805 §F). Rendered like *raises* and placed
         after it, which is numpydoc's order.
+    authored : sequence of str, optional
+        A manifest ``doc`` as `authored_doc_lines` renders it (gh-1493). When
+        given it replaces the summary and is laid out line for line -- never
+        wrapped, joined or flattened -- because its layout is the author's.
+        A single line that fits renders exactly as a *summary* would, so a
+        one-line ``doc`` does not churn.
     trailer : sequence of str, optional
         Ready-indented lines appended before the closing delimiter, for a
         section this function does not model (``_stubs``'s ``Examples``, whose
@@ -2171,12 +2262,17 @@ def class_docstring(
     # Nothing but a summary: this is exactly `summary_docstring`'s job,
     # including keeping a short one on a single line so existing stubs do not
     # churn, and leaving room for a formatter to pull the closer up (gh-746).
-    if not body and not params and not trailer and not diagnostics:
+    if authored:
+        summary = authored[0]
+    only_summary = not body and not params and not trailer and not diagnostics
+    if only_summary:
+        if authored:
+            return authored_docstring(authored, CLASS_INDENT)
         return summary_docstring(summary, indent=CLASS_INDENT)
 
-    head = wrap_summary(summary, CLASS_DOC_WIDTH)
+    head = list(authored) or wrap_summary(summary, CLASS_DOC_WIDTH)
     lines = [f'{pad}"""{head[0]}']
-    lines += [f"{pad}{ln}" for ln in head[1:]]
+    lines += [f"{pad}{ln}" if ln else "" for ln in head[1:]]
     lines += [""]
 
     for para in body:
@@ -2357,6 +2453,8 @@ def render_numpy_doc(
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
     param_defaults: "dict[str, str] | None" = None,
+    param_docs: "dict[str, str] | None" = None,
+    authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
@@ -2415,7 +2513,14 @@ def render_numpy_doc(
         Complete docstring lines, opening and closing ``\"\"\"`` included.
     """
     pad = " " * indent
-    if block is None and not override and not skeleton_fallback and not raises:
+    if (
+        block is None
+        and not override
+        and not skeleton_fallback
+        and not raises
+        and not authored_doc
+        and not param_docs
+    ):
         return [f'{pad}"""{name_summary(name)}"""']
 
     lines, examples = _numpy_sections(
@@ -2427,6 +2532,8 @@ def render_numpy_doc(
         skeleton_fallback=skeleton_fallback,
         param_fallback=param_fallback,
         param_defaults=param_defaults,
+        param_docs=param_docs,
+        authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
     )
@@ -2672,6 +2779,8 @@ def _numpy_sections(
     skeleton_fallback: bool = False,
     param_fallback: str = "Input.",
     param_defaults: "dict[str, str] | None" = None,
+    param_docs: "dict[str, str] | None" = None,
+    authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> tuple[list[str], list[str]]:
@@ -2697,7 +2806,12 @@ def _numpy_sections(
         )
     else:
         summary, body, descs, ret, examples = "", [], {}, "", []
-    summary = override or summary
+    # gh-1493: a manifest `doc` is rendered as the author laid it out and
+    # outranks everything; a header's `@brief` -- and any other `override`,
+    # which callers also use for a header brief -- is still jm's to wrap
+    # (gh-744). Two sources, two rules, two inputs.
+    authored = authored_doc_lines(authored_doc)
+    summary = authored[0] if authored else (override or summary)
     if not summary:
         # gh-867: capitalised on BOTH faces. `skeleton_fallback` used to
         # decide this too, so one flag answered two questions -- "emit the
@@ -2724,7 +2838,7 @@ def _numpy_sections(
         tag_secs.setdefault("Raises", []).append(f"{_cat} {_desc}")
     # gh-744: the summary wraps like every other section. It used to be the
     # single exception, spliced in at whatever length the header wrote it.
-    out = wrap_summary(summary)
+    out = authored or wrap_summary(summary)
     if "__deprecated__" in tag_secs:
         for note in tag_secs.pop("__deprecated__"):
             out += ["", ".. deprecated::"] + [
@@ -2756,6 +2870,13 @@ def _numpy_sections(
         out += ["", "Parameters", "----------"]
         for pname, ann in py_params:
             out.append(f"{pname} : {ann}")
+            # gh-1493: a manifest `doc` on the param, as written. It outranks
+            # the header `@param` -- the order `init_param` has always had
+            # (`_state._pdoc`) -- and was otherwise accepted and dropped.
+            authored = authored_doc_lines((param_docs or {}).get(pname, ""))
+            if authored:
+                out += [f"    {ln}" if ln else "" for ln in authored]
+                continue
             # gh-1042: precedence is header > jm's per-name default >
             # the generic fallback. The middle rung exists because `count`
             # and `out=` are jm's own arguments and "Input." is wrong for
@@ -2815,6 +2936,8 @@ def render_runtime_doc(
     *,
     param_fallback: str = "Input.",
     param_defaults: "dict[str, str] | None" = None,
+    param_docs: "dict[str, str] | None" = None,
+    authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
@@ -2884,6 +3007,8 @@ def render_runtime_doc(
         skeleton_fallback=True,
         param_fallback=param_fallback,
         param_defaults=param_defaults,
+        param_docs=param_docs,
+        authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
     )
@@ -2997,10 +3122,10 @@ class ManifestDoc(NamedTuple):
     where: str
     #: The first paragraph — for ``truncated``, the only part that survives.
     summary: str
-    #: ``"truncated"`` or ``"flattened"`` — which renderer defect applies.
+    #: ``"duplicated"``: a numpy section jm also generates (gh-1493).
     #: Defaulted so a caller naming an entry by hand needs only the two facts
     #: that identify it.
-    kind: str = "flattened"
+    kind: str = "duplicated"
 
 
 #: Per-shape wording, in one table. `status` prints ``line`` under a heading
@@ -3008,19 +3133,14 @@ class ManifestDoc(NamedTuple):
 #: reporters saying the same thing from two literals is the peer pair this
 #: repo has paid for repeatedly, so both read from here.
 _DOC_KINDS = {
-    "truncated": (
-        "the stub face keeps only {summary!r}; the rest reaches the "
-        "extension but is dropped from the `.pyi`"
-    ),
-    "flattened": (
-        "it carries a numpy section heading, and a manifest `doc` is "
-        "flattened into ONE paragraph — the heading and its `----------` "
-        "rule reflow into prose, and jm appends its own generated "
-        "Parameters/Returns after the wreckage"
+    "duplicated": (
+        "it carries a numpy section heading, and jm generates the numpy "
+        "sections itself -- the `doc` renders verbatim (gh-1493), so the "
+        "author's section and jm's generated Parameters/Returns both appear"
     ),
 }
 
-#: The one remedy, shared by both kinds and both reporters.
+#: The remedy, shared by both reporters.
 _DOC_REMEDY = (
     "Write the full docstring as Doxygen above the declaration in the "
     "component's `_core.h` instead: @brief, prose, @param, @return and @code "
@@ -3029,41 +3149,27 @@ _DOC_REMEDY = (
 )
 
 
-def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
-    """Manifest ``doc`` values the renderer mangles, by shape.
+def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
+    """Manifest ``doc`` values carrying a numpy section heading jm duplicates.
 
-    gh-1154 reported this as one rule — "a manifest ``doc`` is a summary" —
-    and gated on a doc holding more than one paragraph. gh-1164 measured what
-    each face actually writes, and that one rule was wrong in every shape it
-    fired on: it named a loss that does not happen, for shapes whose only
-    remedy does not exist. What the artefacts show:
+    History, because it decides what is left to report. gh-1154 gated on a
+    doc holding more than one paragraph; gh-1164 measured three renderer
+    shapes -- a module doc kept whole, a module function's stub TRUNCATED to
+    its first paragraph, everything else FLATTENED into one -- and gated on
+    the two defects. gh-1493 then removed both: every face renders a ``doc``
+    verbatim (`authored_doc_lines`), so nothing is truncated or flattened
+    and a multi-paragraph doc is simply the author's text.
 
-    ================================ ======================================
-    shape                            what the renderer does
-    ================================ ======================================
-    ``[module.X] doc``               renders WHOLE to both faces
-    ``[[module.X.functions]] doc``   ``.pyi`` truncated to paragraph 1
-    object / method / property       flattened into one paragraph
-    ================================ ======================================
+    One thing survives, and it is not a rendering defect. jm GENERATES the
+    numpy sections (``Parameters``, ``Returns``, ``Examples``) from the
+    manifest and the header, so a ``doc`` that writes its own
+    ``Parameters`` / ``----------`` block now renders correctly -- and jm's
+    generated section follows it. Two sections, one heading. That is what
+    this reports:
 
-    So there are three rules, not one:
-
-    - A **module** doc is never a finding. `_context/_modpath` passes it
-      through `_py_docstring` / `_c_doc_literal` with no `group_paragraphs`
-      and no truncation, so every paragraph reaches ``__init__.py`` and
-      ``.m_doc`` intact. It is also the one shape with no remedy: a module has
-      no header to derive from, which `_modpath` says itself, so ``doc`` is
-      the only place its prose can live. Reporting it demanded the author
-      delete text to satisfy a loss that was not occurring.
-    - A **module function** doc is a finding when it has more than one
-      paragraph, because the stub face genuinely drops the rest.
-    - Everything else is a finding when it carries a **section rule**. The
-      flattening itself is correct — joining softly wrapped paragraphs into
-      flowing prose is what `group_paragraphs` is for — and multi-paragraph
-      plain prose comes through as readable text. It is a numpy heading with
-      its ``----------`` rule that reflows into nonsense, beside the real
-      sections jm then generates. That is the defect worth gating, and unlike
-      the paragraph count it is fixable by editing the value in place.
+    - A **module** doc is never a finding: jm generates no sections for a
+      module, so a heading there duplicates nothing.
+    - Every other ``doc`` is a finding when it carries a **section rule**.
 
     Reporting rather than repairing is unchanged, and so is the remedy: jm
     **generates** the numpy sections from the manifest, so an author-written
@@ -3078,16 +3184,16 @@ def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
     Examples
     --------
     >>> mangled = "One.\\n\\nParameters\\n----------\\nb : int\\n    A bin."
-    >>> [d.where for d in manifest_docs_with_paragraphs({"eng": {"doc": mangled}})]
+    >>> [d.where for d in manifest_docs_with_sections({"eng": {"doc": mangled}})]
     ['eng.doc']
-    >>> manifest_docs_with_paragraphs({"eng": {"doc": "One.\\n\\nTwo."}})
+    >>> manifest_docs_with_sections({"eng": {"doc": "One.\\n\\nTwo."}})
     []
     >>> cfg = {"module": {"dsp": {"doc": mangled}}}
-    >>> manifest_docs_with_paragraphs(cfg)
+    >>> manifest_docs_with_sections(cfg)
     []
     >>> fn = {"module": {"dsp": {"functions": [{"name": "f", "doc": "A.\\n\\nB."}]}}}
-    >>> [(d.where, d.kind) for d in manifest_docs_with_paragraphs(fn)]
-    [('module.dsp.functions.f.doc', 'truncated')]
+    >>> manifest_docs_with_sections(fn)
+    []
     """
     found: "list[ManifestDoc]" = []
 
@@ -3097,14 +3203,13 @@ def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
         ``""`` means the renderer carries the value whole, so there is
         nothing to report.
         """
-        if path[:1] == ("module",):
-            # ("module", <id>) is the module's own doc; anything deeper is a
-            # table inside it, and only `functions` is truncated.
-            if len(path) == 2:
-                return ""
-            if len(path) == 4 and path[2] == "functions":
-                return "truncated"
-        return "flattened"
+        # A module's own doc: jm generates no sections for a module, so a
+        # heading there duplicates nothing. Everywhere else jm appends its own
+        # Parameters/Returns. (gh-1493 retired the other two shapes: no face
+        # truncates or flattens a `doc` any more.)
+        if path[:1] == ("module",) and len(path) == 2:
+            return ""
+        return "duplicated"
 
     def walk(node: object, path: "tuple[str, ...]") -> None:
         if isinstance(node, dict):
@@ -3114,11 +3219,7 @@ def manifest_docs_with_paragraphs(cfg: dict) -> "list[ManifestDoc]":
                 if key == "doc" and isinstance(value, str):
                     kind = kind_at(path)
                     body = value.replace("\r\n", "\n").strip("\n")
-                    hit = (
-                        "\n\n" in body
-                        if kind == "truncated"
-                        else has_section_rule(body)
-                    )
+                    hit = has_section_rule(body)
                     if kind and hit:
                         found.append(
                             ManifestDoc(

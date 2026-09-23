@@ -166,16 +166,17 @@ class TestTheManifestRoundTrip:
         assert _loaded_doc(project, "method") == MULTI
 
 
-class TestWhatThisDoesNotFix:
-    """The limit, recorded rather than assumed — see gh-1154.
+class TestTheRendererNowCarriesIt:
+    """The limit this recorded is gone -- gh-1493.
 
-    The issue's motivation was a numpy block reaching the generated surface.
-    The manifest can now carry one; the renderer still cannot use it. Writing
-    that down as a passing test means the day it changes, this fails and
-    someone updates the claim instead of discovering it in a downstream.
+    This class used to pin the gh-1154 gap: the manifest could carry a whole
+    docstring and the stub kept only its first line. It was written so that
+    the day the renderer changed, it would fail and the claim would be
+    updated rather than rediscovered downstream. gh-1493 is that day: a
+    ``doc`` now renders verbatim on every face, so the stub carries it all.
     """
 
-    def test_the_generated_stub_still_shows_only_the_summary(
+    def test_the_generated_stub_carries_the_whole_doc(
         self, project: Path
     ) -> None:
         _set_doc(
@@ -188,6 +189,5 @@ class TestWhatThisDoesNotFix:
         pyi = (project / "src" / "pp" / "dsp" / "dsp.pyi").read_text("utf-8")
         assert "def fmap" in pyi
         assert "Map a bin." in pyi
-        assert ">>> fmap(3)" not in pyi, (
-            "the renderer now carries the body — update gh-1154 and this test"
-        )
+        # Verbatim, line for line: the heading keeps its own line.
+        assert "\n    Examples\n    --------\n    >>> fmap(3)\n" in pyi, pyi
