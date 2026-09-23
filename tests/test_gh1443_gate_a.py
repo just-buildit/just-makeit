@@ -93,7 +93,27 @@ def test_the_ratchet_refuses_new_findings_and_stale_lines(
         G.check("ex", root)
 
     (ratchets / "ex.txt").write_text(
-        "".join(f"{f}\n" for f in found) + "p\truff check\tgone.py E999\n"
+        "".join(f"{f}\n" for f in found)
+        + "p\truff check\tsrc/p/gain.pyi E999\n"
     )
     with pytest.raises(AssertionError, match="only shrinks"):
         G.check("ex", root)
+
+
+def test_a_line_about_a_file_this_run_lacks_is_not_gone(
+    root: Path, tmp_path_factory, monkeypatch
+) -> None:
+    """kitchen_sink's `tone` exists only where doppler does: its lines are
+    not applicable elsewhere, not fixed."""
+    ratchets = tmp_path_factory.mktemp("gate_a")
+    monkeypatch.setattr(G, "RATCHET_DIR", ratchets)
+    monkeypatch.setattr(G, "UPDATE", False)
+    found = G.findings(root)
+    elsewhere = [
+        "p\truff check\tsrc/p/tests/test_tone.py F401",
+        "absent_project\tstatus --check\tSTALE",
+    ]
+    (ratchets / "ex.txt").write_text(
+        "".join(f"{f}\n" for f in [*found, *elsewhere])
+    )
+    G.check("ex", root)  # neither line could be observed here

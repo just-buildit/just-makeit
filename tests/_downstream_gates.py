@@ -81,7 +81,10 @@ def findings(root: Path) -> "set[str]":
         tag = proj.relative_to(root).as_posix()
 
         def norm(text: str) -> str:
-            return text.replace(str(proj) + os.sep, "").replace(str(proj), ".")
+            text = text.replace(str(proj) + os.sep, "").replace(str(proj), ".")
+            # jm prints paths the way the platform spells them; a ratchet
+            # file is one file for every platform.
+            return text.replace(os.sep, "/") if os.sep != "/" else text
 
         st = run_cli("status", "--check", cwd=proj)
         if st.returncode != 0:
@@ -108,6 +111,28 @@ def findings(root: Path) -> "set[str]":
     return out
 
 
+_PATHISH = re.compile(r"[\w.-]+(?:/[\w.-]+)+|[\w-]+\.\w+")
+
+
+def _applies(finding: str, root: Path) -> bool:
+    """Could *finding* have been observed in this run?
+
+    Some projects and files exist only on some platforms or environments --
+    kitchen_sink's ``tone`` is scaffolded only where a doppler build is
+    available, and a module may declare ``platforms``. A ratchet line about
+    a file this run never produced is not a finding that went away; it is
+    one that could not be looked for. The shrink rule applies everywhere the
+    file exists, which is where it can be checked.
+    """
+    tag, _kind, detail = finding.split("\t", 2)
+    proj = root / tag
+    if not proj.is_dir():
+        return False
+    detail = detail.replace("warning ~: ", "").replace("warning !: ", "")
+    m = _PATHISH.search(detail)
+    return m is None or (proj / m.group(0).rstrip(":")).exists()
+
+
 def check(name: str, root: Path) -> None:
     """Compare *root*'s findings with example *name*'s ratchet file."""
     got = findings(root)
@@ -127,7 +152,7 @@ def check(name: str, root: Path) -> None:
         else set()
     )
     new = sorted(got - allowed)
-    gone = sorted(allowed - got)
+    gone = sorted(f for f in allowed - got if _applies(f, root))
     msg = []
     if new:
         msg.append(
