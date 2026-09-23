@@ -358,6 +358,11 @@ _ALLOWED_SKIPS = (
     # test asserts a GNU ld/lld flag SPELLING. No install changes which
     # linker the platform has.
     "GNU ld/lld flag spelling",
+    # gh-1490's behaviour test poisons freed memory through glibc's
+    # `malloc.perturb` tunable; macOS's allocator has no equivalent switch.
+    # The ordering test beside it runs on every platform, so the fix is
+    # still checked there -- only the runtime demonstration is glibc-only.
+    "needs glibc's malloc.perturb",
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",
     "allow-listed:",
