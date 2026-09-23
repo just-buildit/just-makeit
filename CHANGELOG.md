@@ -65,13 +65,13 @@
     `malloc.perturb`: before the fix a `bool` input counted 50000 of 50000
     set where the same flags as `uint8` counted 10.
 
-
 - **A composer's enum getters and JSON check the stored value** (gh-1450).
     The source and segment getters and the state-row getter indexed the
     choice table with whatever C held, reading past it for any value outside
     it. There were five spellings of int-to-string across the faces. There
     is now one, `_enumc.decode_c`, which refuses an unknown value with
     `ValueError`, the way object properties and handle fields already did.
+
 - **`status` and `apply` list files in one order on every platform.** Both
     sorted `Path` objects, and a Windows path compares case-insensitively,
     so the same report put `bootstrap.toml` before `CMakePresets.json` on
