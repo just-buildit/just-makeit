@@ -418,6 +418,27 @@ def _method_notes(m: dict) -> list[str]:
     return out
 
 
+def _param_flag(p: dict) -> str:
+    """The flag that re-declares one method or function param.
+
+    ``--out-param`` for the caller's writable buffer (``out`` or its synonym
+    ``mutable``, :func:`_types.param_writable`), ``--param`` otherwise. Both
+    `jm method` and `jm function` spell it the same way (gh-1491).
+
+    Examples
+    --------
+    >>> _param_flag({"name": "y", "type": "float[]", "out": True})
+    '--out-param'
+    >>> _param_flag({"name": "y", "type": "float[]", "mutable": True})
+    '--out-param'
+    >>> _param_flag({"name": "x", "type": "float[]"})
+    '--param'
+    """
+    from ._types import param_writable
+
+    return "--out-param" if param_writable(p) else "--param"
+
+
 def _method_flags(m: dict, module: str | None) -> list[str]:
     parts: list[str] = []
 
@@ -426,7 +447,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     for p in m.get("params", []):
         val = f"{p['name']}:{p['type']}"
-        parts.append(_flag("--param", val))
+        # gh-1491: a writable param replayed as `--param` comes back const
+        # and read-only -- exit 0, and a kernel that can no longer write.
+        parts.append(_flag(_param_flag(p), val))
 
     at = m.get("arg_type", "")
     if at:
@@ -675,7 +698,7 @@ def _function_flags(fn: dict, module: str) -> list[str]:
             val = f"{p['name']}:{p['type']}"
             if p.get("default") not in (None, ""):
                 val += f"={p['default']}"
-        parts.append(_flag("--param", val))
+        parts.append(_flag(_param_flag(p), val))
 
     rt = fn.get("return_type", "")
     if rt:

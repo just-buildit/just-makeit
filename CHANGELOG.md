@@ -1,7 +1,28 @@
 ## [Unreleased]
 
+### Added
+
+- **`jm method --out-param name:T[]`** declares a writable array param, as
+    `jm function --out-param` already did (gh-1491). Until now a method
+    param's `out = true` (or `mutable = true`) could only be written into
+    the manifest by hand.
+
 ### Fixed
 
+- **A method's writable array param is the caller's buffer on every face**
+    (gh-1491). `out = true` / `mutable = true` on a method param was
+    accepted and then mostly ignored: every prototype still declared it
+    `const`, so the kernel could not write it, and on a `variable_output`
+    method with params the binding marshalled it read-only with no guard.
+    Measured on a built extension, a strided buffer came back untouched and
+    a read-only one was written. Now the prototype drops the `const`, and
+    both binding builders refuse any array they cannot hand over as the
+    caller's own memory (exact dtype, C-contiguous, writable) with the
+    `TypeError` a module function's `out` param already raised. `jm script`
+    replays these params, on methods and module functions, as `--out-param`.
+    Before this it replayed them as `--param`, so a rebuilt project got the
+    buffer back `const` and read-only. The module-function path the issue
+    names was already guarded (gh-581), and a compiled test now covers it.
 - **A manifest `doc` renders as you write it, on every face** (gh-1493).
     The same `doc` was treated four ways: kept whole on a module and an init
     param, flattened into one reflowed paragraph on an object, a method and a

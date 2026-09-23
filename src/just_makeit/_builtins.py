@@ -221,7 +221,7 @@ def overridden_builtin_slots(
             m.get("return_type", "void"),
             bool(m.get("variable_output")),
             m.get("multi_output") or [],
-            [(p["name"], p["type"]) for p in (m.get("params") or [])],
+            list(m.get("params") or []),
             m.get("out_type"),
             pass_capacity=bool(m.get("pass_capacity")),
             batch=bool(m.get("batch")),

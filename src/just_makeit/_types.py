@@ -503,13 +503,45 @@ def c_param_names(params) -> list[str]:
     ]
 
 
+def param_writable(p) -> bool:
+    """True when a declared ARRAY param is the caller's buffer to write into.
+
+    A manifest param says so with ``out = true``, or with its synonym
+    ``mutable = true`` (gh-170). The two keys mean one thing, so every face
+    asks this one question: the prototype drops the ``const``, and the
+    binding refuses any array it cannot hand over as the caller's own memory
+    (exact dtype, C-contiguous, writable -- `_coerce.out_buffer_guard`),
+    because anything else makes numpy substitute a temporary that the C
+    function fills and the binding then discards (gh-1491).
+
+    Only a ``dict`` param can carry either key. A tuple is the CLI's
+    ``(name, type[, default])`` and has no slot for it, so it is never
+    writable here -- a tuple's third element is a DEFAULT, and reading it as
+    a flag would make every defaulted param writable.
+
+    Examples
+    --------
+    >>> param_writable({"name": "y", "type": "float[]", "out": True})
+    True
+    >>> param_writable({"name": "y", "type": "float[]", "mutable": True})
+    True
+    >>> param_writable({"name": "x", "type": "float[]"})
+    False
+    >>> param_writable(("y", "float[]", "0"))
+    False
+    """
+    return isinstance(p, dict) and bool(p.get("out") or p.get("mutable"))
+
+
 def c_param_parts(params) -> list[str]:
     """Expand a method/function param list into C parameter declarations.
 
     The one place that knows how a declared param becomes C. An array param
-    expands to **two** C parameters — a const element pointer and a `size_t`
+    expands to **two** C parameters — an element pointer and a `size_t`
     length — and every generated prototype, stub signature and binding call
-    has to agree on that expansion or the project will not link.
+    has to agree on that expansion or the project will not link. The pointer
+    is ``const`` unless the param is the caller's buffer to write
+    (:func:`param_writable`, gh-1491).
 
     Accepts either shape jm carries params in: ``(name, type)`` tuples (the
     CLI form) or ``{"name": ..., "type": ...}`` dicts (the manifest / apply
@@ -532,6 +564,8 @@ def c_param_parts(params) -> list[str]:
     ['const float _Complex *rx', 'size_t rx_len', 'size_t t0']
     >>> c_param_parts([{"name": "n", "type": "int", "default": "4"}])
     ['int n']
+    >>> c_param_parts([{"name": "y", "type": "float[]", "out": True}])
+    ['float *y', 'size_t y_len']
 
     A pseudo-type is not a C type, and this is where it stops being one
     (gh-1272). ``bytes`` expands to two C parameters exactly as an array
@@ -547,7 +581,8 @@ def c_param_parts(params) -> list[str]:
         pname, ptype = (p["name"], p["type"]) if isinstance(p, dict) else p[:2]
         if is_array_param_type(ptype):
             elem_disp = array_elem_ctype(ptype)
-            parts.append(f"const {elem_disp} *{pname}")
+            qual = "" if param_writable(p) else "const "
+            parts.append(f"{qual}{elem_disp} *{pname}")
             parts.append(f"size_t {pname}_len")
         elif ptype == "path":
             # `path` names a Python-side coercion, not a C type. The
