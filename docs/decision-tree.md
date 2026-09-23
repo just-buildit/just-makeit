@@ -130,7 +130,7 @@ design:
 
 - `opaque` state fields, `no_ctor` per field, `controllable` per field
     (see [Arguments](arguments.md#default-optional-arguments))
-- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse`, `string_enum:` init-param types
+- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse`
 - `max_results` / `max_results_param` on methods and functions
 - `no_generate` modules, `extra_c` files, per-component `extra_link_libs`
 

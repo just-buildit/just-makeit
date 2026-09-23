@@ -2570,6 +2570,10 @@ def run(
     version = C.project_version(cfg)
     if perf is None:
         perf = C.is_perf(cfg)
+    # gh-1489: render from the resolved types, persist the declared ones --
+    # see `C.resolve_init_param_tuples`.
+    declared_init_params = list(init_params)
+    init_params = C.resolve_init_param_tuples(cfg, init_params)
 
     # state_vars is None only when the CLI got no --state (use the starter
     # `gain` so a fresh `jm object` isn't empty); an explicit [] (e.g. apply
@@ -2902,7 +2906,7 @@ def run(
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,
-        init_params_=init_params,
+        init_params_=declared_init_params,
         class_name_=class_name,
         create_fn_=create_fn,
         depends_on_=list(depends_on),

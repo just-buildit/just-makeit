@@ -50,6 +50,56 @@ def parse_state_flag(
     return (name, ctype, default), i + 1
 
 
+def _is_init_param_scalar(ctype: str) -> bool:
+    """Whether *ctype* is a scalar type a constructor parameter may declare.
+
+    The same three families ``_config._declared_type_error`` accepts from a
+    hand-written ``[[obj.init_params]]`` table: a registered scalar, an
+    ``enum:<name>`` reference, or an inline ``string_enum:a,b`` choice list.
+    Before gh-1489 the CLI asked only the first question, so a declaration the
+    manifest accepted -- and ``jm script`` replays as an ``--init-param`` --
+    was refused on the command line as an unsupported type.
+
+    >>> [_is_init_param_scalar(t) for t in
+    ...  ("int", "enum:level", "string_enum:a,b", "level_t")]
+    [True, True, True, False]
+    """
+    from . import _types as T
+
+    return (
+        T.is_valid_type(ctype)
+        or T.is_enum_ref(ctype)
+        or T.is_string_enum_type(ctype)
+    )
+
+
+def _refuse_init_param_type(ctype: str) -> None:
+    """Exit naming every type an ``--init-param`` can spell, and what it can't.
+
+    The one type family the CLI has no spelling for is a C typedef jm has no
+    vocabulary for (gh-1096's ``c_type``), which only the manifest can
+    declare -- so the message says where that goes rather than leaving the
+    author to conclude jm cannot do it at all.
+    """
+    from . import _types as T
+
+    supported = ", ".join(sorted(T.SUPPORTED_TYPES))
+    print(
+        f"error: unsupported type '{ctype}'.\n"
+        f"Scalar types: {supported}\n"
+        f"Enum types: enum:<name> (a declared [[enum]]) or "
+        f"string_enum:a,b,...  e.g. level:enum:level:info\n"
+        f"Array init-param syntax: type[]  e.g. float[]\n"
+        f"A C typedef jm has no name for (an enum's own typedef, say) is "
+        f"declared in the manifest,\n"
+        f"not on the command line -- in [[<object>.init_params]]:\n"
+        f'  type = "enum:<name>"  # or an integer type above\n'
+        f'  c_type = "{ctype}"',
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
     """Parse one --init-param flag at index i.
 
@@ -90,6 +140,15 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-1489: the two enum types carry a ':' of their own -- `enum:<name>`
+    # and `string_enum:a,b` -- so a plain split hands the grammar below the
+    # word `enum` as the type and the enum's name as the default. Rejoin the
+    # type's two halves first; everything after them (a default, `required`)
+    # then sits in the slots it occupies for any other type. The choices of a
+    # `string_enum:` never contain a ':' (constants are bound with '='), so
+    # the type is always exactly two tokens.
+    if len(parts) >= 3 and parts[1] in ("enum", "string_enum"):
+        parts = [parts[0], f"{parts[1]}:{parts[2]}", *parts[3:]]
     name = parts[0]
     ctype = parts[1]
 
@@ -265,26 +324,20 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not T.is_valid_type(ctype):
-            supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-            print(
-                f"error: unsupported type '{ctype}'.\nScalar types: {supported}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        if not _is_init_param_scalar(ctype):
+            _refuse_init_param_type(ctype)
         return (name, ctype, "", "", "", "", False, "", True), i + 1
 
     # Normal scalar / required-array path.
-    if not T.is_valid_type(ctype) and not T.is_array_param_type(ctype):
-        supported = ", ".join(sorted(T.SUPPORTED_TYPES))
-        print(
-            f"error: unsupported type '{ctype}'.\n"
-            f"Scalar types: {supported}\n"
-            f"Array init-param syntax: type[]  e.g. float[]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if T.is_array_param_type(ctype):
+    if not _is_init_param_scalar(ctype) and not T.is_array_param_type(ctype):
+        _refuse_init_param_type(ctype)
+    if T.is_enum_ref(ctype) or T.is_string_enum_type(ctype):
+        # An enum's default is one of its choice strings, and it has no
+        # `_CTYPE_META` zero: no default is the manifest's own spelling of
+        # "the first choice", so the CLI persists exactly what a hand-written
+        # `[[obj.init_params]]` table without a `default` key would.
+        default = parts[2] if len(parts) >= 3 else ""
+    elif T.is_array_param_type(ctype):
         # gh-826: this used to be `default = ""` unconditionally — an array
         # init-param's declared default was discarded here, silently, while
         # its scalar sibling in the same command kept its own.
