@@ -3074,7 +3074,7 @@ def make_methods_ctx(
             _rec_fields = _record.fields(m, doc_blocks, records)
             _descriptor = _record.descriptor_c(
                 _sid,
-                _record.qualified_name(m, component),
+                _record.qualified_name(m),
                 _record.type_doc(m, _rec_fields),
                 _rec_fields,
             )

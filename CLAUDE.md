@@ -180,7 +180,12 @@ the `add_subdirectory` regex stays a single `\w+`), and `pypath` (`dsp/filters`:
 the Python output dir). Intermediate packages get a plain `__init__.py`
 (`_init.ensure_parent_packages`). `Ctx.make_module_ctx` supplies the render
 slots (`module`=cname, `module_leaf`, `module_pypath`, `module_output_name`,
-`module_tp`); they collapse to today's values for a flat id (zero churn). The
+`module_tp`); all but `module_tp` collapse to the bare name for a flat id.
+`module_tp` is always the importable package (`my_project.filter`), because a
+type's `tp_name` prefix is its `__module__` and pickle imports it (gh-1486);
+a standalone object's is `my_project.<comp>`, seeded in
+`_init._make_component_ctx`, and a record's default qualifier is the same
+slot. The
 TOML key is quoted (`[module."dsp.filters"]`); the split-layout fragment file is
 `modules/<cname>.toml`. `_apply._splice_cmake_components` classifies module
 blocks by `C.module_cnames(cfg)` (not the dotted id).

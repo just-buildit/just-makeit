@@ -79,7 +79,7 @@ static PyObject *
 
 static PyTypeObject /*<<ComponentW>>*/Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "/*<<component>>*/./*<<Component>>*/",
+    .tp_name      = "/*<<module_tp>>*/./*<<Component>>*/",
     .tp_basicsize = sizeof(/*<<Component>>*/Object),
     .tp_dealloc   = (destructor)/*<<ComponentW>>*/_dealloc,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
