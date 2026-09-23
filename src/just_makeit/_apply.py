@@ -454,7 +454,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-287: a composer module emits its OO-type binding / CMake / .pyi
         # directly from the manifest (no object-group scaffold).
         if C.is_composer_module(cfg, mod):
-            _composer.materialize(cfg, temp_root, mod)
+            _composer.materialize(
+                cfg, temp_root, mod, project_root=project_root
+            )
             continue
         # gh-306: a handle module emits its typed-class binding / CMake / .pyi
         # directly from the manifest (no object-group scaffold).

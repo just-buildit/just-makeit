@@ -102,8 +102,19 @@ def run(root: Path) -> None:
     assert '#include "playlist/playlist_bridge.h"' in ext
     assert "extern " not in ext, "the binding still declares a seam itself"
 
+    # gh-1516: the declared extra method is forward-declared above the table
+    # that names it, and its file is included although it does not exist yet.
+    assert "static PyObject *Mix_total_samples(PyObject *, PyObject *);" in ext
+    assert '#include "playlist_ext_extra.c"' in ext
+
     # ── 5. The seam bodies ───────────────────────────────────────────────
     shutil.copy(STEPS / "05_playlist_bridge.c", backing / "playlist_bridge.c")
+
+    # ── 5b. The hand-written method, written AFTER apply ─────────────────
+    shutil.copy(
+        STEPS / "05b_playlist_ext_extra.c",
+        proj / "native" / "src" / "playlist" / "playlist_ext_extra.c",
+    )
 
     # ── 6. Build ─────────────────────────────────────────────────────────
     _cmd(

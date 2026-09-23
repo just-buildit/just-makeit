@@ -69,4 +69,11 @@ assert len(mix.segments) == 1
 assert isinstance(mix.segments[0], Track)
 assert mix.repeat is False and mix.continuous is False
 
+# ── the hand-written method ──────────────────────────────────────────────
+print(f"mix.total_samples()      -> {mix.total_samples()}   (_ext_extra.c)")
+assert mix.total_samples() == 4
+two = Mix([Track.sum(Clip(), dur=3), Track.sum(Clip(), dur=5)])
+print(f"  over tracks of 3 and 5 -> {two.total_samples()}")
+assert two.total_samples() == 8
+
 print("composer_seams demo: PASSED")

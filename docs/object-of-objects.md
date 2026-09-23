@@ -346,6 +346,14 @@ doc     = "Per-instance draw records."
 returns = "list[dict[str, object]]"        # raw Python, for the .pyi
 ```
 
+jm forward-declares each row's `fn` above the method table that names it, with
+the signature its `flags` imply. `METH_NOARGS`, `METH_O` and `METH_VARARGS`
+take `(PyObject *self, PyObject *arg)`, and `METH_KEYWORDS` adds a
+`PyObject *kwds`. So define the function with exactly that signature, `self`
+as a `PyObject *` too. A declared row always includes the file, so it can be
+written before or after the `apply` that declares it; if it is missing, the
+build fails naming it. The `composer_seams` example builds one end to end.
+
 `extra_methods` is the composer's escape hatch, and it is deliberately **not**
 spelled `methods`: on a `kind = "handle"` or `kind = "capsule"` module that
 word means "generate the wrapper from this signature", while here the wrapper

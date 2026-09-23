@@ -322,6 +322,16 @@ default = "4"
 
 [module.playlist.oo]
 composer_type_name = "Mix"
+
+# ── a method jm cannot express ────────────────────────────────────────────
+# The body is hand-written CPython in native/src/playlist/playlist_ext_extra.c;
+# this row is what gives it a place on Mix and a line in the .pyi.
+[[module.playlist.extra_methods]]
+name = "total_samples"
+fn = "Mix_total_samples"
+flags = "METH_NOARGS"
+doc = "Samples the whole spec lasts: the sum of every track's dur."
+returns = "int"
 """
 
 
@@ -444,6 +454,61 @@ reference counting and the error translation are all on jm's side of the line.
 
 ---
 
+## 5b. A method jm cannot express
+
+The seams cover what a source *is*. Now and then a type needs one method jm
+has no vocabulary for. `extra_methods` is the escape hatch: the manifest row
+in step 3 declares the name, the flags and the Python signature, and the body
+is plain CPython in a file jm never touches.
+
+`native/src/playlist/playlist_ext_extra.c`:
+
+```c
+/* Hand-written: jm includes this file after the generated types and never
+ * modifies it. The PyMethodDef row and the .pyi line come from
+ * [[module.playlist.extra_methods]]; jm also forward-declares the function
+ * with the signature METH_NOARGS implies, so write exactly that one. */
+
+static PyObject *
+Mix_total_samples (PyObject *self, PyObject *Py_UNUSED (ignored))
+{
+  PyObject *segments = PyObject_GetAttrString (self, "segments");
+  if (!segments)
+    return NULL;
+
+  size_t     total = 0;
+  Py_ssize_t n     = PySequence_Size (segments);
+  for (Py_ssize_t i = 0; i < n; i++)
+    {
+      PyObject *track = PySequence_GetItem (segments, i);
+      PyObject *dur   = track ? PyObject_GetAttrString (track, "dur") : NULL;
+      Py_XDECREF (track);
+      if (!dur)
+        {
+          Py_DECREF (segments);
+          return NULL;
+        }
+      total += PyLong_AsSize_t (dur);
+      Py_DECREF (dur);
+    }
+  Py_DECREF (segments);
+  if (PyErr_Occurred ())
+    return NULL;
+  return PyLong_FromSize_t (total);
+}
+```
+
+jm `#include`s the file after the four generated types, so the body can use
+anything they define. It also forward-declares `Mix_total_samples` above the
+method table that names it, with the signature `METH_NOARGS` implies: write
+that exact signature, or the file does not compile.
+
+The order does not matter either. The row alone makes the binding include the
+file, so it can be written before or after the `apply` that declared it. If it
+is missing, the build fails naming `playlist_ext_extra.c`.
+
+---
+
 ## 6. Build
 
 ```sh
@@ -532,6 +597,13 @@ assert len(mix.segments) == 1
 assert isinstance(mix.segments[0], Track)
 assert mix.repeat is False and mix.continuous is False
 
+# ── the hand-written method ──────────────────────────────────────────────
+print(f"mix.total_samples()      -> {mix.total_samples()}   (_ext_extra.c)")
+assert mix.total_samples() == 4
+two = Mix([Track.sum(Clip(), dur=3), Track.sum(Clip(), dur=5)])
+print(f"  over tracks of 3 and 5 -> {two.total_samples()}")
+assert two.total_samples() == 8
+
 print("composer_seams demo: PASSED")
 ```
 
@@ -544,6 +616,8 @@ Clip(gain=7.0).steps(3)  -> [7.+0.j 7.+0.j 7.+0.j]   (via clip_from_source)
 Clip(gain=-1.0).steps(1) -> ValueError: a clip's gain must be >= 0
 Mix(Track.sum(2,3,dur=4)).execute(8) -> [5.+0.j 5.+0.j 5.+0.j 5.+0.j]
 mix.segments             -> 1 track(s), repeat=False, continuous=False
+mix.total_samples()      -> 4   (_ext_extra.c)
+  over tracks of 3 and 5 -> 8
 composer_seams demo: PASSED
 ```
 
