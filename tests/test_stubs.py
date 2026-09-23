@@ -497,6 +497,13 @@ class TestStringEnumStub:
         assert "Literal" in typing_line
 
     def test_literal_before_numpy(self, enum_project):
+        # gh-1478: `det` has no step and no state, so no array surface, and
+        # its stub no longer imports numpy it never names. A stepping object
+        # beside it brings the import back for the ordering to be about.
+        assert "import numpy" not in _pyi(enum_project, "dsp", "myproj")
+        object_run(
+            enum_project, "gain", "dsp", arg_type="float", return_type="float"
+        )
         pyi = _pyi(enum_project, "dsp", "myproj")
         lines = pyi.splitlines()
         lit_idx = next(

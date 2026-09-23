@@ -82,7 +82,11 @@ def test_the_ratchet_refuses_new_findings_and_stale_lines(
     monkeypatch.setattr(G, "RATCHET_DIR", ratchets)
     monkeypatch.setattr(G, "UPDATE", False)
     monkeypatch.setattr(G, "SHRINK", True)
+    # A fresh scaffold has no findings of its own since gh-1478, and this
+    # needs at least one to drop from the file: plant two.
+    (root / "p" / "src" / "p" / "planted.py").write_text("import os,sys\n")
     found = G.findings(root)
+    assert len(found) >= 2, found
 
     (ratchets / "ex.txt").write_text("".join(f"{f}\n" for f in found))
     G.check("ex", root)  # exactly recorded: passes

@@ -11,7 +11,7 @@ try:
     _approx = _pytest.approx
     _raises = _pytest.raises
 except ImportError:
-    import contextlib, math
+    import contextlib
 
     class _Approx:
         def __init__(self, expected, rel=1e-6):
@@ -20,8 +20,10 @@ except ImportError:
 
         def __eq__(self, other):
             import cmath
-            return cmath.isclose(complex(other), complex(self._exp),
-                                 rel_tol=1e-6, abs_tol=1e-12)
+
+            return cmath.isclose(
+                complex(other), complex(self._exp), rel_tol=1e-6, abs_tol=1e-12
+            )
 
         def __repr__(self):
             return f"approx({self._exp!r})"
@@ -29,6 +31,7 @@ except ImportError:
     @contextlib.contextmanager
     def _raises(exc_type, match=None):
         import re
+
         try:
             yield
         except exc_type as e:

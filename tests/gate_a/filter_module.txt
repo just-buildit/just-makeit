@@ -1,9 +1,0 @@
-my_filters	ruff check	src/my_filters/filter/tests/test_biquad.py E401
-my_filters	ruff check	src/my_filters/filter/tests/test_biquad.py F401
-my_filters	ruff check	src/my_filters/filter/tests/test_fir.py E401
-my_filters	ruff check	src/my_filters/filter/tests/test_fir.py F401
-my_filters	ruff format	src/my_filters/filter/benchmarks/bench_biquad.py
-my_filters	ruff format	src/my_filters/filter/benchmarks/bench_fir.py
-my_filters	ruff format	src/my_filters/filter/filter.pyi
-my_filters	ruff format	src/my_filters/filter/tests/test_biquad.py
-my_filters	ruff format	src/my_filters/filter/tests/test_fir.py

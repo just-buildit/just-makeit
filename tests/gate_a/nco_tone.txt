@@ -1,7 +1,0 @@
-nco_tone_demo	ruff check	src/nco_tone_demo/benchmarks/bench_tone.py F401
-nco_tone_demo	ruff check	src/nco_tone_demo/tests/test_tone.py E401
-nco_tone_demo	ruff check	src/nco_tone_demo/tests/test_tone.py F401
-nco_tone_demo	ruff format	src/nco_tone_demo/__init__.py
-nco_tone_demo	ruff format	src/nco_tone_demo/benchmarks/bench_tone.py
-nco_tone_demo	ruff format	src/nco_tone_demo/tests/test_tone.py
-nco_tone_demo	ruff format	src/nco_tone_demo/tone.pyi

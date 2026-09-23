@@ -289,7 +289,7 @@ def make_step_ctx(
             f"\n"
             f"    def test_context_manager(self):\n"
             f"        with {Component}({py_create_args}) as obj:\n"
-            f"            pass\n"
+            f"            self.assertIsNotNone(obj)\n"
             f"\n"
             f"    def test_destroy(self):\n"
             f"        obj = {Component}({py_create_args})\n"
@@ -299,7 +299,7 @@ def make_step_ctx(
             f"\n"
             f"def test_context_manager():\n"
             f"    with {Component}({py_create_args}) as obj:\n"
-            f"        pass\n"
+            f"        assert obj is not None\n"
             f"\n"
             f"def test_destroy():\n"
             f"    obj = {Component}({py_create_args})\n"
@@ -329,9 +329,22 @@ def make_step_ctx(
             "lifecycle_pytest_methods": _lifecycle,
             "step_pytest_methods_pure": "",
             "lifecycle_pytest_methods_pure": _lifecycle_pure,
-            "bm_step_py": "",
+            # gh-1478: with no step() there is nothing to stream, and a
+            # benchmark that built `obj` and never touched it was an `F841`.
+            # Construction is the one operation every object has (reset()
+            # is not: `no_state`/`no_reset` drop it), so that is what is
+            # timed. The slots nest; `render` substitutes to a fixed point.
+            "bm_step_py": (
+                "\n\ndef test_bench_create(benchmark):\n"
+                "    benchmark(lambda: <<Component>>(<<py_create_args>>))\n"
+            ),
             "bm_steps_py": "",
-            "bench_step_py": "",
+            "bench_step_py": (
+                "    del obj  # no step() to time\n"
+                '    dt = _bench("create", lambda: '
+                "<<Component>>(<<py_create_args>>))\n"
+                "    print(f\"  {'create':<22} {dt * 1e6:9.3f} µs\")\n"
+            ),
             "bench_steps_py": "",
         }
 
@@ -583,7 +596,7 @@ def make_step_ctx(
             f"\n"
             f"    def test_steps_out_param(self):\n"
             f"        obj = {Component}({py_create_args})\n"
-            f"        x   = np.zeros(4, dtype={in_np_dtype})\n"
+            f"        x = np.zeros(4, dtype={in_np_dtype})\n"
             f"        buf = np.zeros(4, dtype={out_np_dtype})\n"
             f"        ret = obj.steps(x, buf)\n"
             f"        assert ret is buf\n"
@@ -598,7 +611,7 @@ def make_step_ctx(
             f"\n"
             f"def test_steps_out_param():\n"
             f"    obj = {Component}({py_create_args})\n"
-            f"    x   = np.zeros(4, dtype={in_np_dtype})\n"
+            f"    x = np.zeros(4, dtype={in_np_dtype})\n"
             f"    buf = np.zeros(4, dtype={out_np_dtype})\n"
             f"    ret = obj.steps(x, buf)\n"
             f"    assert ret is buf\n"
@@ -613,8 +626,7 @@ def make_step_ctx(
             f"    def test_destroy(self):\n"
             f"        obj = {Component}({py_create_args})\n"
             f"        obj.destroy()\n"
-            f"        import pytest\n"
-            f'        with pytest.raises(RuntimeError, match="destroyed"):\n'
+            f'        with _raises(RuntimeError, match="destroyed"):\n'
             f"            obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
         )
         _bw_lifecycle_pure = (
@@ -627,7 +639,6 @@ def make_step_ctx(
             f"def test_destroy():\n"
             f"    obj = {Component}({py_create_args})\n"
             f"    obj.destroy()\n"
-            f"    import pytest\n"
             f'    with pytest.raises(RuntimeError, match="destroyed"):\n'
             f"        obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
         )
@@ -1896,7 +1907,7 @@ def make_step_ctx(
                 f"        self.assertEqual(y.dtype, {out_np_dtype})\n"
                 f"\n"
                 f"    def test_steps_out_param(self):\n"
-                f"        x   = np.ones(64, dtype={in_np_dtype})\n"
+                f"        x = np.ones(64, dtype={in_np_dtype})\n"
                 f"        buf = np.zeros(64, dtype={out_np_dtype})\n"
                 f"        obj1 = {Component}({py_create_args})\n"
                 f"        ret = obj1.steps(x, buf)\n"
@@ -1983,7 +1994,7 @@ def make_step_ctx(
                 f"    assert y.dtype == {out_np_dtype}\n"
                 f"\n"
                 f"def test_steps_out_param():\n"
-                f"    x   = np.ones(64, dtype={in_np_dtype})\n"
+                f"    x = np.ones(64, dtype={in_np_dtype})\n"
                 f"    buf = np.zeros(64, dtype={out_np_dtype})\n"
                 f"    obj1 = {Component}({py_create_args})\n"
                 f"    ret = obj1.steps(x, buf)\n"
