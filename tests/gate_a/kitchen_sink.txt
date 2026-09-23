@@ -1,9 +1,6 @@
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_config_core.c
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_resamp_core.c
-kitchen_sink	re-apply writes	update just-makeit.toml
-kitchen_sink	re-apply writes	update pyproject.toml
-kitchen_sink	re-apply writes	update src/kitchen_sink/cli.py
 kitchen_sink	ruff check	src/kitchen_sink/benchmarks/bench_tone.py F401
 kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_config.py F401
 kitchen_sink	ruff check	src/kitchen_sink/dsp/benchmarks/bench_config.py F841

@@ -1,6 +1,3 @@
-bw	re-apply writes	update CMakeLists.txt
-bw	re-apply writes	update just-makeit.toml
-bw	re-apply writes	update native/src/app/scaletool.c
 bw	ruff check	src/bw/tests/test_scale.py E401
 bw	ruff check	src/bw/tests/test_scale.py F401
 bw	ruff format	src/bw/__init__.py
@@ -8,12 +5,6 @@ bw	ruff format	src/bw/benchmarks/bench_scale.py
 bw	ruff format	src/bw/scale.pyi
 bw	ruff format	src/bw/tests/test_scale.py
 fn	re-apply warns	warning ~: native/benchmarks/bench_mathx_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
-fn	re-apply writes	update CMakeLists.txt
-fn	re-apply writes	update just-makeit.toml
-fn	re-apply writes	update native/src/app/addtool.c
-gen	re-apply writes	update CMakeLists.txt
-gen	re-apply writes	update just-makeit.toml
-gen	re-apply writes	update native/src/app/ramptool.c
 gen	ruff check	src/gen/benchmarks/bench_ramp.py F401
 gen	ruff check	src/gen/tests/test_ramp.py E401
 gen	ruff check	src/gen/tests/test_ramp.py F401
@@ -21,14 +12,9 @@ gen	ruff format	src/gen/__init__.py
 gen	ruff format	src/gen/benchmarks/bench_ramp.py
 gen	ruff format	src/gen/ramp.pyi
 gen	ruff format	src/gen/tests/test_ramp.py
-multi	re-apply warns	warning ~: native/src/app/cmdtool.c: this app is regenerated from `[app]` in the manifest, by `jm app` and by every `jm apply`, and your edits to it have just been discarded. Nothing preserves a body here — put custom logic in a component (`jm method`) and call it from the generated main(), or keep your own copy outside native/src/app/.
-multi	re-apply writes	update CMakeLists.txt
-multi	re-apply writes	update just-makeit.toml
-multi	re-apply writes	update native/src/app/cmdtool.c
 multi	ruff check	src/multi/tests/test_engine.py E401
 multi	ruff check	src/multi/tests/test_engine.py F401
 multi	ruff format	src/multi/__init__.py
 multi	ruff format	src/multi/benchmarks/bench_engine.py
 multi	ruff format	src/multi/engine.pyi
 multi	ruff format	src/multi/tests/test_engine.py
-multi	status --check	(no section)
