@@ -234,6 +234,25 @@ def _changed_report(
     return out
 
 
+def superseded_advice(root: Path, old: str, new: str) -> str:
+    """What to do about a file jm has renamed (gh-1472), for apply and status.
+
+    One sentence for both commands: `upgrade` does the rename while only the
+    old file exists; once both do, jm cannot tell which holds the author's
+    edits, so merging them is the author's.
+    """
+    if (root / new).is_file():
+        return (
+            f"{old} is superseded by {new}, which is the file jm maintains."
+            f" Merge anything you added to {old} into {new}, then delete"
+            f" {old}."
+        )
+    return (
+        f"{old} is now called {new}; jm will not create {new} beside it."
+        " Run `just-makeit upgrade` to rename it -- your edits come along."
+    )
+
+
 def is_skipped(rel: Path) -> bool:
     """True when *rel* is not manifest-owned and must never be compared.
 
@@ -1243,13 +1262,17 @@ def _sync_missing(
     # newer than any pre-existing object files in the build directory.
     _future = time.time() + 2.0
     created: list[Path] = []
+    # gh-1472: a file jm now writes under a new name is not created beside
+    # the author's copy under the old one -- that default would silently
+    # stand in for whatever they had added. `upgrade` renames it instead.
+    renamed_to = {Path(new) for _old, new in _createonly.superseded(root)}
     # Ordinal by the POSIX spelling, the same order on every platform (see
     # `_status._walk_managed`).
     for src in sorted(temp_root.rglob("*"), key=lambda q: q.as_posix()):
         if not src.is_file():
             continue
         rel = src.relative_to(temp_root)
-        if is_skipped(rel):
+        if is_skipped(rel) or rel in renamed_to:
             continue
         dst = root / rel
         if dst.exists() and not (owned and rel in owned):
@@ -3422,6 +3445,11 @@ def run(
             stream=sys.stdout,
             indent="  ",
         )
+
+    # gh-1472: named on every apply until it is gone -- held back above, so
+    # without this line the rename would simply never happen.
+    for _old, _new in _createonly.superseded(root):
+        _report.warn(superseded_advice(root, _old, _new), gates=False)
 
     # gh-442: non-fatal — jm has no way to know which side (manifest or
     # hand-written header doc) is the stale one, so it warns rather than
