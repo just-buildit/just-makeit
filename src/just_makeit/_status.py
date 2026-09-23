@@ -423,7 +423,7 @@ def run(
 
     manifest_doc_entries = [
         d
-        for d in _doc_mod.manifest_docs_with_paragraphs(cfg)
+        for d in _doc_mod.manifest_docs_with_sections(cfg)
         if not _is_allowed(d.where, allow_patterns)
     ]
 

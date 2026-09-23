@@ -476,6 +476,51 @@ to bring one back under budget, none of which changes what the example does:
 `jm status` prints the outstanding count, so a project sweeping them has a
 burn-down number.
 
+### Docstrings — `doc` is rendered as you write it
+
+A `doc` on an object, a view, a method, a property, a module, a module
+function, a state field, an init param, or a method or function param renders
+**verbatim**, identically in the `.pyi` stub and in `help()` at runtime. (The
+`handle`, `capsule` and `composer` module kinds do not follow this rule yet:
+see gh-1499.)
+
+```toml
+doc = """
+This is an example.
+It has two lines.
+"""
+```
+
+becomes exactly
+
+```text
+This is an example.
+It has two lines.
+```
+
+jm does not reflow, join, flatten or truncate it, and it does not re-wrap a
+long line: the layout is yours. The one normalisation is Python's own
+docstring rule, [`inspect.cleandoc`](https://docs.python.org/3/library/inspect.html#inspect.cleandoc):
+blank lines around the text go, and indentation common to every line but the
+first is removed. So the text may start on the `"""` line, and an indented
+TOML table's continuation lines lose their indent:
+
+```toml
+    doc = """What happens in this case?
+        This is an example.
+        It has two lines.
+        """
+```
+
+renders the same three lines. A `doc` on a param or state field becomes that
+parameter's entry under `Parameters`, and outranks the header's `@param`.
+
+jm still generates the numpy sections — `Parameters`, `Returns`,
+`Examples` — itself, so write prose in `doc`, not those headings: a `doc`
+carrying one gets a second copy after it, which `jm status` reports as
+`DOC`. For a full docstring with its own sections and doctests, write it as
+Doxygen above the declaration in the component's `_core.h`.
+
 ### Generated Python style — `py_format_command`
 
 The Python twin of `c_format_command`. jm emits its own layout for the

@@ -4588,6 +4588,28 @@ def opaque_fields(cfg: dict, component: str) -> list[tuple[str, str]]:
     ]
 
 
+def state_docs(cfg: dict, component: str) -> "dict[str, str]":
+    """``{state field: its manifest doc}`` for *component* (gh-1493).
+
+    `doc` on a ``[[<obj>.state]]`` row was accepted and read by nothing, so a
+    constructor's Parameters entry for the field said only ``<name> state
+    variable.``. The class docstring's builders read it from the manifest
+    they are handed, which is the real one on every face -- measured: the
+    replay needs no copy of it (sabotaging one changed no output).
+
+    Examples
+    --------
+    >>> state_docs({"g": {"state": [{"name": "k", "doc": "Gain."},
+    ...                             {"name": "n"}]}}, "g")
+    {'k': 'Gain.'}
+    """
+    return {
+        str(s["name"]): str(s["doc"])
+        for s in cfg.get(component, {}).get("state", [])
+        if s.get("doc") and not s.get("opaque")
+    }
+
+
 def no_ctor_names(cfg: dict, component: str) -> frozenset[str]:
     """Names of non-opaque state entries flagged ``no_ctor = true``.
 

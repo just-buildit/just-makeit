@@ -865,6 +865,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                         bool(p.get("out") or p.get("mutable")),
                         p.get("default", ""),
                         p.get("enum", ""),
+                        # gh-1493: manifest-only; see `_function.run`.
+                        p.get("doc", ""),
                     )
                     for p in fn.get("params", [])
                 ],
@@ -3493,7 +3495,7 @@ def run(
     # already renders a complete numpy docstring from Doxygen.
     from . import _docstring as _doc_mod
 
-    for _md in _doc_mod.manifest_docs_with_paragraphs(cfg):
+    for _md in _doc_mod.manifest_docs_with_sections(cfg):
         _report.warn(
             _doc_mod.manifest_doc_advice(_md),
             gates=True,
@@ -3585,6 +3587,8 @@ def run(
     from . import _codecheck
 
     _codecheck.report(root, cfg)
+    # gh-1493: and a manifest `doc` line, which renders verbatim too.
+    _codecheck.report_docs(root, cfg)
 
     # gh-806: apply is the command that materialises a scaffold over a renamed
     # component's target, so it is the one that must say the previous file is

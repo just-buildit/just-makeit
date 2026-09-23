@@ -310,6 +310,7 @@ def component_ctx(
         ctx.get("py_create_args", ""),
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
+        state_docs=C.state_docs(cfg, object_name),
         custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
         create_fn=C.object_create_fn(cfg, object_name),
         raises=_cls_raises,
@@ -354,6 +355,7 @@ def component_ctx(
                 ctx.get("py_create_args", ""),
                 doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
                 manifest_doc=cfg.get(object_name, {}).get("doc", ""),
+                state_docs=C.state_docs(cfg, object_name),
                 custom_reset=bool(init_params)
                 or C.is_no_reset(cfg, object_name),
                 create_fn=C.object_create_fn(cfg, object_name),
