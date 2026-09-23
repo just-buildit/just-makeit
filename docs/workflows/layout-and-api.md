@@ -50,7 +50,7 @@ my_dsp/
         ├── __init__.py                 [shared]    jm keeps the re-exports current
         ├── gain.pyi                    [jm]        type stub
         ├── benchmarks/bench_gain.py    [yours]
-        └── tests/test_gain.py          [yours]     pytest
+        └── tests/test_gain.py          [jm]        pytest; yours once you delete its `# jm:generated` line
 ```
 
 `[yours]` files are created once and then only gain what is missing — a

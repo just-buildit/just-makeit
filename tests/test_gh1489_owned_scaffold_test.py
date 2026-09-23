@@ -12,9 +12,10 @@ While it does, `apply` renders the file whole and `status` sees its drift;
 deleting the line makes the file the author's for good. A project scaffolded
 before the token existed has none, and nothing touches its tests.
 
-What `apply` will not do is delete a test FUNCTION it does not render: that
-is most likely one the author added without deleting the token, so it
-refuses and names both ways out.
+While the token is there, `apply` overwrites the whole file, as it does an
+owned fragment (gh-1448): a test the render no longer produces is dropped.
+A refusal was tried and removed -- declaring `no_reset` removes the
+`test_reset` jm itself rendered, and the refusal blocked that change.
 
 GATE: a scaffolded Python test carrying jm's ownership token follows the
 manifest's constructor; without the token it is never written.
@@ -127,19 +128,23 @@ class TestOwned:
         # also reports a CTOR finding there; only the test file is asked.
         assert "tests/test_g.py" not in run_cli("status", cwd=root).stdout
 
-    def test_a_test_only_on_disk_refuses(self, tmp_path, module):
-        """An owned file gaining a test jm does not render: apply would
-        delete it, so it refuses, writes nothing, and names the way out."""
+    def test_a_shape_change_drops_jms_own_test(self, tmp_path, module):
+        """Declaring `no_reset` removes a test jm rendered. That must apply:
+        a refusal here made the manifest change un-appliable (gh-1172's
+        suite caught it)."""
         root = _project(tmp_path, module=module)
         path = _test_path(root, module)
-        added = path.read_text() + "\n\ndef test_mine():\n    assert True\n"
-        path.write_text(added)
-        _add_init_param(root)
+        assert "def test_reset" in path.read_text()
+        frag = root / "objects" / "g.toml"
+        target = frag if frag.is_file() else root / "just-makeit.toml"
+        text = target.read_text(encoding="utf-8")
+        target.write_text(
+            text.replace("[g]\n", "[g]\nno_reset = true\n", 1),
+            encoding="utf-8",
+        )
         r = run_cli("apply", cwd=root)
-        assert r.returncode != 0
-        assert "only here: test_mine" in r.stderr + r.stdout
-        assert "# jm:generated" in r.stderr + r.stdout
-        assert path.read_text() == added
+        assert r.returncode == 0, r.stderr
+        assert "def test_reset" not in path.read_text()
 
 
 def test_an_untokened_test_is_never_written(tmp_path):

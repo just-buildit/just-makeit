@@ -48,6 +48,9 @@ to run immediately after `pip install .`.
 For the same `Gain` example, `src/my_dsp/tests/test_gain.py` contains:
 
 ```python
+# jm:generated test_gain.py
+# jm regenerates this file on apply while the line above is here.
+# To make it yours, delete that line: jm then never writes it again.
 import unittest
 import numpy as np
 from my_dsp import Gain

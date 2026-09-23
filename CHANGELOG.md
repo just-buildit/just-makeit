@@ -144,10 +144,9 @@
     `status` could not say so. The file is now born carrying gh-1448's
     ownership token, `# jm:generated test_<comp>.py`: while that line is
     there `apply` renders it whole and `status --check` reports its drift.
-    Delete the line and the file is yours; jm never writes it again. `apply`
-    refuses, writing nothing, rather than delete a test function it does not
-    generate. A project scaffolded before this has no token, and its tests
-    are untouched. The `enum_constants` example no longer tells readers to
+    Delete the line before adding tests of your own and the file is yours;
+    jm never writes it again. A project scaffolded before this has no token,
+    and its tests are untouched. The `enum_constants` example no longer tells readers to
     delete the test.
 
 ## [0.87.1] — 2026-09-23

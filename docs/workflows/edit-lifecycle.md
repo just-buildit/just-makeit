@@ -40,9 +40,10 @@ Four of these have more to them:
     that line is there `apply` rewrites the file, so a constructor that
     gains a parameter reaches the test instead of leaving it calling the old
     signature. Delete the line and the file is yours: jm never writes it
-    again. `apply` refuses rather than delete a test function it does not
-    generate — one you added without deleting the line. A project scaffolded
-    before this has no such line, and its tests stay yours.
+    again — so delete it *before* adding a test of your own, or `apply`
+    replaces the file (`status --check` shows the difference first). A
+    project scaffolded before this has no such line, and its tests stay
+    yours.
 
 ## The loop
 

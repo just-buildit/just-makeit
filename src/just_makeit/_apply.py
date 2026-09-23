@@ -1269,6 +1269,14 @@ def _owned_tests(temp_root: Path, root: Path) -> set:
     author's, and this never selects it again. A project scaffolded before
     the token existed has none, so nothing here touches its tests.
 
+    No guard beside it, deliberately, and for gh-1448's reason: a token
+    present is steady state, and any difference is jm's own drift. A
+    refusal to delete a test the render no longer produces was tried and
+    measured -- declaring `no_reset` removes the `test_reset` jm itself
+    rendered, and the refusal made that manifest change un-appliable.
+    `status --check` reports an edit to an owned test before `apply`
+    overwrites it, and the file's header says jm regenerates it.
+
     Read from the REAL tree: the token records the file's state, and the
     render always carries one.
     """
@@ -1283,81 +1291,6 @@ def _owned_tests(temp_root: Path, root: Path) -> set:
         ):
             out.add(rel)
     return out
-
-
-def _test_units(text: str) -> "set[str] | None":
-    """The test functions *text* defines, qualified by class; None if unparsable.
-
-    >>> sorted(_test_units("class T:\\n  def test_a(self): pass\\n"
-    ...                    "def test_b(): pass\\ndef helper(): pass\\n"))
-    ['T.test_a', 'test_b']
-    >>> _test_units("def (") is None
-    True
-    """
-    import ast
-
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return None
-    out: set = set()
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("test"):
-            out.add(node.name)
-        elif isinstance(node, ast.ClassDef):
-            for sub in node.body:
-                if isinstance(sub, ast.FunctionDef) and sub.name.startswith(
-                    "test"
-                ):
-                    out.add(f"{node.name}.{sub.name}")
-    return out
-
-
-def _refuse_owned_test_that_would_lose(
-    temp_root: Path, root: Path, owned: set
-) -> None:
-    """Refuse to render an owned test over a test only the disk has (gh-1489).
-
-    The unit is a TEST FUNCTION. A difference inside one is overwritten:
-    the file says jm regenerates it, and an older render of the same test
-    is exactly the drift ownership exists to fix. A test the render does
-    not produce at all is different -- the likeliest reading is one the
-    author added without deleting the token, and rendering would delete it
-    with rc 0. jm cannot tell that from a test an older shape rendered
-    (a `reset` since declared away), so it refuses and says both ways out,
-    the same stance `_refuse_owned_that_would_lose` takes for a fragment.
-
-    An owned file that no longer parses is refused too: it was edited, and
-    there is no telling what by.
-    """
-    blocked: list = []
-    for rel in sorted(owned):
-        dst, src = root / rel, temp_root / rel
-        if not src.is_file():
-            continue
-        have = _test_units(dst.read_text(encoding="utf-8"))
-        want = _test_units(src.read_text(encoding="utf-8")) or set()
-        if have is None:
-            blocked.append((rel, ["(does not parse)"]))
-        elif have - want:
-            blocked.append((rel, sorted(have - want)))
-    if not blocked:
-        return
-    lines = [
-        "error: rendering these jm-owned tests would delete a test jm does",
-        "  not generate:",
-    ]
-    for rel, units in blocked:
-        lines.append(f"  {rel.as_posix()}")
-        lines += [f"    only here: {u}" for u in units]
-    lines += [
-        "",
-        "  If you wrote it, the file is yours now: delete its",
-        "  `# jm:generated` line and jm will never write it again.",
-        "  If jm generated it for a shape the object no longer has, delete",
-        "  the test and re-run `just-makeit apply`.",
-    ]
-    raise SystemExit("\n".join(lines))
 
 
 def _sync_missing(
@@ -3478,7 +3411,6 @@ def run(
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
             _tests = _owned_tests(temp_root, root)
-            _refuse_owned_test_that_would_lose(temp_root, root, _tests)
             created = _sync_missing(temp_root, root, _owned | _tests)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
