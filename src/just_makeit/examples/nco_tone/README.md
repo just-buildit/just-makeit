@@ -32,10 +32,10 @@ just-makeit example nco_tone
     `<prefix>/lib/cmake` and `<prefix>/lib64/cmake`.
 
     **From a release tarball** (platform tags: `linux-x86_64`, `linux-aarch64`,
-    `darwin-x86_64`, `darwin-arm64`):
+    `macos-arm64`; Windows is `doppler-$VER-windows-x86_64.zip`):
 
     ```sh
-    VER=0.49.0; PLAT=linux-x86_64
+    VER=0.55.0; PLAT=linux-x86_64
     curl -fsSL -o /tmp/doppler.tar.gz \
         "https://github.com/doppler-dsp/doppler/releases/download/v$VER/doppler-$VER-$PLAT.tar.gz"
     mkdir -p ~/.local/doppler

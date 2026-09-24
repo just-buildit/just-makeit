@@ -109,6 +109,9 @@ jobs:
       # ── TL;DR: run all bundled examples ─────────────────────────────────────
 
       - name: Run all examples (TL;DR smoke test)
+        env:
+          # gh-1377: no silent skip of the doppler build.
+          JM_REQUIRE_DOPPLER: "1"
         run: |
           python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))" \
             | while read example; do
@@ -746,16 +749,16 @@ jobs:
 
       # CC / CMAKE_GENERATOR for THIS step only: the examples call `cmake -B
       # build` themselves, as a Windows user running them by hand would, and
-      # plain CMake under vcvars picks cl.exe. nco_tone and kitchen_sink link
-      # doppler, which ships no Windows build (#1377).
+      # plain CMake under vcvars picks cl.exe.
       - name: Run the examples
         env:
           CC: clang-cl
           CMAKE_GENERATOR: Ninja
+          # gh-1377: no silent skip of the doppler build.
+          JM_REQUIRE_DOPPLER: "1"
         run: |
           python -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))" \
             | tr -d '\r' | while read -r example; do
-              case "$example" in nco_tone|kitchen_sink) continue ;; esac
               echo "=== just-makeit example $example ==="
               just-makeit example "$example"
             done
