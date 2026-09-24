@@ -219,28 +219,6 @@ def _no_toolchain() -> str | None:
 
 _SKIP = _no_toolchain()
 
-#: The serializable triplet is the author's C (gh-400); this is the smallest
-#: honest one, so the instance round trip carries real state.
-_TRIPLET_DECL = """
-size_t osc_state_bytes(const osc_state_t *s);
-void osc_get_state(const osc_state_t *s, void *buf);
-int osc_set_state(osc_state_t *s, const void *buf);
-"""
-_TRIPLET_DEF = """
-#include <string.h>
-size_t osc_state_bytes(const osc_state_t *s) {
-    (void)s;
-    return sizeof(double);
-}
-void osc_get_state(const osc_state_t *s, void *buf) {
-    memcpy(buf, &s->phase, sizeof(double));
-}
-int osc_set_state(osc_state_t *s, const void *buf) {
-    memcpy(&s->phase, buf, sizeof(double));
-    return 0;
-}
-"""
-
 _PROBE = """
 import copyreg
 import importlib
@@ -281,19 +259,10 @@ print("OK")
 """
 
 
-def _write_triplet(root: Path) -> None:
-    h = root / "native/inc/osc/osc_core.h"
-    text = h.read_text()
-    anchor = "#ifdef __cplusplus\n}"
-    assert text.count(anchor) == 1, "osc_core.h: no closing extern-C anchor"
-    h.write_text(text.replace(anchor, _TRIPLET_DECL + anchor))
-    c = root / "native/src/osc/osc_core.c"
-    c.write_text(c.read_text() + _TRIPLET_DEF)
-
-
 @pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
 def test_every_class_pickles(matrix):
-    _write_triplet(matrix)
+    # The serializable triplet is scaffolded (gh-1509), so the tree builds
+    # as written and the instance round trip carries real state.
     build = matrix / "build"
     for cmd in (
         ["cmake", "-S", str(matrix), "-B", str(build)],

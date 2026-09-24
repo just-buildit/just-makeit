@@ -30,6 +30,8 @@ from ._methods import (
     _bench_todo as _bench_todo_impl,
     make_enum_tables_ctx,
     make_methods_ctx,
+    make_serializable_core_ctx,
+    state_blob_fields,
     make_properties_ctx,
 )
 from ._diagnostics import make_warnings_ctx, make_errors_ctx
@@ -61,6 +63,8 @@ __all__ = [
     "make_state_ctx",
     "state_accessor_stubs",
     "make_methods_ctx",
+    "make_serializable_core_ctx",
+    "state_blob_fields",
     "bench_todo_for_functions",
     "make_enum_tables_ctx",
     "make_properties_ctx",

@@ -2055,7 +2055,8 @@ def is_no_reset(cfg: dict, component: str) -> bool:
 def is_serializable(cfg: dict, component: str) -> bool:
     """Return True if the component exposes a serializable-state triplet.
 
-    The C core is assumed to provide (hand-written, sibling to reset):
+    The C core provides (sibling to reset; an object's scaffold writes a
+    first version of all three, gh-1509):
 
         size_t <comp>_state_bytes(const <comp>_state_t *);
         void   <comp>_get_state(const <comp>_state_t *, void *blob);

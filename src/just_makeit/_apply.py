@@ -2611,6 +2611,9 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
         fn = m.get("fn") or f"{comp}_{m['name']}"
         want.add(fn)
         want.add(f"{fn}_max_out")
+    # gh-1509: the binding calls the serializable triplet the same way, and
+    # until then no path declared it in any header.
+    want |= _serializable_triplet(cfg, comp)
     out = []
     for d in _core_h_decl_lines(temp_h.read_text(encoding="utf-8")):
         m = re.search(r"(\w+)\s*\(", d)
@@ -2788,6 +2791,25 @@ def component_core_sources(root: Path, comp: str) -> "list[str]":
     return out
 
 
+def _serializable_triplet(cfg: dict, comp: str) -> frozenset:
+    """The serializable triplet's C names, when *comp* declares one.
+
+    gh-1509 made a fresh scaffold define these three in ``_core.c``. They are
+    NOT spliced into an existing one, unlike a declared method's body: before
+    gh-1509 the triplet was the author's to write, so every serializable
+    object that builds already has one -- and a project may define it where
+    no source reader can see a definition. doppler does, in 18 cores, through
+    ``DP_DEFINE_POD_STATE(boxcar, ...)``; splicing there appended a second
+    definition of each (measured over doppler's tree). A body that really is
+    missing still fails loudly: at link, named by gh-1361's link check.
+    """
+    if not C.is_serializable(cfg, comp):
+        return frozenset()
+    return frozenset(
+        f"{comp}_{n}" for n in ("state_bytes", "get_state", "set_state")
+    )
+
+
 def _splice_missing_core_definitions(
     root: Path, temp_root: Path, cfg: dict
 ) -> list:
@@ -2840,11 +2862,15 @@ def _splice_missing_core_definitions(
             continue
         temp_text = temp_c.read_text(encoding="utf-8")
         ref = _extract_c_function_bodies(temp_text, require_static=False)
-        missing = missing_core_definitions(
-            temp_text,
-            core_c.read_text(encoding="utf-8"),
-            component_core_sources(root, comp),
-        )
+        missing = [
+            n
+            for n in missing_core_definitions(
+                temp_text,
+                core_c.read_text(encoding="utf-8"),
+                component_core_sources(root, comp),
+            )
+            if n not in _serializable_triplet(cfg, comp)
+        ]
         if not missing:
             continue
         cmake = real_dir / "CMakeLists.txt"
