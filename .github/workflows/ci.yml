@@ -65,31 +65,16 @@ jobs:
             fi
           fi
 
-          # A release commit necessarily touches four files, not two: the
-          # bump edits pyproject.toml, then the uv-lock and sync-bootstrap-version
-          # hooks regenerate uv.lock and bootstrap.toml. Skipping on only the first
-          # two meant every release PR ran the full matrix for a version
-          # string. It also deletes the changelog.d/ fragments it promotes
-          # into CHANGELOG.md (gh-1526).
-          changed=$(git diff --name-only "$base" HEAD)
-          if echo "$changed" \
-             | grep -qvE '^(CHANGELOG\.md|changelog\.d/.+|pyproject\.toml|bootstrap\.toml|uv\.lock)$'
-          then
-            echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-
-          # ...but uv.lock also moves for a real dependency change, and
-          # pyproject.toml is already skippable, so the file set alone would
-          # let a dependency bump through untested. Require that the only
-          # pyproject edit is the version line.
-          if git diff -U0 "$base" HEAD -- pyproject.toml \
-             | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-             | grep -qvE '^[+-]version = '
-          then
-            echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-
-          echo "src=false" >> "$GITHUB_OUTPUT"
+          # Is this a version bump and nothing else? The standard's answer
+          # (gh-1537), not a hand-kept list of files: every changed path,
+          # except CHANGELOG.md and changelog.d/ (which a release rewrites),
+          # must equal its $base copy with the old version replaced by the
+          # new one, read through the Makefile's VERSION_PROBES. So a new
+          # version site needs no declaration, and a dependency moving in
+          # uv.lock fails the substitution and runs everything. The list it
+          # replaced went stale once (jb.toml) and had to grow for
+          # changelog.d/. It writes src= to $GITHUB_OUTPUT itself.
+          make -s ci-changes BASE="$base"
 
   test:
     needs: changes
