@@ -186,6 +186,34 @@ def shape_standalone_method(tmp):
     return d, d / "src" / "proj", "osc"
 
 
+def shape_standalone_method_multi_output(tmp):
+    """gh-1523: each extra output is a trailing ``<T> *outN`` parameter
+    (gh-600), and the scaffolded C benchmark called the method without them,
+    so the tree did not build. `_build` compiles the benchmark with the
+    rest; the three calls cover a param, an array arg with two extra
+    outputs, and a void primary."""
+    d = _pkg(tmp)
+    _q(new_run, "proj", d, ["osc"], [("gain", "double", "1.0")])
+    for name, arg, ret, extra, params in (
+        ("m_param", "void", "double", ["int"], [("x", "double")]),
+        ("m_array", "double[]", "double", ["int", "float"], None),
+        ("m_void", "double", "void", ["int"], None),
+    ):
+        _q(
+            method_run,
+            d,
+            "osc",
+            name,
+            None,
+            arg,
+            ret,
+            False,
+            extra,
+            params=params,
+        )
+    return d, d / "src" / "proj", "osc"
+
+
 def shape_module_method(tmp):
     d = _pkg(tmp)
     _q(new_run, "proj", d, [], [])
@@ -965,6 +993,7 @@ _SHAPES = {
     "standalone_state": shape_standalone_state,
     "module_state": shape_module_state,
     "standalone_method": shape_standalone_method,
+    "standalone_method_multi_output": shape_standalone_method_multi_output,
     "module_method": shape_module_method,
     "standalone_property_computed": shape_standalone_property_computed,
     "module_function": shape_standalone_function,
