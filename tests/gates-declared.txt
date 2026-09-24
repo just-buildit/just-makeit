@@ -35,6 +35,7 @@ test_gh1489_owned_scaffold_test
 test_gh1489_token_survives_ruff
 test_gh1491_writable_array_param
 test_gh1499_kind_verbatim_doc
+test_gh1549_replay_dep_closure_order
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor
