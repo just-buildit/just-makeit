@@ -2878,13 +2878,15 @@ def run(
     # gh-1489: born owned, as the standalone test is (`_init`).
     _write(
         pkg_mod_dir / "tests" / f"test_{comp}.py",
-        R.owned_test(r_py(test_py_tmpl), f"test_{comp}.py"),
+        R.owned_scaffold(r_py(test_py_tmpl), f"test_{comp}.py"),
     )
     benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
+    # gh-1528: born owned, as the standalone benchmark is (`_init`).
     _write(
-        pkg_mod_dir / "benchmarks" / f"bench_{comp}.py", r_py(bench_py_tmpl)
+        pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
+        R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
     )
 
     # Update config before regenerating module (so module_objects is up-to-date)

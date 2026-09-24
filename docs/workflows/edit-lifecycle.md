@@ -8,13 +8,13 @@ depends on who owns it. That is the **sacred/glue contract**.
 
 ## Who owns each file
 
-| Kind               | What `apply` does                                                                                                                                                            | Examples                                                                                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Yours** (sacred) | Creates it once. After that it only **adds** what the manifest declares and the file lacks — a declaration in `_core.h`, a stub in `_core.c`. Never rewrites what you wrote. | `<comp>_core.h` (the state struct and inline `step()`), `<comp>_core.c`, your C and Python tests and benchmarks, `objects/<comp>.toml`, `pyproject.toml`, `README.md` |
-| **jm's** (glue)    | Rewrites it from the manifest on every run; `status --check` fails when it drifts. Never hand-edit it.                                                                       | `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, `native/inc/<pkg>.h`, a component's `CMakeLists.txt`                                                                          |
-| **Shared**         | Splices jm's marked blocks in and keeps everything else.                                                                                                                     | the root `CMakeLists.txt`, `src/<pkg>/__init__.py`, a module object's `<mod>_ext_<obj>.c`                                                                             |
-| **Versioned**      | jm's content, but written once. A newer jm ships a newer one, which `jm status` reports as OUTDATED; you adopt it deliberately ([Upgrading](../upgrading.md)).               | `Makefile`, `CMakePresets.json`, `clib_common.h`, `jm_test.h`, `jm_bench.h`, `bootstrap.toml`, `.gitignore`                                                           |
-| **Derived**        | Rewritten, but from *your* files rather than the manifest.                                                                                                                   | `native/tests/test_<comp>_symbols.c` — links every function the binding calls, so a declared-but-undefined one fails `make test` by name                              |
+| Kind               | What `apply` does                                                                                                                                                            | Examples                                                                                                                                                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Yours** (sacred) | Creates it once. After that it only **adds** what the manifest declares and the file lacks — a declaration in `_core.h`, a stub in `_core.c`. Never rewrites what you wrote. | `<comp>_core.h` (the state struct and inline `step()`), `<comp>_core.c`, your C tests and benchmarks, a scaffolded Python test or benchmark once you delete its `# jm:generated` line, `objects/<comp>.toml`, `pyproject.toml`, `README.md` |
+| **jm's** (glue)    | Rewrites it from the manifest on every run; `status --check` fails when it drifts. Never hand-edit it.                                                                       | `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, `native/inc/<pkg>.h`, a component's `CMakeLists.txt`                                                                                                                                                |
+| **Shared**         | Splices jm's marked blocks in and keeps everything else.                                                                                                                     | the root `CMakeLists.txt`, `src/<pkg>/__init__.py`, a module object's `<mod>_ext_<obj>.c`                                                                                                                                                   |
+| **Versioned**      | jm's content, but written once. A newer jm ships a newer one, which `jm status` reports as OUTDATED; you adopt it deliberately ([Upgrading](../upgrading.md)).               | `Makefile`, `CMakePresets.json`, `clib_common.h`, `jm_test.h`, `jm_bench.h`, `bootstrap.toml`, `.gitignore`                                                                                                                                 |
+| **Derived**        | Rewritten, but from *your* files rather than the manifest.                                                                                                                   | `native/tests/test_<comp>_symbols.c` — links every function the binding calls, so a declared-but-undefined one fails `make test` by name                                                                                                    |
 
 The full tree, with every file tagged: [Project layout](layout-and-api.md#project-layout-full).
 
@@ -40,15 +40,16 @@ Four of these have more to them:
     never reaches it. `fragment = "generated"` makes it jm's, and
     `jm adopt <obj>` makes that switch only when nothing of yours would be
     lost ([Who owns a module's binding fragment](../configuration.md#who-owns-a-modules-binding-fragment)).
-- **The scaffolded Python test** `src/<pkg>/tests/test_<comp>.py` is born
-    **jm's**: its first line is `# jm:generated test_<comp>.py`, and while
-    that line is there `apply` rewrites the file, so a constructor that
-    gains a parameter reaches the test instead of leaving it calling the old
-    signature. Delete the line and the file is yours: jm never writes it
-    again — so delete it *before* adding a test of your own, or `apply`
-    replaces the file (`status --check` shows the difference first). A
-    project scaffolded before this has no such line, and its tests stay
-    yours.
+- **The scaffolded Python test and benchmark**,
+    `src/<pkg>/tests/test_<comp>.py` and
+    `src/<pkg>/benchmarks/bench_<comp>.py`, are born **jm's**: each file's
+    first line is `# jm:generated <its name>`, and while that line is there
+    `apply` rewrites the file, so a constructor that gains a parameter
+    reaches both instead of leaving them calling the old signature. Delete the line and the file is yours: jm never writes it
+    again — so delete it *before* adding a test or benchmark of your own, or
+    `apply` replaces the file (`status --check` shows the difference
+    first). A project scaffolded before this has no such line, and those
+    files stay yours.
 
 ## The loop
 

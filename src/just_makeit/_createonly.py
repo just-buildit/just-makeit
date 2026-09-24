@@ -224,6 +224,14 @@ RULES: tuple[Rule, ...] = (
         AUTHOR,
         "the author's Python tests, plus the empty package __init__.",
     ),
+    # gh-1528: the scaffolded benchmark, owned exactly as the test above is,
+    # and ABOVE the author's-benchmarks rule for the same first-match reason.
+    Rule(
+        "src/*/benchmarks/bench_*.py",
+        RECONCILED,
+        "the scaffolded benchmark, jm's while it carries `# jm:generated`"
+        " and the author's once they delete it (gh-1528).",
+    ),
     Rule("src/*/benchmarks/*.py", AUTHOR, "the author's Python benchmarks."),
     Rule(
         "benchmarks/history/*",

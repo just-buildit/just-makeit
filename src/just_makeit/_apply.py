@@ -1254,8 +1254,15 @@ def _refuse_owned_that_would_lose(
     raise SystemExit("\n".join(lines))
 
 
-def _owned_tests(temp_root: Path, root: Path) -> set:
-    """Scaffolded Python tests that still carry jm's ownership token.
+#: The scaffolded Python files born carrying jm's ownership token: the test
+#: (gh-1489) and the benchmark (gh-1528). Both construct the object, so both
+#: follow its constructor while the token is there. One list, so a file
+#: that gains the token gains the whole mechanism.
+_OWNED_SCAFFOLDS = ("src/**/tests/test_*.py", "src/**/benchmarks/bench_*.py")
+
+
+def _owned_scaffolds(temp_root: Path, root: Path) -> set:
+    """Scaffolded Python files that still carry jm's ownership token.
 
     gh-1489. `jm new` / `jm object` write ``tests/test_<comp>.py`` against
     the constructor as it is then. It was create-only, so a later init
@@ -1283,13 +1290,14 @@ def _owned_tests(temp_root: Path, root: Path) -> set:
     from ._render import is_owned_render
 
     out: set = set()
-    for src in temp_root.glob("src/**/tests/test_*.py"):
-        rel = src.relative_to(temp_root)
-        dst = root / rel
-        if dst.is_file() and is_owned_render(
-            dst.read_text(encoding="utf-8"), dst.name
-        ):
-            out.add(rel)
+    for pattern in _OWNED_SCAFFOLDS:
+        for src in temp_root.glob(pattern):
+            rel = src.relative_to(temp_root)
+            dst = root / rel
+            if dst.is_file() and is_owned_render(
+                dst.read_text(encoding="utf-8"), dst.name
+            ):
+                out.add(rel)
     return out
 
 
@@ -3439,8 +3447,8 @@ def run(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
-            _tests = _owned_tests(temp_root, root)
-            created = _sync_missing(temp_root, root, _owned | _tests)
+            _scaffolds = _owned_scaffolds(temp_root, root)
+            created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
             # destructor to `int` when the manifest now declares it fallible.
