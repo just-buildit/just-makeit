@@ -170,17 +170,6 @@ fi
 endef
 
 # ── Test ─────────────────────────────────────────────────────────────────────
-# just-makeit's OWN runtime dependencies, mirrored from pyproject.toml's
-# `[project] dependencies`. `--no-project` excludes the project *and its
-# dependencies*, but the suite imports just_makeit from `src/` — so without
-# these it runs the code under test with its dependencies missing. tomlkit's
-# absence is silent (`_write_doc` falls back to `_dump`, and ~8 round-trip tests
-# fail with no hint why); tomli's is fatal on 3.9/3.10, where `C.tomllib` is the
-# backport. pyproject stays the source of truth — tests/test_test_env.py fails
-# if this list drifts from it, so the duplication cannot rot.
-JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
-                  --with "tomli>=2.0.0; python_version < '3.11'"
-
 # pytest runs three ways. The deltas are spelled out here rather than in three
 # parallel command strings that drift independently:
 #   PYTEST          unit suite — `--no-project` keeps the project env OUT, so
@@ -198,8 +187,8 @@ JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
 # version has to agree byte-for-byte across machines.
 PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
                   --with pyyaml
-PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
-                  --with just-buildit --with-editable .
+PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit \
+                  --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
