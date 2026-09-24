@@ -112,6 +112,9 @@ class TestGain(unittest.TestCase):
 And `src/my_dsp/benchmarks/bench_gain.py`:
 
 ```python
+# jm:generated bench_gain.py
+# jm regenerates this file on apply while the line above is here.
+# To make it yours, delete that line: jm then never writes it again.
 """Benchmark for Gain.
 
 Run standalone:  python src/my_dsp/benchmarks/bench_gain.py
