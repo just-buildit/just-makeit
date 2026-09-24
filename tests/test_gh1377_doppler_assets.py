@@ -6,6 +6,9 @@ test that still reported PASSED, so two wrong rows in the host table went
 unseen: macOS was asked for as ``darwin-arm64`` (doppler publishes
 ``macos-arm64``) and Windows had no row. These pin the table to the hosts
 jm's CI runs on, and pin the switch that makes a skip visible there.
+
+GATE: every CI job that runs the bundled examples sets JM_REQUIRE_DOPPLER,
+    so a doppler it cannot fetch fails the run instead of skipping the build.
 """
 
 import importlib.util
