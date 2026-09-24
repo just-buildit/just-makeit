@@ -1,10 +1,9 @@
 """The test environment carries the code-under-test's own dependencies.
 
-``make test`` runs pytest under ``uv run --no-project``, which excludes the
-project *and its dependencies*, while the suite imports ``just_makeit`` straight
-from ``src/``. That combination means jm's runtime dependencies have to be
-supplied to the test env explicitly — and when one is missing the failure does
-not look like a missing dependency:
+``make test`` runs pytest under ``uv run --no-project ... --with-editable .``:
+the project env is kept out, and jm is installed into the isolated env, which
+brings its ``[project] dependencies`` with it. When one of those is missing the
+failure does not look like a missing dependency:
 
 - ``tomlkit`` absent is **silent**. ``_config._write_doc`` falls back to
   ``_dump`` on purpose (it must stay importable where tomlkit isn't installed),
@@ -13,9 +12,10 @@ not look like a missing dependency:
   that all point at serialization rather than at the environment.
 - ``tomli`` absent is **fatal** below 3.11, where it is ``C.tomllib``.
 
-So the Makefile mirrors ``[project] dependencies``. Mirroring is duplication,
-and duplication rots — this file is what stops it: pyproject stays the source of
-truth, and the Makefile is checked against it.
+The Makefile used to mirror that list into the env by hand (``JM_RUNTIME_DEPS``)
+and this file held the mirror to pyproject. Since gh-1374 installs jm itself,
+pyproject is the only list, and the mirror went with gh-1551. What remains here
+asserts the *outcome* in whatever env runs: the deps are really present.
 """
 
 from __future__ import annotations
@@ -26,52 +26,6 @@ from pathlib import Path
 from just_makeit import _config as C
 
 ROOT = Path(__file__).parent.parent
-PYPROJECT = ROOT / "pyproject.toml"
-MAKEFILE = ROOT / "Makefile"
-
-
-def _declared_runtime_deps() -> set[str]:
-    """Distribution names in ``[project] dependencies`` (the SSOT)."""
-    data = C.tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    names = set()
-    for spec in data["project"]["dependencies"]:
-        # "tomli>=2.0.0; python_version < '3.11'" -> "tomli"
-        names.add(re.split(r"[<>=!;\[ ]", spec.strip(), maxsplit=1)[0])
-    return names
-
-
-def _makefile_test_env_deps() -> set[str]:
-    """Distribution names the Makefile feeds the isolated pytest env."""
-    text = MAKEFILE.read_text(encoding="utf-8")
-    m = re.search(
-        r"^JM_RUNTIME_DEPS\s*=(.*?)(?=\n[A-Z_]+\s*=|\n\n)", text, re.S | re.M
-    )
-    assert m, "JM_RUNTIME_DEPS not found in the Makefile"
-    return {
-        re.split(r"[<>=!;\[ ]", spec, maxsplit=1)[0]
-        for spec in re.findall(r'--with\s+"([^"]+)"', m.group(1))
-    }
-
-
-class TestMakefileMirrorsPyproject:
-    def test_no_runtime_dep_is_missing_from_the_test_env(self):
-        declared = _declared_runtime_deps()
-        supplied = _makefile_test_env_deps()
-        missing = declared - supplied
-        assert not missing, (
-            f"{sorted(missing)} is declared in pyproject's [project] "
-            "dependencies but not passed to the isolated pytest env in the "
-            "Makefile's JM_RUNTIME_DEPS. `make test` would run the code under "
-            "test without it — and a missing tomlkit fails silently."
-        )
-
-    def test_no_stale_dep_lingers_in_the_test_env(self):
-        """The mirror goes both ways: a dropped dependency should not linger."""
-        stale = _makefile_test_env_deps() - _declared_runtime_deps()
-        assert not stale, (
-            f"{sorted(stale)} is passed to the pytest env but is no longer a "
-            "runtime dependency in pyproject — drop it from JM_RUNTIME_DEPS."
-        )
 
 
 class TestDepsActuallyPresent:
