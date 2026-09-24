@@ -2,13 +2,12 @@
  * @file /*<<component>>*/_core.h
  * @brief /*<<Component>>*/ component API.
  *
- * Lifecycle: create -> [step / steps/*<<lifecycle_reset>>*/]* -> destroy
+ * Lifecycle: /*<<lifecycle_summary>>*/
  *
  * Example:
  * @code
  * /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
- * /*<<step_example_lhs>>*//*<<component>>*/_step(obj/*<<step_example_suffix>>*/);
- * /*<<component>>*/_destroy(obj);
+/*<<step_example_c>>*/ * /*<<component>>*/_destroy(obj);
  * @endcode
  */
 #ifndef /*<<COMPONENT>>*/_CORE_H

@@ -188,6 +188,64 @@ def _demo_unless_authored(blk, lines: list[str]) -> list[str]:
     return [] if (blk and blk.examples) else lines
 
 
+def _header_example(
+    ctx: dict, verbs: list[str], calls: list[str]
+) -> dict[str, str]:
+    """The ``_core.h`` file comment's lifecycle line and ``@code`` body.
+
+    gh-1487: both were template text that assumed every object has a scalar
+    ``step()``. A ``--no-step`` object's header showed a call to a function
+    it does not declare, and a blockwise object's showed ``step()`` where it
+    has only ``steps()``. The header is create-only, so the wrong example
+    was frozen into the file a C reader copies first.
+
+    They are built here because this is where each shape decides which of
+    ``step()`` / ``steps()`` it declares -- the same branch that emits the
+    prototypes emits the example that calls them, so the two cannot
+    disagree about which functions exist.
+
+    Parameters
+    ----------
+    ctx : dict
+        The render context so far. ``lifecycle_reset`` (from
+        ``make_state_ctx``) is ``" / reset"``, or ``""`` under ``no_reset``;
+        absent means the object has a ``reset()``.
+    verbs : list of str
+        The execute functions this shape declares, e.g. ``["step",
+        "steps"]``; empty for ``--no-step``.
+    calls : list of str
+        The C statements that exercise them in the example, one per line,
+        without the comment prefix.
+
+    Returns
+    -------
+    dict
+        ``lifecycle_summary`` and ``step_example_c`` render slots.
+
+    Examples
+    --------
+    >>> d = _header_example({"lifecycle_reset": ""}, [], [])
+    >>> d["lifecycle_summary"], d["step_example_c"]
+    ('create -> destroy', '')
+    >>> d = _header_example({}, ["steps"], ["q_steps(obj, in, 4, out);"])
+    >>> d["lifecycle_summary"]
+    'create -> [steps / reset]* -> destroy'
+    >>> print(d["step_example_c"], end="")
+     * q_steps(obj, in, 4, out);
+    """
+    if ctx.get("lifecycle_reset", " / reset"):
+        verbs = [*verbs, "reset"]
+    summary = (
+        f"create -> [{' / '.join(verbs)}]* -> destroy"
+        if verbs
+        else "create -> destroy"
+    )
+    return {
+        "lifecycle_summary": summary,
+        "step_example_c": "".join(f" * {line}\n" for line in calls),
+    }
+
+
 def make_step_ctx(
     ctx: dict,
     arg_type: str,
@@ -346,6 +404,7 @@ def make_step_ctx(
                 "    print(f\"  {'create':<22} {dt * 1e6:9.3f} µs\")\n"
             ),
             "bench_steps_py": "",
+            **_header_example(ctx, [], []),
         }
 
     # ── Blockwise: array-in / array-out (T[] → U[]) ───────────────────────
@@ -675,6 +734,15 @@ def make_step_ctx(
             "lifecycle_pytest_methods": _bw_lifecycle,
             "step_pytest_methods_pure": _bw_pytest_pure,
             "lifecycle_pytest_methods_pure": _bw_lifecycle_pure,
+            **_header_example(
+                ctx,
+                ["steps"],
+                [
+                    f"{in_disp} in[4] = {{{in_zero}}};",
+                    f"{out_disp} out[4];",
+                    f"{component}_steps(obj, in, 4, out{ctrl_obj_args});",
+                ],
+            ),
         }
 
     if arg_type == "void":
@@ -2051,4 +2119,13 @@ def make_step_ctx(
         "lifecycle_pytest_methods": lifecycle_pytest_methods,
         "step_pytest_methods_pure": step_pytest_methods_pure,
         "lifecycle_pytest_methods_pure": lifecycle_pytest_methods_pure,
+        **_header_example(
+            ctx,
+            # An array-input step() has no steps() beside it.
+            ["step", "steps"] if steps_c_decl else ["step"],
+            [
+                f"{ctx.get('step_example_lhs', '')}{component}_step("
+                f"obj{_suffix}{ctrl_obj_args});"
+            ],
+        ),
     }

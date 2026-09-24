@@ -189,6 +189,19 @@
     being refused. A hand-written state entry with no `default` also
     crashed `apply` with `KeyError`; it now takes the zero `--state` would.
 
+- **The scaffolded `_core.h` example calls only what the object declares**
+    (gh-1487). The header's file comment showed `<comp>_step(obj, ...)` for
+    every object, so a `--no-step` object's example called a function it
+    does not have, and a blockwise one's called `step()` where it has only
+    `steps()`; its `Lifecycle:` line listed `step / steps` either way, and
+    `steps` on an array-input object that has none. The example and the
+    lifecycle line are now built in `make_step_ctx`, by the same branch that
+    emits the prototypes: no execute call for `--no-step`, a `steps()` call
+    over declared buffers for blockwise, and only the verbs the header
+    declares. Every shape in a 20-object matrix now has its example compiled
+    against its own header. An example that goes stale after scaffold, when
+    `apply` rewrites `create()`, is gh-1502.
+
 - **A header-only core's accessors keep their return type** (gh-1363). The
     definitions moved into a `--header-only` header were joined with none of
     the line breaks `_core.c` puts between them, so a state accessor's
