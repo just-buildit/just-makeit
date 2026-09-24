@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import _coerce
 from . import _config as C
+from ._builtins import require_scope_names
 from . import _modplatforms
 from . import _render as R
 from . import _procglobal
@@ -59,6 +60,35 @@ def _array_elem_npy(array_type: str) -> tuple[str, str]:
 
 
 # ── per-function emitters ────────────────────────────────────────────────────
+
+#: gh-1525: what :func:`_emit_create` declares beside the init params, which
+#: become its C locals verbatim. Its signature is ``(mod, args)``, not a
+#: method's ``(self, args, kwds)``, and it holds the wrapper in ``w`` and the
+#: capsule in ``cap`` -- an init param named any of those redeclared it.
+CREATE_LOCALS = frozenset({"mod", "w", "cap"})
+
+
+def arg_scopes(
+    cfg: dict, module: str
+) -> "list[tuple[str, str, list, frozenset[str]]]":
+    """Every generated wrapper whose C locals a manifest name becomes.
+
+    ``(owner, C function, params, declares)`` -- the arguments
+    :func:`~just_makeit._builtins.require_param_names` takes, plus the
+    wrapper they describe, which is how
+    ``tests/test_gh1525_kind_arg_local_names.py`` holds *declares* to the
+    rendered C. The execute / reset / property wrappers name nothing after
+    the manifest, so only ``create`` is here.
+    """
+    backing = C.capsule_backing(cfg, module)
+    return [
+        (
+            f"capsule module '{module}' init_params",
+            f"_fn_{backing}_create",
+            C.module_init_params(cfg, module),
+            CREATE_LOCALS,
+        )
+    ]
 
 
 def _emit_create(backing: str, init_params: list[tuple]) -> str:
@@ -592,6 +622,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     """
     from ._init import _write
 
+    require_scope_names(arg_scopes(cfg, module))  # gh-1525
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.capsule_package(cfg, module) or mp.pypath

@@ -139,6 +139,13 @@ few names are refused before anything is written (gh-1512):
 `_y`. The same rule holds for method params, module-function params and init
 params, on the command line and in a hand-written manifest.
 
+The `kind = "handle"`, `"capsule"` and `"composer"` modules follow the same
+rule for their args, and `jm apply` refuses the locals their own wrappers
+declare too (gh-1525): a capsule init param named `mod`, `w` or `cap`; a
+handle method arg named after that shape's result or array locals (`r`,
+`n_in`, `in_data`, `out_data`, `view`, ...); a composer source field named
+`fs`; a serializer param named `segs`. The error names the local.
+
 ______________________________________________________________________
 
 ## How do I add a struct field without making it a state variable?
