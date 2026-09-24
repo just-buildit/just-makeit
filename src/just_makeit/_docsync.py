@@ -67,6 +67,33 @@ _TYPE_RE = re.compile(r"static\s+PyTypeObject\s+\w+\s*=\s*\{")
 _ARRAY_SLOT = {"PyMethodDef": "tp_methods", "PyGetSetDef": "tp_getset"}
 
 
+# What `_code_mask` blanks, as one pattern: a string or char literal (its
+# quotes kept apart from its body), a `//` comment, a `/* */` comment. The
+# text between matches is code and is copied untouched. An escape is a
+# backslash and the character after it, so an escaped quote never closes the
+# literal; a literal or comment left open runs to the end of the text.
+_MASK_RE = re.compile(
+    r"""
+      (?P<sq>")(?P<sb>(?:\\[\s\S]?|[^"\\])*)(?P<se>"?)
+    | (?P<cq>')(?P<cb>(?:\\[\s\S]?|[^'\\])*)(?P<ce>'?)
+    | (?P<line>//[^\n]*)
+    | (?P<block>/\*[\s\S]*?(?:\*/|\Z))
+    """,
+    re.X,
+)
+_NOT_NEWLINE = re.compile(r"[^\n]")
+
+
+def _mask_token(m: "re.Match[str]") -> str:
+    if m.group("sq"):
+        return '"' + " " * len(m.group("sb")) + m.group("se")
+    if m.group("cq"):
+        return "'" + " " * len(m.group("cb")) + m.group("ce")
+    if m.group("line"):
+        return " " * len(m.group("line"))
+    return _NOT_NEWLINE.sub(" ", m.group("block"))
+
+
 def _code_mask(text: str) -> str:
     """Return *text* with string/char-literal contents and comments blanked.
 
@@ -75,61 +102,23 @@ def _code_mask(text: str) -> str:
     delimiting quotes themselves survive. Structural scans (braces, commas) run
     on the mask so punctuation hidden inside strings or comments is invisible;
     content is sliced from the original at offsets the mask reveals.
+
+    Newlines inside a block comment are kept; inside a literal (which C does
+    not allow to span one) they are blanked like any other character.
+
+    One regex pass (gh-1374). It was a per-character state machine, the
+    single largest cost in the test suite on every interpreter: ~20% of a
+    serial session's CPU, from ~45 call sites. The rewrite is output-identical
+    except at one point where the old loop broke its own contract: a lone
+    backslash as the very last character of an open literal emitted two
+    spaces for one character, so the mask came out one longer than *text*.
+
+    >>> _code_mask('f("a;b", c); // x;y')
+    'f("   ", c);       '
+    >>> _code_mask("a /* {\\n} */ b")
+    'a     \\n     b'
     """
-    out: list[str] = []
-    i, n = 0, len(text)
-    NORMAL, STR, CHAR, LINE, BLOCK = range(5)
-    st = NORMAL
-    while i < n:
-        c = text[i]
-        nxt = text[i + 1] if i + 1 < n else ""
-        if st == NORMAL:
-            if c == '"':
-                out.append('"')
-                st = STR
-            elif c == "'":
-                out.append("'")
-                st = CHAR
-            elif c == "/" and nxt == "/":
-                out.append("  ")
-                i += 2
-                st = LINE
-                continue
-            elif c == "/" and nxt == "*":
-                out.append("  ")
-                i += 2
-                st = BLOCK
-                continue
-            else:
-                out.append(c)
-            i += 1
-        elif st in (STR, CHAR):
-            if c == "\\":
-                out.append("  ")
-                i += 2
-                continue
-            if (st == STR and c == '"') or (st == CHAR and c == "'"):
-                out.append(c)
-                st = NORMAL
-            else:
-                out.append(" ")
-            i += 1
-        elif st == LINE:
-            if c == "\n":
-                out.append("\n")
-                st = NORMAL
-            else:
-                out.append(" ")
-            i += 1
-        else:  # BLOCK
-            if c == "*" and nxt == "/":
-                out.append("  ")
-                i += 2
-                st = NORMAL
-                continue
-            out.append("\n" if c == "\n" else " ")
-            i += 1
-    return "".join(out)
+    return _MASK_RE.sub(_mask_token, text)
 
 
 def _match_brace(mask: str, open_idx: int) -> int:
