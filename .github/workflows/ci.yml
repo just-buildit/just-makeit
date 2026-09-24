@@ -341,10 +341,10 @@ jobs:
 
       # clang-cl drives the MSVC toolchain as cl.exe does and needs its
       # environment (INCLUDE / LIB / the linker).
+      # scripts/msvc-env.sh is vendored from canonical; it replaced
+      # ilammy/msvc-dev-cmd, which is node20 and unmaintained.
       - name: MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          arch: x64
+        run: scripts/msvc-env.sh x64
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:

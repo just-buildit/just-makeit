@@ -170,9 +170,14 @@ def test_set_jm_version_direct():
 def test_jm_cli_version_unknown_on_error(monkeypatch):
     import importlib.metadata
 
+    import just_makeit
+
     def _boom(_name):
         raise importlib.metadata.PackageNotFoundError
 
+    # jm_cli_version() reads the cached `__version__` (gh-1374), so a lookup
+    # that fails only matters on a cold cache; start from one, restored after.
+    monkeypatch.delitem(just_makeit.__dict__, "__version__", raising=False)
     monkeypatch.setattr(importlib.metadata, "version", _boom)
     assert C.jm_cli_version() == "unknown"
 

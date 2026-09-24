@@ -129,6 +129,27 @@ class TestTheCacheStillWorks:
         monkeypatch.setattr(importlib.metadata, "version", _boom)
         assert fresh.__version__ == resolved
 
+    def test_jm_cli_version_reads_the_cache(self, fresh, monkeypatch) -> None:
+        """gh-1374: `jm_cli_version()` must not look the version up again.
+
+        Every mutating command calls it. When it did its own
+        `importlib.metadata.version` call, each call scanned all of `sys.path`
+        on Python 3.9 -- thousands per test session. Once `__version__` has
+        resolved, a lookup that would now raise must not be reached.
+        """
+        from just_makeit import _config as C
+
+        monkeypatch.setattr(importlib.metadata, "version", lambda _n: "9.9.9")
+        assert C.jm_cli_version() == "9.9.9"
+
+        def _boom(_name):  # pragma: no cover - must not be called
+            raise AssertionError(
+                "jm_cli_version() looked the version up again"
+            )
+
+        monkeypatch.setattr(importlib.metadata, "version", _boom)
+        assert C.jm_cli_version() == "9.9.9"
+
     def test_it_is_still_discoverable_and_importable(self, fresh) -> None:
         assert "__version__" in dir(fresh)
         from just_makeit import __version__

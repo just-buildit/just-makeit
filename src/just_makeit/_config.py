@@ -4707,11 +4707,22 @@ def set_schema_version(cfg: dict, version: int) -> dict:
 
 
 def jm_cli_version() -> str:
-    """The running just-makeit version (best-effort; 'unknown' if unknown)."""
-    try:
-        from importlib.metadata import version
+    """The running just-makeit version (best-effort; 'unknown' if unknown).
 
-        return version("just-makeit")
+    A reader of ``just_makeit.__version__``, not a second lookup: that name
+    resolves through ``importlib.metadata`` once and caches only a success
+    (gh-764, gh-1166), so this costs a lookup per process instead of one per
+    call. It used to call ``importlib.metadata.version`` itself on every
+    call, and every mutating command stamps the manifest with it (gh-1374).
+    Once the suite drove the CLI in-process (#1395), that meant thousands of
+    lookups in one long-lived process -- and on Python 3.9, whose
+    ``importlib.metadata`` has no path cache, each one scanned every
+    ``sys.path`` entry. That is most of why the 3.9 leg ran 3x the 3.12 one.
+    """
+    try:
+        import just_makeit
+
+        return just_makeit.__version__
     except Exception:
         return "unknown"
 
