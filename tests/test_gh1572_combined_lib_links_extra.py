@@ -115,6 +115,10 @@ def installed(tmp_path_factory):
     cfg["project"]["find_packages"] = ["ExtDep"]
     for table in (cfg["alpha"], cfg["beta"], cfg["module"]["grp"]):
         table["extra_link_libs"] = ["ExtDep::extdep"]
+    # extra_link_libs may name one of the project's own cores (kitchen_sink
+    # links a c_deps `cjson_core` this way). Its objects are already in both
+    # libraries, so restating it would export a target in no export set.
+    cfg["alpha"]["extra_link_libs"].append("beta_core")
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr

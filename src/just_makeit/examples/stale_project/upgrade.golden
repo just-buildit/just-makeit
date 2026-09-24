@@ -36,10 +36,11 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (6) — create-only file(s) behind jm's current version:
+OUTDATED (7) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
+  ↑ cmake/stale-config.cmake.in
   ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
@@ -77,7 +78,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 6 outdated, 8 root-cmake, 2 unwired (!).
+summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 8 root-cmake, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -127,10 +128,11 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (6) — create-only file(s) behind jm's current version:
+OUTDATED (7) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
+  ↑ cmake/stale-config.cmake.in
   ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
@@ -161,7 +163,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 8 root-cmake.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 8 root-cmake.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -209,11 +211,12 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (7) — create-only file(s) behind jm's current version:
+OUTDATED (8) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
   ↑ bootstrap.toml
+  ↑ cmake/stale-config.cmake.in
   ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
@@ -225,7 +228,7 @@ SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 8 outdated.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -241,13 +244,14 @@ warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest 
   create  Doxyfile
   create  Makefile
   create  bootstrap.toml
+  create  cmake/stale-config.cmake.in
   create  cmake/stale.pc.in
   create  native/benchmarks/bench_fir_core.c
   create  native/benchmarks/bench_gain_core.c
   create  native/benchmarks/jm_bench.h
   create  native/inc/clib_common.h
 
-Done!  Materialized 9 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+Done!  Materialized 10 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm adopt --check   # exit 1

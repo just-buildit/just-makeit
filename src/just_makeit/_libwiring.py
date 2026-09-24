@@ -262,6 +262,11 @@ def externally_wired(root: Path) -> "set[str]":
     return {core for _t, core in wired_pairs(root) - root_pairs}
 
 
+def _is_project_core(lib: str) -> bool:
+    """Whether a link item names one of the project's own cores."""
+    return "::" not in lib and lib.endswith("_core")
+
+
 def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     """Restate a core's external libraries on both combined libraries.
 
@@ -288,9 +293,16 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     ``remove`` or ``status`` to learn. CMake 3.13+ (the root requires 3.16)
     lets a directory link a target another directory declared.
 
-    *libs* is the EXTERNAL list only, never the core's full link line:
-    that one also names ``depends_on`` cores, which the root already folds
-    in by objects, and linking them here would put their objects in twice.
+    *libs* is the ``extra_link_libs`` list, never the core's full link
+    line, which also names ``depends_on`` cores. Even so, an in-project core
+    is dropped from it: ``extra_link_libs`` may name one (kitchen_sink's
+    module links ``cjson_core``, a ``[project] c_deps`` OBJECT library). The
+    root already folds its objects in, so the shared library would get them
+    twice, and the archive would export a target that is in no export set --
+    a CMake GENERATE error. A core is recognised by jm's own naming, the
+    convention :func:`dep_core_libs` normalises to: an un-namespaced
+    ``<x>_core``. An imported package target carries ``::``, and a bare
+    library name (``m``, ``fftw3``) does not end in ``_core``.
     ``if(TARGET ...)`` because the ``make`` backend and a root predating the
     combined library declare none. A header-only core is never folded in
     (see ``_DECLARES_CORE``), so it needs nothing.
@@ -308,7 +320,10 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     endif()
     >>> combined_link_c([], False), combined_link_c(["x"], True)
     ('', '')
+    >>> combined_link_c(["cjson_core"], False)
+    ''
     """
+    libs = [lib for lib in libs if not _is_project_core(lib)]
     if not libs or header_only:
         return ""
     joined = "\n      ".join(libs)
