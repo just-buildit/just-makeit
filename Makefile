@@ -199,7 +199,7 @@ JM_RUNTIME_DEPS = --with "tomlkit>=0.15.0" \
 PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
                   --with pyyaml
 PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) $(JM_RUNTIME_DEPS) \
-                  --with just-buildit
+                  --with just-buildit --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
