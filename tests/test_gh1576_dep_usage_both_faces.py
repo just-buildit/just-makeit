@@ -210,8 +210,8 @@ def _consume_cmake(root, ext_pfx, name, pfx, target, env) -> str:
         env,
     )
     _run(["cmake", "--build", "b"], cons, env)
-    run_env = dict(env, LD_LIBRARY_PATH=str(pfx / "lib"))
-    return _run([str(cons / "b" / "c")], cons, run_env).stdout
+    # CMake gives the build-tree executable an rpath to the imported library.
+    return _run([str(cons / "b" / "c")], cons, env).stdout
 
 
 def _consume_pc(root, name, pfx, static, env) -> str:
@@ -228,10 +228,12 @@ def _consume_pc(root, name, pfx, static, env) -> str:
         libs = [f for f in pc("--static", "--libs") if f != f"-l{name}"]
         link = [str(pfx / "lib" / f"lib{name}.a"), *libs]
     else:
-        link = pc("--libs")
+        # An rpath, as docs/c-library.md tells a consumer to: macOS resolves
+        # the installed `@rpath/lib<pkg>.dylib` only through the executable's
+        # rpath and ignores LD_LIBRARY_PATH, so that worked on Linux alone.
+        link = [*pc("--libs"), f"-Wl,-rpath,{pfx / 'lib'}"]
     _run(["cc", *pc("--cflags"), "c.c", *link, "-o", str(exe)], root, pc_env)
-    run_env = dict(pc_env, LD_LIBRARY_PATH=str(pfx / "lib"))
-    return _run([str(exe)], root, run_env).stdout
+    return _run([str(exe)], root, pc_env).stdout
 
 
 @pytest.mark.parametrize("name", sorted(_STYLES))
