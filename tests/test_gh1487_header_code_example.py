@@ -72,6 +72,22 @@ _SHAPES: dict[str, list[str]] = {
     "opaque": ["--opaque-state", "--no-step"],
     "noreset": ["--no-reset", "--arg-type", "float", "--return-type", "float"],
     "createfn": ["--create-fn", "createfn_open", "--init-param", "n:int:3"],
+    # gh-1502: every init-param kind the create() example declares a local
+    # for -- scalar, bool, string, string enum, array -- so the
+    # compile check below also holds the placeholders to the prototype.
+    # (A required complex init-param cannot be scaffolded: gh-1561.)
+    "ipkinds": [
+        "--init-param",
+        "n:size_t:16",
+        "--init-param",
+        "on:bool:true",
+        "--init-param",
+        "name:const char *",
+        "--init-param",
+        "mode:string_enum:a,b",
+        "--init-param",
+        "h:float[]",
+    ],
     "delegate": [
         "--arg-type",
         "float",

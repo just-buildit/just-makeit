@@ -178,8 +178,13 @@ def test_path_init_param_core_h_signature(tmp_path):
         encoding="utf-8"
     )
     assert "rdr_create(const char *path, int sample_type)" in hdr
-    # The zero-seeded smoke/bench create passes NULL for the path.
-    assert "rdr_create(NULL, 0)" in hdr
+    # The zero-seeded smoke create passes NULL for the path. gh-1502: the
+    # header's example names the parameters instead of seeding them.
+    smoke = (root / "native" / "tests" / "test_rdr_core.c").read_text(
+        encoding="utf-8"
+    )
+    assert "rdr_create(NULL, 0)" in smoke
+    assert "rdr_create(path, sample_type)" in hdr
 
 
 def test_path_init_param_pyi(tmp_path):

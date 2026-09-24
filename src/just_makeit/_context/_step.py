@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .. import _coerce
+import re
+
+from .. import _coerce, _ctorsig
 from .._types import (
     _CTYPE_META,
     _KIND_PY_ISINSTANCE,
@@ -220,7 +222,9 @@ def _header_example(
     Returns
     -------
     dict
-        ``lifecycle_summary`` and ``step_example_c`` render slots.
+        ``lifecycle_summary``, ``create_example_c`` and ``step_example_c``
+        render slots. ``create_example_c`` reads ``component``,
+        ``create_name`` and ``create_params`` from *ctx*.
 
     Examples
     --------
@@ -232,9 +236,43 @@ def _header_example(
     'create -> [steps / reset]* -> destroy'
     >>> print(d["step_example_c"], end="")
      * q_steps(obj, in, 4, out);
+    >>> d = _header_example(
+    ...     {"component": "q", "create_params": "int level, const float *h"},
+    ...     [],
+    ...     [],
+    ... )
+    >>> print(d["create_example_c"], end="")
+     * int level = 0; // your value
+     * const float *h = NULL; // your value
+     * q_state_t *obj = q_create(level, h);
     """
     if ctx.get("lifecycle_reset", " / reset"):
         verbs = [*verbs, "reset"]
+    component = ctx.get("component", "")
+    create = ctx.get("create_name") or f"{component}_create"
+    # gh-1502: the create() call names one local per declared parameter,
+    # each of the type the prototype declares, instead of freezing the
+    # scaffold-time values into the call. The example is create-only -- jm
+    # never rewrites it -- so a literal like `o_create(20)` outlived the
+    # parameter it was a value for and went on compiling against the next
+    # one. A local named for its parameter reads as the declaration it
+    # mirrors; `jm status` reports (advisory) a call whose argument count
+    # later stops matching the prototype. The locals come from the same
+    # `create_params` the prototype renders from, split by the same
+    # `_ctorsig.split_params` that counts them back.
+    decls: list[str] = []
+    names: list[str] = []
+    for p in _ctorsig.split_params(ctx.get("create_params", "")):
+        m = re.fullmatch(r"(.*?[\s*])(\w+)", p)
+        ctype, pname = m.group(1).rstrip(), m.group(2)
+        sep = "" if ctype.endswith("*") else " "
+        zero = "NULL" if ctype.endswith("*") else "0"
+        decls.append(f"{ctype}{sep}{pname} = {zero}; // your value")
+        names.append(pname)
+    create_lines = [
+        *decls,
+        f"{component}_state_t *obj = {create}({', '.join(names)});",
+    ]
     summary = (
         f"create -> [{' / '.join(verbs)}]* -> destroy"
         if verbs
@@ -242,6 +280,7 @@ def _header_example(
     )
     return {
         "lifecycle_summary": summary,
+        "create_example_c": "".join(f" * {line}\n" for line in create_lines),
         "step_example_c": "".join(f" * {line}\n" for line in calls),
     }
 

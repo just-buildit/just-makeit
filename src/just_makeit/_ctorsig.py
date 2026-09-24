@@ -101,6 +101,48 @@ def _norm(params: str) -> str:
     return ", ".join(x for x in parts if x)
 
 
+def split_params(params: str) -> list[str]:
+    """The top-level items of a C parameter or argument list.
+
+    One splitter for both sides gh-1502 compares -- the prototype's
+    parameters and the ``@code`` example's arguments -- so a count of one
+    cannot disagree with a count of the other by construction. Commas inside
+    parentheses (a cast, a nested call) do not split, and a list that is
+    ``void`` or empty has no items.
+
+    Examples
+    --------
+    >>> split_params("int level, const float *h, size_t h_len")
+    ['int level', 'const float *h', 'size_t h_len']
+    >>> split_params("f(a, b), 0")
+    ['f(a, b)', '0']
+    >>> split_params("void"), split_params("  ")
+    ([], [])
+    """
+    items: list[str] = []
+    depth = 0
+    cur = ""
+    for ch in params:
+        if ch == "," and depth == 0:
+            items.append(cur.strip())
+            cur = ""
+            continue
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        cur += ch
+    items.append(cur.strip())
+    items = [x for x in items if x]
+    return [] if items == ["void"] else items
+
+
+def _header_text(root: Path, component: str) -> str | None:
+    """``<comp>_core.h`` as text, or ``None`` when it cannot be read."""
+    path = root / "native" / "inc" / component / f"{component}_core.h"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def declared_params(root: Path, component: str, create_fn: str) -> str | None:
     """The parameter list ``<comp>_core.h`` declares for *create_fn*.
 
@@ -115,10 +157,8 @@ def declared_params(root: Path, component: str, create_fn: str) -> str | None:
     passed, and collapsing the two is how a gate comes to report clean over a
     tree it never looked at — the shape gh-1033 was filed for one module over.
     """
-    path = root / "native" / "inc" / component / f"{component}_core.h"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+    text = _header_text(root, component)
+    if text is None:
         return None
     # The declaration jm injects, as it injects it: the state pointer return,
     # the symbol, and everything up to the closing paren. Anchored to a
@@ -172,6 +212,100 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
                 rel=f"native/inc/{comp}/{comp}_core.h",
                 declared=declared,
                 rendered=_norm(rendered),
+            )
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class ExampleDrift:
+    """A file-comment example calling `create()` with the wrong arg count.
+
+    gh-1502. The ``@code`` example at the top of ``<comp>_core.h`` is the
+    author's text: jm writes it once, at scaffold time, and never again. The
+    prototype below it is jm's, and `apply` rewrites it whenever the
+    manifest's init params change. So the example is the one line in the
+    file guaranteed to fall behind, and nothing compiles it to notice.
+
+    **Advisory, never counted.** The header is sacred: the only way to clear
+    a gating finding here would be for the author to retype what jm
+    rendered, which is not an action jm may require of author text. The
+    count is all this compares -- values and names are the author's to
+    choose, and jm cannot tell a stale argument from a deliberate one.
+    """
+
+    component: str
+    rel: str  #: POSIX path of the header, relative to the project root
+    line: int  #: 1-based line of the example's create() call
+    call: str  #: the called symbol, as the example spells it
+    passed: int  #: arguments the example passes
+    declared: int  #: parameters the prototype declares
+
+    def describe(self) -> str:
+        """One advisory line pair, naming the line and what to change."""
+        return (
+            f"{self.rel}:{self.line}\n"
+            f"  the @code example calls {self.call}() with {self.passed}"
+            f" argument(s); the prototype\n"
+            f"  declares {self.declared}. Advisory: the example is your"
+            " text, and jm does not\n"
+            "  rewrite it. Update the call to match the declaration."
+        )
+
+
+def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
+    """Every header whose ``@code`` example mis-counts `create()`'s args.
+
+    The example's call is found by what it assigns to -- the object's
+    ``<comp>_state_t *`` -- inside the file comment's ``@code`` block, so it
+    needs neither the manifest nor the context builders: the comparison is
+    the example against the prototype in the SAME file, read by
+    `declared_params`. Silent when either side is absent (no example, no
+    create call, no prototype), because there is nothing to compare.
+    """
+    out: list[ExampleDrift] = []
+    for comp in C.components(cfg):
+        text = _header_text(root, comp)
+        if text is None:
+            continue
+        head = re.match(r"\s*/\*\*.*?\*/", text, re.S)
+        if head is None:
+            continue
+        block = re.search(r"@code\b(.*?)@endcode", head.group(0), re.S)
+        if block is None:
+            continue
+        call = re.search(
+            rf"\b{re.escape(comp)}_state_t\s*\*\s*\w+\s*=\s*(\w+)\s*\(",
+            block.group(1),
+        )
+        if call is None:
+            continue
+        declared = declared_params(root, comp, call.group(1))
+        if declared is None:
+            continue
+        # The arguments run to the paren that closes the call.
+        rest = block.group(1)[call.end() :]
+        depth, end = 1, None
+        for i, ch in enumerate(rest):
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if depth == 0:
+                end = i
+                break
+        if end is None:
+            continue
+        passed = len(split_params(rest[:end]))
+        want = len(split_params(declared))
+        if passed == want:
+            continue
+        offset = head.start() + block.start(1) + call.start(1)
+        out.append(
+            ExampleDrift(
+                component=comp,
+                rel=f"native/inc/{comp}/{comp}_core.h",
+                line=text.count("\n", 0, offset) + 1,
+                call=call.group(1),
+                passed=passed,
+                declared=want,
             )
         )
     return out
