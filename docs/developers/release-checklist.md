@@ -26,15 +26,18 @@ ______________________________________________________________________
 
 ## 1. Decide the version number
 
-| Change type                                  | Bump            |
-| -------------------------------------------- | --------------- |
-| Breaking CLI change (rename, remove command) | minor (`0.X.0`) |
-| New command or flag                          | patch (`0.X.Y`) |
-| Bug fix, docs, internal refactor             | patch (`0.X.Y`) |
+Two questions, in order:
 
-Pre-1.0, so the digits shift down one place: the minor digit stands in for
-major (breaking changes only), and the patch digit absorbs both new features
-and fixes.
+| Does the release...                                             | Bump            |
+| --------------------------------------------------------------- | --------------- |
+| add functionality -- a new command, flag, manifest key or shape | minor (`0.X.0`) |
+| only fix things -- bugs, docs, internal refactors               | patch (`0.X.Y`) |
+
+Read it off the changelog: any `Added` entry means minor. Pre-1.0
+(SemVer 4, "anything MAY change at any time"), so whether the release breaks
+something does not change the digit; a breaking change goes under
+`### Breaking`, which becomes the release notes. `1.0.0` is a separate,
+explicit decision.
 
 ## 2. Cut the release branch
 
