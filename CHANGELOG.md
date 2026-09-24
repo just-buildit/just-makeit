@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.88.0] — 2026-09-23
+
 ### Added
 
 - **`jm method --out-param name:T[]`** declares a writable array param, as
