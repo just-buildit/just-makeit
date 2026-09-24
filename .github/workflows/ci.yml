@@ -301,6 +301,9 @@ jobs:
         # recorded on (see tests/_downstream_gates.py, SHRINK).
         env:
           JM_GATE_A_SHRINK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          # gh-1377: a doppler that cannot be fetched fails the run instead
+          # of silently skipping nco_tone's build and kitchen_sink's `tone`.
+          JM_REQUIRE_DOPPLER: "1"
         run: make test-examples
 
   examples-windows:
@@ -321,6 +324,9 @@ jobs:
       # picks up clang-cl and Ninja exactly as a Windows user's would.
       CC: clang-cl
       CMAKE_GENERATOR: Ninja
+      # gh-1377: a doppler that cannot be fetched fails the run instead of
+      # silently skipping nco_tone's build and kitchen_sink's `tone` object.
+      JM_REQUIRE_DOPPLER: "1"
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -340,8 +346,6 @@ jobs:
           make tool-install
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
 
-      # nco_tone and kitchen_sink link doppler, which publishes no Windows
-      # build; tracked in #1377.
       - name: Run example tests
         # PROJECT_ENV_TESTS is narrowed to the example builds alone.
         # gh-1442 moved five tool-gated files onto this path; running
@@ -353,8 +357,7 @@ jobs:
         # gh-1376: plus the CMakePresets.json build, which on this runner
         # drives the `windows-*` presets Visual Studio shows -- clang-cl,
         # Ninja and the project's .venv chosen by the preset alone.
-        run: make test-examples EXAMPLES_K="not nco_tone and not kitchen_sink"
-          PROJECT_ENV_TESTS="tests/test_examples.py
+        run: make test-examples PROJECT_ENV_TESTS="tests/test_examples.py
           tests/test_gh1376_presets_build.py"
 
   install-deps-smoke:

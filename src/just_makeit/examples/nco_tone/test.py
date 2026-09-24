@@ -38,6 +38,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -60,7 +61,7 @@ from just_makeit._pyfmt import flatten_prose
 # because doppler published, not because of the change being linted, and
 # doppler ships roughly weekly. The floor is the part with teeth and is
 # asserted in tests/test_doppler_pin_check.py.
-_DOPPLER_VERSION = "0.49.0"
+_DOPPLER_VERSION = "0.55.0"
 #: The oldest doppler whose API this example actually compiles against —
 #: v0.39.0 added the trailing capacity argument to `nco_steps_u32`. It lived
 #: only in the prose above until it was encoded here, which is why a local
@@ -69,7 +70,7 @@ _DOPPLER_VERSION = "0.49.0"
 _DOPPLER_FLOOR = "0.39.0"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
-    "v{version}/doppler-{version}-{platform}.tar.gz"
+    "v{version}/doppler-{version}-{platform}{ext}"
 )
 # Overall wall-clock cap on the tarball download. urlopen(timeout=...) is only a
 # per-read socket timeout, so a server that trickles bytes never trips it; this
@@ -96,26 +97,36 @@ def _cmd(args, cwd, env=None):
     return r
 
 
-def _platform_tag() -> str | None:
-    """Return the doppler release-asset platform tag for this host.
+#: doppler's release-asset name for each host, keyed on (``sys.platform``,
+#: normalised machine) and read off the assets doppler actually publishes
+#: (v0.55.0). Two rows here were once wrong and neither failed: macOS was
+#: asked for as ``darwin-arm64`` while doppler names it ``macos-arm64``, and
+#: Windows had no row, so on both the download 404'd or never ran and the
+#: build SKIPPED inside a test that reported PASSED (gh-1377). A host missing
+#: from this table is a host doppler publishes nothing for.
+_ASSETS = {
+    ("linux", "x86_64"): ("linux-x86_64", ".tar.gz"),
+    ("linux", "aarch64"): ("linux-aarch64", ".tar.gz"),
+    ("darwin", "aarch64"): ("macos-arm64", ".tar.gz"),
+    ("win32", "x86_64"): ("windows-x86_64", ".zip"),
+}
 
-    The release naming convention is doppler-<version>-<platform>.tar.gz.
-    Returns None when the current platform doesn't match a known tag."""
+#: ``platform.machine()`` spells one architecture several ways: Windows says
+#: ``AMD64``, macOS says ``arm64``.
+_MACHINE_ALIASES = {"amd64": "x86_64", "arm64": "aarch64"}
+
+
+def _platform_tag() -> tuple[str, str] | None:
+    """Return doppler's (platform tag, archive extension) for this host.
+
+    The release naming convention is ``doppler-<version>-<tag><ext>``, where
+    ``<ext>`` is ``.zip`` on Windows and ``.tar.gz`` everywhere else. Returns
+    None when doppler publishes no build for this host."""
     import platform as _platform
 
-    system = sys.platform
     machine = _platform.machine().lower()
-    if system == "linux":
-        if machine in ("x86_64", "amd64"):
-            return "linux-x86_64"
-        if machine in ("aarch64", "arm64"):
-            return "linux-aarch64"
-    if system == "darwin":
-        if machine in ("x86_64", "amd64"):
-            return "darwin-x86_64"
-        if machine in ("arm64", "aarch64"):
-            return "darwin-arm64"
-    return None
+    machine = _MACHINE_ALIASES.get(machine, machine)
+    return _ASSETS.get((sys.platform, machine))
 
 
 def _cache_dir() -> Path:
@@ -130,9 +141,10 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
     Returns the prefix path (the directory containing lib/cmake/doppler/)
     on success, or None if the download couldn't be completed (no
     network, no matching asset for this platform, extraction failed)."""
-    platform = _platform_tag()
-    if platform is None:
+    asset = _platform_tag()
+    if asset is None:
         return None
+    platform, ext = asset
 
     extract_dir = _cache_dir() / f"v{version}" / platform
     # If a previous run already extracted here and the cmake config is
@@ -145,9 +157,11 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
             if (extract_dir / rel).exists():
                 return str(extract_dir)
 
-    url = _DOPPLER_RELEASE_URL.format(version=version, platform=platform)
+    url = _DOPPLER_RELEASE_URL.format(
+        version=version, platform=platform, ext=ext
+    )
     extract_dir.mkdir(parents=True, exist_ok=True)
-    tarball = extract_dir.parent / f"doppler-{version}-{platform}.tar.gz"
+    tarball = extract_dir.parent / f"doppler-{version}-{platform}{ext}"
     try:
         with (
             urllib.request.urlopen(url, timeout=60) as resp,
@@ -171,9 +185,13 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
         return None
 
     try:
-        with tarfile.open(tarball, "r:gz") as tar:
-            tar.extractall(extract_dir)
-    except (tarfile.TarError, OSError) as exc:
+        if ext == ".zip":
+            with zipfile.ZipFile(tarball) as zf:
+                zf.extractall(extract_dir)
+        else:
+            with tarfile.open(tarball, "r:gz") as tar:
+                tar.extractall(extract_dir)
+    except (tarfile.TarError, zipfile.BadZipFile, OSError) as exc:
         print(
             f"nco_tone: doppler tarball extraction failed ({exc}); skipping.",
             file=sys.stderr,
@@ -321,6 +339,22 @@ def why_prefix_unusable(prefix: Path) -> str | None:
     return None
 
 
+#: Set by jm's CI on every leg that runs the examples. Without it a doppler
+#: that cannot be fetched SKIPS the build, which is right for a person trying
+#: the example offline and wrong for CI: there the skip is invisible (the
+#: test still reports PASSED), and that is how macOS and Windows built
+#: nothing against doppler for months while every leg was green (gh-1377).
+_REQUIRE_ENV = "JM_REQUIRE_DOPPLER"
+
+
+def _unavailable(why: str) -> None:
+    """Report that doppler is unavailable: a skip, or under CI a failure."""
+    if os.environ.get(_REQUIRE_ENV):
+        raise AssertionError(f"{why}, and {_REQUIRE_ENV} is set")
+    print(f"  [nco_tone] {why}")
+    return None
+
+
 def _find_doppler_prefix() -> str | None:
     """Fetch doppler and return the prefix to pass to --doppler-prefix.
 
@@ -364,14 +398,16 @@ def _find_doppler_prefix() -> str | None:
         # Refuse rather than fail later at COMPILE with an argument-count
         # error that reads as a bug in the example (gh-434's lesson, and the
         # `too many arguments to nco_steps_u32` failure that happened twice).
-        print(
-            f"  [nco_tone] doppler {version} is below the "
-            f"{_DOPPLER_FLOOR} floor this example needs"
+        return _unavailable(
+            f"doppler {version} is below the {_DOPPLER_FLOOR} floor this "
+            f"example needs"
         )
-        return None
     prefix = _download_doppler(version)
     if prefix is None:
-        return None
+        return _unavailable(
+            f"no doppler {version} build could be fetched for "
+            f"{sys.platform}/{_platform_tag() or 'an unpublished host'}"
+        )
     # An independent check that the tarball is what was asked for: the
     # extracted `.pc` states its own version, and a mismatch means the release
     # asset does not carry what its tag claims.
