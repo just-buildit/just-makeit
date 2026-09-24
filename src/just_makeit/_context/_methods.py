@@ -515,6 +515,22 @@ def _bench_method_block(
             pm = _CTYPE_META.get(pt, {})
             param_args += f", {pm.get('zero', '0')}"
 
+    # gh-1523: gh-600 made each extra `multi_output` value a trailing
+    # `<T> *outN` parameter, after the params, and the binding passes a local
+    # for each (`&out1`, ...). The bench still called the old two-argument
+    # form, so a fresh multi-output method's tree did not build. It passes a
+    # local the same way, on the two shapes whose prototype carries them; the
+    # batch prototype carries none, and the result_fields and skipped shapes
+    # never reach a call with them.
+    multi_output: list[str] = list(m.get("multi_output", []))
+    mo_decls = [
+        f"        {rt} {name}_out{i + 1} = {_CTYPE_META[rt]['zero']};"
+        for i, rt in enumerate(multi_output)
+    ]
+    mo_args = "".join(
+        f", &{name}_out{i + 1}" for i in range(len(multi_output))
+    )
+
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
     lines.append(f"        double _times_{name}[ITERATIONS];")
 
@@ -602,7 +618,8 @@ def _bench_method_block(
                 else f"        volatile {ret_disp} {name}_sink;"
             )
         sink = f"{name}_sink = " if has_ret else ""
-        call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args})"
+        lines += mo_decls
+        call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args}{mo_args})"
         lines += [
             "        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
@@ -626,8 +643,9 @@ def _bench_method_block(
                 else f"        volatile {ret_disp} {name}_sink;"
             )
         sink = f"{name}_sink = " if has_ret else ""
+        lines += mo_decls
         in_arg = f", {arg_zero}" if has_arg else ""
-        call = f"{c_fn}(obj{in_arg}{param_args})"
+        call = f"{c_fn}(obj{in_arg}{param_args}{mo_args})"
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
