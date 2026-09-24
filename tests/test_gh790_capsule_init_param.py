@@ -401,8 +401,12 @@ class TestThePythonFace:
         """jm cannot conjure a foreign handle, so the generated example and
         smoke-test seeding must not pretend to — same treatment `path` and
         `bytes` already get."""
-        h = _core_h(_project(tmp_path))
-        assert "capture_create(NULL, 0)" in h
+        root = _project(tmp_path)
+        smoke = (root / "native" / "tests" / "test_capture_core.c").read_text()
+        assert "capture_create(NULL, 0)" in smoke
+        # gh-1502: the header's example passes named locals, the pointer
+        # one initialised to NULL rather than a conjured handle.
+        assert "capture_create(tlm, block_samples)" in _core_h(root)
 
 
 class TestTheManifest:

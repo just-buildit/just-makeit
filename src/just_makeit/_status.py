@@ -902,6 +902,11 @@ def run(
     from . import _ctorsig
 
     _ctor_drift = _ctorsig.drift(root, cfg)
+    # gh-1502: the header's @code example against the prototype beside it.
+    # Advisory -- never counted into drift_count, never in the `--check` exit
+    # code: the example is author text jm does not rewrite, so a gating
+    # finding would be one the author could clear only by retyping jm's.
+    _example_drift = _ctorsig.example_drift(root, cfg)
     from . import _libwiring
     from . import _procglobal
 
@@ -1082,6 +1087,17 @@ def run(
                             "manifest": d.rendered,
                         }
                         for d in _ctor_drift
+                    ],
+                    # gh-1502: advisory, like `silent_benchmarks` below.
+                    "create_example_drift": [
+                        {
+                            "component": e.component,
+                            "path": e.rel,
+                            "line": e.line,
+                            "passed": e.passed,
+                            "declared": e.declared,
+                        }
+                        for e in _example_drift
                     ],
                     "unparseable_stubs": [
                         {
@@ -1745,6 +1761,27 @@ def run(
         )
         print()
 
+    # gh-1502: advisory, printed under the CTOR block it sits beside -- both
+    # read the same prototype -- and under --check too, since the exit code
+    # deliberately does not carry it.
+    if _example_drift:
+        print(
+            f"EXAMPLE ({len(_example_drift)}) — a header's @code example"
+            " calls create() with the wrong number of arguments:"
+        )
+        for e in _example_drift:
+            print(
+                f"  ~ {e.rel}:{e.line}  {e.call}() given {e.passed},"
+                f" declared {e.declared}"
+            )
+        print(
+            "  Advisory: the example is your text and jm does not rewrite"
+            " it. Update the\n"
+            "  call to match the declaration. Not drift; `--check` does not"
+            " fail on it."
+        )
+        print()
+
     # gh-806: advisory, and printed beside the orphans because they are the
     # same discovery from opposite ends — one target covers nothing because
     # its content moved, the other because it never had any.
@@ -2067,6 +2104,10 @@ def run(
         # same reason it is absent over a clean tree.
         _unch = "; unbuilt not checked" if _orphans_unchecked else ""
         _sil = f"; {len(_silent)} silent bench" if _silent else ""
+        # gh-1502: on gh-767's rule, as `_sil` beside it.
+        _sil += (
+            f"; {len(_example_drift)} stale example" if _example_drift else ""
+        )
         # gh-949: a file jm ships a newer version of is not "up to date",
         # even though `apply` cannot fix it. Same qualification as
         # `unreconciled` beside it, for the same gh-767 reason.
@@ -2188,6 +2229,11 @@ def run(
             + (f", {len(_ctor_drift)} ctor-drift (!)" if _ctor_drift else "")
             + (", unbuilt not checked" if _orphans_unchecked else "")
             + (f", {len(_silent)} silent bench" if _silent else "")
+            + (
+                f", {len(_example_drift)} stale example"
+                if _example_drift
+                else ""
+            )
             + (
                 f", {len(unparseable_entries)} unparseable (!)"
                 if unparseable_entries
