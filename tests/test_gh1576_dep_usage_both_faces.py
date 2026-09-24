@@ -134,7 +134,14 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     # A plain library name and a PATH beside the target, as real manifests
     # carry: the compile-usage lines must read properties of neither -- a
     # path inside `$<TARGET_EXISTS:>` fails configure outright.
-    cfg["alpha"]["extra_link_libs"] = [target, "m", "${JM_MATH_LIBRARY}"]
+    # And a generator expression naming a target that is empty here:
+    # `$<TARGET_EXISTS:>` of an empty string fails configure too.
+    cfg["alpha"]["extra_link_libs"] = [
+        target,
+        "m",
+        "${JM_MATH_LIBRARY}",
+        f"$<$<BOOL:0>:{target}>",
+    ]
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr

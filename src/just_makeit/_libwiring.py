@@ -346,6 +346,10 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     return shared + static
 
 
+#: An imported target's name, and nothing else: no expression, variable,
+#: path or flag (gh-1576).
+_IMPORTED_TARGET = re.compile(r"[A-Za-z0-9_.+-]+(?:::[A-Za-z0-9_.+-]+)+")
+
 #: The three properties that carry a target's COMPILE usage requirements --
 #: what `$<COMPILE_ONLY:>` passes on. A dependency's header needs all three:
 #: measured (gh-1576) with a header that `#error`s without its define, include
@@ -370,8 +374,11 @@ def _compile_usage_c(target: str, libs: "list[str]") -> str:
     per property. Measured in clean containers on CMake 3.16.3 and 3.28.3:
     identical to ``$<COMPILE_ONLY:>`` on every consumer face.
 
-    Only an imported-target-shaped item (``Ns::name``: a package's target,
-    ``PkgConfig::X``) is read: anything else in ``extra_link_libs`` is a
+    Only an item that IS an imported-target name (``Ns::name``: a package's
+    target, ``PkgConfig::X``) is read -- a full match, because
+    ``extra_link_libs`` allows generator expressions, and
+    ``$<$<PLATFORM_ID:Linux>:Ns::x>`` is empty elsewhere, which
+    ``$<TARGET_EXISTS:>`` refuses just as it refuses a path. anything else in ``extra_link_libs`` is a
     library file, a ``${VAR}`` holding one, or a flag, none of which has
     usage requirements -- and a path inside ``$<TARGET_EXISTS:>`` is a hard
     configure error ("requires a non-empty valid target name"), measured on
@@ -383,7 +390,8 @@ def _compile_usage_c(target: str, libs: "list[str]") -> str:
 
     Examples
     --------
-    >>> _compile_usage_c("L", ["m", "${LIB}", "/p/libz.a", "-lfoo"])
+    >>> _compile_usage_c("L", ["m", "${LIB}", "/p/libz.a", "-lfoo",
+    ...                        "$<$<PLATFORM_ID:Linux>:x::y>"])
     ''
     >>> print(_compile_usage_c("L", ["x::y", "m"]), end="")
       target_include_directories(L INTERFACE
@@ -393,7 +401,7 @@ def _compile_usage_c(target: str, libs: "list[str]") -> str:
       target_compile_options(L INTERFACE
           $<$<TARGET_EXISTS:x::y>:$<TARGET_PROPERTY:x::y,INTERFACE_COMPILE_OPTIONS>>)
     """
-    libs = [lib for lib in libs if "::" in lib]
+    libs = [lib for lib in libs if _IMPORTED_TARGET.fullmatch(lib)]
     if not libs:
         return ""
     return "".join(

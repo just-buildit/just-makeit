@@ -6,12 +6,12 @@ it with a single `pkg-config` or `find_package` call:
 
 ```sh
 gcc $(pkg-config --cflags my-project) consumer.c \
-    $(pkg-config --libs my-project) -lm -o consumer
+    $(pkg-config --libs my-project) -o consumer
 ```
 
 ```cmake
 find_package(my_project REQUIRED)
-target_link_libraries(my_app PRIVATE my_project::my_project_lib m)
+target_link_libraries(my_app PRIVATE my_project::my_project_lib)
 ```
 
 No just-makeit required on the consumer's machine. The sections below walk
@@ -117,7 +117,19 @@ Compile a consumer:
 gcc $(pkg-config --cflags my-project) \
     consumer.c \
     $(pkg-config --libs my-project) \
-    -lm -o consumer
+    -o consumer
+```
+
+The `.pc` names everything the library needs, libm included, so the
+consumer adds nothing by hand. To link statically, pass the archive in place
+of `-lmy_project` (a bare `-l` finds the shared library first) and let
+`--static` add what the archive needs:
+
+```sh
+gcc $(pkg-config --cflags my-project) consumer.c \
+    /usr/local/lib/libmy_project.a \
+    $(pkg-config --static --libs my-project | sed 's/-lmy_project//') \
+    -o consumer
 ```
 
 > **Linux / `--as-needed` note:** Split `--cflags` and `--libs` with the
@@ -144,8 +156,12 @@ project(my_consumer C)
 find_package(my_project REQUIRED)
 
 add_executable(consumer consumer.c)
-target_link_libraries(consumer PRIVATE my_project::my_project_lib m)
+target_link_libraries(consumer PRIVATE my_project::my_project_lib)
 ```
+
+`my_project::my_project_lib` is the shared library and
+`my_project::my_project_lib_static` the static one. Each carries its own link
+interface, libm included, so the consumer names nothing else.
 
 Configure with the prefix if it's not on the default search path:
 
@@ -154,21 +170,61 @@ cmake -B build -DCMAKE_PREFIX_PATH="$HOME/.local"
 cmake --build build
 ```
 
-If the project's cores link an external package (`extra_link_libs`, with the
-package in `[project] find_packages`), both libraries carry it for you: the
-shared one resolves it when it is built, and the static one hands it on
-through its link interface. The installed `my_project-config.cmake` calls
-`find_dependency()` for each such package, so the consumer only needs that
-package's prefix on `CMAKE_PREFIX_PATH` as well. It does not have to name
-the package itself.
+______________________________________________________________________
 
-The pkg-config face covers dependencies declared with `[project] pkg_modules`. Each one is listed as `Requires.private` in the installed
-`.pc`, so `pkg-config --static --libs my-project` includes it. A dependency
-declared with `find_packages` names a CMake package, and there is no general
-way to turn that into a pkg-config module name, so the `.pc` does not list
-it. A static pkg-config consumer then has to add it by hand. If that face
-matters to you and the dependency ships a `.pc`, declare it with
-`pkg_modules` and link its `PkgConfig::<NAME>` target instead.
+## When your library depends on another package
+
+A component that calls into another C library links it with
+`extra_link_libs`, and that package is declared once, on `[project]`. Declare
+it with the name each consumer face needs:
+
+```toml
+[project]
+find_packages = [
+    { name = "Doppler", pkg_config = "doppler" },   # ships a CMake config and a .pc
+    { name = "Threads", libs_private = "-pthread" }, # no .pc of its own
+]
+pkg_modules = ["fftw3f"]                             # found through pkg-config
+
+[tone]
+extra_link_libs = ["doppler::doppler-static"]
+```
+
+- **`name`** is the CMake package. The root calls `find_package(Doppler)`,
+    and the installed `my_project-config.cmake` calls `find_dependency(Doppler)`.
+- **`pkg_config`** is the dependency's pkg-config module. The installed `.pc`
+    lists it as `Requires.private`. A CMake package name says nothing about
+    its module name (`PNG` is `libpng`, `CURL` is `libcurl`), so this is the
+    one fact you state rather than jm derives.
+- **`libs_private`** is for a dependency that ships no `.pc`. Its flags go to
+    the `.pc`'s `Libs.private`, pkg-config's field for exactly that case.
+- **`pkg_modules`** entries are already pkg-config module names, so they reach
+    `Requires.private` with nothing more to say.
+
+With that, a consumer of the installed project gets the dependency on every
+face, and names nothing but your project:
+
+| consumer               | compiling your headers                  | linking                                    |
+| ---------------------- | --------------------------------------- | ------------------------------------------ |
+| `find_package`, shared | the dependency's include dirs and flags | already resolved inside `libmy_project.so` |
+| `find_package`, static | the same                                | the dependency, through the link interface |
+| `pkg-config`, shared   | its `Cflags`, from `Requires.private`   | already resolved inside `libmy_project.so` |
+| `pkg-config --static`  | the same                                | its `Libs`, or your `libs_private`         |
+
+"Compiling your headers" matters whenever a header of yours includes one of
+the dependency's, as nco_tone's `tone_core.h` includes doppler's
+`nco/nco_core.h`. The consumer still needs the dependency *installed*: put its
+prefix on `CMAKE_PREFIX_PATH` or `PKG_CONFIG_PATH` beside yours.
+
+A bare string entry (`find_packages = ["Doppler"]`) still works through
+`find_package`, but the `.pc` cannot name it: a pkg-config consumer then gets
+no `Cflags` for it, and no libs when linking static. `jm status` lists such
+entries under **PKG-CONFIG**, so the gap is never silent.
+
+Link a package's **imported target** (`doppler::doppler-static`,
+`PkgConfig::FFTW3F`) rather than a path or a `${VAR}` holding one. Only a
+target carries the include dirs and flags a consumer needs, and a path would
+put this machine's layout into the installed package.
 
 ______________________________________________________________________
 
@@ -231,7 +287,7 @@ gcc $(pkg-config --cflags my-project) \
     consumer.c \
     $(pkg-config --libs my-project) \
     -Wl,-rpath,"$LIB_DIR" \
-    -lm -o consumer
+    -o consumer
 ```
 
 **CMake:** set `INSTALL_RPATH_USE_LINK_PATH` or `CMAKE_BUILD_RPATH`:

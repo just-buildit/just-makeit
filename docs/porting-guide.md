@@ -417,8 +417,12 @@ ______________________________________________________________________
 # pkg-config libraries
 pkg_modules   = ["libfftw3f", "libsamplerate"]
 
-# CMake find_package() packages
-find_packages = ["ZLIB", "OpenSSL"]
+# CMake find_package() packages, each with its pkg-config module name --
+# the two differ, and only you know the second
+find_packages = [
+    { name = "ZLIB", pkg_config = "zlib" },
+    { name = "OpenSSL", pkg_config = "openssl" },
+]
 
 # Pure-C subproject deps (add_subdirectory)
 c_deps        = ["resamp", "fft"]
