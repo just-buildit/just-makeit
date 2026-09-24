@@ -30,9 +30,10 @@ gives: the runtime face is what ``help()`` shows, and the honest way to read
 it is to ask Python. Each module is compiled from the binding ``jm apply``
 wrote plus a small hand-written backing, the way ``test_handle_build`` does.
 
-One face is read from the rendered binding instead: a composer's
-``extra_methods`` row cannot be compiled on any path today (gh-1516), so
-its runtime text is decoded from the ``PyMethodDef`` literal.
+That includes a composer's ``extra_methods`` row: its body is the author's
+``<cname>_ext_extra.c``, which the binding has ``#include``-d since gh-1516,
+so its runtime text is read from the built type like every other face
+(gh-1534).
 
 GATE: a manifest ``doc`` renders verbatim on both faces of every ``kind``
 module -- handle, capsule and composer.
@@ -42,7 +43,6 @@ from __future__ import annotations
 
 import ast
 import importlib.util
-import re
 import shutil
 import subprocess
 import sys
@@ -196,6 +196,13 @@ setter_fn = "playlist_set_mode"
 getter_fn = "playlist_get_mode"
 type = "int"
 doc = {_doc("k_setting")}
+
+[[module.playlist.extra_methods]]
+name = "draws"
+fn = "Mix_draws"
+flags = "METH_NOARGS"
+returns = "int"
+doc = {_doc("k_extra_method")}
 """
 
 #: The backings: just enough C for each binding to link and import.
@@ -355,6 +362,17 @@ char *playlist_describe(const track_t *segs, size_t n)
     return out;
 }
 """,
+    # The extra_methods row's body. Not in `_SOURCES`: the binding
+    # `#include`s it after the generated types, and forward-declares
+    # `Mix_draws` with the signature METH_NOARGS implies (gh-1516).
+    "native/src/playlist/playlist_ext_extra.c": """\
+static PyObject *
+Mix_draws(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    (void)self;
+    return PyLong_FromLong(0);
+}
+""",
 }
 
 #: module -> the C files that make its extension.
@@ -459,6 +477,7 @@ FACES = {
     "k_segment_field": ("playlist", lambda m: m.Track.dur.__doc__),
     "k_serializer": ("playlist", lambda m: m.Mix.describe.__doc__),
     "k_setting": ("playlist", lambda m: m.Mix.mode.__doc__),
+    "k_extra_method": ("playlist", lambda m: m.Mix.draws.__doc__),
 }
 
 
@@ -491,45 +510,6 @@ def test_a_kind_module_without_docs_keeps_its_runtime_text(built) -> None:
     # either level: the getset slot stays NULL (the second read "None").
     assert mods["lamp"].Lamp.peak.__doc__ is None
     assert mods["lamp"].Lamp.floor.__doc__ is None
-
-
-# ── the one face read from the rendered binding (gh-1516) ────────────────────
-
-
-_EXTRA = f"""
-[[module.playlist.extra_methods]]
-name = "draws"
-fn = "Mix_draws"
-flags = "METH_NOARGS"
-returns = "int"
-doc = {_doc("k_extra_method")}
-"""
-
-_C_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
-
-
-def _row_doc(c: str, name: str) -> str:
-    """The ``ml_doc`` of *name*'s ``PyMethodDef`` row, decoded as C reads it:
-    every adjacent literal after the flags, concatenated."""
-    row = c[c.index(f'{{"{name}",') :]
-    row = row[: row.index("},")]
-    tail = row[row.index("METH_") :]
-    return "".join(
-        m.group(1).encode().decode("unicode_escape")
-        for m in _C_LITERAL.finditer(tail)
-    )
-
-
-def test_a_composer_extra_method_doc_is_verbatim_on_both_faces() -> None:
-    from just_makeit import _composer
-    from just_makeit import _config as C
-
-    cfg = C.tomllib.loads(_COMPOSER + _EXTRA)
-    cfg["project"] = {"name": "vk", "version": "0.1.0"}
-    want = _expected("k_extra_method")
-    assert _contains_block(_composer.render_pyi(cfg, "playlist"), want)
-    c = _composer.render_composer_type(cfg, "playlist")
-    assert _contains_block(_row_doc(c, "draws"), want), _row_doc(c, "draws")
 
 
 # ── a `doc` with no face is refused, not dropped ─────────────────────────────
