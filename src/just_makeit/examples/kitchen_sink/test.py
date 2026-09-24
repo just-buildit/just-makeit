@@ -228,7 +228,9 @@ _DSP_FN_CMAKE = """\
 # package dir so `from kitchen_sink.dsp import db10` (reexports) resolves.
 if(BUILD_PYTHON)
 Python3_add_library(dsp_fn MODULE WITH_SOABI dsp_fn_ext.c)
-target_link_libraries(dsp_fn PRIVATE m)
+# The root's resolved libm, not a bare `m`: empty on Windows, which has no
+# m.lib (gh-1377), and a path no target named `m` can shadow (gh-1305).
+target_link_libraries(dsp_fn PRIVATE ${JM_MATH_LIBRARY})
 set_target_properties(dsp_fn PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/dsp"
     RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/dsp")
