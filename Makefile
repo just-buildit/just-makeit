@@ -474,6 +474,10 @@ endef
 # ── Vendored from canonical ──────────────────────────────────────────────────
 # Verbatim copies the drift gate holds to canonical, alongside standard.mk
 # itself. Edit canonical and re-vendor; never edit these in place.
-VENDORED_FILES = scripts/release-watch.sh
+# msvc-env.sh replaced ilammy/msvc-dev-cmd (node20, unmaintained) in the
+# Windows jobs. dependabot.yml is the org's Actions-pin config, published at
+# github/dependabot.yml (Pages does not serve .github/).
+VENDORED_FILES = scripts/release-watch.sh scripts/msvc-env.sh \
+                 .github/dependabot.yml
 
 include standard.mk

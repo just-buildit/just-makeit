@@ -698,10 +698,19 @@ jobs:
 
       # clang-cl drives the MSVC toolchain as cl.exe does and needs its
       # environment (INCLUDE / LIB / the linker).
-      - name: MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1.13.0
+      # This job tests the built wheel, not the source tree, so it has no
+      # checkout. It fetches only the vendored msvc-env.sh (which replaced
+      # ilammy/msvc-dev-cmd, node20 and unmaintained), into its own
+      # directory, so nothing else from the repo is on disk.
+      - name: Fetch msvc-env.sh
+        uses: actions/checkout@v7.0.1
         with:
-          arch: x64
+          path: .jm-ci
+          sparse-checkout: scripts/msvc-env.sh
+          sparse-checkout-cone-mode: false
+
+      - name: MSVC developer environment (x64)
+        run: .jm-ci/scripts/msvc-env.sh x64
 
       - name: Download the built wheel
         if: inputs.wheel-artifact != ''
