@@ -310,9 +310,12 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     Examples
     --------
     >>> print(combined_link_c(["doppler::doppler-static"], False), end="")
+    ... # doctest: +ELLIPSIS
     if(TARGET ${PROJECT_NAME}_lib)
       target_link_libraries(${PROJECT_NAME}_lib PRIVATE
           doppler::doppler-static)
+      target_include_directories(${PROJECT_NAME}_lib INTERFACE
+    ...
     endif()
     if(TARGET ${PROJECT_NAME}_lib_static)
       target_link_libraries(${PROJECT_NAME}_lib_static PUBLIC
@@ -327,12 +330,88 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     if not libs or header_only:
         return ""
     joined = "\n      ".join(libs)
-    return "".join(
-        f"if(TARGET ${{PROJECT_NAME}}{suffix})\n"
-        f"  target_link_libraries(${{PROJECT_NAME}}{suffix} {scope}\n"
+    shared = (
+        "if(TARGET ${PROJECT_NAME}_lib)\n"
+        "  target_link_libraries(${PROJECT_NAME}_lib PRIVATE\n"
+        f"      {joined})\n"
+        + _compile_usage_c("${PROJECT_NAME}_lib", libs)
+        + "endif()\n"
+    )
+    static = (
+        "if(TARGET ${PROJECT_NAME}_lib_static)\n"
+        "  target_link_libraries(${PROJECT_NAME}_lib_static PUBLIC\n"
         f"      {joined})\n"
         "endif()\n"
-        for suffix, scope in (("_lib", "PRIVATE"), ("_lib_static", "PUBLIC"))
+    )
+    return shared + static
+
+
+#: An imported target's name, and nothing else: no expression, variable,
+#: path or flag (gh-1576).
+_IMPORTED_TARGET = re.compile(r"[A-Za-z0-9_.+-]+(?:::[A-Za-z0-9_.+-]+)+")
+
+#: The three properties that carry a target's COMPILE usage requirements --
+#: what `$<COMPILE_ONLY:>` passes on. A dependency's header needs all three:
+#: measured (gh-1576) with a header that `#error`s without its define, include
+#: dirs alone failed, and definitions alone failed for a `pkg_check_modules`
+#: target, which carries `-D` as an OPTION.
+_COMPILE_USAGE = (
+    ("target_include_directories", "INTERFACE_INCLUDE_DIRECTORIES"),
+    ("target_compile_definitions", "INTERFACE_COMPILE_DEFINITIONS"),
+    ("target_compile_options", "INTERFACE_COMPILE_OPTIONS"),
+)
+
+
+def _compile_usage_c(target: str, libs: "list[str]") -> str:
+    """Hand *libs*' compile usage to *target*'s consumers, without the link.
+
+    The shared library links a dependency PRIVATE: it resolves the symbols
+    itself, and re-linking a static dependency into every consumer would
+    risk a second copy of its state. But the project's own headers may
+    include the dependency's, so a consumer compiling them needs its include
+    dirs, definitions and options (gh-1576). ``$<COMPILE_ONLY:>`` is exactly
+    this and needs CMake 3.27; the root requires 3.16, so it is spelled out
+    per property. Measured in clean containers on CMake 3.16.3 and 3.28.3:
+    identical to ``$<COMPILE_ONLY:>`` on every consumer face.
+
+    Only an item that IS an imported-target name (``Ns::name``: a package's
+    target, ``PkgConfig::X``) is read -- a full match, because
+    ``extra_link_libs`` allows generator expressions, and
+    ``$<$<PLATFORM_ID:Linux>:Ns::x>`` is empty elsewhere, which
+    ``$<TARGET_EXISTS:>`` refuses just as it refuses a path. anything else in ``extra_link_libs`` is a
+    library file, a ``${VAR}`` holding one, or a flag, none of which has
+    usage requirements -- and a path inside ``$<TARGET_EXISTS:>`` is a hard
+    configure error ("requires a non-empty valid target name"), measured on
+    3.16 and 3.28. ``$<TARGET_EXISTS:>`` still guards the rest, for a
+    ``::`` name the consumer never defines. The expressions are exported as
+    written and evaluated on the consumer's machine, where
+    ``find_dependency`` has defined the target, so nothing absolute reaches
+    the export.
+
+    Examples
+    --------
+    >>> _compile_usage_c("L", ["m", "${LIB}", "/p/libz.a", "-lfoo",
+    ...                        "$<$<PLATFORM_ID:Linux>:x::y>"])
+    ''
+    >>> print(_compile_usage_c("L", ["x::y", "m"]), end="")
+      target_include_directories(L INTERFACE
+          $<$<TARGET_EXISTS:x::y>:$<TARGET_PROPERTY:x::y,INTERFACE_INCLUDE_DIRECTORIES>>)
+      target_compile_definitions(L INTERFACE
+          $<$<TARGET_EXISTS:x::y>:$<TARGET_PROPERTY:x::y,INTERFACE_COMPILE_DEFINITIONS>>)
+      target_compile_options(L INTERFACE
+          $<$<TARGET_EXISTS:x::y>:$<TARGET_PROPERTY:x::y,INTERFACE_COMPILE_OPTIONS>>)
+    """
+    libs = [lib for lib in libs if _IMPORTED_TARGET.fullmatch(lib)]
+    if not libs:
+        return ""
+    return "".join(
+        f"  {fn}({target} INTERFACE\n"
+        + "\n".join(
+            f"      $<$<TARGET_EXISTS:{lib}>:$<TARGET_PROPERTY:{lib},{prop}>>"
+            for lib in libs
+        )
+        + ")\n"
+        for fn, prop in _COMPILE_USAGE
     )
 
 

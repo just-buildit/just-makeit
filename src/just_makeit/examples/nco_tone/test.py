@@ -1,7 +1,8 @@
 """End-to-end test: NCO tone generator backed by doppler's nco_state_t.
 
 Demonstrates:
-  - [project] find_packages = ["Doppler"]  — managed external-deps block
+  - [project] find_packages = [{ name = "Doppler", pkg_config = "doppler" }]
+    — the managed external-deps block, and the installed .pc
   - [tone] extra_link_libs = ["doppler::doppler-static"]  — standalone linking
   - opaque state (nco_state_t*) with create_impl / destroy_impl
   - jm apply keeping the find_package() call alive across re-runs
@@ -527,9 +528,13 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     jm_new("nco_tone_demo", proj)
 
     # 2. Add find_packages to [project] in the manifest.
-    # [project] must live in the manifest, not in a fragment.
+    # [project] must live in the manifest, not in a fragment. The table form
+    # names doppler's pkg-config module too, so the installed .pc can list it
+    # (gh-1576): a CMake package name says nothing about its module name.
     cfg = C.load(proj)
-    cfg["project"]["find_packages"] = ["Doppler"]
+    cfg["project"]["find_packages"] = [
+        {"name": "Doppler", "pkg_config": "doppler"}
+    ]
     C.save(proj, cfg)
 
     # 3. Fragment: declares the tone component with opaque NCO state.

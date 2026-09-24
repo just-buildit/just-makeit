@@ -91,15 +91,18 @@ For [`jm method`](commands/extend.md#just-makeit-method), the output shape is a 
 
 Declare how it's found on `[project]`:
 
-| It's…                      | Declaration                   |
-| -------------------------- | ----------------------------- |
-| A vendored C subdir        | `c_deps = ["liba", "libb"]`   |
-| Findable by `find_package` | `find_packages = ["Doppler"]` |
-| A pkg-config module        | `pkg_modules = ["doppler"]`   |
+| It's…                      | Declaration                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| A vendored C subdir        | `c_deps = ["liba", "libb"]`                                      |
+| Findable by `find_package` | `find_packages = [{ name = "Doppler", pkg_config = "doppler" }]` |
+| A pkg-config module        | `pkg_modules = ["doppler"]`                                      |
 
-Then link or include it on the component (or module) that uses it:
-`extra_link_libs = ["${DOPPLER_LIBRARY}"]`,
-`extra_include_dirs = ["${DOPPLER_INCLUDE_DIR}"]`.
+Then link its imported target on the component (or module) that uses it:
+`extra_link_libs = ["doppler::doppler-static"]` (or `PkgConfig::DOPPLER`). A
+target carries its include dirs, so no `extra_include_dirs` is needed, and it
+is what lets consumers of your *installed* library compile your headers too --
+see [When your library depends on another
+package](c-library.md#when-your-library-depends-on-another-package).
 
 ______________________________________________________________________
 

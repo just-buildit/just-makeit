@@ -556,7 +556,9 @@ def run(root: Path) -> None:
     )
     cfg["module"]["dsp"]["reexports"] = {"dsp_fn": ["db10"]}
     if doppler_prefix:
-        cfg["project"]["find_packages"] = ["Doppler"]
+        cfg["project"]["find_packages"] = [
+            {"name": "Doppler", "pkg_config": "doppler"}
+        ]
     C.save(proj, cfg)
 
     # objects needing TOML-only keys (opaque, depends_on, component

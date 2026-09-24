@@ -68,8 +68,11 @@ extra_link_libs = ["doppler::doppler-static"]
 # create_impl: obj->nco = nco_create(norm_freq, 0);
 ```
 
-`[project] find_packages = ["Doppler"]` emits the `find_package(Doppler REQUIRED)`
-block; the build is configured with `-DDoppler_DIR=...`. If doppler can't be
+`[project] find_packages = [{ name = "Doppler", pkg_config = "doppler" }]` emits
+the `find_package(Doppler REQUIRED)` block, and the installed project's
+`find_dependency(Doppler)` and `.pc` `Requires.private: doppler` -- the table
+form is what names doppler's pkg-config module, which its CMake package name
+does not. The build is configured with `-DDoppler_DIR=...`. If doppler can't be
 found, the `tone` object is skipped and the rest of the example still builds —
 so the example is green everywhere, and exercises the real cross-library link
 wherever doppler is present.

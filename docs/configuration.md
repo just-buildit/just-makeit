@@ -260,6 +260,13 @@ extra_link_libs = ["source_core", "lfsr_core", "m"]
 
 Set it from the CLI with `jm module <m> --extra-link-libs TARGET` (repeatable).
 
+For a package, prefer its **imported target** (`doppler::doppler-static`,
+`PkgConfig::FFTW3F`) over a path or a `${VAR}` holding one. A target carries
+its include dirs and flags, and jm passes those on to consumers of your
+installed library. A path carries neither, and it would put this machine's
+layout into the installed package. See [When your library depends on another
+package](c-library.md#when-your-library-depends-on-another-package).
+
 ### `depends_on` — link *and* include a dependency
 
 When an object actually *calls* another object's C API (not just links it), use
@@ -318,7 +325,7 @@ c_deps = ["io"]                    # hand-written native/src/io (io_core, …)
 
 [module.source]
 objects = ["source", "lfsr"]
-extra_link_libs = ["${DOPPLER_STATIC_LIBRARY}", "io_core", "m"]
+extra_link_libs = ["doppler::doppler-static", "io_core", "m"]
 
 [module.wfm]
 objects = ["waveform_engine"]
@@ -351,20 +358,20 @@ Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 
 ### `[project]` keys
 
-| TOML key           | CLI flag                                  | Status       | Notes                                  |
-| ------------------ | ----------------------------------------- | ------------ | -------------------------------------- |
-| `name`             | `jm new <NAME>`                           | ✅           | Required positional.                   |
-| `version`          | `jm config version X`                     | ✅           | Bumped by `jm app` / release tooling.  |
-| `build`            | `jm new --build-system cmake\|make`       | ✅           |                                        |
-| `perf`             | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.      |
-| `pytest`           | `jm new --pytest`                         | ✅           |                                        |
-| `pytest_benchmark` | `jm new --pytest-benchmark`               | ✅           |                                        |
-| `find_packages`    | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`.   |
-| `pkg_modules`      | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`.    |
-| `c_deps`           | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper). |
-| `schema`           | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.         |
-| `c_style`          | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.      |
-| `c_format_command` | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.    |
+| TOML key           | CLI flag                                  | Status       | Notes                                                                                                                                                                                                         |
+| ------------------ | ----------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | `jm new <NAME>`                           | ✅           | Required positional.                                                                                                                                                                                          |
+| `version`          | `jm config version X`                     | ✅           | Bumped by `jm app` / release tooling.                                                                                                                                                                         |
+| `build`            | `jm new --build-system cmake\|make`       | ✅           |                                                                                                                                                                                                               |
+| `perf`             | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.                                                                                                                                                                             |
+| `pytest`           | `jm new --pytest`                         | ✅           |                                                                                                                                                                                                               |
+| `pytest_benchmark` | `jm new --pytest-benchmark`               | ✅           |                                                                                                                                                                                                               |
+| `find_packages`    | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`; an entry may be `{ name, pkg_config }` or `{ name, libs_private }` for the installed `.pc` — see [c-library](c-library.md#when-your-library-depends-on-another-package). |
+| `pkg_modules`      | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`.                                                                                                                                                                           |
+| `c_deps`           | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                        |
+| `schema`           | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                |
+| `c_style`          | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                             |
+| `c_format_command` | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.                                                                                                                                                                           |
 
 ### Generated-C house style — `c_style` and `c_format_command`
 
