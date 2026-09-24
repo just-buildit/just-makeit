@@ -1633,7 +1633,7 @@ def run(
     # until the author deletes the token and takes it over.
     _write(
         root / "src" / pkg / "tests" / f"test_{comp}.py",
-        R.owned_test(
+        R.owned_scaffold(
             R.render_scaffold_py(pytest_tmpl, ctx), f"test_{comp}.py"
         ),
     )
@@ -1642,9 +1642,13 @@ def run(
     benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
+    # gh-1528: born owned too -- it constructs the object, so it goes stale
+    # with the constructor exactly as the test did.
     _write(
         root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
-        R.render_scaffold_py(bench_py_tmpl, ctx),
+        R.owned_scaffold(
+            R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
+        ),
     )
 
     # Benchmark history dir — dated snapshots committed to git

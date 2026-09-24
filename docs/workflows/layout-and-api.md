@@ -49,7 +49,7 @@ my_dsp/
     └── my_dsp/
         ├── __init__.py                 [shared]    jm keeps the re-exports current
         ├── gain.pyi                    [jm]        type stub
-        ├── benchmarks/bench_gain.py    [yours]
+        ├── benchmarks/bench_gain.py    [jm]        yours once you delete its `# jm:generated` line
         └── tests/test_gain.py          [jm]        pytest; yours once you delete its `# jm:generated` line
 ```
 

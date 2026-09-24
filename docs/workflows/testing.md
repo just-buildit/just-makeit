@@ -43,7 +43,10 @@ ______________________________________________________________________
 
 Every object also gets a Python test file and a benchmark file, placed in
 `tests/` and `benchmarks/` directories next to the package. Both are ready
-to run immediately after `pip install .`.
+to run immediately after `pip install .`. Both start with a
+`# jm:generated` line: while it is there, jm keeps the file in step with
+the object's constructor on every `apply`. Delete it to make the file
+yours ([Who owns what](edit-lifecycle.md)).
 
 For the same `Gain` example, `src/my_dsp/tests/test_gain.py` contains:
 
@@ -109,6 +112,9 @@ class TestGain(unittest.TestCase):
 And `src/my_dsp/benchmarks/bench_gain.py`:
 
 ```python
+# jm:generated bench_gain.py
+# jm regenerates this file on apply while the line above is here.
+# To make it yours, delete that line: jm then never writes it again.
 """Benchmark for Gain.
 
 Run standalone:  python src/my_dsp/benchmarks/bench_gain.py

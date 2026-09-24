@@ -2149,9 +2149,10 @@ OWNED_TOKEN_RE = re.compile(
     re.MULTILINE,
 )
 
-#: The sentence a person reads under the token in a scaffolded test
-#: (gh-1489) -- the `.py` counterpart of `_FRAGMENT_OWNERSHIP["generated"]`.
-OWNED_TEST_NOTE = (
+#: The sentence a person reads under the token in a scaffolded Python file
+#: -- the test (gh-1489) and the benchmark (gh-1528) -- the `.py`
+#: counterpart of `_FRAGMENT_OWNERSHIP["generated"]`.
+OWNED_SCAFFOLD_NOTE = (
     "# jm regenerates this file on apply while the line above is here.\n"
     "# To make it yours, delete that line: jm then never writes it again.\n"
 )
@@ -2172,21 +2173,23 @@ def owned_token(filename: str) -> str:
     return f"/* jm:generated {filename} */"
 
 
-def owned_test(text: str, filename: str) -> str:
-    """*text*, a scaffolded Python test, born owned by jm (gh-1489).
+def owned_scaffold(text: str, filename: str) -> str:
+    """*text*, a scaffolded Python file, born owned by jm.
 
-    The token leads the file, then `OWNED_TEST_NOTE`. While the token names
+    The scaffolded test (gh-1489) and benchmark (gh-1528) both construct
+    the object, so both go stale the moment its constructor changes. The
+    token leads the file, then `OWNED_SCAFFOLD_NOTE`. While the token names
     this file, `apply` renders it whole -- so a constructor that gains a
-    parameter reaches the test instead of leaving it calling the old one.
+    parameter reaches it instead of leaving it calling the old one.
     Deleting the token hands the file to its author for good.
 
-    >>> print(owned_test("import unittest\\n", "test_g.py"), end="")
+    >>> print(owned_scaffold("import unittest\\n", "test_g.py"), end="")
     # jm:generated test_g.py
     # jm regenerates this file on apply while the line above is here.
     # To make it yours, delete that line: jm then never writes it again.
     import unittest
     """
-    return owned_token(filename) + "\n" + OWNED_TEST_NOTE + text
+    return owned_token(filename) + "\n" + OWNED_SCAFFOLD_NOTE + text
 
 
 def is_owned_render(text: str, filename: str) -> bool:
