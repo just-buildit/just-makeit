@@ -1145,6 +1145,34 @@ def run(
             )
             sys.exit(1)
 
+    # gh-1540: `multi_output` adds a trailing `<T> *outN` per extra value
+    # (gh-600), but only some result shapes render them. On these three the
+    # key was accepted and stored, and then no prototype, binding or stub
+    # used it: the declared outputs silently vanished. Refused here, before
+    # anything is written, so the CLI and `apply` agree (gh-1408).
+    if multi_output:
+        _mo_shape = (
+            "--batch"
+            if batch
+            else "--single"
+            if single
+            else "--result-field"
+            if result_fields and not record_dtype and not borrow
+            else ""
+        )
+        if _mo_shape:
+            print(
+                f"error: method '{method_name}': --multi-output has no effect "
+                f"on a {_mo_shape} method.\n"
+                "Its result shape has no slot for extra outputs, so jm would "
+                "store them\nand generate nothing. Drop --multi-output "
+                "(`multi_output` in the manifest),\nor return them another "
+                "way: a plain or --variable-output method\ncarries each extra "
+                "output as a trailing `<T> *outN`.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # gh-805 §B: value-or-negative-error. Checked here rather than left to
     # render, because each of these produces C that COMPILES and is wrong —
     # the failure mode this key exists to remove.
