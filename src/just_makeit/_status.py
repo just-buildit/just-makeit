@@ -39,6 +39,10 @@ the files `apply` *merges* rather than overwrites (the package
               project's file lacks. The file is the author's there, so
               `apply` never adds it; one line per fix, never counted,
               and `--diff` prints the file against today's render.
+  - PKG-CONFIG — (gh-1576) a `[project] find_packages` entry with neither
+              `pkg_config` nor `libs_private`, which the installed `.pc`
+              therefore cannot name. Advisory and never counted: the
+              project works through find_package either way.
   - NOTE    — (gh-921) a method sets `pass_capacity` while its header still
               declares `max_out(state)`, so the exact allocation the opt-in
               asks for is not the one generated. Not a file `apply` would
@@ -1545,6 +1549,37 @@ def run(
         if root_render is not None:
             _real = (root / "CMakeLists.txt").read_bytes()
             print(_unified_diff(_real, root_render, "CMakeLists.txt"), end="")
+        print()
+
+    # gh-1576: a `find_packages` dependency the installed `.pc` cannot name.
+    # A CMake package name maps to no pkg-config module, so jm will not guess
+    # one -- the author states it. Until then a pkg-config consumer misses the
+    # dependency's Cflags (a jm header may include its headers) and, linking
+    # static, its libs. Advisory, like ROOT CMAKE: the project works through
+    # find_package either way.
+    _unnamed = [
+        e.name
+        for e in C.find_package_entries(cfg)
+        if not (e.pkg_config or e.libs_private)
+    ]
+    if _unnamed:
+        print(
+            f"PKG-CONFIG ({len(_unnamed)}) — find_packages dependencies the"
+            " installed .pc cannot name:"
+        )
+        for name in _unnamed:
+            print(f"  ~ {name}")
+        print(
+            "  A CMake package name says nothing about its pkg-config module,"
+            " so a\n"
+            "  pkg-config consumer of the installed project gets no Cflags"
+            " for these and,\n"
+            "  linking static, no libs. Say which: in [project] find_packages"
+            " write\n"
+            '  { name = "<Pkg>", pkg_config = "<module>" }, or'
+            ' libs_private = "<flags>"\n'
+            "  when it ships no .pc. Not drift."
+        )
         print()
 
     # gh-975: printed on both paths for OUTDATED's reason, and counted for the

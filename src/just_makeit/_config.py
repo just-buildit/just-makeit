@@ -3368,20 +3368,109 @@ def enum_choice_docs(
     return out
 
 
-def find_packages(cfg: dict) -> list[str]:
-    """Return CMake package names declared under [project].
+class FindPackage(NamedTuple):
+    """One ``[project] find_packages`` entry, as both faces need it.
 
-    Each name is emitted as ``find_package(X REQUIRED)`` inside the
-    ``# ── External deps`` sentinel block in the top CMakeLists.txt,
-    maintained by ``jm apply``.  Declare in TOML as:
+    ``name`` is the CMake package: ``find_package()`` in the root and
+    ``find_dependency()`` in the installed config. The other two are what
+    the installed ``.pc`` needs and cannot derive, because a CMake package
+    name maps to no pkg-config module name (``PNG`` is ``libpng``, ``CURL``
+    is ``libcurl``, ``Threads`` has none). ``pc(5)`` gives the two cases:
+    a dependency that ships a ``.pc`` goes to ``Requires.private``
+    (*pkg_config*), and one that does not goes to ``Libs.private``
+    (*libs_private*). A bare string entry carries neither (gh-1576).
+    """
+
+    name: str
+    pkg_config: str = ""
+    libs_private: str = ""
+
+
+#: The keys a table entry of ``find_packages`` may carry.
+_FIND_PACKAGE_KEYS = ("name", "pkg_config", "libs_private")
+
+
+def find_package_entries(cfg: dict) -> "list[FindPackage]":
+    """``[project] find_packages``, each entry as a :class:`FindPackage`.
+
+    An entry is a CMake package name, or a table naming it with what the
+    installed ``.pc`` should say about it:
 
     .. code-block:: toml
 
         [project]
-        find_packages = ["Doppler"]
+        find_packages = [
+            "Fftw3",
+            { name = "Doppler", pkg_config = "doppler" },
+            { name = "Threads", libs_private = "-pthread" },
+        ]
+
+    A malformed entry is refused rather than skipped: dropping it would
+    drop the ``find_package()`` line too, and the project would fail at
+    configure on a dependency the manifest plainly declares.
+
+    Examples
+    --------
+    >>> find_package_entries({"project": {"find_packages": [
+    ...     "A", {"name": "B", "pkg_config": "b"}]}})
+    [FindPackage(name='A', pkg_config='', libs_private=''), \
+FindPackage(name='B', pkg_config='b', libs_private='')]
     """
     v = cfg.get("project", {}).get("find_packages", [])
-    return list(v) if isinstance(v, (list, tuple)) else []
+    if not isinstance(v, (list, tuple)):
+        return []
+    out: list[FindPackage] = []
+    errors: list[str] = []
+    for entry in v:
+        if isinstance(entry, str) and entry:
+            out.append(FindPackage(entry))
+            continue
+        if not isinstance(entry, dict):
+            errors.append(
+                f"[project] find_packages entry {entry!r} is neither a"
+                " package name nor a table"
+            )
+            continue
+        unknown = sorted(set(entry) - set(_FIND_PACKAGE_KEYS))
+        if unknown:
+            errors.append(
+                f"[project] find_packages entry {entry!r}: unknown key(s)"
+                f" {', '.join(unknown)} (allowed: "
+                f"{', '.join(_FIND_PACKAGE_KEYS)})"
+            )
+            continue
+        bad = [
+            k
+            for k in _FIND_PACKAGE_KEYS
+            if k in entry and not (isinstance(entry[k], str) and entry[k])
+        ]
+        if "name" not in entry or bad:
+            errors.append(
+                f"[project] find_packages entry {entry!r} needs a `name`,"
+                " and every key must be a non-empty string"
+            )
+            continue
+        out.append(
+            FindPackage(
+                entry["name"],
+                entry.get("pkg_config", ""),
+                entry.get("libs_private", ""),
+            )
+        )
+    if errors:
+        _refuse(errors)
+    return out
+
+
+def find_packages(cfg: dict) -> list[str]:
+    """The CMake package names declared under ``[project] find_packages``.
+
+    Each is emitted as ``find_package(X REQUIRED)`` inside the
+    ``# ── External deps`` sentinel block in the top CMakeLists.txt,
+    maintained by ``jm apply``, and ``find_dependency(X)`` in the installed
+    config. An entry may be a table; see :func:`find_package_entries`.
+    """
+    return [e.name for e in find_package_entries(cfg)]
 
 
 def pkg_modules(cfg: dict) -> list[str]:
@@ -6373,7 +6462,10 @@ def _dump(cfg: dict) -> str:
                 # reloads as a string and raises. Asking the value what it is
                 # needs no registration, and a new list-valued key cannot be
                 # forgotten (see also `status_allow`, mangled the same way).
-                items_str = ", ".join(f'"{x}"' for x in v)
+                # gh-1576: through `_toml_value`, not `f'"{x}"'` -- an entry
+                # may be a table (`find_packages = [{ name = "X", ... }]`),
+                # and quoting its repr is the gh-763 shape one level down.
+                items_str = ", ".join(_toml_value(x) for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:
                 lines.append(f'{k} = "{v}"')

@@ -1411,15 +1411,27 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
             ]
         body = "\n".join(["include(CMakeFindDependencyMacro)", *deps])
         lines.append(f"set(JM_FIND_DEPENDENCIES [=[\n{body}\n]=])\n")
-        # gh-1573: the `.pc` face of the same fact. A `pkg_modules` entry IS
-        # a pkg-config module name, so it goes to `Requires.private`, which
-        # `pkg-config --static` follows to the archive's missing symbols. A
-        # `find_packages` entry names a CMake package, and nothing maps that
-        # to a pkg-config module, so it is not guessed at.
-        if pkg_mods:
+        # gh-1573/gh-1576: the `.pc` face of the same fact, per pc(5). A
+        # dependency with its own `.pc` goes to `Requires.private`: its Cflags
+        # always (a jm header may include the dependency's), its Libs with
+        # `--static`. One without goes to `Libs.private`. A `pkg_modules`
+        # entry IS a module name; a `find_packages` entry names a CMake
+        # package, so the author states its `pkg_config` or `libs_private` --
+        # nothing maps one namespace to the other, and a wrong guess would
+        # break `pkg-config --cflags` for everyone.
+        entries = C.find_package_entries(cfg)
+        requires = [e.pkg_config for e in entries if e.pkg_config]
+        requires += [m for m in pkg_mods if m not in requires]
+        if requires:
             lines.append(
                 "set(JM_PC_REQUIRES_PRIVATE "
-                f'"Requires.private: {", ".join(pkg_mods)}")\n'
+                f'"Requires.private: {", ".join(requires)}")\n'
+            )
+        libs_private = [e.libs_private for e in entries if e.libs_private]
+        if libs_private:
+            lines.append(
+                "set(JM_PC_LIBS_PRIVATE "
+                f'"Libs.private: {" ".join(libs_private)}")\n'
             )
 
     has_begin = _EXTDEPS_BEGIN in real
