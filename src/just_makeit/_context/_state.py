@@ -2059,6 +2059,7 @@ _HEADER_ONLY_DECL_SLOTS = (
     "builtin_reset_decl",
     "steps_c_decl",
     "getter_setter_decls",
+    "serializable_decls",
 )
 
 #: Definition slots, in the order the header should carry them.
@@ -2068,7 +2069,48 @@ _HEADER_ONLY_DEF_SLOTS = (
     "reset_c_close",
     "steps_c_impl",
     "getter_setter_impls",
+    "serializable_impls",
 )
+
+
+def _header_only_defs(ctx: dict) -> str:
+    """Render the definition slots in the layout ``_core.c`` gives them.
+
+    gh-1363. The slots are fragments, not self-delimiting functions: the
+    ``_core.c`` template supplies the line breaks between them. Joining them
+    bare dropped those breaks, so an accessor's return type landed on the
+    closing brace of ``steps()`` -- ``}float`` -- and :func:`staticize`, which
+    works line by line, then prefixed the NAME line instead, giving
+    ``static inline q_get_scale(`` with the type stranded above it.
+
+    So the layout is read from the template itself -- the lines from the
+    first definition slot to the last -- rather than restated here, which
+    would be a second copy of it free to drift. Both faces of a component,
+    ``_core.c`` and the header-only header, then separate the same slots the
+    same way.
+
+    Examples
+    --------
+    >>> _header_only_defs({"steps_c_impl": "}", "getter_setter_impls": "x"})
+    '\\n}\\n\\nx\\n'
+    >>> _header_only_defs({"getter_setter_impls": "x"})
+    '\\nx\\n'
+    >>> _header_only_defs({})
+    ''
+    """
+    from .._render import COMPONENT_CORE_C, render
+
+    first = f"/*<<{_HEADER_ONLY_DEF_SLOTS[0]}>>*/"
+    last = f"/*<<{_HEADER_ONLY_DEF_SLOTS[-1]}>>*/"
+    start = COMPONENT_CORE_C.index(first)
+    end = COMPONENT_CORE_C.index("\n", COMPONENT_CORE_C.index(last)) + 1
+    slots = {k: str(ctx.get(k, "")) for k in _HEADER_ONLY_DEF_SLOTS}
+    # An empty slot (no_step, no state) leaves its separators behind; in a
+    # file the author owns from here on, collapse them so every definition
+    # is preceded by exactly one blank line. The header template already
+    # puts the line break before its extern "C" close.
+    text = render(COMPONENT_CORE_C[start:end], slots).strip("\n")
+    return "\n" + re.sub(r"\n{3,}", "\n\n", text) + "\n" if text else ""
 
 
 def apply_header_only(
@@ -2145,8 +2187,7 @@ def apply_header_only(
         f"{ctx.get('destroy_impl', '')}    free(state);"
         f"{ctx.get('destroy_ret_stmt', '')}{L}}}{L}"
     )
-    body = "".join(str(ctx.get(k, "")) for k in _HEADER_ONLY_DEF_SLOTS)
-    ctx["inline_core"] = lifecycle + staticize(body)
+    ctx["inline_core"] = lifecycle + staticize(_header_only_defs(ctx))
     ctx["create_decl"] = ""
     ctx["destroy_decl"] = ""
     for key in _HEADER_ONLY_DECL_SLOTS:

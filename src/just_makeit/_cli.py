@@ -76,8 +76,10 @@ Commands:
                                 (one impl; step()==steps(..,1) byte-for-byte
                                 under -ffast-math). Scalar/void-arg objects only.
     --serializable              Generate state_bytes()/get_state()/set_state()
-                                over a hand-written C triplet (the elastic /
-                                pure-transducer face) + a round-trip CI test.
+                                over a C triplet scaffolded in _core.c (the
+                                elastic / pure-transducer face): a byte copy
+                                of the declared state when every field is
+                                plain, else a stub whose set_state() raises.
     --init-param name:type[:default]  User-facing constructor param; repeatable.
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).

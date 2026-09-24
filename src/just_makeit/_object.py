@@ -2622,6 +2622,16 @@ def run(
             serializable=serializable,
         )
     )
+    # gh-1509: the C triplet the binding calls, declared in the sacred
+    # header and defined in `_core.c` -- a working one when every field's
+    # bytes are its value, a refusing stub otherwise.
+    ctx.update(
+        Ctx.make_serializable_core_ctx(
+            ctx["component"],
+            serializable,
+            Ctx.state_blob_fields(vars_, opaque_fields, array_args),
+        )
+    )
     # gh-481: a fresh object declares no warnings, but the slot must resolve
     # or this path's _ext.c ships with a literal <<init_warn_block>> in it.
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))

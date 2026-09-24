@@ -202,6 +202,16 @@
     against its own header. An example that goes stale after scaffold, when
     `apply` rewrites `create()`, is gh-1502.
 
+- **A header-only core's accessors keep their return type** (gh-1363). The
+    definitions moved into a `--header-only` header were joined with none of
+    the line breaks `_core.c` puts between them, so a state accessor's
+    return type landed on the closing brace of `steps()` (`}float`) and the
+    name line became `static inline q_get_scale(`. It compiled -- as
+    obsolescent C -- so nothing caught it, in a file the author owns from
+    then on. The definitions are now laid out by the `_core.c` template
+    itself, one blank line apart in every shape (`no_step`, `no_state`,
+    `no_reset`).
+
 - **Every generated class names a module Python can import, so it pickles**
     (gh-1486). A type's `__module__` is the part of its `tp_name` before the
     last dot, and jm wrote `"<comp>.<Comp>"` for a standalone object and
@@ -238,6 +248,21 @@
     ratchet, and the Gate A ratchet loses every ruff line but
     `stale_project`'s, whose frozen 0.33-era test and benchmark files are the
     author's and are never rewritten.
+
+- **A fresh `--serializable` object compiles, and its state round-trips**
+    (gh-1509). The binding calls `<c>_state_bytes`, `<c>_get_state` and
+    `<c>_set_state`, but the scaffold declared and defined none of them, so
+    the tree jm had just written failed on implicit declaration (GCC 14+,
+    clang). They are now scaffolded like every function the binding calls:
+    prototypes in `_core.h`, bodies in `_core.c` (inline for a header-only
+    core). When every state field's bytes are its value -- scalars and
+    fixed `T[N]` arrays -- the bodies pack those fields, so
+    `set_state(get_state())` restores the object; when a field owns memory
+    elsewhere (a string, an `--array-arg`, an opaque field) they are a stub
+    whose `set_state()` raises `ValueError`. `apply` adds the prototypes to
+    an existing header that lacks them, but never splices the bodies into an
+    existing `_core.c`: a project that declared `serializable` before this
+    wrote its own, possibly through a macro jm cannot read as a definition.
 
 ### Changed
 
