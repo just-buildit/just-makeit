@@ -9,7 +9,7 @@
 # invent a command for a target it does not want — a fake target advertised in
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
-                changelog-check changelog-sections-check conflict-check \
+                conflict-check \
                 complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
@@ -114,91 +114,12 @@ tool-install: ## Install this package as a uv tool (retries a network flake)
 	echo "::error::uv tool install failed after $(TOOL_INSTALL_ATTEMPTS) attempts"; \
 	exit 1
 
-# ── changelog-check ──────────────────────────────────────────────────────────
-# A branch that changes src/ must also touch CHANGELOG.md.
-#
-# PER BRANCH, not per file-state, and that distinction is the whole design.
-# The obvious gate -- "is [Unreleased] non-empty?" -- goes INERT the moment one
-# entry exists, so every PR after the first passes for free. doppler shipped a
-# public C API with no entry through exactly that hole
-# (doppler-dsp/doppler#705). This asks a question whose answer changes per
-# branch: did THIS work touch the changelog.
-#
-# It exists because the process failed silently for a whole day. v0.58.0 was
-# assembled from seven merged PRs, not one of which added an entry, and the
-# section had to be reconstructed at release time from context that happened to
-# still be around. A fresh session would have had to reverse-engineer it from
-# commit messages.
-#
-# INERT on main by construction: HEAD is an ancestor of the base there, the
-# range is empty, and there is nothing to judge. It only has an opinion on a
-# branch that is ahead.
-#
-# Touching the file is the bar, not growing a particular section. A refactor
-# that genuinely warrants no user-facing note is one honest line from passing,
-# and a gate that tries to judge which changes "deserve" an entry is a gate
-# that argues with its author.
-CHANGELOG_BASE ?= origin/main
-
-# Hung off `lint`, which is what CI runs. standard.mk owns lint's recipe; this
-# adds a prerequisite to it, and it lives HERE rather than in the Makefile
-# because tests/test_lint_ssot.py holds the Makefile to configuration only --
-# a rule there is a rule the drift gate cannot see. It caught this line in the
-# Makefile on the first run.
-lint: changelog-check
-
-# GATE: a change under src/ carries a CHANGELOG entry under [Unreleased].
-changelog-check: ## Verify a branch that changes src/ also touches CHANGELOG.md
-	@base=$$(git merge-base HEAD $(CHANGELOG_BASE) 2>/dev/null) || { \
-	    echo "changelog-check: no merge base with $(CHANGELOG_BASE) —"; \
-	    echo "  fetch it (CI needs fetch-depth: 0) or set CHANGELOG_BASE."; \
-	    exit 1; \
-	 }; \
-	 files=$$(git diff --name-only "$$base"..HEAD); \
-	 if [ -z "$$files" ]; then \
-	     echo "changelog-check: no commits ahead of $(CHANGELOG_BASE) — inert"; \
-	     exit 0; \
-	 fi; \
-	 src=$$(printf '%s\n' "$$files" | grep '^src/just_makeit/' || true); \
-	 if [ -z "$$src" ]; then \
-	     echo "changelog-check: no src/ changes on this branch"; \
-	     exit 0; \
-	 fi; \
-	 if printf '%s\n' "$$files" | grep -qx 'CHANGELOG.md'; then \
-	     echo "changelog-check: src/ changed and CHANGELOG.md was updated"; \
-	     exit 0; \
-	 fi; \
-	 echo "ERROR: this branch changes src/ but not CHANGELOG.md:"; \
-	 printf '%s\n' "$$src" | sed 's/^/  /' | head -20; \
-	 echo ""; \
-	 echo "  Add an entry under ## [Unreleased] in this branch, so the"; \
-	 echo "  release is a promotion rather than an archaeology exercise."; \
-	 echo "  A purely internal change still gets one honest line."; \
-	 exit 1
-
-# gh-1438: changelog-check asks whether a branch touched CHANGELOG.md, so an
-# entry put inside an already-released section passed it. This asks where the
-# edit landed: every section that existed at the merge base, except
-# [Unreleased], must be unchanged. A release passes with no carve-out, because
-# the section it renames [Unreleased] to is new at HEAD. The logic is a script
-# so tests/test_gh1438_changelog_sections.py can run it on seeded histories.
-lint: changelog-sections-check
-
-# GATE: a branch never edits a CHANGELOG section that already shipped.
-changelog-sections-check: ## Verify a branch edits no already-released CHANGELOG section
-	@base=$$(git merge-base HEAD $(CHANGELOG_BASE) 2>/dev/null) || { \
-	    echo "changelog-sections-check: no merge base with $(CHANGELOG_BASE) -"; \
-	    echo "  fetch it (CI needs fetch-depth: 0) or set CHANGELOG_BASE."; \
-	    exit 1; \
-	 }; \
-	 python3 scripts/changelog_sections_check.py "$$base"
-
 # gh-974: a merge-conflict marker that reached the published docs site and sat
 # there for ten days and a release. The check lives in a script rather than in
 # this recipe so its own gate can run it over seeded files — a lint target that
 # can only be exercised by corrupting the repo is a target nobody proves.
 #
-# Hung off `lint` for changelog-check's reason: CI runs `make lint` and nothing
+# Hung off `lint` because CI runs `make lint` and nothing
 # else, and a rule in the Makefile is a rule tests/test_lint_ssot.py rejects.
 lint: conflict-check
 

@@ -2,8 +2,8 @@
 # module docstring. `make gates-index` prints them; this file is
 # the ratchet that keeps one from quietly dropping out.
 # Regenerate with `make gates-index-update`.
-local.mk:a branch never edits a CHANGELOG section that already shipped.
-local.mk:a change under src/ carries a CHANGELOG entry under [Unreleased].
+Makefile:a branch never edits a CHANGELOG section that already shipped.
+Makefile:a change under src/ carries a changelog.d/ fragment.
 test_changelog_has_every_release
 test_claude_md_drift
 test_cli_flag_docs

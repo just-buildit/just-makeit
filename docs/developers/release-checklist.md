@@ -53,18 +53,24 @@ than a number nobody reads. `uv.lock` is not probed and does not need to be:
 `uv lock` regenerates it, and the `uv-lock` pre-commit hook fails on a lock
 that has drifted from the manifest.
 
-## 3. Promote the changelog heading
+## 3. Review the promoted changelog
 
-The only hand-written step, and it stays prose. Entries were already written
-under `## [Unreleased]` by the PR that made each change — this promotes the
-heading:
+Nothing to write. Each PR added its entry as a file,
+`changelog.d/<section>/<slug>.md`, rather than a line under
+`## [Unreleased]` — so parallel PRs never conflict on `CHANGELOG.md`
+(gh-1526). `release-branch` ran `make changelog-assemble VERSION=X.Y.Z`,
+which moved every fragment into a new `## [X.Y.Z] — YYYY-MM-DD` section,
+in section order, and deleted the fragments.
 
-1. `## [Unreleased]` → `## [X.Y.Z] — YYYY-MM-DD`
-1. add a fresh empty `## [Unreleased]` above it
+Read that section in `git diff`. **The release notes are extracted verbatim
+from it**, so a fragment that reads badly is fixed here, in `CHANGELOG.md`.
+`tag-release` refuses while any fragment is still unassembled
+(`changelog-assembled-check`).
 
-Sections are Breaking / Added / Fixed / Docs, keep-a-changelog style. **The
-release notes are extracted verbatim from this section**, so if a long-lived
-branch left `[Unreleased]` lagging, populate it to match the shipped work now.
+Writing a fragment: `changelog-check` fails a branch that changes
+`src/just_makeit/` without one, and its message says where the file goes.
+The sections are the directories under `changelog.d/`; `CHANGELOG_SECTIONS`
+in `standard.mk` sets their published order.
 
 ## 4. PR it, and merge it green
 

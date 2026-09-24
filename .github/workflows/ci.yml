@@ -69,10 +69,11 @@ jobs:
           # bump edits pyproject.toml, then the uv-lock and sync-bootstrap-version
           # hooks regenerate uv.lock and bootstrap.toml. Skipping on only the first
           # two meant every release PR ran the full matrix for a version
-          # string.
+          # string. It also deletes the changelog.d/ fragments it promotes
+          # into CHANGELOG.md (gh-1526).
           changed=$(git diff --name-only "$base" HEAD)
           if echo "$changed" \
-             | grep -qvE '^(CHANGELOG\.md|pyproject\.toml|bootstrap\.toml|uv\.lock)$'
+             | grep -qvE '^(CHANGELOG\.md|changelog\.d/.+|pyproject\.toml|bootstrap\.toml|uv\.lock)$'
           then
             echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
           fi

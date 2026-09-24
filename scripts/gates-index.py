@@ -120,8 +120,8 @@ def makefile_obligations(root: Path) -> "list[tuple[str, str]]":
     """Obligations declared by make-target gates.
 
     Not every working rule is a pytest. The one that caught the first
-    omission in this session's work was `changelog-check`, a target in
-    `local.mk` -- so an index that read only `tests/` would have left out
+    omission in this session's work was `changelog-check`, then a target
+    in `local.mk` -- so an index that read only `tests/` would have left out
     the very rule it was written for. A `# GATE:` comment anywhere in a
     makefile declares one, on the same terms.
     """
