@@ -578,6 +578,12 @@ finding whose report had to be a gate rather than a note.
 If a file is deliberately kept unbuilt, name it in `[project] status_allow`:
 it stays listed, marked `[status_allow]`, and stops counting.
 
+"A build file" is every `CMakeLists.txt` in the project (not a build tree or
+`vendor/`), the `<dir>_extra.cmake` hook each one includes, and the root
+`Makefile` / `local.mk`. So a hand-written test or benchmark wired in the
+[hook jm tells you to use](../customization.md)
+counts as built (gh-1432); before, it was reported `UNBUILT` while it compiled.
+
 `UNBUILT` reports a benchmark orphan only when the tree builds **some**
 benchmark. A project that builds none — one predating the `make` backend's
 `bench:` target (gh-832) — has the whole category unbuilt by construction, and

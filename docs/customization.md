@@ -70,7 +70,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/<dir>_extra.cmake OPTIONAL)
 ```
 
 Put anything the manifest cannot express there — a
-`target_compile_definitions`, a compile option, a `find_package` — rather than
+`target_compile_definitions`, a compile option, a `find_package`, a
+hand-written test or benchmark target (`jm status` reads the hook when it asks
+whether one is built, gh-1432) — rather than
 in the generated file, where the next `jm apply` would drop it (gh-1351).
 `OPTIONAL` makes the line do nothing until you create the file. It is named for
 the directory, so a module object that shares its module's directory shares its
