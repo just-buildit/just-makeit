@@ -9,6 +9,7 @@ test_claude_md_drift
 test_cli_flag_docs
 test_face_parity_gate
 test_gates_index
+test_generated_ci_pins
 test_gh1141_version_copies
 test_gh1368_complex_surface
 test_gh1374_cli_in_process
