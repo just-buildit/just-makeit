@@ -81,6 +81,13 @@ SHAPES: "dict[str, list[str]]" = {
         "view fir FirView --module m --create-fn fir_create_view"
         " --init-param scale:double:2.0",
     ],
+    # gh-1522: --opaque-state requires --no-step and refuses --state (the
+    # fields are hand-written), standalone and as a module object.
+    "opaque_state": ["object g --opaque-state --no-step"],
+    "opaque_state_module": [
+        "module m",
+        "object g --module m --opaque-state --no-step",
+    ],
     "nested_module": ["module dsp.filters", "object fir --module dsp.filters"],
     "pytest_faces": [
         "new p --pytest --pytest-benchmark",
