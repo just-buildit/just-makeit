@@ -1051,6 +1051,22 @@ def fn_c_inline_stub(
     )
 
 
+def extra_cmake_name(dirname: str) -> str:
+    """The CMake hook a ``native/src/<dirname>/CMakeLists.txt`` includes.
+
+    One spelling for both directions: `with_extra_cmake` writes the include
+    line from it, and `_hollow` reads the file it names when deciding whether
+    a test or benchmark is compiled (gh-1432) -- a hook the scanner looked for
+    under another name would be a wired target reported as unbuilt.
+
+    Examples
+    --------
+    >>> extra_cmake_name("fir")
+    'fir_extra.cmake'
+    """
+    return f"{dirname}_extra.cmake"
+
+
 def with_extra_cmake(text: str, dirname: str) -> str:
     r"""*text* -- a ``native/src/<dirname>/CMakeLists.txt`` -- with its hook.
 
@@ -1083,14 +1099,15 @@ def with_extra_cmake(text: str, dirname: str) -> str:
     include(${CMAKE_CURRENT_LIST_DIR}/o_extra.cmake OPTIONAL)
     <BLANKLINE>
     """
+    hook = extra_cmake_name(dirname)
     return (
         text.rstrip("\n")
         + "\n\n"
-        + f"# Your own CMake for this directory goes in {dirname}_extra.cmake"
+        + f"# Your own CMake for this directory goes in {hook}"
         " beside this\n"
         "# file: jm includes it and never writes it (gh-1351). This file is\n"
         "# regenerated.\n"
-        f"include(${{CMAKE_CURRENT_LIST_DIR}}/{dirname}_extra.cmake OPTIONAL)\n"
+        f"include(${{CMAKE_CURRENT_LIST_DIR}}/{hook} OPTIONAL)\n"
     )
 
 

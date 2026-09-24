@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
+from . import _render as R
 
 #: Where jm puts each kind of generated C target, and the filename shape it
 #: uses. A file in one of these directories matching the pattern is jm-shaped
@@ -216,6 +217,22 @@ def _build_texts(root: Path) -> list[str] | None:
             texts.append(cml.read_text(encoding="utf-8"))
         except OSError:
             continue
+        # gh-1432: every CMakeLists jm renders under `native/src/<d>/`
+        # includes `<d>_extra.cmake` beside it, and that hook is where jm
+        # itself tells an author to put hand CMake -- a benchmark target
+        # included. Not reading it reported a compiled file as UNBUILT and
+        # gated `status --check` on correct work (doppler's
+        # `bench_buffer_core.c`). The name comes from the renderer that
+        # writes the include, so the two cannot disagree; whether the hook
+        # exists is a fact about the directory, so it is simply looked for.
+        # A wildcard in the hook stands the scan down like any other build
+        # file's, which is the point of reading it through this list.
+        hook = cml.parent / R.extra_cmake_name(cml.parent.name)
+        if hook.is_file():
+            try:
+                texts.append(hook.read_text(encoding="utf-8"))
+            except OSError:
+                pass
     # `build = "make"` projects name their C tests in the root Makefile's
     # C_TESTS list instead, so the same question has a second place to look.
     for extra in ("Makefile", "local.mk"):
