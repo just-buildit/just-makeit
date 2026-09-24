@@ -240,6 +240,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1448_token_survives_clang_format.py \
                     tests/test_gh1452_consumer_links_installed_tree.py \
                     tests/test_gh1572_combined_lib_links_extra.py \
+                    tests/test_gh1573_pc_requires_private.py \
                     tests/test_gh1376_presets_build.py \
                     tests/test_gh1443_gate_a.py \
                     tests/test_gh1489_token_survives_ruff.py \

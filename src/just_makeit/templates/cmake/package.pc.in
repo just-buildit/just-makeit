@@ -8,3 +8,4 @@ Description: <<project>> C library
 Version: @PROJECT_VERSION@
 Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@
 Cflags: -I${includedir}
+@JM_PC_REQUIRES_PRIVATE@

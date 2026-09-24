@@ -43,6 +43,7 @@ test_gh1528_owned_scaffold_bench
 test_gh1540_multi_output_shapes
 test_gh1549_replay_dep_closure_order
 test_gh1572_combined_lib_links_extra
+test_gh1573_pc_requires_private
 test_gh949_outdated
 test_lint_ssot
 test_stdlib_floor
