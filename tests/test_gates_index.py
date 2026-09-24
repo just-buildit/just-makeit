@@ -92,9 +92,12 @@ class TestTheIndexIsReal:
             "test_gh949_outdated",
         ):
             assert name in declared, f"{name} stopped declaring its rule"
-        assert any(n.startswith("local.mk:") for n in declared), (
-            "the changelog-entry gate is a make target and must ride too"
-        )
+        # The standard's target since gh-1526, declared at the HAS_CHANGELOG
+        # flag in the Makefile that switches it on.
+        assert (
+            "Makefile:a change under src/ carries a changelog.d/ fragment."
+            in declared
+        ), "the changelog-entry gate is a make target and must ride too"
 
 
 class TestTheRatchet:
