@@ -3363,6 +3363,9 @@ def run(
                 contextlib.redirect_stdout(io.StringIO()),
                 C.deferred_save(),
                 _obj_mod.deferred_module_regen(),
+                # gh-1549: link closures follow the complete depends_on
+                # graph, not the part of it replayed so far.
+                C.replay_dependency_graph(cfg),
             ):
                 _replay(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:

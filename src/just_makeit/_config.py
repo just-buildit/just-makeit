@@ -699,6 +699,43 @@ def scratch_writes() -> "Iterator[None]":
         _SCRATCH_WRITES = prev
 
 
+# gh-1549: the complete manifest whose `depends_on` graph a replay walks.
+# None means "the cfg you were handed", which is every path except a replay.
+_REPLAY_GRAPH: "dict | None" = None
+
+
+@contextmanager
+def replay_dependency_graph(cfg: dict) -> "Iterator[None]":
+    """Walk link closures over *cfg*'s complete ``depends_on`` graph (gh-1549).
+
+    The fourth member of the replay-scope family (`scratch_writes`,
+    `deferred_save`, ``_object.deferred_module_regen``), and scoped the same
+    way for the same reason: `transitive_dep_cores` is reached from deep
+    inside four render paths, and the honest scope is "we are replaying".
+
+    ``apply`` replays components one at a time into a scratch tree, and each
+    render reads the scratch manifest, which holds only what has been
+    replayed so far. `transitive_dep_cores` follows each dependency's OWN
+    ``depends_on`` from that manifest, so a dependency declared later (in a
+    later module, or later in the same one) had no edges yet, and the walk
+    stopped at it. ``B -> A -> C`` with ``A`` replayed after ``B`` rendered
+    ``B``'s link lines without ``c_core``, and ``status --check`` saw the same
+    replay and passed. The output depended on declaration order.
+
+    Inside this scope the walk reads edges from the complete source manifest,
+    so the closure is the same whatever order the replay visits components
+    in. Only the edges are read from here; the consuming object's own entries
+    are still passed in by each caller.
+    """
+    global _REPLAY_GRAPH
+    prev = _REPLAY_GRAPH
+    _REPLAY_GRAPH = cfg
+    try:
+        yield
+    finally:
+        _REPLAY_GRAPH = prev
+
+
 # gh-764: root -> the config `save()` would have written, when deferring.
 # None means "write through", which is every path except a replay.
 _DEFERRED: "dict[Path, dict] | None" = None
@@ -3539,6 +3576,9 @@ def transitive_dep_cores(
 
     out: list[str] = []
     seen: set[str] = set()
+    # A dependency's OWN edges come from the complete graph during a replay
+    # (gh-1549), where *cfg* holds only the components replayed so far.
+    graph = _REPLAY_GRAPH if _REPLAY_GRAPH is not None else cfg
 
     def _visit(ents):
         for core in _cores(ents):
@@ -3546,7 +3586,7 @@ def transitive_dep_cores(
                 continue
             seen.add(core)
             out.append(core)
-            _visit(depends_on_raw(cfg, core[:-5]))
+            _visit(depends_on_raw(graph, core[:-5]))
 
     _visit(entries)
     return out
