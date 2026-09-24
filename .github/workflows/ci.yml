@@ -118,6 +118,26 @@ jobs:
           - os: macos-latest
             python-version: "3.9"
 
+        # The next Python, while it is still a PRE-RELEASE: one leg, on
+        # ubuntu-latest, told to uv as plain "3.15", which uv resolves to the
+        # newest pre-release (3.15.0rc2 at the time of writing). numpy
+        # already ships cp315 wheels, so the suite can really run.
+        #
+        # Allowed to fail, and deliberately not by job-level
+        # `continue-on-error`: how a failed job reads through `CI passed`'s
+        # `needs.*.result` is the question that could turn every PR red. The
+        # Python-dependent steps carry it instead, so the job concludes
+        # success, and a failure is annotated rather than silent.
+        #
+        # It EXPIRES: the first step below fails the job for real once uv
+        # hands back a final 3.15.0, naming the fix -- move "3.15" into
+        # python-version above (and the classifiers), and delete this entry.
+        # A note to revisit it would be a wish.
+        include:
+          - os: ubuntu-latest
+            python-version: "3.15"
+            prerelease: true
+
     steps:
       # `fetch-depth: 0` because three gates ask git what has been RELEASED,
       # and a shallow tagless clone turns all three into a skip that reports
@@ -144,7 +164,23 @@ jobs:
       # matrix; install-deps-smoke covers 3.12 alone. Dropping it because it is
       # no longer a prerequisite would quietly narrow that from 18 combinations
       # to 3.
+      - name: The pre-release leg has not outlived the pre-release
+        if: matrix.prerelease
+        run: |
+          v=$(uv run --no-project python -c \
+              'import sys; print(sys.version.split()[0], sys.version_info.releaselevel)')
+          echo "interpreter: $v"
+          case "$v" in
+            *" final")
+              echo "::error::Python ${v% final} is released. Promote it: add"
+              echo "  \"${{ matrix.python-version }}\" to the python-version list and the"
+              echo "  pyproject classifiers, and delete the prerelease include."
+              exit 1 ;;
+          esac
+
       - name: Smoke-test that the package installs
+        id: install
+        continue-on-error: ${{ matrix.prerelease == true }}
         run: make tool-install
 
       # `make install-deps` — the standard target whose whole job is this, and
@@ -177,6 +213,8 @@ jobs:
       #
       # The shipped runner keeps its own coverage in `install-deps-smoke`.
       - run: make test
+        id: suite
+        continue-on-error: ${{ matrix.prerelease == true }}
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.
@@ -198,8 +236,18 @@ jobs:
             --junitxml=${{ runner.temp }}/pytest-report.xml
             -o junit_family=legacy
 
+      # A tolerated failure on the pre-release leg: say so where a reader
+      # of the run looks, since the job itself stays green.
+      - name: Flag a pre-release failure
+        if: >-
+          matrix.prerelease &&
+          (steps.install.outcome == 'failure' || steps.suite.outcome == 'failure')
+        run: >-
+          echo "::warning::Python ${{ matrix.python-version }} (pre-release):
+          install=${{ steps.install.outcome }} suite=${{ steps.suite.outcome }}"
+
       - name: Upload the test report when the suite fails
-        if: failure()
+        if: failure() || steps.suite.outcome == 'failure'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: pytest-${{ matrix.os }}-py${{ matrix.python-version }}
