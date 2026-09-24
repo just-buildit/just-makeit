@@ -1,5 +1,71 @@
 ## [Unreleased]
 
+## [0.89.0] — 2026-09-24
+
+### Breaking
+
+- **`--multi-output` is refused on a method shape that cannot carry it**
+    (gh-1540). A `--batch` method, a list of records (`--result-field`) and
+    a `--single` record have no slot for extra outputs. jm stored
+    `multi_output` on them and then generated nothing from it: no `*outN`
+    parameter, no binding, no stub, so the declared output silently
+    vanished. `jm method` now refuses the combination, and so does
+    `jm apply` for a manifest that declares it. The error names the fix:
+    drop `multi_output`, or return the values from a plain or
+    `--variable-output` method, which carry each one as a trailing
+    `<T> *outN`.
+
+### Changed
+
+- **The CI `jm ci` generates is pinned the way jm's own is.** The generated
+    `.github/workflows/ci.yml` used `actions/checkout@v4` and
+    `actions/setup-python@v5`. Both run on Node 20, which GitHub now forces
+    onto Node 24 with a deprecation notice on every run and will stop running.
+    It now uses `checkout@v7.0.1` and `setup-python@v7.0.0`, and its matrix
+    adds Python 3.14. A new test holds the template to jm's own workflow pins
+    (which Dependabot never sees in a template) and to jm's supported Python
+    range. An existing project keeps its file; `jm ci --force` rewrites it
+    from the template (hand edits to it are lost).
+
+- **The running version is looked up once per process** (gh-1374).
+    `jm_cli_version()`, which every mutating command uses to stamp the
+    manifest, called `importlib.metadata.version` afresh each time. It now
+    reads `just_makeit.__version__`, which resolves once and caches a
+    success. Where the package has no metadata, every lookup failed and
+    was retried. On Python 3.9, whose `importlib.metadata` has no path
+    cache, each retry scanned all of `sys.path`, and that made jm's own
+    3.9 test leg run about three times as long as 3.12's.
+
+### Fixed
+
+- **The C scanner behind `apply`, `status` and the binding checks is one
+    regex pass** (gh-1374). `_code_mask` blanks string literals and
+    comments so structural scans ignore punctuation inside them. It was a
+    per-character loop and the largest single cost in jm's test suite,
+    about a fifth of a serial session's CPU. It now gives identical output
+    (checked against the loop on 200,000 random inputs and every C file in
+    the repo), with one fix: a lone backslash ending an unterminated
+    literal made the mask one character longer than its text, which broke
+    the offset promise every caller relies on.
+
+- **A multi-output method's scaffolded benchmark builds** (gh-1523).
+    gh-600 made each extra `--multi-output` value a trailing `<T> *outN`
+    parameter, and the binding passes one, but the generated C benchmark
+    still called the method without them. So `jm method w m --param x:double --multi-output int` exited 0 and left a tree whose
+    `cmake --build` failed with `too few arguments`. The benchmark now
+    declares a local per extra output and passes its address, as the
+    binding does. A new stub-conformance shape builds a param, an array
+    and a void-return multi-output method with their benchmark.
+
+- **An object's link lines carry its whole `depends_on` closure, whatever
+    order its components are declared in** (gh-1549). `apply` walked the
+    closure over the part of the manifest it had replayed so far. So when
+    `b` depended on `a`, and `a` was declared after `b` (in a later module,
+    or later in the same one), `a`'s own dependencies were missing from
+    `b_core`, `test_b_core` and `bench_b_core`, and the C test failed to link
+    with `undefined reference`. `status --check` passed, because it sees the
+    same replay. Reordering the declarations used to be the workaround.
+
 ## [0.88.0] — 2026-09-23
 
 ### Added
