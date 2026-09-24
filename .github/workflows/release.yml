@@ -131,7 +131,7 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.11"
 
@@ -186,7 +186,7 @@ jobs:
       #
       # Silencing it with `cache-dependency-glob: ""` would keep the same
       # never-invalidating cache and only hide the warning.
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
           enable-cache: false
