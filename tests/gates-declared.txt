@@ -23,6 +23,7 @@ test_gh1432_drift_hash
 test_gh1432_header_only_depends
 test_gh1432_invariants_runnable
 test_gh1443_stub_any_import
+test_gh1447_status_binding_ahead
 test_gh1447_status_states_what_it_saw
 test_gh1448_adopt_check
 test_gh1448_adopt_flip

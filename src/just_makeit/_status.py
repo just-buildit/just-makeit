@@ -489,6 +489,12 @@ def run(
     # fragment, unit by unit. `before`/`after` are in hand
     # where this is filled, so it costs nothing to ask.
     unreconciled_units: dict = {}
+    # gh-1447 ask 3: the members whose BINDING accepts more than the
+    # manifest declares, per fragment. `signature_drift_details` reports a
+    # format difference in either direction; this says which side is the
+    # superset, so the advice beside it does not send the author to delete
+    # a working `out=`.
+    unreconciled_ahead: dict[str, tuple] = {}
     # gh-785: (path, lineno, message, [at-risk member names]) per `.pyi` on
     # disk that does not parse *and* holds hand-owned members. Only that
     # intersection: a broken stub with nothing hand-written in it is
@@ -700,6 +706,17 @@ def run(
                     )
                     if _why:
                         unreconciled_reasons[rel_posix] = _why
+                        # `_adopt.binding_ahead` is THE direction predicate
+                        # -- `adopt --check` refuses on it. A second copy
+                        # here is the peer pair that drifts.
+                        from . import _adopt as _adopt_dir
+
+                        _ahead = _adopt_dir.binding_ahead(
+                            before.decode("utf-8", "replace"),
+                            after.decode("utf-8", "replace"),
+                        )
+                        if _ahead:
+                            unreconciled_ahead[rel_posix] = _ahead
                     # gh-1447: the four counts, whichever bucket it lands
                     # in. The report used to assert a CAUSE it had not
                     # established; these are what it can actually see.
@@ -1230,8 +1247,22 @@ def run(
             )
             # gh-848: split by WHY, because the two halves want opposite
             # actions and a single list made the actionable ones invisible.
+            # gh-1447 ask 3: a fragment whose binding is AHEAD of the
+            # manifest is not "a fix sitting undelivered" -- deleting it
+            # deletes a feature. doppler's `Resampler.execute_ctrl` took an
+            # `out=` (`"OO|O"`) its manifest never declared, and the advice
+            # below was to delete the file. One ahead member is enough to
+            # make that advice wrong for the whole file.
+            _ahead = [
+                e
+                for e in unreconciled_entries
+                if e[0] in unreconciled_reasons and e[0] in unreconciled_ahead
+            ]
             _actionable = [
-                e for e in unreconciled_entries if e[0] in unreconciled_reasons
+                e
+                for e in unreconciled_entries
+                if e[0] in unreconciled_reasons
+                and e[0] not in unreconciled_ahead
             ]
             # gh-1192: the third bucket, and the one the other two were
             # hiding. A signature difference is not the only kind `apply`
@@ -1264,6 +1295,39 @@ def run(
                         print(_ul)
                     for _member in sorted(unreconciled_reasons[p_]):
                         print(f"        {unreconciled_reasons[p_][_member]}")
+                    if diff and show_diff:
+                        print(
+                            "".join(
+                                f"      {ln}" for ln in diff.splitlines(True)
+                            )
+                        )
+            if _ahead:
+                print(
+                    f"  BINDING AHEAD ({len(_ahead)}) — the binding accepts "
+                    "arguments the manifest does not\n"
+                    "  declare, so the MANIFEST is behind, not the file. Do "
+                    "not delete it: a\n"
+                    "  re-render would remove those arguments. Declare them "
+                    "in just-makeit.toml\n"
+                    "  (e.g. an `out=` buffer is `variable_output = true` on "
+                    "the method), or keep\n"
+                    "  the file as it is."
+                )
+                for p_, _, _, diff, _ in _ahead:
+                    print(f"    ! {p_}")
+                    _ul = _unit_line(unreconciled_units.get(p_))
+                    if _ul:
+                        print(_ul)
+                    for _member in sorted(unreconciled_reasons[p_]):
+                        _tag = (
+                            "  (binding ahead)"
+                            if _member in unreconciled_ahead[p_]
+                            else ""
+                        )
+                        print(
+                            f"        {unreconciled_reasons[p_][_member]}"
+                            f"{_tag}"
+                        )
                     if diff and show_diff:
                         print(
                             "".join(
