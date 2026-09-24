@@ -36,6 +36,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from . import _capsule
 from . import _coerce
 from . import _config as C
+from ._builtins import require_scope_names
 from . import _modplatforms
 from . import _render as R
 from . import _enumc
@@ -592,6 +593,112 @@ def _check_error_decl(
             f" but with {consumed} the C return is {what}. Drop `error`, or"
             " move the check into a separate status method."
         )
+
+
+def _bytes_len_locals(args: list) -> "frozenset[str]":
+    """The ``<n>_len`` a ``bytes`` arg's ``y#`` parse declares beside it."""
+    return frozenset(
+        f"{a['name']}_len" for a in args if a.get("type") == "bytes"
+    )
+
+
+def method_locals(m: dict) -> "frozenset[str]":
+    """The unprefixed C identifiers :func:`_emit_method` declares beside a
+    method's args, for the shape *m* takes (gh-1525).
+
+    Follows the emitter's own dispatch, in its order. The shape's signature
+    (``self``, ``args``, ``kwds``), its ``kwlist`` and every ``_``-prefixed
+    local are the shared rule's already; so are an array arg's ``<x>_obj`` /
+    ``<x>_arr``. What is left is the handful each shape spells without a
+    prefix. ``tests/test_gh1525_kind_arg_local_names.py`` renders every
+    shape and requires this to claim what the C declares.
+
+    Examples
+    --------
+    >>> sorted(method_locals({"name": "pop", "returns": "float[]",
+    ...                       "args": [{"name": "n", "type": "size_t"}]}))
+    ['arr', 'dims', 'got', 'out']
+    >>> sorted(method_locals({"name": "set", "args": [
+    ...     {"name": "g", "type": "float"}]}))
+    []
+    """
+    margs = list(m.get("args", []))
+    returns = m.get("returns")
+    ret_arr = bool(returns) and str(returns).endswith("[]")
+    array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+    # (e) and (f) parse each scalar at safe width into `<n>_raw`.
+    raw = frozenset(
+        f"{a['name']}_raw" for a in margs if a.get("type") != "string"
+    )
+    if m.get("out_len_fn") and ret_arr and not array_in:
+        return raw | {"arr"}  # (e)
+    if m.get("out_len_fn") and returns == "bytes":
+        return raw  # (f)
+    if ret_arr and not array_in:
+        return frozenset({"dims", "arr", "out", "got"})  # (c)
+    if ret_arr and any(a.get("writable") for a in array_in):
+        return frozenset(  # (d)
+            {
+                "n_in",
+                "max_out",
+                "in_data",
+                "out_data",
+                "n_out",
+                "stop",
+                "slice",
+                "view",
+            }
+        )
+    result = frozenset({"r"}) if returns else frozenset()
+    if array_in:
+        return result | {"x_obj", "x_arr", "n_in", "in_data"}  # (b)
+    return frozenset() if m.get("error") else result  # (a)
+
+
+def arg_scopes(
+    cfg: dict, module: str
+) -> "list[tuple[str, str, list, frozenset[str]]]":
+    """Every generated wrapper whose C locals a manifest name becomes.
+
+    ``(owner, C function, params, declares)``: the constructor's
+    ``create_args``, each method's ``args`` and each factory's
+    ``init_params``, with the identifiers that one wrapper declares beside
+    them. The arguments :func:`~just_makeit._builtins.require_param_names`
+    takes, plus the function they describe, so
+    ``tests/test_gh1525_kind_arg_local_names.py`` can hold *declares* to the
+    rendered C.
+    """
+    tname = C.handle_type_name(cfg, module)
+    leaf = C.module_paths(module).leaf
+    args = C.handle_create_args(cfg, module)
+    scopes = [
+        (
+            f"handle module '{module}' create_args",
+            f"{tname}_init",
+            args,
+            _bytes_len_locals(args),
+        )
+    ]
+    for m in C.handle_methods(cfg, module):
+        scopes.append(
+            (
+                f"handle module '{module}' method '{m['name']}'",
+                f"{tname}_{m['name']}",
+                list(m.get("args", [])),
+                method_locals(m),
+            )
+        )
+    for f in C.handle_factories(cfg, module):
+        ips = list(f.get("init_params", []))
+        scopes.append(
+            (
+                f"handle module '{module}' factory '{f['name']}'",
+                f"{leaf}_{f['name']}",
+                ips,
+                _bytes_len_locals(ips),
+            )
+        )
+    return scopes
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -2316,6 +2423,7 @@ def materialize(
     for a direct materialize."""
     from ._init import _write
 
+    require_scope_names(arg_scopes(cfg, module))  # gh-1525
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.handle_package_resolved(cfg, module)

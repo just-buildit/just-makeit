@@ -47,6 +47,7 @@ __all__ = [
     "overridden_builtin_slots",
     "param_name_clash",
     "require_param_names",
+    "require_scope_names",
     "reserved_python_members",
     "result_local",
 ]
@@ -567,6 +568,15 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
 # `tests/test_gh1512_param_local_names.py` renders the shapes with sentinel
 # param names and requires every identifier a wrapper declares to be claimed
 # by one of these rules, so a local added later cannot arrive unreserved.
+#
+# gh-1525: the `kind = "handle" | "capsule" | "composer"` generators write
+# their wrappers by hand-rolled emitters of their own, and those declare
+# unprefixed locals the object face never does (a capsule create's `w` and
+# `cap`, a handle method's `r` / `n_in` / `view`, a composer source's
+# trailing `fs`). They reach the SAME rule through `declares`: each kind
+# names, next to its emitter, the extra identifiers one wrapper declares,
+# and `tests/test_gh1525_kind_arg_local_names.py` holds that list to the
+# rendered C the same way.
 
 #: The C parameters of every generated wrapper, `tp_init` included, and the
 #: one unprefixed local `tp_init` declares (its keyword table).
@@ -610,6 +620,7 @@ def param_name_clash(
     *,
     outbuf: bool = False,
     multi_output: bool = False,
+    declares: "frozenset[str]" = frozenset(),
 ) -> "str | None":
     """Why *name* cannot be a param of this binding, or ``None``.
 
@@ -626,6 +637,10 @@ def param_name_clash(
         or `out_type`).
     multi_output
         The binding returns extra outputs through `out1..outN`.
+    declares
+        Further identifiers this one wrapper declares beside its params --
+        the locals a module kind's own emitter writes (gh-1525), already
+        spelled out, derived names included (a handle's ``x_raw``).
 
     Returns
     -------
@@ -644,6 +659,8 @@ def param_name_clash(
     False
     >>> param_name_clash("y", [("y", "double")]) is None
     True
+    >>> param_name_clash("w", [("w", "double")], declares=frozenset({"w"}))
+    "'w' is a local the generated wrapper declares"
     """
     if name in WRAPPER_SIGNATURE:
         return (
@@ -679,6 +696,8 @@ def param_name_clash(
         )
     if multi_output and _numbered(name, "out"):
         return f"'{name}' is one of the extra outputs this binding returns"
+    if name in declares:
+        return f"'{name}' is a local the generated wrapper declares"
     return None
 
 
@@ -693,20 +712,27 @@ def require_param_names(
     *,
     outbuf: bool = False,
     multi_output: bool = False,
+    declares: "frozenset[str]" = frozenset(),
 ) -> None:
     """Exit 1 when a param of *owner* collides with a name jm's C declares.
 
     Called by every command that renders a binding from params -- `jm
     method`, `jm function`, and object creation for its init params --
     before any C is written, so `apply`'s replay meets the same refusal as
-    the command line.
+    the command line. The handle, capsule and composer module kinds call it
+    from their ``materialize``, before the first file is written, passing
+    their own wrapper's locals as *declares* (gh-1525).
     """
     import sys
 
     for param in params or ():
         name = _param_name_type(param)[0]
         why = param_name_clash(
-            name, params, outbuf=outbuf, multi_output=multi_output
+            name,
+            params,
+            outbuf=outbuf,
+            multi_output=multi_output,
+            declares=declares,
         )
         if why:
             print(
@@ -716,3 +742,16 @@ def require_param_names(
                 file=sys.stderr,
             )
             sys.exit(1)
+
+
+def require_scope_names(scopes) -> None:
+    """:func:`require_param_names` over a module kind's ``arg_scopes``.
+
+    Each scope is ``(owner, C function, params, declares)``: one generated
+    wrapper whose C locals the manifest names become, and the identifiers
+    that wrapper declares beside them. `_handle`, `_capsule` and
+    `_composer` call this from their ``materialize``, before the first file
+    is written (gh-1525).
+    """
+    for owner, _fn, params, declares in scopes:
+        require_param_names(owner, params, declares=declares)

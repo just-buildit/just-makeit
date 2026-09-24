@@ -27,6 +27,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _modplatforms
+from ._builtins import require_scope_names
 from . import _render as R
 from . import _procglobal
 from . import _enumc
@@ -324,6 +325,52 @@ _RANGE_PARSE_FN = "\n".join(
 def render_range_helper(cfg: dict, module: str) -> str:
     """Emit the shared ranged-field parser once, when the module uses ranges."""
     return _RANGE_PARSE_FN if _has_ranged(cfg, module) else ""
+
+
+#: gh-1525: what the source type's ``tp_init`` declares beside the source
+#: fields, each of which becomes a C local of the same name: the sample rate
+#: every source takes as a trailing keyword.
+SOURCE_INIT_LOCALS = frozenset({"fs"})
+
+#: gh-1525: what a delegated serializer (:func:`render_serializers`) declares
+#: beside its params: the resolved segment array it hands the C serializer.
+SERIALIZER_LOCALS = frozenset({"segs"})
+
+
+def arg_scopes(
+    cfg: dict, module: str
+) -> "list[tuple[str, str, list, frozenset[str]]]":
+    """Every generated wrapper whose C locals a manifest name becomes.
+
+    ``(owner, C function, params, declares)``: the source type's
+    ``tp_init``, whose locals are the source fields, and each delegated
+    serializer, whose locals are its params. The arguments
+    :func:`~just_makeit._builtins.require_param_names` takes, plus the
+    function they describe, so ``tests/test_gh1525_kind_arg_local_names.py``
+    can hold *declares* to the rendered C. Every other wrapper here reads
+    its values out of a ``kwargs`` dict or a struct, so a manifest name
+    never becomes one of its locals.
+    """
+    src = C.composer_source(cfg, module)
+    cname = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+    scopes = [
+        (
+            f"composer module '{module}' source field",
+            f"{src['type_name']}_init",
+            list(src.get("fields", [])),
+            SOURCE_INIT_LOCALS,
+        )
+    ]
+    for s in C.composer_serializers(cfg, module):
+        scopes.append(
+            (
+                f"composer module '{module}' serializer '{s['name']}'",
+                f"{cname}_{s['name']}",
+                list(s.get("params", [])),
+                SERIALIZER_LOCALS,
+            )
+        )
+    return scopes
 
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:
@@ -3852,6 +3899,7 @@ def materialize(
     materialize."""
     from ._init import _write
 
+    require_scope_names(arg_scopes(cfg, module))  # gh-1525
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.capsule_package(cfg, module) or mp.pypath
