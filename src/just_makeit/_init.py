@@ -30,6 +30,7 @@ from ._libwiring import (  # noqa: F401
     COMPONENTS_SENTINEL,
     MODULES_SENTINEL,
     cmake_core_wiring,
+    combined_link_c,
     component_core_libs,
     dep_core_libs,
     splice_cmake_component,
@@ -1484,7 +1485,7 @@ def run(
     # `PUBLIC` is not merely wrong there -- CMake refuses the target.
     ctx["extra_link_on_core"] = R.core_link_c(
         comp, list(extra_link_libs or []), header_only, include=False
-    )
+    ) + combined_link_c(list(extra_link_libs or []), header_only)
     # extra_include_dirs_on_core: PUBLIC include dirs on the OBJECT library so
     # downstream consumers (Python ext, test, bench) inherit them transitively.
     ctx["extra_include_dirs_on_core"] = R.core_link_c(

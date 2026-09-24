@@ -262,6 +262,80 @@ def externally_wired(root: Path) -> "set[str]":
     return {core for _t, core in wired_pairs(root) - root_pairs}
 
 
+def _is_project_core(lib: str) -> bool:
+    """Whether a link item names one of the project's own cores."""
+    return "::" not in lib and lib.endswith("_core")
+
+
+def combined_link_c(libs: "list[str]", header_only: bool) -> str:
+    """Restate a core's external libraries on both combined libraries.
+
+    The root folds a core into ``lib<pkg>`` by its objects alone
+    (:func:`wiring_line`), and ``$<TARGET_OBJECTS:>`` is objects, not a link
+    edge: the core's ``extra_link_libs`` usage requirement is dropped on the
+    floor (gh-1572). The shared library was then linked with those symbols
+    undefined -- refused on macOS and Windows, accepted on Linux, where a C
+    consumer of the ``.so`` failed instead -- and the archive's link
+    interface did not carry them for its consumers either.
+
+    The fix is doppler's, for the same shape with ``Threads::Threads``
+    (doppler ``CMakeLists.txt``, "Threads::Threads is PUBLIC on the
+    ARCHIVE"): restate the dependency on each library, ``PRIVATE`` on the
+    shared one, which resolves it at link time, and ``PUBLIC`` on the
+    archive, which cannot and must hand it to whoever links it. The
+    installed config's ``find_dependency`` for the package that defines the
+    target is the other half (``JM_FIND_DEPENDENCIES``, set in the root).
+
+    Emitted into the COMPONENT's CMakeLists, beside the core's own link
+    line, rather than into the root: that file is regenerated from the
+    manifest, so the link follows the core when its ``extra_link_libs``
+    change and leaves with it when it is removed, with no root line for
+    ``remove`` or ``status`` to learn. CMake 3.13+ (the root requires 3.16)
+    lets a directory link a target another directory declared.
+
+    *libs* is the ``extra_link_libs`` list, never the core's full link
+    line, which also names ``depends_on`` cores. Even so, an in-project core
+    is dropped from it: ``extra_link_libs`` may name one (kitchen_sink's
+    module links ``cjson_core``, a ``[project] c_deps`` OBJECT library). The
+    root already folds its objects in, so the shared library would get them
+    twice, and the archive would export a target that is in no export set --
+    a CMake GENERATE error. A core is recognised by jm's own naming, the
+    convention :func:`dep_core_libs` normalises to: an un-namespaced
+    ``<x>_core``. An imported package target carries ``::``, and a bare
+    library name (``m``, ``fftw3``) does not end in ``_core``.
+    ``if(TARGET ...)`` because the ``make`` backend and a root predating the
+    combined library declare none. A header-only core is never folded in
+    (see ``_DECLARES_CORE``), so it needs nothing.
+
+    Examples
+    --------
+    >>> print(combined_link_c(["doppler::doppler-static"], False), end="")
+    if(TARGET ${PROJECT_NAME}_lib)
+      target_link_libraries(${PROJECT_NAME}_lib PRIVATE
+          doppler::doppler-static)
+    endif()
+    if(TARGET ${PROJECT_NAME}_lib_static)
+      target_link_libraries(${PROJECT_NAME}_lib_static PUBLIC
+          doppler::doppler-static)
+    endif()
+    >>> combined_link_c([], False), combined_link_c(["x"], True)
+    ('', '')
+    >>> combined_link_c(["cjson_core"], False)
+    ''
+    """
+    libs = [lib for lib in libs if not _is_project_core(lib)]
+    if not libs or header_only:
+        return ""
+    joined = "\n      ".join(libs)
+    return "".join(
+        f"if(TARGET ${{PROJECT_NAME}}{suffix})\n"
+        f"  target_link_libraries(${{PROJECT_NAME}}{suffix} {scope}\n"
+        f"      {joined})\n"
+        "endif()\n"
+        for suffix, scope in (("_lib", "PRIVATE"), ("_lib_static", "PUBLIC"))
+    )
+
+
 def lib_targets(cmake_text: str, pkg: str) -> list[str]:
     """The combined C library targets the root CMakeLists declares.
 

@@ -1396,6 +1396,21 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
             lines.append(
                 f"pkg_check_modules({mod.upper()} REQUIRED IMPORTED_TARGET {mod})\n"
             )
+    if lines:
+        # gh-1572: the archive's link interface names these packages'
+        # targets (``_libwiring.combined_link_c``), so a consumer of the
+        # INSTALLED project must find them too. The config template
+        # substitutes this where it loads the exported targets -- doppler's
+        # `find_dependency(Threads)` for the same reason.
+        deps = [f"find_dependency({pkg})" for pkg in find_pkgs]
+        if pkg_mods:
+            deps.append("find_dependency(PkgConfig)")
+            deps += [
+                f"pkg_check_modules({m.upper()} REQUIRED IMPORTED_TARGET {m})"
+                for m in pkg_mods
+            ]
+        body = "\n".join(["include(CMakeFindDependencyMacro)", *deps])
+        lines.append(f"set(JM_FIND_DEPENDENCIES [=[\n{body}\n]=])\n")
 
     has_begin = _EXTDEPS_BEGIN in real
     has_end = _EXTDEPS_END in real

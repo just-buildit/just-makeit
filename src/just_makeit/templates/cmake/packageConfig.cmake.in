@@ -1,5 +1,9 @@
 @PACKAGE_INIT@
 
+# gh-1572: the packages whose targets the exported libraries link, from
+# `[project] find_packages` / `pkg_modules`; empty when there are none.
+@JM_FIND_DEPENDENCIES@
+
 include("${CMAKE_CURRENT_LIST_DIR}/<<project_underscore>>-targets.cmake")
 
 check_required_components(<<project_underscore>>)
