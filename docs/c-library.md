@@ -162,6 +162,14 @@ through its link interface. The installed `my_project-config.cmake` calls
 package's prefix on `CMAKE_PREFIX_PATH` as well. It does not have to name
 the package itself.
 
+The pkg-config face covers dependencies declared with `[project] pkg_modules`. Each one is listed as `Requires.private` in the installed
+`.pc`, so `pkg-config --static --libs my-project` includes it. A dependency
+declared with `find_packages` names a CMake package, and there is no general
+way to turn that into a pkg-config module name, so the `.pc` does not list
+it. A static pkg-config consumer then has to add it by hand. If that face
+matters to you and the dependency ships a `.pc`, declare it with
+`pkg_modules` and link its `PkgConfig::<NAME>` target instead.
+
 ______________________________________________________________________
 
 ## Calling it from C++11

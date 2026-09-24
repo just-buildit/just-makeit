@@ -1411,6 +1411,16 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
             ]
         body = "\n".join(["include(CMakeFindDependencyMacro)", *deps])
         lines.append(f"set(JM_FIND_DEPENDENCIES [=[\n{body}\n]=])\n")
+        # gh-1573: the `.pc` face of the same fact. A `pkg_modules` entry IS
+        # a pkg-config module name, so it goes to `Requires.private`, which
+        # `pkg-config --static` follows to the archive's missing symbols. A
+        # `find_packages` entry names a CMake package, and nothing maps that
+        # to a pkg-config module, so it is not guessed at.
+        if pkg_mods:
+            lines.append(
+                "set(JM_PC_REQUIRES_PRIVATE "
+                f'"Requires.private: {", ".join(pkg_mods)}")\n'
+            )
 
     has_begin = _EXTDEPS_BEGIN in real
     has_end = _EXTDEPS_END in real
