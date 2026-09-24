@@ -154,6 +154,14 @@ cmake -B build -DCMAKE_PREFIX_PATH="$HOME/.local"
 cmake --build build
 ```
 
+If the project's cores link an external package (`extra_link_libs`, with the
+package in `[project] find_packages`), both libraries carry it for you: the
+shared one resolves it when it is built, and the static one hands it on
+through its link interface. The installed `my_project-config.cmake` calls
+`find_dependency()` for each such package, so the consumer only needs that
+package's prefix on `CMAKE_PREFIX_PATH` as well. It does not have to name
+the package itself.
+
 ______________________________________________________________________
 
 ## Calling it from C++11
