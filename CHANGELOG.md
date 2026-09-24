@@ -189,6 +189,16 @@
     being refused. A hand-written state entry with no `default` also
     crashed `apply` with `KeyError`; it now takes the zero `--state` would.
 
+- **A header-only core's accessors keep their return type** (gh-1363). The
+    definitions moved into a `--header-only` header were joined with none of
+    the line breaks `_core.c` puts between them, so a state accessor's
+    return type landed on the closing brace of `steps()` (`}float`) and the
+    name line became `static inline q_get_scale(`. It compiled -- as
+    obsolescent C -- so nothing caught it, in a file the author owns from
+    then on. The definitions are now laid out by the `_core.c` template
+    itself, one blank line apart in every shape (`no_step`, `no_state`,
+    `no_reset`).
+
 - **Every generated class names a module Python can import, so it pickles**
     (gh-1486). A type's `__module__` is the part of its `tp_name` before the
     last dot, and jm wrote `"<comp>.<Comp>"` for a standalone object and
