@@ -63,6 +63,9 @@ line-length = 79
 extend-exclude = [
     "src/just_makeit/templates/",
     "src/just_makeit/examples/stale_project/tree/",
+    # Vendored verbatim from canonical and held there by standard-check; a
+    # local formatter pass is a guaranteed drift failure (gh-1526).
+    "scripts/changelog.py",
 ]
 
 [tool.ruff.lint]

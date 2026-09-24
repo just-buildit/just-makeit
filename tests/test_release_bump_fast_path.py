@@ -45,17 +45,32 @@ CI = REPO / ".github/workflows/ci.yml"
 PRECOMMIT = REPO / ".pre-commit-config.yaml"
 
 
-def _allow_list() -> set[str]:
-    """The filenames `ci.yml`'s bump-only check treats as not-source."""
+def _alternatives() -> list[str]:
+    """The regex alternatives of `ci.yml`'s bump-only `grep -qvE`."""
     text = CI.read_text(encoding="utf-8")
     m = re.search(r"grep -qvE '\^\((?P<alts>[^)]+)\)\$'", text)
     assert m, "the bump-only allow-list is no longer a single grep -qvE"
-    return {alt.replace("\\", "") for alt in m.group("alts").split("|")}
+    return m.group("alts").split("|")
+
+
+def _allow_list() -> set[str]:
+    """The literal filenames the bump-only check treats as not-source.
+
+    A pattern alternative (``changelog\\.d/.+``, the fragments a release
+    deletes) names no single file, so it is left out here and matched by
+    `_is_source` instead.
+    """
+    return {
+        alt.replace("\\", "")
+        for alt in _alternatives()
+        if not re.search(r"[.][+*]", alt)
+    }
 
 
 def _is_source(changed: set[str]) -> bool:
-    """Replicate the job's file-set decision: any file outside the list."""
-    return bool(changed - _allow_list())
+    """Replicate the job's decision: any file the grep does not match."""
+    pat = re.compile("^(" + "|".join(_alternatives()) + ")$")
+    return any(not pat.match(f) for f in changed)
 
 
 class TestTheAllowListMatchesWhatABumpWrites:
@@ -141,10 +156,26 @@ class TestItStillRunsEverythingForRealChanges:
             {"CHANGELOG.md", "src/just_makeit/_apply.py"},
             {"pyproject.toml", "tests/test_apply.py"},
             {"bootstrap.toml", ".github/workflows/ci.yml"},
+            {"changelog.d/fixed/x.md", "src/just_makeit/_apply.py"},
         ],
     )
     def test_a_source_change_is_not_bump_only(self, changed):
         assert _is_source(changed), changed
+
+    def test_a_release_that_promotes_fragments_is_bump_only(self):
+        """`release-branch` runs `changelog-assemble`, which deletes every
+        `changelog.d/` fragment it promotes (gh-1526). That commit is still
+        a version bump; without the fragment pattern it ran everything."""
+        assert not _is_source(
+            {
+                "CHANGELOG.md",
+                "changelog.d/fixed/gh-1523-bench.md",
+                "changelog.d/added/gh-1413-record-param.md",
+                "pyproject.toml",
+                "bootstrap.toml",
+                "uv.lock",
+            }
+        )
 
     def test_the_pyproject_guard_is_still_there(self):
         """The file set alone is not enough -- `uv.lock` and `pyproject.toml`

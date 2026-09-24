@@ -23,6 +23,14 @@ HAS_EXAMPLES = 1
 # exactly the drift this file exists to prevent (gh-716). The standard already
 # owns the `coverage` / `coverage-gate` rules; only the commands belong here.
 HAS_COVERAGE = 1
+# An entry is a file, changelog.d/<section>/<slug>.md, so parallel PRs stop
+# conflicting on CHANGELOG.md (gh-1526); release-branch promotes them. The
+# flag is what turns both of the standard's changelog gates on, so their
+# obligations are declared here, where turning it off would drop them.
+# GATE: a change under src/ carries a changelog.d/ fragment.
+# GATE: a branch never edits a CHANGELOG section that already shipped.
+HAS_CHANGELOG        = 1
+CHANGELOG_CODE_PATHS = src/just_makeit
 
 PYTHON     ?= $(shell uv run --no-project python -c \
                   "import sys; print(sys.executable)" 2>/dev/null || python3)
