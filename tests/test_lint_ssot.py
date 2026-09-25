@@ -379,11 +379,15 @@ class TestCIActuallyGates:
         )
 
     def test_ci_passed_requires_lint(self):
-        import yaml
-
         # The aggregator BY NAME: a regex for the first `needs: [changes,`
         # matched whichever job came first, which since gh-1632 is not it.
-        needs = yaml.safe_load(_read(CI))["jobs"]["ci-passed"]["needs"]
+        # Sliced rather than parsed: the shipped jm-run-tests smoke runs this
+        # file in jm-install-deps' venv, which has no pyyaml.
+        ci = _read(CI)
+        block = ci[ci.index("\n  ci-passed:") :]
+        m = re.search(r"^\s*needs: \[([^\]]*)\]", block, re.M)
+        assert m, "could not find the ci-passed aggregator's needs list"
+        needs = [n.strip() for n in m.group(1).split(",")]
         assert "lint" in needs, (
             "`lint` must be in the CI-passed aggregator's needs, or the "
             "branch ruleset will merge PRs that fail lint"
