@@ -19,16 +19,11 @@ GATE: after `jm apply`, a `--class-name` object builds, and the package
 
 from __future__ import annotations
 
-import shutil
 
 import pytest
 
 from _jminc import INC_ROOT
 from _jmrun import run_cli
-
-pytestmark = pytest.mark.skipif(
-    shutil.which("cmake") is None, reason="needs cmake and a C compiler"
-)
 
 
 @pytest.mark.parametrize("module", [None, "grp"], ids=["standalone", "module"])
