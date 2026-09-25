@@ -39,6 +39,11 @@ the files `apply` *merges* rather than overwrites (the package
               project's file lacks. The file is the author's there, so
               `apply` never adds it; one line per fix, never counted,
               and `--diff` prints the file against today's render.
+  - PACKAGING — (gh-1589) a packaging template (`cmake/<pkg>.pc.in`,
+              `cmake/<pkg>-config.cmake.in`) without jm's ownership token
+              that differs from today's render: `apply` never renders it,
+              so no packaging fix reaches it. `jm adopt --packaging` hands
+              it to jm. Advisory, never counted.
   - PKG-CONFIG — (gh-1576) a `[project] find_packages` entry with none of
               `pkg_config`, `libs_private` or `cflags` (gh-1579), which the
               installed `.pc` therefore cannot name. Advisory and never counted: the
@@ -621,6 +626,18 @@ def run(
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
         ]
+        # gh-1589: a packaging template scaffolded before it was born owned
+        # carries no token, so `apply` never renders it and, being
+        # RECONCILED, it is never OUTDATED either. When it differs from
+        # today's render it is behind on fixes nothing will deliver; name it
+        # and the command that hands it to jm. Same operands as `outdated`.
+        from . import _adopt
+
+        packaging_entries = [
+            (v, _is_allowed(v.path, allow_patterns))
+            for v in _adopt.packaging_survey(root, replay_root)
+            if v.state == "behind"
+        ]
         # gh-975: the other half of what the replay knows about a create-only
         # file — not "is it behind" but "can jm still write into it". Same
         # operands as `outdated` above and for the same reason: the real root,
@@ -1131,6 +1148,12 @@ def run(
                     # gh-1459/gh-1471: root-template fixes the project's
                     # root CMakeLists.txt lacks. Reported, never counted, on
                     # `outdated`'s reasoning: the file is the author's.
+                    # gh-1589: packaging templates jm does not own and that
+                    # differ from today's render. Advisory, like root_cmake.
+                    "packaging": [
+                        {"path": v.path, "lost": list(v.lost), "allowed": a}
+                        for (v, a) in packaging_entries
+                    ],
                     "root_cmake": [
                         {
                             "fix": f.key,
@@ -1549,6 +1572,25 @@ def run(
         if root_render is not None:
             _real = (root / "CMakeLists.txt").read_bytes()
             print(_unified_diff(_real, root_render, "CMakeLists.txt"), end="")
+        print()
+
+    # gh-1589: printed regardless of --check, for ROOT CMAKE's reason.
+    if packaging_entries:
+        print(
+            f"PACKAGING ({len(packaging_entries)}) — packaging template(s)"
+            " jm does not own, behind today's render:"
+        )
+        for v, al in packaging_entries:
+            tag = " [status_allow]" if al else ""
+            drops = f" ({len(v.lost)} line(s) of yours?)" if v.lost else ""
+            print(f"  ↑ {v.path}{drops}{tag}")
+        print(
+            "  Without the `# jm:generated` line `apply` never renders these,"
+            " so no\n"
+            "  packaging fix reaches them. `jm adopt --packaging --check`"
+            " shows each\n"
+            "  diff; `jm adopt --packaging` hands them to jm. Not counted."
+        )
         print()
 
     # gh-1576: a `find_packages` dependency the installed `.pc` cannot name.
@@ -2150,6 +2192,12 @@ def run(
         _out = (
             f"; {len(outdated_entries)} outdated" if outdated_entries else ""
         ) + (f"; {len(root_fixes)} root-cmake" if root_fixes else "")
+        # gh-1589: beside root-cmake, for its reason.
+        _out += (
+            f"; {len(packaging_entries)} packaging"
+            if packaging_entries
+            else ""
+        )
         # gh-975: only an allowed one reaches this branch — an unsuppressed
         # anchor gap gates and never gets here. Named anyway, on gh-767's
         # rule: exempt from the gate is not the same as in sync, and this
@@ -2286,6 +2334,12 @@ def run(
             )
             # gh-1459: beside `outdated`, for its reason.
             + (f", {len(root_fixes)} root-cmake" if root_fixes else "")
+            # gh-1589: beside root-cmake, for its reason.
+            + (
+                f", {len(packaging_entries)} packaging"
+                if packaging_entries
+                else ""
+            )
             # gh-975: with the gating mark, unlike `outdated` above it — this
             # one fails `--check` and `jm apply` does not clear it.
             + (

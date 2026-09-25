@@ -459,3 +459,187 @@ def stale_tokens(root: Path, cfg: dict) -> list:
                 ):
                     out.append(f.relative_to(root).as_posix())
     return out
+
+
+# ── packaging templates (gh-1589) ─────────────────────────────────────────────
+#
+# `cmake/<pkg>.pc.in` and `cmake/<pkg>-config.cmake.in` hold no authored
+# content: every value in them arrives through a CMake variable the root
+# CMakeLists sets. A project scaffolded since gh-1589 gets them born owned,
+# and `apply` renders them whole while the token names the file. A project
+# scaffolded before has them token-less, so no fix to either reaches it --
+# that is what `status`'s PACKAGING section reports and what
+# `adopt --packaging` hands to jm, refusing a file whose adoption would drop
+# a line the render does not have.
+
+
+class PackagingVerdict(NamedTuple):
+    """What `adopt --packaging` would do to one packaging template.
+
+    ``state`` is ``owned`` (the token names the file: jm's already),
+    ``current`` (token-less, but otherwise today's render: adopting adds
+    only the token) or ``behind`` (token-less and different: adopting
+    takes today's render). ``lost`` is every line on disk -- blank and
+    comment lines aside -- that the render does not have: what adopting
+    would drop.
+    """
+
+    path: str
+    state: str
+    lost: "tuple[str, ...]"
+    disk: str
+    render: str
+
+
+def packaging_patterns() -> "tuple[str, ...]":
+    """The owned-scaffold patterns that are packaging templates."""
+    from ._apply import OWNED_SCAFFOLDS
+
+    return tuple(p for p in OWNED_SCAFFOLDS if p.startswith("cmake/"))
+
+
+def _meaningful(text: str) -> "list[str]":
+    return [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+
+
+_PKG_TOKEN = __import__("re").compile(r"@\w+@|\$\{\w+\}|\w+|[^\s\w]")
+
+
+def _kept(line: str, render_lines: "list[str]") -> bool:
+    """True when some render line holds every token of *line*, in order.
+
+    gh-1448's structural test (`_docsync.render_only_adds`), per line and
+    over a tokenisation that splits a configure slot (``@JM_PC_CFLAGS@``) or
+    a ``${var}`` from what surrounds it: an older jm's
+    ``Cflags: -I${includedir}`` is kept by today's
+    ``Cflags: -I${includedir}@JM_PC_CFLAGS@``, which only adds to it.
+
+    >>> _kept("Cflags: -I${includedir}", ["Cflags: -I${includedir}@X@"])
+    True
+    >>> _kept("set(MY_HAND 1)", ["check_required_components(p)"])
+    False
+    """
+    toks = " ".join(_PKG_TOKEN.findall(line))
+    return any(
+        _docsync.render_only_adds(toks, " ".join(_PKG_TOKEN.findall(r)))
+        for r in render_lines
+    )
+
+
+def packaging_survey(
+    root: Path, replay_root: Path
+) -> "list[PackagingVerdict]":
+    """Judge each packaging template in *root* against *replay_root*.
+
+    *replay_root* is jm's current render of the whole project (the tree
+    `apply` replays the manifest into); its templates are born owned. A
+    template the replay renders and the project lacks is not listed: that
+    is MISSING, which `apply` creates.
+    """
+    out: "list[PackagingVerdict]" = []
+    for pattern in packaging_patterns():
+        for src in sorted(replay_root.glob(pattern)):
+            rel = src.relative_to(replay_root).as_posix()
+            dst = root / rel
+            if not dst.is_file():
+                continue
+            disk = dst.read_text(encoding="utf-8")
+            render = src.read_text(encoding="utf-8")
+            if R.is_owned_render(disk, dst.name):
+                out.append(PackagingVerdict(rel, "owned", (), disk, render))
+                continue
+            head = R.owned_token(dst.name) + "\n" + R.OWNED_PACKAGING_NOTE
+            bare = render[len(head) :] if render.startswith(head) else render
+            have = _meaningful(render)
+            lost = tuple(ln for ln in _meaningful(disk) if not _kept(ln, have))
+            state = "current" if disk == bare else "behind"
+            out.append(PackagingVerdict(rel, state, lost, disk, render))
+    return out
+
+
+def _packaging_diff(v: PackagingVerdict) -> str:
+    import difflib
+
+    return "".join(
+        difflib.unified_diff(
+            v.disk.splitlines(keepends=True),
+            v.render.splitlines(keepends=True),
+            f"a/{v.path}",
+            f"b/{v.path} (jm's render)",
+        )
+    )
+
+
+def adopt_packaging(
+    root: Path,
+    cfg: dict,
+    *,
+    check: bool,
+    accept: "frozenset[str]" = frozenset(),
+) -> int:
+    """`jm adopt --packaging [--check] [--accept <path>]` (gh-1589).
+
+    ``--check`` prints each template's verdict, its diff against today's
+    render and the lines adopting would drop, and writes nothing. Without
+    it, every template that loses nothing is written as jm's owned render;
+    one that would lose a line is refused -- nothing written for it --
+    unless its path (or file name) is named by ``--accept``. Returns 1 when
+    anything was refused, else 0.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    from . import _apply, _textio
+
+    with tempfile.TemporaryDirectory(prefix="jm-adopt-") as tmp:
+        replay_root = Path(tmp)
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            _apply._replay(cfg, replay_root, root)
+        verdicts = packaging_survey(root, replay_root)
+
+    refused = 0
+    for v in verdicts:
+        taken = v.path in accept or Path(v.path).name in accept
+        if v.state == "owned":
+            print(f"  jm's already        {v.path}")
+            continue
+        label = (
+            "adds the token" if v.state == "current" else "takes the render"
+        )
+        if v.lost and not taken:
+            refused += 1
+            print(f"  REFUSES             {v.path}")
+            for ln in v.lost:
+                print(f"      would drop: {ln}")
+        elif check:
+            print(f"  would adopt         {v.path} ({label})")
+        else:
+            _textio.write_text(root / v.path, v.render)
+            print(f"  adopted             {v.path} ({label})")
+        if check and v.state == "behind":
+            print(_packaging_diff(v), end="")
+    if not verdicts:
+        print("  no packaging templates in this project")
+    if refused:
+        print(
+            "\n  A line on disk that jm's render does not keep is refused:"
+            " adopting would\n"
+            "  drop it. jm cannot tell a line you wrote from one an older jm"
+            " rendered\n"
+            "  and has since respelled, so it asks rather than guesses: read"
+            " the diff\n"
+            "  (`--check`), move anything of yours into the root"
+            " CMakeLists.txt as a\n"
+            "  CMake variable the template reads, then take the render with\n"
+            "  `jm adopt --packaging --accept <path>`."
+            + ("" if check else " Nothing was written for it.")
+        )
+    return 1 if refused else 0

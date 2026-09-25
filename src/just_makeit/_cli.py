@@ -386,7 +386,12 @@ Commands:
                                 where nothing is lost: a unit that differs is taken
                                 only when accepted -- by name, or, if the render only
                                 adds code to it, by --accept-additions.
-  record <obj> <Struct>         Name a C struct and its columns, once, for both
+  adopt --packaging [--check] [--accept PATH]...
+                                Make cmake/'s packaging templates (.pc.in,
+                                -config.cmake.in) jm's, so apply renders them and
+                                every packaging fix reaches this project. A template
+                                that would drop a line is refused unless accepted.
+  record <obj> <Struct>        Name a C struct and its columns, once, for both
                                 directions (gh-1405). The struct is yours, in the
                                 sacred header; this says which fields are exposed
                                 and under what names. Reference it with
@@ -1180,8 +1185,14 @@ def main() -> None:
         _usage = (
             "Usage: just-makeit adopt --check [--module <id>]\n"
             "       just-makeit adopt <obj>... | --module <id> | --all\n"
-            "                   [--accept <unit>]... [--accept-additions]"
+            "                   [--accept <unit>]... [--accept-additions]\n"
+            "       just-makeit adopt --packaging [--check]"
+            " [--accept <path>]..."
         )
+        # gh-1569: `--help` was an unknown option.
+        if "--help" in args[1:] or "-h" in args[1:]:
+            print(_usage)
+            sys.exit(0)
         _mod = None
         _accept: set = set()
         _objs: list = []
@@ -1205,6 +1216,7 @@ def main() -> None:
                 "--check",
                 "--all",
                 "--accept-additions",
+                "--packaging",
             ):
                 print(
                     f"error: unknown option {_a}.\n{_usage}", file=sys.stderr
@@ -1215,6 +1227,33 @@ def main() -> None:
             _i += 1
         _root = Path.cwd()
         _cfg = _C.load(_root)
+        # gh-1589: the packaging templates, a separate subject -- mixing it
+        # with fragment targets would make one refusal stand for two.
+        if "--packaging" in args:
+            if (
+                _objs
+                or _mod
+                or "--all" in args
+                or "--accept-additions" in args
+            ):
+                print(
+                    "error: --packaging takes no objects, --module, --all or"
+                    f" --accept-additions.\n{_usage}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            _chk = "--check" in args
+            print(
+                "adopt --packaging"
+                + (" --check" if _chk else "")
+                + " — jm owns cmake/'s packaging templates where nothing"
+                " is lost"
+            )
+            sys.exit(
+                _adopt.adopt_packaging(
+                    _root, _cfg, check=_chk, accept=frozenset(_accept)
+                )
+            )
         if _mod is not None and _mod not in _C.modules(_cfg):
             print(f"error: --module: no module '{_mod}'.", file=sys.stderr)
             sys.exit(2)

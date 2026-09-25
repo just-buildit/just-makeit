@@ -123,12 +123,26 @@ renames it.
 way — delete it, and `apply` writes today's:
 
 ```sh
-rm .gitignore Makefile Doxyfile bootstrap.toml cmake/stale.pc.in \
+rm .gitignore Makefile Doxyfile bootstrap.toml \
    native/benchmarks/jm_bench.h native/inc/clib_common.h
 jm apply
 ```
 
 A file you *did* edit: merge jm's version into yours by hand instead.
+
+**The packaging templates are handed to jm rather than deleted.**
+`cmake/stale.pc.in` and `cmake/stale-config.cmake.in` are what a C consumer
+reads through pkg-config and `find_package`, and today's jm owns them:
+`status` lists the two under PACKAGING, and once adopted `apply` keeps them
+current by itself. The four lines `--check` says adopting would drop are
+0.33.14's own spelling of the paths and the description, which today's
+render replaced — nothing
+was written into them here — so accept the render:
+
+```sh
+jm adopt --packaging --check                # each diff, and what would be dropped
+jm adopt --packaging --accept stale.pc.in
+```
 
 **Your C benchmarks too, if you never touched them.** Once scaffolded,
 `native/benchmarks/bench_<obj>_core.c` is yours, so `status` cannot call it

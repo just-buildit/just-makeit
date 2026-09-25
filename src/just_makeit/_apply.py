@@ -1254,11 +1254,18 @@ def _refuse_owned_that_would_lose(
     raise SystemExit("\n".join(lines))
 
 
-#: The scaffolded Python files born carrying jm's ownership token: the test
-#: (gh-1489) and the benchmark (gh-1528). Both construct the object, so both
-#: follow its constructor while the token is there. One list, so a file
-#: that gains the token gains the whole mechanism.
-_OWNED_SCAFFOLDS = ("src/**/tests/test_*.py", "src/**/benchmarks/bench_*.py")
+#: The scaffolded files born carrying jm's ownership token: the test
+#: (gh-1489) and the benchmark (gh-1528), which both construct the object and
+#: so follow its constructor while the token is there; and the two packaging
+#: templates (gh-1589), which hold no authored content, so a fix to either
+#: reaches every project. One list, so a file that gains the token gains the
+#: whole mechanism.
+OWNED_SCAFFOLDS = (
+    "src/**/tests/test_*.py",
+    "src/**/benchmarks/bench_*.py",
+    "cmake/*.pc.in",
+    "cmake/*-config.cmake.in",
+)
 
 
 def _owned_scaffolds(temp_root: Path, root: Path) -> set:
@@ -1290,7 +1297,7 @@ def _owned_scaffolds(temp_root: Path, root: Path) -> set:
     from ._render import is_owned_render
 
     out: set = set()
-    for pattern in _OWNED_SCAFFOLDS:
+    for pattern in OWNED_SCAFFOLDS:
         for src in temp_root.glob(pattern):
             rel = src.relative_to(temp_root)
             dst = root / rel

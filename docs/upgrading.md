@@ -81,6 +81,25 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## Packaging templates (`adopt --packaging`)
+
+`cmake/<pkg>.pc.in` and `cmake/<pkg>-config.cmake.in` carry what a C
+consumer reads through pkg-config and `find_package`. Since gh-1589 jm owns
+them: a new project's copies start with `# jm:generated <file>`, and
+`jm apply` renders them whole, so packaging fixes arrive with an upgrade. A
+project scaffolded earlier has copies without that line, which `apply` never
+touches; `jm status` lists each one that is behind under **PACKAGING**.
+
+```sh
+jm adopt --packaging --check   # the diff, and any line adopting would drop
+jm adopt --packaging           # hand them to jm
+```
+
+A template holding a line the render does not keep is refused until you
+accept it — see [`just-makeit adopt --packaging`](commands/build.md#just-makeit-adopt-packaging).
+
+______________________________________________________________________
+
 ## For project maintainers
 
 If you ship a library built on `just-makeit` and your users upgrade jm

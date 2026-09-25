@@ -1661,7 +1661,10 @@ def run(
         # Write cmake/pkg.pc.in if the project predates v0.4
         pc_in = root / "cmake" / f"{pkg.replace('_', '-')}.pc.in"
         if not pc_in.exists():
-            _write(pc_in, R.render(R.CMAKE_PC_IN, ctx))
+            _write(
+                pc_in,
+                R.owned_packaging(R.render(R.CMAKE_PC_IN, ctx), pc_in.name),
+            )
 
         # Write or update the umbrella header
         umbrella = root / "native" / "inc" / f"{pkg}.h"

@@ -2174,23 +2174,40 @@ OWNED_SCAFFOLD_NOTE = (
     "# To make it yours, delete that line: jm then never writes it again.\n"
 )
 
+#: gh-1589: the note under the token in the two packaging templates,
+#: ``cmake/<pkg>.pc.in`` and ``cmake/<pkg>-config.cmake.in``. CMake's
+#: configure step copies comments into the INSTALLED ``.pc`` and
+#: ``-config.cmake``, so the sentence has to be true in both places: it
+#: names the project's template, not "this file".
+OWNED_PACKAGING_NOTE = (
+    "# just-makeit regenerates the project's cmake/ template of this file on\n"
+    "# apply while the line above is there; deleting that line there makes\n"
+    "# the template the project's own.\n"
+)
+
 
 def owned_token(filename: str) -> str:
     """The token an owned render writes for *filename*.
 
-    A C comment for a C file, a ``#`` line for a Python one (gh-1489).
+    A C comment for a C file, a ``#`` line for a Python one (gh-1489) and
+    for a CMake ``.in`` template, which pkg-config and CMake both read as a
+    comment (gh-1589).
 
     >>> owned_token("m_ext_a.c")
     '/* jm:generated m_ext_a.c */'
     >>> owned_token("test_gain.py")
     '# jm:generated test_gain.py'
+    >>> owned_token("demo.pc.in")
+    '# jm:generated demo.pc.in'
     """
-    if filename.endswith(".py"):
+    if filename.endswith((".py", ".in")):
         return f"# jm:generated {filename}"
     return f"/* jm:generated {filename} */"
 
 
-def owned_scaffold(text: str, filename: str) -> str:
+def owned_scaffold(
+    text: str, filename: str, note: str = OWNED_SCAFFOLD_NOTE
+) -> str:
     """*text*, a scaffolded Python file, born owned by jm.
 
     The scaffolded test (gh-1489) and benchmark (gh-1528) both construct
@@ -2206,7 +2223,25 @@ def owned_scaffold(text: str, filename: str) -> str:
     # To make it yours, delete that line: jm then never writes it again.
     import unittest
     """
-    return owned_token(filename) + "\n" + OWNED_SCAFFOLD_NOTE + text
+    return owned_token(filename) + "\n" + note + text
+
+
+def owned_packaging(text: str, filename: str) -> str:
+    """*text*, a packaging template, born owned by jm (gh-1589).
+
+    ``cmake/<pkg>.pc.in`` and ``cmake/<pkg>-config.cmake.in`` hold no
+    authored content -- every value arrives through a CMake variable the
+    root CMakeLists sets -- so jm renders them whole on apply while the
+    token names the file, and a fix to either reaches every project.
+
+    >>> print(owned_packaging("Name: d\\n", "d.pc.in"), end="")
+    # jm:generated d.pc.in
+    # just-makeit regenerates the project's cmake/ template of this file on
+    # apply while the line above is there; deleting that line there makes
+    # the template the project's own.
+    Name: d
+    """
+    return owned_scaffold(text, filename, OWNED_PACKAGING_NOTE)
 
 
 def is_owned_render(text: str, filename: str) -> bool:
