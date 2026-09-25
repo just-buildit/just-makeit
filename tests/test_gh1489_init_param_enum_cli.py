@@ -20,7 +20,6 @@ itself: the same object declared both ways must render byte-identical glue.
 
 from __future__ import annotations
 
-import shlex
 import sys
 from pathlib import Path
 
@@ -29,6 +28,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
+from _jmrun import replay_script as _replay
 from _jmrun import run_cli  # noqa: E402
 
 from just_makeit._cli_parse import parse_init_param_flag  # noqa: E402
@@ -169,39 +169,6 @@ def test_undefined_enum_is_refused_before_anything_is_written(tmp_path):
     assert "undefined [[enum]] 'nope'" in r.stderr
     assert not (root / "objects" / "g.toml").exists()
     assert not (root / "native" / "src" / "g").exists()
-
-
-def _replay(script: str, where: Path) -> Path:
-    """Run a `jm script` output through run_cli, one command at a time.
-
-    Understands exactly the three shapes the script emits: a `cd`, a
-    `cat >> FILE <<'EOF'` block, and a (backslash-continued) `just-makeit`
-    command. Anything else fails the test rather than being skipped, so a
-    new shape cannot quietly go unreplayed.
-    """
-    cwd = where
-    lines = iter(script.replace("\\\n", " ").splitlines())
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("cd "):
-            cwd = cwd / line[3:].strip()
-        elif line.startswith("cat >> "):
-            target = cwd / line.split()[2]
-            body = []
-            for inner in lines:
-                if inner == "EOF":
-                    break
-                body.append(inner + "\n")
-            with target.open("a", encoding="utf-8") as fh:
-                fh.write("".join(body))
-        elif line.startswith("just-makeit "):
-            r = run_cli(*shlex.split(line)[1:], cwd=cwd)
-            assert r.returncode == 0, f"{line}\n{r.stderr}"
-        else:
-            raise AssertionError(f"unreplayable script line: {line!r}")
-    return cwd
 
 
 @pytest.mark.parametrize("module", [False, True], ids=["standalone", "module"])
