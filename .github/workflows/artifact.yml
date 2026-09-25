@@ -175,7 +175,7 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import pathlib, re
-          header = pathlib.Path("my_fir/native/inc/fir_filter/fir_filter_core.h")
+          header = pathlib.Path("my_fir/native/inc/my_fir/fir_filter/fir_filter_core.h")
           impl = (
               "fir_filter_step(fir_filter_state_t *state, float _Complex x)\n"
               "{\n"
@@ -230,10 +230,10 @@ jobs:
         run: |
           PREFIX="$HOME/fir_prefix"
           LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
-          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_fir.pc" -exec dirname {} \; | head -1)
 
           cat > /tmp/fir_consumer.c << 'EOF'
-          #include "my_fir.h"
+          #include "my_fir/my_fir.h"
           #include <assert.h>
           #include <complex.h>
           #include <math.h>
@@ -265,9 +265,9 @@ jobs:
 
           # pkg-config
           gcc -O2 -std=c99 \
-            $(pkg-config --cflags my-fir) \
+            $(pkg-config --cflags my_fir) \
             /tmp/fir_consumer.c \
-            $(pkg-config --libs my-fir) \
+            $(pkg-config --libs my_fir) \
             -Wl,-rpath,"$LIB_DIR" \
             -lm -o /tmp/fir_consumer_pkgconfig
           /tmp/fir_consumer_pkgconfig
@@ -280,7 +280,7 @@ jobs:
           project(fir_consumer C)
           find_package(my_fir REQUIRED)
           add_executable(fir_consumer fir_consumer.c)
-          target_link_libraries(fir_consumer PRIVATE my_fir::my_fir_lib m)
+          target_link_libraries(fir_consumer PRIVATE my_fir::my_fir m)
           set_target_properties(fir_consumer PROPERTIES
               INSTALL_RPATH_USE_LINK_PATH ON)
           EOF
@@ -354,7 +354,7 @@ jobs:
               print(f"patched {header_path}")
 
           patch(
-              "native/inc/fir/fir_core.h",
+              "native/inc/my_filters/fir/fir_core.h",
               "fir_step", "float _Complex",
               "fir_step(fir_state_t *state, float _Complex x)\n",
               "{\n"
@@ -369,7 +369,7 @@ jobs:
           )
 
           patch(
-              "native/inc/biquad/biquad_core.h",
+              "native/inc/my_filters/biquad/biquad_core.h",
               "biquad_step", "float",
               "biquad_step(biquad_state_t *state, float x)\n",
               "{\n"
@@ -448,10 +448,10 @@ jobs:
         run: |
           PREFIX="$HOME/filters_prefix"
           LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | head -1)
-          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-filters.pc" -exec dirname {} \; | head -1)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_filters.pc" -exec dirname {} \; | head -1)
 
           cat > /tmp/filters_consumer.c << 'EOF'
-          #include "my_filters.h"
+          #include "my_filters/my_filters.h"
           #include <assert.h>
           #include <complex.h>
           #include <math.h>
@@ -483,9 +483,9 @@ jobs:
 
           # pkg-config
           gcc -O2 -std=c99 \
-            $(pkg-config --cflags my-filters) \
+            $(pkg-config --cflags my_filters) \
             /tmp/filters_consumer.c \
-            $(pkg-config --libs my-filters) \
+            $(pkg-config --libs my_filters) \
             -Wl,-rpath,"$LIB_DIR" \
             -lm -o /tmp/filters_consumer_pkgconfig
           /tmp/filters_consumer_pkgconfig
@@ -498,7 +498,7 @@ jobs:
           project(filters_consumer C)
           find_package(my_filters REQUIRED)
           add_executable(filters_consumer filters_consumer.c)
-          target_link_libraries(filters_consumer PRIVATE my_filters::my_filters_lib m)
+          target_link_libraries(filters_consumer PRIVATE my_filters::my_filters m)
           set_target_properties(filters_consumer PROPERTIES
               INSTALL_RPATH_USE_LINK_PATH ON)
           EOF
@@ -582,9 +582,12 @@ jobs:
             --return-type "float _Complex" \
             --mutable
           # const must NOT appear in the step() signature
-          ! grep "const nco_state_t" native/inc/nco/nco_core.h
+          # test -f first: a bare `! grep` on a missing file exits 2 and PASSES,
+          # which is how this step stayed green through the gh-1583 move.
+          test -f native/inc/mutable_test/nco/nco_core.h
+          ! grep "const nco_state_t" native/inc/mutable_test/nco/nco_core.h
           # non-const pointer must be present
-          grep "nco_step(nco_state_t \*state)" native/inc/nco/nco_core.h
+          grep "nco_step(nco_state_t \*state)" native/inc/mutable_test/nco/nco_core.h
 
       - name: Scaffold --no-state and --no-step and verify TOML flags
         run: |
@@ -773,7 +776,7 @@ jobs:
             --state "gain:float:1.0"
           python - <<'PYEOF'
           import pathlib, re
-          h = pathlib.Path("my_fir/native/inc/fir_filter/fir_filter_core.h")
+          h = pathlib.Path("my_fir/native/inc/my_fir/fir_filter/fir_filter_core.h")
           impl = (
               "fir_filter_step(fir_filter_state_t *state, float _Complex x)\n"
               "{\n"
@@ -840,7 +843,7 @@ jobs:
           cmake --install my_fir/build --prefix "$RUNNER_TEMP/fir_prefix"
           mkdir consumer && cd consumer
           cat > consumer.c << 'EOF'
-          #include "my_fir.h"
+          #include "my_fir/my_fir.h"
           #include <math.h>
           #include <stdio.h>
           int main(void) {
@@ -862,9 +865,9 @@ jobs:
           project(fir_consumer C)
           find_package(my_fir REQUIRED)
           add_executable(consumer_shared consumer.c)
-          target_link_libraries(consumer_shared PRIVATE my_fir::my_fir_lib)
+          target_link_libraries(consumer_shared PRIVATE my_fir::my_fir)
           add_executable(consumer_static consumer.c)
-          target_link_libraries(consumer_static PRIVATE my_fir::my_fir_lib_static)
+          target_link_libraries(consumer_static PRIVATE my_fir::my_fir-static)
           EOF
           CC=clang-cl cmake -B build -G Ninja \
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/fir_prefix"
