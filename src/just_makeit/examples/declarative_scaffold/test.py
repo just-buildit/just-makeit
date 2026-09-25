@@ -16,9 +16,10 @@ Also runnable directly: python3 examples/declarative_scaffold/test.py
 
 import subprocess
 import sys
-import tempfile
 from just_makeit import _incpath as INC
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 from just_makeit._pyfmt import flatten_prose
 
 
@@ -210,6 +211,6 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("declarative_scaffold: PASSED")

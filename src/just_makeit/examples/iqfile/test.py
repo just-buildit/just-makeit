@@ -6,8 +6,9 @@ Also runnable directly: python3 examples/iqfile/test.py
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
@@ -152,6 +153,6 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("iqfile: PASSED")

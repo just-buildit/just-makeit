@@ -35,13 +35,14 @@ import re
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.request
 import zipfile
 from just_makeit import _incpath as INC
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 from just_makeit._pyfmt import flatten_prose
 
 # Pinned doppler version for the auto-download path. Bump when doppler
@@ -687,5 +688,5 @@ if __name__ == "__main__":
         idx = args.index("--doppler-prefix")
         doppler_prefix = args[idx + 1]
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp), doppler_prefix=doppler_prefix)

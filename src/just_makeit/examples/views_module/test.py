@@ -28,6 +28,8 @@ import sys
 from just_makeit import _incpath as INC
 from pathlib import Path
 
+from just_makeit._example import scratch_dir
+
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
 
@@ -297,8 +299,6 @@ print("views_module: all checks passed")
 
 
 if __name__ == "__main__":
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("views_module: PASSED")

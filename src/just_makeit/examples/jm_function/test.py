@@ -17,13 +17,14 @@ Also runnable directly: python3 examples/jm_function/test.py
 import os
 import subprocess
 import sys
-import tempfile
 
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 HERE = Path(__file__).parent
 STEPS = HERE / ".steps"
@@ -272,6 +273,6 @@ print("jm_function: all Python checks passed")
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("jm_function: PASSED")
