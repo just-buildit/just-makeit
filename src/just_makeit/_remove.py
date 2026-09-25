@@ -777,6 +777,8 @@ def _remove_function(
             print(f"  update  {core_h}")
 
     _regenerate_module(root, cfg, module, pkg)
+    if not fns:
+        _remove_function_core_harness(root, cfg, module, cname)
     print()
     note = (
         f"\n  note: {name}() remains as a static inline in {cname}_core.h"
@@ -785,6 +787,34 @@ def _remove_function(
         else ""
     )
     print(f"Done!  Function '{name}' removed.{note}")
+
+
+def _remove_function_core_harness(
+    root: Path, cfg: dict, module: str, cname: str
+) -> None:
+    """Remove the C test and bench of a module core that no longer exists.
+
+    gh-1479: a module's free functions are its core (gh-1034), and removing
+    the LAST one ends it -- the regenerated CMakeLists builds no
+    ``<cname>_core`` any more. Its C test, symbols test and bench were left
+    behind, compiled by nothing and exercising functions that are gone, so
+    `status --check` failed UNBUILT on the tree `jm remove` had just
+    produced. They go the way an object's do on ``jm remove object``
+    (:func:`_object_paths`): the removal is the author's explicit, confirmed
+    act, and a harness for code that no longer exists has nothing left to
+    hold.
+
+    Kept when an object of the module shares the module's name: that
+    object's core is ``<cname>_core`` too, and these are its files.
+    """
+    if cname in C.module_objects(cfg, module):
+        return
+    for path in (
+        root / "native" / "tests" / f"test_{cname}_core.c",
+        root / "native" / "tests" / f"test_{cname}_symbols.c",
+        root / "native" / "benchmarks" / f"bench_{cname}_core.c",
+    ):
+        _rm(path)
 
 
 def _object_ctx(
