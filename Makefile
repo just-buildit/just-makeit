@@ -228,6 +228,7 @@ PYTEST_PARALLEL = -n auto --dist load
 # time, so "the examples" was already two declarations that nothing held
 # equal.
 PROJECT_ENV_TESTS = tests/test_examples.py \
+                    tests/test_gh1601_install_components.py \
                     tests/test_stub_conformance.py \
                     tests/test_gh746_py_format_command.py \
                     tests/test_gh746_formatter_fixed_point.py \
