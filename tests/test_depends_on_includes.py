@@ -130,10 +130,16 @@ def test_inject_includes_idempotent(tmp_path):
         "#endif /* X_CORE_H */\n",
         deps=["dep"],
     )
-    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is True
+    assert (
+        _inject_includes_into_core_h(hdr, "x", ["dep"], root=tmp_path) is True
+    )
     assert '#include "dep/dep_core.h"' in hdr.read_text(encoding="utf-8")
-    assert _inject_includes_into_core_h(hdr, "x", ["dep"]) is False  # no-op
-    assert _inject_includes_into_core_h(hdr, "x", []) is False  # no deps
+    assert (
+        _inject_includes_into_core_h(hdr, "x", ["dep"], root=tmp_path) is False
+    )  # no-op
+    assert (
+        _inject_includes_into_core_h(hdr, "x", [], root=tmp_path) is False
+    )  # no deps
 
 
 def test_inject_skips_dep_without_a_header(tmp_path):
@@ -148,7 +154,10 @@ def test_inject_skips_dep_without_a_header(tmp_path):
         encoding="utf-8",
     )
     # native/inc/<dep>/<dep>_core.h does not exist for these
-    assert _inject_includes_into_core_h(hdr, "x", ["lo_core"]) is False
+    assert (
+        _inject_includes_into_core_h(hdr, "x", ["lo_core"], root=tmp_path)
+        is False
+    )
     assert "lo_core" not in hdr.read_text(encoding="utf-8")
 
 
@@ -186,7 +195,9 @@ def test_inject_includes_fallback_when_no_includes(tmp_path):
         "#endif /* Y_CORE_H */\n",
         deps=["dep"],
     )
-    assert _inject_includes_into_core_h(hdr, "y", ["dep"]) is True
+    assert (
+        _inject_includes_into_core_h(hdr, "y", ["dep"], root=tmp_path) is True
+    )
     text = hdr.read_text(encoding="utf-8")
     assert '#include "dep/dep_core.h"' in text
     assert text.index("dep/dep_core.h") < text.index("#ifdef __cplusplus")
