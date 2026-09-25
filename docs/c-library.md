@@ -104,10 +104,17 @@ The installed tree **locates itself**. The `.pc` computes its `prefix` from its
 own location (`${pcfiledir}`), and the CMake config does the same, so a prefix
 you copy, stage with `DESTDIR` or move afterwards keeps working. A
 `CMAKE_INSTALL_LIBDIR` given as an absolute path, as Nix and Guix do, is
-written as that path. A distribution package that wants the `.pc` to name its
-prefix absolutely configures with `-DJM_PC_RELOCATABLE=OFF`. Otherwise
-pkg-config spells a system prefix as a path through `pkgconfig/../..`, which
-works but doesn't match `/usr/include` textually.
+written as that path.
+
+The exception is a **system prefix**, `/usr` by default. pkg-config leaves out
+`-I/usr/include` and `-L/usr/lib...` only when the `.pc` spells them
+literally. A self-locating `/usr` install would put them on every consumer's
+command line, which breaks `#include_next` and puts `/usr/lib` ahead of the
+consumer's own `-L`. So a prefix listed in `JM_PC_SYSTEM_PREFIXES` (a
+`;`-separated cache list) gets an absolute `.pc`. `/usr/local` is not in the
+default list, because pkgconf and pkg-config 0.29 both emit its flags anyway.
+To choose outright, pass `-DJM_PC_RELOCATABLE=ON` or `OFF`, which wins over
+the list either way.
 
 ### Versions and ABI
 

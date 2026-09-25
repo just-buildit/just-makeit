@@ -217,12 +217,26 @@ export(
 # working, as the CMake config (PACKAGE_INIT) already does. A libdir or
 # includedir outside the prefix -- GNUInstallDirs given an absolute path, as
 # Nix and Guix do -- is written as that absolute path, never as
-# `${exec_prefix}//abs`. The cost of relocatable is that pkg-config no longer
-# recognises a system prefix (-I/usr/include is emitted as a path through
-# pkgconfig/../..); a distribution package that wants the absolute form sets
-# JM_PC_RELOCATABLE=OFF.
-option(JM_PC_RELOCATABLE "Write the .pc prefix relative to its own location"
-       ON)
+# `${exec_prefix}//abs`.
+#
+# Except under a SYSTEM prefix. pkg-config drops -I/-L for its system dirs only
+# when they are spelled literally; `${pcfiledir}/../..` defeats that, and every
+# consumer of a /usr install would get -I/usr/include (which breaks
+# #include_next and reorders system headers) and -L/usr/lib ahead of its own
+# -L. So a prefix in JM_PC_SYSTEM_PREFIXES is written absolutely. Its default
+# is /usr alone: measured, pkgconf 2.5.1 and pkg-config 0.29 filter /usr's
+# include and lib dirs and not /usr/local's. An explicit -DJM_PC_RELOCATABLE
+# wins either way.
+set(JM_PC_SYSTEM_PREFIXES
+    "/usr"
+    CACHE STRING "Install prefixes whose .pc is written absolutely")
+if(DEFINED CACHE{JM_PC_RELOCATABLE})
+  set(JM_PC_RELOCATE ${JM_PC_RELOCATABLE})
+elseif(CMAKE_INSTALL_PREFIX IN_LIST JM_PC_SYSTEM_PREFIXES)
+  set(JM_PC_RELOCATE OFF)
+else()
+  set(JM_PC_RELOCATE ON)
+endif()
 # Set ${out} to the absolute path ${full} spelled for the .pc: as
 # "${spelled}/<rel>" when it lies under ${base}, and as itself when not.
 function(jm_pc_path out full base spelled)
@@ -242,7 +256,7 @@ function(jm_pc_path out full base spelled)
   endif()
 endfunction()
 set(JM_PC_PREFIX "${CMAKE_INSTALL_PREFIX}")
-if(JM_PC_RELOCATABLE)
+if(JM_PC_RELOCATE)
   file(RELATIVE_PATH JM_PC_UP "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
        "${CMAKE_INSTALL_PREFIX}")
   string(REGEX REPLACE "/$" "" JM_PC_UP "${JM_PC_UP}")
@@ -254,6 +268,21 @@ jm_pc_path(JM_PC_LIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}"
            "${CMAKE_INSTALL_PREFIX}" "\${exec_prefix}")
 jm_pc_path(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}"
            "${CMAKE_INSTALL_PREFIX}" "\${prefix}")
-configure_file(cmake/<<project>>.pc.in <<project>>.pc @ONLY)
+# gh-1582: an optional field with nothing to say is left out, not written as an
+# empty `URL:` -- and the slots the template leaves empty leave no blank lines
+# behind. Name, Description and Version stay: pkg-config 0.29 refuses a .pc
+# without them. The final copy is COPYONLY, so the .pc is rewritten only when
+# its content changes.
+configure_file(cmake/<<project>>.pc.in <<project>>.pc.raw @ONLY)
+file(READ "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.raw" JM_PC_TEXT)
+set(JM_PC_EMPTY_FIELD
+    "\n(URL|Requires|Requires\\.private|Conflicts|Libs\\.private):[ \t]*\n")
+while(JM_PC_TEXT MATCHES "${JM_PC_EMPTY_FIELD}")
+  string(REGEX REPLACE "${JM_PC_EMPTY_FIELD}" "\n" JM_PC_TEXT "${JM_PC_TEXT}")
+endwhile()
+string(REGEX REPLACE "\n+$" "\n" JM_PC_TEXT "${JM_PC_TEXT}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy" "${JM_PC_TEXT}")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy"
+               <<project>>.pc COPYONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

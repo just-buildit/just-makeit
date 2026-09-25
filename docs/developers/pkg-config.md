@@ -62,9 +62,12 @@ Cflags: -I${includedir}
     the pkgconfig directory back to `CMAKE_INSTALL_PREFIX`. The file then
     stays right when the tree is installed with `cmake --install --prefix`,
     staged with `DESTDIR`, or moved, as CMake's own config (`PACKAGE_INIT`)
-    does. jm's root template computes it (gh-1582) and offers
-    `JM_PC_RELOCATABLE=OFF` for the absolute form, since pkg-config does not
-    recognise a system prefix spelled through `pkgconfig/../..`.
+    does. The exception is a system prefix (`/usr`). pkg-config drops
+    `-I`/`-L` for its system dirs only when they are spelled literally, so
+    `${pcfiledir}/../..` there would put `-I/usr/include` on every consumer.
+    jm's root template writes the `.pc` absolutely for any prefix in
+    `JM_PC_SYSTEM_PREFIXES` (default `/usr`), and an explicit
+    `JM_PC_RELOCATABLE` overrides that (gh-1582).
 - **`libdir` / `includedir`** — `${exec_prefix}/<rel>` when the
     `CMAKE_INSTALL_FULL_*` path is under the prefix, and that absolute path
     when it is not. `GNUInstallDirs` may itself be given absolute paths (Nix

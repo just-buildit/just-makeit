@@ -74,6 +74,9 @@ SABOTAGE = {
     "version-compat": r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}",
     "build-tree-export": r"export\(\s*EXPORT[^)]*\)",
     "pc-paths": r"jm_pc_path\(\s*JM_PC_LIBDIR[^)]*\)",
+    "pc-system-prefix": r"set\(\s*JM_PC_SYSTEM_PREFIXES\b[^)]*\)",
+    # Configure straight to the .pc, which is the pre-tidy shape.
+    "pc-tidy": r"(?<=p\.pc)\.raw(?=\s+@ONLY)",
 }
 
 

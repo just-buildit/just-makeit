@@ -176,6 +176,14 @@ def world(tmp_path_factory):
     _run(["cmake", "--install", bo], proj)
     layouts["abs-libdir-outside"] = Layout(outp, outlib)
 
+    # A prefix declared a SYSTEM prefix, standing in for /usr: its .pc must
+    # be written absolutely, or pkg-config cannot filter its system dirs.
+    sysp = root / "sysp"
+    bsy = proj / "bsy"
+    _build(proj, bsy, sysp, f"-DJM_PC_SYSTEM_PREFIXES={sysp}")
+    _run(["cmake", "--install", bsy], proj)
+    layouts["system-prefix"] = Layout(sysp, sysp / "lib")
+
     return root, proj, b, layouts
 
 
@@ -226,10 +234,13 @@ LAYOUT_NAMES = [
     "abs-libdir",
     "abs-libdir-outside",
 ]
+#: every layout; pkg-config consumers build against LAYOUT_NAMES only,
+#: because a system prefix's flags are (rightly) filtered to nothing.
+ALL_LAYOUTS = [*LAYOUT_NAMES, "system-prefix"]
 
 
 @pytest.mark.parametrize("linkage", ["shared", "static"])
-@pytest.mark.parametrize("layout", LAYOUT_NAMES)
+@pytest.mark.parametrize("layout", ALL_LAYOUTS)
 def test_find_package_installed(world, layout, linkage):
     root, _, _, layouts = world
     lay = layouts[layout]
@@ -284,6 +295,35 @@ def test_the_pc_spells_an_absolute_libdir_once(world):
         assert "}//" not in text, text
     inside = layouts["abs-libdir"].libdir / "pkgconfig" / f"{PC_NAME}.pc"
     assert "libdir=${exec_prefix}/lib64" in inside.read_text()
+
+
+def test_a_system_prefix_emits_no_system_flags(world):
+    """Under a system prefix pkg-config must be able to drop -I/-L: it does
+    so only for a LITERAL system dir, and `${pcfiledir}/../..` is not one.
+    The env points pkg-config's system dirs at the stand-in prefix, as
+    /usr's are by default."""
+    root, _, _, layouts = world
+    lay = layouts["system-prefix"]
+    env = dict(os.environ)
+    env["PKG_CONFIG_PATH"] = str(lay.libdir / "pkgconfig")
+    env["PKG_CONFIG_SYSTEM_INCLUDE_PATH"] = str(lay.prefix / "include")
+    env["PKG_CONFIG_SYSTEM_LIBRARY_PATH"] = str(lay.libdir)
+    out = _run(
+        ["pkg-config", "--cflags", "--libs", PC_NAME], root, env
+    ).stdout.split()
+    assert not [f for f in out if f[:2] in ("-I", "-L")], out
+    assert f"-l{NAME}" in out, out
+
+
+@pytest.mark.parametrize("layout", ALL_LAYOUTS)
+def test_the_pc_has_no_empty_field_or_blank_tail(world, layout):
+    """An optional field with nothing to say is left out rather than written
+    as `URL:`, and the template's empty slots leave no blank lines."""
+    _, _, _, layouts = world
+    text = (layouts[layout].libdir / "pkgconfig" / f"{PC_NAME}.pc").read_text()
+    empty = [ln for ln in text.splitlines() if re.fullmatch(r"[\w.]+:\s*", ln)]
+    assert empty == [], empty
+    assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-40:])
 
 
 ABI = ".".join(VERSION.split(".")[:2])

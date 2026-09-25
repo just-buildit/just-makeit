@@ -314,6 +314,25 @@ def _configures_pc(r: Root) -> bool:
     )
 
 
+def _has_pc_tidy(r: Root) -> bool:
+    # The .pc.in is configured to an intermediate rather than to the .pc
+    # itself: that is the step that drops empty optional fields.
+    return any(
+        c.name == "configure_file"
+        and len(c.args) > 1
+        and c.args[0].endswith(".pc.in")
+        and not c.args[1].endswith(".pc")
+        for c in r.calls
+    )
+
+
+def _has_system_prefixes(r: Root) -> bool:
+    return any(
+        c.name == "set" and c.args[:1] == ("JM_PC_SYSTEM_PREFIXES",)
+        for c in r.calls
+    )
+
+
 class Fix(NamedTuple):
     """One fix the root template carries outside jm's managed blocks.
 
@@ -443,6 +462,27 @@ FIXES: "tuple[Fix, ...]" = (
         "them, and the older one hard-codes the install prefix, so a moved "
         "or staged prefix points consumers at the old path",
         _has_pc_paths,
+        _configures_pc,
+    ),
+    Fix(
+        "pc-system-prefix",
+        "gh-1582",
+        "Linux",
+        "JM_PC_SYSTEM_PREFIXES is not set, so a .pc installed under /usr "
+        "is written relative to itself; pkg-config then cannot recognise "
+        "its system dirs, and every consumer gets -I/usr/include and "
+        "-L/usr/lib ahead of its own flags",
+        _has_system_prefixes,
+        lambda r: _configures_pc(r) and _has_pc_paths(r),
+    ),
+    Fix(
+        "pc-tidy",
+        "gh-1582",
+        "all",
+        "the .pc is configured directly from cmake/<pkg>.pc.in, so an "
+        "empty optional field is written as `URL:` and the template's "
+        "empty slots leave blank lines at the end of the file",
+        _has_pc_tidy,
         _configures_pc,
     ),
 )

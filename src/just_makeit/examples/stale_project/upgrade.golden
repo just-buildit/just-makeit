@@ -48,7 +48,7 @@ OUTDATED (7) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (12) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -61,6 +61,7 @@ ROOT CMAKE (12) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc paths are not computed (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR): today's cmake/<pkg>.pc.in writes an empty prefix without them, and the older one hard-codes the install prefix, so a moved or staged prefix points consumers at the old path
+  ↑ pc-tidy (gh-1582): the .pc is configured directly from cmake/<pkg>.pc.in, so an empty optional field is written as `URL:` and the template's empty slots leave blank lines at the end of the file
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
   from. A fix you do not want: name it in [project] status_allow as
@@ -82,7 +83,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 12 root-cmake, 2 unwired (!).
+summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 13 root-cmake, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -144,7 +145,7 @@ OUTDATED (7) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (12) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -157,6 +158,7 @@ ROOT CMAKE (12) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc paths are not computed (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR): today's cmake/<pkg>.pc.in writes an empty prefix without them, and the older one hard-codes the install prefix, so a moved or staged prefix points consumers at the old path
+  ↑ pc-tidy (gh-1582): the .pc is configured directly from cmake/<pkg>.pc.in, so an empty optional field is written as `URL:` and the template's empty slots leave blank lines at the end of the file
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
   from. A fix you do not want: name it in [project] status_allow as
@@ -171,7 +173,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 12 root-cmake.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 13 root-cmake.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
