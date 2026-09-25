@@ -21,7 +21,7 @@ CFLAGS ?= -O2 -fPIC -std=c99 -Wall
 
 PY_INC := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")
 EXT    := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
-INC     = -I$(PY_INC) -Inative/inc
+INC     = -I$(PY_INC) -I<<inc_dir>>
 
 # The compile rules below pass -I$(numpy.get_include()), so an importable
 # numpy whose header tree is absent produces `numpy/arrayobject.h: No such

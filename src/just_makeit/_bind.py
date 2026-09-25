@@ -41,6 +41,7 @@ from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
 from . import _types as T
+from . import _incpath as INC
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_class_brief
 from ._init import _make_component_ctx
@@ -610,7 +611,7 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     Returns the rendered text either way so tests and ``--check`` mode
     can compare without touching the filesystem.
     """
-    header = root / "native" / "inc" / component / f"{component}_core.h"
+    header = INC.core_h(root, component)
     if not header.exists():
         print(f"error: header not found: {header}", file=sys.stderr)
         sys.exit(1)

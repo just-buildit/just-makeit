@@ -4,7 +4,7 @@ Python3_add_library(<<module>> MODULE WITH_SOABI <<module>>_ext.c<<extra_ext_sou
 target_link_libraries(<<module>> PRIVATE
     <<object_core_libs>>
     <<extra_link_libs_block>>Python3::NumPy)
-target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/native/inc<<extra_include_dirs_block>>)
+target_include_directories(<<module>> PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>><<extra_include_dirs_block>>)
 set_target_properties(<<module>> PROPERTIES<<module_output_name>>
     LIBRARY_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module_pypath>>"
     RUNTIME_OUTPUT_DIRECTORY "${PYTHON_PACKAGE_DIR}/<<module_pypath>>")

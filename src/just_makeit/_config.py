@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Iterator, NamedTuple
 
 from . import _types as _T
+from . import _incpath as INC
 
 FILENAME = "just-makeit.toml"
 
@@ -2031,7 +2032,7 @@ def core_family_errors(name: str, sec: dict) -> "list[str]":
         errors.append(
             f"`{name}` sets {', '.join(present)} but not {', '.join(missing)}:"
             " a macro family needs all three -- the macro, its arguments, and"
-            " the header under native/inc/ that defines it."
+            f" the header under {INC.INC_DIR}/ that defines it."
         )
     if not _truthy(sec.get("header_only")):
         errors.append(

@@ -31,6 +31,7 @@ from typing import Union
 from . import _config as C
 from . import _record
 from . import _render as T
+from . import _incpath as INC
 from ._builtins import require_param_names
 from ._object import _regenerate_module
 
@@ -87,7 +88,7 @@ def _write_function_c(
         f"/*\n"
         f" * {fn_name}.c — {cname} module-level function.\n"
         f" */\n"
-        f'#include "{cname}/{cname}_core.h"\n\n'
+        f'#include "{INC.core_include(cname, path)}"\n\n'
         f"{stub}"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,7 +294,7 @@ def run(
     cname = C.module_paths(module).cname
 
     fn_c = root / "native" / "src" / cname / f"{fn_name}.c"
-    core_h = root / "native" / "inc" / cname / f"{cname}_core.h"
+    core_h = INC.core_h(root, cname)
 
     core_c = root / "native" / "src" / cname / f"{cname}_core.c"
     # gh-247: a module may opt to keep all its free functions in one TU

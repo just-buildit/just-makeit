@@ -48,6 +48,7 @@ from ._init import (
 )
 from ._object import _regenerate_module
 from . import _linkcheck
+from . import _incpath as INC
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -675,7 +676,7 @@ def _write_varargs_core_c(
         f" */\n"
         f"#define PY_SSIZE_T_CLEAN\n"
         f"#include <Python.h>\n"
-        f'#include "{component}/{component}_core.h"\n'
+        f'#include "{INC.core_include(component, path)}"\n'
         f"\n"
         f"/* <<IMPLEMENT: {method_name}(*args, **kwargs)\n"
         f" * Parse args/kwargs and return a PyObject *.\n"
@@ -1930,9 +1931,7 @@ def run(
         _vo_fn = C.method_c_symbol(
             object_name, {"name": method_name, "fn": fn}
         )
-        _core_h_check = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
+        _core_h_check = INC.core_h(root, object_name)
         if _core_h_check.exists():
             _h_text = _core_h_check.read_text(encoding="utf-8")
             import re as _re
@@ -2120,9 +2119,7 @@ def run(
         # Surgically add the new method's declaration to the per-object
         # _core.h (needed for the module ext.c's #include) — no re-render,
         # no body splice.
-        core_h_ = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
+        core_h_ = INC.core_h(root, object_name)
         _rec_advice = record_type_advice(
             core_h_,
             record_dtype,
@@ -2173,9 +2170,7 @@ def run(
         # Surgically inject the new method's declaration into _core.h (sacred
         # struct + inline step() untouched); regenerate the glue (_ext.c, the
         # benchmark, the stub, and the component CMakeLists) from the manifest.
-        core_h = (
-            root / "native" / "inc" / object_name / f"{object_name}_core.h"
-        )
+        core_h = INC.core_h(root, object_name)
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
         no_step = C.is_no_step(cfg, object_name)

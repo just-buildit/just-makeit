@@ -43,6 +43,7 @@ from . import _enumc
 from . import _context as Ctx
 from . import _types as T
 from . import _procglobal
+from . import _incpath as INC
 from ._context import _diagnostics
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
@@ -1760,6 +1761,8 @@ def render_ext(
             "__attribute__((weak));\n"
         )
 
+    # gh-1583: the include of a jm header is spelled by the layout.
+    _common_h = INC.include("clib_common.h", C.project_name(cfg))
     parts = [
         f"""/*
  * {mp.cname}_ext.c — handle extension: typed `{tname}` over `{backing}` (jm; gh-306).
@@ -1772,7 +1775,7 @@ def render_ext(
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
-#include "clib_common.h"
+#include "{_common_h}"
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -1861,7 +1864,7 @@ def render_cmake(cfg: dict, module: str) -> str:
 Python3_add_library({leaf} MODULE WITH_SOABI {cname}_ext.c)
 target_link_libraries({leaf} PRIVATE
 {link_lines}    Python3::NumPy)
-target_include_directories({leaf} PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)
+target_include_directories({leaf} PRIVATE {INC.CMAKE_INC})
 set_target_properties({leaf} PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${{PYTHON_PACKAGE_DIR}}/{out_pkg}"
     RUNTIME_OUTPUT_DIRECTORY "${{PYTHON_PACKAGE_DIR}}/{out_pkg}")
@@ -2400,7 +2403,7 @@ def _backing_doc_blocks(
     header_rel = C.handle_header(cfg, module)
     if not header_rel or project_root is None:
         return {}
-    hp = Path(project_root) / "native" / "inc" / header_rel
+    hp = INC.inc_dir(Path(project_root)) / header_rel
     if not hp.exists():
         return {}
     from ._docstring import extract_doc_blocks

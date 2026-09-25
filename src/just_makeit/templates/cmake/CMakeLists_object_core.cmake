@@ -6,7 +6,7 @@ add_executable(test_<<component>>_core
 target_link_libraries(test_<<component>>_core
                       PRIVATE <<component>>_core <<extra_link_libs_block>>${JM_MATH_LIBRARY})
 target_include_directories(test_<<component>>_core
-                           PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
+                           PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>>)
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
 
 add_executable(
@@ -15,5 +15,5 @@ add_executable(
 target_link_libraries(bench_<<component>>_core
                       PRIVATE <<component>>_core <<extra_link_libs_block>>${JM_MATH_LIBRARY})
 target_include_directories(
-  bench_<<component>>_core PRIVATE ${CMAKE_SOURCE_DIR}/native/inc
+  bench_<<component>>_core PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>>
                                    ${CMAKE_SOURCE_DIR}/native/benchmarks)

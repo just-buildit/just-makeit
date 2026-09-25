@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _context as Ctx
+from . import _incpath as INC
 from ._init import _inject_decls_into_core_h, _to_title
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
@@ -182,7 +183,7 @@ def run(
     )
     create_params = vctx["create_params"]
 
-    core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+    core_h = INC.core_h(root, object_name)
     proto = f"{object_name}_state_t *{create_fn}({create_params});"
     if _inject_decls_into_core_h(
         core_h, object_name, [proto], family=C.core_family(cfg, object_name)

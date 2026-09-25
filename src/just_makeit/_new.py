@@ -16,6 +16,7 @@ from pathlib import Path
 from . import _color as Color
 from . import _config as C
 from . import _render as T
+from . import _incpath as INC
 
 
 def _make_project_ctx(
@@ -119,12 +120,12 @@ def run(
     _write(root / "zensical.toml", r(T.ZENSICAL_TOML))
     _write(root / "docs" / "index.md", r(T.DOCS_INDEX_MD))
     _write(root / "docs" / "api.md", r(T.DOCS_API_MD))
-    _write(root / "native" / "inc" / "clib_common.h", r(T.CLIB_COMMON_H))
-    _write(root / "native" / "inc" / "pyex_common.h", r(T.PYEX_COMMON_H))
-    _write(root / "native" / "inc" / f"{project}.h", r(T.UMBRELLA_H))
+    _write(INC.path(root, "clib_common.h", project), r(T.CLIB_COMMON_H))
+    _write(INC.path(root, "pyex_common.h", project), r(T.PYEX_COMMON_H))
+    _write(INC.path(root, f"{project}.h", project), r(T.UMBRELLA_H))
     if perf:
-        _write(root / "native" / "inc" / "jm_perf.h", r(T.JM_PERF_H))
-        _write(root / "native" / "inc" / "jm_simd.h", T.JM_SIMD_H)
+        _write(INC.path(root, "jm_perf.h", project), r(T.JM_PERF_H))
+        _write(INC.path(root, "jm_simd.h", project), T.JM_SIMD_H)
 
     if build_system == "cmake":
         # gh-1589: both packaging templates are born owned -- `apply` renders

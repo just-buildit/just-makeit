@@ -2,7 +2,7 @@
 PROJECT_NAME           = "<<project>>"
 PROJECT_NUMBER         = <<version>>
 OUTPUT_DIRECTORY       = docs/doxygen
-INPUT                  = native/inc native/src
+INPUT                  = <<inc_dir>> native/src
 RECURSIVE              = YES
 EXTRACT_ALL            = YES
 EXTRACT_STATIC         = YES

@@ -1,6 +1,6 @@
-#include "/*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 #include "jm_bench.h"
-#include "clib_common.h"
+#include "/*<<inc_prefix>>*/clib_common.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

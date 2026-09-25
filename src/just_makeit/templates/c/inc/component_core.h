@@ -12,7 +12,7 @@
 #ifndef /*<<COMPONENT>>*/_CORE_H
 #define /*<<COMPONENT>>*/_CORE_H
 
-#include "clib_common.h"
+#include "/*<<inc_prefix>>*/clib_common.h"
 /*<<perf_include>>*//*<<depends_includes>>*/
 #ifdef __cplusplus
 extern "C" {

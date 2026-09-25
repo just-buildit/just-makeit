@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from ._docstring import STUB_TARGET_WIDTH, example_budget
 
 # Where a documented function's examples land in the generated stub. Getting
@@ -112,16 +113,14 @@ def _example_sources(root: Path, cfg: dict) -> dict[str, tuple[Path, str]]:
     for obj in C.components(cfg):
         _add(
             _load_doc_blocks(root, obj) or {},
-            root / "native" / "inc" / obj / f"{obj}_core.h",
+            INC.core_h(root, obj),
         )
     for mod in C.modules(cfg):
         try:
             blocks = _load_module_doc_blocks(root, mod) or {}
         except (OSError, ValueError):
             continue
-        _add(
-            blocks, root / "native" / "inc" / f"{C.module_paths(mod).cname}.h"
-        )
+        _add(blocks, INC.path(root, f"{C.module_paths(mod).cname}.h"))
     return src
 
 

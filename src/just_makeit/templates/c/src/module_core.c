@@ -3,4 +3,4 @@
  *
  * Add extra #includes below, then implement module-level functions.
  */
-#include "/*<<module>>*///*<<module>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<module>>*///*<<module>>*/_core.h"

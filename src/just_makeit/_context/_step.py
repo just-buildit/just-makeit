@@ -21,7 +21,8 @@ from ._parse import _build_ml_doc, _step_parse_block
 def make_perf_ctx(perf: bool) -> dict[str, str]:
     if perf:
         return {
-            "perf_include": '#include "jm_perf.h"',
+            # render() fills the layout slot (gh-1583).
+            "perf_include": '#include "<<inc_prefix>>jm_perf.h"',
             "step_qualifier": "JM_FORCEINLINE JM_HOT",
             "omp_simd_hint": "    /* #pragma omp simd */\n",
         }

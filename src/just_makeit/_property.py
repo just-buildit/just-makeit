@@ -24,6 +24,7 @@ from . import _config as C
 from . import _glue
 from . import _linkcheck
 from . import _types as T
+from . import _incpath as INC
 from ._context._methods import (
     container_fn_names,
     validate_container_property,
@@ -264,7 +265,7 @@ def run(
     # must not send the author there. The getter/setter bodies are the
     # author's either way; only the file named changes.
     _body_file = (
-        f"native/inc/{object_name}/{object_name}_core.h"
+        INC.core_rel(object_name, root)
         if C.is_header_only(cfg, object_name)
         else f"native/src/{object_name}/{object_name}_core.c"
     )
@@ -442,7 +443,7 @@ def run(
     #                    value unless it returns a PyObject *). A PyObject *
     #                    value_fn needs Python.h and so is forward-declared in
     #                    the glue instead -- see _methods._container_getter.
-    core_h = root / "native" / "inc" / object_name / f"{object_name}_core.h"
+    core_h = INC.core_h(root, object_name)
     if container:
         fns = container_fn_names(object_name, prop_name, prop_entry)
         state_t = f"const {object_name}_state_t *"

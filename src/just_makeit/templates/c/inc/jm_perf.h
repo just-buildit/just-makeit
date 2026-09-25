@@ -101,7 +101,7 @@
 #endif
 
 /* Width-portable SIMD operation macros (JM_VEC_F32, JM_MAC_F32, etc.) */
-#include "jm_simd.h"
+#include "/*<<inc_prefix>>*/jm_simd.h"
 
 /* ── JM_DEFINE_STEPS ────────────────────────────────────────────────────────
  *
