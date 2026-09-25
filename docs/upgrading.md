@@ -81,22 +81,31 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Packaging templates (`adopt --packaging`)
+## Packaging (`adopt --packaging`)
 
-`cmake/<pkg>.pc.in` and `cmake/<pkg>-config.cmake.in` carry what a C
-consumer reads through pkg-config and `find_package`. Since gh-1589 jm owns
-them: a new project's copies start with `# jm:generated <file>`, and
-`jm apply` renders them whole, so packaging fixes arrive with an upgrade. A
-project scaffolded earlier has copies without that line, which `apply` never
-touches; `jm status` lists each one that is behind under **PACKAGING**.
+Three things carry what a C consumer reads through pkg-config and
+`find_package`: `cmake/<pkg>.pc.in`, `cmake/<pkg>-config.cmake.in`, and the
+install section of the root `CMakeLists.txt`, which installs the library, its
+headers and both files. Since gh-1589 jm owns all three:
+
+- a new project's templates start with `# jm:generated <file>`, and its
+    install section runs from `# ── Install` to `# ── End install`;
+- `jm apply` renders them, so every packaging fix arrives with an upgrade.
+
+A project scaffolded earlier has neither mark, and `apply` never touches what
+it has. `jm status` lists each template that is behind under **PACKAGING**,
+and the install section as `ROOT CMAKE install-block`.
 
 ```sh
-jm adopt --packaging --check   # the diff, and any line adopting would drop
+jm adopt --packaging --check   # the diff, and anything of yours adopting would drop
 jm adopt --packaging           # hand them to jm
 ```
 
-A template holding a line the render does not keep is refused until you
-accept it — see [`just-makeit adopt --packaging`](commands/build.md#just-makeit-adopt-packaging).
+Adopting drops nothing a released jm rendered -- jm records every line and
+command it ever shipped there -- so an older project's own copies adopt
+cleanly. A line or command of yours is refused and named until you move it
+(or accept losing it) -- see
+[`just-makeit adopt --packaging`](commands/build.md#just-makeit-adopt-packaging).
 
 ______________________________________________________________________
 

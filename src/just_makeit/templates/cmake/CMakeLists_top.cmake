@@ -107,13 +107,6 @@ foreach(lib_target <<project_underscore>>_lib
                            $<INSTALL_INTERFACE:-lm>)
   endif()
 endforeach()
-# The pkg-config face of the same fact, in `Libs:` rather than `Libs.private`
-# for the same reason: it is needed to link a CONSUMER.
-if(JM_MATH_LIBRARY)
-  set(JM_PC_LIBM " -lm")
-else()
-  set(JM_PC_LIBM "")
-endif()
 # gh-1368: one OUTPUT_NAME for both is unambiguous on Linux and macOS
 # (lib<name>.so vs lib<name>.a) and a collision on Windows, where the SHARED
 # library's import library and the STATIC library are both <name>.lib --
@@ -131,6 +124,23 @@ endif()
 # elsewhere.
 set_target_properties(<<project_underscore>>_lib
                       PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
+enable_testing()
+
+# ── Components (add_subdirectory lines appended here by just-makeit)
+# ──────────
+
+# ── Modules (add_subdirectory lines appended here by just-makeit)
+# ─────────────
+
+# ── Install ──────────────────────────────────────────────────────────────────
+# gh-1589: jm renders everything from the line above down to "End install" on
+# every `apply`, so each packaging fix reaches this project. Put install rules
+# of your own below that line, or in a file you include() from there.
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
 # gh-1582: the ABI version. The shared library installs as lib<name>.so.X.Y.Z
 # with the soname lib<name>.so.<ABI> and a lib<name>.so link, so a release that
 # breaks the ABI installs BESIDE the old library instead of over it, and a
@@ -148,19 +158,6 @@ endif()
 set_target_properties(
   <<project_underscore>>_lib PROPERTIES VERSION ${PROJECT_VERSION}
                                         SOVERSION ${JM_ABI_VERSION})
-
-enable_testing()
-
-# ── Components (add_subdirectory lines appended here by just-makeit)
-# ──────────
-
-# ── Modules (add_subdirectory lines appended here by just-makeit)
-# ─────────────
-
-# ── Install ──────────────────────────────────────────────────────────────────
-
-include(GNUInstallDirs)
-include(CMakePackageConfigHelpers)
 
 # gh-1594: on macOS the installed library names itself by its absolute path, as
 # Homebrew's and MacPorts' do. CMake's default install name is
@@ -242,7 +239,15 @@ export(
 #
 # A libdir or includedir given as an absolute path (GNUInstallDirs under Nix or
 # Guix) is where the files are whatever the prefix, so it is written as itself,
-# never as `${exec_prefix}//abs`; a relative one follows the prefix.
+# never as `${exec_prefix}//abs`; a relative one follows the prefix. gh-1452:
+# libm is in the library's link interface (see its PUBLIC link above), so the
+# .pc says so in `Libs:` rather than `Libs.private`: it is needed to link a
+# CONSUMER, whose own object compiles jm's inline step().
+if(JM_MATH_LIBRARY)
+  set(JM_PC_LIBM " -lm")
+else()
+  set(JM_PC_LIBM "")
+endif()
 set(JM_PC_PREFIX "%JM_INSTALL_PREFIX%")
 set(JM_PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
@@ -285,3 +290,4 @@ file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]])
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+# ── End install ──────────────────────────────────────────────────────────────

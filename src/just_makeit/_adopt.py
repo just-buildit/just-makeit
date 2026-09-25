@@ -531,7 +531,7 @@ def _kept(line: str, render_lines: "list[str]") -> bool:
 
 
 def packaging_survey(
-    root: Path, replay_root: Path
+    root: Path, replay_root: Path, project: str = ""
 ) -> "list[PackagingVerdict]":
     """Judge each packaging template in *root* against *replay_root*.
 
@@ -541,6 +541,9 @@ def packaging_survey(
     is MISSING, which `apply` creates.
     """
     out: "list[PackagingVerdict]" = []
+    # gh-1589: a line some released jm rendered is an older jm's, not the
+    # author's, however today's render has respelled it.
+    released = _history_lines(project) if project else set()
     for pattern in packaging_patterns():
         for src in sorted(replay_root.glob(pattern)):
             rel = src.relative_to(replay_root).as_posix()
@@ -555,10 +558,94 @@ def packaging_survey(
             head = R.owned_token(dst.name) + "\n" + R.OWNED_PACKAGING_NOTE
             bare = render[len(head) :] if render.startswith(head) else render
             have = _meaningful(render)
-            lost = tuple(ln for ln in _meaningful(disk) if not _kept(ln, have))
+            lost = tuple(
+                ln
+                for ln in _meaningful(disk)
+                if ln not in released and not _kept(ln, have)
+            )
             state = "current" if disk == bare else "behind"
             out.append(PackagingVerdict(rel, state, lost, disk, render))
     return out
+
+
+def _fill(project: str):
+    names = {
+        "<<project_underscore>>": project,
+        "<<project>>": project.replace("_", "-"),
+    }
+
+    def fill(text: str) -> str:
+        for k, v in names.items():
+            text = text.replace(k, v)
+        return text
+
+    return fill
+
+
+def _history_lines(project: str) -> "set[str]":
+    """Every content line a released jm rendered in a packaging template,
+    with *project*'s names in place of the placeholders (gh-1589)."""
+    from . import _installhistory
+
+    fill = _fill(project)
+    return {fill(ln) for ln in _installhistory.LINES}
+
+
+def _history_calls(project: str) -> "set":
+    """Every install-section command a released jm rendered, with *project*'s
+    names in place of the template's placeholders (gh-1589)."""
+    from . import _installhistory
+
+    fill = _fill(project)
+    return {
+        (name, tuple(fill(a) for a in args))
+        for name, args in _installhistory.CALLS
+    }
+
+
+def root_install_verdict(
+    root: Path, replay_root: Path, cfg: dict
+) -> "PackagingVerdict | None":
+    """What `adopt --packaging` would do to the root install section.
+
+    ``owned`` when the file already carries the managed block (`apply` keeps
+    it). Otherwise the section runs from the ``# ── Install`` header to the
+    end of the file, as every older scaffold wrote it, and adopting replaces
+    it with the managed block. ``lost`` is each COMMAND in it that neither
+    today's block nor any released jm rendered (:mod:`_installhistory`):
+    those are the author's, and adopting would drop them. A command an older
+    jm rendered is not the author's, however it has since changed.
+
+    ``None`` when there is no root file or no install section to adopt.
+    """
+    from . import _rootcmake
+
+    real, temp = root / "CMakeLists.txt", replay_root / "CMakeLists.txt"
+    if not (real.is_file() and temp.is_file()):
+        return None
+    disk = real.read_text(encoding="utf-8")
+    if _rootcmake.install_block(disk) is not None:
+        return PackagingVerdict("CMakeLists.txt", "owned", (), disk, disk)
+    begin = _rootcmake.INSTALL_BEGIN.search(disk)
+    rendered = temp.read_text(encoding="utf-8")
+    rb = _rootcmake.INSTALL_BEGIN.search(rendered)
+    re_ = _rootcmake.INSTALL_END.search(rendered)
+    if begin is None or rb is None or re_ is None:
+        return None
+    block = rendered[rb.start() : re_.end()] + "\n"
+    render = disk[: begin.start()] + block
+    old = _rootcmake.calls(disk[begin.end() :])
+    known = _history_calls(C.project_name(cfg)) | {
+        (c.name, c.args) for c in _rootcmake.calls(block)
+    }
+    lost = tuple(
+        f"{c.name}({' '.join(c.args)})"
+        for c in old
+        if (c.name, c.args) not in known
+    )
+    new = _rootcmake.calls(rendered[rb.end() : re_.start()])
+    state = "current" if old == new else "behind"
+    return PackagingVerdict("CMakeLists.txt", state, lost, disk, render)
 
 
 def _packaging_diff(v: PackagingVerdict) -> str:
@@ -603,19 +690,30 @@ def adopt_packaging(
         replay_root = Path(tmp) / C.project_name(cfg)
         with contextlib.redirect_stderr(io.StringIO()):
             _apply.replay_project(cfg, replay_root, root)
-        verdicts = packaging_survey(root, replay_root)
+        verdicts = packaging_survey(root, replay_root, C.project_name(cfg))
+        # gh-1589 part 2: the root install section, by the same rules.
+        section = root_install_verdict(root, replay_root, cfg)
+        if section is not None:
+            verdicts.append(section)
 
     refused = 0
+    root_refused = False
     for v in verdicts:
         taken = v.path in accept or Path(v.path).name in accept
         if v.state == "owned":
             print(f"  jm's already        {v.path}")
             continue
-        label = (
-            "adds the token" if v.state == "current" else "takes the render"
-        )
+        if v.path == "CMakeLists.txt":
+            label = "its install section becomes jm's managed block"
+        else:
+            label = (
+                "adds the token"
+                if v.state == "current"
+                else "takes the render"
+            )
         if v.lost and not taken:
             refused += 1
+            root_refused |= v.path == "CMakeLists.txt"
             print(f"  REFUSES             {v.path}")
             for ln in v.lost:
                 print(f"      would drop: {ln}")
@@ -641,5 +739,16 @@ def adopt_packaging(
             "  CMake variable the template reads, then take the render with\n"
             "  `jm adopt --packaging --accept <path>`."
             + ("" if check else " Nothing was written for it.")
+        )
+    if root_refused:
+        print(
+            "\n  In the root CMakeLists.txt, a refused line is a command no"
+            " released jm\n"
+            "  rendered in its install section. Move it above the"
+            " `# ── Install` line (or\n"
+            "  into a file you include() from there), then adopt; after"
+            " adopting, your own\n"
+            "  install rules go below `# ── End install`, which jm never"
+            " writes."
         )
     return 1 if refused else 0

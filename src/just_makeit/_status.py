@@ -635,7 +635,9 @@ def run(
 
         packaging_entries = [
             (v, _is_allowed(v.path, allow_patterns))
-            for v in _adopt.packaging_survey(root, replay_root)
+            for v in _adopt.packaging_survey(
+                root, replay_root, C.project_name(cfg)
+            )
             if v.state == "behind"
         ]
         # gh-975: the other half of what the replay knows about a create-only
