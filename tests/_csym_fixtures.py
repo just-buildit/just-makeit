@@ -12,6 +12,7 @@ fixture of what someone thinks jm emits, which is the thing under test
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from _jmrun import run_cli
@@ -214,16 +215,17 @@ def _merge(dst: dict, src: dict) -> None:
             dst[k] = v
 
 
-def build(where: Path) -> "dict[str, Path]":
+def build(where: Path, *extra_new_args: str) -> "dict[str, Path]":
     """Scaffold every project in :data:`PROJECTS` under *where*, then
-    ``apply`` each, and return ``{row: project root}``.
+    ``apply`` each, and return ``{row: project root}``. *extra_new_args* go
+    on every ``jm new`` (gh-1591 phase 2 passes ``--c-prefix zz``).
 
     Every step must succeed: a fixture that half-built would make a clean
     oracle mean nothing.
     """
     roots = {}
     for row, (new_args, steps) in PROJECTS.items():
-        r = run_cli("new", *new_args, cwd=where)
+        r = run_cli("new", *new_args, *extra_new_args, cwd=where)
         assert r.returncode == 0, f"{row}: new: {r.stdout}{r.stderr}"
         root = where / new_args[0]
         for step in steps:
@@ -239,6 +241,87 @@ def build(where: Path) -> "dict[str, Path]":
         assert r.returncode == 0, f"{row}: apply: {r.stdout}{r.stderr}"
         roots[row] = root
     return roots
+
+
+#: The stem mark both oracles use: the monkeypatched stem (gh-1633) and a
+#: real ``[project] c_prefix = "zz"`` (gh-1591 phase 2) render the same.
+MARK = "zz_"
+
+#: What jm derives from a component's stem (gh-1591's inventory).
+LIFECYCLE = (
+    "create",
+    "destroy",
+    "reset",
+    "step",
+    "steps",
+    "step_batch",
+    "state_t",
+    "state_ptr",
+    "state_adopt",
+    "state_bytes",
+    "get_state",
+    "set_state",
+)
+
+
+def derived(cfg: dict) -> "list[re.Pattern]":
+    """The patterns an UNPREFIXED derived symbol of *cfg*'s names matches."""
+    from just_makeit import _config as C
+
+    comps = set(C.components(cfg))
+    for mod in C.modules(cfg):
+        comps |= set(C.module_objects(cfg, mod))
+    pats = []
+    for comp in sorted(comps):
+        tails = list(LIFECYCLE)
+        tails += [m["name"] for m in C.methods(cfg, comp) if not m.get("fn")]
+        for p in C.properties(cfg, comp):
+            tails += [f"get_{p['name']}", f"set_{p['name']}"]
+        pats.append(
+            re.compile(
+                rf"(?<![A-Za-z0-9_]){re.escape(comp)}_"
+                rf"(?:{'|'.join(map(re.escape, tails))})(?![A-Za-z0-9_])"
+            )
+        )
+        pats.append(
+            re.compile(rf"(?<![A-Za-z0-9_]){re.escape(comp.upper())}_CORE_H\b")
+        )
+    for mod in C.modules(cfg):
+        for fn in C.module_functions(cfg, mod):
+            pats.append(
+                re.compile(rf"(?<![A-Za-z0-9_]){re.escape(fn['name'])}\s*\(")
+            )
+    return pats
+
+
+def stripped(data: bytes) -> bytes:
+    """*data* with the stem mark removed, both cases."""
+    return data.replace(MARK.encode(), b"").replace(MARK.upper().encode(), b"")
+
+
+def escapes(root: Path) -> "list[str]":
+    """Each ``file:line: symbol`` in *root*'s generated C and headers that
+    spells a derived symbol without the stem -- comments and string
+    literals masked, so prose about a symbol is never a finding."""
+    from just_makeit import _config as C
+    from just_makeit._docsync import _code_mask
+
+    pats = derived(C.load(root))
+    bad = []
+    for path in sorted((root / "native").rglob("*")):
+        if path.suffix not in (".c", ".h"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        code = _code_mask(text)
+        lines = text.splitlines()
+        for pat in pats:
+            for m in pat.finditer(code):
+                n = code.count("\n", 0, m.start())
+                bad.append(
+                    f"{path.relative_to(root).as_posix()}:"
+                    f"{n + 1}: {m.group(0)}  | {lines[n].strip()}"
+                )
+    return sorted(set(bad))
 
 
 def tree(root: Path) -> "dict[str, bytes]":
