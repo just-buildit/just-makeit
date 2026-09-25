@@ -54,7 +54,7 @@ def test_all_examples_have_test_py():
     assert not missing, (
         f"Example(s) missing test.py: {missing}\n"
         "Add a test.py with a run(root: Path) -> None function. "
-        "See examples/README.md for the pattern."
+        'See docs/developers/testing.md, "Adding a new example".'
     )
 
 
