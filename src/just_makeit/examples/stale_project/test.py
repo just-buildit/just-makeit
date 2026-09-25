@@ -379,8 +379,8 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    import tempfile
+    from just_makeit._example import scratch_dir
 
-    with tempfile.TemporaryDirectory() as d:
+    with scratch_dir() as d:
         run(Path(d))
     print("stale_project: OK")

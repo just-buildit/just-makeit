@@ -10,8 +10,9 @@ Also runnable directly: python3 examples/app_shapes/test.py
 import struct
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 
 def _cmd(args, cwd):
@@ -198,6 +199,6 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("app_shapes: PASSED")
