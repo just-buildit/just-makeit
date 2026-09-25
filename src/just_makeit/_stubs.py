@@ -598,7 +598,7 @@ def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
     """
     pairs: set[tuple[str, str]] = set()
     for comp in C.components(cfg):
-        Component = C.class_name(cfg, comp) or _title(comp)
+        Component = C.resolved_class_name(cfg, comp)
         declared = {
             m["name"] for m in C.methods(cfg, comp) if m.get("manual_stub")
         }
@@ -1481,7 +1481,7 @@ def _obj_stream_pyi(cfg: dict, obj: str) -> str:
     """
     from ._context import make_stream_ctx
 
-    Component = C.class_name(cfg, obj) or _title(obj)
+    Component = C.resolved_class_name(cfg, obj)
     return make_stream_ctx(
         obj,
         Component,
@@ -1547,7 +1547,7 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # gh-1591: every C name this stub reads a doc block by derives here.
     csym = CSYM.stem(cfg, obj)
-    Component = C.class_name(cfg, obj) or _title(obj)
+    Component = C.resolved_class_name(cfg, obj)
     state_vars = C.state_vars(cfg, obj)
     arg_type = C.arg_type(cfg, obj)
     return_type = C.return_type(cfg, obj)

@@ -884,7 +884,7 @@ def _regenerate_object_bindings(
     # the generic stub (same reasoning as _glue.regenerate_standalone).
     from ._object import _load_doc_blocks
 
-    cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj)
+    cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj, cfg)
     ctx = _object_ctx(cfg, obj, pkg, module, root)
     # gh-543: keep a hand-written extra wired through a removal.
     ctx["extra_include"] = standalone_extra_include(root, obj)

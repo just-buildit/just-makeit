@@ -2607,7 +2607,7 @@ def _sync_aggregates(
         # .pyi is already correct and byte-identical), so it costs nothing there.
         from ._object import _load_doc_blocks
 
-        _real_blocks = _load_doc_blocks(root, comp)
+        _real_blocks = _load_doc_blocks(root, comp, cfg)
         # gh-1117: a standalone object's rendezvous is a CROSS-COMPONENT
         # fact -- which component declared `process_global`, which modules
         # link its core -- and none of that is known while the replay is

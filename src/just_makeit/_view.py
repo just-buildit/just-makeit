@@ -22,7 +22,7 @@ from . import _config as C
 from . import _context as Ctx
 from . import _incpath as INC
 from . import _csym as CSYM
-from ._init import _inject_decls_into_core_h, _to_title
+from ._init import _inject_decls_into_core_h
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
 
@@ -73,7 +73,7 @@ def run(
     # on the PyModule_AddObject key and the generated C symbols otherwise.
     taken: set[str] = set()
     for o in mod_objs:
-        taken.add(C.class_name(cfg, o) or _to_title(o))
+        taken.add(C.resolved_class_name(cfg, o))
         for v in C.views(cfg, o):
             taken.add(v["class_name"])
     if class_name in taken:

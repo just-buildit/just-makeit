@@ -148,6 +148,47 @@ def _renamed_class(tmp_path: Path) -> Path:
     return root
 
 
+def _renamed_standalone(tmp_path: Path) -> Path:
+    """`class_name` on a STANDALONE object (gh-1651).
+
+    `_renamed_class` covers the key on a module object only, and a standalone
+    object renders through a different path: `apply`'s post-replay re-render
+    in `_sync_aggregates`, whose context seeded the default class name. The
+    fresh scaffold was STALE against itself, `apply` then registered the type
+    as `Named` while `__init__.py` imported `Renamed`, and every later
+    `status` agreed. :func:`test_every_object_key_is_exercised_in_both_placements`
+    is what keeps a key from being covered in one placement only again.
+    """
+    root = _base(tmp_path)
+    object_run(
+        root,
+        "named",
+        None,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        class_name="Renamed",
+    )
+    return root
+
+
+def _serializable_module(tmp_path: Path) -> Path:
+    """`serializable` on a module object -- the placement `_serializable` does
+    not reach (gh-1651's placement coverage)."""
+    root = _base(tmp_path)
+    module_run(root, "store")
+    object_run(
+        root,
+        "widget",
+        "store",
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        serializable=True,
+    )
+    return root
+
+
 def _serializable(tmp_path: Path) -> Path:
     root = _base(tmp_path)
     object_run(
@@ -272,12 +313,71 @@ SHAPES = {
     "module": _module,
     "module_extras": _module_extras,
     "renamed_class": _renamed_class,
+    "renamed_standalone": _renamed_standalone,
     "serializable": _serializable,
+    "serializable_module": _serializable_module,
     "variable_output": _variable_output,
     "status_return": _status_return,
     "view": _view,
     "record": _record,
 }
+
+
+#: Object-level keys that exist in ONE placement only, by design -- each with
+#: the reason. Everything else a shape sets must be exercised on a standalone
+#: object AND a module object.
+ONE_PLACEMENT = {
+    "views": "a module-object feature: `jm view` refuses without --module",
+}
+
+
+def _keys_by_placement() -> "dict[str, set[str]]":
+    """Every object-level key the SHAPES really set, by where its object sits.
+
+    Read from the manifests the shapes produce, not from a list: a key a new
+    shape sets is covered without being registered here.
+    """
+    import tempfile
+
+    out: "dict[str, set[str]]" = {"standalone": set(), "module": set()}
+    for fn in SHAPES.values():
+        with tempfile.TemporaryDirectory() as d:
+            with redirect_stdout(io.StringIO()):
+                cfg = C.load(fn(Path(d)))
+            for comp in C.components(cfg):
+                place = "module" if C.module_of(cfg, comp) else "standalone"
+                out[place] |= {
+                    k for k in (cfg.get(comp) or {}) if not k.startswith("_")
+                }
+    return out
+
+
+def test_every_object_key_is_exercised_in_both_placements():
+    """gh-1651: a standalone object and a module object render through
+    different paths, so a key covered in one placement proves nothing about
+    the other. `class_name` was covered on a module object only
+    (`_renamed_class`), and on a standalone object `jm apply` dropped it.
+
+    Registration-free over keys: whatever the shapes set is what is checked.
+    """
+    by = _keys_by_placement()
+    missing = sorted(
+        f"{k!r}: {place} only"
+        for place, other in (
+            ("standalone", "module"),
+            ("module", "standalone"),
+        )
+        for k in by[place] - by[other] - set(ONE_PLACEMENT)
+    )
+    assert not missing, (
+        "these object keys are exercised in one placement only -- add a "
+        "shape for the other, or list the key in ONE_PLACEMENT with why:\n  "
+        + "\n  ".join(missing)
+    )
+    stale = sorted(
+        k for k in ONE_PLACEMENT if k in by["standalone"] and k in by["module"]
+    )
+    assert not stale, f"ONE_PLACEMENT lists keys covered in both: {stale}"
 
 
 def _tree_digest(root: Path) -> dict[str, str]:

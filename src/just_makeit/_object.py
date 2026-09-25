@@ -165,7 +165,7 @@ def _included_member_docs(
     return out, structs
 
 
-def _load_doc_blocks(root: Path, obj: str) -> dict:
+def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
     Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
@@ -212,6 +212,14 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         out[struct_members_key()] = _structs
     # gh-1591: a declaration's C name starts with the object's STEM.
     stem = CSYM.stem(doc_root, obj)
+    # gh-1651: the class the header was rendered with, so its `reset`
+    # boilerplate (which names the CLASS) is recognised under a class_name.
+    # From *cfg* when the caller renders from one: at `jm object` time the
+    # manifest on disk does not hold the new object yet, and a scaffold that
+    # read the brief as authored while `apply` read it as jm's disagreed.
+    cls = C.resolved_class_name(
+        cfg if cfg is not None else INC.manifest(doc_root), obj
+    )
     for cname, block_text in raw.items():
         # strip the stem_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).
@@ -221,7 +229,7 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         parsed = parse_doxygen_block(block_text, name=verb)
         if parsed is None:
             continue
-        if _is_scaffold_brief(obj, verb, parsed):
+        if _is_scaffold_brief(obj, verb, parsed, cls):
             continue
         out[cname] = parsed
     # gh-761: the `_max_out` prototypes' arity, from the same header read.
@@ -253,7 +261,7 @@ def init_param_drift(
     either side missing, or not parseable as a number, is skipped rather than
     reported — a false negative here is fine, a false positive is not.
     """
-    doc_blocks = _load_doc_blocks(root, obj)
+    doc_blocks = _load_doc_blocks(root, obj, cfg)
     create_blk = doc_blocks.get(CSYM.create_name(CSYM.stem(cfg, obj)))
     if create_blk is None:
         return []
@@ -311,7 +319,7 @@ def inert_pass_capacity(
     to read. A method jm has not scaffolded yet keeps gh-607's count-bearing
     default and is not in the seam.
     """
-    doc_blocks = _load_doc_blocks(root, obj)
+    doc_blocks = _load_doc_blocks(root, obj, cfg)
     if not doc_blocks:
         return []
     inert: list[tuple[str, str]] = []
@@ -363,7 +371,7 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     return out
 
 
-def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
+def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
     Thin owner-aware wrapper over :func:`_docstring.is_scaffold_doc`, which is
@@ -374,7 +382,7 @@ def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
     ``@param`` at all, so the method skeleton, which does carry generated
     ``@param`` lines, was derived into the ``.pyi`` as if authored.
     """
-    return is_scaffold_doc(block, verb, obj)
+    return is_scaffold_doc(block, verb, obj, cls)
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
@@ -1458,7 +1466,9 @@ def build_component_ctxs(
         # Parse the sacred header's Doxygen once; stash transiently on cfg so
         # the .pyi generator (_stubs, which receives cfg) sees the same blocks
         # without re-reading. The underscore key is dropped by _config._dump.
-        _doc_blocks = {} if force_fallback else _load_doc_blocks(root, obj)
+        _doc_blocks = (
+            {} if force_fallback else _load_doc_blocks(root, obj, cfg)
+        )
         cfg.setdefault(obj, {})["_doc_blocks"] = _doc_blocks
         state_vars = C.state_vars(cfg, obj)
         arg_type_ = C.arg_type(cfg, obj)
