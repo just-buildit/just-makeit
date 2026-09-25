@@ -82,10 +82,10 @@ class TestDroppedSymbolDetection:
         assert rc >= 1
 
     def test_dropped_section_survives_check_mode(self, hand_dropped):
-        # --check collapses MISSING/STALE/ALLOWED to a one-line summary,
-        # but DROPPED must stay visible -- it's the whole point of gh-426.
+        # --check collapses the advisory listings (gh-1619 keeps MISSING and
+        # STALE, which it counts), and DROPPED must stay visible -- it's the
+        # whole point of gh-426.
         rc, out = _run(hand_dropped, check=True)
-        assert "STALE (" not in out
         assert "DROPPED (1)" in out
         assert "Fft.execute_ci16" in out
         assert rc >= 1

@@ -1283,69 +1283,70 @@ def run(
         )
         return drift_count
 
-    if not check:
-        missing = [e for e in drift if e[1] == "missing"]
-        stale = [e for e in drift if e[1] == "stale"]
-        if missing:
-            print(f"MISSING ({len(missing)}) — `jm apply` will create:")
-            for p, _, _, _, _ in missing:
-                print(f"  + {p}")
+    # gh-1619: MISSING and STALE print under --check too. They are what
+    # the exit code counts, and `--check` is the command a downstream CI
+    # runs, so a failure that named no file sent the reader off to
+    # reproduce it locally. The advisory listings below stay collapsed,
+    # which is what the collapse is for.
+    missing = [e for e in drift if e[1] == "missing"]
+    stale = [e for e in drift if e[1] == "stale"]
+    if missing:
+        print(f"MISSING ({len(missing)}) — `jm apply` will create:")
+        for p, _, _, _, _ in missing:
+            print(f"  + {p}")
+        print()
+    if stale:
+        # gh-1337: split by WHO OWNS the file, because `apply` does two
+        # different things and one header cannot describe both. Printed
+        # together, the old wording contradicted itself inside a single
+        # screen -- "`jm apply` will rewrite from the manifest" above a
+        # list containing `_core.c`, then "your _core.c is kept" two
+        # lines below it, then "apply never changes it" in the footer.
+        #
+        # Ownership is `_createonly`'s question and it already answers
+        # it; asking it a second way here is how the two would drift.
+        def _is_yours(entry) -> bool:
+            # Unclassified falls to the glue wording: a false "jm will
+            # rewrite this" sends the reader to look, while a false
+            # "yours, apply only adds" tells them not to.
+            rule = _createonly.classify(str(entry[0]))
+            return rule is not None and rule.kind == _createonly.AUTHOR
+
+        _sacred = [e for e in stale if _is_yours(e)]
+        _glue = [e for e in stale if not _is_yours(e)]
+
+        def _emit(entries):
+            for p, _, _, diff, _ in entries:
+                print(f"  ~ {p}")
+                if diff:
+                    print("".join(f"    {ln}" for ln in diff.splitlines(True)))
+
+        if _glue:
+            print(
+                f"STALE ({len(_glue)}) — `jm apply` will rewrite "
+                "from the manifest:"
+            )
+            _emit(_glue)
+            print("  Run `jm apply` to sync.")
             print()
-        if stale:
-            # gh-1337: split by WHO OWNS the file, because `apply` does two
-            # different things and one header cannot describe both. Printed
-            # together, the old wording contradicted itself inside a single
-            # screen -- "`jm apply` will rewrite from the manifest" above a
-            # list containing `_core.c`, then "your _core.c is kept" two
-            # lines below it, then "apply never changes it" in the footer.
-            #
-            # Ownership is `_createonly`'s question and it already answers
-            # it; asking it a second way here is how the two would drift.
-            def _is_yours(entry) -> bool:
-                # Unclassified falls to the glue wording: a false "jm will
-                # rewrite this" sends the reader to look, while a false
-                # "yours, apply only adds" tells them not to.
-                rule = _createonly.classify(str(entry[0]))
-                return rule is not None and rule.kind == _createonly.AUTHOR
-
-            _sacred = [e for e in stale if _is_yours(e)]
-            _glue = [e for e in stale if not _is_yours(e)]
-
-            def _emit(entries):
-                for p, _, _, diff, _ in entries:
-                    print(f"  ~ {p}")
-                    if diff:
-                        print(
-                            "".join(
-                                f"    {ln}" for ln in diff.splitlines(True)
-                            )
-                        )
-
-            if _glue:
-                print(
-                    f"STALE ({len(_glue)}) — `jm apply` will rewrite "
-                    "from the manifest:"
-                )
-                _emit(_glue)
-                print("  Run `jm apply` to sync.")
-                print()
-            if _sacred:
-                # Not "will rewrite", and not "never changes" either: apply
-                # APPENDS a definition the manifest declares and the file
-                # does not have (gh-1294). It never edits or removes a line
-                # the author wrote. Saying either absolute was wrong in one
-                # direction or the other.
-                print(
-                    f"STALE ({len(_sacred)}) — yours; `jm apply` will ADD "
-                    "a missing definition, never rewrite what you wrote:"
-                )
-                _emit(_sacred)
-                print(
-                    "  Run `jm apply` to splice in what is missing, or "
-                    "`jm regenerate <component>` to rebuild from the "
-                    "manifest (discards your edits)."
-                )
-                print()
+        if _sacred:
+            # Not "will rewrite", and not "never changes" either: apply
+            # APPENDS a definition the manifest declares and the file
+            # does not have (gh-1294). It never edits or removes a line
+            # the author wrote. Saying either absolute was wrong in one
+            # direction or the other.
+            print(
+                f"STALE ({len(_sacred)}) — yours; `jm apply` will ADD "
+                "a missing definition, never rewrite what you wrote:"
+            )
+            _emit(_sacred)
+            print(
+                "  Run `jm apply` to splice in what is missing, or "
+                "`jm regenerate <component>` to rebuild from the "
+                "manifest (discards your edits)."
+            )
+            print()
+    if not check:
         if unreconciled_entries:
             print(
                 f"UNRECONCILED ({len(unreconciled_entries)}) — `jm apply` "
