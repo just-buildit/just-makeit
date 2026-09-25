@@ -122,3 +122,59 @@ def test_every_manifest_body_key_is_one_the_respell_reads():
     assert bodies <= set(_csym.MANIFEST_C_KEYS), bodies - set(
         _csym.MANIFEST_C_KEYS
     )
+    files = {k for k in _keys.OBJECT_KEYS if k.endswith("impl_file")}
+    assert files == {f"{k}_file" for k in _csym.IMPL_KEYS}, files
+
+
+def _impl_file_project(where):
+    """A bare `lo` whose `reset()` body is lifted from the project's own
+    ``legacy/old.c::lo_reset`` -- a jm-derived name, in a file the upgrade
+    respells."""
+    from just_makeit._new import run as new_run
+
+    root = where / "q"
+    new_run("q", root, c_prefix=None, fragments=True)
+    (root / "legacy").mkdir()
+    (root / "objects").mkdir(exist_ok=True)
+    (root / "legacy" / "old.c").write_text(
+        "void lo_reset(lo_state_t *state)\n{\n    state->gain = 2.0f;\n}\n",
+        newline="\n",
+    )
+    (root / "objects" / "lo.toml").write_text(
+        '[lo]\narg_type = "float"\nreturn_type = "float"\n'
+        'reset_impl_file = "legacy/old.c::lo_reset"\n'
+        '[[lo.state]]\nname = "gain"\ntype = "float"\ndefault = "1.0"\n',
+        newline="\n",
+    )
+    assert run_cli("apply", cwd=root).returncode == 0
+    FX.set_prefix(root)
+    return root
+
+
+def test_an_impl_file_function_follows_its_respelled_file(tmp_path):
+    """The file's `lo_reset` becomes `zz_lo_reset`; a manifest still naming
+    `::lo_reset` is a body `apply` cannot find -- it failed outright."""
+    root = _impl_file_project(tmp_path)
+    refused = run_cli("apply", cwd=root)
+    assert refused.returncode == 1, refused.stdout
+    assert "objects/lo.toml" in refused.stderr, refused.stderr
+    r = run_cli("upgrade", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    frag = (root / "objects" / "lo.toml").read_text()
+    assert f'reset_impl_file = "legacy/old.c::{P}_lo_reset"' in frag, frag
+    (root / "native" / "src" / "lo" / "lo_core.c").unlink()
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    assert "state->gain = 2.0f;" in c, c
+    assert "respelled" not in run_cli("upgrade", cwd=root).stdout
+
+
+def test_an_impl_file_outside_the_walk_keeps_its_name(tmp_path):
+    """A file the upgrade does not respell -- here, outside the project --
+    still defines the old name, so the manifest must keep it."""
+    names = {"lo_reset": f"{P}_lo_reset"}
+    text = 'reset_impl_file = "../vendor/old.c::lo_reset"\n'
+    followed = {(tmp_path / "legacy" / "old.c").resolve()}
+    got = _csym.respell_manifest(text, names, {}, tmp_path, followed)
+    assert got == text

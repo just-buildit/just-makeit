@@ -722,9 +722,12 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     # gh-1653: the author's C that lives in the MANIFEST -- `*_impl` bodies
     # and a sibling's `type` -- which jm copies into the C verbatim. Each
     # value is replaced in place; the file is never re-serialised.
+    # An `*_impl_file`'s function follows its file when the walk above
+    # respelled that file (`CSYM.IMPL_FILE_VALUE`).
+    followed = CSYM.walked(root)
     for path in CSYM._manifest_files(root):
         text = path.read_text(encoding="utf-8")
-        new = CSYM.respell_manifest(text, names, stems)
+        new = CSYM.respell_manifest(text, names, stems, root, followed)
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)

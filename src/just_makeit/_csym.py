@@ -381,13 +381,16 @@ _DEFINE_STEPS = re.compile(
     r"(\bJM_DEFINE_STEPS\s*\(\s*)([A-Za-z_]\w*)(?=\s*,)"
 )
 
+#: The step and lifecycle body keys (`_keys`' `*impl`), each of which has a
+#: ``<key>_file = "path::fn"`` companion that lifts the body from a file.
+IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
+
 #: The manifest keys whose string value is C that jm copies into the project's
-#: C verbatim (gh-1653): the lifecycle and step bodies (`_keys`' `*impl`
-#: keys, their `_file` companions excepted -- those name files, which the C
-#: walk reaches) and a state / init-param / method-param `type`, which can
-#: name a sibling component's derived type. Author-NAMED keys (`fn`,
-#: `create_fn`, ...) are not here: jm never prefixes what the author named.
-MANIFEST_C_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl", "type")
+#: C verbatim (gh-1653): the bodies (:data:`IMPL_KEYS`) and a state /
+#: init-param / method-param `type`, which can name a sibling component's
+#: derived type. Author-NAMED keys (`fn`, `create_fn`, ...) are not here: jm
+#: never prefixes what the author named.
+MANIFEST_C_KEYS = IMPL_KEYS + ("type",)
 
 
 def _toml_string(q: int) -> str:
@@ -410,6 +413,37 @@ MANIFEST_C_VALUE = re.compile(
     + r")(\s*=\s*)"
     + _toml_string(3)
 )
+
+
+#: A ``<impl>_file = "path::fn"`` value: group 3 the path, 4 the function.
+#: The FILE is C the upgrade's walk respells, so when it is in that walk its
+#: ``fn`` moves with it -- a derived name renamed in the file and not here
+#: is a body `apply` can no longer find. A path outside the walk, or a
+#: ``path::N:M`` line range, names nothing the upgrade moved.
+IMPL_FILE_VALUE = re.compile(
+    r"(?<![\w-])((?:"
+    + "|".join(IMPL_KEYS)
+    + r")_file\s*=\s*)(\"|')([^\"'\n]*)::([A-Za-z_]\w*)\2"
+)
+
+
+def walked(root: Path) -> "set[Path]":
+    """Every C/C++ file `jm upgrade` respells under *root*, resolved -- what an
+    ``*_impl_file`` path must be for its function name to follow."""
+    from . import _upgrade
+
+    files = _upgrade._project_files(
+        root, lambda p: p.suffix in _upgrade._C_SUFFIXES
+    )
+    return {p.resolve() for p in files}
+
+
+def _impl_file_fns(text: str, root: Path, followed: "set[Path]"):
+    """``(match, fn)`` for each ``*_impl_file`` value in *text* whose file is
+    in *followed* -- one reading for the respell and for the refusal."""
+    for m in IMPL_FILE_VALUE.finditer(text):
+        if (root / m.group(3)).resolve() in followed:
+            yield m, m.group(4)
 
 
 def macro_stems(cfg: dict) -> "dict[str, str]":
@@ -472,10 +506,16 @@ def respell_c(
 
 
 def respell_manifest(
-    text: str, names: "dict[str, str]", stems: "dict[str, str]"
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    root: "Path | None" = None,
+    followed: "set[Path]" = frozenset(),
 ) -> str:
     """*text* (a manifest or fragment) with each :data:`MANIFEST_C_KEYS`
-    value respelled by :func:`respell_c`, in place; nothing else moves.
+    value respelled by :func:`respell_c`, and each ``*_impl_file``'s ``fn``
+    whose file (resolved against *root*) is in *followed*, in place;
+    nothing else moves.
 
     >>> t = 'create_fn = "fir_open"\\ntype = "fir_state_t *"\\n'
     >>> print(respell_manifest(t, {"fir_state_t": "p_fir_state_t"}, {}), end="")
@@ -487,7 +527,19 @@ def respell_manifest(
         body = respell_c(m.group(4), names, stems)
         return f"{m.group(1)}{m.group(2)}{m.group(3)}{body}{m.group(3)}"
 
-    return MANIFEST_C_VALUE.sub(value, text)
+    text = MANIFEST_C_VALUE.sub(value, text)
+    if root is None:
+        return text
+    hits = {m.start(): fn for m, fn in _impl_file_fns(text, root, followed)}
+
+    def lifted(m: "re.Match") -> str:
+        fn = hits.get(m.start())
+        if fn not in names:
+            return m.group(0)
+        head = m.group(1) + m.group(2) + m.group(3) + "::"
+        return head + names[fn] + m.group(2)
+
+    return IMPL_FILE_VALUE.sub(lifted, text)
 
 
 def _manifest_files(root: Path) -> "list[Path]":
@@ -557,6 +609,7 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
         if found:
             out[p.relative_to(root).as_posix()] = found
     if cfg is not None:
+        followed = walked(root)
         for p in _manifest_files(root):
             found = sorted(
                 {
@@ -565,6 +618,13 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
                         p.read_text(encoding="utf-8")
                     )
                     for n in _old_in(m.group(4), names, stems)
+                }
+                | {
+                    fn
+                    for _m, fn in _impl_file_fns(
+                        p.read_text(encoding="utf-8"), root, followed
+                    )
+                    if fn in names
                 }
             )
             if found:
