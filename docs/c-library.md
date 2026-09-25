@@ -368,6 +368,49 @@ A core belongs to one library: `apply` refuses one also folded into
 `lib<pkg>`, one claimed by two libraries, and one the tree does not declare as
 an OBJECT library. jm never folds a claimed core into `lib<pkg>` itself.
 
+## Two packages, one program
+
+Headers under `<pkg>/` keep two installed jm packages' FILES apart, but not
+their C symbols: two packages that both have a component `fir` both export
+`fir_create`, and a translation unit including both `fir_core.h`s gets only
+the first -- the shared `FIR_CORE_H` guard silently drops the second.
+`[project] c_prefix` namespaces what jm derives:
+
+```toml
+[project]
+c_prefix = "dp"      # written without the joining underscore
+```
+
+| moves (derived by jm)                                                     | stays (named by you, or not C)                                           |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `fir_create`, `fir_destroy`, `fir_reset`, `fir_step(s)` -> `dp_fir_...`   | a manifest `fn =`, `create_fn`, `bridge_fn`, `type_name`, `record_dtype` |
+| a method's `fir_<name>`, a property's `fir_get_<name>` / `fir_set_<name>` | your own macros in the sacred `_core.h` (`ACC_F32_STATE_MAGIC`)          |
+| the `fir_state_t` type -> `dp_fir_state_t`                                | the Python names: `Fir`, `from pkg import fir`, a module function `mix`  |
+| jm's include guards (`DP_FIR_CORE_H`) and `process_global` defines        | file names: `native/inc/<pkg>/fir/fir_core.h` stays                      |
+| a module function `mix` -> `dp_mix` (in C only)                           | `<pkg>_version`                                                          |
+
+A name that already starts with `dp_` is not prefixed again: a component
+`dp_tlm` keeps `dp_tlm_create`. So `apply` refuses a project in which two
+names derive one symbol -- `x` and `dp_x` both deriving `dp_x_create`, or a
+method and a module function that meet -- naming both.
+
+A consumer includes both packages' headers and calls each by its prefix:
+
+```c
+#include "pa/fir/fir_core.h"
+#include "pb/fir/fir_core.h"
+
+pa_fir_state_t *a = pa_fir_create (2.0);
+pb_fir_state_t *b = pb_fir_create (2.0);
+```
+
+Set it with `jm new --c-prefix dp`. On an existing project it renames every
+derived symbol, which your C (the sacred `_core.h` / `_core.c`, module
+function sources, tests and benchmarks) must follow: `apply` refuses, naming
+each file and the old names it still spells, until they are respelled.
+`jm upgrade` support for that respell is coming ([upgrading](upgrading.md)).
+It is also an ABI change for your consumers -- say so in your release notes.
+
 ## Calling it from C++11
 
 Every generated header carries an `extern "C"` guard, so a C++ translation
