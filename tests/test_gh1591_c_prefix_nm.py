@@ -125,21 +125,7 @@ def test_every_export_carries_the_prefix(libs, row):
     )
 
 
-@pytest.mark.parametrize(
-    "row",
-    [
-        pytest.param(
-            "std",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="gh-1651: apply drops --class-name from the module "
-                "init, so `from std import Renamed` fails -- with or without "
-                "a prefix",
-            ),
-        ),
-        *[r for r in ROWS if r != "std"],
-    ],
-)
+@pytest.mark.parametrize("row", ROWS)
 def test_it_builds_tests_and_imports(libs, row):
     """`jm test`: the CMake build with the Python extension, ctest, and the
     generated pytest suite, which imports every class -- the declarations
