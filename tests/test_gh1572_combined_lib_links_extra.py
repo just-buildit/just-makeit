@@ -119,7 +119,39 @@ def installed(tmp_path_factory):
     # links a c_deps `cjson_core` this way). Its objects are already in both
     # libraries, so restating it would export a target in no export set.
     cfg["alpha"]["extra_link_libs"].append("beta_core")
+    # gh-1613: doppler's shape -- a c_dep OBJECT library NOT named `_core`,
+    # which the root folds into both libraries, named by its objects and by
+    # its bare target. Either restated on the combined libraries puts its
+    # objects in lib<pkg>.so twice: `multiple definition of ...`.
+    for d, obj in (("util", "util_obj"), ("more", "more_objs")):
+        (proj / "native" / "src" / d).mkdir()
+        (proj / "native" / "src" / d / f"{d}.c").write_text(
+            f"int jmx_{d}_one(void) {{ return 1; }}\n"
+        )
+        (proj / "native" / "src" / d / "CMakeLists.txt").write_text(
+            f"add_library({obj} OBJECT {d}.c)\n"
+            f"set_target_properties({obj} PROPERTIES"
+            " POSITION_INDEPENDENT_CODE ON)\n"
+        )
+    cfg["project"]["c_deps"] = ["util", "more"]
+    cfg["alpha"]["extra_link_libs"] += [
+        "$<TARGET_OBJECTS:util_obj>",  # doppler's dp_interrupt_obj
+        "more_objs",  # the bare target
+    ]
+    # the module-object emit site too (`_object`, not `_init`)
+    cfg["beta"]["extra_link_libs"].append("more_objs")
     C.save(proj, cfg)
+    # ...and the root folds both into the combined libraries itself, as
+    # doppler's does -- the state in which restating them doubles them.
+    root_cmake = proj / "CMakeLists.txt"
+    root_cmake.write_text(
+        root_cmake.read_text()
+        + "".join(
+            f"target_sources(jmx_{lib} PRIVATE $<TARGET_OBJECTS:{obj}>)\n"
+            for lib in ("lib", "lib_static")
+            for obj in ("util_obj", "more_objs")
+        )
+    )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
 

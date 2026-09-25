@@ -2181,7 +2181,11 @@ def _regenerate_module_now(
             # one emitter that decides it beside `component_core_decl`.
             extra_link_on_object_core = R.core_link_c(
                 obj, _core_pub, C.is_header_only(cfg, obj), include=False
-            ) + W.combined_link_c(list(extra_libs), C.is_header_only(cfg, obj))
+            ) + W.combined_link_c(
+                list(extra_libs),
+                C.is_header_only(cfg, obj),
+                frozenset(W.declared_cores(_DOC_ROOT_OVERRIDE or root)),
+            )
             # gh-531: the module's extra_include_dirs reach the module's own
             # core and the .so, but never reached a COLLOCATED object's core —
             # so a core whose .c/.h includes a vendored header (cJSON.h) could
@@ -2725,7 +2729,11 @@ def run(
         # must agree or the library is INTERFACE and its link line is not.
         header_only,
         include=False,
-    ) + W.combined_link_c(list(extra_link_libs), header_only)
+    ) + W.combined_link_c(
+        list(extra_link_libs),
+        header_only,
+        frozenset(W.declared_cores(_DOC_ROOT_OVERRIDE or root)),
+    )
     # gh-531: same for include dirs. The module's own extra_include_dirs count
     # too — a collocated object belongs to the module, and if the module needs a
     # vendored header its objects' cores generally do as well. Without this the
