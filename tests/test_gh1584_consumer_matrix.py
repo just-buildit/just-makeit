@@ -231,7 +231,9 @@ def _pc_file(lay: Layout) -> Path:
     return lay.libdir / "pkgconfig" / f"{PC_NAME}.pc"
 
 
-def _find_package(root, name, linkage, where: "list[str]") -> str:
+def _find_package(
+    root, name, linkage, where: "list[str]", lay: "Layout | None" = None
+) -> str:
     cons = root / f"fp_{name}_{linkage}"
     cons.mkdir()
     (cons / "CMakeLists.txt").write_text(
@@ -243,7 +245,12 @@ def _find_package(root, name, linkage, where: "list[str]") -> str:
     )
     _run(["cmake", "-S", ".", "-B", "b", *where], cons)
     _run(["cmake", "--build", "b"], cons)
-    return _run([cons / "b" / "c"], cons).stdout
+    # A moved or staged tree needs the loader told, on this route as on
+    # pkg-config's: the macOS install name is absolute (gh-1594) and names
+    # where the library was installed, which CMake's build rpath does not
+    # override.
+    env = _loader_env(dict(os.environ), lay) if lay else None
+    return _run([cons / "b" / "c"], cons, env).stdout
 
 
 def _pc_env(lay: Layout) -> "dict[str, str]":
@@ -317,7 +324,7 @@ def test_find_package_installed(world, layout, linkage):
         f"-DCMAKE_PREFIX_PATH={lay.prefix}",
         f"-D{NAME}_DIR={lay.libdir / 'cmake' / NAME}",
     ]
-    out = _find_package(root, layout, linkage, where)
+    out = _find_package(root, layout, linkage, where, lay)
     assert out == "ran 1\n", out
 
 
