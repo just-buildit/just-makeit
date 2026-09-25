@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import io
 import os
+import shlex
 import sys
 import tempfile
 import traceback
@@ -155,3 +156,39 @@ def run_cli(
         out.seek(0)
         err.seek(0)
         return JmRun(code, out.read(), err.read())
+
+
+def replay_script(script: str, where: Path) -> Path:
+    """Run a `jm script` output through run_cli, one command at a time.
+
+    Shared by every test that replays a script (gh-1489, gh-1587): one
+    replayer, so a script shape it cannot run fails every such test at once.
+
+    Understands exactly the three shapes the script emits: a `cd`, a
+    `cat >> FILE <<'EOF'` block, and a (backslash-continued) `just-makeit`
+    command. Anything else fails the test rather than being skipped, so a
+    new shape cannot quietly go unreplayed.
+    """
+    cwd = where
+    lines = iter(script.replace("\\\n", " ").splitlines())
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("cd "):
+            cwd = cwd / line[3:].strip()
+        elif line.startswith("cat >> "):
+            target = cwd / line.split()[2]
+            body = []
+            for inner in lines:
+                if inner == "EOF":
+                    break
+                body.append(inner + "\n")
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write("".join(body))
+        elif line.startswith("just-makeit "):
+            r = run_cli(*shlex.split(line)[1:], cwd=cwd)
+            assert r.returncode == 0, f"{line}\n{r.stderr}"
+        else:
+            raise AssertionError(f"unreplayable script line: {line!r}")
+    return cwd
