@@ -119,9 +119,9 @@ jobs:
             fi
             export PKG_CONFIG_PATH="$PC_DIR"
             echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
-            pkg-config --modversion my-fir
-            pkg-config --cflags my-fir
-            pkg-config --libs my-fir
+            pkg-config --modversion my_fir
+            pkg-config --cflags my_fir
+            pkg-config --libs my_fir
             echo "pkg-config OK"
           '
 
