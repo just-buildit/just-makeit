@@ -378,8 +378,10 @@ Commands:
   upgrade                       Migrate an older project's just-makeit.toml to the
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
-  adopt --check [--module ID]   Would a module object's binding fragment be safe as jm's
-                                content? Reports, per object, `would flip`,
+  adopt --check [--module ID | --all]
+                                Would a module object's binding fragment be safe as jm's
+                                content? The whole project unless --module narrows it.
+                                Reports, per object, `would flip`,
                                 `needs acknowledgement` or `REFUSES`. Writes nothing.
   adopt <obj>... | --module ID | --all [--accept UNIT]... [--accept-additions]
                                 Make those fragments jm's (`fragment = "generated"`)
@@ -1183,7 +1185,7 @@ def main() -> None:
         from . import _config as _C
 
         _usage = (
-            "Usage: just-makeit adopt --check [--module <id>]\n"
+            "Usage: just-makeit adopt --check [--module <id> | --all]\n"
             "       just-makeit adopt <obj>... | --module <id> | --all\n"
             "                   [--accept <unit>]... [--accept-additions]\n"
             "       just-makeit adopt --packaging [--check]"
@@ -1193,13 +1195,19 @@ def main() -> None:
         if "--help" in args[1:] or "-h" in args[1:]:
             print(_usage)
             sys.exit(0)
+        # gh-1569: the options this parser accepts are READ from the usage
+        # text, and those followed by `<...>` take a value -- so an option
+        # cannot be accepted without the usage naming it, and the two cannot
+        # drift the way `--check --all` did (accepted, advertised nowhere).
+        _flags = set(re.findall(r"--[a-z][a-z-]*", _usage))
+        _valued = set(re.findall(r"(--[a-z][a-z-]*) <", _usage))
         _mod = None
         _accept: set = set()
         _objs: list = []
         _i = 1
         while _i < len(args):
             _a = args[_i]
-            if _a in ("--module", "--accept"):
+            if _a in _valued:
                 if _i + 1 >= len(args):
                     print(
                         f"error: {_a} requires a value.\n{_usage}",
@@ -1212,12 +1220,7 @@ def main() -> None:
                     _accept.add(args[_i + 1])
                 _i += 2
                 continue
-            if _a.startswith("-") and _a not in (
-                "--check",
-                "--all",
-                "--accept-additions",
-                "--packaging",
-            ):
+            if _a.startswith("-") and _a not in _flags:
                 print(
                     f"error: unknown option {_a}.\n{_usage}", file=sys.stderr
                 )
@@ -1258,6 +1261,15 @@ def main() -> None:
             print(f"error: --module: no module '{_mod}'.", file=sys.stderr)
             sys.exit(2)
         if "--check" in args:
+            # gh-1569: the survey is per module or whole-project; an object
+            # named here was silently ignored and every object reported.
+            if _objs:
+                print(
+                    "error: adopt --check takes --module or --all, not"
+                    f" object names ({', '.join(_objs)}).\n{_usage}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             print('adopt --check — would `fragment = "generated"` be safe?')
             sys.exit(_adopt.report(_adopt.survey(_root, _cfg, only_mod=_mod)))
         if not (_objs or _mod or "--all" in args):
