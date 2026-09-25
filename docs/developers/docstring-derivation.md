@@ -137,7 +137,7 @@ The argument does not have to be an identifier. `@c -1`, `@c "A"` and
 `@c +/-10^(clip_db/20)` are all ordinary Doxygen, and all have the marker
 removed (gh-641).
 
-A line that *begins* with one of these is prose, not a tag — `@ref demo_reset is the counterpart` stays in the body with just the marker stripped.
+A line that *begins* with one of these is prose, not a tag — `@ref <pkg>_demo_reset is the counterpart` stays in the body with just the marker stripped.
 
 ### A `@brief` that only restates the name is treated as empty
 
@@ -175,7 +175,7 @@ structure:
  * @param x
  * @param hz
  */
-void fir_tune(fir_state_t *state, double x, double hz);
+void <pkg>_fir_tune(<pkg>_fir_state_t *state, double x, double hz);
 ```
 
 Three properties are load-bearing:
@@ -204,9 +204,9 @@ does jm — a hand-written block placed above the skeleton wins.
  * @brief Construct a log-domain feedback AGC.
  * @param ref_db   Target output power in dB (e.g. 0.0 for unity power).
  * @param loop_bw  Loop noise bandwidth in cycles/sample.
- * @return Heap-allocated agc_state_t, or NULL on allocation failure.
+ * @return Heap-allocated <pkg>_agc_state_t, or NULL on allocation failure.
  */
-agc_state_t *agc_create(double ref_db, double loop_bw);
+<pkg>_agc_state_t *<pkg>_agc_create(double ref_db, double loop_bw);
 ```
 
 **Generated `.pyi`** (`src/doppler/agc/agc.pyi`):
@@ -271,7 +271,7 @@ C extension every CI pass. If a method comment says
  * 0.5
  * @endcode
  */
-float widget_scale(const widget_state_t *state, float x);
+float <pkg>_widget_scale(const <pkg>_widget_state_t *state, float x);
 ```
 
 …and the C implementation returns `0.6`, CI will catch it. Write your `@code`

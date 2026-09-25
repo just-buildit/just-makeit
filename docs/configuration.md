@@ -467,7 +467,7 @@ A line wrapped to the header's own 79 columns is 74 columns of content once
 is why `jm apply` reports the concrete figure per site rather than a rule:
 
 ```
-native/inc/my_project/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in the
+native/inc/my_project/cvt/cvt_core.h: my_project_cvt_step(): @code line will be 82 columns in the
   stub; wrap at <= 71.
     >>> c.step(2.0)                    # beyond +1.0 -> saturates to int16 max
 ```
@@ -642,7 +642,7 @@ constructor's own message.
 ```
 SKIPPED: required constructor parameter(s) capacity, slots have no default;
          seed valid arguments to enable this smoke test:
-         allocator_create returned NULL
+         my_project_allocator_create returned NULL
 ```
 
 The decision is made when the test **runs**, not when it is written, which is
@@ -764,7 +764,7 @@ c_type  = "det_noise_mode_t"
 ```
 
 ```c
-detector_state_t *detector_create(det_noise_mode_t noise_mode);
+my_project_detector_state_t *my_project_detector_create(det_noise_mode_t noise_mode);
 ```
 
 ```python
@@ -790,7 +790,7 @@ derived = ["ny", "nx"]
 ```
 
 ```c
-corr2d_state_t *corr2d_create(const float _Complex *ref,
+my_project_corr2d_state_t *my_project_corr2d_create(const float _Complex *ref,
                               size_t ny, size_t nx, size_t dwell);
 ```
 
@@ -1655,7 +1655,7 @@ supplies the definitions:
 
 ```c
 /** @brief Process one input sample. ... */
-static inline int16_t f32_to_i16_step(const f32_to_i16_state_t *state, float x);
+static inline int16_t my_project_f32_to_i16_step(const my_project_f32_to_i16_state_t *state, float x);
 ...
 DECLARE_F32_TO_INT (f32_to_i16, int16_t, 32767.0f)
 ```

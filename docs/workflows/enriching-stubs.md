@@ -25,15 +25,15 @@ just-makeit example accumulator
 
 ## The class docstring — from `create()`
 
-Give `gain_create` a real `@brief`:
+Give `<pkg>_gain_create` a real `@brief`:
 
 ```c
 /**
  * @brief Construct a scalar gain stage.
  * @param gain  Linear gain applied to each sample (default: 1.0).
- * @return Heap-allocated gain_state_t, or NULL on allocation failure.
+ * @return Heap-allocated <pkg>_gain_state_t, or NULL on allocation failure.
  */
-gain_state_t *gain_create(float gain);
+<pkg>_gain_state_t *<pkg>_gain_create(float gain);
 ```
 
 Run `just-makeit apply` (or any mutating command) and the `@brief` becomes the
@@ -92,7 +92,7 @@ header, and a `@code` block becomes a **runnable Examples doctest**:
  * 3.0
  * @endcode
  */
-float gain_scale(const gain_state_t *state, float x);
+float <pkg>_gain_scale(const <pkg>_gain_state_t *state, float x);
 ```
 
 Regenerate and `gain.pyi` carries:
@@ -161,7 +161,7 @@ dropped.
 Three things worth knowing when your docs don't seem to "take":
 
 - **Your `@brief` must say more than the function name.** A brief that merely
-    restates the name (jm's own `@brief gain_create.` scaffold shape) is treated
+    restates the name (jm's own `@brief <pkg>_gain_create.` scaffold shape) is treated
     as empty, and jm keeps the name-based fallback until you write something
     real.
 - **`@code` examples are executed in CI.** They run against the *built* C

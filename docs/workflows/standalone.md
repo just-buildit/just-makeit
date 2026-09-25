@@ -22,17 +22,17 @@ output. Omit both and they default to `float _Complex`.
 
 ## 2. Implement
 
-Open `native/inc/my_dsp/gain/gain_core.h` and fill in the `gain_step` stub:
+Open `native/inc/my_dsp/gain/gain_core.h` and fill in the `my_dsp_gain_step` stub:
 
 ```c
 static inline float
-gain_step(const gain_state_t *state, float x)
+my_dsp_gain_step(const my_dsp_gain_state_t *state, float x)
 {
     return state->gain * x;
 }
 ```
 
-`gain_steps()` — the block processor — is already in `gain_core.c` and loops
+`my_dsp_gain_steps()` — the block processor — is already in `gain_core.c` and loops
 over this automatically. You do not edit the Python binding (`gain_ext.c`).
 
 ## 3. Build and test

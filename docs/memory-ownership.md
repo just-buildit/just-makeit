@@ -27,11 +27,11 @@ Every generated C kernel takes its output as a pre-allocated pointer:
 
 ```c
 /* blockwise */
-void  comp_steps(comp_state_t *state, const T *in, size_t n, R *out);
+void  <pkg>_comp_steps(<pkg>_comp_state_t *state, const T *in, size_t n, R *out);
 /* variable-length */
-size_t comp_verb(comp_state_t *state, const T *in, size_t n_in, R *out);
+size_t <pkg>_comp_verb(<pkg>_comp_state_t *state, const T *in, size_t n_in, R *out);
 /* records */
-size_t comp_verb(comp_state_t *state, rec_t *result, size_t max_results);
+size_t <pkg>_comp_verb(<pkg>_comp_state_t *state, rec_t *result, size_t max_results);
 ```
 
 The kernel writes and returns a count. It never mallocs something the caller
@@ -52,12 +52,12 @@ is allocation-free by construction.
     The other pointer-returning shapes are real, and each has its own
     one-line contract:
 
-    | shape                  | example                        | contract                                |
-    | ---------------------- | ------------------------------ | --------------------------------------- |
-    | constructor            | `comp_create()`                | **caller frees**, via `comp_destroy()`  |
-    | introspection accessor | `RateConverter_stages_value()` | borrowed; valid while the object lives  |
-    | zero-copy receive      | `dp_msg_data()`                | borrowed; valid until the matching free |
-    | serialized metadata    | `wfm_spec_to_json()`           | **caller frees** the returned string    |
+    | shape                  | example                        | contract                                     |
+    | ---------------------- | ------------------------------ | -------------------------------------------- |
+    | constructor            | `<pkg>_comp_create()`          | **caller frees**, via `<pkg>_comp_destroy()` |
+    | introspection accessor | `RateConverter_stages_value()` | borrowed; valid while the object lives       |
+    | zero-copy receive      | `dp_msg_data()`                | borrowed; valid until the matching free      |
+    | serialized metadata    | `wfm_spec_to_json()`           | **caller frees** the returned string         |
 
     Two of those hand out heap the caller must release. That does not weaken
     the kernel rule — it is why the kernel rule is worth stating separately.
@@ -74,7 +74,7 @@ Every array-returning binding allocates its result from NumPy, per call:
 npy_intp _adim = (npy_intp)_cap;
 PyObject *arr0 = PyArray_SimpleNew(1, &_adim, NPY_COMPLEX64);
 R *_d0 = (R *)PyArray_DATA((PyArrayObject *)arr0);
-size_t n_out = comp_verb(self->handle, ..., _d0);
+size_t n_out = <pkg>_comp_verb(self->handle, ..., _d0);
 ```
 
 No instance buffer, no free-list, no liveness tracking. The returned array

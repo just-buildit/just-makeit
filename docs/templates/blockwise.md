@@ -44,28 +44,28 @@ jm object my_conv --preset blockwise \
 ```c
 typedef struct {
     float gain;
-} my_xform_state_t;
+} my_dsp_my_xform_state_t;
 
-my_xform_state_t *my_xform_create(float gain);
-void              my_xform_destroy(my_xform_state_t *state);
-void              my_xform_reset(my_xform_state_t *state);
+my_dsp_my_xform_state_t *my_dsp_my_xform_create(float gain);
+void              my_dsp_my_xform_destroy(my_dsp_my_xform_state_t *state);
+void              my_dsp_my_xform_reset(my_dsp_my_xform_state_t *state);
 
 void
-my_xform_steps(
-    my_xform_state_t *state,
+my_dsp_my_xform_steps(
+    my_dsp_my_xform_state_t *state,
     const float _Complex     *in, size_t n,
     float _Complex          *out);
 
-float my_xform_get_gain(const my_xform_state_t *state);
-void  my_xform_set_gain(my_xform_state_t *state, float val);
+float my_dsp_my_xform_get_gain(const my_dsp_my_xform_state_t *state);
+void  my_dsp_my_xform_set_gain(my_dsp_my_xform_state_t *state, float val);
 ```
 
 ### `native/src/my_xform/my_xform_core.c`
 
 ```c
 void
-my_xform_steps(
-    my_xform_state_t *state,
+my_dsp_my_xform_steps(
+    my_dsp_my_xform_state_t *state,
     const float _Complex     *in, size_t n,
     float _Complex          *out)
 {
@@ -179,7 +179,7 @@ Then implement `steps()` in `fft_core.c`:
 
 ```c
 void
-fft_steps(fft_state_t        *state,
+my_dsp_fft_steps(my_dsp_fft_state_t        *state,
           const float _Complex *in, size_t n,
           float _Complex       *out)
 {

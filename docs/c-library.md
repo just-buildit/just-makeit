@@ -422,9 +422,9 @@ of your algorithms are C99 and some are C++11:
 #include <vector>
 
 std::vector<float _Complex> xs;      // C99's type, in a C++11 container
-engine_state_t *o = engine_create(2.0);
-float _Complex y = engine_step(o, xs.at(0));
-engine_destroy(o);
+<pkg>_engine_state_t *o = <pkg>_engine_create(2.0);
+float _Complex y = <pkg>_engine_step(o, xs.at(0));
+<pkg>_engine_destroy(o);
 ```
 
 Compile the C++ side with `-std=c++11` and link with the C++ driver (`g++` /
@@ -510,7 +510,7 @@ ______________________________________________________________________
 ls $PREFIX/include/my_project/my_project.h
 
 # library present and has expected symbols
-nm -D $PREFIX/lib/libmy_project.so | grep component_a_create
+nm -D $PREFIX/lib/libmy_project.so | grep my_project_component_a_create
 
 # pkg-config resolves
 pkg-config --modversion my_project

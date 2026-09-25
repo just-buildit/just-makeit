@@ -158,7 +158,7 @@ controllable = true   # -> steps(x, gain=...) overrides self->gain for the block
 `amp.steps(x)` reads the current `gain`; `amp.steps(x, gain=10.0)` (or
 positionally, `amp.steps(x, None, 10.0)`) overrides it for that call only — the
 override never mutates the field, so `get_gain()` is unchanged afterwards. The
-override threads into the C `amp_steps(state, in, n, out, gain)` signature (the
+override threads into the C `<pkg>_amp_steps(state, in, n, out, gain)` signature (the
 one declared, intentional change to the sacred core), and the binding sources it
 `arg-if-provided else self->gain`.
 
