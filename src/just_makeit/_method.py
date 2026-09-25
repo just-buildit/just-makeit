@@ -2177,7 +2177,7 @@ def run(
         from ._object import _load_doc_blocks
 
         cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
-            root, object_name
+            root, object_name, cfg
         )
         ctx = _glue.component_ctx(cfg, object_name, pkg, root)
 

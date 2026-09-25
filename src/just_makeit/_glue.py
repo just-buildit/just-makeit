@@ -416,7 +416,7 @@ def regenerate_standalone(
     from ._object import _load_doc_blocks
 
     cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(
-        root, object_name
+        root, object_name, cfg
     )
     ctx = component_ctx(cfg, object_name, pkg, root)
     # gh-543: component_ctx is manifest-only by contract, so the on-disk probe

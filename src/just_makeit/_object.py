@@ -165,7 +165,7 @@ def _included_member_docs(
     return out, structs
 
 
-def _load_doc_blocks(root: Path, obj: str) -> dict:
+def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
     Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
@@ -214,7 +214,12 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     stem = CSYM.stem(doc_root, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
     # boilerplate (which names the CLASS) is recognised under a class_name.
-    cls = C.resolved_class_name(INC.manifest(doc_root), obj)
+    # From *cfg* when the caller renders from one: at `jm object` time the
+    # manifest on disk does not hold the new object yet, and a scaffold that
+    # read the brief as authored while `apply` read it as jm's disagreed.
+    cls = C.resolved_class_name(
+        cfg if cfg is not None else INC.manifest(doc_root), obj
+    )
     for cname, block_text in raw.items():
         # strip the stem_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).
@@ -256,7 +261,7 @@ def init_param_drift(
     either side missing, or not parseable as a number, is skipped rather than
     reported — a false negative here is fine, a false positive is not.
     """
-    doc_blocks = _load_doc_blocks(root, obj)
+    doc_blocks = _load_doc_blocks(root, obj, cfg)
     create_blk = doc_blocks.get(CSYM.create_name(CSYM.stem(cfg, obj)))
     if create_blk is None:
         return []
@@ -314,7 +319,7 @@ def inert_pass_capacity(
     to read. A method jm has not scaffolded yet keeps gh-607's count-bearing
     default and is not in the seam.
     """
-    doc_blocks = _load_doc_blocks(root, obj)
+    doc_blocks = _load_doc_blocks(root, obj, cfg)
     if not doc_blocks:
         return []
     inert: list[tuple[str, str]] = []
@@ -1461,7 +1466,9 @@ def build_component_ctxs(
         # Parse the sacred header's Doxygen once; stash transiently on cfg so
         # the .pyi generator (_stubs, which receives cfg) sees the same blocks
         # without re-reading. The underscore key is dropped by _config._dump.
-        _doc_blocks = {} if force_fallback else _load_doc_blocks(root, obj)
+        _doc_blocks = (
+            {} if force_fallback else _load_doc_blocks(root, obj, cfg)
+        )
         cfg.setdefault(obj, {})["_doc_blocks"] = _doc_blocks
         state_vars = C.state_vars(cfg, obj)
         arg_type_ = C.arg_type(cfg, obj)
