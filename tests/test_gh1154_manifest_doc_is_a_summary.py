@@ -56,6 +56,7 @@ described a loss which was not happening.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 from pathlib import Path
 
@@ -368,7 +369,7 @@ class TestTheRecommendedPathActuallyWorks:
     def test_header_doxygen_renders_the_full_numpy_docstring(
         self, project: Path
     ) -> None:
-        h = project / "native" / "inc" / "dsp" / "dsp_core.h"
+        h = project / INC_ROOT / "dsp" / "dsp_core.h"
         body = h.read_text(encoding="utf-8")
         assert "int fmap(" in body, body
         h.write_text(

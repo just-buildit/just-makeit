@@ -517,7 +517,8 @@ def already_provides(
     # the one built-in that has no `_core.c` body at all: `step`, a `static
     # inline` in the header.
     src = Path("native") / "src" / component / f"{component}_core.c"
-    inc = Path("native") / "inc" / component / f"{component}_core.h"
+    # gh-1583: the header's place depends on the project's layout.
+    inc = Path(INC.core_rel(component, root))
     for rel, what in ((src, "defines"), (inc, "declares")):
         path = root / rel
         if not path.is_file():

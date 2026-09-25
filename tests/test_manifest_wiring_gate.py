@@ -30,6 +30,7 @@ idempotence half to protect you, which is the point.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import hashlib
 import io
@@ -426,7 +427,7 @@ def _faces(root: Path) -> tuple[str, str]:
 
 
 def _declare_header_brief(root: Path, comp: str, old: str, new: str) -> None:
-    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    h = root / INC_ROOT / comp / f"{comp}_core.h"
     t = h.read_text(encoding="utf-8")
     assert old in t, f"the scaffold no longer writes {old!r}"
     h.write_text(t.replace(old, new), encoding="utf-8")

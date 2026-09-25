@@ -13,6 +13,7 @@ when omitted — so it takes its declared position among the other optional
 params instead of being hoisted, matching what the `.pyi` already did.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def _ext_c(root, obj):
 
 
 def _core_h(root, obj):
-    return (root / "native" / "inc" / obj / f"{obj}_core.h").read_text(
+    return (root / INC_ROOT / obj / f"{obj}_core.h").read_text(
         encoding="utf-8"
     )
 

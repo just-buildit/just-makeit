@@ -81,7 +81,7 @@ and marks the spot to fill in:
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include "filter/filter_core.h"
+#include "va_filter/filter/filter_core.h"
 
 /* <<IMPLEMENT: configure(*args, **kwargs)
  * Parse args/kwargs and return a PyObject *.
@@ -122,7 +122,7 @@ just-makeit method filter current_gain --return-type double
 
 Three stubs need bodies:
 
-- `filter_step` in `native/inc/filter/filter_core.h` — multiply input by gain.
+- `filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
 - `filter_configure` in `native/src/filter/filter_configure_core.c` — parse
   the `gain=` keyword argument and write it to state.
 - `filter_current_gain` in `native/src/filter/filter_core.c` — return
@@ -141,7 +141,7 @@ import re
 STEPS = pathlib.Path(__file__).parent
 
 # -- 1. Patch the inline filter_step in filter_core.h -------------------
-header = pathlib.Path("native/inc/filter/filter_core.h")
+header = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
 step_impl = (STEPS / "03_step.c").read_text(encoding="utf-8")
 step_re = re.compile(
     r"static inline float\s*\nfilter_step"
@@ -208,7 +208,7 @@ filter_step (const filter_state_t *state, float x)
  *   filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
-#include "filter/filter_core.h"
+#include "va_filter/filter/filter_core.h"
 #include <Python.h>
 
 PyObject *

@@ -73,12 +73,12 @@ ______________________________________________________________________
 
 ```
 native/src/utils/linear_to_db.c    ← sacred; implement here
-native/inc/utils/utils_core.h      ← declaration injected automatically
+native/inc/my_utils/utils/utils_core.h      ← declaration injected automatically
 ```
 
 ```c
 /* native/src/utils/linear_to_db.c */
-#include "utils/utils_core.h"
+#include "my_utils/utils/utils_core.h"
 
 /* <<IMPLEMENT: linear_to_db>> */
 float
@@ -92,7 +92,7 @@ linear_to_db(float x)
 **`clamp`** (inline):
 
 ```c
-/* native/inc/utils/utils_core.h — injected inline */
+/* native/inc/my_utils/utils/utils_core.h — injected inline */
 static inline float
 clamp(float x, float lo, float hi)
 {
@@ -158,7 +158,7 @@ the generated `.pyi` docstring, and a `@code` block becomes a **runnable
 doctest**. Free functions are an ideal home for doctests — they take plain
 scalars and return plain scalars, so the `>>>` lines read like ordinary
 Python. Add a comment above the `linear_to_db` declaration in
-`native/inc/utils/utils_core.h`:
+`native/inc/my_utils/utils/utils_core.h`:
 
 ```c
 /**

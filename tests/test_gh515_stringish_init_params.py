@@ -13,6 +13,7 @@ The fix routes both through the ``...`` sentinel the stub machinery already
 understands, and drops the ``, default …`` clause when there is no default.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import ast
 import sys
 from pathlib import Path
@@ -174,9 +175,7 @@ def test_path_init_param_core_h_signature(tmp_path):
     """C sees a plain ``const char *`` it is told to copy."""
     root = tmp_path / "p"
     _project_with_init_param(root, "path")
-    hdr = (root / "native" / "inc" / "rdr" / "rdr_core.h").read_text(
-        encoding="utf-8"
-    )
+    hdr = (root / INC_ROOT / "rdr" / "rdr_core.h").read_text(encoding="utf-8")
     assert "rdr_create(const char *path, int sample_type)" in hdr
     # The zero-seeded smoke create passes NULL for the path. gh-1502: the
     # header's example names the parameters instead of seeding them.

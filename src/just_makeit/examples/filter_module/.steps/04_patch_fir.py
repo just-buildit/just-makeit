@@ -4,7 +4,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/fir/fir_core.h")
+header = pathlib.Path("native/inc/my_filters/fir/fir_core.h")
 text = header.read_text(encoding="utf-8")
 
 stub_re = re.compile(

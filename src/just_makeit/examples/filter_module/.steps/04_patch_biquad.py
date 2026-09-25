@@ -4,7 +4,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/biquad/biquad_core.h")
+header = pathlib.Path("native/inc/my_filters/biquad/biquad_core.h")
 text = header.read_text(encoding="utf-8")
 
 stub_re = re.compile(

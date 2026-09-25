@@ -21,6 +21,7 @@ undefined symbol; `jm test` imports the module.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -87,7 +88,7 @@ def _project(tmp_path: Path, shape: str) -> Path:
 
 def _body_file(root: Path, shape: str) -> Path:
     if shape == "header_only":
-        return root / "native" / "inc" / "o" / "o_core.h"
+        return root / INC_ROOT / "o" / "o_core.h"
     return root / "native" / "src" / "o" / "o_core.c"
 
 

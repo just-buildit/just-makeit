@@ -36,6 +36,7 @@ would be a separate change to both.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 from pathlib import Path
@@ -92,7 +93,7 @@ def project(tmp_path: Path) -> Path:
         ).returncode
         == 0
     )
-    h = root / "native" / "inc" / "inter" / "inter_core.h"
+    h = root / INC_ROOT / "inter" / "inter_core.h"
     body = h.read_text(encoding="utf-8")
     decl = re.search(r"^.*inter_create_rx.*$", body, re.M)
     assert decl, body
@@ -213,7 +214,7 @@ class TestPrecedenceAndFallback:
             ),
             encoding="utf-8",
         )
-        h = root / "native" / "inc" / "o" / "o_core.h"
+        h = root / INC_ROOT / "o" / "o_core.h"
         body = h.read_text(encoding="utf-8")
         decl = re.search(r"^.*o_create_alt.*$", body, re.M)
         assert decl, body

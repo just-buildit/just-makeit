@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -58,7 +59,7 @@ def run(root: Path) -> None:
     )
     # A constant-level source: the composed output is then checkable by eye,
     # and the example stays about the seams rather than about a kernel.
-    core_h = proj / "native" / "inc" / "clip" / "clip_core.h"
+    core_h = INC.header_root(proj) / "clip" / "clip_core.h"
     text = core_h.read_text(encoding="utf-8")
     stub = (
         "    (void)state; /* TODO: implement */\n    return (float _Complex)0;"
@@ -70,12 +71,12 @@ def run(root: Path) -> None:
     )
 
     # ── 2. The hand-written backing, in a c_deps directory ───────────────
-    (proj / "native" / "inc" / "playlist").mkdir(parents=True, exist_ok=True)
+    (INC.header_root(proj) / "playlist").mkdir(parents=True, exist_ok=True)
     backing = proj / "native" / "src" / "backing"
     backing.mkdir(parents=True, exist_ok=True)
     shutil.copy(
         STEPS / "02_playlist_core.h",
-        proj / "native" / "inc" / "playlist" / "playlist_core.h",
+        INC.header_root(proj) / "playlist" / "playlist_core.h",
     )
     shutil.copy(STEPS / "02_playlist_core.c", backing / "playlist_core.c")
     shutil.copy(STEPS / "02_CMakeLists.txt", backing / "CMakeLists.txt")
@@ -85,21 +86,21 @@ def run(root: Path) -> None:
 
     # ── 4. Apply, and check the header a consumer will include ───────────
     jm_apply(proj)
-    bridge = proj / "native" / "inc" / "playlist" / "playlist_bridge.h"
+    bridge = INC.header_root(proj) / "playlist" / "playlist_bridge.h"
     assert bridge.exists(), "gh-998: no bridge header was written"
     bt = bridge.read_text(encoding="utf-8")
     assert "clip_state_t *clip_from_source(const clip_t *, double);" in bt
     assert "double clip_duration(const clip_t *);" in bt
     # Self-contained: a consumer must not have to work out the include order.
-    assert '#include "playlist/playlist_core.h"' in bt
-    assert '#include "clip/clip_core.h"' in bt
+    assert '#include "studio/playlist/playlist_core.h"' in bt
+    assert '#include "studio/clip/clip_core.h"' in bt
     assert "PLAYLIST_BRIDGE_H" in bt, "no include guard"
     # And the binding must INCLUDE it rather than re-declare the seams --
     # a second copy of a signature jm owns is the defect gh-998 removed.
     ext = (proj / "native" / "src" / "playlist" / "playlist_ext.c").read_text(
         encoding="utf-8"
     )
-    assert '#include "playlist/playlist_bridge.h"' in ext
+    assert '#include "studio/playlist/playlist_bridge.h"' in ext
     assert "extern " not in ext, "the binding still declares a seam itself"
 
     # gh-1516: the declared extra method is forward-declared above the table

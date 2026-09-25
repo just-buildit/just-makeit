@@ -17,13 +17,13 @@ POSIX_IO = """\
 #endif"""
 
 # ── add the I/O header to _core.h ─────────────────────────────────────────
-core_h = root / "native/inc/q15_to_cf32/q15_to_cf32_core.h"
+core_h = root / "native/inc/iqfile/q15_to_cf32/q15_to_cf32_core.h"
 text = core_h.read_text(encoding="utf-8")
 
 if "<unistd.h>" not in text:
     text = text.replace(
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n' + POSIX_IO,
+        '#include "iqfile/clib_common.h"',
+        '#include "iqfile/clib_common.h"\n' + POSIX_IO,
         1,
     )
 
@@ -60,8 +60,8 @@ text = core_c.read_text(encoding="utf-8")
 # The I/O header if needed (steps() calls read/lseek)
 if "<unistd.h>" not in text:
     text = text.replace(
-        '#include "q15_to_cf32/q15_to_cf32_core.h"',
-        '#include "q15_to_cf32/q15_to_cf32_core.h"\n' + POSIX_IO,
+        '#include "iqfile/q15_to_cf32/q15_to_cf32_core.h"',
+        '#include "iqfile/q15_to_cf32/q15_to_cf32_core.h"\n' + POSIX_IO,
         1,
     )
 

@@ -19,6 +19,7 @@ Off by default, so no consumer goes red mid-sweep.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -60,7 +61,7 @@ def _widen(root: Path) -> None:
     """
     from just_makeit._apply import run as apply_run
 
-    h = root / "native" / "inc" / "thing" / "thing_core.h"
+    h = root / INC_ROOT / "thing" / "thing_core.h"
     text = h.read_text()
     anchor = (
         " * @brief Get current gain.\n * @param state  Must be non-NULL.\n"

@@ -26,6 +26,7 @@ and binds, the user implements the accessor, and an unimplemented one is a
 loud link error rather than a silently absent attribute.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import contextlib
 import io
 import re
@@ -76,7 +77,7 @@ def _fragment(root):
 
 
 def _header(root):
-    return (root / "native" / "inc" / "reader" / "reader_core.h").read_text()
+    return (root / INC_ROOT / "reader" / "reader_core.h").read_text()
 
 
 @pytest.fixture()
@@ -159,7 +160,7 @@ class TestHeaderInjectionIsNarrow:
     an existing prototype is never rewritten, whatever its signature."""
 
     def test_existing_prototype_is_never_rewritten(self, first_property):
-        hdr = first_property / "native" / "inc" / "reader" / "reader_core.h"
+        hdr = first_property / INC_ROOT / "reader" / "reader_core.h"
         hand = hdr.read_text().replace(
             "int reader_get_thing(const reader_state_t *state);",
             "int reader_get_thing(const reader_state_t *state, size_t n);",
@@ -173,7 +174,7 @@ class TestHeaderInjectionIsNarrow:
 
     def test_unrelated_declarations_untouched(self, first_property):
         """Nothing else in the header moves — that was the +44 regression."""
-        hdr = first_property / "native" / "inc" / "reader" / "reader_core.h"
+        hdr = first_property / INC_ROOT / "reader" / "reader_core.h"
         before = hdr.read_text()
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(first_property)

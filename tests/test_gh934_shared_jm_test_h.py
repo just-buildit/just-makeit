@@ -22,6 +22,7 @@ it prints is right — and the count is the whole mechanism.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR  # noqa: E402
 
 import re
 import shutil
@@ -198,7 +199,7 @@ class TestRuntimeBehaviour:
                 _CC,
                 _STD,
                 "-I",
-                str(root / "native" / "inc"),
+                str(root / INC_DIR),
                 "-o",
                 str(exe),
                 str(src),

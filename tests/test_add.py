@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit add`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def project(tmp_path):
 class TestAddStateVar:
     def test_add_single_var_header(self, project):
         add_run(project, None, [("order", "int", "4")], force=True)
-        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core = (project / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "double gain;" in core
@@ -73,7 +74,7 @@ class TestAddStateVar:
             [("bandwidth", "double", "200.0"), ("poles", "int", "2")],
             force=True,
         )
-        core = (project / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core = (project / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "double bandwidth;" in core
@@ -120,7 +121,7 @@ class TestAddPreservesInitParams:
     def test_ctor_keeps_init_param_after_add(self, init_param_project):
         add_run(init_param_project, "obj", [("y", "float", "1")], force=True)
         core = (
-            init_param_project / "native" / "inc" / "obj" / "obj_core.h"
+            init_param_project / INC_ROOT / "obj" / "obj_core.h"
         ).read_text(encoding="utf-8")
         # Constructor stays init-param-driven: obj_create(int n), NOT
         # obj_create(float x, float y).

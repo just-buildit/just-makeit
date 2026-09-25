@@ -7,7 +7,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/power_est/power_est_core.h")
+header = pathlib.Path("native/inc/my_power/power_est/power_est_core.h")
 impl = pathlib.Path(__file__).with_name("02_step_impl.c")
 
 stub_re = re.compile(

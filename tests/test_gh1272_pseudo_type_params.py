@@ -44,6 +44,7 @@ covered on the day it is added rather than the day someone remembers.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import ast
 import sys
@@ -200,7 +201,7 @@ class TestTheMethodFace:
         root = _method_project(tmp_path, ptype)
         proto = [
             ln
-            for ln in (root / "native" / "inc" / "o" / "o_core.h")
+            for ln in (root / INC_ROOT / "o" / "o_core.h")
             .read_text(encoding="utf-8")
             .splitlines()
             if "o_fin(" in ln
@@ -298,7 +299,7 @@ class TestEveryPrototypeBranch:
         if shape == "variable_output":
             extra = 'variable_output = true\nout_type = "double"\n'
         root = _method_project(tmp_path, ptype, extra=extra, return_type=rt)
-        header = (root / "native" / "inc" / "o" / "o_core.h").read_text(
+        header = (root / INC_ROOT / "o" / "o_core.h").read_text(
             encoding="utf-8"
         )
         proto = [ln for ln in header.splitlines() if "o_fin(" in ln]

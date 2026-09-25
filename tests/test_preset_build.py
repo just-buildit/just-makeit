@@ -9,6 +9,7 @@ cannot silently come back.
 Skipped when the C toolchain is unavailable (matches test_examples.py).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import shutil
 import subprocess
 
@@ -95,7 +96,7 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
     )
 
     # The element type is stripped everywhere the buffer/param/sizeof renders.
-    core_h = (root / "native/inc/filt/filt_core.h").read_text()
+    core_h = (root / INC_ROOT / "filt/filt_core.h").read_text()
     core_c = (root / "native/src/filt/filt_core.c").read_text()
     ext_c = (root / "native/src/filt/filt_ext.c").read_text()
     for text in (core_h, core_c, ext_c):

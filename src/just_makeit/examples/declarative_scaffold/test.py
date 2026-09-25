@@ -17,6 +17,7 @@ Also runnable directly: python3 examples/declarative_scaffold/test.py
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -134,7 +135,7 @@ def run(root: Path) -> None:
     assert (proj / "objects" / "agc.toml").exists()
 
     # The {Component} placeholder was interpolated to `Agc`.
-    core_h = (proj / "native" / "inc" / "agc" / "agc_core.h").read_text(
+    core_h = (INC.header_root(proj) / "agc" / "agc_core.h").read_text(
         encoding="utf-8"
     )
     assert "/* Agc — EMA power tracker" in core_h, core_h
@@ -145,7 +146,7 @@ def run(root: Path) -> None:
     #        The `impl` banner comment is not a Doxygen @brief; the class
     #        summary is authored on `agc_create` (the single source of truth
     #        for docs) and flows to the stub via `jm apply`.
-    core_h_path = proj / "native" / "inc" / "agc" / "agc_core.h"
+    core_h_path = INC.header_root(proj) / "agc" / "agc_core.h"
     _enrich_doxygen(core_h_path)
     jm_apply(proj)
 

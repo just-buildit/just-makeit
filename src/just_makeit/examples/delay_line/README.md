@@ -102,7 +102,7 @@ ______________________________________________________________________
 ## 3. Implement step()
 
 ```c
-/* native/inc/delay_line/delay_line_core.h */
+/* native/inc/delay_line_demo/delay_line/delay_line_core.h */
 static inline float
 delay_line_step(delay_line_state_t *state, float x)
 {

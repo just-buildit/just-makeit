@@ -135,7 +135,7 @@ is the **author's** and goes in the component's own header before the method
 that names it:
 
 ```c
-/* native/inc/iq16_ring/iq16_ring_core.h */
+/* native/inc/ringdemo/iq16_ring/iq16_ring_core.h */
 typedef struct { int16_t i; int16_t q; } iq16_t;
 ```
 

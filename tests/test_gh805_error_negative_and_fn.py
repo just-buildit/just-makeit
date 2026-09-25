@@ -37,6 +37,7 @@ fields and handle methods, so this is one key reaching one more place.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -97,7 +98,7 @@ def _add(root: Path, name: str, **kw) -> None:
 
 
 def _core_h(root: Path) -> str:
-    return (root / "native" / "inc" / COMP / f"{COMP}_core.h").read_text()
+    return (root / INC_ROOT / COMP / f"{COMP}_core.h").read_text()
 
 
 def _core_c(root: Path) -> str:

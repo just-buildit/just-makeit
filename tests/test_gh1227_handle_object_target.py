@@ -20,6 +20,8 @@ one (gh-1235). This resolver is the better-founded of the two.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -70,7 +72,7 @@ def _project(
         new_run("proj", root)
         object_run(root, "seg", None, state_vars=[("k", "size_t", "0")])
     if with_header:
-        h = root / "native" / "inc" / "wfm" / "wfm_writer.h"
+        h = root / INC_ROOT / "wfm" / "wfm_writer.h"
         h.parent.mkdir(parents=True, exist_ok=True)
         h.write_text(
             "#ifndef WFM_WRITER_H\n#define WFM_WRITER_H\n"
@@ -79,7 +81,11 @@ def _project(
             encoding="utf-8",
         )
     cfg = C.load(root)
-    cfg.setdefault("module", {})["wfm_writer"] = {**_HANDLE, **handle_extra}
+    module = {**_HANDLE, **handle_extra}
+    if module.get("header") == _HANDLE["header"]:
+        # gh-1583: the author includes their own header as `<pkg>/...`.
+        module["header"] = INC.include(_HANDLE["header"], root)
+    cfg.setdefault("module", {})["wfm_writer"] = module
     C.save(root, cfg)
     return root
 
@@ -95,13 +101,14 @@ def _declare(root: Path, ref: str) -> dict:
 
 class TestItResolves:
     def test_all_four_slots_come_from_declarations(self, tmp_path: Path):
-        cfg = C.load(_project(tmp_path))
+        root = _project(tmp_path)
+        cfg = C.load(root)
         ctype, cap, header, cls = C.resolve_object_ref(cfg, "wfm_writer")
         # `handle_type` defaults to `<backing>_t`, and the struct stores
         # `{htype} *h` -- so this is the declared type, not a guess.
         assert ctype == "wfm_writer_t *"
         assert cap == CAP
-        assert header == "wfm/wfm_writer.h"
+        assert header == INC.include("wfm/wfm_writer.h", root)
         assert cls == "Writer"
 
     def test_an_explicit_handle_type_wins(self, tmp_path: Path):
@@ -139,9 +146,8 @@ class TestItResolves:
         m = cfg["module"]["wfm_writer"]
         m.pop("header", None)
         m.pop("package", None)
-        assert (
-            C.resolve_object_ref(cfg, "wfm_writer")[2]
-            == "wfm_writer/wfm_writer_core.h"
+        assert C.resolve_object_ref(cfg, "wfm_writer")[2] == INC.core_include(
+            "wfm_writer", cfg
         )
         assert (
             C.object_ref_import(cfg, "wfm_writer")
@@ -205,9 +211,10 @@ class TestTheGeneratedCIsTheCapsulePath:
         """The regression gh-1234 is about, on the half that CAN be right:
         the prototype names the type the capsule actually carries."""
         root = self._apply(tmp_path)
-        core_h = (root / "native" / "inc" / "seg" / "seg_core.h").read_text()
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
         assert "seg_state_t *seg_create(wfm_writer_t *w);" in core_h
-        assert '#include "wfm/wfm_writer.h"' in core_h
+        spelled = INC.include("wfm/wfm_writer.h", root)
+        assert f'#include "{spelled}"' in core_h
 
     def test_a_header_that_is_not_there_is_not_included(self, tmp_path: Path):
         """The peer of the test above, from gh-790. A handle's backing header
@@ -215,7 +222,7 @@ class TestTheGeneratedCIsTheCapsulePath:
         emit an include for a file that is not, or the component stops
         compiling because of a declaration it only referenced."""
         root = self._apply(tmp_path, with_header=False)
-        core_h = (root / "native" / "inc" / "seg" / "seg_core.h").read_text()
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
         assert "seg_state_t *seg_create(wfm_writer_t *w);" in core_h
         assert "wfm/wfm_writer.h" not in core_h
 
@@ -265,7 +272,6 @@ def test_one_answer_to_where_a_handle_lands(tmp_path: Path) -> None:
     cfg["module"]["wfm_writer"].pop("package")
     cfg["module"]["wfm_writer"].pop("header")
     assert C.handle_package_resolved(cfg, "wfm_writer") == "wfm_writer"
-    assert (
-        C.handle_header_resolved(cfg, "wfm_writer")
-        == "wfm_writer/wfm_writer_core.h"
+    assert C.handle_header_resolved(cfg, "wfm_writer") == INC.core_include(
+        "wfm_writer", cfg
     )

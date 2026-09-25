@@ -21,6 +21,7 @@ showing after a real suite has been added.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -101,9 +102,9 @@ def _rename(root: Path, old: str, new: str) -> None:
             encoding="utf-8",
         )
 
-    (root / "native" / "inc" / old).rename(root / "native" / "inc" / new)
-    (root / "native" / "inc" / new / f"{old}_core.h").rename(
-        root / "native" / "inc" / new / f"{new}_core.h"
+    (root / INC_ROOT / old).rename(root / INC_ROOT / new)
+    (root / INC_ROOT / new / f"{old}_core.h").rename(
+        root / INC_ROOT / new / f"{new}_core.h"
     )
     (root / "native" / "src" / old).rename(root / "native" / "src" / new)
     for suffix in ("_core.c", "_ext.c"):
@@ -116,11 +117,11 @@ def _rename(root: Path, old: str, new: str) -> None:
         new.title().replace("_", ""),
     )
     touched = [
-        root / "native" / "inc" / new / f"{new}_core.h",
+        root / INC_ROOT / new / f"{new}_core.h",
         root / "native" / "src" / new / f"{new}_core.c",
         root / "native" / "src" / new / f"{new}_ext.c",
         root / "native" / "src" / new / "CMakeLists.txt",
-        root / "native" / "inc" / "proj.h",
+        root / INC_ROOT / "proj.h",
         root / "CMakeLists.txt",
         root / "src" / "proj" / "__init__.py",
     ]
@@ -477,7 +478,7 @@ class TestTheEmptyBenchmarkSaysSo:
                 str(root / "native" / "benchmarks" / "bench_tlm_core.c"),
                 str(root / "native" / "src" / "tlm" / "tlm_core.c"),
                 "-I",
-                str(root / "native" / "inc"),
+                str(root / INC_DIR),
                 "-I",
                 str(root / "native" / "benchmarks"),
                 "-lm",
@@ -509,7 +510,7 @@ def _run_c_test(root: Path, comp: str, tmp_path: Path) -> str:
             str(root / "native" / "tests" / f"test_{comp}_core.c"),
             str(root / "native" / "src" / comp / f"{comp}_core.c"),
             "-I",
-            str(root / "native" / "inc"),
+            str(root / INC_DIR),
             "-lm",
         ],
         check=True,

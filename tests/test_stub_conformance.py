@@ -25,6 +25,8 @@ mirroring `tests/test_examples.py`.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -290,7 +292,7 @@ def _append_core(root, comp, code):
 def _append_header(root, comp, code):
     """Append a declaration to a component's `_core.h`, before the include
     guard's closing `#endif` so a sibling `_ext` fragment sees it."""
-    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    h = root / INC_ROOT / comp / f"{comp}_core.h"
     text = h.read_text()
     idx = text.rfind("#endif")
     h.write_text(text[:idx] + code + "\n\n" + text[idx:])
@@ -585,14 +587,25 @@ target_include_directories(ringbuf_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
 """
 
 
+def _spelled(text: str, proj: Path, stem: str) -> str:
+    """*text* with its ``#include "<stem>/..."`` spelled in *proj*'s layout:
+    the c_dep's header is the project's own, so from schema 8 on it is
+    included as ``<pkg>/<stem>/...`` (gh-1583)."""
+    return text.replace(
+        f'#include "{stem}/', f'#include "{INC.include(stem, proj)}/'
+    )
+
+
 def _vendor_ringbuf(proj: Path) -> None:
     """Drop the ringbuf c_dep (public header + OBJECT-lib source) into *proj*."""
-    inc = proj / "native" / "inc" / "ringbuf"
+    inc = proj / INC_ROOT / "ringbuf"
     inc.mkdir(parents=True, exist_ok=True)
     (inc / "ringbuf.h").write_text(_RINGBUF_H, encoding="utf-8")
     rb = proj / "native" / "src" / "ringbuf"
     rb.mkdir(parents=True, exist_ok=True)
-    (rb / "ringbuf.c").write_text(_RINGBUF_C, encoding="utf-8")
+    (rb / "ringbuf.c").write_text(
+        _spelled(_RINGBUF_C, proj, "ringbuf"), encoding="utf-8"
+    )
     (rb / "CMakeLists.txt").write_text(_RINGBUF_CMAKE, encoding="utf-8")
 
 
@@ -614,6 +627,9 @@ def _inject_module(
     cfg["project"]["c_deps"] = [c_dep]
     if enums:
         cfg["enum"] = enums
+    if "header" in section:
+        # gh-1583: the backing header is the author's, spelled `<pkg>/...`.
+        section = {**section, "header": INC.include(section["header"], proj)}
     cfg.setdefault("module", {})[module] = section
     C.save(proj, cfg)
     _q(apply_run, proj)
@@ -759,12 +775,14 @@ target_include_directories(gadget_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
 
 def _vendor_gadget(proj: Path) -> None:
     """Drop the gadget c_dep (public header + OBJECT-lib source) into *proj*."""
-    inc = proj / "native" / "inc" / "gadget"
+    inc = proj / INC_ROOT / "gadget"
     inc.mkdir(parents=True, exist_ok=True)
     (inc / "gadget.h").write_text(_GADGET_H, encoding="utf-8")
     src = proj / "native" / "src" / "gadget"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "gadget.c").write_text(_GADGET_C, encoding="utf-8")
+    (src / "gadget.c").write_text(
+        _spelled(_GADGET_C, proj, "gadget"), encoding="utf-8"
+    )
     (src / "CMakeLists.txt").write_text(_GADGET_CMAKE, encoding="utf-8")
 
 
@@ -912,12 +930,14 @@ target_include_directories(mixer_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
 
 def _vendor_mixer(proj: Path) -> None:
     """Drop the mixer c_dep (public header + OBJECT-lib source) into *proj*."""
-    inc = proj / "native" / "inc" / "mixer"
+    inc = proj / INC_ROOT / "mixer"
     inc.mkdir(parents=True, exist_ok=True)
     (inc / "mixer.h").write_text(_MIXER_H, encoding="utf-8")
     mx = proj / "native" / "src" / "mixer"
     mx.mkdir(parents=True, exist_ok=True)
-    (mx / "mixer.c").write_text(_MIXER_C, encoding="utf-8")
+    (mx / "mixer.c").write_text(
+        _spelled(_MIXER_C, proj, "mixer"), encoding="utf-8"
+    )
     (mx / "CMakeLists.txt").write_text(_MIXER_CMAKE, encoding="utf-8")
 
 

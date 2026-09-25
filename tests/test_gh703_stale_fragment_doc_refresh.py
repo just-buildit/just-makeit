@@ -51,6 +51,7 @@ the one that was actually broken.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -248,7 +249,7 @@ def project(tmp_path: Path) -> tuple[Path, Path]:
         [],
         params=[("up", "double"), ("dn", "double")],
     )
-    hdr = root / "native" / "inc" / "det" / "det_core.h"
+    hdr = root / INC_ROOT / "det" / "det_core.h"
     text = hdr.read_text(encoding="utf-8")
     old = re.search(
         r"/\*\*\n(?: \*[^\n]*\n)+ \*/(?=\nvoid det_configure)", text

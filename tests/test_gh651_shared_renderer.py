@@ -16,6 +16,7 @@ docstring, whether or not the object lives in a module.*
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -48,7 +49,7 @@ _RICH = """\
 
 def _annotate(dest: Path, comp: str, c_func: str, block: str) -> None:
     """Replace the Doxygen immediately above *c_func* in the sacred header."""
-    header = dest / "native" / "inc" / comp / f"{comp}_core.h"
+    header = dest / INC_ROOT / comp / f"{comp}_core.h"
     text = header.read_text(encoding="utf-8")
     decl_re = re.compile(
         r"(?:^[ \t]*/\*\*(?:(?!\*/)[\s\S])*?\*/[ \t]*\r?\n)?"

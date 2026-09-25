@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit init` (add component to existing project)."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def project_with_engine(tmp_path):
 class TestInitAddsFiles:
     def test_component_header(self, project_with_engine):
         assert (
-            project_with_engine / "native" / "inc" / "engine" / "engine_core.h"
+            project_with_engine / INC_ROOT / "engine" / "engine_core.h"
         ).exists()
 
     def test_component_core_c(self, project_with_engine):
@@ -143,7 +144,7 @@ class TestInitContent:
 
     def test_header_has_correct_typedef(self, project_with_engine):
         h = (
-            project_with_engine / "native" / "inc" / "engine" / "engine_core.h"
+            project_with_engine / INC_ROOT / "engine" / "engine_core.h"
         ).read_text(encoding="utf-8")
         assert "engine_state_t" in h
         assert "engine_create" in h

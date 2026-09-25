@@ -35,7 +35,8 @@ gh-1012 was filed for.
 
 from __future__ import annotations
 
-from pathlib import Path
+from just_makeit import _incpath as INC
+
 
 import pytest
 
@@ -46,7 +47,6 @@ from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 
-HDR = Path("native/inc/rx/rx_core.h")
 SCAFFOLD_BRIEF = " * @brief block."
 
 
@@ -98,7 +98,7 @@ def _author(dest, symbol, marker):
     override's are byte-identical, so a positional replace would pin nothing
     about which block reached which face — the very question this file asks.
     """
-    hdr = dest / HDR
+    hdr = INC.core_h(dest, "rx")
     text = hdr.read_text(encoding="utf-8")
     at = text.index(f"size_t {symbol}(")
     start = text.rindex("/**", 0, at)

@@ -19,6 +19,7 @@
    and correct for everything else.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def _hand_author_create_fn_doc(root, create_fn="acq_create_continuous"):
     unchanged: the ``.tp_doc`` transplant keys off ``create_fn``'s block,
     not off a derived ``<obj>_create``.
     """
-    header = root / "native" / "inc" / "acq" / "acq_core.h"
+    header = root / INC_ROOT / "acq" / "acq_core.h"
     text = header.read_text(encoding="utf-8")
     old = " * @brief Create a acq instance.\n"
     assert text.count(old) == 1, (
@@ -115,7 +116,7 @@ class TestDocstringTransplantFollowsCreateFn:
             module="mod",
             init_params=[("carrier", "double", "0.05")],
         )
-        header = root / "native" / "inc" / "burst" / "burst_core.h"
+        header = root / INC_ROOT / "burst" / "burst_core.h"
         text = header.read_text(encoding="utf-8")
         text = text.replace(
             "@brief Create a burst instance.",

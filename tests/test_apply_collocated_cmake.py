@@ -9,6 +9,7 @@ placeholder leaked into the generated file and broke the build. This guards
 that apply resolves it.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
 import shutil
@@ -248,7 +249,7 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
     dest = tmp_path / "p"
     _collocated_with_dep(dest)
     # Make the collocated core actually compose the sibling.
-    h = dest / "native/inc/ddc/ddc_core.h"
+    h = dest / INC_ROOT / "ddc/ddc_core.h"
     h.write_text(
         h.read_text()
         .replace(
@@ -468,7 +469,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
         return_type="float",
     )
     # tone_core.c now composes extra's symbol.
-    h = dest / "native/inc/tone/tone_core.h"
+    h = dest / INC_ROOT / "tone/tone_core.h"
     h.write_text(
         h.read_text()
         .replace(

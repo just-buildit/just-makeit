@@ -20,6 +20,7 @@ one face alone would not notice.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 from pathlib import Path
@@ -57,7 +58,7 @@ def _scaffold(tmp_path: Path, documented: bool) -> Path:
         == 0
     )
     proj = root / "p"
-    header = proj / "native" / "inc" / "psd" / "psd_core.h"
+    header = proj / INC_ROOT / "psd" / "psd_core.h"
     if documented:
         text = header.read_text(encoding="utf-8")
         assert "    size_t nfft;" in text
@@ -214,7 +215,7 @@ class TestMethods:
             ).returncode
             == 0
         )
-        header = proj / "native" / "inc" / "psd" / "psd_core.h"
+        header = proj / INC_ROOT / "psd" / "psd_core.h"
         text = header.read_text(encoding="utf-8")
         decl = "double psd_sfdr("
         assert decl in text
@@ -304,7 +305,7 @@ class TestRecordFields:
         proj = root / "p"
         # The row struct is the author's, and its fields are deliberately
         # left without `/**<` comments -- that is the gap under test.
-        header = proj / "native" / "inc" / "meter" / "meter_core.h"
+        header = proj / INC_ROOT / "meter" / "meter_core.h"
         text = header.read_text(encoding="utf-8")
         marker = "typedef struct"
         text = text.replace(

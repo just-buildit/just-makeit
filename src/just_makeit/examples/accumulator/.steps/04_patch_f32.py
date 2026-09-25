@@ -56,7 +56,7 @@ def patch_fn(text, fn_name, new_body):
 
 # --- Patch header (step stub) ---
 
-header = pathlib.Path("native/inc/acc_f32/acc_f32_core.h")
+header = pathlib.Path("native/inc/my_acc/acc_f32/acc_f32_core.h")
 text = header.read_text(encoding="utf-8")
 text = patch_step(text)
 header.write_text(text, encoding="utf-8")

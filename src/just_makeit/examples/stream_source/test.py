@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -137,7 +138,7 @@ def run(root: Path) -> None:
         "increasing float32 sequence, advancing by a fixed increment per "
         "sample, streamable in blocks via stream() and __iter__."
     )
-    header = proj / "native" / "inc" / "ramp" / "ramp_core.h"
+    header = INC.header_root(proj) / "ramp" / "ramp_core.h"
     htext = header.read_text(encoding="utf-8")
     scaffold = " * @brief Create a ramp instance."
     assert scaffold in htext, "scaffold create @brief not found in header"
@@ -162,7 +163,7 @@ def run(root: Path) -> None:
 
     # 2. Splice in step() — the SAME .steps/02_step.c the README embeds, so the
     #    taught function is the compiled function.
-    core_h = proj / "native" / "inc" / "ramp" / "ramp_core.h"
+    core_h = INC.header_root(proj) / "ramp" / "ramp_core.h"
     snippet = (STEPS / "02_step.c").read_text(encoding="utf-8")
     fn = snippet[snippet.index("static inline") :].rstrip() + "\n"
     core_h.write_text(

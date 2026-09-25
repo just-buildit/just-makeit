@@ -24,6 +24,7 @@ report and silently merge every jm-authored glue docstring into a blob, so
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -88,7 +89,7 @@ def _project(tmp_path: Path, *, author_accessor: bool) -> Path:
         True,
         [],
     )
-    hdr = root / "native" / "inc" / "enc" / "enc_core.h"
+    hdr = root / INC_ROOT / "enc" / "enc_core.h"
     lines = hdr.read_text(encoding="utf-8").split("\n")
     # the METHOD block always gets the same body, as the control
     text = "\n".join(lines).replace(

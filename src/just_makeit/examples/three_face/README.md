@@ -17,7 +17,7 @@ binary, the C test, and the Python extension — so all three faces behave
 identically (the test asserts every face agrees to within 1e-5).
 
 The hand-written Doxygen `@brief` on `gain_create()` in the sacred
-`native/inc/gain/gain_core.h` header drives the generated `gain.pyi` class
+`native/inc/gaintool/gain/gain_core.h` header drives the generated `gain.pyi` class
 docstring — `jm apply` re-derives the stub from that comment.
 
 ## Run it

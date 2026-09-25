@@ -1,5 +1,7 @@
 """Integration tests for `just-makeit new`."""
 
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -43,10 +45,10 @@ class TestNewProjectFiles:
         assert (project / ".gitignore").exists()
 
     def test_clib_common_h(self, project):
-        assert (project / "native" / "inc" / "clib_common.h").exists()
+        assert (project / INC_ROOT / "clib_common.h").exists()
 
     def test_pyex_common_h(self, project):
-        assert (project / "native" / "inc" / "pyex_common.h").exists()
+        assert (project / INC_ROOT / "pyex_common.h").exists()
 
     def test_just_makeit_toml_exists(self, project):
         assert (project / "just-makeit.toml").exists()
@@ -55,7 +57,7 @@ class TestNewProjectFiles:
         assert (project / "bootstrap.toml").exists()
 
     def test_umbrella_header_exists(self, project):
-        assert (project / "native" / "inc" / "my_filter.h").exists()
+        assert (project / INC_ROOT / "my_filter.h").exists()
 
     def test_pc_in_exists(self, project):
         assert (project / "cmake" / "my_filter.pc.in").exists()
@@ -66,9 +68,7 @@ class TestNewProjectFiles:
 
 class TestNewComponentFiles:
     def test_component_header(self, project):
-        assert (
-            project / "native" / "inc" / "my_filter" / "my_filter_core.h"
-        ).exists()
+        assert (project / INC_ROOT / "my_filter" / "my_filter_core.h").exists()
 
     def test_component_core_c(self, project):
         assert (
@@ -303,9 +303,9 @@ class TestNewContent:
         assert "Python3_add_library(my_filter" in cmake
 
     def test_header_has_correct_typedef(self, project):
-        h = (
-            project / "native" / "inc" / "my_filter" / "my_filter_core.h"
-        ).read_text(encoding="utf-8")
+        h = (project / INC_ROOT / "my_filter" / "my_filter_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "my_filter_state_t" in h
         assert "my_filter_create" in h
         assert "my_filter_destroy" in h
@@ -345,9 +345,7 @@ class TestNewContent:
         assert "add_library(my_filter_core OBJECT" in cmake
 
     def test_umbrella_header_content(self, project):
-        h = (project / "native" / "inc" / "my_filter.h").read_text(
-            encoding="utf-8"
-        )
+        h = (project / INC_ROOT / "my_filter.h").read_text(encoding="utf-8")
         assert "MY_FILTER_H" in h
 
     def test_umbrella_header_updated_by_init(self, tmp_path):
@@ -356,10 +354,8 @@ class TestNewContent:
         dest = tmp_path / "my_pkg"
         run("my_pkg", dest)
         init_run(dest, "gain")
-        umbrella = (dest / "native" / "inc" / "my_pkg.h").read_text(
-            encoding="utf-8"
-        )
-        assert '#include "gain/gain_core.h"' in umbrella
+        umbrella = (dest / INC_ROOT / "my_pkg.h").read_text(encoding="utf-8")
+        assert f'#include "{INC.core_include("gain", dest)}"' in umbrella
 
     def test_pc_in_content(self, project):
         pc = (project / "cmake" / "my_filter.pc.in").read_text(
@@ -447,7 +443,7 @@ class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "float gain;" in core_h
@@ -456,7 +452,7 @@ class TestNewStateVars:
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("cutoff", "double", "0.0")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "double cutoff;" in core_h
@@ -469,7 +465,7 @@ class TestNewStateVars:
             ["comp"],
             [("gain", "double", "1.0"), ("order", "int", "4")],
         )
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "double gain;" in core_h
@@ -478,7 +474,7 @@ class TestNewStateVars:
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
         run("comp", dest, ["comp"], [("alpha", "float", "0.0f")])
-        core_h = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "float alpha;" in core_h
@@ -665,7 +661,7 @@ class TestVoidReturn:
         return dest
 
     def test_step_returns_void_in_core_h(self, sink):
-        h = (sink / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        h = (sink / INC_ROOT / "sink/sink_core.h").read_text(encoding="utf-8")
         # step_impl_def spans two lines: "static inline void\nsink_step("
         assert "static inline void" in h
         assert "sink_step(" in h
@@ -699,7 +695,7 @@ class TestVoidReturn:
         )
 
     def test_core_h_step_example_no_void_y(self, sink):
-        h = (sink / "native/inc/sink/sink_core.h").read_text(encoding="utf-8")
+        h = (sink / INC_ROOT / "sink/sink_core.h").read_text(encoding="utf-8")
         assert "void y = " not in h
         assert "sink_step(obj" in h
 
@@ -761,19 +757,19 @@ class TestArrayArgType:
         return dest
 
     def test_core_h_step_has_ptr_len_params(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+        h = (arr_obj / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float _Complex *x, size_t x_len" in h
 
     def test_core_h_step_returns_correct_type(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+        h = (arr_obj / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "static inline float _Complex" in h
 
     def test_core_h_no_steps(self, arr_obj):
-        h = (arr_obj / "native/inc/filt/filt_core.h").read_text(
+        h = (arr_obj / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "filt_steps" not in h

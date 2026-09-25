@@ -51,6 +51,7 @@ GATE: a program linked only against what an installed jm project advertises
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC  # noqa: E402
 import os
 import re
 import shutil
@@ -77,7 +78,7 @@ TARGETS = {
 
 _CONSUMER = (
     "#include <stdio.h>\n"
-    '#include "gain/gain_core.h"\n'
+    '#include "<<P>>gain/gain_core.h"\n'
     "int main(void) {\n"
     "    gain_state_t *g = gain_create(1.0f);\n"
     "    float y = gain_step(g, 4.0f);\n"
@@ -157,7 +158,8 @@ def world(tmp_path_factory):
     text = cm.read_text(encoding="utf-8")
     assert len(re.findall(r"VERSION 0\.1\.0\b", text)) == 1
     cm.write_text(text.replace("VERSION 0.1.0", f"VERSION {VERSION}"))
-    (root / "c.c").write_text(_CONSUMER)
+    # gh-1583: an installed package's headers are included as `<pkg>/...`.
+    (root / "c.c").write_text(_CONSUMER.replace("<<P>>", INC.prefix(proj)))
 
     layouts: "dict[str, Layout]" = {}
 

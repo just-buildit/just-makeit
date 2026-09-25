@@ -17,6 +17,8 @@ dropped, trusting the bound the kernel itself now enforces.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -50,9 +52,7 @@ def _scaffold(tmp_path):
 
 
 def _core_h(root):
-    return (root / "native" / "inc" / "ddc" / "ddc_core.h").read_text(
-        encoding="utf-8"
-    )
+    return (root / INC_ROOT / "ddc" / "ddc_core.h").read_text(encoding="utf-8")
 
 
 def _core_c(root):
@@ -390,10 +390,9 @@ class TestPassCapacityOutBufferAcceptsExactMaxOutRuntime:
         text = text.replace(_MAX_OUT_STUB, _MAX_OUT_IMPL).replace(
             _EXECUTE_STUB, _EXECUTE_IMPL
         )
-        text = text.replace(
-            '#include "rc/rc_core.h"',
-            '#include "rc/rc_core.h"\n#include <math.h>',
-        )
+        anchor = f'#include "{INC.core_include("rc", dest)}"'
+        assert anchor in text, "the core no longer includes its header"
+        text = text.replace(anchor, anchor + "\n#include <math.h>")
         core.write_text(text, encoding="utf-8")
 
         build = dest / "build"

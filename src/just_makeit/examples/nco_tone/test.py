@@ -40,6 +40,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -562,7 +563,7 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     assert "doppler::doppler-static" in comp_cmake, comp_cmake
 
     # 6. Verify the generated header has the opaque nco field.
-    core_h = proj / "native" / "inc" / "tone" / "tone_core.h"
+    core_h = INC.header_root(proj) / "tone" / "tone_core.h"
     h = core_h.read_text(encoding="utf-8")
     assert "nco_state_t * nco;" in h, h
 
@@ -573,8 +574,8 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     h_text = core_h.read_text(encoding="utf-8")
     if '#include "nco/nco_core.h"' not in h_text:
         h_text = h_text.replace(
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n#include "nco/nco_core.h"\n#include <math.h>',
+            '#include "nco_tone_demo/clib_common.h"',
+            '#include "nco_tone_demo/clib_common.h"\n#include "nco/nco_core.h"\n#include <math.h>',
             1,
         )
         core_h.write_text(h_text, encoding="utf-8")

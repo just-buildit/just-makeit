@@ -25,6 +25,7 @@ Two layers, deliberately:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -221,7 +222,7 @@ def project(tmp_path: Path) -> Path:
         [],
         params=[("gain", "double")],
     )
-    header = root / "native" / "inc" / "fir" / "fir_core.h"
+    header = root / INC_ROOT / "fir" / "fir_core.h"
     text = header.read_text(encoding="utf-8")
     assert " * @brief run." in text, "the scaffold no longer seeds @brief run."
     header.write_text(
@@ -291,7 +292,7 @@ class TestGeneratedProject:
             params=[("n", "size_t"), ("beta", "double")],
             out_type="double",
         )
-        hdr = root / "native" / "inc" / "win" / "win_core.h"
+        hdr = root / INC_ROOT / "win" / "win_core.h"
         text = hdr.read_text(encoding="utf-8")
         decl = re.search(r"^[^\n]*kaiser_window[^\n]*$", text, re.M)
         assert decl, "no kaiser_window declaration in the module header"
@@ -423,7 +424,7 @@ def _detector(tmp_path: Path, block: str | None) -> Path:
         return_type="double",
     )
     if block is not None:
-        hdr = root / "native" / "inc" / "det" / "det_core.h"
+        hdr = root / INC_ROOT / "det" / "det_core.h"
         text = hdr.read_text(encoding="utf-8")
         m = re.search(
             r"/\*\*\n(?: \*[^\n]*\n)+ \*/\n(?=[^\n]*\ndet_step\s*\(|det_step\s*\()",

@@ -29,6 +29,7 @@ length-bearing), 61 stub accessors, **0 disagreeing with their prototype**.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -119,7 +120,7 @@ def _project_with_variable_output(root: Path, module: str | None = None):
 
 def _make_state_only(root: Path, comp: str, meth: str) -> None:
     """Rewrite the header's ``_max_out`` prototype to take only the state."""
-    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    h = root / INC_ROOT / comp / f"{comp}_core.h"
     text = h.read_text(encoding="utf-8")
     import re
 
@@ -170,7 +171,7 @@ class TestStandaloneFacesAgree:
         root = tmp_path / "proj"
         _project_with_variable_output(root)
         _make_state_only(root, "widget", "run")
-        h = root / "native" / "inc" / "widget" / "widget_core.h"
+        h = root / INC_ROOT / "widget" / "widget_core.h"
         before = h.read_text(encoding="utf-8")
         apply_run(root)
 
@@ -385,9 +386,7 @@ class TestRegeneratePreservesTheAuthorsPrototype:
 
     def test_the_declaration_survives(self, tmp_path):
         root = self._setup(tmp_path)
-        header = (
-            root / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text()
+        header = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
         decls = [
             ln.strip()
             for ln in header.splitlines()
@@ -445,12 +444,8 @@ class TestRegeneratePreservesTheAuthorsPrototype:
             [],
             params=[("x", "float _Complex[]")],
         )
-        before = (
-            root / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text()
+        before = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
         regenerate_run(root, "widget", force=True)
-        after = (
-            root / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text()
+        after = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
         assert "size_t x_len" in after, "the default form was lost"
         assert before == after, "regenerate churned an unmodified header"

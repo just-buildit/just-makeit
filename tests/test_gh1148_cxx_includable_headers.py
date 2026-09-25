@@ -54,6 +54,8 @@ three.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import shutil
 import subprocess
@@ -138,7 +140,7 @@ class TestEveryGeneratedHeaderIsCxxIncludable:
         include, because every one of them carries or includes an `extern "C"`
         block. A new generated header is covered on the day it is generated.
         """
-        inc = project / "native" / "inc"
+        inc = project / INC_DIR
         headers = sorted(
             p.relative_to(inc).as_posix() for p in inc.rglob("*.h")
         )
@@ -189,11 +191,11 @@ class TestTheAbiSurvivesTheCrossing:
     def test_a_cxx11_tu_calls_the_c99_core(
         self, project: Path, tmp_path: Path
     ) -> None:
-        inc = project / "native" / "inc"
+        inc = project / INC_DIR
         core_c = project / "native" / "src" / "cplx" / "cplx_core.c"
         caller = tmp_path / "caller.cpp"
         caller.write_text(
-            '#include "cplx/cplx_core.h"\n'
+            f'#include "{INC.core_include("cplx", project)}"\n'
             "#include <vector>\n"
             "#include <cstdio>\n"
             "int main() {\n"
@@ -284,8 +286,9 @@ class TestTheUmbrellaDoesNotWrapItsIncludes:
     def test_the_generated_umbrella_opens_no_extern_c_block(
         self, project: Path
     ) -> None:
-        umbrella = (project / "native" / "inc" / "yy.h").read_text("utf-8")
-        assert '#include "cplx/cplx_core.h"' in umbrella, umbrella
+        umbrella = (project / INC_ROOT / "yy.h").read_text("utf-8")
+        spelled = INC.core_include("cplx", project)
+        assert f'#include "{spelled}"' in umbrella, umbrella
         assert 'extern "C" {' not in umbrella, umbrella
 
     def test_the_component_headers_still_carry_theirs(
@@ -294,8 +297,7 @@ class TestTheUmbrellaDoesNotWrapItsIncludes:
         """The converse, so "delete the guards" cannot pass this file: the
         per-component headers are where `extern "C"` belongs, and they open
         it AFTER including `clib_common.h`, not around it."""
-        h = (project / "native" / "inc" / "cplx" / "cplx_core.h").read_text(
-            "utf-8"
-        )
+        h = (project / INC_ROOT / "cplx" / "cplx_core.h").read_text("utf-8")
         assert 'extern "C" {' in h
-        assert h.index('#include "clib_common.h"') < h.index('extern "C" {')
+        common = f'#include "{INC.include("clib_common.h", project)}"'
+        assert h.index(common) < h.index('extern "C" {')

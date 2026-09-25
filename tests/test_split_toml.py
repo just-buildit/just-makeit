@@ -4,6 +4,7 @@ Covers `_config.load()` resolving the `include` key and the
 `jm apply <fragment>` compose path.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -123,7 +124,7 @@ class TestApplyCompose:
         assert "include" in C.load_manifest(bare_project)
         assert "agc" in C.components(C.load(bare_project))
         # Materialization actually ran.
-        assert (bare_project / "native" / "inc" / "agc").is_dir()
+        assert (bare_project / INC_ROOT / "agc").is_dir()
 
     def test_compose_idempotent_include(self, bare_project, tmp_path):
         """Adding a second fragment doesn't duplicate the include line."""

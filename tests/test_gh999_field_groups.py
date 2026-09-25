@@ -40,6 +40,7 @@ delete itself on first use.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import ast
 import contextlib
@@ -242,9 +243,9 @@ class TestItIsExactlyTheHandWrittenList:
     def _render(self, root: Path) -> tuple[str, str]:
         _quiet(_apply.run, root)
         pkg = C.project_name(C.load(root))
-        header = (
-            root / "native" / "inc" / "frame" / "frame_core.h"
-        ).read_text(encoding="utf-8")
+        header = (root / INC_ROOT / "frame" / "frame_core.h").read_text(
+            encoding="utf-8"
+        )
         pyi = (root / "src" / pkg / "frame.pyi").read_text(encoding="utf-8")
         return header, pyi
 

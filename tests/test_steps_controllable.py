@@ -15,6 +15,7 @@ rejected at generation with a clean error. Declaration is TOML-first
 (``controllable_names`` threaded through generation).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import shutil
 import subprocess
 import sys
@@ -70,7 +71,7 @@ def amp(tmp_path):
 
 class TestCoreSignature:
     def test_header_steps_takes_control_param(self, amp):
-        h = (amp / "native/inc/amp/amp_core.h").read_text()
+        h = (amp / INC_ROOT / "amp/amp_core.h").read_text()
         assert "float          *out, float gain);" in h
 
     def test_impl_steps_takes_control_param(self, amp):
@@ -359,7 +360,7 @@ def _cmake_build(root):
 
 class TestScalarSignature:
     def test_step_and_steps_take_control(self, scalar):
-        h = (scalar / "native/inc/amp/amp_core.h").read_text()
+        h = (scalar / INC_ROOT / "amp/amp_core.h").read_text()
         # step() inline gains the param; steps() decl gains it too.
         assert "float x, float gain)" in h
         assert "size_t               n, float gain);" in h
@@ -447,7 +448,7 @@ def test_scalar_controllable_e2e(scalar):
     if _SKIP:
         pytest.skip(_SKIP)
     # y = x * gain (the override is observable).
-    h = scalar / "native/inc/amp/amp_core.h"
+    h = scalar / INC_ROOT / "amp/amp_core.h"
     h.write_text(
         h.read_text().replace("return (float)x;", "return (float)(x * gain);")
     )
@@ -601,7 +602,7 @@ class TestPerfMacro:
         root = tmp_path / "proj"
         new_run("proj", root)
         init_run(root, "c", arg_type="float", return_type="float", perf=True)
-        perf_h = (root / "native/inc/jm_perf.h").read_text()
+        perf_h = (root / INC_ROOT / "jm_perf.h").read_text()
         assert "JM_DEFINE_STEPS_EX(" in perf_h
         # gh-944: the private layer is JM_EVAL_IMPL now. It was `_JM_EVAL_` —
         # a reserved identifier, which the implementation may define itself.
@@ -640,7 +641,7 @@ def test_perf_controllable_macro_e2e(tmp_path):
         controllable_names=frozenset({"gain"}),
     )
     # step() = x * gain
-    h = root / "native/inc/c/c_core.h"
+    h = root / INC_ROOT / "c/c_core.h"
     h.write_text(
         h.read_text().replace("return (float)x;", "return (float)(x * gain);")
     )

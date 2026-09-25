@@ -4,7 +4,7 @@ c_deps = ["ringbuf"]
 [module.ring]
 kind = "handle"
 backing = "ringbuf"
-header = "ringbuf/ringbuf.h"
+header = "composites/ringbuf/ringbuf.h"
 package = "."
 type_name = "Ring"
 context_manager = true

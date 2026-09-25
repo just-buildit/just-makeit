@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit remove`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def project(tmp_path):
 class TestRemoveObjectStandalone:
     def test_files_deleted(self, project):
         remove_run(project, "object", "gadget", force=True)
-        assert not (project / "native" / "inc" / "gadget").exists()
+        assert not (project / INC_ROOT / "gadget").exists()
         assert not (project / "native" / "src" / "gadget").exists()
         assert not (project / "src" / "proj" / "gadget.pyi").exists()
         assert not (
@@ -54,9 +55,7 @@ class TestRemoveObjectStandalone:
         cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "native/src/gadget" not in cmake
         assert "gadget_core>" not in cmake
-        umbrella = (project / "native" / "inc" / "proj.h").read_text(
-            encoding="utf-8"
-        )
+        umbrella = (project / INC_ROOT / "proj.h").read_text(encoding="utf-8")
         assert "gadget/gadget_core.h" not in umbrella
 
     def test_pkg_init_import_removed(self, project):
@@ -75,14 +74,14 @@ class TestRemoveObjectStandalone:
 class TestRemoveObjectInModule:
     def test_files_deleted_and_module_membership_updated(self, project):
         remove_run(project, "object", "mixer", force=True)
-        assert not (project / "native" / "inc" / "mixer").exists()
+        assert not (project / INC_ROOT / "mixer").exists()
         cfg = load(project)
         assert "mixer" not in components(cfg)
         assert module_objects(cfg, "dsp") == ["nco"]
 
     def test_sibling_object_survives(self, project):
         remove_run(project, "object", "mixer", force=True)
-        assert (project / "native" / "inc" / "nco").exists()
+        assert (project / INC_ROOT / "nco").exists()
         ext = (project / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
         )
@@ -107,7 +106,7 @@ class TestRemoveModule:
 
     def test_standalone_object_untouched(self, project):
         remove_run(project, "module", "dsp", force=True)
-        assert (project / "native" / "inc" / "widget").exists()
+        assert (project / INC_ROOT / "widget").exists()
         assert "widget" in components(load(project))
 
     def test_unknown_module_exits(self, project):
@@ -161,7 +160,7 @@ class TestRemoveMethodPropertyFunction:
 
 class TestIsImplemented:
     def test_stub_not_implemented(self, project):
-        core_h = project / "native" / "inc" / "gadget" / "gadget_core.h"
+        core_h = project / INC_ROOT / "gadget" / "gadget_core.h"
         assert core_h.exists()
         assert not _is_implemented(core_h)
 
@@ -169,7 +168,7 @@ class TestIsImplemented:
         assert not _is_implemented(tmp_path / "nonexistent.h")
 
     def test_implemented_after_marker_removed(self, project):
-        core_h = project / "native" / "inc" / "gadget" / "gadget_core.h"
+        core_h = project / INC_ROOT / "gadget" / "gadget_core.h"
         text = core_h.read_text(encoding="utf-8")
         # gadget has state vars so it uses the longer form of the marker
         assert "/* TODO: implement using state variables */" in text
@@ -187,7 +186,7 @@ class TestIsImplemented:
 class TestRemoveWarnsOnImplemented:
     def _implement(self, project, obj):
         """Replace the TODO stub in obj's _core.h to simulate user code."""
-        core_h = project / "native" / "inc" / obj / f"{obj}_core.h"
+        core_h = project / INC_ROOT / obj / f"{obj}_core.h"
         text = core_h.read_text(encoding="utf-8")
         # Strip every variant of the TODO marker (with or without state suffix)
         import re
@@ -377,25 +376,25 @@ class TestRemoveStateField:
     def test_struct_no_longer_has_field(self, project):
         """After removal, core.h no longer declares the struct member."""
         remove_run(project, "state", "gain", object_name="widget", force=True)
-        header = (
-            project / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text(encoding="utf-8")
+        header = (project / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "float gain;" not in header
 
     def test_create_signature_updated(self, project):
         """After removal, create() signature no longer includes the field."""
         remove_run(project, "state", "gain", object_name="widget", force=True)
-        header = (
-            project / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text(encoding="utf-8")
+        header = (project / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "widget_create(void)" in header
 
     def test_getter_setter_removed(self, project):
         """After removal, getter/setter declarations are gone."""
         remove_run(project, "state", "gain", object_name="widget", force=True)
-        header = (
-            project / "native" / "inc" / "widget" / "widget_core.h"
-        ).read_text(encoding="utf-8")
+        header = (project / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "widget_get_gain" not in header
         assert "widget_set_gain" not in header
 
@@ -432,7 +431,7 @@ class TestRemoveStateField:
 
     def test_warns_when_referenced_in_code(self, project, capsys):
         """Prints a warning when state-><name> is found in a core file."""
-        core_h = project / "native" / "inc" / "widget" / "widget_core.h"
+        core_h = project / INC_ROOT / "widget" / "widget_core.h"
         text = core_h.read_text(encoding="utf-8")
         # Inject a reference that looks like user code
         core_h.write_text(

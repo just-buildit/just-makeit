@@ -25,6 +25,7 @@ should not look identical to a header with no documentation in it.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -195,7 +196,7 @@ def test_a_line_commented_header_reaches_both_faces(tmp_path):
         arg_type="float",
         return_type="float",
     )
-    header = root / "native/inc/widget/widget_core.h"
+    header = root / INC_ROOT / "widget/widget_core.h"
     text = header.read_text(encoding="utf-8")
     old = "@brief Process one input sample."
     assert old in text, "the scaffold no longer writes that brief"

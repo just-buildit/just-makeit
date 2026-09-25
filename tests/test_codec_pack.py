@@ -10,6 +10,7 @@ compiler.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -151,7 +152,7 @@ class TestApplyCodegen:
     def test_no_stray_core_stub(self, tmp_path):
         # a codec method has no C core fn — jm must not scaffold one.
         d = _module_with_codec_method(tmp_path)
-        core_h = (d / "native/inc/gizmo/gizmo_core.h").read_text()
+        core_h = (d / INC_ROOT / "gizmo/gizmo_core.h").read_text()
         assert "gizmo_add_kw" not in core_h
 
     def test_roundtrip_preserves_codec_keys(self, tmp_path):
@@ -189,7 +190,7 @@ def test_build_and_call(tmp_path):
     d = _module_with_codec_method(tmp_path)
     # hand-write the pure-C sink: declared in the sacred header, implemented in
     # the sacred core. It rejects a too-long buffer so rc->ValueError is live.
-    h = d / "native/inc/gizmo/gizmo_core.h"
+    h = d / INC_ROOT / "gizmo/gizmo_core.h"
     ht = h.read_text()
     idx = ht.rfind("#endif")
     decl = (

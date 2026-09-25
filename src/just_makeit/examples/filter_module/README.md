@@ -118,7 +118,7 @@ just-makeit object biquad \
 
 | File                                 | Purpose                                            |
 | ------------------------------------ | -------------------------------------------------- |
-| `native/inc/fir/fir_core.h`          | Header: struct, inline `fir_step`, getters/setters |
+| `native/inc/my_filters/fir/fir_core.h`          | Header: struct, inline `fir_step`, getters/setters |
 | `native/src/fir/fir_core.c`          | Source: create/destroy/reset/steps                 |
 | `native/src/fir/CMakeLists.txt`      | OBJECT library + C test + bench (no `.so`)         |
 | `native/tests/test_fir_core.c`       | C test with `CHECK` macro counter                  |
@@ -179,7 +179,7 @@ arithmetic.  A module can host types with different I/O types; `Fir` is complex,
 
 ### FIR filter
 
-Open `native/inc/fir/fir_core.h` and replace `fir_step`.  The delay line
+Open `native/inc/my_filters/fir/fir_core.h` and replace `fir_step`.  The delay line
 is mutated, so the signature drops `const`:
 
 ```c
@@ -199,7 +199,7 @@ fir_step(fir_state_t *state, float _Complex x)
 
 ### Biquad filter (Direct Form II transposed, real)
 
-Open `native/inc/biquad/biquad_core.h` and replace `biquad_step`.
+Open `native/inc/my_filters/biquad/biquad_core.h` and replace `biquad_step`.
 Delay states `w1`/`w2` are written each call, so `const` drops here too:
 
 ```c

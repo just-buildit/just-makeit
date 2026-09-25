@@ -12,6 +12,7 @@ character of the output, including doctest defaults sourced from the
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -110,7 +111,7 @@ class TestParser:
     def test_parses_state_struct_fields(self, tmp_path):
         root = tmp_path / "proj"
         _scaffold_filter(root)
-        header = root / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        header = root / INC_ROOT / "my_filter" / "my_filter_core.h"
         parsed = parse_header(header)
         assert parsed["component"] == "my_filter"
         assert parsed["fields"] == [("gain", "float")]
@@ -118,7 +119,7 @@ class TestParser:
     def test_parses_step_signature(self, tmp_path):
         root = tmp_path / "proj"
         _scaffold_filter(root)
-        header = root / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        header = root / INC_ROOT / "my_filter" / "my_filter_core.h"
         parsed = parse_header(header)
         assert parsed["arg_type"] == "float _Complex"
         assert parsed["return_type"] == "float _Complex"

@@ -1,6 +1,7 @@
 """Tests for inline `impl` / `impl_file` / `replace` on object and
 method TOML sections, consumed by `jm apply`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -209,9 +210,9 @@ class TestApplyInjectsInlineImpl:
         frag.write_text(_OBJECT_FRAGMENT)
         apply_run(project, fragment=frag)
 
-        core_h = (
-            project / "native" / "inc" / "scaler" / "scaler_core.h"
-        ).read_text(encoding="utf-8")
+        core_h = (project / INC_ROOT / "scaler" / "scaler_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "Scaler scales x by state->gain" in core_h
         assert "(float _Complex)(state->gain * x)" in core_h
 
@@ -219,9 +220,9 @@ class TestApplyInjectsInlineImpl:
         frag = tmp_path / "scaler.toml"
         frag.write_text(_OBJECT_FRAGMENT)
         apply_run(project, fragment=frag)
-        core_h = (
-            project / "native" / "inc" / "scaler" / "scaler_core.h"
-        ).read_text(encoding="utf-8")
+        core_h = (project / INC_ROOT / "scaler" / "scaler_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "{Component}" not in core_h
 
 

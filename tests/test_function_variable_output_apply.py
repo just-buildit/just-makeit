@@ -17,6 +17,7 @@ These tests pin three things end-to-end through the scaffold + apply path
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -85,9 +86,7 @@ def _ext_c(root: Path) -> str:
 
 
 def _core_h(root: Path) -> str:
-    return (root / "native" / "inc" / "wfm" / "wfm_core.h").read_text(
-        encoding="utf-8"
-    )
+    return (root / INC_ROOT / "wfm" / "wfm_core.h").read_text(encoding="utf-8")
 
 
 def test_cli_persists_variable_output_and_out_size(tmp_path):
@@ -134,7 +133,7 @@ def test_apply_preserves_self_sizing_output(tmp_path):
     root = _scaffold(tmp_path)
     # Remove the regenerable glue + decl so apply must re-materialize them.
     (root / "native" / "src" / "wfm" / "wfm_ext.c").unlink()
-    (root / "native" / "inc" / "wfm" / "wfm_core.h").unlink()
+    (root / INC_ROOT / "wfm" / "wfm_core.h").unlink()
     (root / "native" / "src" / "wfm" / "rrc_taps.c").unlink()
 
     _silent(apply_run, root)

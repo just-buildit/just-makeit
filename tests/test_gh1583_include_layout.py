@@ -58,6 +58,27 @@ def _prose(tree) -> "set[int]":
     return out
 
 
+def _is_str(node, value: str) -> bool:
+    return isinstance(node, ast.Constant) and node.value == value
+
+
+def _ends_with_native(node) -> bool:
+    """*node* is a path expression whose last segment is ``"native"``:
+    ``x / "native"``, ``Path("native")`` or ``Path(x, "native")``.
+
+    gh-1583 part 3: the first version of this gate read only the
+    ``x / "native" / "inc"`` shape, and `_method` spelled the root as
+    ``Path("native") / "inc"`` -- so under the prefixed layout it looked for
+    a header where none was, and `jm method` on a built-in name wrote a stub
+    that declared the member twice.
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _is_str(node.right, "native")
+    if isinstance(node, ast.Call) and node.args:
+        return _is_str(node.args[-1], "native")
+    return _is_str(node, "native")
+
+
 def test_only_incpath_spells_the_include_root():
     hits = []
     for rel, tree in _modules():
@@ -73,13 +94,15 @@ def test_only_incpath_spells_the_include_root():
             if (
                 isinstance(node, ast.BinOp)
                 and isinstance(node.op, ast.Div)
-                and isinstance(node.right, ast.Constant)
-                and node.right.value == "inc"
-                and isinstance(node.left, ast.BinOp)
-                and isinstance(node.left.right, ast.Constant)
-                and node.left.right.value == "native"
+                and _is_str(node.right, "inc")
+                and _ends_with_native(node.left)
             ):
                 hits.append(f'{rel}:{node.lineno}  ... / "native" / "inc"')
+            if isinstance(node, ast.Call) and any(
+                _is_str(a, "native") and _is_str(b, "inc")
+                for a, b in zip(node.args, node.args[1:])
+            ):
+                hits.append(f'{rel}:{node.lineno}  Path(..., "native", "inc")')
     assert hits == [], (
         "spell the include root through `_incpath` (INC.core_h, INC.path, "
         "INC.rel, INC.inc_dir, INC.CMAKE_INC ...):\n" + "\n".join(hits)
@@ -162,6 +185,48 @@ def test_every_emitted_include_of_a_generated_header_is_spelled_by_the_owner():
     assert bad == [], (
         "spell an emitted #include of a jm-generated header through "
         "`_incpath` (INC.include / INC.core_include) or <<inc_prefix>>:\n"
+        + "\n".join(bad)
+    )
+
+
+#: A core header's include spelling built from a name: ``{x}/{x}_core.h``.
+_CORE_SPELLING = re.compile(r"^\{\}/\{\}_core\.h$")
+
+
+def test_no_core_header_spelling_bypasses_the_owner():
+    """A DEFAULT include spelling of a core header goes through `_incpath`.
+
+    gh-1583 part 3. The gate above reads strings that say ``#include``; a
+    default such as ``C.capsule_header(...) or f"{backing}/{backing}_core.h"``
+    is the same spelling held in a variable and wrapped in ``#include`` later,
+    so it was invisible -- and under the prefixed layout every handle,
+    capsule and composer module that relied on it emitted an include that
+    does not resolve. An f-string handed straight to an ``INC.*`` call is
+    that call's argument, not a spelling of its own.
+    """
+    bad = []
+    for rel, tree in _modules():
+        prose = _prose(tree)
+        owned = {
+            id(arg)
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "INC"
+            for arg in call.args
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.JoinedStr) or id(node) in prose:
+                continue
+            text = "".join(
+                p.value if isinstance(p, ast.Constant) else "{}"
+                for p in node.values
+            )
+            if _CORE_SPELLING.match(text) and id(node) not in owned:
+                bad.append(f"{rel}:{node.lineno}  {text}")
+    assert bad == [], (
+        "spell a core header's include through INC.core_include(comp, cfg):\n"
         + "\n".join(bad)
     )
 

@@ -21,6 +21,7 @@ gh-767/gh-777 drift-invisibility class one level up.
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC  # noqa: E402
 import contextlib
 import io
 import os
@@ -126,13 +127,7 @@ class TestTheOtherFaces:
         already has, so there is no `telemetry_get__capsule()` for the author
         to implement — declaring one would be a prototype with no definition.
         """
-        h = (
-            _project(tmp_path)
-            / "native"
-            / "inc"
-            / "telemetry"
-            / "telemetry_core.h"
-        ).read_text()
+        h = INC.core_h(_project(tmp_path), "telemetry").read_text()
         assert "_capsule" not in h
 
     def test_it_round_trips_through_the_manifest(self, tmp_path):

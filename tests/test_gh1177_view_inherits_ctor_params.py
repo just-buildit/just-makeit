@@ -35,6 +35,7 @@ question: is anything authored.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 from pathlib import Path
@@ -74,7 +75,7 @@ def _build(tmp_path: Path, *, view_brief: str = "") -> Path:
         ).returncode
         == 0
     )
-    h = root / "native" / "inc" / "rx" / "rx_core.h"
+    h = root / INC_ROOT / "rx" / "rx_core.h"
     s = h.read_text(encoding="utf-8")
     assert " * @brief Create a rx instance." in s, s
     s = s.replace(

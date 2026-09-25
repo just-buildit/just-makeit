@@ -6,13 +6,13 @@ import sys
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
 # ── step() in _core.h ──────────────────────────────────────────────────────
-core_h = root / "native/inc/cf32_to_q15/cf32_to_q15_core.h"
+core_h = root / "native/inc/iqfile/cf32_to_q15/cf32_to_q15_core.h"
 text = core_h.read_text(encoding="utf-8")
 
 if "<math.h>" not in text:
     text = text.replace(
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include <math.h>',
+        '#include "iqfile/clib_common.h"',
+        '#include "iqfile/clib_common.h"\n#include <math.h>',
         1,
     )
 

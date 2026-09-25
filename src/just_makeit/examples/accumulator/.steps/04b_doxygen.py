@@ -94,7 +94,7 @@ ENRICHMENTS = {
 
 
 def _enrich(obj: str, spec: dict) -> None:
-    header = pathlib.Path("native/inc") / obj / f"{obj}_core.h"
+    header = pathlib.Path("native/inc/my_acc") / obj / f"{obj}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.

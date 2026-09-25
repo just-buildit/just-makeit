@@ -6,7 +6,7 @@
  * to these signatures was to write a second copy of them, and a second copy
  * is what drifts.
  */
-#include "playlist/playlist_bridge.h"
+#include "studio/playlist/playlist_bridge.h"
 
 #include <stdio.h>
 

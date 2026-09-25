@@ -33,6 +33,7 @@ call site is a second place to forget one, which is how gh-788 put the wrong
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import shutil
 import subprocess
@@ -65,7 +66,7 @@ def _cli(*args, cwd) -> JmRun:
 
 
 def _header(root: Path) -> Path:
-    return root / "native" / "inc" / "o" / "o_core.h"
+    return root / INC_ROOT / "o" / "o_core.h"
 
 
 @pytest.fixture

@@ -28,6 +28,7 @@ Two halves, one per decision on the issue:
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC  # noqa: E402
 import json
 import re
 import sys
@@ -126,7 +127,7 @@ def test_arity_drift_is_reported_and_does_not_gate(tmp_path):
     assert r.returncode == 0, r.stdout  # advisory: never gates
     assert "EXAMPLE (1)" in r.stdout, r.stdout
     assert (
-        f"native/inc/o/o_core.h:{line}  o_create() given 1, declared 2"
+        f"{INC.core_rel('o', root)}:{line}  o_create() given 1, declared 2"
         in r.stdout
     ), r.stdout
     assert "Advisory" in r.stdout, r.stdout
@@ -135,7 +136,7 @@ def test_arity_drift_is_reported_and_does_not_gate(tmp_path):
     assert json.loads(r.stdout)["create_example_drift"] == [
         {
             "component": "o",
-            "path": "native/inc/o/o_core.h",
+            "path": INC.core_rel("o", root),
             "line": line,
             "passed": 1,
             "declared": 2,

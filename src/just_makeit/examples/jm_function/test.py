@@ -96,7 +96,7 @@ def run(root: Path) -> None:
     )
     assert "_bind_clamp" in ext, "utils_ext.c missing _bind_clamp"
 
-    header = (dest / "native/inc/utils/utils_core.h").read_text(
+    header = (dest / "native/inc/my_utils/utils/utils_core.h").read_text(
         encoding="utf-8"
     )
     assert "linear_to_db" in header, (
@@ -112,7 +112,7 @@ def run(root: Path) -> None:
     assert "linear_to_db(float x)" in fn_c_text, (
         "linear_to_db.c missing the function stub"
     )
-    assert '#include "utils/utils_core.h"' in fn_c_text, (
+    assert '#include "my_utils/utils/utils_core.h"' in fn_c_text, (
         "linear_to_db.c must include the module header"
     )
 

@@ -36,6 +36,7 @@ gap is filed, not papered over. What is fixed is the silence.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -139,7 +140,7 @@ class TestItStaysQuietWhenTheTypeExists:
             None,
             state_vars=[("cap", "size_t", "8")],
         )
-        h = root / "native/inc/ring/ring_core.h"
+        h = root / INC_ROOT / "ring/ring_core.h"
         t = h.read_text()
         cut = t.index("#ifdef __cplusplus")
         h.write_text(
@@ -175,7 +176,7 @@ class TestItStaysQuietWhenTheTypeExists:
             None,
             state_vars=[("cap", "size_t", "8")],
         )
-        h = root / "native/inc/ring/ring_core.h"
+        h = root / INC_ROOT / "ring/ring_core.h"
         t = h.read_text()
         cut = t.index("#ifdef __cplusplus")
         h.write_text(

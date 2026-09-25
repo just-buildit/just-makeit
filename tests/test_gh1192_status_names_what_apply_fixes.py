@@ -49,6 +49,7 @@ drift.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import io
 import re
@@ -95,7 +96,7 @@ def _add_header_doc(root: Path) -> None:
     """Document a getter in the sacred header — the plainest in-place
     refresh there is, and the one that reproduces gh-1192 with no manifest
     `doc` involved at all (so it is not gh-1191 wearing a different hat)."""
-    hdr = root / "native" / "inc" / "o" / "o_core.h"
+    hdr = root / INC_ROOT / "o" / "o_core.h"
     body = hdr.read_text(encoding="utf-8")
     decl = "double o_get_level(const o_state_t *state);"
     assert decl in body, body

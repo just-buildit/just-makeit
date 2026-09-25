@@ -16,6 +16,7 @@ unreachable or lossy in another, and says nothing about it:
    author one at all — and (2) could not have round-tripped even if it tried.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -97,7 +98,7 @@ class TestRemoveWarning:
         remove_run(
             project, "warning", "underpowered", object_name="acq", force=True
         )
-        core_h = (project / "native" / "inc" / "acq" / "acq_core.h").read_text(
+        core_h = (project / INC_ROOT / "acq" / "acq_core.h").read_text(
             encoding="utf-8"
         )
         assert "underpowered" in core_h

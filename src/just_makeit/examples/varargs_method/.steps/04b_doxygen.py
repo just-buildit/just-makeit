@@ -30,7 +30,7 @@ import pathlib
 import re
 import sys
 
-HEADER = pathlib.Path("native/inc/filter/filter_core.h")
+HEADER = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
 
 
 def _project_name() -> str:

@@ -26,6 +26,7 @@ threading a new variable through the acquisition code.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -88,7 +89,7 @@ def _project(tmp_path, param):
 
 
 def _header(root):
-    return (root / "native/inc/hbdecim/hbdecim_core.h").read_text()
+    return (root / INC_ROOT / "hbdecim/hbdecim_core.h").read_text()
 
 
 def _ext(root):

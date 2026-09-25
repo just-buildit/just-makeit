@@ -23,6 +23,7 @@ list.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -410,7 +411,7 @@ class TestTheBorrowShape:
     def test_the_prototype_returns_a_pointer(self, tmp_path):
         """The kernel lends; it does not fill an out-param."""
         root = self._project(tmp_path / "p")
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert "float _Complex *ring_wait(ring_state_t *state, size_t n);" in h
 
     def test_the_stub_returns_a_pointer_too(self, tmp_path):
@@ -608,7 +609,7 @@ class TestItActuallyBorrows:
             borrow=True,
         )
         if implement:
-            h = root / "native/inc/ring/ring_core.h"
+            h = root / INC_ROOT / "ring/ring_core.h"
             h.write_text(
                 h.read_text().replace(
                     "    size_t cap;",

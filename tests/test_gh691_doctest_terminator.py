@@ -21,6 +21,7 @@ one that regressed. Any future emitter that forgets it fails here.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import doctest
 import sys
@@ -54,7 +55,7 @@ _METHOD_CODE = """ * @brief Retune the oscillator.
 
 
 def _author(root: Path, old: str, new: str) -> None:
-    h = root / "native" / "inc" / "nco" / "nco_core.h"
+    h = root / INC_ROOT / "nco" / "nco_core.h"
     t = h.read_text(encoding="utf-8")
     assert old in t, f"the scaffold no longer writes {old!r}"
     h.write_text(t.replace(old, new, 1), encoding="utf-8")

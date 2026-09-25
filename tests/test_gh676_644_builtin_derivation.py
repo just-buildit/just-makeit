@@ -31,6 +31,7 @@ reports STALE against itself.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -76,7 +77,7 @@ def _scaffold(tmp_path: Path, *, module: bool) -> Path:
 
 def _author(root: Path) -> None:
     """Give every derivable built-in a unique, non-scaffold @brief."""
-    h = root / "native" / "inc" / "widget" / "widget_core.h"
+    h = root / INC_ROOT / "widget" / "widget_core.h"
     text = h.read_text(encoding="utf-8")
     for old, new in _MARKS.items():
         assert old in text, f"scaffold no longer writes {old!r}"

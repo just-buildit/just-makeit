@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -147,7 +148,7 @@ def run(root: Path) -> None:
         "empty block once exhausted, so stream() iterates it to a "
         "self-terminating stop."
     )
-    header = proj / "native" / "inc" / "drainer" / "drainer_core.h"
+    header = INC.header_root(proj) / "drainer" / "drainer_core.h"
     htext = header.read_text(encoding="utf-8")
     scaffold = " * @brief Create a drainer instance."
     assert scaffold in htext, "scaffold create @brief not found in header"

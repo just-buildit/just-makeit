@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit property`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -102,21 +103,21 @@ class TestPropertyUpdatesExtC:
 class TestPropertyUpdatesCoreH:
     def test_core_h_has_getter_decl(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "buf_get_dropped" in h
 
     def test_core_h_has_setter_decl_when_writable(self, project):
         property_run(project, "buf", "threshold", None, "size_t", True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "buf_set_threshold" in h
 
     def test_core_h_no_setter_decl_when_readonly(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "buf_set_dropped" not in h
@@ -174,7 +175,7 @@ class TestFieldInjectionIndentation:
         dest = tmp_path / "dsp"
         new_run("dsp", dest, ["buf"], [("capacity", "size_t", "1024")])
         property_run(dest, "buf", "level", None, "size_t", False, field=True)
-        h = (dest / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (dest / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert re.search(r"\n {4}size_t level;\n", h)
@@ -287,7 +288,7 @@ class TestPropertyField:
         property_run(
             project, "buf", "phase", None, "uint32_t", False, field=True
         )
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint32_t phase;" in h
@@ -297,7 +298,7 @@ class TestPropertyField:
         property_run(
             project, "buf", "phase", None, "uint32_t", False, field=True
         )
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "buf_create(size_t capacity)" in h
@@ -335,7 +336,7 @@ class TestPropertyField:
         property_run(
             project, "buf", "phase", None, "uint32_t", True, field=True
         )
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "buf_get_phase" not in h
@@ -356,7 +357,7 @@ class TestPropertyField:
         property_run(
             project, "buf", "phase_inc", None, "uint32_t", False, field=True
         )
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint32_t phase;" in h
@@ -373,7 +374,7 @@ class TestPropertyField:
         )
         assert "self->handle->phase" in ext
         assert "buf_get_status(self->handle)" in ext
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint32_t phase;" in h
@@ -387,7 +388,7 @@ class TestPropertyField:
             project, "buf", "phase", None, "uint32_t", True, field=True
         )
         add_run(project, "buf", [("gain", "float", "1.0f")], force=True)
-        h = (project / "native" / "inc" / "buf" / "buf_core.h").read_text(
+        h = (project / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint32_t phase;" in h
@@ -408,7 +409,7 @@ class TestPropertyFieldModule:
         property_run(
             mod_project, "nco", "phase", "sig", "uint32_t", False, field=True
         )
-        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (mod_project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint32_t phase;" in h
@@ -435,7 +436,7 @@ class TestPropertyFieldModule:
         property_run(
             mod_project, "nco", "phase", "sig", "uint32_t", True, field=True
         )
-        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (mod_project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_get_phase" not in h
@@ -452,7 +453,7 @@ class TestPropertyFieldModule:
         those with ``no_state = true``.
         """
         property_run(mod_project, "nco", "phase", "sig", "uint32_t", False)
-        h = (mod_project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (mod_project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_get_phase" in h
@@ -469,7 +470,7 @@ class TestPropertyFieldModule:
         new_run("proj", dest, modules=["dsp"])
         object_run(dest, "mavg", "dsp", no_state=True, no_step=True)
         property_run(dest, "mavg", "out", "dsp", "float _Complex", False)
-        h = (dest / "native" / "inc" / "mavg" / "mavg_core.h").read_text(
+        h = (dest / INC_ROOT / "mavg" / "mavg_core.h").read_text(
             encoding="utf-8"
         )
         assert "mavg_get_out" in h
@@ -495,7 +496,7 @@ class TestPropertyFieldModule:
         property_run(
             dest, "counter", "count", "core", "uint64_t", True, field=True
         )
-        h = (dest / "native" / "inc" / "counter" / "counter_core.h").read_text(
+        h = (dest / INC_ROOT / "counter" / "counter_core.h").read_text(
             encoding="utf-8"
         )
         c = (dest / "native" / "src" / "counter" / "counter_core.c").read_text(
@@ -526,7 +527,7 @@ class TestFieldPropertyAliasesState:
         property_run(
             dest, "reader", "position", None, "size_t", False, field=True
         )
-        h = (dest / "native" / "inc" / "reader" / "reader_core.h").read_text(
+        h = (dest / INC_ROOT / "reader" / "reader_core.h").read_text(
             encoding="utf-8"
         )
         # Each state field name appears once in the struct body.

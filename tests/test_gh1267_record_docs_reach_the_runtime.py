@@ -35,6 +35,7 @@ slot disagreeing with the reference is stale by construction.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -167,7 +168,7 @@ def _scaffold(tmp_path: Path) -> Path:
         arg_type="double",
         return_type="double",
     )
-    header = root / "native" / "inc" / "o" / "o_core.h"
+    header = root / INC_ROOT / "o" / "o_core.h"
     header.write_text(
         header.read_text(encoding="utf-8").replace(
             "} o_state_t;",
@@ -198,7 +199,7 @@ def _scaffold(tmp_path: Path) -> Path:
 
 def _document(root: Path) -> None:
     """Document the record afterwards, the two ways an author can."""
-    header = root / "native" / "inc" / "o" / "o_core.h"
+    header = root / INC_ROOT / "o" / "o_core.h"
     header.write_text(
         header.read_text(encoding="utf-8").replace(
             "    uint64_t n;\n    double mean;",
@@ -299,7 +300,7 @@ def test_the_built_type_carries_the_docs(tmp_path):
             "-fPIC",
             *_LINK,
             "-std=gnu99",
-            f"-I{root / 'native' / 'inc'}",
+            f"-I{root / INC_DIR}",
             f"-I{sysconfig.get_paths()['include']}",
             f"-I{np.get_include()}",
             str(root / "native" / "src" / "mm" / "mm_ext.c"),

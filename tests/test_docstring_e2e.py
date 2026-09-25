@@ -6,6 +6,7 @@ binding's PyMethodDef (via _context/_methods), with TOML override and a
 no-Doxygen fallback.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -56,7 +57,7 @@ def _scaffold_with_method(dest: Path):
 
 def _annotate(dest: Path, c_func: str, block: str):
     """Replace the Doxygen immediately above the *c_func* declaration."""
-    header = dest / "native" / "inc" / "mix" / "mix_core.h"
+    header = dest / INC_ROOT / "mix" / "mix_core.h"
     text = header.read_text(encoding="utf-8")
     # Strip only a Doxygen block IMMEDIATELY above the decl (the negative
     # lookahead keeps `.*?` from bridging across another block's `*/`), then
@@ -162,7 +163,7 @@ class TestDerivedDocstrings:
             arg_type="float",
             return_type="float",
         )
-        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        header = dest / INC_ROOT / "gain" / "gain_core.h"
         text = header.read_text(encoding="utf-8")
         block = "/**\n * @brief A configurable scalar gain stage.\n */\n"
         decl_re = re.compile(
@@ -198,7 +199,7 @@ class TestDerivedDocstrings:
             return_type="float",
         )
         method_run(dest, "gain", "scale", None, "float", "float", False, [])
-        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        header = dest / INC_ROOT / "gain" / "gain_core.h"
         text = header.read_text(encoding="utf-8")
         block = (
             "/**\n"
@@ -245,7 +246,7 @@ class TestDerivedDocstrings:
             return_type="float",
         )
         property_run(dest, "gain", "level", None, "float", False)
-        header = dest / "native" / "inc" / "gain" / "gain_core.h"
+        header = dest / INC_ROOT / "gain" / "gain_core.h"
         text = header.read_text(encoding="utf-8")
         block = "/**\n * @brief The current output level in dBFS.\n */\n"
         text2 = re.sub(

@@ -42,7 +42,7 @@ The generated project has a `dsp` module with six objects, a hand-written
 **component-level** `extra_link_libs` — the exact path jm gh-174 fixed.
 
 `depends_on` does two things for `mixer`: it injects
-`#include "lfo/lfo_core.h"` into `mixer_core.h` (so the opaque field compiles)
+`#include "kitchen_sink/lfo/lfo_core.h"` into `mixer_core.h` (so the opaque field compiles)
 and links `lfo_core` into `mixer`'s OBJECT lib **and** its test/bench
 executables (gh-174 follow-up). `mixer`'s `step()` then calls `lfo_step()` on
 its own oscillator.

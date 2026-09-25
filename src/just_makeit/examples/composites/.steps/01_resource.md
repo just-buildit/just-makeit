@@ -5,7 +5,7 @@ buffer. It opens and closes (the create/close lifecycle), pushes and pops
 arrays (the methods), fills a `*_stats_t` struct (the decoded getters read it),
 and has a gain get/set pair (the writable property).
 
-The public header lives under `native/inc/ringbuf/`:
+The public header lives under `native/inc/composites/ringbuf/`:
 
 ```{ringbuf.h}
 ```

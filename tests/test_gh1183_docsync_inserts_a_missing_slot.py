@@ -39,6 +39,7 @@ something jm produced.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -89,7 +90,7 @@ def project(tmp_path: Path) -> Path:
         out = _cli(*step, cwd=root)
         assert out.returncode == 0, f"{step}: {out.stdout}{out.stderr}"
 
-    header = root / "native" / "inc" / "o" / "o_core.h"
+    header = root / INC_ROOT / "o" / "o_core.h"
     body = header.read_text(encoding="utf-8")
     decl = "o_state_t *o_create_peek(double g);"
     assert decl in body, body

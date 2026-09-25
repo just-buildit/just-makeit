@@ -28,6 +28,7 @@ than learning anything new about the project.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -70,7 +71,7 @@ def _project(tmp_path: Path, module: str | None) -> Path:
 
 
 def _header(root: Path) -> Path:
-    return root / "native" / "inc" / "hb" / "hb_core.h"
+    return root / INC_ROOT / "hb" / "hb_core.h"
 
 
 def _reorder(root: Path) -> None:

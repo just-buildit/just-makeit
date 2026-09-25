@@ -98,7 +98,7 @@ just-makeit apply ../agc.toml
 1. Copies `agc.toml` into `objects/agc.toml` — the project becomes
     self-contained and the external fragment is no longer needed
 1. Adds `include = ["objects/*.toml"]` to `just-makeit.toml`
-1. Materialises `native/inc/agc/agc_core.h`, `native/src/agc/agc_core.c`,
+1. Materialises `native/inc/demo/agc/agc_core.h`, `native/src/agc/agc_core.c`,
     `native/src/agc/agc_ext.c`, tests, type stub, CMake wiring
 
 The `step()` body from `impl` is injected into `agc_core.h` at materialise

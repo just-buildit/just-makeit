@@ -21,6 +21,7 @@ The standalone (non-collocated) path already did this via
 ``extra_include_dirs_on_core``; this closes the gap between the two shapes.
 """
 
+from just_makeit import _incpath as INC  # noqa: E402
 import io
 import contextlib
 import sys
@@ -96,8 +97,8 @@ class TestModuleIncludesReachTheCore:
         """The vendored dir is added; the two built-in ones must survive."""
         _declare_module_incs(proj)
         text = _obj_cmake(proj)
-        assert "${CMAKE_SOURCE_DIR}/native/inc" in text
-        assert "${CMAKE_SOURCE_DIR}/native/inc/rdr" in text
+        assert INC.CMAKE_INC in text
+        assert f"{INC.CMAKE_INC}/{INC.include('rdr', proj)}" in text
 
     def test_several_dirs_all_land(self, proj):
         _declare_module_incs(proj, ("${A_INC}", "${B_INC}"))

@@ -27,6 +27,7 @@ the mistake gh-994 already made once.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import shutil
 import subprocess
@@ -150,7 +151,7 @@ class TestAConsumerCanActuallyUseIt:
     """
 
     def _tree(self, tmp_path: Path) -> Path:
-        inc = tmp_path / "native" / "inc"
+        inc = tmp_path / INC_DIR
         (inc / "playlist").mkdir(parents=True)
         (inc / "clip").mkdir(parents=True)
         (inc / "playlist" / "playlist_core.h").write_text(
@@ -255,7 +256,7 @@ class TestItReachesTheProjectOnDisk:
 
         root = self._project(tmp_path / "proj")
         _composer.materialize(C.load(root), root, _MODULE)
-        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        h = root / INC_ROOT / _MODULE / f"{_MODULE}_bridge.h"
         assert h.exists(), "the bridge header was rendered but never written"
         assert "clip_from_source" in h.read_text(encoding="utf-8")
 
@@ -272,9 +273,7 @@ class TestItReachesTheProjectOnDisk:
         cfg.setdefault("module", {})[_MODULE] = mod
         C.save(root, cfg)
         _composer.materialize(C.load(root), root, _MODULE)
-        assert not (
-            root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
-        ).exists()
+        assert not (root / INC_ROOT / _MODULE / f"{_MODULE}_bridge.h").exists()
 
     def test_apply_carries_it_into_the_real_tree(self, tmp_path):
         """`apply` materializes into a TEMP tree and copies a listed subset.
@@ -287,7 +286,7 @@ class TestItReachesTheProjectOnDisk:
 
         root = self._project(tmp_path / "proj")
         apply_run(root)
-        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        h = root / INC_ROOT / _MODULE / f"{_MODULE}_bridge.h"
         assert h.exists(), "apply left the bridge header in the temp tree"
         text = h.read_text(encoding="utf-8")
         assert "clip_from_source" in text
@@ -308,7 +307,7 @@ class TestItReachesTheProjectOnDisk:
 
         root = self._project(tmp_path / "proj")
         apply_run(root)
-        h = root / "native" / "inc" / _MODULE / f"{_MODULE}_bridge.h"
+        h = root / INC_ROOT / _MODULE / f"{_MODULE}_bridge.h"
         h.write_text("/* stale */\n", encoding="utf-8")
         apply_run(root)
         text = h.read_text(encoding="utf-8")

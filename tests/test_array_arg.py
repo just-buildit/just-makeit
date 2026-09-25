@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit object --array-arg name:dtype`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -102,19 +103,19 @@ class TestArrayArgExtC:
 
 class TestArrayArgCoreH:
     def test_create_params_has_array(self, standalone):
-        h = (standalone / "native/inc/fir/fir_core.h").read_text(
+        h = (standalone / INC_ROOT / "fir/fir_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float *h, size_t h_len" in h
 
     def test_create_params_array_before_scalar(self, in_module):
-        h = (in_module / "native/inc/hbdecim/hbdecim_core.h").read_text(
+        h = (in_module / INC_ROOT / "hbdecim/hbdecim_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float *h, size_t h_len, int factor" in h
 
     def test_create_param_docs(self, standalone):
-        h = (standalone / "native/inc/fir/fir_core.h").read_text(
+        h = (standalone / INC_ROOT / "fir/fir_core.h").read_text(
             encoding="utf-8"
         )
         assert "h" in h  # array param documented
@@ -201,7 +202,7 @@ class TestMultipleArrayArgs:
         assert "Py_DECREF(h_arr)" in ext
 
     def test_create_params_order(self, dual):
-        h = (dual / "native/inc/resamp/resamp_core.h").read_text(
+        h = (dual / INC_ROOT / "resamp/resamp_core.h").read_text(
             encoding="utf-8"
         )
         assert (

@@ -20,6 +20,7 @@ link lines and off every surface the artifact is built from:
 * the object's public core header.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
 import sys
@@ -56,11 +57,11 @@ def _declare(proj, entry):
     # apply is additive: it materializes what is missing, so remove the two
     # artifacts under test to force a genuine re-render.
     (proj / "native" / "src" / "rdr" / "CMakeLists.txt").unlink()
-    (proj / "native" / "inc" / "rdr" / "rdr_core.h").unlink()
+    (proj / INC_ROOT / "rdr" / "rdr_core.h").unlink()
     _q(apply_run, proj)
     return (
         (proj / "native" / "src" / "rdr" / "CMakeLists.txt").read_text(),
-        (proj / "native" / "inc" / "rdr" / "rdr_core.h").read_text(),
+        (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text(),
     )
 
 

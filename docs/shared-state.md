@@ -57,7 +57,7 @@ jm cannot do this part. The state is yours — declared in your `_core.c` and
 reached by your own code on every access — so nothing generated can allocate
 it or route reads through a pointer it does not own.
 
-`jm apply` writes `native/inc/<comp>/<comp>_procglobal.h` declaring exactly
+`jm apply` writes `native/inc/<pkg>/<comp>/<comp>_procglobal.h` declaring exactly
 what to implement. Hold the state behind one pointer:
 
 ```c
@@ -100,7 +100,7 @@ yourself:
 warning: module 'legacy' links flag_core and is `no_generate`, so jm writes
 no PyInit_ there: it keeps its OWN copy of flag's process-global state while
 every other module shares one. Add the adopt to its hand-written binding —
-native/inc/flag/flag_procglobal.h shows it, with the owner, attribute and
+native/inc/<pkg>/flag/flag_procglobal.h shows it, with the owner, attribute and
 capsule names as #defines.
 ```
 

@@ -78,7 +78,7 @@ never reads a field. Adding them BEFORE declaring the methods is what lets
 
 from pathlib import Path
 
-HEADER = Path("native/inc/collector/collector_core.h")
+HEADER = Path("native/inc/evlog/collector/collector_core.h")
 
 STRUCTS = """\
 /* One row of the log — the element type of what read() hands back. */
@@ -193,7 +193,7 @@ runs.
 
 from pathlib import Path
 
-HEADER = Path("native/inc/collector/collector_core.h")
+HEADER = Path("native/inc/evlog/collector/collector_core.h")
 CORE = Path("native/src/collector/collector_core.c")
 
 STEP_BODY = """\
@@ -302,8 +302,8 @@ def main() -> None:
     )
     h = _replace(
         h,
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n\n' + HELPERS,
+        '#include "evlog/clib_common.h"',
+        '#include "evlog/clib_common.h"\n\n' + HELPERS,
         "helper defines",
     )
     HEADER.write_text(h, encoding="utf-8")

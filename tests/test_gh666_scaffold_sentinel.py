@@ -21,6 +21,7 @@ The sentinel has two strengths, and the difference is the point:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -231,7 +232,7 @@ class TestMethodScaffoldEndToEnd:
             [],
             params=[("hz", "double")],
         )
-        return root, root / "native" / "inc" / "fir" / "fir_core.h"
+        return root, root / INC_ROOT / "fir" / "fir_core.h"
 
     def test_method_gets_a_skeleton(self, tmp_path):
         _root, header = self._project(tmp_path)
@@ -284,7 +285,7 @@ class TestScaffoldedHeaderDerivesNothing:
             arg_type="float _Complex",
             return_type="float _Complex",
         )
-        header = root / "native" / "inc" / "fir" / "fir_core.h"
+        header = root / INC_ROOT / "fir" / "fir_core.h"
         # The scaffold really does write Doxygen (lifecycle + accessors)...
         assert "@brief" in header.read_text(encoding="utf-8")
         # ...and none of it is derived, so a manifest-only rebuild -- which has

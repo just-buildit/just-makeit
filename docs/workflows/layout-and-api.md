@@ -25,13 +25,14 @@ my_dsp/
 ├── benchmarks/history/                 [yours]     saved `jm bench` results
 ├── native/
 │   ├── inc/
-│   │   ├── my_dsp.h                    [jm]        umbrella header
-│   │   ├── clib_common.h               [versioned] common C99 types
-│   │   ├── pyex_common.h               [versioned] Python extension includes
-│   │   ├── jm_perf.h                   [versioned] JM_FORCEINLINE / JM_HOT / …
-│   │   ├── jm_simd.h                   [versioned] width-portable SIMD macros
-│   │   └── gain/
-│   │       └── gain_core.h             [yours]     state struct + step()  ← implement
+│   │   └── my_dsp/
+│   │       ├── my_dsp.h                [jm]        umbrella header
+│   │       ├── clib_common.h           [versioned] common C99 types
+│   │       ├── pyex_common.h           [versioned] Python extension includes
+│   │       ├── jm_perf.h               [versioned] JM_FORCEINLINE / JM_HOT / …
+│   │       ├── jm_simd.h               [versioned] width-portable SIMD macros
+│   │       └── gain/
+│   │           └── gain_core.h         [yours]     state struct + step()  ← implement
 │   ├── src/
 │   │   ├── my_dsp_lib.c                [yours]     libmy_dsp root: my_dsp_version()
 │   │   └── gain/

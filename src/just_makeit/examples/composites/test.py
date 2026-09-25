@@ -41,6 +41,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -115,7 +116,7 @@ void ringbuf_set_gain(ringbuf_t *r, float gain);
 
 _RINGBUF_C = """\
 /* A small FIFO ring buffer: push scales by gain, pop drains oldest-first. */
-#include "ringbuf/ringbuf.h"
+#include "composites/ringbuf/ringbuf.h"
 #include <stdlib.h>
 
 struct ringbuf {
@@ -189,7 +190,7 @@ void ringbuf_set_gain(ringbuf_t *r, float gain)
 _RINGBUF_CMAKE = """\
 # Vendored ring-buffer resource — pure C OBJECT lib, no Python wrapper.
 # The handle module links `ringbuf_core` via its depends_on; the include path
-# reaches the public header under native/inc/ringbuf/.
+# reaches the public header under native/inc/composites/ringbuf/.
 add_library(ringbuf_core OBJECT ringbuf.c)
 target_include_directories(ringbuf_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
 """
@@ -207,7 +208,7 @@ def _ring_module() -> dict:
     return {
         "kind": "handle",
         "backing": "ringbuf",
-        "header": "ringbuf/ringbuf.h",
+        "header": "composites/ringbuf/ringbuf.h",
         "package": ".",  # land ring.so in the package root: composites.ring
         "type_name": "Ring",
         "context_manager": True,
@@ -283,7 +284,7 @@ def run(root: Path) -> None:
 
     # 2. Vendor the ring-buffer resource: a public header under native/inc and
     #    a pure-C OBJECT lib under native/src (the c_deps shape).
-    inc = proj / "native" / "inc" / "ringbuf"
+    inc = INC.header_root(proj) / "ringbuf"
     inc.mkdir(parents=True, exist_ok=True)
     (inc / "ringbuf.h").write_text(_RINGBUF_H, encoding="utf-8")
     rb = proj / "native" / "src" / "ringbuf"

@@ -228,6 +228,11 @@ def _strip_umbrella(root: Path, pkg: str, obj: str) -> None:
         return
     include = f'#include "{INC.core_include(obj, root)}"\n'
     text = umbrella.read_text(encoding="utf-8")
+    # `_init.insert_umbrella_include` writes the line AND a blank one after
+    # it; take both back, or the blank one is left over and the next `apply`
+    # rewrites the umbrella (gh-1443 Gate A).
+    if include + "\n" in text:
+        include += "\n"
     if include in text:
         _textio.write_text(umbrella, text.replace(include, "", 1))
         print(f"  update  {umbrella}")

@@ -24,6 +24,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -100,7 +101,7 @@ def run(root: Path) -> None:
         "constant factor, exposed three ways: a C binary, a Python CLI, "
         "and a Python module."
     )
-    header = proj / "native" / "inc" / "gain" / "gain_core.h"
+    header = INC.header_root(proj) / "gain" / "gain_core.h"
     htext = header.read_text(encoding="utf-8")
     scaffold = " * @brief Create a gain instance."
     assert scaffold in htext, "scaffold create @brief not found in header"

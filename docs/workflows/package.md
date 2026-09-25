@@ -32,7 +32,7 @@ just-makeit object ema \
 `object` writes all C and Python files for the new standalone object and updates:
 
 - root `CMakeLists.txt` — `add_subdirectory` + `target_sources($<TARGET_OBJECTS:…>)`
-- umbrella header `native/inc/dsp_toolkit.h` — `#include "ema/ema_core.h"`
+- umbrella header `native/inc/dsp_toolkit/dsp_toolkit.h` — `#include "dsp_toolkit/ema/ema_core.h"`
 - `src/dsp_toolkit/__init__.py` — splices in `from .ema import Ema` and
     adds `"Ema"` to `__all__`, preserving any existing user edits
 

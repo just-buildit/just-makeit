@@ -22,6 +22,7 @@ naming a backend that has since been fixed.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR  # noqa: E402
 
 import contextlib
 import io
@@ -259,7 +260,7 @@ class TestItShipsNoDeadCode:
                 "/dev/null",
                 str(root / "native" / "benchmarks" / "bench_tlm_core.c"),
                 "-I",
-                str(root / "native" / "inc"),
+                str(root / INC_DIR),
                 "-I",
                 str(root / "native" / "benchmarks"),
             ],

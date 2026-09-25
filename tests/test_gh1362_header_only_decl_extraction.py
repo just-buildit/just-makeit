@@ -19,6 +19,8 @@ prototype names its function AFTER at least a return type, and contains no
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -76,7 +78,7 @@ def _is_prototype(line: str) -> bool:
 
 def test_nothing_from_inside_a_body_is_a_declaration(tmp_path):
     root = _header_only(tmp_path)
-    text = (root / "native" / "inc" / "q" / "q_core.h").read_text()
+    text = (root / INC_ROOT / "q" / "q_core.h").read_text()
     # The fixture must have bodies to be misread, or this passes vacuously.
     assert "free(state);" in text and "calloc(" in text
     decls = _core_h_decl_lines(text)
@@ -86,7 +88,7 @@ def test_nothing_from_inside_a_body_is_a_declaration(tmp_path):
 def test_a_body_moved_out_of_the_header_is_not_injected_back(tmp_path):
     """The reported repro: the header is byte-identical after `apply`."""
     root = _header_only(tmp_path)
-    h = root / "native" / "inc" / "q" / "q_core.h"
+    h = root / INC_ROOT / "q" / "q_core.h"
     _move_bodies_to_family(root, h)
     before = h.read_text(encoding="utf-8")
     _quiet(apply_run, root)
@@ -136,10 +138,10 @@ def _move_bodies_to_family(root: Path, header: Path) -> None:
         "static inline void q_set_scale(q_state_t *state, float val);\n"
         "static inline float q_gain(q_state_t *state, float x);\n"
         "static inline double q_get_level(const q_state_t *state);\n"
-        '\n#include "fam/fam.h"\nDECLARE_Q(q, int16_t)\n'
+        f'\n#include "{INC.include("fam/fam.h", root)}"\nDECLARE_Q(q, int16_t)\n'
     )
     header.write_text(text[:start] + decls + text[end:], encoding="utf-8")
-    fam = root / "native" / "inc" / "fam"
+    fam = root / INC_ROOT / "fam"
     fam.mkdir()
     (fam / "fam.h").write_text(_FAMILY, encoding="utf-8")
 
@@ -153,7 +155,7 @@ def _cli(*args, cwd) -> JmRun:
 def test_the_family_macro_shape_still_builds_after_apply(tmp_path):
     """Compiled: the shape gh-1310 needs survives `apply` and passes."""
     root = _header_only(tmp_path)
-    _move_bodies_to_family(root, root / "native" / "inc" / "q" / "q_core.h")
+    _move_bodies_to_family(root, root / INC_ROOT / "q" / "q_core.h")
     _quiet(apply_run, root)
     r = _cli("test", cwd=root)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]

@@ -23,15 +23,16 @@ Every `just-makeit.toml` carries a `schema` version number:
 [project]
 name    = "my_dsp"
 version = "0.1.0"
-schema  = "7"
+schema  = "8"
 ```
 
-When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances (it is `7`
-currently). If your project's schema is behind, `just-makeit` will remind
-you whenever you run a command that modifies the project:
+When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances;
+`jm upgrade` prints the schema it moves your project from and to. If your
+project's schema is behind, `just-makeit` will remind you whenever you run a
+command that modifies the project:
 
 ```
-warning: project schema is v4, current is v7.
+warning: project schema is v4, current is v8.
 Run 'just-makeit upgrade' to get new features.
 ```
 
@@ -78,6 +79,41 @@ everywhere jm reads a type — in `just-makeit.toml`, on the CLI, and in a heade
 No TOML changes, no `jm upgrade` required.
 
 ______________________________________________________________________
+
+______________________________________________________________________
+
+## Headers under your package (gh-1583)
+
+A project's headers live under `native/inc/<pkg>/`, and every include of one
+is spelled `"<pkg>/..."`:
+
+```c
+#include "my_dsp/fir/fir_core.h"    /* was: "fir/fir_core.h" */
+#include "my_dsp/clib_common.h"     /* was: "clib_common.h" */
+```
+
+`native/inc` is still the `-I` directory, so an installed project's headers
+land in `include/<pkg>/` and two jm projects in one prefix no longer collide
+over a component name, `clib_common.h`, or `jm_perf.h`.
+
+`jm upgrade` (schema 7 to 8) moves an existing project there. It moves all of
+`native/inc/*` one level down, then respells every reference that **resolves
+to a moved file**:
+
+- an `#include` in any of your C or C++ files, sacred ones included. A quoted
+    include that finds a *different* file beside itself is left alone, since C
+    finds that one first;
+- a quoted string in `just-makeit.toml` or a fragment it includes: a
+    `header =`, a `core_header =`, and the like, which jm writes into an
+    `#include` verbatim;
+- a `native/inc/...` path in any `CMakeLists.txt` or `.cmake` file.
+
+A reference that does not resolve to a moved file (a vendored library's own
+`"config.h"`, a system header) is not touched. `jm upgrade` prints every file
+it changed. Review them, then run `jm apply` and rebuild.
+
+A header **you** add from now on goes under `native/inc/<pkg>/` too, and a
+manifest `header =` naming it is spelled `"<pkg>/..."`.
 
 ______________________________________________________________________
 

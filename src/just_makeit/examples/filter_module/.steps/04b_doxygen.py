@@ -33,7 +33,7 @@ SUMMARIES = {
 
 
 def _enrich(obj: str, summary: str) -> None:
-    header = pathlib.Path("native/inc") / obj / f"{obj}_core.h"
+    header = pathlib.Path("native/inc/my_filters") / obj / f"{obj}_core.h"
     text = header.read_text(encoding="utf-8")
 
     scaffold = f" * @brief Create a {obj} instance."

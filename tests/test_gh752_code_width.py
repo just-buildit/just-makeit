@@ -22,6 +22,7 @@ producer, including the ones gh-747 tracks.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -72,7 +73,7 @@ def _project(tmp_path, example_lines):
     root = tmp_path / "proj"
     new_run("proj", root)
     object_run(root, "widget", None, state_vars=[("gain", "double", "1.0")])
-    h = root / "native" / "inc" / "widget" / "widget_core.h"
+    h = root / INC_ROOT / "widget" / "widget_core.h"
     text = h.read_text(encoding="utf-8")
     marker = "widget_steps("
     idx = text.index(marker)

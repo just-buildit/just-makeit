@@ -50,6 +50,7 @@ thought of yet.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -116,7 +117,7 @@ def test_the_declaration_reaches_the_header_the_module_wrote(project: Path):
     """The header `jm module` writes and the one `jm function` injects into
     must be the same file. They were not, which is the whole bug."""
     assert _add_function(project).returncode == 0
-    header = project / "native" / "inc" / CNAME / f"{CNAME}_core.h"
+    header = project / INC_ROOT / CNAME / f"{CNAME}_core.h"
     assert "taps" in header.read_text(encoding="utf-8")
 
 
@@ -130,7 +131,7 @@ def test_the_stub_includes_a_header_that_exists(project: Path):
     )
     m = re.search(r'#include "([^"]+_core\.h)"', body)
     assert m, body
-    assert (project / "native" / "inc" / m.group(1)).is_file()
+    assert (project / INC_DIR / m.group(1)).is_file()
 
 
 def test_removing_it_deletes_the_c_and_strips_the_declaration(project: Path):
@@ -148,7 +149,7 @@ def test_removing_it_deletes_the_c_and_strips_the_declaration(project: Path):
     )
     assert r.returncode == 0, r.stderr
     assert not (project / "native" / "src" / CNAME / "taps.c").exists()
-    header = project / "native" / "inc" / CNAME / f"{CNAME}_core.h"
+    header = project / INC_ROOT / CNAME / f"{CNAME}_core.h"
     assert "taps" not in header.read_text(encoding="utf-8")
 
 
@@ -157,7 +158,7 @@ def test_authored_doxygen_reaches_the_generated_docstring(project: Path):
     took its documented `{}` fallback, and every function in a dotted module
     got the name-based stub instead of what its author wrote."""
     assert _add_function(project).returncode == 0
-    header = project / "native" / "inc" / CNAME / f"{CNAME}_core.h"
+    header = project / INC_ROOT / CNAME / f"{CNAME}_core.h"
     body = header.read_text(encoding="utf-8")
     assert "double taps(double x);" in body, body
     header.write_text(
@@ -248,7 +249,7 @@ def test_every_generated_include_resolves(project: Path):
     )
     assert _cli("apply", cwd=project).returncode == 0
 
-    inc = project / "native" / "inc"
+    inc = project / INC_DIR
     unresolved = []
     for src in sorted(project.rglob("*")):
         if src.suffix not in (".c", ".h"):
@@ -303,5 +304,5 @@ def test_the_flat_case_is_untouched(project: Path, tmp_path: Path):
         == 0
     )
     assert (flat / "native" / "src" / "filters" / "taps.c").is_file()
-    assert (flat / "native" / "inc" / "filters" / "filters_core.h").is_file()
+    assert (flat / INC_ROOT / "filters" / "filters_core.h").is_file()
     assert _cli("status", "--check", cwd=flat).returncode == 0

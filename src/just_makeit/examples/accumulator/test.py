@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -179,13 +180,13 @@ def run(root: Path) -> None:
     _cmd([sys.executable, str(STEPS / "04_patch_cf64.py")], cwd=dest)
 
     # Verify the step stubs were replaced
-    h_f32 = (dest / "native" / "inc" / "acc_f32" / "acc_f32_core.h").read_text(
+    h_f32 = (INC.header_root(dest) / "acc_f32" / "acc_f32_core.h").read_text(
         encoding="utf-8"
     )
     assert "state->acc += x;" in h_f32, "acc_f32_step not patched"
 
     h_cf64 = (
-        dest / "native" / "inc" / "acc_cf64" / "acc_cf64_core.h"
+        INC.header_root(dest) / "acc_cf64" / "acc_cf64_core.h"
     ).read_text(encoding="utf-8")
     assert "state->acc += x;" in h_cf64, "acc_cf64_step not patched"
 

@@ -6,6 +6,7 @@ command — removing the manual ``clang-format`` step doppler documents. Off by
 default, output is byte-identical, so existing projects are untouched.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import shutil
 import subprocess
 import sys
@@ -244,8 +245,8 @@ class TestConvergence:
         cfg = C.load(root)
         sacred = [
             root / "native/src/widget/widget_core.c",
-            root / "native/inc/widget/widget_core.h",
-            root / "native/inc/p.h",
+            root / INC_ROOT / "widget/widget_core.h",
+            root / INC_ROOT / "p.h",
         ]
         sacred = [p for p in sacred if p.exists()]
         assert sacred, "expected sacred sources to exist"
@@ -270,7 +271,7 @@ class TestConvergence:
         root = tmp_path / "p"
         new_run("p", root, object_names=["widget"], c_style="clang-format")
         ext = root / "native/src/widget/widget_ext.c"
-        core_h = root / "native/inc/widget/widget_core.h"
+        core_h = root / INC_ROOT / "widget/widget_core.h"
         _apply.run(root)  # first reconcile
         after_first = {p: p.read_bytes() for p in (ext, core_h)}
         _apply.run(root)  # second reconcile on an unchanged manifest

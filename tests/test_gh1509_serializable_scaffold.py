@@ -26,6 +26,7 @@ jm's existing gh-1294 splice meeting a function the author supplied first.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import shutil
@@ -55,7 +56,7 @@ def _cli(*args, cwd) -> JmRun:
 
 
 def _h(root: Path, comp: str) -> str:
-    return (root / "native" / "inc" / comp / f"{comp}_core.h").read_text(
+    return (root / INC_ROOT / comp / f"{comp}_core.h").read_text(
         encoding="utf-8"
     )
 
@@ -224,7 +225,7 @@ class TestExistingProject:
         # Rewind both to the pre-gh-1509 shape: no prototypes, and the
         # bodies supplied by the author in a form jm cannot read.
         for comp in ("osc", "mo"):
-            h = root / "native" / "inc" / comp / f"{comp}_core.h"
+            h = root / INC_ROOT / comp / f"{comp}_core.h"
             h.write_text(
                 re.sub(
                     rf"\n\n/\*\* @brief [^\n]*\*/\n[^\n]*{comp}_"

@@ -107,7 +107,7 @@ EOF
 # check that fails is reported, not fatal; a listed check that PASSES fails
 # the run until it is removed, so the list only shrinks. Each issue's fix
 # removes its entry.
-KNOWN_BROKEN=" disjoint-install prefixed-include " # gh-1583
+KNOWN_BROKEN=" "
 
 expect() { # id, description, command...
     local id=$1 what=$2

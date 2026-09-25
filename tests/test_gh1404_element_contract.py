@@ -35,6 +35,7 @@ rather than by a flag:
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC  # noqa: E402
 from pathlib import Path
 
 import shutil
@@ -45,7 +46,6 @@ from _jmrun import run_cli
 
 FRAG = Path("objects") / "ring.toml"
 CORE = Path("native") / "src" / "ring" / "ring_core.c"
-HDR = Path("native") / "inc" / "ring" / "ring_core.h"
 PYI = Path("src") / "p" / "ring.pyi"
 INV = Path("src") / "p" / "tests" / "test_ring_invariants.py"
 
@@ -155,7 +155,7 @@ class TestBothFacesReadOneDeclaration:
     def test_the_generated_c_uses_the_declared_width(self, tmp_path):
         """The artefact, not the manifest: one declaration, two prototypes."""
         proj = _pair_project(tmp_path)
-        hdr = (proj / HDR).read_text()
+        hdr = INC.core_h(proj, "ring").read_text()
         assert "const float _Complex *x" in hdr  # the writer
         assert "float _Complex *ring_wait" in hdr  # the reader
         # Anchored on the DECLARATOR, not the bare word: the generated

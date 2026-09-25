@@ -183,7 +183,7 @@ jm remove function <name> --module <mod>
 ```
 
 - Syntax mirrors the additive commands.
-- **object / module** — delete the generated `native/inc/<x>/`,
+- **object / module** — delete the generated `native/inc/<pkg>/<x>/`,
     `native/src/<x>/`, `src/<pkg>/<x>/`; strip `add_subdirectory` /
     `target_sources` from the top `CMakeLists.txt`; drop the TOML section
     (and the object's file, if split).

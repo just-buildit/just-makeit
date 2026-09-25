@@ -34,6 +34,7 @@ string changed but that CTOR passes against a real typedef'd header and
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -277,7 +278,7 @@ class TestTheGateGoesQuiet:
 
     @staticmethod
     def _typedef_header(root: Path, old: str, new: str) -> None:
-        h = root / "native" / "inc" / "obj" / "obj_core.h"
+        h = root / INC_ROOT / "obj" / "obj_core.h"
         text = h.read_text(encoding="utf-8")
         assert old in text, text
         h.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -342,7 +343,7 @@ class TestTheGateGoesQuiet:
             "obj_state_t *obj_create(det_noise_mode_t noise_mode);",
         )
         _quiet(apply_run, root)
-        text = (root / "native" / "inc" / "obj" / "obj_core.h").read_text(
+        text = (root / INC_ROOT / "obj" / "obj_core.h").read_text(
             encoding="utf-8"
         )
         assert "obj_create(det_noise_mode_t noise_mode);" in text

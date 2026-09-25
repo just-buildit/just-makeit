@@ -235,11 +235,11 @@ ______________________________________________________________________
 
 ### Sacred files (yours — never overwritten)
 
-| File                        | Protected content                        |
-| --------------------------- | ---------------------------------------- |
-| `native/inc/<c>/<c>_core.h` | state struct body + inline `step()` body |
-| `native/src/<c>/<c>_core.c` | all function bodies (steps, lifecycle)   |
-| `native/src/<mod>/<fn>.c`   | module-level function bodies             |
+| File                              | Protected content                        |
+| --------------------------------- | ---------------------------------------- |
+| `native/inc/<pkg>/<c>/<c>_core.h` | state struct body + inline `step()` body |
+| `native/src/<c>/<c>_core.c`       | all function bodies (steps, lifecycle)   |
+| `native/src/<mod>/<fn>.c`         | module-level function bodies             |
 
 `_core.h` is hybrid: `jm apply` may inject new method/property declarations,
 but the struct body and `step()` inline body are never touched.
@@ -405,7 +405,7 @@ depends_on  = ["hbfilter", "nco"]
 
 `jm apply` then wires the `hbfilter` and `nco` OBJECT libraries into
 `decimator`'s OBJECT lib **and** its test/bench link, and injects
-`#include "hbfilter/hbfilter_core.h"` into `decimator_core.h` (for any dep
+`#include "myproject/hbfilter/hbfilter_core.h"` into `decimator_core.h` (for any dep
 whose header exists). The C code can use the dependency's types directly.
 
 ______________________________________________________________________

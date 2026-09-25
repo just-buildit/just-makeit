@@ -33,6 +33,7 @@ Discovered while measuring gh-1164: the doc gate reported an object doc as
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 from pathlib import Path
 
@@ -96,7 +97,7 @@ class TestItReachesBothFaces:
     def test_it_outranks_the_headers_brief(self, project: Path) -> None:
         """`authored_class_brief` documents manifest > header. That precedence
         was unobservable while the manifest value reached nothing."""
-        h = project / "native" / "inc" / "eng" / "eng_core.h"
+        h = project / INC_ROOT / "eng" / "eng_core.h"
         body = h.read_text(encoding="utf-8")
         assert "eng_create" in body, body
         h.write_text(
@@ -118,7 +119,7 @@ class TestItReachesBothFaces:
     def test_a_header_only_doc_still_lands(self, project: Path) -> None:
         """The pre-existing path must keep working: with no manifest `doc`,
         the header's @brief is still what both faces show."""
-        h = project / "native" / "inc" / "eng" / "eng_core.h"
+        h = project / INC_ROOT / "eng" / "eng_core.h"
         body = h.read_text(encoding="utf-8")
         h.write_text(
             body.replace(

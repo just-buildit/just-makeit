@@ -10,6 +10,7 @@ bindings the manifest can't express survive, *_extra.c is untouched,
 idempotent.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import io
 import re
 import contextlib
@@ -34,7 +35,7 @@ def _silent(fn, *a, **k):
 
 def _annotate(dest: Path, obj: str, c_func: str, brief: str):
     """Put `@brief <brief>` on the *c_func* decl in <obj>_core.h."""
-    header = dest / "native" / "inc" / obj / f"{obj}_core.h"
+    header = dest / INC_ROOT / obj / f"{obj}_core.h"
     text = header.read_text(encoding="utf-8")
     block = f"  /**\n   * @brief {brief}\n   */\n"
     decl_re = re.compile(

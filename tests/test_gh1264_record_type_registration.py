@@ -37,6 +37,7 @@ sure something ALSO registers the type where jm's other faces say it lives.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -120,7 +121,7 @@ def _scaffold_standalone(tmp_path: Path) -> Path:
         record_name="SyncHit",
         result_fields=[dict(f) for f in _FIELDS],
     )
-    _declare_hit_struct(root / "native" / "inc" / "sync" / "sync_core.h")
+    _declare_hit_struct(root / INC_ROOT / "sync" / "sync_core.h")
     return root
 
 
@@ -152,7 +153,7 @@ def _scaffold_module(tmp_path: Path) -> Path:
         record_name="SyncHit",
         result_fields=[dict(f) for f in _FIELDS],
     )
-    _declare_hit_struct(root / "native" / "inc" / "sync" / "sync_core.h")
+    _declare_hit_struct(root / INC_ROOT / "sync" / "sync_core.h")
     return root
 
 
@@ -286,7 +287,7 @@ class TestStandaloneObject:
                 _CC,
                 "-fsyntax-only",
                 "-std=gnu99",
-                f"-I{root / 'native' / 'inc'}",
+                f"-I{root / INC_DIR}",
                 f"-I{sysconfig.get_paths()['include']}",
                 f"-I{numpy.get_include()}",
                 str(root / "native" / "src" / "sync" / "sync_ext.c"),
@@ -332,7 +333,7 @@ class TestModuleAggregatedObject:
                 _CC,
                 "-fsyntax-only",
                 "-std=gnu99",
-                f"-I{root / 'native' / 'inc'}",
+                f"-I{root / INC_DIR}",
                 f"-I{sysconfig.get_paths()['include']}",
                 f"-I{numpy.get_include()}",
                 str(root / "native" / "src" / "m" / "m_ext.c"),

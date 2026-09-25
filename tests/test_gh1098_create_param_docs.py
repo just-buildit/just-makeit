@@ -29,6 +29,7 @@ descriptions byte-for-byte, new names arrive **bare** for the author to fill
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -81,9 +82,7 @@ def _project(tmp_path: Path, name: str) -> Path:
 
 
 def _header(root: Path) -> str:
-    return (root / "native" / "inc" / "obj" / "obj_core.h").read_text(
-        encoding="utf-8"
-    )
+    return (root / INC_ROOT / "obj" / "obj_core.h").read_text(encoding="utf-8")
 
 
 def _create_block(text: str) -> str:
@@ -138,7 +137,7 @@ class TestProseIsNeverRewritten:
         reconciler rewriting every description.
         """
         root = _project(tmp_path, "e")
-        h = root / "native" / "inc" / "obj" / "obj_core.h"
+        h = root / INC_ROOT / "obj" / "obj_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace(
                 " * @param dwell",

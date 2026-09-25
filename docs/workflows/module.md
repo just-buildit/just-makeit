@@ -67,7 +67,8 @@ Types within a module may have different `--arg-type`/`--return-type`. Here
 
 ## 3. Implement
 
-Edit `native/inc/fir/fir_core.h` and `native/inc/biquad/biquad_core.h` to
+Edit `native/inc/my_filters/fir/fir_core.h` and
+`native/inc/my_filters/biquad/biquad_core.h` to
 fill in the `_step` stubs, exactly as in Scenarios 1 and 2.
 
 ## 4. Build and test

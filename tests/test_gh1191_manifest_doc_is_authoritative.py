@@ -40,6 +40,7 @@ anywhere, reports the same line on 0.71.0 and is likewise fixed by the next
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -265,7 +266,7 @@ class TestTheHeaderPathIsUnchanged:
         ):
             assert _cli(*step, cwd=root).returncode == 0
         assert _cli("apply", cwd=root).returncode == 0
-        hdr = root / "native" / "inc" / "o" / "o_core.h"
+        hdr = root / INC_ROOT / "o" / "o_core.h"
         body = hdr.read_text(encoding="utf-8")
         decl = "double o_get_level(const o_state_t *state);"
         assert decl in body, body

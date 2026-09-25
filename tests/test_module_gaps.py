@@ -16,6 +16,7 @@ Gap #6: External lib CMake blocks — if(DOPPLER_C_LIB) … endif() blocks are
         copied from sibling CMakeLists to newly added object libraries.
 """
 
+from just_makeit import _incpath as INC  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -284,7 +285,7 @@ class TestPhantomCoreHInclude:
         ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '#include "dsp/dsp_core.h"' not in ext_c
+        assert f'#include "{INC.core_include("dsp", root)}"' not in ext_c
 
     def test_include_present_with_functions(self, tmp_path):
         """module_ext.c MUST include module_core.h when module functions exist."""
@@ -298,7 +299,7 @@ class TestPhantomCoreHInclude:
         ext_c = (root / "native" / "src" / "dsp" / "dsp_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '#include "dsp/dsp_core.h"' in ext_c
+        assert f'#include "{INC.core_include("dsp", root)}"' in ext_c
 
 
 # ---------------------------------------------------------------------------

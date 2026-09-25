@@ -10,7 +10,7 @@ import re
 STEPS = pathlib.Path(__file__).parent
 
 # -- 1. Patch the inline filter_step in filter_core.h -------------------
-header = pathlib.Path("native/inc/filter/filter_core.h")
+header = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
 step_impl = (STEPS / "03_step.c").read_text(encoding="utf-8")
 step_re = re.compile(
     r"static inline float\s*\nfilter_step"

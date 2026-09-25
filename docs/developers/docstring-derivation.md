@@ -10,7 +10,7 @@ ______________________________________________________________________
 ## The pipeline
 
 ```
-native/inc/<obj>_core.h   ← you write Doxygen /** ... */ comments here
+native/inc/<pkg>/<obj>/<obj>_core.h   ← you write Doxygen /** ... */ comments here
         │
         │  jm reads header text with regex — no Doxygen tool invoked
         ▼
@@ -197,7 +197,7 @@ does jm — a hand-written block placed above the skeleton wins.
 
 ### Before and after: a concrete example
 
-**C header** (`native/inc/agc/agc_core.h`):
+**C header** (`native/inc/<pkg>/agc/agc_core.h`):
 
 ```c
 /**
