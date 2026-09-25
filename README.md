@@ -103,7 +103,7 @@ my_project/
 ├── src/my_project/
 │   ├── engine.pyi                 # type stub
 │   └── tests/test_engine.py       # pytest / unittest
-├── cmake/my-project.pc.in         # pkg-config template
+├── cmake/my_project.pc.in         # pkg-config template
 ├── CMakeLists.txt
 ├── Makefile
 ├── just-makeit.toml

@@ -81,9 +81,9 @@ def _install_smoke(proj: Path) -> None:
         "project(smoke C)\n"
         "find_package(my_fir REQUIRED)\n"
         "add_executable(smoke_static smoke.c)\n"
-        "target_link_libraries(smoke_static PRIVATE my_fir::my_fir_lib_static)\n"
+        "target_link_libraries(smoke_static PRIVATE my_fir::my_fir-static)\n"
         "add_executable(smoke_shared smoke.c)\n"
-        "target_link_libraries(smoke_shared PRIVATE my_fir::my_fir_lib)\n",
+        "target_link_libraries(smoke_shared PRIVATE my_fir::my_fir)\n",
         encoding="utf-8",
     )
     _cmd(
@@ -128,22 +128,22 @@ def _install_smoke(proj: Path) -> None:
     env = os.environ.copy()
     env["PKG_CONFIG_PATH"] = str(pc_dir)
     r = subprocess.run(
-        [pkg_config, "--exists", "my-fir"],
+        [pkg_config, "--exists", "my_fir"],
         env=env,
         capture_output=True,
         text=True,
         timeout=600,
     )
-    assert r.returncode == 0, f"pkg-config --exists my-fir failed:\n{r.stderr}"
+    assert r.returncode == 0, f"pkg-config --exists my_fir failed:\n{r.stderr}"
     r = subprocess.run(
-        [pkg_config, "--cflags", "--libs", "my-fir"],
+        [pkg_config, "--cflags", "--libs", "my_fir"],
         env=env,
         capture_output=True,
         text=True,
         timeout=600,
     )
     assert r.returncode == 0, (
-        f"pkg-config --cflags --libs my-fir failed:\n{r.stderr}"
+        f"pkg-config --cflags --libs my_fir failed:\n{r.stderr}"
     )
     assert "-lmy_fir" in r.stdout, (
         f"Expected -lmy_fir in pkg-config output; got: {r.stdout!r}"

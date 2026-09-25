@@ -19,7 +19,7 @@ my_dsp/
 ├── bootstrap.toml                      [versioned] toolchain declaration for CI
 ├── .clang-tidy  .gitignore  Doxyfile  zensical.toml          [versioned]
 ├── cmake/
-│   ├── my-dsp.pc.in                    [jm] pkg-config template
+│   ├── my_dsp.pc.in                    [jm] pkg-config template
 │   └── my_dsp-config.cmake.in          [jm] find_package template
 ├── docs/                               [yours]     index.md, api.md
 ├── benchmarks/history/                 [yours]     saved `jm bench` results

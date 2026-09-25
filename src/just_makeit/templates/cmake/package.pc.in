@@ -3,7 +3,7 @@ exec_prefix=${prefix}
 libdir=@JM_PC_LIBDIR@
 includedir=@JM_PC_INCLUDEDIR@
 
-Name: <<project>>
+Name: <<project_underscore>>
 Description: @PROJECT_DESCRIPTION@
 @JM_PC_EXTRA_FIELDS@Version: @PROJECT_VERSION@
 Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@

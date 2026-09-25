@@ -81,6 +81,23 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## One name per library (gh-1581)
+
+A library's `.pc` is named for the library: `libmy_proj` ships
+`my_proj.pc`, not `my-proj.pc`, and its exported CMake targets are
+`my_proj::my_proj` and `my_proj::my_proj-static` (they were
+`my_proj::my_proj_lib` and `..._lib_static`). A name without `_` is
+unaffected. Update what your consumers write:
+
+```sh
+pkg-config --cflags --libs my_proj           # was: my-proj
+target_link_libraries(app PRIVATE my_proj::my_proj)   # was: my_proj::my_proj_lib
+```
+
+In the project, `jm upgrade` renames `cmake/my-proj.pc.in` to
+`cmake/my_proj.pc.in` (its edits, and jm's ownership of it, come along);
+until then `apply` leaves both names alone and `status` names the old one.
+
 ## Packaging (`adopt --packaging`)
 
 Three things carry what a C consumer reads through pkg-config and

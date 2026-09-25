@@ -313,11 +313,38 @@ RULES: tuple[Rule, ...] = (
 #: default beside the author's file silently drops whatever they added to
 #: it -- ``[runtime.*]`` packages, for ``jb.toml``); `upgrade` renames *old*
 #: to *new*, edits and all; and `status` names *old* until it is gone.
+#:
+#: A pair may name the project: ``{pkg}`` is its name, ``{pkg_hyphen}`` the
+#: same with ``-`` for ``_``. Such a pair is read only in a project whose
+#: manifest names it, and is no rename at all when the two spell the same.
 RENAMED: "tuple[tuple[str, str], ...]" = (
     # gh-935: the bootstrap declaration is named for what it is, not for
     # the tool that first read it.
     ("jb.toml", "bootstrap.toml"),
+    # gh-1581: the .pc template is named for the library, as the .pc it
+    # configures is -- the file name IS the pkg-config package name.
+    ("cmake/{pkg_hyphen}.pc.in", "cmake/{pkg}.pc.in"),
 )
+
+
+def _renames(root: Path) -> "list[tuple[str, str]]":
+    """`RENAMED` with the project's name filled in for *root*."""
+    pkg = ""
+    out: "list[tuple[str, str]]" = []
+    for old, new in RENAMED:
+        if "{" in old + new:
+            if not pkg:
+                from . import _config as C
+
+                if not (root / C.FILENAME).is_file():
+                    continue
+                pkg = C.project_name(C.load(root))
+            names = {"pkg": pkg, "pkg_hyphen": pkg.replace("_", "-")}
+            old, new = old.format(**names), new.format(**names)
+            if old == new:
+                continue
+        out.append((old, new))
+    return out
 
 
 def superseded(root: Path) -> "list[tuple[str, str]]":
@@ -331,7 +358,9 @@ def superseded(root: Path) -> "list[tuple[str, str]]":
     >>> superseded(d)
     [('jb.toml', 'bootstrap.toml')]
     """
-    return [(old, new) for old, new in RENAMED if (root / old).is_file()]
+    return [
+        (old, new) for old, new in _renames(root) if (root / old).is_file()
+    ]
 
 
 def classify(rel_posix: str) -> Rule | None:

@@ -176,7 +176,7 @@ EOF
 }
 
 dependent beta bcore 'find_packages = [{ name = "alpha", pkg_config = "alpha" }]' \
-    'alpha::alpha_lib'
+    'alpha::alpha'
 dependent gamma gcore 'pkg_modules = ["alpha >= 0.1"]' 'PkgConfig::ALPHA'
 
 # ── consumers: the official instructions, verbatim ───────────────────────────
@@ -222,9 +222,9 @@ cmake_minimum_required(VERSION 3.16)
 project(only_$name C)
 find_package($name REQUIRED)
 add_executable(only_shared ../only.c)
-target_link_libraries(only_shared PRIVATE $name::${name}_lib)
+target_link_libraries(only_shared PRIVATE $name::$name)
 add_executable(only_static ../only.c)
-target_link_libraries(only_static PRIVATE $name::${name}_lib_static)
+target_link_libraries(only_static PRIVATE $name::${name}-static)
 EOF
     cat >"$dir/both/CMakeLists.txt" <<EOF
 cmake_minimum_required(VERSION 3.16)
@@ -232,10 +232,10 @@ project(both_$name C)
 find_package($name REQUIRED)
 find_package(alpha REQUIRED)
 add_executable(both_shared ../both.c)
-target_link_libraries(both_shared PRIVATE $name::${name}_lib alpha::alpha_lib)
+target_link_libraries(both_shared PRIVATE $name::$name alpha::alpha)
 add_executable(both_static ../both.c)
-target_link_libraries(both_static PRIVATE $name::${name}_lib_static
-                                          alpha::alpha_lib_static)
+target_link_libraries(both_static PRIVATE $name::${name}-static
+                                          alpha::alpha-static)
 EOF
     runs() { # program, expected output
         local out

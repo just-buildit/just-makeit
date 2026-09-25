@@ -129,7 +129,9 @@ def run(
     if build_system == "cmake":
         # gh-1589: both packaging templates are born owned -- `apply` renders
         # them whole while the token names the file.
-        pc_in = f"{project.replace('_', '-')}.pc.in"
+        # gh-1581: the .pc is named for the library it describes; the file
+        # name IS the pkg-config package name.
+        pc_in = f"{project}.pc.in"
         _write(
             root / "cmake" / pc_in, T.owned_packaging(r(T.CMAKE_PC_IN), pc_in)
         )

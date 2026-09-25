@@ -1659,7 +1659,7 @@ def run(
 
     if build == "cmake":
         # Write cmake/pkg.pc.in if the project predates v0.4
-        pc_in = root / "cmake" / f"{pkg.replace('_', '-')}.pc.in"
+        pc_in = root / "cmake" / f"{pkg}.pc.in"
         if not pc_in.exists():
             _write(
                 pc_in,

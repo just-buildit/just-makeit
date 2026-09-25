@@ -194,7 +194,7 @@ warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm sca
 $ jm upgrade   # exit 0
 already up to date (schema 7)
 
-renamed jb.toml -> bootstrap.toml (gh-935); your edits came along.
+renamed jb.toml -> bootstrap.toml; your edits came along.
 
 respelled the complex types in 4 file(s) (`complex` -> `_Complex`, gh-1246):
   native/inc/fir/fir_core.h

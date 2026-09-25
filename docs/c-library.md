@@ -5,13 +5,13 @@ Your generated project is already a distributable C library. After
 it with a single `pkg-config` or `find_package` call:
 
 ```sh
-gcc $(pkg-config --cflags my-project) consumer.c \
-    $(pkg-config --libs my-project) -o consumer
+gcc $(pkg-config --cflags my_project) consumer.c \
+    $(pkg-config --libs my_project) -o consumer
 ```
 
 ```cmake
 find_package(my_project REQUIRED)
-target_link_libraries(my_app PRIVATE my_project::my_project_lib)
+target_link_libraries(my_app PRIVATE my_project::my_project)
 ```
 
 No just-makeit required on the consumer's machine. The sections below walk
@@ -76,7 +76,7 @@ $PREFIX/
 │   ├── libmy_project.so         # -> .so.0.1, what `-lmy_project` finds
 │   ├── libmy_project.a          # static library
 │   ├── pkgconfig/
-│   │   └── my-project.pc        # pkg-config descriptor
+│   │   └── my_project.pc        # pkg-config descriptor
 │   └── cmake/my_project/
 │       ├── my_project-config.cmake
 │       ├── my_project-config-version.cmake
@@ -141,15 +141,15 @@ ______________________________________________________________________
 ## Using with pkg-config
 
 ```sh
-pkg-config --cflags --libs my-project   # verify it resolves
+pkg-config --cflags --libs my_project   # verify it resolves
 ```
 
 Compile a consumer:
 
 ```sh
-gcc $(pkg-config --cflags my-project) \
+gcc $(pkg-config --cflags my_project) \
     consumer.c \
-    $(pkg-config --libs my-project) \
+    $(pkg-config --libs my_project) \
     -o consumer
 ```
 
@@ -159,9 +159,9 @@ of `-lmy_project` (a bare `-l` finds the shared library first) and let
 `--static` add what the archive needs:
 
 ```sh
-gcc $(pkg-config --cflags my-project) consumer.c \
+gcc $(pkg-config --cflags my_project) consumer.c \
     /usr/local/lib/libmy_project.a \
-    $(pkg-config --static --libs my-project | sed 's/-lmy_project//') \
+    $(pkg-config --static --libs my_project | sed 's/-lmy_project//') \
     -o consumer
 ```
 
@@ -169,7 +169,7 @@ gcc $(pkg-config --cflags my-project) consumer.c \
 > source file between them. GNU ld on Debian/Ubuntu uses `--as-needed` by
 > default, which silently drops any shared library that appears *before* the
 > object files referencing it. If you merge them with the source last
-> (`$(pkg-config --cflags --libs my-project) consumer.c`) you will get
+> (`$(pkg-config --cflags --libs my_project) consumer.c`) you will get
 > undefined-reference errors at link time even though the library is present.
 
 If you installed to a non-standard prefix, point pkg-config at it:
@@ -189,11 +189,11 @@ project(my_consumer C)
 find_package(my_project REQUIRED)
 
 add_executable(consumer consumer.c)
-target_link_libraries(consumer PRIVATE my_project::my_project_lib)
+target_link_libraries(consumer PRIVATE my_project::my_project)
 ```
 
-`my_project::my_project_lib` is the shared library and
-`my_project::my_project_lib_static` the static one. Each carries its own link
+`my_project::my_project` is the shared library and
+`my_project::my_project-static` the static one. Each carries its own link
 interface, libm included, so the consumer names nothing else.
 
 Configure with the prefix if it's not on the default search path:
@@ -340,10 +340,10 @@ For a custom prefix, embed the library path in the binary at link time:
 **pkg-config:**
 
 ```sh
-LIB_DIR=$(pkg-config --variable=libdir my-project)
-gcc $(pkg-config --cflags my-project) \
+LIB_DIR=$(pkg-config --variable=libdir my_project)
+gcc $(pkg-config --cflags my_project) \
     consumer.c \
-    $(pkg-config --libs my-project) \
+    $(pkg-config --libs my_project) \
     -Wl,-rpath,"$LIB_DIR" \
     -o consumer
 ```
@@ -381,5 +381,5 @@ ls $PREFIX/include/my_project.h
 nm -D $PREFIX/lib/libmy_project.so | grep component_a_create
 
 # pkg-config resolves
-pkg-config --modversion my-project
+pkg-config --modversion my_project
 ```
