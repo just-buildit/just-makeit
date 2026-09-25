@@ -132,7 +132,7 @@ class TestTheConstructor:
         a decref on every early return between them."""
         ext = _composer.render_ext(_cfg(), "wc")
         assert "int _st_seed_advance = 0;" in ext
-        assert "int _st_seed_advance_set = 0;" in ext
+        assert "int _stset_seed_advance = 0;" in ext
 
 
 class TestTheAttribute:
