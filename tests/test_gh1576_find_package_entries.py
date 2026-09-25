@@ -98,8 +98,11 @@ def test_both_pc_fields_reach_the_root(project):
     assert 'set(JM_PC_LIBS_PRIVATE "Libs.private: -pthread")' in root
     assert 'set(JM_PC_CFLAGS " -I/opt/hdr/include -DHDR=1")' in root
     pc_in = next((project / "cmake").glob("*.pc.in")).read_text()
-    assert "@JM_PC_REQUIRES_PRIVATE@" in pc_in
-    assert "@JM_PC_LIBS_PRIVATE@" in pc_in
+    # gh-1582: both reach the .pc through the one optional-fields slot, which
+    # the root assembles from exactly these lines.
+    assert "@JM_PC_EXTRA_FIELDS@" in pc_in
+    for var in ("JM_PC_REQUIRES_PRIVATE", "JM_PC_LIBS_PRIVATE"):
+        assert f'string(APPEND JM_PC_EXTRA_FIELDS "${{{var}}}\\n")' in root
     # gh-1579: appended to the one Cflags line, not a second field --
     # pc(5) has no private Cflags.
     assert "\nCflags: -I${includedir}@JM_PC_CFLAGS@\n" in pc_in
