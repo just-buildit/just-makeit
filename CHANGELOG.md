@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+## [0.91.0] — 2026-09-25
+
+### Added
+
+- **A project can install more than one library** (gh-1600).
+    `[project.libraries.<name>]` names OBJECT libraries (`cores`), an
+    optional `description` and optional `platforms`, and installs
+    `lib<pkg>_<name>` beside `lib<pkg>`: its own `<pkg>_<name>.pc` with
+    `Requires: <pkg>`, and exported targets `<pkg>::<name>` /
+    `<pkg>::<name>-static` in the same package, found with
+    `find_package(<pkg> COMPONENTS <name>)`. Every per-library rule (soname,
+    install name, install components, the install-time `.pc` prefix) now runs
+    over one list of the project's libraries, so an additional library gets
+    exactly what `lib<pkg>` gets. `apply` refuses a core the tree does not
+    declare, one claimed by two libraries, and one also folded into
+    `lib<pkg>`. The packaging templates (`<pkg>.pc.in`,
+    `<pkg>-config.cmake.in`) change; `apply` renders jm-owned ones.
+
+### Fixed
+
+- **An install after a `sudo cmake --install` no longer fails on the `.pc`**
+    (found by gh-1600's consumer smoke). The install step writes each
+    library's configured `.pc` into the build tree, and a root install left
+    that file owned by root, so the next install as the user -- a DESTDIR
+    stage, a second prefix, `--component runtime|dev` -- failed with
+    `file failed to open for writing (Permission denied)`. The file is now
+    removed before it is written.
+
+- **`jm status --check` names what it fails on** (gh-1619). It collapsed
+    its report to one summary line, and the MISSING and STALE listings went
+    with it, so a CI run exited 1 on `1 stale` without saying which file.
+    Both listings now print under `--check`; the advisory ones stay
+    collapsed.
+
 ## [0.90.1] — 2026-09-25
 
 **0.90.0 was tagged but never published.** Its pre-publish smoke failed on
