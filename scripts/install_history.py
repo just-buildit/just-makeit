@@ -23,6 +23,7 @@ Usage: ``make install-history-update``.
 from __future__ import annotations
 
 import importlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from just_makeit import _rootcmake as R  # noqa: E402
+
+#: A bracket-argument opener as a word of its own (see ``main``).
+_OPEN = re.compile(r"^\[=*\[$")
 
 TEMPLATE = "src/just_makeit/templates/cmake/CMakeLists_top.cmake"
 #: The packaging templates whose LINES are recorded the same way, so adopting
@@ -72,7 +76,13 @@ def main() -> int:
     lines: set = set()
     if OUT.exists():
         old = importlib.import_module("just_makeit._installhistory")
-        known |= set(old.CALLS)
+        # gh-1604: `calls()` reads a bracket argument as ONE word. An entry
+        # recorded before that holds its `[[` as a word of its own, and can
+        # never match what the parser produces now -- drop it; the tags and
+        # the current template below re-add the command in its real form.
+        known |= {
+            c for c in old.CALLS if not any(_OPEN.match(w) for w in c[1])
+        }
         lines |= set(getattr(old, "LINES", ()))
     tags = subprocess.run(
         ["git", "tag", "-l", "v*", "--sort=v:refname"],

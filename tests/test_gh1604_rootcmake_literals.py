@@ -65,3 +65,20 @@ def test_apply_delivers_a_change_after_a_hash_in_the_install_code(tmp_path):
 
     assert _apply._splice_root_install(real, temp) is True
     assert "# v2\n" in real.read_text(encoding="utf-8")
+
+
+def test_the_install_history_is_in_the_parsers_form():
+    """An entry recorded before gh-1604 holds a bracket argument's ``[[`` as
+    a word of its own; `calls()` can no longer produce it, so it can never
+    match. `make install-history-update` drops those (a branch that added a
+    `CODE [[ ]]` command before rebasing onto this would otherwise leave
+    one behind, which is exactly what #1605 did)."""
+    import re
+
+    from just_makeit import _installhistory
+
+    opener = re.compile(r"^\[=*\[$")
+    stale = [
+        c for c in _installhistory.CALLS if any(opener.match(w) for w in c[1])
+    ]
+    assert stale == []
