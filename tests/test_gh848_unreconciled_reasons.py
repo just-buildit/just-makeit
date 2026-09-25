@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from _statusfaces import assert_status_faces_agree
 from just_makeit import _config as C
 from just_makeit import _status
 from just_makeit._apply import run as apply_run
@@ -164,3 +165,4 @@ def test_both_kinds_are_separated_in_one_report(tmp_path):
     assert "m_ext_v.c" in head, (
         f"the fragment with an undelivered fix is not under ACTIONABLE:\n{out}"
     )
+    assert_status_faces_agree(root, "actionable")

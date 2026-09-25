@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _statusfaces import assert_status_faces_agree
 from _jmrun import run_cli
 
 FRAG = Path("native") / "src" / "dsp" / "dsp_ext_blk.c"
@@ -104,6 +105,7 @@ class TestABindingAheadIsNotDeleted:
         assert str(FRAG.as_posix()) in block, block
         # ...and it says WHICH member, with the evidence.
         assert '"O|OO"' in block and "(binding ahead)" in block, block
+        assert_status_faces_agree(proj, "binding_ahead")
 
 
 class TestTheManifestAheadStillSaysDelete:
@@ -118,3 +120,4 @@ class TestTheManifestAheadStillSaysDelete:
         assert "ACTIONABLE (1)" in block, block
         assert "Delete the file" in block, block
         assert "BINDING AHEAD" not in block, block
+        assert_status_faces_agree(proj, "actionable")
