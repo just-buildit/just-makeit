@@ -320,7 +320,7 @@ def run(
     # the warning would be spurious.
     if core_c.exists() and not in_core and not inline:
         core_text = core_c.read_text(encoding="utf-8")
-        full_name = f"{cname}_{fn_name}"
+        full_name = c_name
         if full_name in core_text:
             print(
                 f"WARNING: '{full_name}' appears to be implemented in "

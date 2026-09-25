@@ -302,7 +302,7 @@ def parse_header(path: Path) -> dict:
         ret_ct = _normalize_ctype(ret_raw_m)
         if ret_ct not in T._CTYPE_META and ret_ct != "void":
             warnings.warn(
-                f"jm bind: skipping method '{comp}_{verb}' — "
+                f"jm bind: skipping method '{mcomp}_{verb}' — "
                 f"return type '{ret_ct}' not in type allowlist",
                 stacklevel=2,
             )
@@ -316,7 +316,7 @@ def parse_header(path: Path) -> dict:
             marg = _normalize_ctype(arg_raw.strip())
             if marg not in T._CTYPE_META and marg != "void":
                 warnings.warn(
-                    f"jm bind: skipping method '{comp}_{verb}' — "
+                    f"jm bind: skipping method '{mcomp}_{verb}' — "
                     f"arg type '{marg}' not in type allowlist "
                     f"(use TOML for array or multi-param methods)",
                     stacklevel=2,

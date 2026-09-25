@@ -660,6 +660,16 @@ def _splice_varargs_source(
     print(f"  update  {cmake_path}")
 
 
+def _varargs_core_c(object_name: str, method_name: str) -> str:
+    """The FILE a varargs method's body lives in (gh-1591: a file stem,
+    which stays the object's name -- never its C symbol stem).
+
+    >>> _varargs_core_c("fir", "mix")
+    'fir_mix_core.c'
+    """
+    return f"{object_name}_{method_name}_core.c"
+
+
 def _write_varargs_core_c(
     path: Path,
     component: str,
@@ -679,7 +689,7 @@ def _write_varargs_core_c(
     """
     text = (
         f"/*\n"
-        f" * {csym}_{method_name}_core.c"
+        f" * {_varargs_core_c(component, method_name)}"
         f" — varargs Python binding for {component}.{method_name}().\n"
         f" *\n"
         f" * Compiled into the Python extension DSO, not the pure-C core.\n"
@@ -1784,7 +1794,7 @@ def run(
             / "native"
             / "src"
             / object_name
-            / f"{object_name}_{method_name}_core.c"
+            / _varargs_core_c(object_name, method_name)
         )
         _write_varargs_core_c(binding_c, object_name, method_name, csym=csym)
     else:
@@ -2254,7 +2264,7 @@ def run(
             _splice_varargs_source(
                 obj_cmake,
                 object_name,
-                f"{object_name}_{method_name}_core.c",
+                _varargs_core_c(object_name, method_name),
             )
 
     print()
@@ -2266,7 +2276,7 @@ def run(
     elif varargs:
         print(
             f"Done!  Implement {csym}_{method_name}()"
-            f" in {object_name}_{method_name}_core.c"
+            f" in {_varargs_core_c(object_name, method_name)}"
         )
     else:
         # gh-805 §A2: name the symbol actually written. Pointing the author at
