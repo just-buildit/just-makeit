@@ -317,7 +317,9 @@ GATES_LOCAL_ONLY = docs-check
 # reachable from `gates`, and it caught both of these the moment ci.yml started
 # calling them — which is the gate working: naming them here is a decision,
 # where leaving them out of ci.yml entirely would have been an accident.
-GATES_PROVISION = install-deps install-deps-dev tool-install setup
+# `wheel` builds the artifact ci.yml's per-PR artifact smoke installs
+# (gh-1632): a build step the smoke gates, not a gate itself.
+GATES_PROVISION = install-deps install-deps-dev tool-install setup wheel
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
 # Two commands because a report is not a gate — the standard splits them so CI

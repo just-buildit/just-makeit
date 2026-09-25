@@ -22,6 +22,7 @@ from ._docstring import class_import_line
 from ._builtins import overridden_builtin_slots, require_param_names
 from . import _docstring
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._docstring import scaffold_doc_block
 
 # gh-981/gh-984: the combined-C-library wiring — emitter and detector — lives
@@ -130,11 +131,15 @@ def standalone_extra_include(root: Path, component: str) -> str:
     return ""
 
 
-def _make_component_ctx(component: str) -> dict[str, str]:
+def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
     return {
         "component": component,
         "Component": _to_title(component),
         "COMPONENT": component.upper(),
+        # gh-1591: the stem the component's C symbols derive from, which
+        # only its project's manifest can say -- beside the file stem above,
+        # which stays the component's name.
+        **CSYM.slots(owner, component),
         # Default empty; paths with `depends_on` override it (gh-170). Keeps
         # the `<<depends_includes>>` slot from leaking on paths that have no
         # dependency info to inject.
@@ -1208,7 +1213,7 @@ def run(
             "true" if pytest_benchmark_ else "false"
         )
 
-    ctx = _make_component_ctx(component)
+    ctx = _make_component_ctx(component, cfg)
     if class_name is not None:
         ctx["Component"] = class_name
         # gh-915: the seed built `tp_doc` from the derived name before the
@@ -1248,6 +1253,7 @@ def run(
             no_reset=no_reset,
             opaque_state=opaque_state,
             header_only=header_only,
+            csym=ctx["csym"],
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))

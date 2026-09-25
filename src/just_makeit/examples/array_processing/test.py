@@ -15,9 +15,10 @@ Also runnable directly: python3 examples/array_processing/test.py
 import os
 import subprocess
 import sys
-import tempfile
 from just_makeit import _incpath as INC
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 from just_makeit._pyfmt import flatten_signatures
 
 HERE = Path(__file__).parent
@@ -305,6 +306,6 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("array_processing: PASSED")

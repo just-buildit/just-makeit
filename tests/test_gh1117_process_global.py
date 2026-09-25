@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _capsule, _composer, _handle, _procglobal
 from just_makeit import _render as R
 from just_makeit import _incpath as INC  # noqa: E402
+from just_makeit import _csym as CSYM  # noqa: E402
 
 from _jmrun import JmRun, run_cli
 
@@ -344,6 +345,7 @@ class TestEveryEmitterSplicesIt:
             {
                 "procglobal": "    /*HERE*/\n",
                 **INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+                **CSYM.slots({"project": {"name": "p"}}, "flag"),
             },
         )
         assert "    /*HERE*/" in out
@@ -415,7 +417,7 @@ class TestDeclaration:
         the test exists so that stays true if someone hand-writes one."""
         h = _procglobal.render_header(_cfg(), "flag")
         block = _procglobal.rendezvous_c(_cfg(), "own")
-        for decl in _procglobal.contract_decls("flag"):
+        for decl in _procglobal.contract_decls(_cfg(), "flag"):
             assert decl in h, decl
             assert decl in block, decl
 

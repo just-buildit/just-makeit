@@ -6,11 +6,11 @@
  *
  * Example:
  * @code
-/*<<create_example_c>>*//*<<step_example_c>>*/ * /*<<component>>*/_destroy(obj);
+/*<<create_example_c>>*//*<<step_example_c>>*/ * /*<<csym>>*/_destroy(obj);
  * @endcode
  */
-#ifndef /*<<COMPONENT>>*/_CORE_H
-#define /*<<COMPONENT>>*/_CORE_H
+#ifndef /*<<CSYM>>*/_CORE_H
+#define /*<<CSYM>>*/_CORE_H
 
 #include "/*<<inc_prefix>>*/clib_common.h"
 /*<<perf_include>>*//*<<depends_includes>>*/
@@ -25,7 +25,7 @@ extern "C" {
  *
 /*<<create_param_docs>>*/
  * @return Heap-allocated state, or NULL on allocation failure.
- * @note Caller must call /*<<component>>*/_destroy() when done.
+ * @note Caller must call /*<<csym>>*/_destroy() when done.
  */
 /*<<create_decl>>*/
 
@@ -49,4 +49,4 @@ extern "C" {
 }
 #endif
 
-#endif /* /*<<COMPONENT>>*/_CORE_H */
+#endif /* /*<<CSYM>>*/_CORE_H */

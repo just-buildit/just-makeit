@@ -563,10 +563,15 @@ def run(root: Path) -> None:
     C.save(proj, cfg)
 
     # objects needing TOML-only keys (opaque, depends_on, component
-    # extra_link_libs, create_impl) — written as raw fragments, last.
-    (proj / "objects" / "mixer.toml").write_text(_MIXER_TOML, encoding="utf-8")
+    # extra_link_libs, create_impl) — written as raw fragments, last. LF, as
+    # jm writes every file (gh-1368): these are written AFTER the last apply,
+    # and a platform newline left a Windows tree `status --check` rightly
+    # called STALE -- apply would rewrite them to LF.
+    (proj / "objects" / "mixer.toml").write_text(
+        _MIXER_TOML, encoding="utf-8", newline="\n"
+    )
     (proj / "objects" / "config.toml").write_text(
-        _CONFIG_TOML, encoding="utf-8"
+        _CONFIG_TOML, encoding="utf-8", newline="\n"
     )
     objs = '["gain", "lfo", "meter", "resamp", "mixer", "config"]'
     if doppler_prefix:

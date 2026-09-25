@@ -430,6 +430,7 @@ def _build_ctx(
     comp: str,
     parsed: dict,
     pkg: str,
+    owner: "INC.Owner",
     defaults: dict[str, str] | None = None,
     doc_blocks: dict | None = None,
 ) -> dict:
@@ -440,7 +441,7 @@ def _build_ctx(
     ``@brief``/``@param`` exactly like every other regeneration path. ``None``
     yields the generic ``"<Component> component."`` summary.
     """
-    ctx = _make_component_ctx(comp)
+    ctx = _make_component_ctx(comp, owner)
     ctx.update(
         {
             "package": pkg,
@@ -478,6 +479,7 @@ def _build_ctx(
             # writes the same _ext.c apply does, so anything it does not
             # derive shows up as a round-trip divergence.
             doc_blocks=doc_blocks,
+            csym=ctx["csym"],
         )
     )
     ctx.update(Ctx.make_perf_ctx(False))
@@ -645,16 +647,16 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     from ._object import _load_doc_blocks
 
     doc_blocks = _load_doc_blocks(root, component)
-    ctx = _build_ctx(component, parsed, pkg, defaults, doc_blocks)
     # gh-1583: the layout of the project the header is bound into; a
-    # header bound where no manifest exists yet gets a new project's.
-    ctx.update(
-        INC.ctx_slots(
-            root
-            if (root / C.FILENAME).is_file()
-            else {"project": {"name": pkg, "schema": str(C.CURRENT_SCHEMA)}}
-        )
+    # header bound where no manifest exists yet gets a new project's. The
+    # same owner answers the C symbol stem (gh-1591).
+    owner = (
+        root
+        if (root / C.FILENAME).is_file()
+        else {"project": {"name": pkg, "schema": str(C.CURRENT_SCHEMA)}}
     )
+    ctx = _build_ctx(component, parsed, pkg, owner, defaults, doc_blocks)
+    ctx.update(INC.ctx_slots(owner))
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:

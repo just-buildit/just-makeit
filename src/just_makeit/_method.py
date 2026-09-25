@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _borrow
 from . import _record
 from . import _glue
@@ -1421,7 +1422,9 @@ def run(
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            parent_symbol = C.method_c_symbol(object_name, parent)
+            parent_symbol = C.method_c_symbol(
+                CSYM.stem(cfg, object_name), parent
+            )
             if fn:
                 # gh-1012: a signature override. Refuse a symbol that is the
                 # parent's — it would compile as a redefinition with a
@@ -1930,7 +1933,7 @@ def run(
         # the net fired on the parent's declaration every time and advised
         # removing a capacity param that was never there.
         _vo_fn = C.method_c_symbol(
-            object_name, {"name": method_name, "fn": fn}
+            CSYM.stem(cfg, object_name), {"name": method_name, "fn": fn}
         )
         _core_h_check = INC.core_h(root, object_name)
         if _core_h_check.exists():

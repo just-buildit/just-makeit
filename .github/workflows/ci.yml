@@ -584,12 +584,44 @@ jobs:
           CONSUMER_CMAKE_VERSION: ${{ matrix.cmake }}
         run: make consumer-smoke
 
+  # gh-1632: the release's pre-publish artifact smoke, per PR. It ran only on
+  # a release tag, so three layout PRs (#1602, #1612, #1616) broke it and
+  # merged green, and v0.90.0 was the first run to see it -- failing before
+  # publish on every leg. One leg per job here; the release keeps the full
+  # matrix. Same reusable workflow and the same `make wheel` the release
+  # builds with, so this runs what the release runs.
+  wheel:
+    name: Build the wheel
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.11"
+      - run: make wheel
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dist-pr
+          path: dist/
+
+  artifact-smoke:
+    name: Artifact smoke
+    needs: [changes, wheel]
+    if: needs.changes.outputs.src == 'true'
+    uses: ./.github/workflows/artifact.yml
+    with:
+      wheel-artifact: dist-pr
+      quick: true
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, test, examples, examples-windows, install-deps-smoke,
-            consumer-smoke, coverage, lint, bench]
+            consumer-smoke, coverage, lint, bench, wheel, artifact-smoke]
     if: always()
     # Inputs as env, so the script below reads only shell variables and
     # tests/test_ci_passed_aggregator.py can run it as-is with any results.

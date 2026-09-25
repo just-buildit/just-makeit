@@ -146,6 +146,7 @@ the user only writes the DSP algorithm.
 | `_targets.py`        | Which CMake target names are already claimed — what jm will emit, and what the project declares itself (gh-1046)                                                                                                                                                                                                                                                                                                                  |
 | `_builtins.py`       | Which member names an object's own generated code occupies — when a declared method may replace one, describe one, or is refused outright (gh-994/gh-996) — and which C identifiers a binding declares beside a param, so a colliding param is refused or its result local moved (gh-1512)                                                                                                                                        |
 | `_incpath.py`        | The one owner of the header layout: the `-I` directory (`INC_DIR`), where a project writes its own headers, and how an `#include` spells one. The layout is per PROJECT: from manifest schema `PREFIXED_SCHEMA` on, headers live under `native/inc/<pkg>/` and are spelled `<pkg>/...`, answered only by `prefixed(owner)`; `render()` refuses a template using `<<inc_prefix>>` whose context lacks `ctx_slots(owner)` (gh-1583) |
+| `_csym.py`           | The one owner of the C symbol stem: every identifier jm derives from a component, module or function name (`<stem>_create`, `<stem>_state_t`, the `<STEM>_CORE_H` guard) starts with `stem(owner, name)`; the name stays the FILE stem. Templates read `<<csym>>`, which `render()` refuses without `slots(owner, name)`; the hand-spelled sites are ratcheted (gh-1591)                                                          |
 | `_textio.py`         | The one way jm writes a text file: UTF-8, `\n` line endings on every platform; `tests/test_gh1368_lf_writes.py` refuses any other write (gh-1368)                                                                                                                                                                                                                                                                                 |
 | `_termynal_fence.py` | Superfences formatter for animated terminal (termynal) docs blocks                                                                                                                                                                                                                                                                                                                                                                |
 
@@ -485,6 +486,10 @@ just-buildit/.github README under "Makefile standard".
     packages and their dependencies to the DEFAULT prefix and consumes them
     by the official pkg-config and CMake instructions, with no hints: the
     acceptance test for epic gh-1584. Locally it uses a temp prefix.
+- `Artifact smoke` in `ci.yml` (gh-1632) — the release's pre-publish
+    `artifact.yml`, one leg per job (`quick: true`), from the wheel
+    `make wheel` builds. It ran only on a tag until v0.90.0 failed before
+    publish on a layout three PRs had changed.
 - `release.yml` — tag `v*` → test matrix → build wheel → PyPI publish →
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images
