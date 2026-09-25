@@ -76,12 +76,16 @@ def component_ctx(
     # component lives in one. The manifest records membership one way, so
     # ask it here; "" for a standalone object leaves the line unchanged.
     _module_id = C.module_of(cfg, object_name)
-    Component = C.resolved_class_name(cfg, object_name)
     state_vars_list = C.state_vars(cfg, object_name)
     arg_type_ = C.arg_type(cfg, object_name)
     return_type_ = C.return_type(cfg, object_name)
 
     ctx = _make_component_ctx(object_name, cfg)
+    # gh-1651: the class name comes from the seed, which resolves the
+    # manifest's `class_name` -- not recomputed here. This line computed the
+    # default instead, and `jm apply` registered `--class-name Renamed` as
+    # `Named`.
+    Component = ctx["Component"]
     ctx.update(
         {
             "package": pkg,
