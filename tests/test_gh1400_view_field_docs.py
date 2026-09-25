@@ -20,6 +20,7 @@ read `Cached from the winning acquisition hit.` at runtime and
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import ast
 import re
@@ -57,7 +58,7 @@ def _project(tmp_path: Path) -> Path:
     )
     assert r.returncode == 0, r.stderr
 
-    header = proj / "native" / "inc" / "rx" / "rx_core.h"
+    header = proj / INC_ROOT / "rx" / "rx_core.h"
     text = header.read_text(encoding="utf-8")
     assert "    double cn0_dbhz;" in text
     header.write_text(

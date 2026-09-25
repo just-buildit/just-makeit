@@ -18,6 +18,8 @@ unable to either. Each instance is ``header_only`` and names a family macro:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -52,7 +54,7 @@ arg_type = "float"
 return_type = "{elem}"
 core_macro = "DECLARE_F32_TO_INT"
 core_args = ["{id}", "{elem}", "{sat}"]
-core_header = "cvt/f32_to_int.h"
+core_header = "<<P>>cvt/f32_to_int.h"
 
 [[template.f32_to_int.state]]
 name = "scale"
@@ -128,11 +130,13 @@ def _project(
     toml = root / C.FILENAME
     toml.write_text(
         toml.read_text(encoding="utf-8")
-        + template.replace("<<module>>", 'module = "cvt"\n' if module else ""),
+        + template.replace(
+            "<<module>>", 'module = "cvt"\n' if module else ""
+        ).replace("<<P>>", INC.prefix(root)),
         "utf-8",
     )
     if family is not None:
-        fh = root / "native" / "inc" / "cvt" / "f32_to_int.h"
+        fh = root / INC_ROOT / "cvt" / "f32_to_int.h"
         fh.parent.mkdir(parents=True, exist_ok=True)
         fh.write_text(family, "utf-8")
         _quiet(apply_run, root)
@@ -140,7 +144,7 @@ def _project(
 
 
 def _header(root: Path, iid: str = "f32_to_i16") -> Path:
-    return root / "native" / "inc" / iid / f"{iid}_core.h"
+    return root / INC_ROOT / iid / f"{iid}_core.h"
 
 
 def _invocations(text: str) -> "list[str]":
@@ -152,7 +156,8 @@ def _invocations(text: str) -> "list[str]":
 
 @pytest.mark.parametrize("module", [True, False], ids=["module", "standalone"])
 def test_the_header_declares_and_never_defines(tmp_path, module):
-    text = _header(_project(tmp_path, module=module)).read_text()
+    root = _project(tmp_path, module=module)
+    text = _header(root).read_text()
     # An independent oracle for "no body": a function body is the only `{`
     # that follows a `)`. The struct's `{` follows `struct`.
     assert not re.search(r"\)\s*\{", text), text
@@ -164,7 +169,7 @@ def test_the_header_declares_and_never_defines(tmp_path, module):
     assert _invocations(text) == [
         "DECLARE_F32_TO_INT (f32_to_i16, int16_t, 32767.0f)"
     ]
-    assert '#include "cvt/f32_to_int.h"' in text
+    assert f'#include "{INC.include("cvt/f32_to_int.h", root)}"' in text
 
 
 def test_each_declaration_keeps_its_doc(tmp_path):
@@ -304,14 +309,18 @@ def test_apply_refuses_a_missing_family_header_before_writing(tmp_path):
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(err), pytest.raises(SystemExit):
             apply_run(root)
-    assert "native/inc/cvt/f32_to_int.h does not exist" in err.getvalue()
+    rel = INC.rel("cvt/f32_to_int.h", root)
+    assert f"{rel} does not exist" in err.getvalue()
     assert not _header(root).exists()
 
 
 @pytest.mark.parametrize(
     "edit, says",
     [
-        (('core_header = "cvt/f32_to_int.h"\n', ""), "but not core_header"),
+        (
+            ('core_header = "<<P>>cvt/f32_to_int.h"\n', ""),
+            "but not core_header",
+        ),
         (('header_only = "true"\n', ""), 'without `header_only = "true"`'),
         (('"DECLARE_F32_TO_INT"', '"DECLARE-X"'), "is not a C identifier"),
         (('["{id}", "{elem}", "{sat}"]', "[]"), "non-empty list of strings"),

@@ -25,6 +25,7 @@ distinction being tested.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -52,11 +53,16 @@ from test_gh790_capsule_init_param import (  # noqa: E402
     FOREIGN_H,
     HDR,
     PTR,
+    _hdr,
 )
 
 
-def _param(*, nullable: bool) -> tuple:
-    """A capsule init-param tuple, mandatory or not. `required` is slot 8."""
+def _param(*, nullable: bool, root: "Path | None" = None) -> tuple:
+    """A capsule init-param tuple, mandatory or not. `required` is slot 8.
+
+    With *root*, the header is spelled in that project's layout (gh-1583);
+    without one it is the bare string the CLI grammar tests parse.
+    """
     return (
         "tlm",
         PTR,
@@ -69,7 +75,7 @@ def _param(*, nullable: bool) -> tuple:
         not nullable,
         "",
         CAP,
-        HDR,
+        HDR if root is None else _hdr(root),
     )
 
 
@@ -145,7 +151,7 @@ class TestTheGeneratedSurfaces:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             object_run(
@@ -153,7 +159,7 @@ class TestTheGeneratedSurfaces:
                 "capture",
                 None,
                 state_vars=[("seen", "size_t", "0")],
-                init_params=[_param(nullable=nullable)],
+                init_params=[_param(nullable=nullable, root=root)],
             )
         return root
 
@@ -178,16 +184,12 @@ class TestTheGeneratedSurfaces:
         # The author's `create()` has to handle NULL, and the header is where
         # they read its contract.
         root = self._scaffold(tmp_path, nullable=True)
-        h = (
-            root / "native" / "inc" / "capture" / "capture_core.h"
-        ).read_text()
+        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text()
         assert "May be NULL (Python: None)." in h
 
     def test_a_mandatory_handle_does_not(self, tmp_path):
         root = self._scaffold(tmp_path, nullable=False)
-        h = (
-            root / "native" / "inc" / "capture" / "capture_core.h"
-        ).read_text()
+        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text()
         # The exact sentence, not the substring: `destroy()`'s own
         # `@param state  May be NULL.` is unrelated and always present.
         assert "May be NULL (Python: None)." not in h
@@ -222,7 +224,7 @@ class TestItCompilesAndRuns:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             object_run(
@@ -242,7 +244,7 @@ class TestItCompilesAndRuns:
                 "capture",
                 None,
                 state_vars=[("seen", "size_t", "0")],
-                init_params=[_param(nullable=True)],
+                init_params=[_param(nullable=True, root=root)],
             )
         core = root / "native" / "src" / "capture" / "capture_core.c"
         s = core.read_text()
@@ -352,7 +354,7 @@ class TestTheModuleFaceAgreesWithItsBinding:
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
             module_run(root, "m")
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             object_run(

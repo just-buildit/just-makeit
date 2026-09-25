@@ -1,6 +1,8 @@
 """Integration tests for `just-makeit function`."""
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import re
 import sys
@@ -247,7 +249,7 @@ class TestModuleScaffold:
     def test_core_h_exists(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        assert (root / "native/inc/fft/fft_core.h").exists()
+        assert (root / INC_ROOT / "fft/fft_core.h").exists()
 
     def test_core_c_exists(self, tmp_path):
         root = tmp_path / "dsp"
@@ -257,7 +259,7 @@ class TestModuleScaffold:
     def test_core_h_has_guard(self, tmp_path):
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
-        text = (root / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        text = (root / INC_ROOT / "fft/fft_core.h").read_text(encoding="utf-8")
         assert "#ifndef FFT_CORE_H" in text
         assert "#define FFT_CORE_H" in text
         assert "#endif /* FFT_CORE_H */" in text
@@ -266,7 +268,7 @@ class TestModuleScaffold:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         text = (root / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
-        assert '#include "fft/fft_core.h"' in text
+        assert f'#include "{INC.core_include("fft", root)}"' in text
 
 
 class TestCoreUpdated:
@@ -287,13 +289,13 @@ class TestCoreUpdated:
         assert "fft_global_setup(void)" in text
 
     def test_core_h_has_declaration(self, fft_module):
-        text = (fft_module / "native/inc/fft/fft_core.h").read_text(
+        text = (fft_module / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         assert "void fft_global_setup(void);" in text
 
     def test_core_h_declaration_before_endif(self, fft_module):
-        text = (fft_module / "native/inc/fft/fft_core.h").read_text(
+        text = (fft_module / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         decl_pos = text.index("void fft_global_setup(void);")
@@ -306,14 +308,16 @@ class TestExtCHeader:
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '#include "fft/fft_core.h"' in ext
+        assert f'#include "{INC.core_include("fft", fft_module)}"' in ext
 
     def test_core_h_included_after_numpy(self, fft_module):
         ext = (fft_module / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
         numpy_pos = ext.index("#include <numpy/arrayobject.h>")
-        include_pos = ext.index('#include "fft/fft_core.h"')
+        include_pos = ext.index(
+            f'#include "{INC.core_include("fft", fft_module)}"'
+        )
         assert numpy_pos < include_pos
 
     def test_core_h_omitted_without_functions(self, tmp_path):
@@ -322,7 +326,7 @@ class TestExtCHeader:
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["fft"])
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
-        assert '#include "fft/fft_core.h"' not in ext
+        assert f'#include "{INC.core_include("fft", root)}"' not in ext
 
 
 class TestExtCFooter:
@@ -395,7 +399,7 @@ class TestTwoFunctions:
         assert "fft1d_execute(void)" in execute
 
     def test_both_declarations_in_core_h(self, two_functions):
-        text = (two_functions / "native/inc/fft/fft_core.h").read_text(
+        text = (two_functions / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         assert "void fft_global_setup(void);" in text
@@ -485,7 +489,7 @@ class TestCoexistenceWithObjects:
     ):
         root = module_with_objects_and_functions
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
-        assert '#include "dsp/dsp_core.h"' in ext
+        assert f'#include "{INC.core_include("dsp", root)}"' in ext
 
     def test_adding_object_after_function_preserves_methods(self, tmp_path):
         root = tmp_path / "dsp"
@@ -608,7 +612,7 @@ class TestFunctionTyped:
         assert "return (float)" in text
 
     def test_core_h_has_declaration(self, typed_fn):
-        text = (typed_fn / "native/inc/fft/fft_core.h").read_text(
+        text = (typed_fn / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         assert "float compute_window(size_t n, float beta);" in text
@@ -764,7 +768,7 @@ class TestFunctionWithArrayParam:
         assert "(void)data_len;" in text
 
     def test_core_h_declaration(self, arr_fn):
-        text = (arr_fn / "native/inc/fft/fft_core.h").read_text(
+        text = (arr_fn / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         assert "apply_window" in text
@@ -877,20 +881,20 @@ class TestInlineFunction:
         return root
 
     def test_core_h_has_static_inline(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+        h = (inline_fn / INC_ROOT / "cvt/cvt_core.h").read_text(
             encoding="utf-8"
         )
         assert "static inline" in h
         assert "f32_to_i16" in h
 
     def test_core_h_has_implement_comment(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+        h = (inline_fn / INC_ROOT / "cvt/cvt_core.h").read_text(
             encoding="utf-8"
         )
         assert "<<IMPLEMENT: f32_to_i16>>" in h
 
     def test_core_h_has_placeholder_return(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+        h = (inline_fn / INC_ROOT / "cvt/cvt_core.h").read_text(
             encoding="utf-8"
         )
         assert "return" in h and "placeholder" in h
@@ -902,7 +906,7 @@ class TestInlineFunction:
         assert "f32_to_i16" not in c
 
     def test_core_h_has_no_bare_declaration(self, inline_fn):
-        h = (inline_fn / "native/inc/cvt/cvt_core.h").read_text(
+        h = (inline_fn / INC_ROOT / "cvt/cvt_core.h").read_text(
             encoding="utf-8"
         )
         # A bare forward declaration would have a semicolon-terminated signature
@@ -933,7 +937,7 @@ class TestInlineFunction:
         function_run(root, "fft_setup", "fft", return_type="void")
         c = _fn_c(root, "fft", "fft_setup")
         assert "fft_setup" in c
-        h = (root / "native/inc/fft/fft_core.h").read_text(encoding="utf-8")
+        h = (root / INC_ROOT / "fft/fft_core.h").read_text(encoding="utf-8")
         assert "static inline" not in h
 
     def test_no_stray_placeholders(self, inline_fn):
@@ -1020,7 +1024,7 @@ class TestOutArrayParamNotConst:
         return root
 
     def test_decl_output_not_const(self, out_param_fn):
-        h = (out_param_fn / "native/inc/io/io_core.h").read_text(
+        h = (out_param_fn / INC_ROOT / "io/io_core.h").read_text(
             encoding="utf-8"
         )
         # Output must be `float *output`, not `const float *output`.
@@ -1177,7 +1181,7 @@ class TestModuleFunctionDocstring:
         self._scaffold(root)
 
         # Prepend a hand-written Doxygen block before the injected declaration.
-        header = root / "native" / "inc" / "dsp" / "dsp_core.h"
+        header = root / INC_ROOT / "dsp" / "dsp_core.h"
         text = header.read_text(encoding="utf-8")
         doc_block = (
             "/**\n"

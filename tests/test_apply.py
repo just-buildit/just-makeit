@@ -1,6 +1,8 @@
 """Integration tests for `just-makeit apply`."""
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -156,10 +158,8 @@ class TestApplyReconcilesAggregates:
 
         apply_run(proj)
 
-        umbrella = (proj / "native" / "inc" / "proj.h").read_text(
-            encoding="utf-8"
-        )
-        assert '#include "agc/agc_core.h"' in umbrella
+        umbrella = (proj / INC_ROOT / "proj.h").read_text(encoding="utf-8")
+        assert f'#include "{INC.core_include("agc", proj)}"' in umbrella
 
     def test_package_init_py_gets_import(self, tmp_path):
         from just_makeit._apply import run as apply_run
@@ -263,7 +263,7 @@ class TestApplyImplInjection:
 
         apply_run(proj)
 
-        h_path = proj / "native" / "inc" / "widget" / "widget_core.h"
+        h_path = proj / INC_ROOT / "widget" / "widget_core.h"
         text = h_path.read_text(encoding="utf-8")
         assert "state->gain *= 2.0f;" in text
 
@@ -278,10 +278,10 @@ class TestApplyImplInjection:
         # Delete sacred files so apply creates them from scratch.
         import shutil
 
-        shutil.rmtree(proj / "native" / "inc" / "widget")
+        shutil.rmtree(proj / INC_ROOT / "widget")
         apply_run(proj)
 
-        h_path = proj / "native" / "inc" / "widget" / "widget_core.h"
+        h_path = proj / INC_ROOT / "widget" / "widget_core.h"
         text = h_path.read_text(encoding="utf-8")
         assert "return state->gain + 1.0f;" in text
 
@@ -670,9 +670,9 @@ class TestMethodReplayArgType:
         frag = proj.parent / "frag.toml"
         frag.write_text(frag_text)
         apply_run(proj, fragment=frag)
-        return (
-            proj / "native" / "inc" / "drain_obj" / "drain_obj_core.h"
-        ).read_text(encoding="utf-8")
+        return (proj / INC_ROOT / "drain_obj" / "drain_obj_core.h").read_text(
+            encoding="utf-8"
+        )
 
     def test_variable_output_params_used_not_float_complex(self, tmp_path):
         """drain() should use uint32_t n, not const float _Complex *in."""
@@ -712,7 +712,7 @@ class TestMethodReplayArgType:
         proj = tmp_path / "proj"
         new_run("proj", proj)
         object_run(proj, "osc", None, state_vars=[("phase", "float", "0.0f")])
-        header = (proj / "native" / "inc" / "osc" / "osc_core.h").read_text(
+        header = (proj / INC_ROOT / "osc" / "osc_core.h").read_text(
             encoding="utf-8"
         )
         assert "void osc_reset(osc_state_t *state);" in header
@@ -727,9 +727,9 @@ class TestVariableOutputOutType:
         frag = proj.parent / "frag.toml"
         frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
         apply_run(proj, fragment=frag)
-        header = (
-            proj / "native" / "inc" / "lfsr_obj" / "lfsr_obj_core.h"
-        ).read_text(encoding="utf-8")
+        header = (proj / INC_ROOT / "lfsr_obj" / "lfsr_obj_core.h").read_text(
+            encoding="utf-8"
+        )
         core_c = (
             proj / "native" / "src" / "lfsr_obj" / "lfsr_obj_core.c"
         ).read_text(encoding="utf-8")
@@ -913,7 +913,7 @@ class TestOpaqueState:
         frag.write_text(_OPAQUE_FIELD_FRAGMENT)
         apply_run(proj, fragment=frag)
         return (
-            (proj / "native" / "inc" / "fft" / "fft_core.h").read_text(),
+            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(),
             (proj / "native" / "src" / "fft" / "fft_core.c").read_text(),
             (proj / "native" / "src" / "fft" / "fft_ext.c").read_text(),
         )
@@ -1035,7 +1035,7 @@ class TestNoCtorState:
         frag.write_text(_NO_CTOR_FRAGMENT)
         apply_run(proj, fragment=frag)
         return (
-            (proj / "native" / "inc" / "ring" / "ring_core.h").read_text(),
+            (proj / INC_ROOT / "ring" / "ring_core.h").read_text(),
             (proj / "native" / "src" / "ring" / "ring_core.c").read_text(),
             (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(),
         )
@@ -1172,7 +1172,7 @@ class TestOpaqueInModule:
         apply_run(proj, fragment=frag)
         ext_dir = proj / "native" / "src" / "dsp"
         return (
-            (proj / "native" / "inc" / "fft" / "fft_core.h").read_text(),
+            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(),
             (ext_dir / "dsp_ext_fft.c").read_text(),
         )
 
@@ -1206,7 +1206,7 @@ class TestNoCtorInModule:
         apply_run(proj, fragment=frag)
         ext_dir = proj / "native" / "src" / "dsp"
         return (
-            (proj / "native" / "inc" / "ticker" / "ticker_core.h").read_text(),
+            (proj / INC_ROOT / "ticker" / "ticker_core.h").read_text(),
             (ext_dir / "dsp_ext_ticker.c").read_text(),
         )
 
@@ -1267,9 +1267,7 @@ class TestApplyModuleFunctionImpl:
         fn_c = (
             proj_root / "native" / "src" / "io" / "q15_to_float.c"
         ).read_text()
-        core_h = (
-            proj_root / "native" / "inc" / "io" / "io_core.h"
-        ).read_text()
+        core_h = (proj_root / INC_ROOT / "io" / "io_core.h").read_text()
         return fn_c, core_h
 
     def test_impl_body_in_fn_c(self, tmp_path):
@@ -1286,12 +1284,10 @@ class TestApplyModuleFunctionImpl:
         self._apply(proj)
         fn_c_path = proj / "native" / "src" / "io" / "q15_to_float.c"
         before_c = fn_c_path.read_text()
-        before_h = (proj / "native" / "inc" / "io" / "io_core.h").read_text()
+        before_h = (proj / INC_ROOT / "io" / "io_core.h").read_text()
         apply_run(proj)
         assert fn_c_path.read_text() == before_c
-        assert (
-            proj / "native" / "inc" / "io" / "io_core.h"
-        ).read_text() == before_h
+        assert (proj / INC_ROOT / "io" / "io_core.h").read_text() == before_h
 
 
 class TestApplySacredGlueSplit:
@@ -1368,7 +1364,7 @@ class TestApplySacredGlueSplit:
         )
         apply_run(root)
         # Header declares the method; binding exposes it; stub lists it.
-        core_h = (root / "native" / "inc" / "eng" / "eng_core.h").read_text(
+        core_h = (root / INC_ROOT / "eng" / "eng_core.h").read_text(
             encoding="utf-8"
         )
         ext_c = (root / "native" / "src" / "eng" / "eng_ext.c").read_text(
@@ -1382,7 +1378,7 @@ class TestApplySacredGlueSplit:
     def test_inline_step_body_preserved_on_header_refresh(self, tmp_path):
         root = tmp_path / "proj"
         self._project(root)
-        core_h = root / "native" / "inc" / "eng" / "eng_core.h"
+        core_h = root / INC_ROOT / "eng" / "eng_core.h"
         # Plant a sentinel inside the inline step() body.
         text = core_h.read_text(encoding="utf-8")
         text = text.replace("/* TODO", "/* USER_STEP_SENTINEL */ /* TODO", 1)

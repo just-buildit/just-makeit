@@ -26,6 +26,7 @@ create/reset/step/steps derive across sixteen cells but did not cover
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -54,7 +55,7 @@ def _acc_project(tmp_path: Path, *, author: bool) -> Path:
         return_type="float",
     )
     if author:
-        h = root / "native" / "inc" / "acc" / "acc_core.h"
+        h = root / INC_ROOT / "acc" / "acc_core.h"
         t = h.read_text(encoding="utf-8")
         assert " * @brief Get current acc." in t
         t = t.replace(
@@ -154,7 +155,7 @@ class TestMaxOutFallback:
 class TestMaxOutHeaderWins:
     def test_authored_block_replaces_the_fallback(self, tmp_path):
         root = _mo_project(tmp_path)
-        h = root / "native" / "inc" / "fir" / "fir_core.h"
+        h = root / INC_ROOT / "fir" / "fir_core.h"
         t = h.read_text(encoding="utf-8")
         assert "size_t fir_execute_max_out" in t
         h.write_text(

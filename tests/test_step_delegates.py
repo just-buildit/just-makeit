@@ -4,6 +4,7 @@ byte-for-byte under -ffast-math (no separate inlined scalar body to contract
 into FMAs differently).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import contextlib
 import io
 import sys
@@ -38,7 +39,7 @@ def _scaffold(tmp_path, arg_type, return_type, *, delegate=True):
         return_type=return_type,
         step_delegates=delegate,
     )
-    h = (root / "native/inc/qpsk/qpsk_core.h").read_text(encoding="utf-8")
+    h = (root / INC_ROOT / "qpsk/qpsk_core.h").read_text(encoding="utf-8")
     c = (root / "native/src/qpsk/qpsk_core.c").read_text(encoding="utf-8")
     return root, h, c
 

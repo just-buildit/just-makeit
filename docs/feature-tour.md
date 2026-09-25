@@ -91,8 +91,8 @@ just-makeit property nco freq --module signal --type double --writable
 
 | File                                    | Purpose                                              |
 | --------------------------------------- | ---------------------------------------------------- |
-| `native/inc/signal/nco_core.h`          | Struct + `static inline nco_step()` — implement here |
-| `native/src/signal/nco_core.c`          | `nco_steps()` + lifecycle stubs                      |
+| `native/inc/dsp_demo/nco/nco_core.h`    | Struct + `static inline nco_step()` — implement here |
+| `native/src/nco/nco_core.c`             | `nco_steps()` + lifecycle stubs                      |
 | `native/src/signal/signal_ext_nco.c`    | CPython binding (auto-generated)                     |
 | `native/tests/test_nco_core.c`          | C lifecycle smoke test                               |
 | `src/dsp_demo/signal/tests/test_nco.py` | pytest integration test                              |
@@ -194,7 +194,7 @@ Once the algorithm is written and the tests pass, retrofit hot-path hints:
 just-makeit perf
 ```
 
-This writes `native/inc/jm_perf.h` (the `JM_HOT` / `JM_FORCEINLINE` macros),
+This writes `native/inc/dsp_demo/jm_perf.h` (the `JM_HOT` / `JM_FORCEINLINE` macros),
 patches `step()` in every `_core.h`, and records the setting in
 `just-makeit.toml` so future objects inherit it automatically.
 

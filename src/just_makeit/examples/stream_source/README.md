@@ -95,11 +95,12 @@ stream_block_default = "256"
 ## 2. Implement `step()`
 
 A source's whole algorithm lives in the inline `step()` in
-`native/inc/ramp/ramp_core.h`. Replace the generated stub with the ramp
+`native/inc/stream_source_demo/ramp/ramp_core.h`. Replace the generated stub with the ramp
 recurrence — emit the current value, then advance it:
 
 ```c
-/* Implement in native/inc/ramp/ramp_core.h — replace the generated stub.
+/* Implement in native/inc/stream_source_demo/ramp/ramp_core.h — replace the
+ * generated stub.
  *
  * A free-running source: emit the current value, then advance it. `value`
  * and `step_inc` are state fields, so each call resumes where the last one

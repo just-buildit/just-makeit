@@ -72,11 +72,12 @@ below) do.
     │   └── my_project.pc.in
     ├── native/
     │   ├── inc/
-    │   │   ├── my_project.h
-    │   │   ├── clib_common.h
-    │   │   ├── pyex_common.h
-    │   │   └── engine/
-    │   │       └── engine_core.h
+    │   │   └── my_project/
+    │   │       ├── my_project.h
+    │   │       ├── clib_common.h
+    │   │       ├── pyex_common.h
+    │   │       └── engine/
+    │   │           └── engine_core.h
     │   ├── src/
     │   │   ├── my_project_lib.c
     │   │   └── engine/
@@ -465,7 +466,7 @@ A line wrapped to the header's own 79 columns is 74 columns of content once
 is why `jm apply` reports the concrete figure per site rather than a rule:
 
 ```
-native/inc/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in the
+native/inc/my_project/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in the
   stub; wrap at <= 71.
     >>> c.step(2.0)                    # beyond +1.0 -> saturates to int16 max
 ```
@@ -1638,10 +1639,10 @@ arg_type = "float"
 return_type = "{elem}"
 core_macro = "DECLARE_F32_TO_INT"            # defined in core_header
 core_args = ["{id}", "{elem}", "{sat}"]      # its arguments, per instance
-core_header = "cvt/f32_to_int.h"             # under native/inc/, yours
+core_header = "my_project/cvt/f32_to_int.h"  # an #include spelling; yours
 ```
 
-`native/inc/cvt/f32_to_int.h` is a header **you** write. It defines
+`native/inc/my_project/cvt/f32_to_int.h` is a header **you** write. It defines
 `DECLARE_F32_TO_INT(id, elem, SAT)`, which expands to every function one
 instance has (`create`, `destroy`, `reset`, `step`, `steps`, each accessor
 and method), all `static inline`. It's the same pattern as a

@@ -40,6 +40,8 @@ module -- handle, capsule and composer.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import ast
 import importlib.util
@@ -64,7 +66,7 @@ kind = "handle"
 backing = "lamp"
 type_name = "Lamp"
 handle_type = "lamp_t"
-header = "lamp/lamp.h"
+header = "<<P>>lamp/lamp.h"
 create_fn = "lamp_open"
 close_fn = "lamp_close"
 doc = {_doc("h_module")}
@@ -187,7 +189,7 @@ composer_type_name = "Mix"
 name = "describe"
 fn = "playlist_describe"
 returns = "str"
-header = "playlist/playlist_ser.h"
+header = "<<P>>playlist/playlist_ser.h"
 doc = {_doc("k_serializer")}
 
 [[module.playlist.settings]]
@@ -207,7 +209,7 @@ doc = {_doc("k_extra_method")}
 
 #: The backings: just enough C for each binding to link and import.
 _BACKINGS = {
-    "native/inc/lamp/lamp.h": """\
+    "native/inc/<<P>>lamp/lamp.h": """\
 #ifndef LAMP_H
 #define LAMP_H
 typedef struct lamp lamp_t;
@@ -222,7 +224,7 @@ void lamp_stats(const lamp_t *l, lamp_stats_t *out);
 """,
     "native/src/lamp/lamp.c": """\
 #include <stdlib.h>
-#include "lamp/lamp.h"
+#include "<<P>>lamp/lamp.h"
 struct lamp { int level, hits; };
 lamp_t *lamp_open(int level)
 {
@@ -240,7 +242,7 @@ void lamp_stats(const lamp_t *l, lamp_stats_t *out)
     out->peak = l->level;
 }
 """,
-    "native/inc/gadget/gadget_core.h": """\
+    "native/inc/<<P>>gadget/gadget_core.h": """\
 #ifndef GADGET_CORE_H
 #define GADGET_CORE_H
 typedef struct gadget_state gadget_state_t;
@@ -253,7 +255,7 @@ void gadget_set_rate(gadget_state_t *s, double rate);
 """,
     "native/src/gadget/gadget_core.c": """\
 #include <stdlib.h>
-#include "gadget/gadget_core.h"
+#include "<<P>>gadget/gadget_core.h"
 struct gadget_state { double rate; };
 gadget_state_t *gadget_create(double rate)
 {
@@ -266,11 +268,11 @@ void gadget_reset(gadget_state_t *s) { (void)s; }
 double gadget_get_rate(const gadget_state_t *s) { return s->rate; }
 void gadget_set_rate(gadget_state_t *s, double rate) { s->rate = rate; }
 """,
-    "native/inc/clip/clip_core.h": """\
+    "native/inc/<<P>>clip/clip_core.h": """\
 #ifndef CLIP_CORE_H
 #define CLIP_CORE_H
 #include <stddef.h>
-#include "clib_common.h"
+#include "<<P>>clib_common.h"
 typedef struct { double gain; } clip_t;
 typedef struct clip_state clip_state_t;
 void clip_steps(clip_state_t *s, float _Complex *out, size_t n);
@@ -279,12 +281,12 @@ void clip_reset(clip_state_t *s);
 void clip_destroy(clip_state_t *s);
 #endif
 """,
-    "native/inc/playlist/playlist_core.h": """\
+    "native/inc/<<P>>playlist/playlist_core.h": """\
 #ifndef PLAYLIST_CORE_H
 #define PLAYLIST_CORE_H
 #include <stddef.h>
-#include "clib_common.h"
-#include "clip/clip_core.h"
+#include "<<P>>clib_common.h"
+#include "<<P>>clip/clip_core.h"
 typedef struct {
     clip_t *sources;
     size_t  n_sources;
@@ -302,20 +304,20 @@ void playlist_set_mode(playlist_state_t *s, int mode);
 int playlist_get_mode(const playlist_state_t *s);
 #endif
 """,
-    "native/inc/playlist/playlist_ser.h": """\
+    "native/inc/<<P>>playlist/playlist_ser.h": """\
 #ifndef PLAYLIST_SER_H
 #define PLAYLIST_SER_H
 #include <stddef.h>
-#include "playlist/playlist_core.h"
+#include "<<P>>playlist/playlist_core.h"
 char *playlist_describe(const track_t *segs, size_t n);
 #endif
 """,
     "native/src/playlist/playlist.c": """\
 #include <stdlib.h>
 #include <string.h>
-#include "playlist/playlist_core.h"
-#include "playlist/playlist_ser.h"
-#include "playlist/playlist_bridge.h"
+#include "<<P>>playlist/playlist_core.h"
+#include "<<P>>playlist/playlist_ser.h"
+#include "<<P>>playlist/playlist_bridge.h"
 struct clip_state { double gain; };
 struct playlist_state { int mode; };
 clip_state_t *clip_from_source(const clip_t *src, double fs)
@@ -404,7 +406,7 @@ def _import(proj: Path, mod: str):
     r = subprocess.run(
         [_CC, *link, "-fPIC", "-std=c11",
          "-Werror=implicit-function-declaration",
-         "-I", str(proj / "native" / "inc"),
+         "-I", str(proj / INC_DIR),
          "-I", sysconfig.get_path("include"),
          "-I", np.get_include(),
          *[str(proj / s) for s in _SOURCES[mod]],
@@ -419,6 +421,13 @@ def _import(proj: Path, mod: str):
     return m
 
 
+def _layout(text: str, proj: Path) -> str:
+    """The fixture's own headers, spelled in *proj*'s layout (gh-1583): an
+    author writes them under the package directory and includes them as
+    ``<pkg>/...``, so every such spelling above carries ``<<P>>``."""
+    return text.replace("<<P>>", INC.prefix(proj))
+
+
 @pytest.fixture(scope="module")
 def built(tmp_path_factory) -> "tuple[Path, dict]":
     root = tmp_path_factory.mktemp("gh1499")
@@ -426,12 +435,17 @@ def built(tmp_path_factory) -> "tuple[Path, dict]":
     proj = root / "vk"
     mods = proj / "modules"
     mods.mkdir(exist_ok=True)
-    (mods / "lamp.toml").write_text(_HANDLE, encoding="utf-8")
-    (mods / "gadget.toml").write_text(_CAPSULE, encoding="utf-8")
-    (mods / "playlist.toml").write_text(_COMPOSER, encoding="utf-8")
+    (mods / "lamp.toml").write_text(_layout(_HANDLE, proj), encoding="utf-8")
+    (mods / "gadget.toml").write_text(
+        _layout(_CAPSULE, proj), encoding="utf-8"
+    )
+    (mods / "playlist.toml").write_text(
+        _layout(_COMPOSER, proj), encoding="utf-8"
+    )
     for rel, text in _BACKINGS.items():
-        (proj / rel).parent.mkdir(parents=True, exist_ok=True)
-        (proj / rel).write_text(text, encoding="utf-8")
+        path = proj / _layout(rel, proj)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_layout(text, proj), encoding="utf-8")
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
     # `status` replays the manifest onto a copy and diffs: a doc the replay
@@ -527,7 +541,9 @@ def test_a_getter_doc_backing_several_properties_is_refused(tmp_path) -> None:
         'fn = "lamp_stats"\n', f'fn = "lamp_stats"\ndoc = {_doc("x")}\n'
     )
     assert manifest != _HANDLE
-    (proj / "modules" / "lamp.toml").write_text(manifest, encoding="utf-8")
+    (proj / "modules" / "lamp.toml").write_text(
+        _layout(manifest, proj), encoding="utf-8"
+    )
     r = run_cli("apply", cwd=proj)
     out = r.stdout + r.stderr
     assert r.returncode != 0, out

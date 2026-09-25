@@ -20,6 +20,7 @@ and the lifecycle line's verbs must be exactly the ``step`` / ``steps`` /
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import re
 import shutil
@@ -32,6 +33,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from _jmrun import run_cli  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 _CC = shutil.which("cc") or shutil.which("gcc")
 
@@ -112,7 +114,7 @@ def project(tmp_path_factory) -> Path:
 
 
 def _header(root: Path, name: str) -> str:
-    return (root / "native" / "inc" / name / f"{name}_core.h").read_text(
+    return (root / INC_ROOT / name / f"{name}_core.h").read_text(
         encoding="utf-8"
     )
 
@@ -169,7 +171,7 @@ def test_example_compiles_against_its_header(project, name, tmp_path):
     h = _header(project, name)
     tu = tmp_path / "example.c"
     tu.write_text(
-        f'#include "{name}/{name}_core.h"\n'
+        f'#include "{INC.core_include(name, project)}"\n'
         "int main(void)\n{\n"
         + "".join(f"    {ln}\n" for ln in _example(h))
         + "    return 0;\n}\n",
@@ -183,7 +185,7 @@ def test_example_compiles_against_its_header(project, name, tmp_path):
             "-Werror=implicit-function-declaration",
             "-Werror=int-conversion",
             "-Werror=incompatible-pointer-types",
-            f"-I{project / 'native' / 'inc'}",
+            f"-I{project / INC_DIR}",
             str(tu),
         ],
         capture_output=True,

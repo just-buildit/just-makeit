@@ -69,7 +69,7 @@ BLOCKS = [
 
 
 def main() -> None:
-    header = pathlib.Path("native/inc/utils/utils_core.h")
+    header = pathlib.Path("native/inc/my_utils/utils/utils_core.h")
     text = header.read_text(encoding="utf-8")
 
     for decl, block in BLOCKS:

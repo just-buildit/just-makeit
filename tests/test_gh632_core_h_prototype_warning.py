@@ -21,6 +21,7 @@ the rewrite warns.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -189,7 +190,7 @@ class TestTheReportedReproduction:
             False,
             [],
         )
-        header = root / "native" / "inc" / "gain" / "gain_core.h"
+        header = root / INC_ROOT / "gain" / "gain_core.h"
         original = header.read_text()
 
         # Only the *declaration* line — the inline step() definition in the

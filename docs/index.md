@@ -19,7 +19,7 @@ Generates everything, tested and passing, so you can start on the algorithm imme
 $ just-makeit new my_project --object my_object
 {d}just-makeit: creating project 'my_project'{/d}
 
-  create  native/inc/my_object/my_object_core.h
+  create  native/inc/my_project/my_object/my_object_core.h
   create  native/src/my_object/my_object_core.c
   create  native/src/my_object/my_object_ext.c
   create  native/tests/test_my_object_core.c

@@ -35,7 +35,7 @@ Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
 **1.** Add the constants and `fir_filter_step_batch()` to
-`native/inc/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
+`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
 
 ```{07_step_batch.h}
 ```

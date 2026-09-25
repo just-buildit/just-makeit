@@ -7,7 +7,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
+header = pathlib.Path("native/inc/my_fir/fir_filter/fir_filter_core.h")
 impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(

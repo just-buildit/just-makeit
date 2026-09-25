@@ -5,7 +5,7 @@
  * The include is the generated header, so these definitions are checked
  * against jm's declarations by the compiler rather than by eye.
  */
-#include "playlist/playlist_bridge.h"
+#include "studio/playlist/playlist_bridge.h"
 
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses

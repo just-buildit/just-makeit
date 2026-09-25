@@ -7,6 +7,8 @@ compiles without a manual edit. Also covers the `mutable` synonym for `out` on
 a module-function array param (the related const-vs-writable observation).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 import io
 import contextlib
 import sys
@@ -55,11 +57,16 @@ def _scaffold_dep_pair(dest: Path):
 def test_apply_injects_depends_on_include(tmp_path):
     _scaffold_dep_pair(tmp_path / "tp")
     _silent(apply_run, tmp_path / "tp")
-    hdr = tmp_path / "tp/native/inc/wfm/wfm_core.h"
-    assert '#include "lfsr/lfsr_core.h"' in hdr.read_text(encoding="utf-8")
+    hdr = INC.core_h(tmp_path / "tp", "wfm")
+    assert (
+        f'#include "{INC.core_include("lfsr", tmp_path / "tp")}"'
+        in hdr.read_text(encoding="utf-8")
+    )
     _silent(apply_run, tmp_path / "tp")  # idempotent
     assert (
-        hdr.read_text(encoding="utf-8").count('#include "lfsr/lfsr_core.h"')
+        hdr.read_text(encoding="utf-8").count(
+            f'#include "{INC.core_include("lfsr", tmp_path / "tp")}"'
+        )
         == 1
     )
 
@@ -68,9 +75,7 @@ def test_apply_injects_depends_on_include(tmp_path):
 def test_include_placement(tmp_path):
     _scaffold_dep_pair(tmp_path / "tp")
     _silent(apply_run, tmp_path / "tp")
-    text = (tmp_path / "tp/native/inc/wfm/wfm_core.h").read_text(
-        encoding="utf-8"
-    )
+    text = (INC.core_h(tmp_path / "tp", "wfm")).read_text(encoding="utf-8")
     assert text.index("clib_common.h") < text.index("lfsr/lfsr_core.h")
     # before the struct typedef (the doc comment mentions wfm_state_t earlier)
     assert text.index("lfsr/lfsr_core.h") < text.index("} wfm_state_t;")
@@ -94,7 +99,7 @@ def test_function_mutable_param_is_non_const(tmp_path):
     _silent(apply_run, dest)
     decl = next(
         line
-        for line in (dest / "native/inc/dsp/dsp_core.h")
+        for line in (dest / INC_ROOT / "dsp/dsp_core.h")
         .read_text(encoding="utf-8")
         .splitlines()
         if "process(" in line
@@ -109,7 +114,7 @@ def test_function_mutable_param_is_non_const(tmp_path):
 def _inc_layout(tmp_path: Path, comp: str, comp_body: str, deps=()) -> Path:
     """Write native/inc/<comp>/<comp>_core.h plus an empty header per dep, so
     the dep-header existence check resolves. Returns the component header."""
-    inc = tmp_path / "native" / "inc"
+    inc = tmp_path / INC_ROOT
     for d in deps:
         (inc / d).mkdir(parents=True, exist_ok=True)
         (inc / d / f"{d}_core.h").write_text("/* dep */\n", encoding="utf-8")
@@ -177,11 +182,9 @@ def test_apply_skips_link_target_dep(tmp_path):
     cfg["wfm"]["depends_on"] = ["m", "some_core"]  # libm + a bare target
     C.save(tmp_path / "tp", cfg)
     _silent(apply_run, tmp_path / "tp")
-    text = (tmp_path / "tp/native/inc/wfm/wfm_core.h").read_text(
-        encoding="utf-8"
-    )
+    text = (INC.core_h(tmp_path / "tp", "wfm")).read_text(encoding="utf-8")
     assert "some_core/some_core_core.h" not in text
-    assert '#include "m/m_core.h"' not in text
+    assert f'#include "{INC.core_include("m", tmp_path / "tp")}"' not in text
 
 
 def test_inject_includes_fallback_when_no_includes(tmp_path):
@@ -232,8 +235,8 @@ def test_module_object_gets_depends_on_include(tmp_path):
     cfg["mix"]["depends_on"] = ["lfsr"]
     C.save(dest, cfg)
     _silent(apply_run, dest)
-    hdr = (dest / "native/inc/mix/mix_core.h").read_text(encoding="utf-8")
-    assert '#include "lfsr/lfsr_core.h"' in hdr
+    hdr = (dest / INC_ROOT / "mix/mix_core.h").read_text(encoding="utf-8")
+    assert f'#include "{INC.core_include("lfsr", dest)}"' in hdr
 
 
 # ── gh-174 follow-up: a depends_on object's own test/bench link the dep core ──

@@ -10,7 +10,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/fir_filter/fir_filter_core.h")
+header = pathlib.Path("native/inc/my_fir/fir_filter/fir_filter_core.h")
 core_c = pathlib.Path("native/src/fir_filter/fir_filter_core.c")
 batch_h = pathlib.Path(__file__).with_name("07_step_batch.h")
 kernel = pathlib.Path(__file__).with_name("07_kernel.c")

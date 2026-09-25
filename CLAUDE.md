@@ -154,7 +154,7 @@ Context dicts are assembled by chaining `make_*_ctx()` functions:
 
 A scaffolded project contains:
 
-- `native/inc/<comp>/<comp>_core.h` — public C API + inline `step()`
+- `native/inc/<pkg>/<comp>/<comp>_core.h` — public C API + inline `step()`
 - `native/src/<comp>/<comp>_core.c` — `steps()` + lifecycle (`create`/`destroy`/`reset`)
 - `native/src/<comp>/<comp>_ext.c` — CPython extension glue (arg parsing, `PyMethodDef`, module init)
 - `native/tests/test_<comp>_core.c` — CTest smoke test
@@ -167,9 +167,11 @@ From manifest schema `_incpath.PREFIXED_SCHEMA` on (gh-1583), every header lives
 `native/inc/<pkg>/` -- `native/inc/<pkg>/<comp>/<comp>_core.h`,
 `native/inc/<pkg>/clib_common.h`, the umbrella `native/inc/<pkg>/<pkg>.h` --
 and every generated include is spelled `"<pkg>/..."`; `-I` stays
-`native/inc`, so the installed tree is `include/<pkg>/`. `CURRENT_SCHEMA` is
-still below it: `jm new` scaffolds the legacy layout until `jm upgrade` can move an
-existing project (part 3). The author of such a project spells their own headers
+`native/inc`, so the installed tree is `include/<pkg>/`. `jm new` scaffolds it,
+and `jm upgrade` moves an older project there (`_upgrade.PrefixHeaders`): it moves
+`native/inc/*` one level down and respells each include, manifest string and
+CMake path that RESOLVES to a moved file, so hand-written headers come along and a
+vendored library's own `"config.h"` does not. The author spells their own headers
 `"<pkg>/..."` too, including a manifest `header =`.
 
 ### Module vs standalone objects
@@ -282,7 +284,7 @@ the composed generator from the source struct, and each
 generates the binding that calls them; the project writes the bodies.
 
 Their **prototypes are jm's**, and they are published in a generated
-`native/inc/<cname>/<cname>_bridge.h` — self-contained (it pulls in the source
+`native/inc/<pkg>/<cname>/<cname>_bridge.h` — self-contained (it pulls in the source
 struct's header and the generator's), include-guarded, and included by
 `<cname>_ext.c` rather than re-declared there. That file is the *only* header a
 composer module emits, and it is emitted only when the source declares at

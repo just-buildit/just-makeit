@@ -43,7 +43,7 @@ a bogus complex value.
 
 ## What you get
 
-### `native/inc/NAME/NAME_core.h`
+### `native/inc/<pkg>/NAME/NAME_core.h`
 
 ```c
 typedef struct {

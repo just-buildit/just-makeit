@@ -29,6 +29,7 @@ entry" is the one with no exceptions.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -113,7 +114,7 @@ def _project(tmp_path: Path, module: str | None = None) -> Path:
 
 def _author(root: Path, replace: str) -> None:
     """Put an authored Doxygen block on generator()'s declaration."""
-    hdr = next((root / "native" / "inc").rglob("rs_core.h"))
+    hdr = next((root / INC_ROOT).rglob("rs_core.h"))
     t = hdr.read_text(encoding="utf-8")
     assert " * @brief generator." in t, "the scaffold no longer seeds @brief"
     hdr.write_text(t.replace(" * @brief generator.", replace, 1), "utf-8")
@@ -324,7 +325,7 @@ def _named_project(tmp_path: Path, module: str | None) -> Path:
             [],
             params=[(param, "int", "")],
         )
-    hdr = next((root / "native" / "inc").rglob("w_core.h"))
+    hdr = next((root / INC_ROOT).rglob("w_core.h"))
     t = hdr.read_text(encoding="utf-8")
     for name in ("tune", "shift"):
         assert f" * @brief {name}." in t, "the scaffold no longer seeds @brief"

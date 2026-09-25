@@ -180,7 +180,7 @@ def run(root: Path) -> None:
         assert f") level = {i};" not in ext, "a choice bound to its index"
 
     # ── 4. The author's C, then re-apply for the docs ────────────────────
-    hdr = proj / "native/inc/gate/gate_core.h"
+    hdr = proj / "native/inc/levels/gate/gate_core.h"
     _replace_once(
         hdr,
         "/**\n * @brief Gate state.",

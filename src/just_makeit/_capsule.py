@@ -270,10 +270,9 @@ def render_ext(cfg: dict, module: str) -> str:
     )
     # The backing C API header; defaults to <backing>/<backing>_core.h but a
     # composed object may declare its API elsewhere (ddcr lives in ddc_core.h).
-    header = (
-        cfg.get("module", {}).get(module, {}).get("header")
-        or f"{backing}/{backing}_core.h"
-    )
+    header = cfg.get("module", {}).get(module, {}).get(
+        "header"
+    ) or INC.core_include(backing, cfg)
     init_params = C.module_init_params(cfg, module)
 
     parts: list[str] = []

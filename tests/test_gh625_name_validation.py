@@ -25,6 +25,7 @@ a sixth copy.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -116,7 +117,7 @@ class TestTheCommandsThatWereMissingIt:
         """The damage in the report is not the exit code — it is the four
         artifacts, one of them sacred, left carrying the bad name. Rejecting
         after writing would be no better than not rejecting."""
-        header = project / "native" / "inc" / "thing" / "thing_core.h"
+        header = project / INC_ROOT / "thing" / "thing_core.h"
         before = header.read_text()
         manifest = (project / C.FILENAME).read_text()
 

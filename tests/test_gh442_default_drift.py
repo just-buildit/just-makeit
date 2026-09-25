@@ -16,6 +16,7 @@ section, always shown and never suppressed by `--allow`/`status_allow`,
 mirroring the gh-426 DROPPED-symbol precedent.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import contextlib
 import io
 import json
@@ -54,7 +55,7 @@ def _hand_document_create(dest: Path, default_text: str = "0.05") -> None:
     """Replace the scaffold-trivial create() doc with a real hand-written
     one (a non-template @brief, or `_is_scaffold_brief` filters the whole
     block — including its @param defaults — as jm's own boilerplate)."""
-    header = dest / "native" / "inc" / "burst" / "burst_core.h"
+    header = dest / INC_ROOT / "burst" / "burst_core.h"
     text = header.read_text(encoding="utf-8")
     text = text.replace(
         "@brief Create a burst instance.",
@@ -104,7 +105,7 @@ class TestInitParamDrift:
         self, tmp_path
     ):
         dest = _scaffold(tmp_path)
-        header = dest / "native" / "inc" / "burst" / "burst_core.h"
+        header = dest / INC_ROOT / "burst" / "burst_core.h"
         text = header.read_text(encoding="utf-8")
         text = text.replace(
             "@brief Create a burst instance.",

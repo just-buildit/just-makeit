@@ -7,7 +7,7 @@
  *   filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
-#include "filter/filter_core.h"
+#include "va_filter/filter/filter_core.h"
 #include <Python.h>
 
 PyObject *

@@ -153,7 +153,7 @@ ______________________________________________________________________
 State variables (declared with `--state`) get a constructor parameter,
 getter/setter pair, and reset target. If you just need a field in the struct
 — a scratch buffer, a lookup table, something initialised in `_create` — add
-it manually to `native/inc/<obj>/<obj>_core.h` inside the struct body.
+it manually to `native/inc/<pkg>/<obj>/<obj>_core.h` inside the struct body.
 
 The state struct (and the inline `step()` body) in `<obj>_core.h` is sacred —
 `just-makeit apply` never re-renders it; it only injects missing method/property

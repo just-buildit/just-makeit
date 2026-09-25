@@ -4,7 +4,7 @@
 ```
 
 ```
-  create  native/inc/playlist/playlist_bridge.h
+  create  native/inc/studio/playlist/playlist_bridge.h
   create  native/src/playlist/CMakeLists.txt
   create  native/src/playlist/playlist_ext.c
   create  src/studio/playlist/playlist.pyi

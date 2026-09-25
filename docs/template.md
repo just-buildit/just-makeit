@@ -12,10 +12,11 @@ for the complete, generated-file-by-file tree.
 <project>/
     native/
         inc/
-            clib_common.h               # common C99 types
-            pyex_common.h               # common Python extension includes
-            <component>/
-                <component>_core.h      # public API + inline step()
+            <project>/
+                clib_common.h           # common C99 types
+                pyex_common.h           # common Python extension includes
+                <component>/
+                    <component>_core.h  # public API + inline step()
         src/
             <component>/
                 <component>_core.c      # your algorithm lives here (sacred)

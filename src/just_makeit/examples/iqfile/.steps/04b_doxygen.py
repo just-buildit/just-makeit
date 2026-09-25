@@ -63,7 +63,7 @@ GETTER_BLOCKS = {
 
 
 def _enrich(obj: str) -> None:
-    header = pathlib.Path("native/inc") / obj / f"{obj}_core.h"
+    header = pathlib.Path("native/inc/iqfile") / obj / f"{obj}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real summary.

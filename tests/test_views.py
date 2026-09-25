@@ -1,6 +1,7 @@
 """Tests for `[[<obj>.views]]` — a second class over one C core (gh-504)."""
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import pytest
 
@@ -224,7 +225,7 @@ class TestScaffold:
         assert 'PyModule_AddObject(m, "BurstAcquisition"' in agg
 
     def test_create_fn_scaffolded_into_core(self, view_project):
-        h = (view_project / "native" / "inc" / "acq" / "acq_core.h").read_text(
+        h = (view_project / INC_ROOT / "acq" / "acq_core.h").read_text(
             encoding="utf-8"
         )
         c = (view_project / "native" / "src" / "acq" / "acq_core.c").read_text(
@@ -471,11 +472,7 @@ class TestExcludeMethods:
         # The excluded method's C function stays in the sacred core (the parent
         # still calls it) — excluding only drops the view's Python wrapper.
         h = (
-            view_project_with_excluded_method
-            / "native"
-            / "inc"
-            / "acc"
-            / "acc_core.h"
+            view_project_with_excluded_method / INC_ROOT / "acc" / "acc_core.h"
         ).read_text(encoding="utf-8")
         assert "acc_reset_hard" in h
 
@@ -613,7 +610,7 @@ class TestDivergingSurfaces:
         self, diverging_view_project
     ):
         h = (
-            diverging_view_project / "native" / "inc" / "acq" / "acq_core.h"
+            diverging_view_project / INC_ROOT / "acq" / "acq_core.h"
         ).read_text(encoding="utf-8")
         assert (
             "reps;" in h

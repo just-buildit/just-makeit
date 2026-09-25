@@ -35,6 +35,7 @@ without a compiler; these cannot, so the property stays armed everywhere.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -76,7 +77,7 @@ def _faces(root: Path) -> dict:
     """The four C faces that must agree on the constructor's name."""
     return {
         "_core.c": root / "native/src/widget/widget_core.c",
-        "_core.h": root / "native/inc/widget/widget_core.h",
+        "_core.h": root / INC_ROOT / "widget/widget_core.h",
         "_ext.c": root / "native/src/widget/widget_ext.c",
         "test": root / "native/tests/test_widget_core.c",
     }

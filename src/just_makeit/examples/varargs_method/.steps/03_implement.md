@@ -2,7 +2,7 @@
 
 Three stubs need bodies:
 
-- `filter_step` in `native/inc/filter/filter_core.h` — multiply input by gain.
+- `filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
 - `filter_configure` in `native/src/filter/filter_configure_core.c` — parse
   the `gain=` keyword argument and write it to state.
 - `filter_current_gain` in `native/src/filter/filter_core.c` — return

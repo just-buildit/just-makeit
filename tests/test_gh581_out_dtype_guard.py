@@ -30,6 +30,7 @@ that forgets the guard fails it without anyone having to remember gh-581.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -302,7 +303,7 @@ class TestRuntime:
             )
         # Make step() do something observable, so "was the caller's buffer
         # written?" is distinguishable from "was it left at zero?".
-        core = dest / "native/inc/gain/gain_core.h"
+        core = dest / INC_ROOT / "gain/gain_core.h"
         text = core.read_text("utf-8")
         stub = "    return (float)x;"
         assert stub in text, "stub shape changed; update this test"

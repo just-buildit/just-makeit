@@ -30,6 +30,7 @@ Two gates, because they answer different questions:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import shutil
 import subprocess
@@ -514,7 +515,7 @@ class TestApplyActuallyEmitsIt:
         assert 'PyImport_ImportModule("p.own.own")' in ext
 
     def test_the_contract_header_is_written(self, project):
-        h = project / "native/inc/flag/flag_procglobal.h"
+        h = project / INC_ROOT / "flag/flag_procglobal.h"
         assert h.exists()
         text = h.read_text()
         assert "void *flag_state_ptr(void);" in text
@@ -546,7 +547,7 @@ class TestApplyActuallyEmitsIt:
         ext = (root / "native/src/eng/eng_ext.c").read_text()
         assert "PyCapsule_New" not in ext
         assert "_jm_pg_" not in ext
-        assert not (root / "native/inc/eng/eng_procglobal.h").exists()
+        assert not (root / INC_ROOT / "eng/eng_procglobal.h").exists()
 
 
 def test_the_key_round_trips_through_dump():

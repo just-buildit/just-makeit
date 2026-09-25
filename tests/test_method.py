@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit method`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -64,7 +65,7 @@ class TestMethodPreservesInitParams:
             return_type="float _Complex",
         )
 
-        header = dest / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        header = dest / INC_ROOT / "my_filter" / "my_filter_core.h"
         before = header.read_text(encoding="utf-8")
         # Initial scaffold honours init_params (gh-69 from 0.13.22).
         assert "my_filter_create(float sample_rate)" in before
@@ -416,7 +417,7 @@ class TestMethodUpdatesExtC:
             True,
             [],
         )
-        h = (project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_execute_cf32_max_out" in h
@@ -1021,7 +1022,7 @@ class TestMethodFixedMultiOutput:
             False,
             ["uint8_t"],
         )
-        h = (project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "uint8_t *out1" in h
@@ -1311,7 +1312,7 @@ class TestMethodWithParams:
             [],
             params=[("freq", "float"), ("mode", "int32_t")],
         )
-        h = (project / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (project / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "float freq" in h
@@ -1660,7 +1661,7 @@ class TestMethodArrayArgWithParams:
         assert "const float *h" in core
 
     def test_core_h_prototype_has_x_and_h(self, madd_method):
-        hdr = (madd_method / "native/inc/nco/nco_core.h").read_text(
+        hdr = (madd_method / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float *x" in hdr
@@ -1853,7 +1854,7 @@ class TestMethodExtraArgsTomlKey:
         # Remove generated sacred files so apply must recreate them.
         import shutil
 
-        shutil.rmtree(proj / "native" / "inc" / "nco")
+        shutil.rmtree(proj / INC_ROOT / "nco")
         shutil.rmtree(proj / "native" / "src" / "nco")
         apply_run(proj)
 
@@ -1899,7 +1900,7 @@ class TestMethodVarargs:
         )
 
     def _core_h(self, p):
-        return (p / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        return (p / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
 

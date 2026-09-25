@@ -34,6 +34,7 @@ GATE: a manifest key a method shape accepts is honoured in the generated
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import ast
 import builtins
@@ -143,7 +144,7 @@ def _project(tmp_path: Path, *, real_kernels: bool) -> Path:
     if real_kernels:
         # A header-only component's kernels live in the HEADER, which is
         # the half the stub check was reading from the wrong file.
-        hdr = proj / "native" / "inc" / "r" / "r_core.h"
+        hdr = proj / INC_ROOT / "r" / "r_core.h"
         s = hdr.read_text()
         i = s.index("r_read(r_state_t *state")
         o = s.index("{", i)

@@ -34,6 +34,7 @@ same name, same signature    doc-only override, shares the parent's
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import pytest
 
@@ -146,9 +147,9 @@ class TestSignatureOverride:
         assert "rx_block_real" not in frag
 
     def test_both_prototypes_reach_the_shared_header(self, override_project):
-        h = (
-            override_project / "native" / "inc" / "rx" / "rx_core.h"
-        ).read_text(encoding="utf-8")
+        h = (override_project / INC_ROOT / "rx" / "rx_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "rx_block(rx_state_t *state, const float _Complex *" in h
         assert "rx_block_real(rx_state_t *state, const float *" in h
 

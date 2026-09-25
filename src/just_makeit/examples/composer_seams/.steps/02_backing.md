@@ -5,7 +5,7 @@ is yours. It lives in a `c_deps` directory, which is jm's escape hatch for
 hand-written C: jm emits an `add_subdirectory()` line for it and never touches
 anything inside.
 
-`native/inc/playlist/playlist_core.h`:
+`native/inc/studio/playlist/playlist_core.h`:
 
 ```{02_playlist_core.h}
 ```

@@ -21,6 +21,7 @@ together so a future edit cannot fix one and leave the other, which is the
 single most repeated failure mode in this codebase.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import ast
 import shutil
 import subprocess
@@ -84,7 +85,7 @@ class TestStandaloneStub:
     def test_header_decl_is_present(self, project):
         """The issue's second claim ('no C declaration injected') is stale --
         assert it stays injected, with the `*out` output param."""
-        h = (project / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
         assert (
             "rdr_read(rdr_state_t *state, size_t n, float _Complex *out)" in h
         )

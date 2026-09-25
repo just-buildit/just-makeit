@@ -13,6 +13,8 @@ interpreter's own Python/numpy ABI. Skipped only where no C compiler is
 available."""
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import importlib.util
 import shutil
@@ -351,17 +353,28 @@ def _ringbuf_module() -> dict:
     }
 
 
+def _placed(module: dict, tmp: Path) -> dict:
+    """*module* with its backing ``header`` spelled in *tmp*'s layout: the
+    author's own header is included as ``<pkg>/...`` from schema 8 on."""
+    return {**module, "header": INC.include(module["header"], tmp)}
+
+
 def _compile_import(
     tmp: Path, mod_name: str, header_src: str, backing_src: str
 ):
     """Compile a materialized handle module's binding + its C backing into a
     ``.so`` and import it. The init symbol is ``PyInit_<mod_name>``, so the spec
     name must match (not an arbitrary alias)."""
-    inc = tmp / "native" / "inc" / mod_name
+    inc = tmp / INC_ROOT / mod_name
     inc.mkdir(parents=True, exist_ok=True)
     (inc / f"{mod_name}.h").write_text(header_src)
     backing_c = tmp / "native" / "src" / mod_name / f"{mod_name}.c"
-    backing_c.write_text(backing_src)
+    backing_c.write_text(
+        backing_src.replace(
+            f'#include "{mod_name}/',
+            f'#include "{INC.include(mod_name, tmp)}/',
+        )
+    )
     ext_c = tmp / "native" / "src" / mod_name / f"{mod_name}_ext.c"
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     so = tmp / f"{mod_name}{suffix}"
@@ -378,7 +391,7 @@ def _compile_import(
         "-O2",
         "-std=c11",
         "-I",
-        str(tmp / "native" / "inc"),
+        str(tmp / INC_DIR),
         "-I",
         sysconfig.get_path("include"),
         "-I",
@@ -402,7 +415,7 @@ def _build_ring_so(tmp: Path):
     """Scaffold → apply → compile the generated ringbuf .so; import + return it."""
     new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
     cfg = C.load(tmp)
-    cfg.setdefault("module", {})["ringbuf"] = _ringbuf_module()
+    cfg.setdefault("module", {})["ringbuf"] = _placed(_ringbuf_module(), tmp)
     C.save(tmp, cfg)
     apply_run(tmp)
     return _compile_import(tmp, "ringbuf", _RINGBUF_H, _RINGBUF_C)
@@ -451,7 +464,7 @@ def _ticks_module() -> dict:
 def _build_ticks_so(tmp: Path):
     new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
     cfg = C.load(tmp)
-    cfg.setdefault("module", {})["ticks"] = _ticks_module()
+    cfg.setdefault("module", {})["ticks"] = _placed(_ticks_module(), tmp)
     C.save(tmp, cfg)
     apply_run(tmp)
     return _compile_import(tmp, "ticks", _TICKS_H, _TICKS_C)
@@ -500,7 +513,7 @@ def _flaky_module() -> dict:
 def _build_flaky_so(tmp: Path):
     new_run("proj", tmp, ["widget"], [("gain", "float", "0.0f")])
     cfg = C.load(tmp)
-    cfg.setdefault("module", {})["flaky"] = _flaky_module()
+    cfg.setdefault("module", {})["flaky"] = _placed(_flaky_module(), tmp)
     C.save(tmp, cfg)
     apply_run(tmp)
     return _compile_import(tmp, "flaky", _FLAKY_H, _FLAKY_C)

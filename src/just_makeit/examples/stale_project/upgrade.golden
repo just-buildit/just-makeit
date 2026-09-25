@@ -87,6 +87,7 @@ summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
+warning: project schema is v7, current is v8. Run 'just-makeit upgrade' to get new features.
 warning: this project was last generated with just-makeit 0.33.14, but you are running <HEAD>. Generated glue may be incorrect.
          Install the matching version (uvx --from 'just-makeit==0.33.14' just-makeit …) or re-apply with the current CLI to move the project forward.
   stamp   just-makeit.toml  [project] jm_version = <HEAD>
@@ -182,6 +183,7 @@ OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent ben
         project is real. `apply` rewrites neither kind; see docs/upgrading.md.
 
 $ jm apply   # exit 0
+warning: project schema is v7, current is v8. Run 'just-makeit upgrade' to get new features.
 just-makeit: applying just-makeit.toml
 
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
@@ -192,12 +194,36 @@ Done!  Materialized 0 new file(s), patched 0 impl(s), and reconciled 1 wiring fi
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm upgrade   # exit 0
-already up to date (schema 7)
+migrating schema 7 → 8
+  move    native/inc/* -> native/inc/stale/  (6 file(s))
+  update  native/benchmarks/bench_dsp_core.c  (header references)
+  update  native/benchmarks/bench_fir_core.c  (header references)
+  update  native/benchmarks/bench_gain_core.c  (header references)
+  update  native/inc/stale/dsp/dsp_core.h  (header references)
+  update  native/inc/stale/fir/fir_core.h  (header references)
+  update  native/inc/stale/gain/gain_core.h  (header references)
+  update  native/inc/stale/stale.h  (header references)
+  update  native/src/dsp/dsp_core.c  (header references)
+  update  native/src/dsp/dsp_ext.c  (header references)
+  update  native/src/dsp/dsp_ext_fir.c  (header references)
+  update  native/src/dsp/energy.c  (header references)
+  update  native/src/fir/fir_core.c  (header references)
+  update  native/src/gain/gain_core.c  (header references)
+  update  native/src/gain/gain_ext.c  (header references)
+  update  native/tests/jm_test.h  (header references)
+  update  native/tests/test_dsp_core.c  (header references)
+  update  native/tests/test_fir_core.c  (header references)
+  update  native/tests/test_fir_symbols.c  (header references)
+  update  native/tests/test_gain_core.c  (header references)
+  update  native/tests/test_gain_symbols.c  (header references)
+  update  native/src/fir/CMakeLists.txt  (header references)
+  update  native/src/gain/CMakeLists.txt  (header references)
+project is now at schema 8
 
 renamed jb.toml -> bootstrap.toml; your edits came along.
 
 respelled the complex types in 4 file(s) (`complex` -> `_Complex`, gh-1246):
-  native/inc/fir/fir_core.h
+  native/inc/stale/fir/fir_core.h
   native/src/fir/fir_core.c
   native/tests/test_fir_core.c
   native/tests/test_gain_core.c
@@ -227,7 +253,7 @@ OUTDATED (6) — create-only file(s) behind jm's current version:
   ↑ Makefile
   ↑ bootstrap.toml
   ↑ native/benchmarks/jm_bench.h
-  ↑ native/inc/clib_common.h
+  ↑ native/inc/stale/clib_common.h
   jm owns the content of these and ships a newer one, but `apply` will NOT
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
@@ -313,7 +339,7 @@ warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest 
   create  native/benchmarks/bench_fir_core.c
   create  native/benchmarks/bench_gain_core.c
   create  native/benchmarks/jm_bench.h
-  create  native/inc/clib_common.h
+  create  native/inc/stale/clib_common.h
 
 Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time

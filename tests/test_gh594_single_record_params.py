@@ -34,6 +34,7 @@ site 4 goes through the shared parse builder, so an array param gets the
 pointer + `_len` treatment the non-single path always gave it.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -352,7 +353,7 @@ class TestGeneratedBinding:
 
     def test_prototype_and_binding_agree(self, tmp_path):
         dest = _scaffold(tmp_path / "p", ARRAY_PARAMS)
-        header = (dest / "native/inc/meter/meter_core.h").read_text("utf-8")
+        header = (dest / INC_ROOT / "meter/meter_core.h").read_text("utf-8")
         assert (
             "ber_align_t meter_align(meter_state_t *state,"
             " const float _Complex *rx, size_t rx_len, size_t t0);" in header
@@ -361,7 +362,7 @@ class TestGeneratedBinding:
     def test_scalar_only_params_also_agree(self, tmp_path):
         """The issue's 'correct' row -- a compile error before this fix."""
         dest = _scaffold(tmp_path / "p", [("t0", "size_t"), ("pfa", "double")])
-        header = (dest / "native/inc/meter/meter_core.h").read_text("utf-8")
+        header = (dest / INC_ROOT / "meter/meter_core.h").read_text("utf-8")
         ext = (dest / "native/src/ber/ber_ext_meter.c").read_text("utf-8")
         assert (
             "ber_align_t meter_align(meter_state_t *state,"

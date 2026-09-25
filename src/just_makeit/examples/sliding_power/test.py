@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_signatures
 
@@ -37,18 +38,14 @@ def run(root: Path) -> None:
         return_type="float",
     )
 
-    assert (dest / "native" / "inc" / "jm_simd.h").exists(), (
-        "jm_simd.h missing"
-    )
-    assert (dest / "native" / "inc" / "jm_perf.h").exists(), (
-        "jm_perf.h missing"
-    )
+    assert (INC.header_root(dest) / "jm_simd.h").exists(), "jm_simd.h missing"
+    assert (INC.header_root(dest) / "jm_perf.h").exists(), "jm_perf.h missing"
 
     # Patch step(): replace stub (const + placeholder body) with real implementation.
     # The stub is: JM_FORCEINLINE JM_HOT float\npower_est_step(const ...) { ... }
     import re as _re
 
-    header = dest / "native" / "inc" / "power_est" / "power_est_core.h"
+    header = INC.header_root(dest) / "power_est" / "power_est_core.h"
     text = header.read_text(encoding="utf-8")
     stub_re = _re.compile(
         r"JM_FORCEINLINE JM_HOT float\s*\n"

@@ -4,6 +4,7 @@
 This is distinct from --array-arg which adds constructor parameters.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -54,23 +55,23 @@ def in_module_void(tmp_path):
 
 class TestCoreHeader:
     def test_step_takes_pointer_and_len(self, standalone_void):
-        h = (standalone_void / "native/inc/proc/proc_core.h").read_text()
+        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text()
         assert "const float *x, size_t x_len" in h
 
     def test_step_returns_void(self, standalone_void):
-        h = (standalone_void / "native/inc/proc/proc_core.h").read_text()
+        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text()
         # step signature is "void\nproc_step(...)"
         assert re.search(r"\bvoid\b.*proc_step", h, re.DOTALL)
 
     def test_step_returns_scalar_when_explicit(self, standalone_scalar_return):
         h = (
-            standalone_scalar_return / "native/inc/peak/peak_core.h"
+            standalone_scalar_return / INC_ROOT / "peak/peak_core.h"
         ).read_text()
         assert "const float *x, size_t x_len" in h
         assert re.search(r"\bfloat\b.*peak_step", h, re.DOTALL)
 
     def test_complex_elem_type(self, in_module_void):
-        h = (in_module_void / "native/inc/sink/sink_core.h").read_text()
+        h = (in_module_void / INC_ROOT / "sink/sink_core.h").read_text()
         # gh-1246: jm emits the `_Complex` spelling, never the
         # <complex.h> `complex` macro (which does not exist in C++).
         assert "float _Complex" in h
@@ -235,7 +236,7 @@ class TestBlockwise:
         from just_makeit import _apply
 
         _apply.run(root)  # must not raise
-        core_h = root / "native/inc/filt/filt_core.h"
+        core_h = root / INC_ROOT / "filt/filt_core.h"
         core_c = root / "native/src/filt/filt_core.c"
         assert core_h.exists() and core_c.exists()
         # steps() signature in header; no inline step()
@@ -277,7 +278,7 @@ class TestBlockwise:
             arg_type="float _Complex[]",
             return_type="float _Complex[]",
         )
-        h = (root / "native/inc/xform/xform_core.h").read_text()
+        h = (root / INC_ROOT / "xform/xform_core.h").read_text()
         assert "xform_steps" in h
         # No inline step() function body (the @code comment may reference step
         # but there must be no static inline definition)
@@ -335,7 +336,7 @@ class TestBoolScalarType:
         root = tmp_path / "bp"
         new_run("bp", root)
         object_run(root, "flg", None, arg_type="bool", return_type="bool")
-        core = (root / "native" / "inc" / "flg" / "flg_core.h").read_text()
+        core = (root / INC_ROOT / "flg" / "flg_core.h").read_text()
         assert "bool" in core
 
 
@@ -365,7 +366,7 @@ class TestVariableOutputArrayArg:
         return root
 
     def test_header_decl_is_valid_c(self, proj):
-        h = (proj / "native/inc/widget/widget_core.h").read_text()
+        h = (proj / INC_ROOT / "widget/widget_core.h").read_text()
         assert "const float _Complex *in, size_t n_in" in h
         assert "[] *" not in h
 

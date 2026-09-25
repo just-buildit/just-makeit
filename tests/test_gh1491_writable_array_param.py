@@ -28,6 +28,7 @@ GATE: a manifest key a method shape accepts is honoured in the generated
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import os
 import re
@@ -133,7 +134,7 @@ class TestThePrototypeCanWrite:
         ],
     )
     def test_header(self, project, decl):
-        hdr = (project / "native/inc/w/w_core.h").read_text(encoding="utf-8")
+        hdr = (project / INC_ROOT / "w/w_core.h").read_text(encoding="utf-8")
         assert decl in hdr
 
     @pytest.mark.parametrize(
@@ -220,7 +221,7 @@ class TestTheScriptReplaysIt:
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stdout + r.stderr
 
-        hdr = (proj / "native/inc/w/w_core.h").read_text(encoding="utf-8")
+        hdr = (proj / INC_ROOT / "w/w_core.h").read_text(encoding="utf-8")
         assert hdr.count("float *buf, size_t buf_len") == 2, hdr
         assert "const float *buf" not in hdr
         src = (proj / "native/src/m/m_ext_w.c").read_text(encoding="utf-8")

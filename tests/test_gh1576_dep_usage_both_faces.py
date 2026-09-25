@@ -41,6 +41,8 @@ GATE: a consumer of an installed project whose header includes a
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import os
 import subprocess
@@ -98,7 +100,7 @@ _EXT_C = (
 # dependency's counter through jm then directly: "1,2" is one copy.
 _CONSUMER = (
     "#include <stdio.h>\n"
-    '#include "alpha/alpha_core.h"\n'
+    '#include "<<P>>alpha/alpha_core.h"\n'
     "int main(void) {\n"
     "    extdep_cfg_t c = {1};\n"
     "    int a = alpha_bump(), b = extdep_bump();\n"
@@ -169,6 +171,11 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     decl, target = _STYLES[name]
     assert run_cli("new", name, "--object", "alpha", cwd=root).returncode == 0
     proj = root / name
+    # gh-1583: an installed package's headers are included as `<pkg>/...`,
+    # so each package gets the consumer spelled for it.
+    (root / f"c_{name}.c").write_text(
+        _CONSUMER.replace("<<P>>", INC.prefix(proj))
+    )
     cfg = C.load(proj)
     cfg["project"].update(_fill(decl, ext_pfx))
     # A plain library name and a PATH beside the target, as real manifests
@@ -186,9 +193,9 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
 
-    h = proj / "native" / "inc" / "alpha" / "alpha_core.h"
+    h = proj / INC_ROOT / "alpha" / "alpha_core.h"
     s = h.read_text()
-    anchor = '#include "clib_common.h"'
+    anchor = f'#include "{INC.include("clib_common.h", proj)}"'
     assert s.count(anchor) == 1, s
     h.write_text(
         s.replace(anchor, anchor + '\n#include "extdep.h"')
@@ -222,7 +229,6 @@ def installed(tmp_path_factory):
     env = dict(os.environ)
     env["PKG_CONFIG_PATH"] = str(ext_pfx / "lib" / "pkgconfig")
     _cmake_install(ext, ext_pfx, env)
-    (root / "c.c").write_text(_CONSUMER)
     return root, ext_pfx, _Installs(root, env, ext_pfx), env
 
 
@@ -259,7 +265,7 @@ def _consume_cmake(root, ext_pfx, name, pfx, target, env) -> str:
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(cons C)\n"
         f"find_package({name} REQUIRED)\n"
-        "add_executable(c ../c.c)\n"
+        f"add_executable(c ../c_{name}.c)\n"
         f"target_link_libraries(c PRIVATE {name}::{target})\n"
     )
     _run(
@@ -297,7 +303,8 @@ def _consume_pc(root, name, pfx, static, env) -> str:
         # library names itself absolutely (gh-1594). A temp prefix is on no
         # Linux search path, so LD_LIBRARY_PATH there (ld.so(8)).
         link = pc("--libs")
-    _run(["cc", *pc("--cflags"), "c.c", *link, "-o", str(exe)], root, pc_env)
+    src = f"c_{name}.c"
+    _run(["cc", *pc("--cflags"), src, *link, "-o", str(exe)], root, pc_env)
     run_env = dict(pc_env)
     if sys.platform.startswith("linux"):
         run_env["LD_LIBRARY_PATH"] = str(pfx / "lib")

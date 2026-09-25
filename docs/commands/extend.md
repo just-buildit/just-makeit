@@ -1088,7 +1088,7 @@ no persistent state.
 
 Writes a C stub to the function's own sacred source file
 `native/src/<module>/<name>.c` (never regenerated — your implementation is
-safe) and injects the declaration into `native/inc/<module>/<module>_core.h`.
+safe) and injects the declaration into `native/inc/<pkg>/<module>/<module>_core.h`.
 Each function thus owns one translation unit, which the module's CMakeLists
 compiles into the module's OBJECT library. Then regenerates `<module>_ext.c`
 to add a `_bind_<name>` Python wrapper and wire it into the `PyMethodDef`
@@ -1137,7 +1137,7 @@ just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables.
 /*
  * fft_global_setup.c — fft module-level function.
  */
-#include "fft/fft_core.h"
+#include "<pkg>/fft/fft_core.h"
 
 /* <<IMPLEMENT: fft_global_setup>> */
 void
@@ -1168,7 +1168,7 @@ just-makeit function compute_window \
 /*
  * compute_window.c — fft module-level function.
  */
-#include "fft/fft_core.h"
+#include "<pkg>/fft/fft_core.h"
 
 /* <<IMPLEMENT: compute_window>> */
 float
@@ -1252,7 +1252,7 @@ img.convert_image("input.png", dst_cs="lab")   # → None, or raises RuntimeErro
 C stub (`native/src/img/convert_image.c` — yours to implement):
 
 ```c
-#include "img/img_core.h"
+#include "<pkg>/img/img_core.h"
 
 int
 convert_image(const char *path, int src_cs, int dst_cs)

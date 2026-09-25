@@ -50,7 +50,7 @@ from . import _incpath as INC
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 7
+CURRENT_SCHEMA = 8
 
 
 def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
@@ -2823,7 +2823,7 @@ def handle_header_resolved(cfg: dict, module: str) -> str:
     """
     backing = handle_backing(cfg, module)
     return handle_header(cfg, module) or (
-        f"{backing}/{backing}_core.h" if backing else ""
+        INC.core_include(backing, cfg) if backing else ""
     )
 
 
@@ -3264,7 +3264,7 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     # refusal on its own terms: the type was never unknowable, only undeclared.
     declared = str(prop.get("capsule_type") or "").strip()
     if declared:
-        return (declared, capsule, f"{comp}/{comp}_core.h", cls)
+        return (declared, capsule, INC.core_include(comp, cfg), cls)
     expr = str(prop.get("expr") or "").strip()
     if expr and expr != "self->handle":
         raise ValueError(
@@ -3279,7 +3279,7 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             f"    --init-param '<name>:<the C type> *:capsule:{capsule}"
             f":<header>'"
         )
-    return (f"{comp}_state_t *", capsule, f"{comp}/{comp}_core.h", cls)
+    return (f"{comp}_state_t *", capsule, INC.core_include(comp, cfg), cls)
 
 
 def enum_doc_key(ptype: str) -> str:

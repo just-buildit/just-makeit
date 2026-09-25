@@ -8,6 +8,7 @@ CMakeLists lists only ``<module>_core.c``. Off by default (one sacred ``.c`` per
 function), so existing projects are unchanged.
 """
 
+from just_makeit import _incpath as INC  # noqa: E402
 import shutil
 import subprocess
 import sys
@@ -134,9 +135,11 @@ def test_functions_in_core_builds_with_shared_static(tmp_path):
     root = tmp_path / "p"
     _two_fn_module(root, in_core=True)
     core = _measure_dir(root) / "measure_core.c"
+    anchor = f'#include "{INC.core_include("measure", root)}"'
+    assert anchor in core.read_text(), "the core no longer includes its header"
     text = core.read_text().replace(
-        '#include "measure/measure_core.h"',
-        '#include "measure/measure_core.h"\n\n'
+        anchor,
+        anchor + "\n\n"
         "static int32_t _next_pow2(int32_t n)"
         " { int32_t p = 1; while (p < n) p <<= 1; return p; }",
     )

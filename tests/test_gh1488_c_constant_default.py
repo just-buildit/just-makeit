@@ -19,6 +19,8 @@ Both object shapes are walked: a module object's stub comes from the other
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import ast
 import doctest
@@ -73,9 +75,9 @@ def _scaffold(tmp_path: Path, shape: str) -> Path:
         assert run_cli("module", "m", cwd=root).returncode == 0
     out = run_cli("object", "gate", "--no-step", *_STATE, *extra, cwd=root)
     assert out.returncode == 0, out.stdout
-    header = root / "native" / "inc" / "gate" / "gate_core.h"
+    header = root / INC_ROOT / "gate" / "gate_core.h"
     text = header.read_text(encoding="utf-8")
-    anchor = '#include "clib_common.h"\n'
+    anchor = f'#include "{INC.include("clib_common.h", root)}"\n'
     assert text.count(anchor) == 1
     header.write_text(
         text.replace(anchor, anchor + _DEFINES), encoding="utf-8"

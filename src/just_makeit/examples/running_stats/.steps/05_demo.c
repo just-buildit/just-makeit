@@ -1,5 +1,5 @@
 // demo.c
-#include "running_stats/running_stats_core.h"
+#include "my_stats/running_stats/running_stats_core.h"
 #include <complex.h>
 #include <stdio.h>
 

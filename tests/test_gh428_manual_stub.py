@@ -18,6 +18,7 @@ C-side declarations for it, or the next `jm apply` collides with the
 user's own binding.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -161,7 +162,7 @@ class TestNoCSideRegression:
         ext_c = (dest / "native" / "src" / "fft" / "fft_ext.c").read_text(
             encoding="utf-8"
         )
-        core_h = (dest / "native" / "inc" / "fft" / "fft_core.h").read_text(
+        core_h = (dest / INC_ROOT / "fft" / "fft_core.h").read_text(
             encoding="utf-8"
         )
         core_c = (dest / "native" / "src" / "fft" / "fft_core.c").read_text(

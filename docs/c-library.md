@@ -332,7 +332,7 @@ unit can include it and call the C core directly — the mixed case where some
 of your algorithms are C99 and some are C++11:
 
 ```cpp
-#include "engine/engine_core.h"      // the same header your C code includes
+#include "<pkg>/engine/engine_core.h"      // the same header your C code includes
 #include <vector>
 
 std::vector<float _Complex> xs;      // C99's type, in a C++11 container

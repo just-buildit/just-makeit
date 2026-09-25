@@ -28,6 +28,7 @@ method a view exposes lives in the parent's C namespace either way.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -65,7 +66,7 @@ def _project(tmp_path: Path, *, author: bool = True) -> Path:
     )
     view_run(root, "ddc", "MatchedDDC", "dsp", create_fn="ddc_create_matched")
     if author:
-        h = root / "native" / "inc" / "ddc" / "ddc_core.h"
+        h = root / INC_ROOT / "ddc" / "ddc_core.h"
         t = h.read_text(encoding="utf-8")
         assert " * @brief execute_ctrl." in t
         h.write_text(

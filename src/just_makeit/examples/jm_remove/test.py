@@ -46,6 +46,7 @@ Project layout
 from __future__ import annotations
 
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 
@@ -243,7 +244,7 @@ def run(root: Path) -> None:
 
     # State removal triggers regeneration of env_core.h so the struct definition
     # and the constructor signature reflect only the surviving fields.
-    core_h = (proj / "native" / "inc" / "env" / "env_core.h").read_text(
+    core_h = (INC.header_root(proj) / "env" / "env_core.h").read_text(
         encoding="utf-8"
     )
     # The struct field and any constructor default for "decay" are gone.
@@ -263,7 +264,7 @@ def run(root: Path) -> None:
         "osc must be absent from components() after object removal"
     )
     # Generated directory trees for osc must be deleted.
-    assert not (proj / "native" / "inc" / "osc").exists(), (
+    assert not (INC.header_root(proj) / "osc").exists(), (
         "native/inc/osc/ must be deleted after object removal"
     )
     assert not (proj / "native" / "src" / "osc").exists(), (
@@ -273,8 +274,8 @@ def run(root: Path) -> None:
     assert "env" in C.components(cfg), (
         "env must still be present after osc is removed"
     )
-    assert (proj / "native" / "inc" / "env").exists(), (
-        "native/inc/env/ must survive osc removal"
+    assert (INC.header_root(proj) / "env").exists(), (
+        "native/inc/my_synth/env/ must survive osc removal"
     )
 
 

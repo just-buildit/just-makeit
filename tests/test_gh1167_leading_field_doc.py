@@ -32,6 +32,7 @@ written (gh-1154/gh-1164).
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 from pathlib import Path
 
@@ -58,7 +59,7 @@ def project(tmp_path: Path) -> Path:
             ).returncode
             == 0
         )
-    h = root / "native" / "inc" / "o" / "o_core.h"
+    h = root / INC_ROOT / "o" / "o_core.h"
     s = h.read_text(encoding="utf-8")
     assert "    int span;" in s and "    int width;" in s, s
     s = s.replace(
@@ -116,7 +117,7 @@ class TestBothCommentForms:
             ).returncode
             == 0
         )
-        h = root / "native" / "inc" / "o" / "o_core.h"
+        h = root / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace(
                 "    int span;",

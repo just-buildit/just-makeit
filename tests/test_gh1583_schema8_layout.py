@@ -83,11 +83,11 @@ class TestTheSchemaDecides:
         assert INC.core_include("g", seven) == "g/g_core.h"
         assert INC.core_include("g", eight) == "p/g/g_core.h"
 
-    def test_current_schema_is_still_legacy(self):
-        # Part 3 flips this together with the `jm upgrade` migration; until
-        # then no project jm scaffolds may be prefixed.
+    def test_a_new_project_is_prefixed(self):
+        # Part 3: every project jm scaffolds now is, and `jm upgrade` moves an
+        # older one there.
         cur = {"project": {"name": "p", "schema": str(C.CURRENT_SCHEMA)}}
-        assert not INC.prefixed(cur)
+        assert INC.prefixed(cur)
 
     def test_a_bare_name_is_refused(self):
         # A name does not say which layout its project is in.

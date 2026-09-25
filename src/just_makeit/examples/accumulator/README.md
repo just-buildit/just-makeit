@@ -243,7 +243,7 @@ Open the generated header and replace the `(void)state; (void)x; /* TODO: implem
 stub. The only difference between the two is the C type — the logic is
 `state->acc += x` in both cases:
 
-**`native/inc/acc_f32/acc_f32_core.h`**
+**`native/inc/my_acc/acc_f32/acc_f32_core.h`**
 
 ```c
 static inline void
@@ -253,7 +253,7 @@ acc_f32_step(acc_f32_state_t *state, float x)
 }
 ```
 
-**`native/inc/acc_cf64/acc_cf64_core.h`**
+**`native/inc/my_acc/acc_cf64/acc_cf64_core.h`**
 
 ```c
 static inline void

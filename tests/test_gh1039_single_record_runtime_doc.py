@@ -28,6 +28,7 @@ Two layers, matching ``test_gh642_runtime_doc_parity``:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -138,7 +139,7 @@ def _scaffold(tmp_path: Path, **method_kw) -> Path:
 def project(tmp_path: Path) -> Path:
     """A scaffold whose ``single = true`` find() carries a full block."""
     root = _scaffold(tmp_path)
-    header = root / "native" / "inc" / "sync" / "sync_core.h"
+    header = root / INC_ROOT / "sync" / "sync_core.h"
     text = header.read_text(encoding="utf-8")
     assert " * @brief find." in text, "the scaffold no longer seeds @brief"
     header.write_text(

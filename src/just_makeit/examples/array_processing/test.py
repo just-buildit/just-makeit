@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_signatures
 
@@ -202,7 +203,7 @@ def run(root: Path) -> None:
 
     # step() takes a numpy array, returns int — no steps() generated
     core_h = (
-        proj_buf / "native" / "inc" / "buf_proc" / "buf_proc_core.h"
+        INC.header_root(proj_buf) / "buf_proc" / "buf_proc_core.h"
     ).read_text(encoding="utf-8")
     assert "const float _Complex *x, size_t x_len" in core_h, (
         "array arg not in step signature"

@@ -27,7 +27,7 @@ and marks the spot to fill in:
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include "filter/filter_core.h"
+#include "va_filter/filter/filter_core.h"
 
 /* <<IMPLEMENT: configure(*args, **kwargs)
  * Parse args/kwargs and return a PyObject *.

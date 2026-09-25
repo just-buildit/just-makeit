@@ -104,8 +104,8 @@ def _prepend_to_header(path: Path, text: str) -> None:
     s = path.read_text(encoding="utf-8")
     path.write_text(
         s.replace(
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n\n' + text,
+            '#include "ringdemo/clib_common.h"',
+            '#include "ringdemo/clib_common.h"\n\n' + text,
             1,
         ),
         encoding="utf-8",
@@ -164,7 +164,8 @@ def run(root: Path) -> None:
     # AUTHOR's, in the sacred header, and must exist before the method that
     # names them -- exactly as `iq16_t` does for the record ring below.
     _prepend_to_header(
-        proj / "native/inc/cf32_ring/cf32_ring_core.h", _CF32_STATUS_ENUM
+        proj / "native/inc/ringdemo/cf32_ring/cf32_ring_core.h",
+        _CF32_STATUS_ENUM,
     )
     # gh-1426 C: a message may name a PROPERTY, and an `expr` property has
     # no C getter at all -- its getset inlines the expression. That is the
@@ -294,11 +295,11 @@ def run(root: Path) -> None:
     )
     # The record is the AUTHOR's type and must exist before the method that
     # names it -- it goes into the component's own (sacred) header.
-    hdr = proj / "native/inc/iq16_ring/iq16_ring_core.h"
+    hdr = proj / "native/inc/ringdemo/iq16_ring/iq16_ring_core.h"
     hdr.write_text(
         hdr.read_text(encoding="utf-8").replace(
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n#include <stdint.h>\n\n'
+            '#include "ringdemo/clib_common.h"',
+            '#include "ringdemo/clib_common.h"\n#include <stdint.h>\n\n'
             "/** One complex q15 sample: the record a borrowed view hands"
             " back. */\ntypedef struct {\n    int16_t i;\n    int16_t q;\n"
             "} iq16_t;",
@@ -352,7 +353,7 @@ def run(root: Path) -> None:
     # ── 4. The author writes the kernels -- IN THE HEADER ────────────────
     # There is no `_core.c` to write them into. jm's own guidance says so:
     # "Done!  Implement cf32_ring_wait() in cf32_ring_core.h".
-    h = proj / "native/inc/cf32_ring/cf32_ring_core.h"
+    h = proj / "native/inc/ringdemo/cf32_ring/cf32_ring_core.h"
     # The precedence function goes in first, above the kernels that use it
     # and below the struct it reads.
     _insert_after(h, "} cf32_ring_state_t;", "\n" + _CF32_STATUS_FN)
@@ -401,7 +402,7 @@ def run(root: Path) -> None:
     state->closed = 1;""",
     )
 
-    h = proj / "native/inc/iq16_ring/iq16_ring_core.h"
+    h = proj / "native/inc/ringdemo/iq16_ring/iq16_ring_core.h"
     _patch_body(
         h,
         "iq16_ring_write(iq16_ring_state_t *state",

@@ -36,6 +36,7 @@ key was always there with the right value.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -67,7 +68,7 @@ def _project(tmp_path: Path) -> Path:
 
 
 def _headers(proj: Path) -> list[Path]:
-    return sorted((proj / "native" / "inc").rglob("*_core.h"))
+    return sorted((proj / INC_ROOT).rglob("*_core.h"))
 
 
 def test_no_generated_header_carries_an_unfilled_slot(tmp_path: Path):
@@ -117,9 +118,7 @@ def test_the_literal_token_is_absent_from_the_no_state_header(
     proj = _project(tmp_path)
     with contextlib.redirect_stdout(io.StringIO()):
         init_run(proj, "nos", no_state=True)
-    text = (proj / "native" / "inc" / "nos" / "nos_core.h").read_text(
-        encoding="utf-8"
-    )
+    text = (proj / INC_ROOT / "nos" / "nos_core.h").read_text(encoding="utf-8")
     assert "property_struct_fields" not in text
     assert "IMPLEMENT: add fields" in text
 

@@ -24,6 +24,7 @@ swapped. The guard is gh-581's rule for an `out=` buffer, one direction over.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import subprocess
 import sys
@@ -162,7 +163,7 @@ class TestTheDeclaration:
 class TestTheGeneratedC:
     def test_the_prototype_takes_the_struct(self, tmp_path):
         proj = _declare(tmp_path)
-        header = (proj / "native" / "inc" / "ring" / "ring_core.h").read_text()
+        header = (proj / INC_ROOT / "ring" / "ring_core.h").read_text()
         assert (
             "size_t ring_write(ring_state_t *state, const iq16_t *x,"
             " size_t x_len);" in header
@@ -191,7 +192,7 @@ class TestAgainstARealExtension:
 
     def _built(self, tmp_path: Path) -> Path:
         proj = _declare(tmp_path)
-        header = proj / "native" / "inc" / "ring" / "ring_core.h"
+        header = proj / INC_ROOT / "ring" / "ring_core.h"
         header.write_text(
             header.read_text().replace("typedef struct", RECORD_H, 1),
             encoding="utf-8",

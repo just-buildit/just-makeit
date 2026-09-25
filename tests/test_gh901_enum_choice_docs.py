@@ -22,6 +22,7 @@ custom heading.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -65,7 +66,7 @@ def _project(tmp_path, *, enumerators=True, documented=True):
             init_params=[("kind", "string_enum:low,high,band", "low")],
         )
     if documented:
-        h = root / "native/inc/fir/fir_core.h"
+        h = root / INC_ROOT / "fir/fir_core.h"
         h.write_text(h.read_text().replace("#endif", _ENUM_C, 1))
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(io.StringIO()):

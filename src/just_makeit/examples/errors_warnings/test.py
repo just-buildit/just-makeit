@@ -22,6 +22,7 @@ Also runnable directly: python3 examples/errors_warnings/test.py
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -133,7 +134,7 @@ def run(root: Path) -> None:
     # constructor. (`no_ctor` on the state fields is the other route and is
     # broken today -- it reaches the prototype and not the binding, gh-1066.)
     header = (
-        proj / "native" / "inc" / "allocator" / "allocator_core.h"
+        INC.header_root(proj) / "allocator" / "allocator_core.h"
     ).read_text(encoding="utf-8")
     assert (
         "allocator_state_t *allocator_create(size_t capacity, size_t slots);"

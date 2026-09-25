@@ -31,6 +31,8 @@ by `psd_t`, a struct the record is not.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import io
 import sys
@@ -54,18 +56,25 @@ def _quiet(fn, *a, **kw):
 
 
 def _write_header(root: Path, sub: str, body: str) -> None:
-    d = root / "native" / "inc" / sub
+    d = root / INC_ROOT / sub
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{sub}_core.h").write_text(body, encoding="utf-8")
+    (d / f"{sub}_core.h").write_text(
+        body.replace("<<P>>", INC.prefix(root)), encoding="utf-8"
+    )
+
+
+def _common(root: Path) -> str:
+    """The scaffold's ``clib_common.h`` include, in *root*'s layout."""
+    return f'#include "{INC.include("clib_common.h", root)}"'
 
 
 def _include(root: Path, obj: str, rel: str) -> None:
-    h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    h = root / INC_ROOT / obj / f"{obj}_core.h"
     t = h.read_text(encoding="utf-8")
     h.write_text(
         t.replace(
-            '#include "clib_common.h"',
-            f'#include "clib_common.h"\n#include "{rel}"',
+            _common(root),
+            f'{_common(root)}\n#include "{INC.include(rel, root)}"',
             1,
         ),
         encoding="utf-8",
@@ -121,7 +130,7 @@ def _record_project(tmp_path: Path) -> Path:
     _write_header(
         root,
         "measure",
-        '#include "psd/psd_core.h"\n'
+        '#include "<<P>>psd/psd_core.h"\n'
         "typedef struct {\n"
         "    double snr;  ///< SENTINEL_SNR Signal-to-noise ratio, dB.\n"
         "} tone_meas_t;\n",
@@ -193,7 +202,7 @@ class TestScoping:
             "typedef struct { double snr; ///< FROM_INCLUDE\n} a_t;\n",
         )
         _include(root, "tm", "shared/shared_core.h")
-        h = root / "native/inc/tm/tm_core.h"
+        h = root / INC_ROOT / "tm/tm_core.h"
         h.write_text(
             h.read_text(encoding="utf-8")
             + "\ntypedef struct { double snr; ///< FROM_OWN\n} b_t;\n",
@@ -215,12 +224,10 @@ class TestScoping:
             arg_type="float",
             return_type="float",
         )
-        h = root / "native/inc/tm/tm_core.h"
+        h = root / INC_ROOT / "tm/tm_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace(
-                '#include "clib_common.h"',
-                '#include "clib_common.h"\n#include <stdio.h>',
-                1,
+                _common(root), _common(root) + "\n#include <stdio.h>", 1
             ),
             encoding="utf-8",
         )
@@ -243,13 +250,13 @@ class TestScoping:
         _write_header(
             root,
             "a",
-            '#include "b/b_core.h"\n'
+            '#include "<<P>>b/b_core.h"\n'
             "typedef struct { double x; ///< FROM_A\n} a_t;\n",
         )
         _write_header(
             root,
             "b",
-            '#include "a/a_core.h"\ntypedef struct '
+            '#include "<<P>>a/a_core.h"\ntypedef struct '
             "{ double y; ///< FROM_B\n} b_t;\n",
         )
         _include(root, "tm", "a/a_core.h")
@@ -292,7 +299,7 @@ def test_a_rewritten_header_is_not_served_from_cache(tmp_path):
     _include(root, "tm", "shared/shared_core.h")
     assert _load_doc_blocks(root, "tm")["<member>snr"].brief == "FIRST"
 
-    p = root / "native/inc/shared/shared_core.h"
+    p = root / INC_ROOT / "shared/shared_core.h"
     p.write_text(
         "typedef struct { double snr; ///< SECOND\n} a_t;\n"
         # Change the size too: a same-size same-mtime_ns rewrite is not

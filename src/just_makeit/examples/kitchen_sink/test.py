@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -319,7 +320,7 @@ def _patch(path: Path, old: str, new: str):
 
 def _implement_c_bodies(proj: Path):
     """Fill the generated stubs with real DSP bodies (the only hand step)."""
-    inc = proj / "native" / "inc"
+    inc = INC.header_root(proj)
     src = proj / "native" / "src"
     # gain — scalar
     _patch(
@@ -338,8 +339,8 @@ def _implement_c_bodies(proj: Path):
     # lfo — mutable generator (needs <math.h>)
     _patch(
         inc / "lfo" / "lfo_core.h",
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include <math.h>',
+        '#include "kitchen_sink/clib_common.h"',
+        '#include "kitchen_sink/clib_common.h"\n#include <math.h>',
     )
     _patch(
         inc / "lfo" / "lfo_core.h",
@@ -353,8 +354,8 @@ def _implement_c_bodies(proj: Path):
     # meter — consumer (needs <math.h>)
     _patch(
         inc / "meter" / "meter_core.h",
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include <math.h>',
+        '#include "kitchen_sink/clib_common.h"',
+        '#include "kitchen_sink/clib_common.h"\n#include <math.h>',
     )
     _patch(
         inc / "meter" / "meter_core.h",
@@ -392,8 +393,8 @@ def _implement_c_bodies(proj: Path):
     # config — uses vendored cJSON; needs cJSON.h in its header
     _patch(
         inc / "config" / "config_core.h",
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include "cJSON.h"',
+        '#include "kitchen_sink/clib_common.h"',
+        '#include "kitchen_sink/clib_common.h"\n#include "cJSON.h"',
     )
     _patch(
         src / "config" / "config_core.c",
@@ -602,11 +603,11 @@ def run(root: Path) -> None:
     _implement_c_bodies(proj)
 
     if doppler_prefix:
-        tone_h = proj / "native/inc/tone/tone_core.h"
+        tone_h = proj / "native/inc/kitchen_sink/tone/tone_core.h"
         _patch(
             tone_h,
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n#include "nco/nco_core.h"\n'
+            '#include "kitchen_sink/clib_common.h"',
+            '#include "kitchen_sink/clib_common.h"\n#include "nco/nco_core.h"\n'
             "#include <math.h>",
         )
         _patch(tone_h, _TONE_STEP_OLD, _TONE_STEP_NEW)
@@ -618,8 +619,12 @@ def run(root: Path) -> None:
         )  # links the real doppler
 
     # assert the integration wiring jm produced ----------------------------
-    mixer_h = (proj / "native/inc/mixer/mixer_core.h").read_text("utf-8")
-    assert '#include "lfo/lfo_core.h"' in mixer_h  # depends_on auto-include
+    mixer_h = (proj / "native/inc/kitchen_sink/mixer/mixer_core.h").read_text(
+        "utf-8"
+    )
+    assert (
+        '#include "kitchen_sink/lfo/lfo_core.h"' in mixer_h
+    )  # depends_on auto-include
     mixer_cmake = (proj / "native/src/mixer/CMakeLists.txt").read_text("utf-8")
     assert mixer_cmake.count("lfo_core") >= 3  # PUBLIC + test + bench (gh-174)
     cfg_cmake = (proj / "native/src/config/CMakeLists.txt").read_text("utf-8")

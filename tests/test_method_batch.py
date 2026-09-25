@@ -6,6 +6,7 @@ must match that, not the scalar `(state, T x)` fall-through — otherwise the
 project fails to compile ("too many arguments to function").
 """
 
+from just_makeit import _incpath as INC  # noqa: E402
 import contextlib
 import io
 import sys
@@ -26,7 +27,7 @@ def _silent(fn, *a, **k):
 
 
 def _decl(dest: Path, comp: str, name: str) -> str:
-    text = (dest / f"native/inc/{comp}/{comp}_core.h").read_text("utf-8")
+    text = INC.core_h(dest, comp).read_text("utf-8")
     return next(line for line in text.splitlines() if f"{name}(" in line)
 
 

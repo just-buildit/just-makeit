@@ -1,5 +1,6 @@
 """CLI dispatch tests for just-makeit."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import pytest
 
 from just_makeit._config import load as _load_cfg
@@ -83,7 +84,7 @@ class TestNewCLI:
         r = _cli("new", "gain", str(dest), "--object", "gain")
         assert r.returncode == 0
         assert (dest / "CMakeLists.txt").exists()
-        assert (dest / "native" / "inc" / "gain" / "gain_core.h").exists()
+        assert (dest / INC_ROOT / "gain" / "gain_core.h").exists()
 
     def test_new_prints_created_files(self, tmp_path):
         r = _cli("new", "gain", str(tmp_path / "gain"), "--object", "gain")
@@ -110,8 +111,8 @@ class TestNewCLI:
             "new", "dsp", str(dest), "--object", "fir", "--object", "biquad"
         )
         assert r.returncode == 0
-        assert (dest / "native" / "inc" / "fir" / "fir_core.h").exists()
-        assert (dest / "native" / "inc" / "biquad" / "biquad_core.h").exists()
+        assert (dest / INC_ROOT / "fir" / "fir_core.h").exists()
+        assert (dest / INC_ROOT / "biquad" / "biquad_core.h").exists()
 
     def test_new_multiple_objects_both_in_init(self, tmp_path):
         dest = tmp_path / "dsp"
@@ -135,7 +136,7 @@ class TestNewStateCLI:
             "--state",
             "cutoff:double",
         )
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(
+        core = (dest / INC_ROOT / "bpf" / "bpf_core.h").read_text(
             encoding="utf-8"
         )
         assert "double cutoff;" in core
@@ -171,7 +172,7 @@ class TestNewStateCLI:
             "order:int:4",
         )
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "bpf" / "bpf_core.h").read_text(
+        core = (dest / INC_ROOT / "bpf" / "bpf_core.h").read_text(
             encoding="utf-8"
         )
         assert "double cutoff;" in core
@@ -180,7 +181,7 @@ class TestNewStateCLI:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
         _cli("new", "comp", str(dest), "--object", "comp")
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "float gain;" in core
@@ -225,7 +226,7 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", cwd=dest)
         assert r.returncode == 0
-        assert (dest / "native" / "inc" / "engine" / "engine_core.h").exists()
+        assert (dest / INC_ROOT / "engine" / "engine_core.h").exists()
 
     def test_object_no_project_exits_1(self, tmp_path):
         r = _cli("object", "engine", cwd=tmp_path)
@@ -243,9 +244,9 @@ class TestObjectCLI:
         _cli("new", "proj", str(dest))
         r = _cli("object", "engine", "--state", "rate:double:1.0", cwd=dest)
         assert r.returncode == 0
-        core = (
-            dest / "native" / "inc" / "engine" / "engine_core.h"
-        ).read_text(encoding="utf-8")
+        core = (dest / INC_ROOT / "engine" / "engine_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "double rate;" in core
 
 
@@ -279,7 +280,7 @@ class TestVoidArgTypeCLI:
             "--return-type",
             "float",
         )
-        h = (dest / "native" / "inc" / "nco" / "nco_core.h").read_text(
+        h = (dest / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_step(const nco_state_t *state)" in h
@@ -310,7 +311,7 @@ class TestVoidArgTypeCLI:
             "float",
             cwd=dest,
         )
-        h = (dest / "native" / "inc" / "osc" / "osc_core.h").read_text(
+        h = (dest / INC_ROOT / "osc" / "osc_core.h").read_text(
             encoding="utf-8"
         )
         assert "osc_step(const osc_state_t *state)" in h
@@ -570,7 +571,7 @@ class TestAddCLI:
         _cli("new", "comp", str(dest), "--object", "comp")
         r = _cli("add", "--state", "order:int:4", "--force", cwd=dest)
         assert r.returncode == 0
-        core = (dest / "native" / "inc" / "comp" / "comp_core.h").read_text(
+        core = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
         assert "int order;" in core
@@ -740,7 +741,7 @@ class TestArrayArgTypeCLI:
             "--return-type",
             "float",
         )
-        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
+        core_h = (dest / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "const float *x, size_t x_len" in core_h
@@ -862,7 +863,7 @@ class TestModuleCommandCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("module", "dsp", cwd=dest)
-        assert (dest / "native" / "inc" / "dsp" / "dsp_core.h").exists()
+        assert (dest / INC_ROOT / "dsp" / "dsp_core.h").exists()
 
     def test_module_functions_in_core_flag(self, tmp_path):
         # gh-247: --functions-in-core sets the module flag in the manifest.
@@ -923,7 +924,7 @@ class TestObjectNoStateCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "gen", "--no-state", cwd=dest)
-        core_h = (dest / "native/inc/gen/gen_core.h").read_text(
+        core_h = (dest / INC_ROOT / "gen/gen_core.h").read_text(
             encoding="utf-8"
         )
         # struct frame is present but body is left as a manual-implementation placeholder
@@ -960,7 +961,7 @@ class TestObjectNoStepCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "sink", "--no-step", cwd=dest)
-        core_h = (dest / "native/inc/sink/sink_core.h").read_text(
+        core_h = (dest / INC_ROOT / "sink/sink_core.h").read_text(
             encoding="utf-8"
         )
         # inline function definition should be absent (docstring examples may mention it)
@@ -1014,7 +1015,7 @@ class TestObjectMutableCLI:
             "float _Complex",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+        core_h = (dest / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_step(nco_state_t *state)" in core_h
@@ -1032,7 +1033,7 @@ class TestObjectMutableCLI:
             "float _Complex",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+        core_h = (dest / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "nco_step(const nco_state_t *state)" in core_h
@@ -1050,7 +1051,7 @@ class TestObjectMutableCLI:
             "float",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/filt/filt_core.h").read_text(
+        core_h = (dest / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
         assert "filt_step(filt_state_t *state, float x)" in core_h
@@ -1086,7 +1087,7 @@ class TestObjectPerfCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "engine", "--perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+        core_h = (dest / INC_ROOT / "engine/engine_core.h").read_text(
             encoding="utf-8"
         )
         assert "jm_perf.h" in core_h
@@ -1095,7 +1096,7 @@ class TestObjectPerfCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli("object", "engine", "--perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+        core_h = (dest / INC_ROOT / "engine/engine_core.h").read_text(
             encoding="utf-8"
         )
         assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
@@ -1293,7 +1294,7 @@ class TestPropertyCLI:
             "--writable",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+        core_h = (dest / INC_ROOT / "engine/engine_core.h").read_text(
             encoding="utf-8"
         )
         assert "set_gain" in core_h or "gain" in core_h
@@ -1317,7 +1318,7 @@ class TestPropertyCLI:
             "--field",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+        core_h = (dest / INC_ROOT / "engine/engine_core.h").read_text(
             encoding="utf-8"
         )
         assert "double rate;" in core_h
@@ -1391,7 +1392,7 @@ class TestFunctionReturnTypeCLI:
             "size_t",
             cwd=dest,
         )
-        core_h = (dest / "native/inc/fft/fft_core.h").read_text(
+        core_h = (dest / INC_ROOT / "fft/fft_core.h").read_text(
             encoding="utf-8"
         )
         assert "size_t" in core_h
@@ -1484,7 +1485,7 @@ class TestAddParamCLI:
     def test_add_param_appears_in_header(self, tmp_path):
         dest = self._setup(tmp_path)
         _cli("add", "--param", "offset:double:0.0", "--force", cwd=dest)
-        core_h = (dest / "native/inc/norm/norm_core.h").read_text(
+        core_h = (dest / INC_ROOT / "norm/norm_core.h").read_text(
             encoding="utf-8"
         )
         assert "double offset" in core_h or "offset" in core_h
@@ -1514,13 +1515,13 @@ class TestPerfCommandCLI:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--object", "engine")
         _cli("perf", cwd=dest)
-        assert (dest / "native" / "inc" / "jm_perf.h").exists()
+        assert (dest / INC_ROOT / "jm_perf.h").exists()
 
     def test_perf_step_gains_qualifiers(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--object", "engine")
         _cli("perf", cwd=dest)
-        core_h = (dest / "native/inc/engine/engine_core.h").read_text(
+        core_h = (dest / INC_ROOT / "engine/engine_core.h").read_text(
             encoding="utf-8"
         )
         assert "JM_HOT" in core_h or "JM_FORCEINLINE" in core_h
@@ -1748,8 +1749,8 @@ class TestNewModuleRepeatableCLI:
             "source",
         )
         assert r.returncode == 0
-        assert (dest / "native/inc/filter/filter_core.h").exists()
-        assert (dest / "native/inc/source/source_core.h").exists()
+        assert (dest / INC_ROOT / "filter/filter_core.h").exists()
+        assert (dest / INC_ROOT / "source/source_core.h").exists()
 
     def test_two_modules_both_in_toml(self, tmp_path):
         dest = tmp_path / "proj"
@@ -2114,7 +2115,7 @@ class TestInitParamCLI:
         )
         assert r.returncode == 0, r.stderr
         # Header declares the ctor taking the init param, not the state field.
-        core_h = (dest / "native/inc/iq_reader/iq_reader_core.h").read_text(
+        core_h = (dest / INC_ROOT / "iq_reader/iq_reader_core.h").read_text(
             encoding="utf-8"
         )
         assert "iq_reader_create(const char * filepath)" in core_h
@@ -2198,7 +2199,7 @@ class TestImplCLI:
             cwd=dest,
         )
         assert r.returncode == 0
-        core_h = (dest / "native/inc/nco/nco_core.h").read_text(
+        core_h = (dest / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
         assert "return 0.0f" in core_h

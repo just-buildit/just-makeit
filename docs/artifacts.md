@@ -30,11 +30,12 @@ mylib/
 ├── native/
 │   ├── benchmarks/                 # empty; add bench_compute.c here if needed
 │   ├── inc/
-│   │   ├── clib_common.h           # shared C99 type aliases
-│   │   ├── pyex_common.h           # Python/NumPy includes
-│   │   ├── mylib.h                 # umbrella header
-│   │   └── dsp/
-│   │       └── dsp_core.h          # declare compute() here
+│   │   └── mylib/
+│   │       ├── clib_common.h       # shared C99 type aliases
+│   │       ├── pyex_common.h       # Python/NumPy includes
+│   │       ├── mylib.h             # umbrella header
+│   │       └── dsp/
+│   │           └── dsp_core.h      # declare compute() here
 │   ├── src/
 │   │   ├── mylib_lib.c             # version symbol
 │   │   └── dsp/
@@ -82,11 +83,12 @@ mylib/
 │   │   ├── bench_engine_core.c     # C-level microbenchmark
 │   │   └── jm_bench.h              # shared per-round timing/stats helpers
 │   ├── inc/
-│   │   ├── clib_common.h
-│   │   ├── pyex_common.h
-│   │   ├── mylib.h                 # umbrella header
-│   │   └── engine/
-│   │       └── engine_core.h       # public C API + inline step()
+│   │   └── mylib/
+│   │       ├── clib_common.h
+│   │       ├── pyex_common.h
+│   │       ├── mylib.h             # umbrella header
+│   │       └── engine/
+│   │           └── engine_core.h   # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
 │   │   └── engine/
@@ -140,11 +142,12 @@ mylib/
 │   │   ├── bench_filt_core.c
 │   │   └── jm_bench.h
 │   ├── inc/
-│   │   ├── clib_common.h
-│   │   ├── pyex_common.h
-│   │   ├── mylib.h
-│   │   └── filt/
-│   │       └── filt_core.h         # public C API + inline step()
+│   │   └── mylib/
+│   │       ├── clib_common.h
+│   │       ├── pyex_common.h
+│   │       ├── mylib.h
+│   │       └── filt/
+│   │           └── filt_core.h     # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/
@@ -198,13 +201,14 @@ mylib/
 │   │   ├── bench_biquad_core.c
 │   │   └── jm_bench.h
 │   ├── inc/
-│   │   ├── clib_common.h
-│   │   ├── pyex_common.h
-│   │   ├── mylib.h
-│   │   ├── fir/
-│   │   │   └── fir_core.h          # public C API + inline step()
-│   │   └── biquad/
-│   │       └── biquad_core.h       # public C API + inline step()
+│   │   └── mylib/
+│   │       ├── clib_common.h
+│   │       ├── pyex_common.h
+│   │       ├── mylib.h
+│   │       ├── fir/
+│   │       │   └── fir_core.h      # public C API + inline step()
+│   │       └── biquad/
+│   │           └── biquad_core.h   # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/
@@ -262,13 +266,14 @@ mylib/
 │   │   ├── bench_reader_core.c
 │   │   └── jm_bench.h
 │   ├── inc/
-│   │   ├── clib_common.h
-│   │   ├── pyex_common.h
-│   │   ├── mylib.h
-│   │   ├── fir/
-│   │   │   └── fir_core.h          # public C API + inline step()
-│   │   └── reader/
-│   │       └── reader_core.h       # public C API + inline step()
+│   │   └── mylib/
+│   │       ├── clib_common.h
+│   │       ├── pyex_common.h
+│   │       ├── mylib.h
+│   │       ├── fir/
+│   │       │   └── fir_core.h      # public C API + inline step()
+│   │       └── reader/
+│   │           └── reader_core.h   # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/

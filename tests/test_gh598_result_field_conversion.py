@@ -31,6 +31,8 @@ validation is the backstop for genuine typos.
 
 # `str | None` below is 3.10+ syntax at runtime; jm still supports 3.9.
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -285,12 +287,11 @@ class TestRuntime:
                 ],
                 max_results=4,
             )
-        hdr = dest / "native/inc/det/det_core.h"
+        hdr = dest / INC_ROOT / "det/det_core.h"
+        anchor = f'#include "{INC.include("clib_common.h", dest)}"'
+        assert anchor in hdr.read_text("utf-8")
         hdr.write_text(
-            hdr.read_text("utf-8").replace(
-                '#include "clib_common.h"',
-                f'#include "clib_common.h"\n\n{HIT_T}',
-            ),
+            hdr.read_text("utf-8").replace(anchor, f"{anchor}\n\n{HIT_T}"),
             encoding="utf-8",
         )
         core = dest / "native/src/det/det_core.c"

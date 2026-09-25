@@ -38,6 +38,7 @@ The fix moves the rule to :func:`_record.resolve`, over a namespace the
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -125,7 +126,7 @@ def _scaffold(tmp_path: Path) -> Path:
         "acc_create_seeded",
         init_params=[("seed", "double", "0.0")],
     )
-    header = root / "native" / "inc" / "acc" / "acc_core.h"
+    header = root / INC_ROOT / "acc" / "acc_core.h"
     text = header.read_text(encoding="utf-8")
     text = text.replace(
         "} acc_state_t;",
@@ -286,7 +287,7 @@ def test_the_built_module_survives_a_collection(tmp_path):
             "-fPIC",
             *_LINK,
             "-std=gnu99",
-            f"-I{root / 'native' / 'inc'}",
+            f"-I{root / INC_DIR}",
             f"-I{sysconfig.get_paths()['include']}",
             f"-I{np.get_include()}",
             str(root / "native" / "src" / "m" / "m_ext.c"),

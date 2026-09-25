@@ -72,7 +72,7 @@ def _install_smoke(proj: Path) -> None:
     consumer = proj / "consumer_smoke"
     consumer.mkdir()
     (consumer / "smoke.c").write_text(
-        '#include "my_fir.h"\n'
+        '#include "my_fir/my_fir.h"\n'
         "int main(void) { fir_filter_destroy(NULL); return 0; }\n",
         encoding="utf-8",
     )

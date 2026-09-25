@@ -27,6 +27,7 @@ This is a standing property of the manifest, not an event.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -85,7 +86,7 @@ def _scaffold(dest: Path, *, state_only: bool, **method_over) -> Path:
             **method_over,
         )
         if state_only:
-            header = dest / "native/inc/nco/nco_core.h"
+            header = dest / INC_ROOT / "nco/nco_core.h"
             text = header.read_text("utf-8")
             text, n_sub = re.subn(
                 r"size_t nco_steps_u32_max_out\s*\([^)]*\)",
@@ -194,7 +195,7 @@ class TestTheDetector:
                     [],
                     pass_capacity=True,
                 )
-            header = dest / "native/inc/nco/nco_core.h"
+            header = dest / INC_ROOT / "nco/nco_core.h"
             text = header.read_text("utf-8")
             text, n_sub = re.subn(
                 r"size_t nco_steps_u32_max_out\s*\([^)]*\)",

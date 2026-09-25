@@ -21,6 +21,8 @@ half looks correct until you build a freshly created project.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -130,7 +132,7 @@ class TestTheHeaderCarriesDefinitions:
 
     def test_no_dangling_prototype(self, tmp_path):
         root = _project(tmp_path / "p")
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         # Every function the header names must be defined in it.
         for fn in ("ring_create", "ring_destroy", "ring_reset", "ring_steps"):
             assert f"{fn}(" in h, fn
@@ -141,7 +143,7 @@ class TestTheHeaderCarriesDefinitions:
         separate lines and BOTH look like a definition start; prefixing each
         gives `static inline static`, which does not compile."""
         root = _project(tmp_path / "p")
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert "static inline static" not in h
         assert "static static" not in h
 
@@ -159,10 +161,10 @@ class TestTheHeaderHasNoExternalLinkage:
 
     def test_two_translation_units_link(self, tmp_path):
         root = _project(tmp_path / "p")
-        inc = root / "native" / "inc"
+        inc = root / INC_DIR
         for n in (1, 2):
             (tmp_path / f"tu{n}.c").write_text(
-                '#include "ring/ring_core.h"\n'
+                f'#include "{INC.core_include("ring", root)}"\n'
                 f"int tu{n}(void) {{ return (int)sizeof(ring_state_t); }}\n"
             )
         (tmp_path / "main.c").write_text(

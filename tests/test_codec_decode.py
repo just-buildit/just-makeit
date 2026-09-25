@@ -9,6 +9,7 @@ test decodes a real dict end-to-end.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -179,7 +180,7 @@ def test_build_and_decode(tmp_path):
         value_field="value",
     )
     # hand-write the struct + cursor (the user's contract; jm declares neither).
-    h = d / "native/inc/gizmo/gizmo_core.h"
+    h = d / INC_ROOT / "gizmo/gizmo_core.h"
     ht = h.read_text()
     idx = ht.rfind("#endif")
     h.write_text(ht[:idx] + _STRUCT_AND_CURSOR + "\n" + ht[idx:])

@@ -17,6 +17,8 @@ are exercised more broadly in ``test_method.py`` (multi_output) and
 ``test_cli_method.py`` / ``test_stubs.py`` (result_fields).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
+
 
 def _methods_ctx(methods, component="c", Component="C"):
     from just_makeit._context import make_methods_ctx
@@ -290,5 +292,5 @@ class TestCliFunctionResultFieldReturnType:
                 "index:size_t",
             ]
         )
-        h = (root / "native/inc/dsp/dsp_core.h").read_text(encoding="utf-8")
+        h = (root / INC_ROOT / "dsp/dsp_core.h").read_text(encoding="utf-8")
         assert "peaks_result_t *result" in h

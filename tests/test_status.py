@@ -1,5 +1,6 @@
 """Integration tests for `just-makeit status`."""
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -38,7 +39,7 @@ class TestStatus:
         assert "up to date" in out
 
     def test_reports_missing_after_deletion(self, project, capsys):
-        header = project / "native" / "inc" / "my_filter" / "my_filter_core.h"
+        header = project / INC_ROOT / "my_filter" / "my_filter_core.h"
         assert header.exists()
         header.unlink()
         count = status_run(project)

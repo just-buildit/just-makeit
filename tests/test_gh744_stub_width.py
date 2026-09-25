@@ -31,6 +31,7 @@ them is precisely how the two were missed.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -80,7 +81,7 @@ def _document_create(root, comp, brief, param, pname):
     The class docstring derives from this block, so it is the input that
     exercises ``_build_class_docstring`` rather than ``_numpy_sections``.
     """
-    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    h = root / INC_ROOT / comp / f"{comp}_core.h"
     text = h.read_text(encoding="utf-8")
     marker = f"{comp}_state_t *{comp}_create("
     idx = text.index(marker)

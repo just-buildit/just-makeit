@@ -9,6 +9,7 @@ prototype, _core.c stub, and ext-binding call all carry the capacity (the
 buffer-cap field jm already maintains for grow-on-demand).
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def proj(tmp_path):
 
 class TestPassCapacity:
     def test_header_decl_has_capacity(self, proj):
-        h = (proj / "native/inc/ddc/ddc_core.h").read_text()
+        h = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
         assert (
             "size_t ddc_execute(ddc_state_t *state,"
             " const float _Complex *x, size_t x_len,"
@@ -88,9 +89,9 @@ class TestPassCapacity:
     def test_apply_is_idempotent(self, proj):
         """A 5-arg header from pass_capacity matches what apply generates, so
         a second apply must not re-inject a conflicting 4-arg prototype."""
-        h_before = (proj / "native/inc/ddc/ddc_core.h").read_text()
+        h_before = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
         apply_run(proj)
-        h_after = (proj / "native/inc/ddc/ddc_core.h").read_text()
+        h_after = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
         assert h_before == h_after
         # exactly one declaration of ddc_execute (no duplicate)
         assert h_after.count("size_t ddc_execute(ddc_state_t *state,") == 1

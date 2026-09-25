@@ -16,6 +16,7 @@ must render exactly as it did before the feature existed, because these slots
 were cut into templates every project already uses.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import subprocess
 import sys
@@ -221,9 +222,9 @@ class TestSacredSignature:
             state_vars=[("fail", "int", "0")],
             destroy=_TABLE,
         )
-        h = (
-            dest / "native" / "inc" / "wfm_writer" / "wfm_writer_core.h"
-        ).read_text(encoding="utf-8")
+        h = (dest / INC_ROOT / "wfm_writer" / "wfm_writer_core.h").read_text(
+            encoding="utf-8"
+        )
         c = (
             dest / "native" / "src" / "wfm_writer" / "wfm_writer_core.c"
         ).read_text(encoding="utf-8")
@@ -239,9 +240,7 @@ class TestSacredSignature:
         # so without an explicit patch the first build after declaring the
         # table fails with conflicting types.
         apply_run(project)
-        h_path = (
-            project / "native" / "inc" / "wfm_writer" / "wfm_writer_core.h"
-        )
+        h_path = project / INC_ROOT / "wfm_writer" / "wfm_writer_core.h"
         assert "void wfm_writer_destroy" in h_path.read_text(encoding="utf-8")
 
         _declare(project, "wfm_writer", _TABLE)
@@ -436,7 +435,7 @@ class TestByteIdenticalWhenUndeclared:
     def test_core_files_stay_void(self, project):
         apply_run(project)
         h = (
-            project / "native" / "inc" / "wfm_writer" / "wfm_writer_core.h"
+            project / INC_ROOT / "wfm_writer" / "wfm_writer_core.h"
         ).read_text(encoding="utf-8")
         c = (
             project / "native" / "src" / "wfm_writer" / "wfm_writer_core.c"

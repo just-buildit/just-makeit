@@ -30,13 +30,13 @@ jm new my_dsp \
 
 ## What you get
 
-### `native/inc/my_filter/my_filter_core.h`
+### `native/inc/my_dsp/my_filter/my_filter_core.h`
 
 ```c
 #ifndef MY_FILTER_CORE_H
 #define MY_FILTER_CORE_H
 
-#include "clib_common.h"
+#include "my_dsp/clib_common.h"
 
 /* state struct — one entry per --state flag */
 typedef struct {
@@ -69,7 +69,7 @@ void  my_filter_set_gain(my_filter_state_t *state, float val);
 ### `native/src/my_filter/my_filter_core.c`
 
 ```c
-#include "my_filter/my_filter_core.h"
+#include "my_dsp/my_filter/my_filter_core.h"
 
 my_filter_state_t *
 my_filter_create(float gain)

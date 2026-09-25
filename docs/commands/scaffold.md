@@ -101,13 +101,13 @@ modules.
 
 Creates:
 
-| File                               | Purpose                                            |
-| ---------------------------------- | -------------------------------------------------- |
-| `native/inc/<name>/<name>_core.h`  | Public C API — declare module-level functions here |
-| `native/src/<name>/<name>_core.c`  | Implementation — write module-level functions here |
-| `native/src/<name>/<name>_ext.c`   | Python binding (auto-generated)                    |
-| `native/src/<name>/CMakeLists.txt` | Python module target                               |
-| `src/<pkg>/<name>/__init__.py`     | Subpackage init (empty exports)                    |
+| File                                    | Purpose                                            |
+| --------------------------------------- | -------------------------------------------------- |
+| `native/inc/<pkg>/<name>/<name>_core.h` | Public C API — declare module-level functions here |
+| `native/src/<name>/<name>_core.c`       | Implementation — write module-level functions here |
+| `native/src/<name>/<name>_ext.c`        | Python binding (auto-generated)                    |
+| `native/src/<name>/CMakeLists.txt`      | Python module target                               |
+| `src/<pkg>/<name>/__init__.py`          | Subpackage init (empty exports)                    |
 
 Appends `add_subdirectory(native/src/<name>)` to the root `CMakeLists.txt`
 and records `[module.<name>]` with an empty `objects` list in `just-makeit.toml`.
@@ -152,7 +152,7 @@ just-makeit object biquad --module filter --state "b0:double:1.0" --state "a1:do
 
 | File                                   | Purpose                                                             |
 | -------------------------------------- | ------------------------------------------------------------------- |
-| `native/inc/<obj>/<obj>_core.h`        | Header: struct, inline `_step`, getters/setters                     |
+| `native/inc/<pkg>/<obj>/<obj>_core.h`  | Header: struct, inline `_step`, getters/setters                     |
 | `native/src/<obj>/<obj>_core.c`        | Source: create/destroy/reset/steps                                  |
 | `native/src/<obj>/CMakeLists.txt`      | OBJECT library + C test + bench                                     |
 | `native/tests/test_<obj>_core.c`       | C test with `CHECK` macro counter                                   |

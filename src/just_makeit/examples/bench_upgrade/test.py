@@ -24,12 +24,16 @@ def run(root: Path) -> None:
 
     proj = root / "my_filter"
 
-    # 1. Scaffold a minimal standalone project (lands at CURRENT_SCHEMA).
+    # 1. Scaffold a minimal standalone project the way an OLD jm did: the
+    #    header layout is part of what an old project looks like (gh-1583),
+    #    and the upgrade below moves it -- a current scaffold with its schema
+    #    number rolled back is a tree no jm ever wrote.
     jm_new(
         "my_filter",
         proj,
         object_names=["fir"],
         state_vars=[("gain", "double", "1.0")],
+        schema=7,
     )
 
     # 2. Add two methods: one scalar, one excluded from bench.

@@ -20,6 +20,7 @@ check is what it was.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -71,7 +72,7 @@ _SHAPES = pytest.mark.parametrize(
 
 
 def _header(root: Path) -> Path:
-    return root / "native" / "inc" / "hb" / "hb_core.h"
+    return root / INC_ROOT / "hb" / "hb_core.h"
 
 
 def _with_override(root: Path, override_params: str) -> dict:

@@ -21,6 +21,7 @@ Fixes, all in `_patch_step_impls` / `_impl_marker` (`_apply.py`):
    would warn once, falsely, on every already-in-sync component.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def scaler_project_no_impl(tmp_path):
 
 
 def _core_h(root: Path) -> Path:
-    return root / "native" / "inc" / "scaler" / "scaler_core.h"
+    return root / INC_ROOT / "scaler" / "scaler_core.h"
 
 
 class TestMarkerComment:

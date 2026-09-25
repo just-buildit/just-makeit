@@ -22,6 +22,7 @@ without `field = true` has always been accessor-backed
 (`<comp>_get_<name>(self->handle)`), so properties never forced the struct open.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
 import sys
@@ -55,7 +56,7 @@ def _mk(proj, name="rdr", **kw):
     opts.update(kw)
     _q(object_run, proj, name, None, **opts)
     return (
-        (proj / "native" / "inc" / name / f"{name}_core.h").read_text(),
+        (proj / INC_ROOT / name / f"{name}_core.h").read_text(),
         (proj / "native" / "src" / name / f"{name}_core.c").read_text(),
     )
 
@@ -117,7 +118,7 @@ class TestManifestRoundTrip:
         _mk(proj)
         assert C.is_opaque_state(C.load(proj), "rdr") is True
         _q(apply_run, proj)
-        h = (proj / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
+        h = (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text()
         assert "typedef struct rdr_state rdr_state_t;" in h
 
     def test_key_survives_the_dump_serializer(self, proj):

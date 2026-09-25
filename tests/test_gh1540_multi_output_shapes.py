@@ -17,6 +17,7 @@ quietly widen.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -62,7 +63,7 @@ def proj(tmp_path):
 
 
 def _header(proj: Path) -> str:
-    return (proj / "native/inc/w/w_core.h").read_text(encoding="utf-8")
+    return (proj / INC_ROOT / "w/w_core.h").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("shape", sorted(_REFUSED))

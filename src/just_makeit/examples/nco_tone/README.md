@@ -157,8 +157,8 @@ First make Doppler's NCO header and `<math.h>` visible by adding them after
 the always-present `clib_common.h` include:
 
 ```c
-/* native/inc/tone/tone_core.h */
-#include "clib_common.h"
+/* native/inc/nco_tone_demo/tone/tone_core.h */
+#include "nco_tone_demo/clib_common.h"
 #include "nco/nco_core.h"
 #include <math.h>
 ```

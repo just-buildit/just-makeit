@@ -21,6 +21,8 @@ different jm. That is the ABI hazard the capsule triangle exists to avoid.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -79,7 +81,7 @@ class TestResolution:
         ctype, cap, header, cls = C.resolve_object_ref(cfg, "frame")
         assert ctype == "frame_state_t *"
         assert cap == CAP
-        assert header == "frame/frame_core.h"
+        assert header == INC.core_include("frame", cfg)
         assert cls == "Frame"
 
     def test_a_view_is_a_legal_target(self, tmp_path):
@@ -305,8 +307,8 @@ class TestTheGeneratedCIsTheShippedCapsulePath:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        core_h = (root / "native" / "inc" / "seg" / "seg_core.h").read_text()
-        assert '#include "frame/frame_core.h"' in core_h
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
+        assert f'#include "{INC.core_include("frame", root)}"' in core_h
         assert "seg_state_t *seg_create(frame_state_t *frame);" in core_h
 
 

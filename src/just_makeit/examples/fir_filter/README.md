@@ -56,7 +56,7 @@ Three state variables:
 
 ## 2. Implement
 
-Open `native/inc/fir_filter/fir_filter_core.h` and replace the `fir_filter_step` stub.
+Open `native/inc/my_fir/fir_filter/fir_filter_core.h` and replace the `fir_filter_step` stub.
 The filter must update the delay line, so the signature changes from `const` to mutable:
 
 ```c
@@ -152,7 +152,7 @@ After `make`, the combined shared library is at `build/libmy_fir.so`.
 
 ```c
 // demo.c
-#include "fir_filter/fir_filter_core.h"
+#include "my_fir/fir_filter/fir_filter_core.h"
 #include <complex.h>
 #include <stdio.h>
 
@@ -286,7 +286,7 @@ Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
 **1.** Add the constants and `fir_filter_step_batch()` to
-`native/inc/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
+`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
 
 ```c
 #define FIR_TAPS 16 /* algorithm:   number of coefficients       */
@@ -389,7 +389,7 @@ CREATE_BRIEF = (
 
 
 def main() -> None:
-    header = pathlib.Path("native/inc") / OBJ / f"{OBJ}_core.h"
+    header = pathlib.Path("native/inc/my_fir") / OBJ / f"{OBJ}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.

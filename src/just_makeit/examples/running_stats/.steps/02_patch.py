@@ -16,7 +16,7 @@ import pathlib
 import re
 import sys
 
-header = pathlib.Path("native/inc/running_stats/running_stats_core.h")
+header = pathlib.Path("native/inc/my_stats/running_stats/running_stats_core.h")
 impl_name = sys.argv[1] if len(sys.argv) > 1 else "02_base_step.c"
 impl = pathlib.Path(__file__).with_name(impl_name)
 

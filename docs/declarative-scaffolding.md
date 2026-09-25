@@ -680,9 +680,9 @@ the dependent's `<comp>_core.h` — "if jm links it, it includes it":
 
 ```c
 /* fir_core.h, generated */
-#include "clib_common.h"
-#include "resamp/resamp_core.h"
-#include "fft/fft_core.h"
+#include "demo/clib_common.h"
+#include "demo/resamp/resamp_core.h"
+#include "demo/fft/fft_core.h"
 ```
 
 So an opaque field of a dependency's type — e.g. `resamp_state_t *resamp;` —
@@ -725,7 +725,7 @@ flowchart TD
     SYNC --> NEW["copy every<br/>missing file"]
     SYNC --> AGG["reconcile aggregate<br/>wiring files"]
     AGG --> CMAKE["top CMakeLists.txt<br/>(sentinel splice;<br/>user content outside survives)"]
-    AGG --> UMB["umbrella native/inc/&lt;pkg&gt;.h"]
+    AGG --> UMB["umbrella native/inc/&lt;pkg&gt;/&lt;pkg&gt;.h"]
     AGG --> PKGINIT["src/&lt;pkg&gt;/__init__.py<br/>(splice missing imports)"]
     AGG --> MODFILES["src/&lt;pkg&gt;/&lt;mod&gt;/__init__.py<br/>(merge; user wrappers survive)"]
 ```

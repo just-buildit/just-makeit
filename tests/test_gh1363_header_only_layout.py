@@ -17,6 +17,7 @@ moves which two fragments meet.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -53,7 +54,7 @@ def _header(tmp_path: Path, shape: dict) -> list[str]:
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", tmp_path)
         object_run(tmp_path, "q", None, header_only=True, **shape)
-    path = tmp_path / "native" / "inc" / "q" / "q_core.h"
+    path = tmp_path / INC_ROOT / "q" / "q_core.h"
     return path.read_text(encoding="utf-8").splitlines()
 
 

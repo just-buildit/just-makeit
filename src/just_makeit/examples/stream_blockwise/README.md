@@ -217,5 +217,5 @@ the next pull. A *source* producer (`steps`) has no such rule — see the
 `stream_source` example.
 
 The hand-written Doxygen `@brief` on `drainer_create()` in the sacred
-`native/inc/drainer/drainer_core.h` header drives the generated `drainer.pyi`
+`native/inc/stream_blockwise_demo/drainer/drainer_core.h` header drives the generated `drainer.pyi`
 class docstring — `jm apply` re-derives the stub from that comment.

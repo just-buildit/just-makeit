@@ -2,7 +2,7 @@
 
 The algorithm is unchanged from the sync example — async iteration reuses the
 exact same producer. Replace the inline `step()` stub in
-`native/inc/ramp/ramp_core.h` with the ramp recurrence:
+`native/inc/stream_source_async_demo/ramp/ramp_core.h` with the ramp recurrence:
 
 ```{02_step.c}
 ```

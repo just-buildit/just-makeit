@@ -7,6 +7,7 @@ instead of replacing it (clobbering the qualifiers) or appending a second,
 conflicting declaration that fails to compile.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
 import sys
@@ -43,7 +44,7 @@ def _project_with_fn(dest: Path):
     ]
     C.save(dest, cfg)
     _silent(apply_run, dest)
-    return dest / "native/inc/dsp/dsp_core.h"
+    return dest / INC_ROOT / "dsp/dsp_core.h"
 
 
 _RESTRICT_SINGLE = (

@@ -21,6 +21,7 @@ the author wrote a call that works.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -124,7 +125,7 @@ class TestEndToEnd:
             arg_type="float",
             return_type="float",
         )
-        h = root / "native" / "inc" / "widget" / "widget_core.h"
+        h = root / INC_ROOT / "widget" / "widget_core.h"
         text = h.read_text(encoding="utf-8")
         assert " * @brief Create a widget instance." in text
         h.write_text(

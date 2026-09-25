@@ -27,6 +27,7 @@ Also runnable directly: python3 examples/delay_line/test.py
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -160,7 +161,7 @@ def _enrich_doxygen(core_h: Path) -> None:
 # Hand-written C smoke test that matches our reset semantics (length is
 # preserved across reset because it's the configured ring-buffer size).
 _C_TEST_BODY = """\
-#include "delay_line/delay_line_core.h"
+#include "delay_line_demo/delay_line/delay_line_core.h"
 
 /* gh-934: CHECK, REQUIRE and the epilogue come from the shared harness
    just-makeit writes once per project.  This example used to carry its own
@@ -273,7 +274,7 @@ def run(root: Path) -> None:
     jm_apply(proj, fragment=fragment)
 
     # 4. Inspect generated artefacts before patching/building.
-    core_h = proj / "native" / "inc" / "delay_line" / "delay_line_core.h"
+    core_h = INC.header_root(proj) / "delay_line" / "delay_line_core.h"
     core_c = proj / "native" / "src" / "delay_line" / "delay_line_core.c"
     h = core_h.read_text(encoding="utf-8")
     c = core_c.read_text(encoding="utf-8")

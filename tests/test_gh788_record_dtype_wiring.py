@@ -25,6 +25,7 @@ The four faces that must agree, all asserted below:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -90,9 +91,7 @@ def _ext(root: Path) -> str:
 
 
 def _core_h(root: Path) -> str:
-    return (
-        root / "native" / "inc" / "telemetry" / "telemetry_core.h"
-    ).read_text()
+    return (root / INC_ROOT / "telemetry" / "telemetry_core.h").read_text()
 
 
 def _core_c(root: Path) -> str:
@@ -603,7 +602,7 @@ def _implement(root: Path, structs: str, body_subs: list[tuple[str, str]]):
     whole reason the dtype has to be derived by the compiler at build time
     rather than computed by jm at generate time.
     """
-    h = root / "native" / "inc" / "telemetry" / "telemetry_core.h"
+    h = root / INC_ROOT / "telemetry" / "telemetry_core.h"
     t = h.read_text()
     anchor = "/**\n * @brief Telemetry state."
     assert anchor in t

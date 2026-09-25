@@ -35,6 +35,7 @@ wrongly.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import json
 import re
@@ -342,9 +343,9 @@ def _c_dep_project(tmp_path: Path) -> Path:
     """
     assert _cli("new", "p", "--c-dep", "pacing", cwd=tmp_path).returncode == 0
     root = tmp_path / "p"
-    (root / "native" / "inc" / "pacing").mkdir(parents=True, exist_ok=True)
+    (root / INC_ROOT / "pacing").mkdir(parents=True, exist_ok=True)
     (root / "native" / "src" / "pacing").mkdir(parents=True, exist_ok=True)
-    (root / "native" / "inc" / "pacing" / "pacing_core.h").write_text(
+    (root / INC_ROOT / "pacing" / "pacing_core.h").write_text(
         "#ifndef PACING_CORE_H\n#define PACING_CORE_H\n"
         "double pacing_now(void);\n#endif\n",
         encoding="utf-8",

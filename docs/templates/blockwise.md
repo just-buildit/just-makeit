@@ -39,7 +39,7 @@ jm object my_conv --preset blockwise \
 
 ## What you get
 
-### `native/inc/my_xform/my_xform_core.h`
+### `native/inc/my_dsp/my_xform/my_xform_core.h`
 
 ```c
 typedef struct {

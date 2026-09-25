@@ -26,6 +26,8 @@ and must only report when it encodes a decision.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -109,7 +111,7 @@ class TestItMigrates:
         """The whole reason this needed a command: the inline `step()` lives
         in `<comp>_core.h`, which `apply` and `regenerate` both refuse."""
         root = _project(tmp_path)
-        header = root / "native" / "inc" / "nco" / "nco_core.h"
+        header = root / INC_ROOT / "nco" / "nco_core.h"
         assert _OLD in _COMMENT.sub("", header.read_text())
         _upgrade_out(root)
         code = _COMMENT.sub("", header.read_text())
@@ -117,9 +119,10 @@ class TestItMigrates:
         assert _NEW in code
 
     def test_it_names_every_file_it_changed(self, tmp_path: Path):
-        out = _upgrade_out(_project(tmp_path))
+        root = _project(tmp_path)
+        out = _upgrade_out(root)
         assert "respelled the complex types" in out
-        assert "native/inc/nco/nco_core.h" in out
+        assert INC.core_rel("nco", root) in out
         assert "gh-1246" in out
 
     def test_it_runs_on_a_project_already_at_the_current_schema(
@@ -167,7 +170,7 @@ def test_clib_common_h_is_left_alone(tmp_path: Path) -> None:
     prose about itself" trap, found by running the documented command in the
     documented order after verifying it in the reverse one."""
     root = _project(tmp_path)
-    clib = root / "native" / "inc" / "clib_common.h"
+    clib = root / INC_ROOT / "clib_common.h"
     before = clib.read_text()
     assert _OLD in before, "the comment should quote the old spelling"
     _upgrade_out(root)
@@ -187,16 +190,15 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
     root = _project(tmp_path)
     _upgrade_out(root)
     cxx = shutil.which("c++") or shutil.which("g++")
-    inc = root / "native" / "inc"
+    inc = root / INC_DIR
     body = (
         "int main(){ std::vector<std::complex<float> > v;"
         " v.push_back(std::complex<float>(3,4)); return 0; }\n"
     )
+    nco = f'#include "{INC.core_include("nco", root)}"\n'
     orders = {
-        "jm-first": '#include "nco/nco_core.h"\n#include <complex>\n'
-        "#include <vector>\n" + body,
-        "std-first": "#include <complex>\n#include <vector>\n"
-        '#include "nco/nco_core.h"\n' + body,
+        "jm-first": nco + "#include <complex>\n#include <vector>\n" + body,
+        "std-first": "#include <complex>\n#include <vector>\n" + nco + body,
     }
     for name, src in orders.items():
         tu = tmp_path / f"{name}.cpp"
@@ -224,7 +226,7 @@ class TestCommentsAndStringsAreProse:
 
     def test_a_comment_is_left_as_written(self, tmp_path: Path):
         root = _project(tmp_path)
-        h = root / "native" / "inc" / "nco" / "dp_like.h"
+        h = root / INC_ROOT / "nco" / "dp_like.h"
         h.write_text(self._PROSE + "float complex z;\n", encoding="utf-8")
         _upgrade_out(root)
         after = h.read_text(encoding="utf-8")

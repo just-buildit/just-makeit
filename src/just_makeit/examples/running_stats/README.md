@@ -59,7 +59,7 @@ Variance = `m2 / (n - 1)` once `n > 1`.
 
 ## 2. Implement
 
-Open `native/inc/running_stats/running_stats_core.h` and replace the stub.
+Open `native/inc/my_stats/running_stats/running_stats_core.h` and replace the stub.
 The algorithm mutates state, so the signature changes from `const` to mutable.
 The real part of the input is the sample value; the return packs `mean` into
 the real part and sample variance into the imaginary part:
@@ -140,7 +140,7 @@ After `make`, the combined shared library is at `build/libmy_stats.so`.
 
 ```c
 // demo.c
-#include "running_stats/running_stats_core.h"
+#include "my_stats/running_stats/running_stats_core.h"
 #include <complex.h>
 #include <stdio.h>
 
@@ -258,7 +258,7 @@ CREATE_BRIEF = (
 
 
 def _enrich() -> None:
-    header = pathlib.Path("native/inc") / OBJ / f"{OBJ}_core.h"
+    header = pathlib.Path("native/inc/my_stats") / OBJ / f"{OBJ}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real one. The

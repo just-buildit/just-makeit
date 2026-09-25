@@ -26,7 +26,7 @@ CREATE_BRIEF = (
 
 
 def main() -> None:
-    header = pathlib.Path("native/inc") / OBJ / f"{OBJ}_core.h"
+    header = pathlib.Path("native/inc/my_fir") / OBJ / f"{OBJ}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.

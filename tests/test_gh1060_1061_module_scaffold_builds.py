@@ -23,6 +23,8 @@ would pass just as happily against a wrong prototype.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -113,7 +115,7 @@ class TestAnOutTypeFunctionIsNotCalled:
             out_type="float",
             variable_output=True,
         )
-        header = (root / "native" / "inc" / "dsp" / "dsp_core.h").read_text(
+        header = (root / INC_ROOT / "dsp" / "dsp_core.h").read_text(
             encoding="utf-8"
         )
         test_c = (root / "native" / "tests" / "test_dsp_core.c").read_text(
@@ -260,12 +262,13 @@ class TestItActuallyBuilds:
         # The sacred bodies are the author's; write ones that make `dsp`
         # genuinely depend on `win`, which is the shape gh-1061 is about.
         (root / "native" / "src" / "win" / "window.c").write_text(
-            '#include "win/win_core.h"\n\n'
+            f'#include "{INC.core_include("win", root)}"\n\n'
             "void\nwindow(int n)\n{\n    (void)n;\n}\n",
             encoding="utf-8",
         )
         (root / "native" / "src" / "dsp" / "reset_all.c").write_text(
-            '#include "dsp/dsp_core.h"\n#include "win/win_core.h"\n\n'
+            f'#include "{INC.core_include("dsp", root)}"\n'
+            f'#include "{INC.core_include("win", root)}"\n\n'
             "void\nreset_all(void)\n{\n    window(1);\n}\n",
             encoding="utf-8",
         )

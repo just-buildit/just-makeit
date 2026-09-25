@@ -25,8 +25,8 @@ text = core_c.read_text(encoding="utf-8")
 # utils_core.h included; log10f lives in <math.h>.
 if "<math.h>" not in text:
     text = text.replace(
-        '#include "utils/utils_core.h"',
-        '#include "utils/utils_core.h"\n#include <math.h>',
+        '#include "my_utils/utils/utils_core.h"',
+        '#include "my_utils/utils/utils_core.h"\n#include <math.h>',
     )
 
 # Replace the placeholder body produced by fn_c_stub().
@@ -58,7 +58,7 @@ print(f"patched {core_c}")
 
 # ── 2. clamp (static inline) in utils_core.h ────────────────────────────────
 
-core_h = pathlib.Path("native/inc/utils/utils_core.h")
+core_h = pathlib.Path("native/inc/my_utils/utils/utils_core.h")
 text = core_h.read_text(encoding="utf-8")
 
 old_clamp = (
@@ -90,7 +90,7 @@ print(f"patched {core_h}")
 # warning.  We replace that one line with the actual multiply so the Gain
 # object passes its Python smoke test.
 
-gain_h = pathlib.Path("native/inc/gain/gain_core.h")
+gain_h = pathlib.Path("native/inc/my_utils/gain/gain_core.h")
 text = gain_h.read_text(encoding="utf-8")
 
 old_gain = "    (void)state; /* TODO: implement using state variables */\n    return (float)x;"

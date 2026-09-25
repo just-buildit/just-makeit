@@ -33,7 +33,7 @@ CREATE_BRIEF = (
 
 
 def _enrich() -> None:
-    header = pathlib.Path("native/inc") / OBJ / f"{OBJ}_core.h"
+    header = pathlib.Path("native/inc/my_stats") / OBJ / f"{OBJ}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real one. The

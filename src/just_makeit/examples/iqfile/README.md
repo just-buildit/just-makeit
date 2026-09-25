@@ -171,13 +171,13 @@ import sys
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
 # ── step() in _core.h ──────────────────────────────────────────────────────
-core_h = root / "native/inc/cf32_to_q15/cf32_to_q15_core.h"
+core_h = root / "native/inc/iqfile/cf32_to_q15/cf32_to_q15_core.h"
 text = core_h.read_text(encoding="utf-8")
 
 if "<math.h>" not in text:
     text = text.replace(
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n#include <math.h>',
+        '#include "iqfile/clib_common.h"',
+        '#include "iqfile/clib_common.h"\n#include <math.h>',
         1,
     )
 
@@ -237,13 +237,13 @@ POSIX_IO = """\
 #endif"""
 
 # ── add the I/O header to _core.h ─────────────────────────────────────────
-core_h = root / "native/inc/q15_to_cf32/q15_to_cf32_core.h"
+core_h = root / "native/inc/iqfile/q15_to_cf32/q15_to_cf32_core.h"
 text = core_h.read_text(encoding="utf-8")
 
 if "<unistd.h>" not in text:
     text = text.replace(
-        '#include "clib_common.h"',
-        '#include "clib_common.h"\n' + POSIX_IO,
+        '#include "iqfile/clib_common.h"',
+        '#include "iqfile/clib_common.h"\n' + POSIX_IO,
         1,
     )
 
@@ -280,8 +280,8 @@ text = core_c.read_text(encoding="utf-8")
 # The I/O header if needed (steps() calls read/lseek)
 if "<unistd.h>" not in text:
     text = text.replace(
-        '#include "q15_to_cf32/q15_to_cf32_core.h"',
-        '#include "q15_to_cf32/q15_to_cf32_core.h"\n' + POSIX_IO,
+        '#include "iqfile/q15_to_cf32/q15_to_cf32_core.h"',
+        '#include "iqfile/q15_to_cf32/q15_to_cf32_core.h"\n' + POSIX_IO,
         1,
     )
 
@@ -532,7 +532,7 @@ GETTER_BLOCKS = {
 
 
 def _enrich(obj: str) -> None:
-    header = pathlib.Path("native/inc") / obj / f"{obj}_core.h"
+    header = pathlib.Path("native/inc/iqfile") / obj / f"{obj}_core.h"
     text = header.read_text(encoding="utf-8")
 
     # Replace jm's trivial scaffold brief on <obj>_create with a real summary.

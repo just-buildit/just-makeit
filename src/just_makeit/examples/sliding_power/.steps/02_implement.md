@@ -1,6 +1,6 @@
 ## 2. Implement step()
 
-Replace the generated stub in `native/inc/power_est/power_est_core.h` with
+Replace the generated stub in `native/inc/my_power/power_est/power_est_core.h` with
 the recursive O(1) update.  The delay line stores `|x|²` for each past sample;
 `sum_sq` is the running total.
 

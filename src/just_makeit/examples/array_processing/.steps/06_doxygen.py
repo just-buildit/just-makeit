@@ -74,7 +74,7 @@ def main() -> None:
     core.write_text(text.replace(QUANTIZE_STUB, QUANTIZE_IMPL, 1), "utf-8")
     print(f"implemented {core}")
 
-    header = pathlib.Path("native/inc/ema/ema_core.h")
+    header = pathlib.Path("native/inc/my_arrays/ema/ema_core.h")
     text = header.read_text(encoding="utf-8")
     if CREATE_SCAFFOLD_BRIEF not in text:
         print("ERROR: create() scaffold brief not found", file=sys.stderr)

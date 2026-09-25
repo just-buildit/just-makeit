@@ -40,6 +40,7 @@ and in `tests/test_gh703_stale_fragment_doc_refresh.py`.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import re
 import sys
@@ -91,7 +92,7 @@ class TestTheDecisionItself:
 
 def _doc_above(root: Path, symbol: str, doc: str) -> None:
     """Put a Doxygen block above *symbol*'s declaration in the sacred header."""
-    h = root / "native" / "inc" / "o" / "o_core.h"
+    h = root / INC_ROOT / "o" / "o_core.h"
     t = h.read_text(encoding="utf-8")
     m = re.search(rf"^\w[\w ]*\b{re.escape(symbol)}\(", t, re.M)
     assert m, f"{symbol} not declared in {h}"
@@ -142,7 +143,7 @@ class TestAnAccessorDocEdit:
         assert _cli("apply", cwd=project).returncode == 0
         assert "DOC_ONE" in _frag(project), "gh-1192's empty-slot fill broke"
 
-        h = project / "native" / "inc" / "o" / "o_core.h"
+        h = project / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace("DOC_ONE", "DOC_TWO"),
             encoding="utf-8",
@@ -156,7 +157,7 @@ class TestAnAccessorDocEdit:
         """Repeated apply did not converge, which is how it was found."""
         _doc_above(project, "o_get_level", "/** @brief DOC_ONE. */\n")
         assert _cli("apply", cwd=project).returncode == 0
-        h = project / "native" / "inc" / "o" / "o_core.h"
+        h = project / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace("DOC_ONE", "DOC_TWO"),
             encoding="utf-8",
@@ -195,7 +196,7 @@ class TestAMethodDocEditIncludingItsCode:
         assert _cli("apply", cwd=project).returncode == 0
         assert "EXAMPLE_ONE" in _frag(project)
 
-        h = project / "native" / "inc" / "o" / "o_core.h"
+        h = project / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8")
             .replace("PROSE_ONE", "PROSE_TWO")
@@ -216,7 +217,7 @@ class TestAMethodDocEditIncludingItsCode:
         """
         _doc_above(project, "o_cfg", _METHOD_DOC.format(n="ONE"))
         assert _cli("apply", cwd=project).returncode == 0
-        h = project / "native" / "inc" / "o" / "o_core.h"
+        h = project / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8")
             .replace("PROSE_ONE", "PROSE_TWO")
@@ -244,7 +245,7 @@ class TestWhatItTakesIsNamed:
     def test_apply_names_the_member(self, project: Path):
         _doc_above(project, "o_cfg", "/** @brief DOC_ONE. */\n")
         assert _cli("apply", cwd=project).returncode == 0
-        h = project / "native" / "inc" / "o" / "o_core.h"
+        h = project / INC_ROOT / "o" / "o_core.h"
         h.write_text(
             h.read_text(encoding="utf-8").replace("DOC_ONE", "DOC_TWO"),
             encoding="utf-8",

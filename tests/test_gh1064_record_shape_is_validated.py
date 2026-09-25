@@ -21,6 +21,7 @@ release later.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -69,7 +70,7 @@ def _project(tmp_path: Path) -> Path:
         arg_type="double",
         return_type="void",
     )
-    header = proj / "native" / "inc" / "col" / "col_core.h"
+    header = proj / INC_ROOT / "col" / "col_core.h"
     text = header.read_text(encoding="utf-8")
     anchor = text.index("typedef struct {")
     header.write_text(

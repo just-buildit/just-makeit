@@ -32,6 +32,7 @@ GATE: an object documents itself identically standalone and inside a module.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import ast
 import re
@@ -500,7 +501,7 @@ def _tune_project(root: Path, module: str | None, authored: bool) -> Path:
         params=[("gain", "double", "")],
     )
     if authored:
-        h = next((root / "native" / "inc").rglob("w_core.h"))
+        h = next((root / INC_ROOT).rglob("w_core.h"))
         t = h.read_text(encoding="utf-8")
         assert t.count(" * @brief tune.") == 1, "scaffold no longer seeds it"
         h.write_text(t.replace(" * @brief tune.", _AUTHORED_TUNE), "utf-8")

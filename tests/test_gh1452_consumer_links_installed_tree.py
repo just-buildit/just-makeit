@@ -29,6 +29,8 @@ GATE: a program linked only against what an installed jm project advertises
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import os
 import subprocess
@@ -39,7 +41,7 @@ import pytest
 from _jmrun import run_cli
 
 _CONSUMER = (
-    '#include "gain/gain_core.h"\n'
+    '#include "<<P>>gain/gain_core.h"\n'
     "int main(void) {\n"
     "    gain_state_t *g = gain_create(1.0f);\n"
     "    float y = gain_step(g, 4.0f);\n"
@@ -76,7 +78,7 @@ def installed(tmp_path_factory):
         == 0
     )
     proj = root / "jmpc"
-    h = proj / "native" / "inc" / "gain" / "gain_core.h"
+    h = proj / INC_ROOT / "gain" / "gain_core.h"
     s = h.read_text()
     s = s.replace(
         "#ifndef GAIN_CORE_H", "#include <math.h>\n#ifndef GAIN_CORE_H", 1
@@ -108,7 +110,8 @@ def installed(tmp_path_factory):
     ):
         r = _run(cmd, proj)
         assert r.returncode == 0, (cmd, r.stdout[-1500:], r.stderr[-1500:])
-    (proj / "c.c").write_text(_CONSUMER)
+    # gh-1583: an installed package's headers are included as `<pkg>/...`.
+    (proj / "c.c").write_text(_CONSUMER.replace("<<P>>", INC.prefix(proj)))
     return proj, pfx
 
 

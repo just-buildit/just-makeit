@@ -22,6 +22,7 @@ one-per-line all work without the parser knowing which construct it sits in.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import sys
 from pathlib import Path
@@ -127,7 +128,7 @@ def _project(tmp_path: Path, *, manifest_doc: str = "") -> Path:
         return_type="float",
     )
     property_run(root, "osc", "gain", None, "double", False, doc=manifest_doc)
-    hdr = root / "native" / "inc" / "osc" / "osc_core.h"
+    hdr = root / INC_ROOT / "osc" / "osc_core.h"
     text = hdr.read_text(encoding="utf-8")
     assert "    double gain;\n" in text, "scaffold no longer emits the field"
     hdr.write_text(

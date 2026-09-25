@@ -23,6 +23,7 @@ gh-910 by a different route.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -235,7 +236,7 @@ def test_the_gate_fires_before_the_first_file_is_written(tmp_path):
                 return_type="float",
                 state_vars=[("gaïn", "double", "1.0")],
             )
-    assert not (root / "native/inc/w/w_core.h").exists(), (
+    assert not (root / INC_ROOT / "w/w_core.h").exists(), (
         "the object's sacred header was written before the name was refused, "
         "so the command failed and left a tree to clean up by hand"
     )

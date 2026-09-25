@@ -416,7 +416,7 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "step_fn": g.get("step_fn", f"{gen}_step"),
         "reset_fn": g.get("reset_fn", f"{gen}_reset"),
         "destroy_fn": g.get("destroy_fn", f"{gen}_destroy"),
-        "header": g.get("header", f"{gen}/{gen}_core.h"),
+        "header": g.get("header", INC.core_include(gen, cfg)),
         "output_type": g.get("output_type", "float _Complex"),
     }
 
@@ -3224,7 +3224,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     ``PyInit`` that readies and registers every type. The DSP kernels stay in
     the backing ``_core.c``; this file is pure generated glue."""
     backing = C.capsule_backing(cfg, module)
-    header = C.capsule_header(cfg, module) or f"{backing}/{backing}_core.h"
+    header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
     mp = C.module_paths(module)
     leaf = mp.leaf
     # gh-1190: the hand-written hook every other module kind already has.
@@ -3836,7 +3836,7 @@ def render_bridge_h(cfg: dict, module: str) -> str:
         return ""
 
     backing = C.capsule_backing(cfg, module)
-    header = C.capsule_header(cfg, module) or f"{backing}/{backing}_core.h"
+    header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
     src_struct = C.composer_source(cfg, module)["struct"]
     mp = C.module_paths(module)
     guard = f"{mp.cname.upper()}_BRIDGE_H"
@@ -4410,7 +4410,7 @@ def render_cli(cfg: dict, module: str) -> str:
     from . import _app
 
     backing = C.capsule_backing(cfg, module)
-    header = C.capsule_header(cfg, module) or f"{backing}/{backing}_core.h"
+    header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     src_struct, seg_struct = src["struct"], seg["struct"]

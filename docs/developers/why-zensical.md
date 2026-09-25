@@ -342,7 +342,7 @@ HTML-escaped automatically.
 ````markdown
 ```termynal
 $ just-makeit new my_dsp --object engine
-  {c}create{/c}  native/inc/engine/engine_core.h
+  {c}create{/c}  native/inc/my_dsp/engine/engine_core.h
   {c}create{/c}  native/src/engine/engine_core.c
   {c}create{/c}  native/src/engine/engine_ext.c
 {g}Done!{/g}  cd my_dsp && make && make test

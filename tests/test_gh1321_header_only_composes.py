@@ -20,6 +20,7 @@ the body alone trades a link error for a compile error.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -135,10 +136,10 @@ class TestItDoesNotCrash:
 class TestTheBodyGoesIntoTheHeader:
     def test_defined_static_inline(self, tmp_path, module):
         root = _ring(tmp_path / "p", module=module)
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert "ring_wait" not in h
         _add_method(root)
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert "static inline float _Complex *\nring_wait(" in h, h
 
     def test_no_core_c_is_created(self, tmp_path, module):
@@ -160,7 +161,7 @@ class TestTheBodyGoesIntoTheHeader:
         lands beside the definition."""
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert h.count("ring_wait") == 1, h
         assert (
             "float _Complex *ring_wait(ring_state_t *state, size_t n);"
@@ -172,7 +173,7 @@ class TestTheBodyGoesIntoTheHeader:
         for the rest -- which links until someone includes it from C++."""
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert h.index("ring_wait(") < h.rindex("#ifdef __cplusplus"), h
 
 

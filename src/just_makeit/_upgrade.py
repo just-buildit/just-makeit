@@ -17,6 +17,10 @@ AddTomlKey(section, key, default)
     Add `key = default` under `[section]` in the TOML if the key is absent.
     `section` is a list of strings, e.g. ``["project"]``.
 
+PrefixHeaders()
+    Schema 8 (gh-1583): move the project's headers under
+    ``native/inc/<pkg>/`` and respell every reference to them.
+
 Usage
 -----
     just-makeit upgrade          # advance to CURRENT_SCHEMA
@@ -74,6 +78,24 @@ class MigrateBenchHistory:
     drops raw per-iteration arrays before writing a snapshot, so a single
     run no longer bloats the JSON to 100+ MB.  Any older ``bench-python``
     / ``bench-c`` targets and ``BENCH_*`` variables are removed.
+    """
+
+
+@dataclass
+class PrefixHeaders:
+    """Schema 8 (gh-1583): the project's headers move under their package.
+
+    ``native/inc`` stays the ``-I`` directory; everything in it moves one
+    level down, into ``native/inc/<pkg>/``, so the installed tree is
+    ``include/<pkg>/`` and two projects' headers cannot collide. That rule
+    is right for EVERY schema-7 tree, because ``native/inc`` was its header
+    root: whatever was at ``native/inc/X`` was included as ``"X"`` and is now
+    ``"<pkg>/X"`` -- a component named after the package included.
+
+    What moves is read from the tree, not listed, and so is what gets
+    respelled -- a reference is rewritten only if it RESOLVES to a moved file
+    (:func:`_prefix_headers`), so a hand-written header is carried along and
+    a vendored library's own ``"config.h"`` is not.
     """
 
 
@@ -269,6 +291,11 @@ MIGRATIONS: dict[int, list] = {
         # manifest that declares `[[enum]]`, so the bump also signals the
         # minimum tool version.)
     ],
+    7: [
+        # Schema 8 prefixes the header layout (gh-1583): headers move under
+        # native/inc/<pkg>/ and every include of one is spelled "<pkg>/...".
+        PrefixHeaders(),
+    ],
 }
 
 
@@ -315,6 +342,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             if new != old:
                 _textio.write_text(makefile, new)
                 print("  update  Makefile  (bench → just-makeit bench)")
+
+    elif isinstance(step, PrefixHeaders):
+        _prefix_headers(root)
 
     elif isinstance(step, RegenBench):
         cfg = C.load(root)
@@ -395,6 +425,186 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     comp_ctx["bench_methods_timing_block"] = ""
             _textio.write_text(bench_c, R.render(tmpl, comp_ctx))
             print(f"  update  {bench_c.relative_to(root)}")
+
+
+#: The files whose ``#include`` lines the header move respells.
+_C_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"}
+_INCLUDE_LINE = re.compile(
+    r'^([ \t]*#[ \t]*include[ \t]*)(["<])([^">\n]+)([">])', re.M
+)
+#: A quoted TOML string (basic or literal) -- a manifest's header references.
+_TOML_STRING = re.compile(r"""(["'])([^"'\n]+)\1""")
+
+
+def _nested_projects(root: Path) -> "list[Path]":
+    """Directories below *root* holding a manifest of their own.
+
+    Each is ANOTHER project -- a downstream example, a test fixture -- with
+    its own ``native/inc`` and its own layout. doppler carries one
+    (``examples/downstream-jm``), and respelling its ``"clib_common.h"`` as
+    this project's would have pointed it at the wrong file. Its own `jm
+    upgrade` is what moves it.
+    """
+    return sorted(
+        m.parent
+        for m in root.rglob(C.FILENAME)
+        if m.parent != root and not _skipped_dir(m.relative_to(root).parts)
+    )
+
+
+def _skipped_dir(parts: "tuple[str, ...]") -> bool:
+    return any(p.startswith(".") or p.startswith("build") for p in parts[:-1])
+
+
+def _project_files(root: Path, want) -> "list[Path]":
+    """The project's own files *want* accepts: not build trees, not dot-dirs,
+    not the virtualenv, and nothing inside a nested project."""
+    nested = _nested_projects(root)
+    out = []
+    for path in sorted(root.rglob("*")):
+        if _skipped_dir(path.relative_to(root).parts):
+            continue
+        if any(n in path.parents for n in nested):
+            continue
+        if path.is_file() and want(path):
+            out.append(path)
+    return out
+
+
+def _prefix_headers(root: Path) -> None:
+    """Move ``native/inc/*`` under ``native/inc/<pkg>/`` and respell every
+    reference to a moved header (gh-1583, schema 7 -> 8).
+
+    Respelled, each only where it resolves to a file that moves:
+
+    - an ``#include`` in any of the project's C or C++ files. A quoted
+      include that resolves beside its own file is left alone, because C
+      finds it there first and the two move together;
+    - a quoted string in the manifest or a fragment it includes (``header =
+      "wfm/wfm.h"`` and its kin: jm emits them into ``#include`` verbatim);
+    - a ``native/inc/<entry>`` path in any CMake file.
+
+    Every rewrite is printed, so the author can review what changed. The
+    references are rewritten BEFORE the move, while the old tree still says
+    what resolves.
+    """
+    cfg = C.load(root)
+    inc = INC.inc_dir(root)
+    if not inc.is_dir():
+        return
+    pkg = C.project_name(cfg)
+    # The spellings of the layout the project is moving TO. The manifest still
+    # says schema 7 while the step runs, so `_incpath` is asked about a
+    # schema-8 owner explicitly rather than about this project.
+    to = INC.prefixed_owner(pkg)
+    # A tree already in the prefixed layout is not moved again, whatever its
+    # manifest says: jm's own clib_common.h sits under the package and not at
+    # the include root. Moving it would nest it twice (`<pkg>/<pkg>/`).
+    if (
+        INC.path(root, "clib_common.h", to).is_file()
+        and not INC.path(root, "clib_common.h", cfg).is_file()
+    ):
+        print(
+            f"  skip    {INC.rel('', to)}  (headers already under the package)"
+        )
+        return
+    moved = {
+        p.relative_to(inc).as_posix() for p in inc.rglob("*") if p.is_file()
+    }
+    # A configured template moves the header it produces, too: doppler's
+    # `wfm/wfm_plan_dsp_hash.h.in` becomes `${CMAKE_BINARY_DIR}/native/inc/
+    # wfm/wfm_plan_dsp_hash.h`, whose output path is respelled below with the
+    # rest of the CMake -- so the include naming the GENERATED file must be
+    # respelled with it, though that file is never in the source tree.
+    moved |= {m[: -len(".in")] for m in moved if m.endswith(".in")}
+    entries = sorted(p.name for p in inc.iterdir())
+
+    def spell(match: "re.Match[str]", here: Path) -> str:
+        lead, open_, name, close = match.groups()
+        if name not in moved:
+            return match.group(0)
+        # A quoted include is looked up beside its own file first. Kept only
+        # when that finds a DIFFERENT file from the -I lookup: then the
+        # author's spelling decides what is included. The same file -- every
+        # header directly in native/inc, the umbrella among them -- takes the
+        # canonical spelling, as jm renders it.
+        beside = here.parent / name
+        if (
+            open_ == '"'
+            and beside.is_file()
+            and beside.resolve() != (inc / name).resolve()
+        ):
+            return match.group(0)
+        return f"{lead}{open_}{INC.include(name, to)}{close}"
+
+    touched: "list[str]" = []
+    for f in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
+        text = f.read_text(encoding="utf-8", errors="surrogateescape")
+        new = _INCLUDE_LINE.sub(lambda m: spell(m, f), text)
+        if new != text:
+            _textio.write_text(f, new)
+            touched.append(f.relative_to(root).as_posix())
+
+    manifests = [root / C.FILENAME] + _manifest_fragments(root)
+    for f in manifests:
+        text = f.read_text(encoding="utf-8")
+        new = _TOML_STRING.sub(
+            lambda m: (
+                f"{m.group(1)}{INC.include(m.group(2), to)}{m.group(1)}"
+                if m.group(2) in moved
+                else m.group(0)
+            ),
+            text,
+        )
+        if new != text:
+            _textio.write_text(f, new)
+            touched.append(f.relative_to(root).as_posix())
+
+    old_rel = re.compile(
+        rf"{re.escape(INC.INC_DIR)}/({'|'.join(map(re.escape, entries))})(?=[/\s\")}}$]|$)",
+        re.M,
+    )
+    for f in _project_files(
+        root, lambda p: p.name == "CMakeLists.txt" or p.suffix == ".cmake"
+    ):
+        text = f.read_text(encoding="utf-8")
+        new = (
+            old_rel.sub(lambda m: INC.rel(m.group(1), to), text)
+            if entries
+            else text
+        )
+        if new != text:
+            _textio.write_text(f, new)
+            touched.append(f.relative_to(root).as_posix())
+
+    # The move itself: the whole directory, one level down. Through a
+    # sibling so a component named after the package moves too.
+    staging = inc.with_name(inc.name + ".jm-upgrade")
+    inc.rename(staging)
+    inc.mkdir()
+    staging.rename(INC.header_root(root, to))
+    print(
+        f"  move    {INC.INC_DIR}/* -> {INC.rel('', to)}"
+        f"  ({len(moved)} file(s))"
+    )
+    # Named where each file IS now: a header respelled above has moved since.
+    moved_prefix = INC.INC_DIR + "/"
+    for rel in touched:
+        if rel.startswith(moved_prefix):
+            rel = INC.rel(rel[len(moved_prefix) :], to)
+        print(f"  update  {rel}  (header references)")
+    for nested in _nested_projects(root):
+        print(
+            f"  skip    {nested.relative_to(root).as_posix()}/  (its own"
+            f" project: run `jm upgrade` there; an include of this"
+            f' project\'s headers becomes "{INC.prefix(to)}...")'
+        )
+
+
+def _manifest_fragments(root: Path) -> "list[Path]":
+    """The fragment files the manifest's ``include`` names."""
+    raw = C.load_manifest(root)
+    return C._resolve_includes(root, raw.get("include") or [])
 
 
 def _where_declared(root: Path, unknown) -> str:

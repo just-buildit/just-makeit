@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 from just_makeit._bench import child_pytest_env
@@ -94,7 +95,7 @@ def _enrich_headers(proj: Path) -> None:
     `@code`.
     """
     for obj, summary in CLASS_SUMMARIES.items():
-        header = proj / "native" / "inc" / obj / f"{obj}_core.h"
+        header = INC.header_root(proj) / obj / f"{obj}_core.h"
         text = header.read_text(encoding="utf-8")
         scaffold_re = re.compile(
             rf"/\*\*\n \* @brief Create a {obj} instance\..*?"

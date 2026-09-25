@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -158,7 +159,7 @@ def run(root: Path) -> None:
     assert "seededacc_core" not in cmake
 
     # ── 3. Implement step() and the view's alternate constructor ─────────────
-    core_h = dest / "native" / "inc" / "acc" / "acc_core.h"
+    core_h = INC.header_root(dest) / "acc" / "acc_core.h"
     _patch(
         core_h,
         "    (void)state; /* TODO: implement using state variables */\n"

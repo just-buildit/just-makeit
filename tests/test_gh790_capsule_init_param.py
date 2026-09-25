@@ -25,6 +25,8 @@ generating it.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -50,6 +52,13 @@ CAP = "doppler.telemetry.tlm"
 PTR = "dp_tlm_t *"
 HDR = "telemetry/telemetry.h"
 
+
+def _hdr(root: Path) -> str:
+    """How an author includes the foreign header in *root*'s layout: the
+    header is theirs, under the project's header root (gh-1583)."""
+    return INC.include(HDR, root)
+
+
 # The foreign module's header. jm never writes this — it is the author's, the
 # same way `--single`'s record struct is.
 FOREIGN_H = """#ifndef TELEMETRY_H
@@ -65,7 +74,7 @@ def _project(tmp_path: Path, *, with_header: bool = True) -> Path:
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("proj", root)
         if with_header:
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
         object_run(
@@ -86,7 +95,7 @@ def _project(tmp_path: Path, *, with_header: bool = True) -> Path:
                     True,
                     "",
                     CAP,
-                    HDR,
+                    _hdr(root),
                 ),
                 ("block_samples", "size_t", "0"),
             ],
@@ -99,7 +108,7 @@ def _ext(root: Path) -> str:
 
 
 def _core_h(root: Path) -> str:
-    return (root / "native" / "inc" / "capture" / "capture_core.h").read_text()
+    return (root / INC_ROOT / "capture" / "capture_core.h").read_text()
 
 
 def _pyi(root: Path) -> str:
@@ -119,7 +128,8 @@ class TestTheCFace:
     def test_the_foreign_header_is_included(self, tmp_path):
         """Without it the sacred `_core.h` does not parse — `dp_tlm_t` is
         undeclared in the very prototype jm just wrote."""
-        assert f'#include "{HDR}"' in _core_h(_project(tmp_path))
+        root = _project(tmp_path)
+        assert f'#include "{_hdr(root)}"' in _core_h(root)
 
     def test_the_include_lands_at_CREATION_not_only_at_apply(self, tmp_path):
         """The bug this guards. `param_headers` reads the manifest, and at
@@ -130,13 +140,13 @@ class TestTheCFace:
         happened to run `jm apply`."""
         root = _project(tmp_path)
         # No apply_run() above — this is the creation-time render.
-        assert f'#include "{HDR}"' in _core_h(root)
+        assert f'#include "{_hdr(root)}"' in _core_h(root)
 
     def test_a_missing_header_is_not_included(self, tmp_path):
         """Pre-existing gh-432 rule, kept: jm does not emit an include for a
         file that is not there."""
         root = _project(tmp_path, with_header=False)
-        assert f'#include "{HDR}"' not in _core_h(root)
+        assert f'#include "{_hdr(root)}"' not in _core_h(root)
 
 
 class TestTheBinding:
@@ -192,7 +202,7 @@ class TestTheBinding:
                             True,
                             "",
                             CAP,
-                            HDR,
+                            _hdr(root),
                         )
                     ],
                 )
@@ -249,7 +259,7 @@ class TestDeclaredAfterADefaultedParam:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             object_run(
@@ -271,7 +281,7 @@ class TestDeclaredAfterADefaultedParam:
                         True,
                         "",
                         CAP,
-                        HDR,
+                        _hdr(root),
                     ),
                 ],
             )
@@ -320,7 +330,7 @@ class TestWithAPathParam:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             object_run(
@@ -355,7 +365,7 @@ class TestWithAPathParam:
                         True,
                         "",
                         CAP,
-                        HDR,
+                        _hdr(root),
                     ),
                 ],
             )
@@ -411,11 +421,12 @@ class TestThePythonFace:
 
 class TestTheManifest:
     def test_it_round_trips(self, tmp_path):
-        ip = C.init_params(C.load(_project(tmp_path)), "capture")
+        root = _project(tmp_path)
+        ip = C.init_params(C.load(root), "capture")
         tlm = ip[0]
         assert tlm[0] == "tlm" and tlm[1] == PTR
         assert tlm[10] == CAP
-        assert tlm[11] == HDR
+        assert tlm[11] == _hdr(root)
 
     def test_apply_is_idempotent(self, tmp_path):
         root = _project(tmp_path)
@@ -431,7 +442,7 @@ class TestTheManifest:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             S.run(root)
-        assert f"tlm:{PTR}:capsule:{CAP}:{HDR}" in buf.getvalue()
+        assert f"tlm:{PTR}:capsule:{CAP}:{_hdr(root)}" in buf.getvalue()
 
 
 class TestTheCliGrammar:
@@ -554,7 +565,7 @@ class TestItCompilesAndRuns:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
             new_run("proj", root)
-            d = root / "native" / "inc" / "telemetry"
+            d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
             # Producer: its state struct is layout-compatible with dp_tlm_t,
@@ -590,7 +601,7 @@ class TestItCompilesAndRuns:
                         True,
                         "",
                         CAP,
-                        HDR,
+                        _hdr(root),
                     ),
                     ("block_samples", "size_t", "0"),
                 ],

@@ -21,6 +21,8 @@ get it wrong either.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -79,7 +81,7 @@ def _project(root: Path):
     end = t.index("\n}\n", i) + 3
     body = t[start:end]
     c.write_text(t[:start] + t[end:], encoding="utf-8")
-    h = root / "native/inc/cic/cic_core.h"
+    h = root / INC_ROOT / "cic/cic_core.h"
     s = h.read_text(encoding="utf-8")
     cut = s.rindex("#ifdef __cplusplus")
     h.write_text(
@@ -119,7 +121,7 @@ def _project(root: Path):
     # is.
     for rel in (
         "native/src/widget/widget_core.c",
-        "native/inc/widget/widget_core.h",
+        INC.core_rel("widget", root),
     ):
         f = root / rel
         s = f.read_text(encoding="utf-8")

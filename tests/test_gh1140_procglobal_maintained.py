@@ -36,6 +36,8 @@ import pytest
 
 from _jmrun import JmRun, run_cli
 
+from just_makeit import _incpath as INC
+
 
 CLOBBER = "/* CLOBBERED */\n"
 
@@ -82,7 +84,10 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
-HEADER = "native/inc/flag/flag_procglobal.h"
+def _header(root: Path) -> str:
+    """The contract header's path in *root*'s layout (gh-1583)."""
+    return INC.rel("flag/flag_procglobal.h", root)
+
 
 # What the rendezvous must import: the EXTENSION module, not the package that
 # re-exports it (gh-1134). The whole of gh-1140 is that this string reached
@@ -93,7 +98,9 @@ OWNER = '#define FLAG_PG_OWNER   "pgdemo.own.own"'
 def _owner_line(root: Path) -> str:
     return next(
         ln
-        for ln in (root / HEADER).read_text(encoding="utf-8").splitlines()
+        for ln in (root / _header(root))
+        .read_text(encoding="utf-8")
+        .splitlines()
         if ln.startswith("#define FLAG_PG_OWNER")
     )
 
@@ -108,7 +115,7 @@ class TestApplyMaintainsTheHeader:
         """gh-1140's own failure, exactly: the pre-gh1134 string in a header
         that already exists. This is what an adopting project carries after
         the pin bump."""
-        p = project / HEADER
+        p = project / _header(project)
         p.write_text(
             p.read_text(encoding="utf-8").replace(
                 '"pgdemo.own.own"', '"pgdemo.own"'
@@ -122,7 +129,7 @@ class TestApplyMaintainsTheHeader:
 
     def test_a_clobbered_header_is_restored(self, project: Path) -> None:
         """`DO NOT EDIT` is only true if something rewrites it."""
-        (project / HEADER).write_text(CLOBBER, encoding="utf-8")
+        (project / _header(project)).write_text(CLOBBER, encoding="utf-8")
         assert _cli("status", "--check", cwd=project).returncode == 1
         assert _cli("apply", cwd=project).returncode == 0
         assert _owner_line(project) == OWNER
@@ -131,7 +138,7 @@ class TestApplyMaintainsTheHeader:
         """Not the same path as the two above — `_sync_missing` creates it,
         from bytes rendered against the whole manifest rather than whatever
         the replay held when it scaffolded this one component."""
-        (project / HEADER).unlink()
+        (project / _header(project)).unlink()
         assert _cli("apply", cwd=project).returncode == 0
         assert _owner_line(project) == OWNER
 
@@ -151,7 +158,7 @@ class TestApplyMaintainsTheHeader:
         cfg = _config.load(project)
         want = _procglobal.render_header(cfg, "flag")
         assert want, "the fixture no longer declares process_global"
-        assert (project / HEADER).read_text(encoding="utf-8") == want
+        assert (project / _header(project)).read_text(encoding="utf-8") == want
 
     def test_apply_converges(self, project: Path) -> None:
         """A reconcile whose two sides disagree reports drift forever, which
@@ -195,13 +202,14 @@ class TestApplyMaintainsTheHeader:
 # derived from the header, so a header edit that changes which called
 # functions it declares makes `apply` rewrite the table -- and `status`
 # rightly reports what apply would change. `other`/`own` carry no table.
+#: The author's own headers, relative to the header root (gh-1583: where
+#: that root is depends on the project's layout).
+YOURS_HEADERS = {"other/other_core.h", "own/own_core.h"}
 YOURS = {
     "README.md",
     "benchmarks/history/.gitkeep",
     "docs/api.md",
     "docs/index.md",
-    "native/inc/other/other_core.h",
-    "native/inc/own/own_core.h",
     "native/src/other/other_core.c",
     "native/src/own/own_core.c",
     "native/src/pgdemo_lib.c",
@@ -256,7 +264,9 @@ class TestNothingGeneratedIsInvisibleToStatus:
                     invisible.add(rel)
             finally:
                 path.write_bytes(keep)
-        assert invisible == YOURS
+        assert invisible == YOURS | {
+            INC.rel(h, project) for h in YOURS_HEADERS
+        }
 
 
 class TestTheOrphanedHeader:
@@ -292,7 +302,7 @@ class TestTheOrphanedHeader:
         `apply` did clean up, there would be nothing to report."""
         self._undeclare(project)
         assert _cli("apply", cwd=project).returncode == 0
-        assert (project / HEADER).is_file()
+        assert (project / _header(project)).is_file()
         ext = (project / "native/src/other/other_ext.c").read_text("utf-8")
         assert "PyImport_ImportModule" not in ext, (
             "the rendezvous should be gone from the generated binding"
@@ -303,7 +313,7 @@ class TestTheOrphanedHeader:
         assert _cli("apply", cwd=project).returncode == 0
         out = _cli("status", cwd=project)
         assert "ORPHAN (1)" in out.stdout, out.stdout
-        assert HEADER in out.stdout, out.stdout
+        assert _header(project) in out.stdout, out.stdout
         assert _cli("status", "--check", cwd=project).returncode == 1
 
     def test_apply_warns_in_the_run_that_creates_it(
@@ -322,7 +332,7 @@ class TestTheOrphanedHeader:
         before. The action is the one the message names."""
         self._undeclare(project)
         assert _cli("apply", cwd=project).returncode == 0
-        (project / HEADER).unlink()
+        (project / _header(project)).unlink()
         assert _cli("status", "--check", cwd=project).returncode == 0
 
     def test_a_declared_header_is_not_an_orphan(self, project: Path) -> None:

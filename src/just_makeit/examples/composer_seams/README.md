@@ -91,7 +91,7 @@ is yours. It lives in a `c_deps` directory, which is jm's escape hatch for
 hand-written C: jm emits an `add_subdirectory()` line for it and never touches
 anything inside.
 
-`native/inc/playlist/playlist_core.h`:
+`native/inc/studio/playlist/playlist_core.h`:
 
 ```
 /* playlist_core.h — the backing kernel, hand-written.
@@ -142,7 +142,7 @@ void           playlist_destroy (playlist_state_t *state);
 `native/src/backing/playlist_core.c`:
 
 ```c
-#include "playlist/playlist_core.h"
+#include "studio/playlist/playlist_core.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -362,7 +362,7 @@ just-makeit apply
 ```
 
 ```
-  create  native/inc/playlist/playlist_bridge.h
+  create  native/inc/studio/playlist/playlist_bridge.h
   create  native/src/playlist/CMakeLists.txt
   create  native/src/playlist/playlist_ext.c
   create  src/studio/playlist/playlist.pyi
@@ -399,7 +399,7 @@ with neither gets no header at all, because there would be nothing to say.
  * The include is the generated header, so these definitions are checked
  * against jm's declarations by the compiler rather than by eye.
  */
-#include "playlist/playlist_bridge.h"
+#include "studio/playlist/playlist_bridge.h"
 
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses
@@ -640,7 +640,7 @@ produce samples at all.
  * to these signatures was to write a second copy of them, and a second copy
  * is what drifts.
  */
-#include "playlist/playlist_bridge.h"
+#include "studio/playlist/playlist_bridge.h"
 
 #include <stdio.h>
 

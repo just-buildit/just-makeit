@@ -37,6 +37,7 @@ keeps meeting from the other side.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import inspect
@@ -301,7 +302,7 @@ class TestThroughTheCliInterface:
         return root
 
     def _header(self, root: Path) -> str:
-        return (root / "native" / "inc" / "dsp" / "dsp_core.h").read_text(
+        return (root / INC_ROOT / "dsp" / "dsp_core.h").read_text(
             encoding="utf-8"
         )
 
@@ -385,7 +386,7 @@ class TestItActuallyCompiles:
                 {"name": "v", "type": "double"},
             ],
         )
-        header = root / "native" / "inc" / "dsp" / "dsp_core.h"
+        header = root / INC_ROOT / "dsp" / "dsp_core.h"
         # The row struct is the author's, in the sacred header, and jm never
         # sees it — so the compile needs it declared. A translation unit that
         # includes the header and nothing else is the narrowest thing that
@@ -398,7 +399,7 @@ class TestItActuallyCompiles:
             encoding="utf-8",
         )
         cc = shutil.which("cc") or shutil.which("gcc")
-        inc = root / "native" / "inc"
+        inc = root / INC_DIR
         proc = subprocess.run(
             [
                 cc,

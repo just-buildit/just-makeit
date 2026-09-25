@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit._pyfmt import flatten_prose
 
@@ -124,7 +125,7 @@ def run(root: Path) -> None:
     assert "def __aiter__(self) -> AsyncIterator[NDArray[np.float32]]:" in pyi
 
     # 2. Splice in step() — the SAME .steps/02_step.c the README embeds.
-    core_h = proj / "native" / "inc" / "ramp" / "ramp_core.h"
+    core_h = INC.header_root(proj) / "ramp" / "ramp_core.h"
     snippet = (STEPS / "02_step.c").read_text(encoding="utf-8")
     fn = snippet[snippet.index("static inline") :].rstrip() + "\n"
     core_h.write_text(

@@ -22,6 +22,7 @@ templates every existing project renders, so an object without the flag must
 still produce exactly the previous bytes.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import re
 import subprocess
 import sys
@@ -160,7 +161,7 @@ class TestByteIdenticalWhenUnset:
         ) in c
 
     def test_core_h_declaration_and_lifecycle_line(self, plain):
-        h = _read(plain / "native" / "inc" / "keeper" / "keeper_core.h")
+        h = _read(plain / INC_ROOT / "keeper" / "keeper_core.h")
         assert (
             " * Lifecycle: create -> [step / steps / reset]* -> destroy" in h
         )
@@ -231,7 +232,7 @@ class TestRemovedFromEveryArtifact:
         assert _mentions_reset(dest) == []
 
     def test_core_h_has_no_declaration(self, flagged):
-        h = _read(flagged / "native" / "inc" / "writerx2" / "writerx2_core.h")
+        h = _read(flagged / INC_ROOT / "writerx2" / "writerx2_core.h")
         assert "writerx2_reset" not in h
         # The lifecycle summary must not advertise a verb that is gone.
         assert "reset" not in h
@@ -267,7 +268,7 @@ class TestRemovedFromEveryArtifact:
     def test_sibling_object_is_unaffected(self, flagged):
         # Two objects in one project: only the flagged one loses reset().
         assert "writerx_reset" in _read(
-            flagged / "native" / "inc" / "writerx" / "writerx_core.h"
+            flagged / INC_ROOT / "writerx" / "writerx_core.h"
         )
 
 
@@ -303,7 +304,7 @@ class TestModuleObject:
 
     def test_module_core_files_and_tests(self, project):
         assert "modw_reset" not in _read(
-            project / "native" / "inc" / "modw" / "modw_core.h"
+            project / INC_ROOT / "modw" / "modw_core.h"
         )
         assert "modw_reset" not in _read(
             project / "native" / "src" / "modw" / "modw_core.c"
@@ -350,7 +351,7 @@ class TestNoResetWithNoState:
     def test_no_state_alone_still_has_reset(self, tmp_path):
         dest = tmp_path / "ns"
         new_run("ns", dest, ["sink"], None, no_state=True)
-        h = _read(dest / "native" / "inc" / "sink" / "sink_core.h")
+        h = _read(dest / INC_ROOT / "sink" / "sink_core.h")
         assert "sink_reset(sink_state_t *state);" in h
         ext = _read(dest / "native" / "src" / "sink" / "sink_ext.c")
         assert "SinkObj_reset" in ext

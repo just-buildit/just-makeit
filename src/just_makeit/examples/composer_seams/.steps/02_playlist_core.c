@@ -1,4 +1,4 @@
-#include "playlist/playlist_core.h"
+#include "studio/playlist/playlist_core.h"
 #include <stdlib.h>
 #include <string.h>
 

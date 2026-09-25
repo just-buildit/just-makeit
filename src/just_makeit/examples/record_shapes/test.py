@@ -19,6 +19,7 @@ Also runnable directly: python3 examples/record_shapes/test.py
 import subprocess
 import sys
 import tempfile
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -117,7 +118,7 @@ def run(root: Path) -> None:
     # narrated: one key changes, and the C signature and the Python return
     # type both change with it.
     header = (
-        proj / "native" / "inc" / "collector" / "collector_core.h"
+        INC.header_root(proj) / "collector" / "collector_core.h"
     ).read_text(encoding="utf-8")
     assert (
         "evlog_summary_t collector_summary(collector_state_t *state);"

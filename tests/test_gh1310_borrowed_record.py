@@ -18,6 +18,8 @@ traversal agreeing with itself; only the compiler knows what it laid out.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -156,7 +158,7 @@ class TestEveryFaceNamesTheRecord:
 
     def test_the_sacred_header_returns_a_record_pointer(self, tmp_path):
         root = _declare(tmp_path / "p")
-        h = (root / "native/inc/ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
         assert "iq_pair_t *ring_wait(ring_state_t *state, size_t n);" in h, h
 
     def test_the_stub_defines_one(self, tmp_path):
@@ -226,12 +228,12 @@ class TestTheLayoutMatchesTheCompiler:
     @classmethod
     def _build(cls, root: Path, shape: str, fields):
         _declare(root, fields=fields)
-        h = root / "native/inc/ring/ring_core.h"
+        h = root / INC_ROOT / "ring/ring_core.h"
+        common = f'#include "{INC.include("clib_common.h", root)}"'
         h.write_text(
             h.read_text().replace(
-                '#include "clib_common.h"',
-                '#include "clib_common.h"\n#include <stdint.h>\n\n'
-                + cls.STRUCTS[shape],
+                common,
+                common + "\n#include <stdint.h>\n\n" + cls.STRUCTS[shape],
                 1,
             )
         )
@@ -266,7 +268,7 @@ class TestTheLayoutMatchesTheCompiler:
         src = tmp / "layout.c"
         src.write_text(
             "#include <stdio.h>\n#include <stddef.h>\n"
-            '#include "ring/ring_core.h"\n'
+            f'#include "{INC.core_include("ring", root)}"\n'
             "int main(void) {\n"
             '    printf("%zu %zu %zu\\n", sizeof(iq_pair_t),\n'
             "        offsetof(iq_pair_t, i), offsetof(iq_pair_t, q));\n"
@@ -279,9 +281,9 @@ class TestTheLayoutMatchesTheCompiler:
                 cc,
                 str(src),
                 "-I",
-                str(root / "native/inc"),
+                str(root / INC_DIR),
                 "-I",
-                str(root / "native/inc/ring"),
+                str(root / INC_ROOT / "ring"),
                 "-o",
                 str(exe),
             ],

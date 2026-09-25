@@ -91,10 +91,11 @@ stream_block_default = "256"
 
 The algorithm is unchanged from the sync example — async iteration reuses the
 exact same producer. Replace the inline `step()` stub in
-`native/inc/ramp/ramp_core.h` with the ramp recurrence:
+`native/inc/stream_source_async_demo/ramp/ramp_core.h` with the ramp recurrence:
 
 ```c
-/* Implement in native/inc/ramp/ramp_core.h — replace the generated stub.
+/* Implement in native/inc/stream_source_async_demo/ramp/ramp_core.h — replace
+ * the generated stub.
  *
  * A free-running source: emit the current value, then advance it. `value`
  * and `step_inc` are state fields, so each call resumes where the last one

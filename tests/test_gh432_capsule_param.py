@@ -21,6 +21,8 @@ The motivating consumer is doppler's telemetry attach face
                           const char *prefix, uint32_t decim);
 """
 
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -53,10 +55,23 @@ SET_TELEMETRY = {
 }
 
 
+def _hdr(dest: Path) -> str:
+    """How the author includes the foreign header in *dest*'s layout."""
+    return INC.include("telemetry/telemetry.h", dest)
+
+
+def _telemetry(dest: Path) -> dict:
+    """``SET_TELEMETRY`` with its capsule header spelled for *dest*."""
+    m = dict(SET_TELEMETRY)
+    m["params"] = [dict(p) for p in SET_TELEMETRY["params"]]
+    m["params"][0]["header"] = _hdr(dest)
+    return m
+
+
 def _foreign_header(dest: Path) -> None:
     """Plant the foreign type's header under native/inc (out-of-convention
     location: telemetry/telemetry.h, not telemetry/telemetry_core.h)."""
-    hdr = dest / "native" / "inc" / "telemetry" / "telemetry.h"
+    hdr = dest / INC_ROOT / "telemetry" / "telemetry.h"
     hdr.parent.mkdir(parents=True, exist_ok=True)
     hdr.write_text(
         "#ifndef TLM_H\n#define TLM_H\n"
@@ -72,7 +87,7 @@ def _scaffold_standalone(tmp_path: Path) -> Path:
     object_run(dest, "agc", module=None)
     _foreign_header(dest)
     cfg = C.load(dest)
-    C.add_method(cfg, "agc", dict(SET_TELEMETRY))
+    C.add_method(cfg, "agc", _telemetry(dest))
     C.save(dest, cfg)
     apply_run(dest)
     return dest
@@ -85,7 +100,7 @@ def _scaffold_module(tmp_path: Path) -> Path:
     object_run(dest, "agc", "track")
     _foreign_header(dest)
     cfg = C.load(dest)
-    C.add_method(cfg, "agc", dict(SET_TELEMETRY))
+    C.add_method(cfg, "agc", _telemetry(dest))
     C.save(dest, cfg)
     apply_run(dest)
     return dest
@@ -146,10 +161,10 @@ class TestGeneratedParseGlue:
 class TestHeaderAndPrototype:
     def test_core_h_gains_include_and_decl(self, tmp_path):
         dest = _scaffold_standalone(tmp_path)
-        core_h = (dest / "native" / "inc" / "agc" / "agc_core.h").read_text(
+        core_h = (dest / INC_ROOT / "agc" / "agc_core.h").read_text(
             encoding="utf-8"
         )
-        assert '#include "telemetry/telemetry.h"' in core_h
+        assert f'#include "{_hdr(dest)}"' in core_h
         assert (
             "int agc_set_telemetry(agc_state_t *state,"
             " dp_tlm_t * tlm, const char * prefix, uint32_t decim);" in core_h
@@ -157,10 +172,10 @@ class TestHeaderAndPrototype:
 
     def test_module_object_core_h_gains_include(self, tmp_path):
         dest = _scaffold_module(tmp_path)
-        core_h = (dest / "native" / "inc" / "agc" / "agc_core.h").read_text(
+        core_h = (dest / INC_ROOT / "agc" / "agc_core.h").read_text(
             encoding="utf-8"
         )
-        assert '#include "telemetry/telemetry.h"' in core_h
+        assert f'#include "{_hdr(dest)}"' in core_h
 
     def test_missing_header_is_not_injected(self, tmp_path):
         # A header key naming a file that doesn't exist under native/inc is
@@ -176,7 +191,7 @@ class TestHeaderAndPrototype:
         C.add_method(cfg, "agc", m)
         C.save(dest, cfg)
         apply_run(dest)
-        core_h = (dest / "native" / "inc" / "agc" / "agc_core.h").read_text(
+        core_h = (dest / INC_ROOT / "agc" / "agc_core.h").read_text(
             encoding="utf-8"
         )
         assert "nope/nope.h" not in core_h
@@ -222,7 +237,7 @@ class TestRoundTrip:
         ]
         assert m["status_return"] is True
         assert m["params"][0]["capsule"] == CAPSULE_NAME
-        assert m["params"][0]["header"] == "telemetry/telemetry.h"
+        assert m["params"][0]["header"] == _hdr(dest)
         assert m["params"][2]["default"] == "1"
 
     def test_save_is_idempotent(self, tmp_path):
@@ -235,7 +250,7 @@ class TestRoundTrip:
     def test_apply_is_idempotent(self, tmp_path):
         dest = _scaffold_standalone(tmp_path)
         ext_path = dest / "native" / "src" / "agc" / "agc_ext.c"
-        core_h_path = dest / "native" / "inc" / "agc" / "agc_core.h"
+        core_h_path = dest / INC_ROOT / "agc" / "agc_core.h"
         ext_before = ext_path.read_text(encoding="utf-8")
         core_before = core_h_path.read_text(encoding="utf-8")
         apply_run(dest)
@@ -245,5 +260,5 @@ class TestRoundTrip:
     def test_param_headers_accessor(self, tmp_path):
         dest = _scaffold_standalone(tmp_path)
         cfg = C.load(dest)
-        assert C.param_headers(cfg, "agc") == ["telemetry/telemetry.h"]
+        assert C.param_headers(cfg, "agc") == [_hdr(dest)]
         assert C.param_headers(cfg, "missing") == []

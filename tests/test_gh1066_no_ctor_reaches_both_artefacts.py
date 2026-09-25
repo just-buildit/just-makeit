@@ -27,6 +27,7 @@ argument" would pass just as happily on a header that was also wrong.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -77,7 +78,7 @@ def _scaffold(root: Path) -> Path:
 
 
 def _proto_arity(proj: Path) -> int:
-    text = (proj / "native" / "inc" / "thing" / "thing_core.h").read_text(
+    text = (proj / INC_ROOT / "thing" / "thing_core.h").read_text(
         encoding="utf-8"
     )
     m = re.search(r"^thing_state_t \*thing_create\((.*?)\);", text, re.M)

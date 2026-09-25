@@ -7,7 +7,7 @@ never reads a field. Adding them BEFORE declaring the methods is what lets
 
 from pathlib import Path
 
-HEADER = Path("native/inc/collector/collector_core.h")
+HEADER = Path("native/inc/evlog/collector/collector_core.h")
 
 STRUCTS = """\
 /* One row of the log — the element type of what read() hands back. */

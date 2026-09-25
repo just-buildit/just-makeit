@@ -102,6 +102,19 @@ def prefixed(owner: Owner) -> bool:
     return C.schema_version(_cfg(owner)) >= PREFIXED_SCHEMA
 
 
+def prefixed_owner(pkg: str) -> dict:
+    """An owner for package *pkg* in the prefixed layout.
+
+    For `jm upgrade` (gh-1583): while it moves a project, the manifest still
+    says the old schema, so what the NEW spellings are is asked of this
+    owner -- the layout's schema stays a fact only this module states.
+
+    >>> prefix(prefixed_owner("p"))
+    'p/'
+    """
+    return {"project": {"name": pkg, "schema": str(PREFIXED_SCHEMA)}}
+
+
 def _pkg(owner: Owner) -> str:
     from . import _config as C
 

@@ -41,6 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
+from just_makeit import _incpath as INC
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -279,7 +280,10 @@ def run(root: Path) -> None:
     assert "ROOT CMAKE" not in status, status
     block = status[status.index("OUTDATED (") :].split("\n\n")[0]
     outdated = re.findall(r"^  ↑ (\S+)$", block, re.MULTILINE)
-    assert "native/inc/clib_common.h" in outdated, outdated
+    # gh-1583: upgrade moved every header under native/inc/<pkg>/ and
+    # respelled each include of one; the kernel's header went with them.
+    assert INC.prefixed(proj), "upgrade left the legacy header layout"
+    assert INC.rel("clib_common.h", proj) in outdated, outdated
     for rel in outdated:
         (proj / rel).unlink()
     # gh-1589: the packaging templates are jm's to own, not files to delete.
@@ -333,9 +337,9 @@ def run(root: Path) -> None:
     assert "REFUSED" in after and _OUT_REFUSED in after, after
 
     # The author's kernel came through every step untouched.
-    assert "return x * state->scale;" in (
-        proj / "native/inc/fir/fir_core.h"
-    ).read_text(encoding="utf-8")
+    assert "return x * state->scale;" in (INC.core_h(proj, "fir")).read_text(
+        encoding="utf-8"
+    )
 
     # ── the regression half: what every step printed ─────────────────────
     report = log.report()

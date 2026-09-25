@@ -14,6 +14,7 @@ import; and an end-to-end build + real ``async for`` (over ``stream(...)`` and
 over the object), with sync iteration still working.
 """
 
+from _jminc import INC_ROOT  # noqa: E402
 import os
 import shutil
 import subprocess
@@ -103,7 +104,7 @@ class TestAsyncCodegen:
 class TestAsyncRuntime:
     def test_build_and_async_iterate(self, tmp_path, monkeypatch):
         root = _scaffold_async(tmp_path / "p", monkeypatch)
-        core_h = root / "native/inc/osc/osc_core.h"
+        core_h = root / INC_ROOT / "osc/osc_core.h"
         core_h.write_text(core_h.read_text().replace(_STEP_STUB, _STEP_BODY))
         build = root / "build"
         cfg = subprocess.run(

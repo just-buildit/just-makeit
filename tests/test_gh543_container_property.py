@@ -30,6 +30,7 @@ class (an unchecked pointer that segfaults rather than raising):
     scenario into exit 139.
 """
 
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 import ast
 import shutil
 import subprocess
@@ -344,7 +345,7 @@ class TestStandaloneProject:
         assert props["stages"]["value_type"] == "const char *"
 
     def test_core_header_gains_only_the_pure_c_accessors(self, project):
-        h = (project / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
         assert "size_t rdr_num_keywords(const rdr_state_t *state);" in h
         assert "const char *rdr_stages_value(" in h
         assert "PyObject" not in h
@@ -449,7 +450,7 @@ class TestModuleProject:
             "-Wall",
             "-Wextra",
             "-Werror=implicit-function-declaration",
-            f"-I{project / 'native' / 'inc'}",
+            f"-I{project / INC_DIR}",
             f"-I{sysconfig.get_paths()['include']}",
             f"-I{numpy.get_include()}",
             str(src / "wfm_ext.c"),
@@ -758,7 +759,7 @@ class TestCli:
             "double",
         )
         assert rc == 0
-        h = (project / "native" / "inc" / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
         assert (
             "double rdr_gains_value(const rdr_state_t *state, size_t i);" in h
         )

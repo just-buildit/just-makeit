@@ -40,6 +40,7 @@ purpose, and they check each other.
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC  # noqa: E402
 from pathlib import Path
 
 import pytest
@@ -305,7 +306,7 @@ class TestNoGeneratedCNestsABlockComment:
             "native/src/cplx/cplx_ext.c",  # standalone object
             "native/src/dsp/dsp_ext_filt.c",  # object in a module
             "native/src/dsp/scale.c",  # module-level function
-            "native/inc/jm_perf.h",  # --perf
+            INC.rel("jm_perf.h", wide_project),  # --perf
             "native/src/hand/hand_ext.c",  # kind = "handle"
             "native/src/cap/cap_ext.c",  # kind = "capsule"
             "native/src/mix/mix_ext.c",  # kind = "composer" (gh-1287)

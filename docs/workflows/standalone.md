@@ -22,7 +22,7 @@ output. Omit both and they default to `float _Complex`.
 
 ## 2. Implement
 
-Open `native/inc/gain/gain_core.h` and fill in the `gain_step` stub:
+Open `native/inc/my_dsp/gain/gain_core.h` and fill in the `gain_step` stub:
 
 ```c
 static inline float

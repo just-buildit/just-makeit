@@ -21,6 +21,7 @@ Two tiers, matching how this repo already splits build-dependent tests:
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import json
 import re
@@ -87,7 +88,7 @@ class TestScaffoldWiring:
         # other project's layout filters out everything and reports clean,
         # which is how jm's own root copy sat dead for a year.
         assert "HeaderFilterRegex:" in tidy.read_text()
-        assert (root / "native" / "inc").is_dir()
+        assert (root / INC_ROOT).is_dir()
 
     def test_header_filter_covers_every_tree_jm_writes_headers_into(
         self, tmp_path

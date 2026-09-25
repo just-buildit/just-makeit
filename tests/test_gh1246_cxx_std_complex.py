@@ -40,6 +40,8 @@ library, so the link is load-bearing rather than decorative.
 
 from __future__ import annotations
 
+from just_makeit import _incpath as INC
+
 import os
 import shutil
 import subprocess
@@ -64,9 +66,9 @@ _SKIP = _skip_reason()
 _CXX = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
 
 # jm's header first, then <complex> -- the macro poisons what follows.
-_JM_FIRST = '#include "cplx/cplx_core.h"\n#include <complex>\n'
+_JM_FIRST = '#include "<<P>>cplx/cplx_core.h"\n#include <complex>\n'
 # <complex> first -- `#undef complex` then destroys what is already there.
-_JM_SECOND = '#include <complex>\n#include "cplx/cplx_core.h"\n'
+_JM_SECOND = '#include <complex>\n#include "<<P>>cplx/cplx_core.h"\n'
 
 _USES_STD_COMPLEX = """\
 #include <vector>
@@ -134,6 +136,8 @@ class TestACxx11TuCanUseStdComplex:
     ):
         root, _, __ = built
         src = tmp_path / f"{order}.cpp"
+        # gh-1583: the jm header is spelled in the project's layout.
+        includes = includes.replace("<<P>>", INC.prefix(root))
         src.write_text(includes + _USES_STD_COMPLEX, encoding="utf-8")
         r = subprocess.run(
             [
@@ -169,7 +173,7 @@ class TestItLinksTheRealLibraryAndRuns:
         root, _, static = built
         app = tmp_path / "app.cpp"
         app.write_text(
-            '#include "cplx/cplx_core.h"\n'
+            f'#include "{INC.core_include("cplx", root)}"\n'
             "#include <complex>\n"
             "#include <vector>\n"
             "#include <cstdio>\n"

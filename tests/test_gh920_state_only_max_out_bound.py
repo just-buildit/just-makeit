@@ -34,6 +34,7 @@ text reads as correct on both sides of the fix, and only a compiled call with
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
 import io
@@ -180,7 +181,7 @@ class TestRuntime:
             )
             # The author's own prototype: the pre-gh-607 state-only form, on
             # the sacred header, which is what puts the project in the seam.
-            header = dest / "native/inc/nco/nco_core.h"
+            header = dest / INC_ROOT / "nco/nco_core.h"
             text = header.read_text("utf-8")
             text = re.sub(
                 r"size_t nco_steps_u32_max_out\s*\([^)]*\)",

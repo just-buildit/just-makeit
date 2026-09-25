@@ -26,6 +26,8 @@ picks the donor.
 """
 
 from __future__ import annotations
+from _jminc import INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
 import io
@@ -57,23 +59,30 @@ def _write(root: Path, rel: str, text: str) -> None:
     p.write_text(text, encoding="utf-8")
 
 
+def _inc(root: Path, name: str) -> str:
+    """An ``#include`` of the project's own header *name*, in its layout."""
+    return f'#include "{INC.include(name, root)}"'
+
+
 def _include_donor(root: Path, comp: str) -> None:
     """A shared header with a documented same-named field, included first."""
     _write(
         root,
-        "native/inc/ring/ring_core.h",
+        INC.rel("ring/ring_core.h", root),
         "typedef struct {\n"
         f"    size_t dropped;  /**< {_DONOR} ring. */\n"
         f"    double snr;      /**< {_DONOR} snr. */\n"
         "} ring_t;\n",
     )
-    h = root / "native" / "inc" / comp / f"{comp}_core.h"
+    h = root / INC_ROOT / comp / f"{comp}_core.h"
     t = h.read_text(encoding="utf-8")
-    assert t.count('#include "clib_common.h"') == 1
+    assert t.count(_inc(root, "clib_common.h")) == 1
     h.write_text(
         t.replace(
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n#include "ring/ring_core.h"',
+            _inc(root, "clib_common.h"),
+            _inc(root, "clib_common.h")
+            + "\n"
+            + _inc(root, "ring/ring_core.h"),
         ),
         encoding="utf-8",
     )
@@ -125,7 +134,7 @@ def _property_project(tmp_path: Path, module: str | None, own: str) -> Path:
         False,
         field=True,
     )
-    h = root / "native" / "inc" / "rx" / "rx_core.h"
+    h = root / INC_ROOT / "rx" / "rx_core.h"
     t = h.read_text(encoding="utf-8")
     decl = "uint64_t dropped;"
     assert t.count(decl) == 1, t
@@ -220,14 +229,16 @@ def _record_project(tmp_path: Path, module: str | None) -> Path:
         _include_donor(root, "tx")
     _write(
         root,
-        "native/inc/meas/meas_core.h",
+        INC.rel("meas/meas_core.h", root),
         "typedef struct {\n    double snr;  /**< OWN_SNR in dB. */\n} meas_t;\n",
     )
-    h = root / "native" / "inc" / "rx" / "rx_core.h"
+    h = root / INC_ROOT / "rx" / "rx_core.h"
     h.write_text(
         h.read_text(encoding="utf-8").replace(
-            '#include "ring/ring_core.h"',
-            '#include "ring/ring_core.h"\n#include "meas/meas_core.h"',
+            _inc(root, "ring/ring_core.h"),
+            _inc(root, "ring/ring_core.h")
+            + "\n"
+            + _inc(root, "meas/meas_core.h"),
         ),
         encoding="utf-8",
     )

@@ -43,7 +43,7 @@ substitutions to the lifted text before injection.
 
 ## What you get
 
-### `native/inc/io/io_core.h` (declaration)
+### `native/inc/my_dsp/io/io_core.h` (declaration)
 
 ```c
 void q15_to_float(const int16_t *input,  size_t input_len,

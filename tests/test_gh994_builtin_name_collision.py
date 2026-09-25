@@ -28,6 +28,8 @@ win; adding one later, the built-in is already in a file jm must not rewrite.
 """
 
 from __future__ import annotations
+from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 import re
 import shutil
@@ -249,7 +251,7 @@ class TestOneDefinitionPerName:
             params,
             name == "steps",
         )
-        header = (root / "native/inc/osc/osc_core.h").read_text(
+        header = (root / INC_ROOT / "osc/osc_core.h").read_text(
             encoding="utf-8"
         )
         core_c = (root / "native/src/osc/osc_core.c").read_text(
@@ -299,7 +301,7 @@ class TestOneDefinitionPerName:
             tmp_path / "proj", name, "void", "float", params, var_out
         )
         expected = {
-            "native/inc/osc/osc_core.h": decl,
+            INC.core_rel("osc", root): decl,
             "native/src/osc/osc_core.c": decl,
             "src/proj/osc.pyi": py_decl,
         }
@@ -390,7 +392,7 @@ class TestGeneratedTreeCompiles:
             tmp_path / "proj", name, arg_type, return_type, params, var_out
         )
         proc = _compile(
-            root / "native/src/osc/osc_core.c", [str(root / "native/inc")]
+            root / "native/src/osc/osc_core.c", [str(root / INC_DIR)]
         )
         assert proc.returncode == 0, proc.stderr
 
@@ -408,7 +410,7 @@ class TestGeneratedTreeCompiles:
         proc = _compile(
             root / "native/src/osc/osc_ext.c",
             [
-                str(root / "native/inc"),
+                str(root / INC_DIR),
                 sysconfig.get_paths()["include"],
                 numpy.get_include(),
             ],
