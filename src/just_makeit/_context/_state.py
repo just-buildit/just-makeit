@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from .. import _coerce
+from .. import _csym as CSYM
 from .._docstring import ctor_demo_label as _ctor_demo_label
 from .._docstring import (
     struct_member_doc,
@@ -2148,13 +2149,18 @@ def apply_header_only(
 
     Examples
     --------
-    >>> apply_header_only({"steps_c_decl": "x"}, False)["steps_c_decl"]
+    >>> apply_header_only({"csym": "q", "steps_c_decl": "x"}, False)[
+    ...     "steps_c_decl"
+    ... ]
     'x'
-    >>> apply_header_only({"steps_c_decl": "x"}, True)["steps_c_decl"]
+    >>> apply_header_only({"csym": "q", "steps_c_decl": "x"}, True)[
+    ...     "steps_c_decl"
+    ... ]
     ''
     """
     L = chr(10)
-    comp = str(ctx.get("component", ""))
+    # gh-1591: every name built here is a C symbol, so from the stem.
+    csym = str(ctx["csym"])
     # create/destroy are the two the header states literally rather than
     # through a definition slot, so their declaration text is built here and
     # their bodies come from the same slots `_core.c` uses.
@@ -2162,13 +2168,13 @@ def apply_header_only(
     # gh-1328: the NAME comes from `create_name`, never from `comp` -- the
     # header must declare the function `_core.c` defines and `_ext.c` calls,
     # and `create_fn` renames all three at once.
-    cname = str(ctx.get("create_name") or f"{comp}_create")
+    cname = CSYM.ctx_create_name(ctx)
     ctx["create_decl"] = (
-        f"{comp}_state_t *{cname}({ctx.get('create_params', '')});"
+        f"{csym}_state_t *{cname}({ctx.get('create_params', '')});"
     )
     ctx["destroy_decl"] = (
-        f"{ctx.get('destroy_c_ret', 'void')} {comp}_destroy"
-        f"({comp}_state_t *state);"
+        f"{ctx.get('destroy_c_ret', 'void')} {csym}_destroy"
+        f"({csym}_state_t *state);"
     )
     if not header_only:
         ctx.setdefault("inline_core", "")
@@ -2176,14 +2182,14 @@ def apply_header_only(
     if family is not None:
         return _apply_core_family(ctx, family)
     lifecycle = (
-        f"{L}static inline {comp}_state_t *{L}"
+        f"{L}static inline {csym}_state_t *{L}"
         f"{cname}({ctx.get('create_params', '')}){L}{{{L}"
-        f"    {comp}_state_t *obj = calloc(1, sizeof(*obj));{L}"
+        f"    {csym}_state_t *obj = calloc(1, sizeof(*obj));{L}"
         f"    if (!obj){L}        return NULL;{L}"
         f"{ctx.get('create_assignments', '')}"
         f"    return obj;{L}}}{L}{L}"
         f"static inline {ctx.get('destroy_c_ret', 'void')}{L}"
-        f"{comp}_destroy({comp}_state_t *state){L}{{{L}"
+        f"{csym}_destroy({csym}_state_t *state){L}{{{L}"
         f"{ctx.get('destroy_impl', '')}    free(state);"
         f"{ctx.get('destroy_ret_stmt', '')}{L}}}{L}"
     )
@@ -2565,8 +2571,15 @@ def make_state_ctx(
     header_only: bool = False,
     opaque_state: bool = False,
     doc_blocks: dict | None = None,
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
+
+    *csym* is the component's C symbol stem (``_csym.stem``, gh-1591): every
+    identifier built here -- ``<stem>_create``, ``<stem>_state_t``, the
+    accessors -- derives from it, while *component* stays the FILE stem.
+    Keyword-only and required, so a caller cannot fall back to the name.
 
     Each entry in state_vars is (name, ctype, default), where default is a
     C literal used for both reset and as the Python __init__ default value.
@@ -2600,7 +2613,7 @@ def make_state_ctx(
     no-op would report success for work that never happened; removing the
     method makes the absence explicit instead.
     """
-    _create = create_fn or f"{component}_create"
+    _create = CSYM.create_name(csym, create_fn)
     # gh-676/gh-644: one lookup, both faces, both branches below.
     _reset_rt, _reset_pyi = _reset_docs(component, doc_blocks)
     if no_state:
@@ -2658,11 +2671,11 @@ def make_state_ctx(
             ),
             "c_create_args": "",
             "bench_create_stmt": (
-                f"    /* TODO: {component}_state_t *obj = {_create}(...); */"
+                f"    /* TODO: {csym}_state_t *obj = {_create}(...); */"
             ),
             "bench_destroy_stmt": "",
             "getter_setter_test_c": "",
-            "reset_test_c": (f"    /* reset */\n    {component}_reset(obj);"),
+            "reset_test_c": (f"    /* reset */\n    {csym}_reset(obj);"),
             "array_args_parse_block": "",
             "array_args_decref": "",
             "create_line": (f"    self->handle = {_create}();\n"),
@@ -2687,7 +2700,7 @@ def make_state_ctx(
                 f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
                 f"        return NULL;\n"
                 f"    }}\n"
-                f"    {component}_reset(self->handle);\n"
+                f"    {csym}_reset(self->handle);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             ),
@@ -2701,7 +2714,7 @@ def make_state_ctx(
                 f" * @brief Reset {Component} to its post-create state.\n"
                 f" * @param state  Must be non-NULL.\n"
                 f" */\n"
-                f"void {component}_reset({component}_state_t *state);"
+                f"void {csym}_reset({csym}_state_t *state);"
             ),
             "builtin_reset_pyi": (
                 "\n    def reset(self) -> None:\n" + _reset_pyi
@@ -2819,16 +2832,16 @@ def make_state_ctx(
             f" * @brief Get current {name}.\n"
             f" * @param state  Must be non-NULL.\n"
             f" */\n"
-            f"{ct} {component}_get_{name}"
-            f"(const {component}_state_t *state);\n"
+            f"{ct} {csym}_get_{name}"
+            f"(const {csym}_state_t *state);\n"
             f"\n"
             f"/**\n"
             f" * @brief Set {name}.\n"
             f" * @param state  Must be non-NULL.\n"
             f" * @param val    New value.\n"
             f" */\n"
-            f"void {component}_set_{name}"
-            f"({component}_state_t *state, {ct} val);"
+            f"void {csym}_set_{name}"
+            f"({csym}_state_t *state, {ct} val);"
         )
     for name, elem_ct, size in array_info:
         decl_parts.append(
@@ -2837,24 +2850,24 @@ def make_state_ctx(
             f" * @param state  Must be non-NULL.\n"
             f" * @param dest   Output buffer of length {size}.\n"
             f" */\n"
-            f"void {component}_get_{name}"
-            f"(const {component}_state_t *state, {elem_ct} *dest);\n"
+            f"void {csym}_get_{name}"
+            f"(const {csym}_state_t *state, {elem_ct} *dest);\n"
             f"\n"
             f"/**\n"
             f" * @brief Get a read-only pointer to {name}.\n"
             f" * @param state  Must be non-NULL.\n"
-            f" * @return Pointer valid until {component}_destroy() is called.\n"
+            f" * @return Pointer valid until {csym}_destroy() is called.\n"
             f" */\n"
-            f"const {elem_ct} *{component}_get_{name}_view"
-            f"(const {component}_state_t *state);\n"
+            f"const {elem_ct} *{csym}_get_{name}_view"
+            f"(const {csym}_state_t *state);\n"
             f"\n"
             f"/**\n"
             f" * @brief Set {name} from src.\n"
             f" * @param state  Must be non-NULL.\n"
             f" * @param src    Source buffer of length {size}.\n"
             f" */\n"
-            f"void {component}_set_{name}"
-            f"({component}_state_t *state, const {elem_ct} *src);"
+            f"void {csym}_set_{name}"
+            f"({csym}_state_t *state, const {elem_ct} *src);"
         )
     getter_setter_decls = "\n\n".join(decl_parts)
 
@@ -2895,15 +2908,15 @@ def make_state_ctx(
     for name, ct, _ in scalar_vars:
         impl_parts.append(
             f"{ct}\n"
-            f"{component}_get_{name}"
-            f"(const {component}_state_t *state)\n"
+            f"{csym}_get_{name}"
+            f"(const {csym}_state_t *state)\n"
             f"{{\n"
             f"    return state->{name};\n"
             f"}}\n"
             f"\n"
             f"void\n"
-            f"{component}_set_{name}"
-            f"({component}_state_t *state, {ct} val)\n"
+            f"{csym}_set_{name}"
+            f"({csym}_state_t *state, {ct} val)\n"
             f"{{\n"
             f"    state->{name} = val;\n"
             f"}}"
@@ -2911,23 +2924,23 @@ def make_state_ctx(
     for name, elem_ct, size in array_info:
         impl_parts.append(
             f"void\n"
-            f"{component}_get_{name}"
-            f"(const {component}_state_t *state, {elem_ct} *dest)\n"
+            f"{csym}_get_{name}"
+            f"(const {csym}_state_t *state, {elem_ct} *dest)\n"
             f"{{\n"
             f"    memcpy(dest, state->{name},"
             f" {size} * sizeof({elem_ct}));\n"
             f"}}\n"
             f"\n"
             f"const {elem_ct} *\n"
-            f"{component}_get_{name}_view"
-            f"(const {component}_state_t *state)\n"
+            f"{csym}_get_{name}_view"
+            f"(const {csym}_state_t *state)\n"
             f"{{\n"
             f"    return state->{name};\n"
             f"}}\n"
             f"\n"
             f"void\n"
-            f"{component}_set_{name}"
-            f"({component}_state_t *state, const {elem_ct} *src)\n"
+            f"{csym}_set_{name}"
+            f"({csym}_state_t *state, const {elem_ct} *src)\n"
             f"{{\n"
             f"    memcpy(state->{name}, src,"
             f" {size} * sizeof({elem_ct}));\n"
@@ -3054,7 +3067,7 @@ def make_state_ctx(
     method_parts = []
     for name, ct, _ in scalar_vars:
         meta = _CTYPE_META[ct]
-        to_py = meta["to_py"](f"{component}_get_{name}(self->handle)")
+        to_py = meta["to_py"](f"{csym}_get_{name}(self->handle)")
         getter = (
             f"static PyObject *\n"
             f"{Component}_get_{name}(\n"
@@ -3075,7 +3088,7 @@ def make_state_ctx(
                 f'    if (!PyArg_ParseTuple(args, "{meta["fmt"]}", &v_raw))\n'
                 f"        return NULL;\n"
                 f"    {ct} v = {meta['to_c']('v')};\n"
-                f"    {component}_set_{name}(self->handle, v);\n"
+                f"    {csym}_set_{name}(self->handle, v);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
@@ -3089,7 +3102,7 @@ def make_state_ctx(
                 f"    {ct} v = {meta['zero']};\n"
                 f'    if (!PyArg_ParseTuple(args, "{meta["fmt"]}", &v))\n'
                 f"        return NULL;\n"
-                f"    {component}_set_{name}(self->handle, v);\n"
+                f"    {csym}_set_{name}(self->handle, v);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
@@ -3109,7 +3122,7 @@ def make_state_ctx(
             f"    npy_intp dims[] = {{{size}}};\n"
             f"    PyObject *arr = PyArray_SimpleNew(1, dims, {npy_enum});\n"
             f"    if (!arr) return NULL;\n"
-            f"    {component}_get_{name}(self->handle,\n"
+            f"    {csym}_get_{name}(self->handle,\n"
             f"        {ptr_cast}PyArray_DATA((PyArrayObject *)arr));\n"
             f"    return arr;\n"
             f"}}"
@@ -3133,7 +3146,7 @@ def make_state_ctx(
             f"{{\n"
             f"{guard}"
             + _borrow_view_c(
-                f"{component}_get_{name}_view(self->handle)",
+                f"{csym}_get_{name}_view(self->handle)",
                 size,
                 npy_enum,
                 writeable=False,
@@ -3160,7 +3173,7 @@ def make_state_ctx(
             f"        Py_DECREF(arr);\n"
             f"        return NULL;\n"
             f"    }}\n"
-            f"    {component}_set_{name}(self->handle,\n"
+            f"    {csym}_set_{name}(self->handle,\n"
             f"        {const_ptr_cast}PyArray_DATA(arr));\n"
             f"    Py_DECREF(arr);\n"
             f"    Py_RETURN_NONE;\n"
@@ -3386,12 +3399,10 @@ def make_state_ctx(
         # one is the peer-drift this repo keeps paying for.
         cgs_lines.append(f"    /* {name}: getter / setter */")
         if _assert_initial:
-            cgs_lines.append(
-                f"    CHECK({component}_get_{name}(obj) == {dflt});"
-            )
+            cgs_lines.append(f"    CHECK({csym}_get_{name}(obj) == {dflt});")
         cgs_lines += [
-            f"    {component}_set_{name}(obj, {sv});",
-            f"    CHECK({component}_get_{name}(obj) == {sv});",
+            f"    {csym}_set_{name}(obj, {sv});",
+            f"    CHECK({csym}_get_{name}(obj) == {sv});",
             "",
         ]
     for name, elem_ct, size in array_info:
@@ -3401,8 +3412,8 @@ def make_state_ctx(
             "    {",
             f"        {elem_ct} src[{size}], dst[{size}];",
             f"        src[0] = {sv};",
-            f"        {component}_set_{name}(obj, src);",
-            f"        {component}_get_{name}(obj, dst);",
+            f"        {csym}_set_{name}(obj, src);",
+            f"        {csym}_get_{name}(obj, dst);",
             f"        CHECK(dst[0] == {sv});",
             "    }",
             "",
@@ -3413,25 +3424,25 @@ def make_state_ctx(
 
     rst_lines = ["    /* reset restores defaults */"]
     for name, ct, _ in scalar_vars:
-        rst_lines.append(f"    {component}_set_{name}(obj, {_c_set_val(ct)});")
+        rst_lines.append(f"    {csym}_set_{name}(obj, {_c_set_val(ct)});")
     for name, elem_ct, size in array_info:
         sv = _c_set_val(elem_ct)
         rst_lines += [
             "    {",
             f"        {elem_ct} ones[{size}];",
             f"        size_t i_; for (i_ = 0; i_ < {size}; i_++) ones[i_] = {sv};",
-            f"        {component}_set_{name}(obj, ones);",
+            f"        {csym}_set_{name}(obj, ones);",
             "    }",
         ]
-    rst_lines.append(f"    {component}_reset(obj);")
+    rst_lines.append(f"    {csym}_reset(obj);")
     for name, _, dflt in scalar_vars:
-        rst_lines.append(f"    CHECK({component}_get_{name}(obj) == {dflt});")
+        rst_lines.append(f"    CHECK({csym}_get_{name}(obj) == {dflt});")
     for name, elem_ct, size in array_info:
         zero = _CTYPE_META[elem_ct]["zero"]
         rst_lines += [
             "    {",
             f"        {elem_ct} buf[{size}];",
-            f"        {component}_get_{name}(obj, buf);",
+            f"        {csym}_get_{name}(obj, buf);",
             f"        CHECK(buf[0] == {zero});",
             "    }",
         ]
@@ -3501,12 +3512,12 @@ def make_state_ctx(
         # and the bench must declare `obj` (else the unconditional destroy(obj)
         # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
-            f"    {component}_state_t *obj = {_create}({c_create_args});"
+            f"    {csym}_state_t *obj = {_create}({c_create_args});"
         ),
         # gh-1328: see the twin in `_build_no_state_init_ctx`. One slot names
         # the constructor for every C face.
         "create_name": _create,
-        "bench_destroy_stmt": f"    {component}_destroy(obj);",
+        "bench_destroy_stmt": f"    {csym}_destroy(obj);",
         "getter_setter_test_c": getter_setter_test_c,
         "reset_test_c": reset_test_c,
         # ComponentW is the wrapper-function prefix.
@@ -3534,7 +3545,7 @@ def make_state_ctx(
             f'        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
             f"        return NULL;\n"
             f"    }}\n"
-            f"    {component}_reset(self->handle);\n"
+            f"    {csym}_reset(self->handle);\n"
             f"    Py_RETURN_NONE;\n"
             f"}}"
         ),
@@ -3548,7 +3559,7 @@ def make_state_ctx(
             f" * @brief Reset {Component} to its post-create state.\n"
             f" * @param state  Must be non-NULL.\n"
             f" */\n"
-            f"void {component}_reset({component}_state_t *state);"
+            f"void {csym}_reset({csym}_state_t *state);"
         ),
         "builtin_reset_pyi": ("\n    def reset(self) -> None:\n" + _reset_pyi),
     }
@@ -3628,12 +3639,9 @@ def make_state_ctx(
             _init_ctx["c_create_args"] = _c_args
             _init_ctx["py_create_args"] = _py_args
             _init_ctx["bench_create_stmt"] = (
-                f"    {component}_state_t *obj = {_create}({_c_args});"
+                f"    {csym}_state_t *obj = {_create}({_c_args});"
                 if _c_args
-                else (
-                    f"    /* TODO: {component}_state_t *obj ="
-                    f" {_create}(...); */"
-                )
+                else (f"    /* TODO: {csym}_state_t *obj = {_create}(...); */")
             )
         _CTOR_OVERRIDE_KEYS = (
             "create_params",

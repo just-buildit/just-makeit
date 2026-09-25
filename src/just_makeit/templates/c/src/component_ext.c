@@ -11,12 +11,12 @@
 #include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 
 /* ======================================================== */
-/* /*<<Component>>*/Object — wraps /*<<component>>*/_state_t *       */
+/* /*<<Component>>*/Object — wraps /*<<csym>>*/_state_t *       */
 /* ======================================================== */
 
 typedef struct {
     PyObject_HEAD
-    /*<<component>>*/_state_t *handle;
+    /*<<csym>>*/_state_t *handle;
 /*<<extra_buf_fields>>*//*<<capsule_owner_fields>>*/} /*<<Component>>*/Object;
 
 static void
@@ -94,7 +94,7 @@ static PyTypeObject /*<<ComponentW>>*/Type = {
 /* Module definition                                         */
 /* ======================================================== */
 
-static PyModuleDef /*<<component>>*/_module = {
+static PyModuleDef /*<<csym>>*/_module = {
     PyModuleDef_HEAD_INIT,
     .m_name    = "/*<<component>>*/",
     .m_doc     = "Python binding for /*<<component>>*/_core.h.",
@@ -109,7 +109,7 @@ PyInit_/*<<component>>*/(void)
     if (PyType_Ready(&/*<<ComponentW>>*/Type) < 0)
         return NULL;/*<<stream_type_ready>>*/
 /*<<record_type_ready>>*/
-    PyObject *m = PyModule_Create(&/*<<component>>*/_module);
+    PyObject *m = PyModule_Create(&/*<<csym>>*/_module);
     if (!m)
         return NULL;
 

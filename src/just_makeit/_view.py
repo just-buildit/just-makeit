@@ -21,6 +21,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._init import _inject_decls_into_core_h, _to_title
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
@@ -180,6 +181,7 @@ def run(
         state_vars,
         init_params=view_ip,
         create_fn=create_fn,
+        csym=CSYM.stem(cfg, object_name),
     )
     create_params = vctx["create_params"]
 

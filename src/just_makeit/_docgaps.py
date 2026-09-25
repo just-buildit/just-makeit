@@ -32,6 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _record
 from ._docstring import function_doc, method_doc, property_doc
 
@@ -120,7 +121,8 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         comp,
                         "method",
                         mname,
-                        f"`@brief` above {C.method_c_symbol(comp, method)}() "
+                        "`@brief` above "
+                        f"{C.method_c_symbol(CSYM.stem(cfg, comp), method)}() "
                         f"in the sacred header, or `doc =` on the method",
                     )
                 )
