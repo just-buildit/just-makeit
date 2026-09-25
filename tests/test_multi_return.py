@@ -23,7 +23,7 @@ from _jminc import INC_ROOT  # noqa: E402
 def _methods_ctx(methods, component="c", Component="C"):
     from just_makeit._context import make_methods_ctx
 
-    return make_methods_ctx(component, Component, methods)
+    return make_methods_ctx(component, Component, methods, csym=component)
 
 
 class TestTupleOfArrays:
@@ -121,6 +121,7 @@ class TestListOfRecordsHeaderDeclMatchesBody:
                 {"name": "index", "type": "size_t"},
                 {"name": "magnitude", "type": "float"},
             ],
+            csym="comp",
         )
         assert proto == (
             "size_t comp_find_peaks(comp_state_t *state, const float *in,"
@@ -146,9 +147,14 @@ class TestListOfRecordsHeaderDeclMatchesBody:
             multi_output=[],
             params=[],
             result_fields=result_fields,
+            csym="comp",
         ).rstrip(";")
         stub = _methods_c_stub_result_fields(
-            "comp", "find_peaks", "float[]", "peaks_result_t"
+            "comp",
+            "find_peaks",
+            "float[]",
+            "peaks_result_t",
+            csym="comp",
         )
         # The declaration's "fn(...)" text must appear verbatim as the
         # definition's signature line in the body stub.
@@ -171,6 +177,7 @@ class TestListOfRecordsHeaderDeclMatchesBody:
             params=[],
             result_fields=[{"name": "index", "type": "size_t"}],
             single=True,
+            csym="comp",
         )
         assert proto == (
             "peaks_result_t comp_find_peak(comp_state_t *state,"
@@ -197,7 +204,7 @@ class TestBenchBlockResultFields:
     def test_call_includes_results_buffer_and_cap(self):
         from just_makeit._context._methods import _bench_method_block
 
-        block = _bench_method_block("comp", self.METHOD)
+        block = _bench_method_block("comp", self.METHOD, csym="comp")
         assert (
             "comp_find_peaks(obj, find_peaks_in, BENCH_N,"
             " find_peaks_results, 64)" in block
@@ -206,14 +213,14 @@ class TestBenchBlockResultFields:
     def test_results_buffer_declared(self):
         from just_makeit._context._methods import _bench_method_block
 
-        block = _bench_method_block("comp", self.METHOD)
+        block = _bench_method_block("comp", self.METHOD, csym="comp")
         assert "peaks_result_t find_peaks_results[64];" in block
 
     def test_respects_custom_max_results(self):
         from just_makeit._context._methods import _bench_method_block
 
         m = dict(self.METHOD, max_results=16)
-        block = _bench_method_block("comp", m)
+        block = _bench_method_block("comp", m, csym="comp")
         assert "find_peaks_results[16];" in block
         assert ", find_peaks_results, 16)" in block
 
@@ -237,6 +244,7 @@ class TestFunctionResultFieldsWrapper:
                 {"name": "index", "type": "size_t"},
                 {"name": "magnitude", "type": "float"},
             ],
+            c_name="find_peaks",
         )
         assert "size_t _max = 64;" in wrapper
         assert "find_peaks(x, x_len, _results, _max)" in wrapper
@@ -255,6 +263,7 @@ class TestFunctionResultFieldsWrapper:
             "detector_event_t",
             result_fields=[{"name": "lag", "type": "uint32_t"}],
             max_results_param="max_events",
+            c_name="push",
         )
         assert "size_t _max = (size_t)max_events;" in wrapper
         assert "push(x, max_events, _results)" in wrapper

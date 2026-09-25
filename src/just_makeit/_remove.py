@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _render as R
@@ -538,6 +539,8 @@ def _remove_state(
 def _remove_method(
     root: Path, cfg: dict, obj: str, name: str, force: bool
 ) -> None:
+    # gh-1591: the C names these messages point at.
+    csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -565,13 +568,15 @@ def _remove_method(
     print()
     print(
         f"Done!  Method '{name}' removed."
-        f"\n  note: {obj}_{name}() remains in {obj}_core.c — delete it by hand."
+        f"\n  note: {csym}_{name}() remains in {obj}_core.c — delete it by hand."
     )
 
 
 def _remove_property(
     root: Path, cfg: dict, obj: str, name: str, force: bool
 ) -> None:
+    # gh-1591: the C names these messages point at.
+    csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -600,10 +605,10 @@ def _remove_property(
     _regenerate_object_bindings(root, cfg, obj, pkg, name)
     print()
     note = (
-        f"\n  note: the '{name}' field remains in {obj}_state_t "
+        f"\n  note: the '{name}' field remains in {csym}_state_t "
         f"({obj}_core.h) — delete it by hand."
         if is_field
-        else f"\n  note: {obj}_get_{name}()/{obj}_set_{name}() remain in "
+        else f"\n  note: {csym}_get_{name}()/{csym}_set_{name}() remain in "
         f"{obj}_core.c — delete them by hand."
     )
     print(f"Done!  Property '{name}' removed.{note}")
@@ -622,6 +627,8 @@ def _remove_warning(
     touched, and the condition field on the state struct is left alone — the
     component computes it, and it may well have other readers.
     """
+    # gh-1591: the C names these messages point at.
+    csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -656,7 +663,7 @@ def _remove_warning(
     print()
     print(
         f"Done!  Warning removed.\n"
-        f"\n  note: the '{name}' field remains in {obj}_state_t — it is the "
+        f"\n  note: the '{name}' field remains in {csym}_state_t — it is the "
         f"component's own state, not the warning's."
     )
 
@@ -669,6 +676,8 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
     from gh-482 shows up here too. Removing it reverts the glue to the blanket
     ``MemoryError``, which is the pre-gh-482 behaviour rather than a new state.
     """
+    # gh-1591: the C names these messages point at.
+    csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
@@ -698,7 +707,7 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
     _regenerate_object_bindings(root, cfg, obj, pkg)
     print()
     print(
-        f"Done!  create_error removed — {obj}_create() failures now report "
+        f"Done!  create_error removed — {csym}_create() failures now report "
         f"MemoryError."
     )
 

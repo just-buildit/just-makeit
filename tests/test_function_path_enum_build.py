@@ -59,7 +59,9 @@ size_t make_code(const char *name, int kind, int extra) {
 
 
 def _build(tmp: Path):
-    w = make_functions_ctx("logm", "Logm", _FNS, _ENUMS)
+    w = make_functions_ctx(
+        "logm", "Logm", _FNS, _ENUMS, owner={"project": {"name": "p"}}
+    )
     src = f"""
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

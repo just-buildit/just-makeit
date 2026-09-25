@@ -54,7 +54,9 @@ _FNS = [
 
 
 def _wrappers() -> str:
-    return make_functions_ctx("cnt", "Cnt", _FNS, {})["function_wrappers"]
+    return make_functions_ctx(
+        "cnt", "Cnt", _FNS, {}, owner={"project": {"name": "p"}}
+    )["function_wrappers"]
 
 
 def _body(w: str, fn: str) -> str:
@@ -102,7 +104,9 @@ int twice(int v) { return 2 * v; }
 
 
 def _build(tmp: Path) -> Path:
-    w = make_functions_ctx("cnt", "Cnt", _FNS, {})
+    w = make_functions_ctx(
+        "cnt", "Cnt", _FNS, {}, owner={"project": {"name": "p"}}
+    )
     src = f"""
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

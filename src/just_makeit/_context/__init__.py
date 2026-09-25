@@ -45,15 +45,20 @@ from ._stream import make_stream_ctx
 from ._modpath import make_module_ctx
 
 
-def bench_todo_for_functions(component: str, functions: "list[str]") -> str:
+def bench_todo_for_functions(
+    component: str, functions: "list[str]", *, csym: str
+) -> str:
     """gh-1034: the scaffolded-benchmark TODO for a module's free functions.
 
     A thin alias so `_object` reaches the one block in `_methods` rather than
     growing a second. The worked ``jm_bench_add`` example inside it is
     paste-and-run and carries its own ``elapsed_sec`` declarations for that
     reason; a second copy is a copy that stops running.
+
+    *functions* are the functions' C names and *csym* the module's stem
+    (``_csym.stem``, gh-1591).
     """
-    return _bench_todo_impl(component, [], functions=functions)
+    return _bench_todo_impl(component, [], functions=functions, csym=csym)
 
 
 __all__ = [

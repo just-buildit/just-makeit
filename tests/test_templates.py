@@ -516,7 +516,11 @@ class TestNoStateWrapperNames:
             {"name": "process", "arg_type": "float", "return_type": "float"}
         ]
         ctx = make_methods_ctx(
-            "Resampler", "Resampler", methods, no_state=True
+            "Resampler",
+            "Resampler",
+            methods,
+            no_state=True,
+            csym="Resampler",
         )
         assert "ResamplerObj_process" in ctx["extra_methods_c"]
         assert "ResamplerObj_process" in ctx["extra_methods_pymethoddef"]
@@ -525,7 +529,9 @@ class TestNoStateWrapperNames:
         methods = [
             {"name": "process", "arg_type": "float", "return_type": "float"}
         ]
-        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        ctx = make_methods_ctx(
+            "fir", "Fir", methods, no_state=False, csym="fir"
+        )
         assert "Fir_process" in ctx["extra_methods_c"]
 
     def test_user_reset_suppresses_builtin_reset(self):
@@ -534,7 +540,11 @@ class TestNoStateWrapperNames:
             {"name": "reset", "arg_type": "void", "return_type": "void"}
         ]
         ctx = make_methods_ctx(
-            "Resampler", "Resampler", methods, no_state=True
+            "Resampler",
+            "Resampler",
+            methods,
+            no_state=True,
+            csym="Resampler",
         )
         assert ctx["builtin_reset_c"] == ""
         assert ctx["builtin_reset_pmd"] == ""
@@ -544,7 +554,9 @@ class TestNoStateWrapperNames:
         methods = [
             {"name": "reset", "arg_type": "void", "return_type": "void"}
         ]
-        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        ctx = make_methods_ctx(
+            "fir", "Fir", methods, no_state=False, csym="fir"
+        )
         assert ctx["builtin_reset_c"] == ""
         assert ctx["builtin_reset_pmd"] == ""
 
@@ -552,7 +564,9 @@ class TestNoStateWrapperNames:
         methods = [
             {"name": "process", "arg_type": "float", "return_type": "float"}
         ]
-        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        ctx = make_methods_ctx(
+            "fir", "Fir", methods, no_state=False, csym="fir"
+        )
         assert "builtin_reset_c" not in ctx or ctx.get("builtin_reset_c") != ""
 
     def test_user_reset_suppresses_builtin_reset_pyi(self):
@@ -561,7 +575,9 @@ class TestNoStateWrapperNames:
         methods = [
             {"name": "reset", "arg_type": "void", "return_type": "void"}
         ]
-        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        ctx = make_methods_ctx(
+            "fir", "Fir", methods, no_state=False, csym="fir"
+        )
         assert ctx["builtin_reset_pyi"] == ""
 
     def test_no_user_reset_keeps_builtin_reset_pyi(self):
@@ -569,7 +585,9 @@ class TestNoStateWrapperNames:
         methods = [
             {"name": "process", "arg_type": "float", "return_type": "float"}
         ]
-        ctx = make_methods_ctx("fir", "Fir", methods, no_state=False)
+        ctx = make_methods_ctx(
+            "fir", "Fir", methods, no_state=False, csym="fir"
+        )
         assert (
             "builtin_reset_pyi" not in ctx
             or ctx.get("builtin_reset_pyi", "x") != ""
@@ -591,7 +609,7 @@ class TestVariableOutputComplexParam:
                 "params": [{"name": "x", "type": "double _Complex"}],
             }
         ]
-        ctx = make_methods_ctx("delay", "Delay", methods)
+        ctx = make_methods_ctx("delay", "Delay", methods, csym="delay")
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
         assert "double _Complex x = x_raw.real + x_raw.imag * I" in c
@@ -607,7 +625,7 @@ class TestVariableOutputComplexParam:
                 "params": [{"name": "x", "type": "float _Complex"}],
             }
         ]
-        ctx = make_methods_ctx("filt", "Filt", methods)
+        ctx = make_methods_ctx("filt", "Filt", methods, csym="filt")
         c = ctx["extra_methods_c"]
         assert "Py_complex x_raw = {0.0, 0.0}" in c
         assert (

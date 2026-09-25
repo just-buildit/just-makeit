@@ -132,6 +132,7 @@ def standalone_extra_include(root: Path, component: str) -> str:
 
 
 def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
+    csym = CSYM.stem(owner, component)
     return {
         "component": component,
         "Component": _to_title(component),
@@ -182,7 +183,7 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # scaffold with no header yet) renders byte-identically to before.
         # _glue.component_ctx overrides it from create()'s @brief.
         "tp_doc": (
-            f'"{_to_title(component)} component. Wraps {component}_state_t."'
+            f'"{_to_title(component)} component. Wraps {csym}_state_t."'
         ),
         # gh-543: a standalone object's hand-written `<comp>_ext_extra.c`,
         # #included when it exists. Module objects have had this since the
@@ -219,13 +220,15 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # spec right after that.
         # gh-856: [] not None — this seed runs before any manifest is read
         # and never carries a spec, so there is no `exit` to resolve.
-        **Ctx.make_destroy_ctx(component, _to_title(component), None, []),
+        **Ctx.make_destroy_ctx(
+            component, _to_title(component), None, [], csym=csym
+        ),
         # gh-542: the slots that wrap a reset body — the sacred _core.c
         # function and the generated test defs. Seeded here for the same
         # reason as the destructor slots above: no render path may leak a
         # literal <<reset_c_open>> into generated C. make_state_ctx overwrites
         # them (and blanks them under `no_reset`) on every real path.
-        **Ctx._reset_wrapper_slots(component),
+        **Ctx._reset_wrapper_slots(component, csym=csym),
     }
 
 
@@ -688,7 +691,7 @@ def _inject_decls_into_core_h(
         if cpp_end in text:
             text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
         else:
-            guard = f"#endif /* {comp.upper()}_CORE_H */"
+            guard = f"#endif /* {CSYM.upper(path, comp)}_CORE_H */"
             text = text.replace(guard, f"{block}{guard}", 1)
     if text == original:
         return False
@@ -1222,7 +1225,9 @@ def run(
         # `_glue.component_ctx` replaces this from create()'s @brief once the
         # header has one — which is exactly why it survived: it is wrong only
         # on the objects nobody has documented yet.
-        ctx["tp_doc"] = f'"{class_name} component. Wraps {component}_state_t."'
+        ctx["tp_doc"] = (
+            f'"{class_name} component. Wraps {ctx["csym"]}_state_t."'
+        )
     ctx.update(
         {
             "package": pkg,
@@ -1286,6 +1291,7 @@ def run(
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
             serializable=serializable,
+            csym=ctx["csym"],
         )
     )
     # gh-1509: the C triplet that binding calls, declared in the sacred
@@ -1296,6 +1302,7 @@ def run(
             ctx["component"],
             serializable,
             Ctx.state_blob_fields(vars_, opaque_fields, array_args),
+            csym=ctx["csym"],
         )
     )
     # No properties exist at creation time (jm property adds them later) —
@@ -1306,6 +1313,7 @@ def run(
             ctx["component"],
             ctx["Component"],
             [],
+            csym=ctx["csym"],
         )
     )
     # Same reasoning as properties above (gh-481): a fresh object declares no
@@ -1314,7 +1322,11 @@ def run(
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     # gh-482: likewise undeclared at creation, which yields the historical
     # MemoryError block — so this render stays byte-identical to before.
-    ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
+    ctx.update(
+        Ctx.make_errors_ctx(
+            ctx["component"], create_fn=create_fn, csym=ctx["csym"]
+        )
+    )
     # gh-541/gh-544: the destructor contract. Re-run here with the settled
     # ComponentW and the caller's spec, which `jm apply` supplies when
     # replaying a manifest that declares [<comp>.destroy]. This is the render
@@ -1334,6 +1346,7 @@ def run(
             class_name=class_name or "",
             # gh-1326: the standalone creation path dropped it too.
             create_fn=create_fn or "",
+            csym=ctx["csym"],
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
@@ -1404,6 +1417,7 @@ def run(
         ctx.get("py_create_args", ""),
         doc_blocks=None,
         custom_reset=bool(init_params) or no_reset,
+        csym=ctx["csym"],
     )
 
     if create_impl_body is not None:
@@ -1577,7 +1591,9 @@ def run(
 
         h_path = INC.core_h(root, comp)
         h_text = h_path.read_text(encoding="utf-8")
-        h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
+        h_text = I.patch_function_body(
+            h_text, f"{CSYM.stem(root, comp)}_step", impl_body
+        )
         _textio.write_text(h_path, h_text)
 
     # C sources (create-only — see above).

@@ -711,7 +711,11 @@ def name_summary(name: str) -> str:
 
 
 def property_doc(
-    component: str, prop: dict, doc_blocks: "dict | None"
+    component: str,
+    prop: dict,
+    doc_blocks: "dict | None",
+    *,
+    csym: str,
 ) -> tuple[str, bool]:
     """A property's documentation, and whether it is only its name.
 
@@ -744,7 +748,7 @@ def property_doc(
     ('Frame len.', False)
     """
     name = str(prop.get("name") or "")
-    block = (doc_blocks or {}).get(f"{component}_get_{name}")
+    block = (doc_blocks or {}).get(f"{csym}_get_{name}")
     text = (
         # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
         # returned raw, so the runtime getset kept an indented TOML table's
@@ -752,13 +756,17 @@ def property_doc(
         # the gh-1493 gate learned to compare indentation.
         "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
         or (block.brief if (block and block.brief) else "")
-        or struct_member_doc(doc_blocks, f"{component}_state_t", name)
+        or struct_member_doc(doc_blocks, f"{csym}_state_t", name)
     )
     return (text, False) if text else (name_summary(name), True)
 
 
 def method_doc(
-    component: str, method: dict, doc_blocks: "dict | None"
+    component: str,
+    method: dict,
+    doc_blocks: "dict | None",
+    *,
+    csym: str,
 ) -> tuple[str, bool]:
     """A method's summary, and whether it is only its name (gh-1396).
 
@@ -786,9 +794,9 @@ def method_doc(
     # ONE derivation of "which symbol does this bind", imported rather than
     # respelled: a view signature override is DEFINED by having a different
     # one, so a second spelling here would decide that differently.
-    block = (doc_blocks or {}).get(method_c_symbol(component, method)) or (
+    block = (doc_blocks or {}).get(method_c_symbol(csym, method)) or (
         doc_blocks or {}
-    ).get(f"{component}_{name}")
+    ).get(f"{csym}_{name}")
     if block is not None and is_scaffold_doc(block, name):
         block = None
     text = str(method.get("doc") or "") or (

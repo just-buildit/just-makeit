@@ -36,6 +36,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from . import _capsule
 from . import _coerce
 from . import _config as C
+from . import _csym as CSYM
 from ._builtins import require_scope_names
 from . import _modplatforms
 from . import _render as R
@@ -363,6 +364,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
                 f'        PyErr_SetString(PyExc_RuntimeError, "{create_fn}'
                 ' failed");\n'
             ),
+            csym=CSYM.stem(cfg, module),
         )["create_fail_block"].rstrip("\n")
         construct = f"""    self->h = {create_fn}({call_args});
 {fs_decref}{_fail_block}"""

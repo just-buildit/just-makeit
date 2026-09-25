@@ -16,7 +16,11 @@ def _ctx(params, component="resamp", Component="Resamp", array_args=()):
     from just_makeit._context import _build_no_state_init_ctx
 
     return _build_no_state_init_ctx(
-        component, Component, params, array_args=array_args
+        component,
+        Component,
+        params,
+        array_args=array_args,
+        csym=component,
     )
 
 

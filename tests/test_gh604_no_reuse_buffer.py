@@ -70,7 +70,7 @@ SINGLE = {
 
 
 def _ctx(**over):
-    return make_methods_ctx("lo", "Lo", [dict(SINGLE, **over)])
+    return make_methods_ctx("lo", "Lo", [dict(SINGLE, **over)], csym="lo")
 
 
 class TestMachineryIsGone:

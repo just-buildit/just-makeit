@@ -35,7 +35,12 @@ from just_makeit._context import _destroy as D  # noqa: E402
 
 def _dealloc(component="f32_buffer", spec=None, create_fn=""):
     return D.make_destroy_ctx(
-        component, "F32Buffer", spec or {}, [], create_fn=create_fn
+        component,
+        "F32Buffer",
+        spec or {},
+        [],
+        create_fn=create_fn,
+        csym=component,
     )["destroy_dealloc_call"]
 
 
@@ -77,6 +82,7 @@ class TestTheBindingCallsIt:
             {"returns": "int", "name": "close"},
             [],
             create_fn="dp_wfm_create",
+            csym="wfm_writer",
         )
         assert (
             "int rc = dp_wfm_destroy(self->handle);"

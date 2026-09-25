@@ -153,6 +153,7 @@ def run(
         module_doc_c=mod_slots["module_doc_c"],
         procglobal=_procglobal.rendezvous_c(cfg, module),
         layout=INC.ctx_slots(cfg),
+        owner=cfg,
     )
     _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
 

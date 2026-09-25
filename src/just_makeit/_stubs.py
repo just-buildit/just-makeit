@@ -1283,6 +1283,7 @@ def class_docstring_block(
     import_line: str,
     py_create_args: str,
     *,
+    csym: str,
     doc_blocks: dict | None = None,
     manifest_doc: str = "",
     state_docs: "dict[str, str] | None" = None,
@@ -1314,7 +1315,7 @@ def class_docstring_block(
     is derived from its output, so both faces get the sections from that one
     derivation for free.
     """
-    create_blk = (doc_blocks or {}).get(CSYM.create_name(obj, create_fn))
+    create_blk = (doc_blocks or {}).get(CSYM.create_name(csym, create_fn))
     brief = manifest_doc or (
         create_blk.brief if (create_blk and create_blk.brief) else ""
     )
@@ -1375,6 +1376,7 @@ def class_runtime_doc(
     import_line: str,
     py_create_args: str,
     *,
+    csym: str,
     doc_blocks: dict | None = None,
     manifest_doc: str = "",
     state_docs: "dict[str, str] | None" = None,
@@ -1420,6 +1422,7 @@ def class_runtime_doc(
         raises=raises,
         warns=warns,
         enum_choices=enum_choices,
+        csym=csym,
     ).split("\n")
     return docstring_body(lines, CLASS_INDENT)
 
@@ -1542,6 +1545,8 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
 
 
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
+    # gh-1591: every C name this stub reads a doc block by derives here.
+    csym = CSYM.stem(cfg, obj)
     Component = C.class_name(cfg, obj) or _title(obj)
     state_vars = C.state_vars(cfg, obj)
     arg_type = C.arg_type(cfg, obj)
@@ -1694,6 +1699,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         raises=_raises,
         warns=_warns,
         enum_choices=C.enum_choice_docs(cfg, doc_blocks),
+        csym=csym,
     ).split("\n")
     # A generated object type is `Py_TPFLAGS_DEFAULT` — not `BASETYPE` — so it
     # cannot be subclassed at runtime; the stub says so with @final. (Composer
@@ -1828,7 +1834,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     if not _user_has_reset and not no_reset:
         lines += ["", "    def reset(self) -> None:"]
         lines += _builtin_doc(
-            f"{obj}_reset", [], "None", "Reset state to post-create defaults."
+            f"{csym}_reset", [], "None", "Reset state to post-create defaults."
         )
 
     # step() / steps()
@@ -1853,7 +1859,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f"    ) -> NDArray[{_np(return_type)}]:",
         ]
         lines += _builtin_doc(
-            f"{obj}_steps",
+            f"{csym}_steps",
             [("x", f"NDArray[{_np(arg_type)}]")],
             f"NDArray[{_np(return_type)}]",
             "Apply the blockwise transform to the input array.",
@@ -1865,7 +1871,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f"{_ctrl_posonly}) -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
-            f"{obj}_step",
+            f"{csym}_step",
             [("x", _py(arg_type))],
             _py(return_type),
             "Process one buffer of samples.",
@@ -1877,7 +1883,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f"{_ctrl_posonly}) -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
-            f"{obj}_step",
+            f"{csym}_step",
             [("x", _py(arg_type))],
             _py(return_type),
             (
@@ -1895,7 +1901,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(
-                f"{obj}_steps",
+                f"{csym}_steps",
                 [("x", f"NDArray[{_np(arg_type)}]")],
                 f"NDArray[{_np(return_type)}]",
                 # gh-867: the standalone face's exact wording. Two
@@ -1911,7 +1917,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"{_ctrl_kw}) -> None:",
             ]
             lines += _builtin_doc(
-                f"{obj}_steps",
+                f"{csym}_steps",
                 [("x", f"NDArray[{_np(arg_type)}]")],
                 "None",
                 # gh-881: the standalone face's wording. These canned
@@ -1927,7 +1933,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             f" -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
-            f"{obj}_step",
+            f"{csym}_step",
             [],
             _py(return_type),
             (
@@ -1946,7 +1952,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(
-                f"{obj}_steps",
+                f"{csym}_steps",
                 [("n", "int")],
                 f"NDArray[{_np(return_type)}]",
                 "Generate n output samples.",
@@ -1958,7 +1964,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"    def steps(self, n: int = 1{_ctrl_kw}) -> None:",
             ]
             lines += _builtin_doc(
-                f"{obj}_steps",
+                f"{csym}_steps",
                 [("n", "int")],
                 "None",
                 "Run n iterations.",  # gh-881: standalone wording
@@ -1983,7 +1989,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # silently losing its documentation.
         _blk = doc_blocks.get(
             C.method_c_symbol(CSYM.stem(cfg, obj), m)
-        ) or doc_blocks.get(f"{obj}_{m_name}")
+        ) or doc_blocks.get(f"{csym}_{m_name}")
         # ...and the scaffold sentinel is judged against the member NAME, not
         # the symbol. jm writes its skeleton brief from the Python name
         # (`@brief block.`) while `parse_doxygen_block` recognises a scaffold
@@ -1997,7 +2003,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             _blk = None
         if m.get("varargs"):
             # gh-1396: the one chain, shared with the binding and the report.
-            _va_doc = method_doc(obj, m, doc_blocks)[0]
+            _va_doc = method_doc(obj, m, doc_blocks, csym=csym)[0]
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
@@ -2280,7 +2286,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # bound name at all (a first scaffold), never to overrule a
             # declaration that exists.
             _mo_sym = f"{C.method_c_symbol(CSYM.stem(cfg, obj), m)}_max_out"
-            _mo_fallback = f"{obj}_{m_name}_max_out"
+            _mo_fallback = f"{csym}_{m_name}_max_out"
             _mo_arity = (doc_blocks or {}).get(
                 max_out_arity_key()
             ) or frozenset()
@@ -2340,7 +2346,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # gh-684: the module-aggregated stub derives accessors too, from the
     # same blocks the standalone path uses.
     _acc_pyi = Ctx.state_accessor_stubs(
-        _acc_scalars, _acc_arrays, obj, doc_blocks
+        _acc_scalars, _acc_arrays, CSYM.stem(cfg, obj), doc_blocks
     )
     if _acc_pyi:
         lines += _acc_pyi.rstrip("\n").lstrip("\n").split("\n")
@@ -2368,6 +2374,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         doc_blocks=doc_blocks,
         enums=C.enums(cfg),  # gh-519: `enum` properties annotate as Literal
         codecs=C.codecs(cfg),  # gh-554: codec properties annotate as the union
+        csym=csym,
     )["property_stubs_pyi"]
     if _prop_pyi:
         lines += _prop_pyi.rstrip("\n").split("\n")
@@ -2397,6 +2404,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # thing to maintain, and this is already right if the stub ever reads a
         # slot that does carry the symbol.
         create_fn=C.object_create_fn(cfg, obj) or "",
+        csym=csym,
     )
     lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the

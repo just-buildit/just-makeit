@@ -75,20 +75,24 @@ def _pyi(root: Path) -> str:
 
 class TestCountDefaultParts:
     def test_absent_keeps_the_historical_one(self):
-        assert _count_default_parts("", "delay") == ("1", "")
+        assert _count_default_parts("", "delay", csym="delay") == ("1", "")
 
     def test_integer_needs_no_state_alias(self):
-        init, alias = _count_default_parts("64", "delay")
+        init, alias = _count_default_parts("64", "delay", csym="delay")
         assert init == "(Py_ssize_t)(64)"
         assert alias == ""  # else -Wunused-variable on the alias
 
     def test_state_expression_gets_an_alias(self):
-        init, alias = _count_default_parts("state->num_taps", "delay")
+        init, alias = _count_default_parts(
+            "state->num_taps", "delay", csym="delay"
+        )
         assert init == "(Py_ssize_t)(state->num_taps)"
         assert alias == "    delay_state_t *state = self->handle;\n"
 
     def test_state_as_a_substring_does_not_trigger_the_alias(self):
-        _, alias = _count_default_parts("self->handle->statemachine", "delay")
+        _, alias = _count_default_parts(
+            "self->handle->statemachine", "delay", csym="delay"
+        )
         assert alias == ""
 
 

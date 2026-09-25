@@ -700,6 +700,8 @@ def make_errors_ctx(
     create_fn: "str | None" = None,
     handle_expr: str = "self->handle",
     undeclared_body: str = "",
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Build the create()-failure translation block (gh-482).
 
@@ -737,13 +739,13 @@ def make_errors_ctx(
 
     Examples
     --------
-    >>> print(make_errors_ctx("acq")["create_fail_block"], end="")
+    >>> print(make_errors_ctx("acq", csym="acq")["create_fail_block"], end="")
         if (!self->handle) {
             PyErr_SetString(PyExc_MemoryError,
                             "acq_create returned NULL");
             return -1;
         }
-    >>> out = make_errors_ctx("acq", "ValueError", "bad params")
+    >>> out = make_errors_ctx("acq", "ValueError", "bad params", csym="acq")
     >>> print(out["create_fail_block"], end="")
         if (!self->handle) {
             PyErr_SetString(PyExc_ValueError,
@@ -756,7 +758,7 @@ def make_errors_ctx(
         # object overrides its constructor name (create_fn), the message names
         # the function that actually returned NULL — default None preserves the
         # historical ``<component>_create`` text byte-for-byte.
-        _cfn = CSYM.create_name(component, create_fn)
+        _cfn = CSYM.create_name(csym, create_fn)
         body = undeclared_body or (
             "        PyErr_SetString(PyExc_MemoryError,\n"
             f'                        "{_cfn} returned NULL");\n'

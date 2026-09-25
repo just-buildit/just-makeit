@@ -81,7 +81,9 @@ class TestFunctionOutParamConst:
                 ],
             }
         ]
-        return make_functions_ctx("dsp", "Dsp", fns)["function_wrappers"]
+        return make_functions_ctx(
+            "dsp", "Dsp", fns, owner={"project": {"name": "p"}}
+        )["function_wrappers"]
 
     def test_out_true_emits_writable_pointer(self):
         w = self._wrappers(out=True)
@@ -105,7 +107,9 @@ class TestFunctionKeywordCapable:
     def _ctx(self, fns):
         from just_makeit._render import make_functions_ctx
 
-        return make_functions_ctx("dsp", "Dsp", fns)
+        return make_functions_ctx(
+            "dsp", "Dsp", fns, owner={"project": {"name": "p"}}
+        )
 
     def test_param_function_is_kw_capable(self):
         ctx = self._ctx(
@@ -157,7 +161,9 @@ class TestFunctionDefaultParams:
         from just_makeit._render import make_functions_ctx
 
         fns = [{"name": "scaled", "return_type": "void", "params": params}]
-        return make_functions_ctx("dsp", "Dsp", fns)["function_wrappers"]
+        return make_functions_ctx(
+            "dsp", "Dsp", fns, owner={"project": {"name": "p"}}
+        )["function_wrappers"]
 
     def test_default_scalar_is_optional_in_format(self):
         w = self._wrappers(
@@ -1056,7 +1062,9 @@ class TestVariableOutputFunction:
     def _w(self, fn):
         from just_makeit._render import make_functions_ctx
 
-        return make_functions_ctx("wfm", "Wfm", [fn])["function_wrappers"]
+        return make_functions_ctx(
+            "wfm", "Wfm", [fn], owner={"project": {"name": "p"}}
+        )["function_wrappers"]
 
     def test_scalar_args_self_sized_void(self):
         w = self._w(

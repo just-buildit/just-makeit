@@ -99,8 +99,10 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
     out: list[DocGap] = []
     for comp in C.components(cfg):
         blocks = _doc_blocks(root, comp)
+        # gh-1591: the C names a gap points at derive from the stem.
+        csym = CSYM.stem(cfg, comp)
         for prop in C.properties(cfg, comp):
-            _, is_stub = property_doc(comp, prop, blocks)
+            _, is_stub = property_doc(comp, prop, blocks, csym=csym)
             if is_stub:
                 name = str(prop.get("name") or "")
                 out.append(
@@ -108,12 +110,12 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         comp,
                         "property",
                         name,
-                        f"{comp}_state_t.{name}'s own `/**< ... */`, "
+                        f"{csym}_state_t.{name}'s own `/**< ... */`, "
                         f"or `doc =` on the property",
                     )
                 )
         for method in C.methods(cfg, comp):
-            _, is_stub = method_doc(comp, method, blocks)
+            _, is_stub = method_doc(comp, method, blocks, csym=csym)
             if is_stub:
                 mname = str(method.get("name") or "")
                 out.append(
@@ -122,7 +124,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         "method",
                         mname,
                         "`@brief` above "
-                        f"{C.method_c_symbol(CSYM.stem(cfg, comp), method)}() "
+                        f"{C.method_c_symbol(csym, method)}() "
                         f"in the sacred header, or `doc =` on the method",
                     )
                 )
@@ -153,7 +155,9 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
             vblocks = cfg_v[synth].get("_doc_blocks") or {}
             cls = str(view.get("class_name") or synth)
             for prop in C.properties(cfg_v, synth):
-                _, is_stub = property_doc(synth, prop, vblocks)
+                _, is_stub = property_doc(
+                    synth, prop, vblocks, csym=CSYM.stem(cfg_v, synth)
+                )
                 if is_stub:
                     pname = str(prop.get("name") or "")
                     out.append(
@@ -161,12 +165,14 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                             cls,
                             "view property",
                             pname,
-                            f"{comp}_state_t.{pname}'s own `/**< ... */`, "
+                            f"{csym}_state_t.{pname}'s own `/**< ... */`, "
                             f"or `doc =` on the view's property",
                         )
                     )
             for method in C.methods(cfg_v, synth):
-                _, is_stub = method_doc(synth, method, vblocks)
+                _, is_stub = method_doc(
+                    synth, method, vblocks, csym=CSYM.stem(cfg_v, synth)
+                )
                 if is_stub:
                     mname = str(method.get("name") or "")
                     out.append(
@@ -174,7 +180,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                             cls,
                             "view method",
                             mname,
-                            f"`@brief` above {comp}_{mname}() in the sacred "
+                            f"`@brief` above {csym}_{mname}() in the sacred "
                             f"header, or `doc =` on the view's method",
                         )
                     )

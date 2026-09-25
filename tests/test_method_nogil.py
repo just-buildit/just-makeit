@@ -151,7 +151,12 @@ def test_hoist_lifts_only_numpy_accessors():
 
 def test_make_methods_ctx_nogil_off_is_plain():
     ctx = make_methods_ctx(
-        "dec", "Dec", [dict(_EXEC_METHOD)], pkg="p", no_state=True
+        "dec",
+        "Dec",
+        [dict(_EXEC_METHOD)],
+        pkg="p",
+        no_state=True,
+        csym="dec",
     )
     assert "Py_BEGIN_ALLOW_THREADS" not in ctx["extra_methods_c"]
 
@@ -159,7 +164,9 @@ def test_make_methods_ctx_nogil_off_is_plain():
 def test_make_methods_ctx_nogil_on_wraps_kernel():
     m = dict(_EXEC_METHOD)
     m["nogil"] = True
-    ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
+    ctx = make_methods_ctx(
+        "dec", "Dec", [m], pkg="p", no_state=True, csym="dec"
+    )
     assert "Py_BEGIN_ALLOW_THREADS" in ctx["extra_methods_c"]
 
 
@@ -180,7 +187,12 @@ _PUSH_METHOD = {
 
 def test_make_methods_ctx_result_fields_nogil_off_is_plain():
     ctx = make_methods_ctx(
-        "dec", "Dec", [dict(_PUSH_METHOD)], pkg="p", no_state=True
+        "dec",
+        "Dec",
+        [dict(_PUSH_METHOD)],
+        pkg="p",
+        no_state=True,
+        csym="dec",
     )
     c = ctx["extra_methods_c"]
     assert "Py_BEGIN_ALLOW_THREADS" not in c
@@ -190,7 +202,9 @@ def test_make_methods_ctx_result_fields_nogil_off_is_plain():
 def test_make_methods_ctx_result_fields_nogil_wraps_kernel():
     m = dict(_PUSH_METHOD)
     m["nogil"] = True
-    ctx = make_methods_ctx("dec", "Dec", [m], pkg="p", no_state=True)
+    ctx = make_methods_ctx(
+        "dec", "Dec", [m], pkg="p", no_state=True, csym="dec"
+    )
     c = ctx["extra_methods_c"]
     assert "Py_BEGIN_ALLOW_THREADS" in c
     assert "Py_END_ALLOW_THREADS" in c

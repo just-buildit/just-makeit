@@ -115,7 +115,7 @@ def test_bad_category_is_a_jm_diagnostic(tmp_path, capsys):
 
 def test_object_rendering_is_unchanged():
     """`make_errors_ctx`'s new params must default to the object behaviour."""
-    out = make_errors_ctx("acq")["create_fail_block"]
+    out = make_errors_ctx("acq", csym="acq")["create_fail_block"]
     assert out == (
         "    if (!self->handle) {\n"
         "        PyErr_SetString(PyExc_MemoryError,\n"
@@ -131,6 +131,7 @@ def test_handle_expr_and_undeclared_body_compose():
         "wfm_reader",
         handle_expr="self->h",
         undeclared_body='        PyErr_SetString(PyExc_RuntimeError, "x");\n',
+        csym="wfm_reader",
     )["create_fail_block"]
     assert out == (
         "    if (!self->h) {\n"
@@ -145,6 +146,7 @@ def test_handle_expr_and_undeclared_body_compose():
         "boom",
         handle_expr="self->h",
         undeclared_body='        PyErr_SetString(PyExc_RuntimeError, "x");\n',
+        csym="wfm_reader",
     )["create_fail_block"]
     assert "PyExc_ValueError" in declared
     assert "PyExc_RuntimeError" not in declared

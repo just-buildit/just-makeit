@@ -151,7 +151,12 @@ def _direct_render_pairs(root: Path) -> list[tuple[Path, str]]:
             pairs.append((p, S.make_module_pyi(cfg, mod, root)))
         p = root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c"
         if p.exists():
-            pairs.append((p, O.render_module_ext_c(root, cfg, mod, pkg)))
+            pairs.append(
+                (
+                    p,
+                    O.render_module_ext_c(root, cfg, mod, pkg),
+                )
+            )
     owned = {o for m in C.modules(cfg) for o in C.module_objects(cfg, m)}
     for comp in C.components(cfg):
         if comp in owned:

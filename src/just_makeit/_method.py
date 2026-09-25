@@ -132,6 +132,8 @@ def _methods_c_stub_variable(
     count_default: str = "",
     count_name: str = "",
     c_fn: str = "",
+    *,
+    csym: str,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -149,7 +151,7 @@ def _methods_c_stub_variable(
     kernel, so ``0`` is an ordinary answer (e.g. "this call produces
     nothing"), not a "no information" sentinel.
     """
-    c_fn = c_fn or f"{component}_{name}"
+    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = _out_elem_disp(return_type, out_type)
     has_arg = arg_type != "void"
     params = params or []
@@ -191,7 +193,7 @@ def _methods_c_stub_variable(
     lines = [
         _max_out_head,
         "size_t",
-        f"{c_fn}_max_out({component}_state_t *state{moc_decl})",
+        f"{c_fn}_max_out({csym}_state_t *state{moc_decl})",
         "{",
         f"    (void)state;{moc_suppress}",
         _max_out_body,
@@ -200,7 +202,7 @@ def _methods_c_stub_variable(
         f"/* <<IMPLEMENT: process{' input and' if has_arg else ''} write results"
         f" into out[0..n_out-1]; return actual output count >> */",
         "size_t",
-        f"{c_fn}({component}_state_t *state"
+        f"{c_fn}({csym}_state_t *state"
         f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
         "    (void)state;",
@@ -225,6 +227,8 @@ def _methods_c_stub_result_fields(
     max_results: int = 64,
     params: list | None = None,
     c_fn: str = "",
+    *,
+    csym: str,
 ) -> str:
     """C stub for a method that returns a list of structs (result_fields).
 
@@ -232,7 +236,7 @@ def _methods_c_stub_result_fields(
     :func:`_build_method_prototype` (gh-594) — the stub *is* the definition
     that prototype declares, so the two must not drift.
     """
-    c_fn = c_fn or f"{component}_{name}"
+    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
     has_arg = arg_type != "void"
     params = params or []
@@ -254,7 +258,7 @@ def _methods_c_stub_result_fields(
     lines = [
         "/* <<IMPLEMENT: push input, fill result[], return count >> */",
         "size_t",
-        f"{c_fn}({component}_state_t *state"
+        f"{c_fn}({csym}_state_t *state"
         f"{step_param}, {ret_disp} *result, size_t max_results)",
         "{",
         "    (void)state;",
@@ -273,6 +277,8 @@ def _methods_c_stub_result_single(
     return_type: str,
     params: list | None = None,
     c_fn: str = "",
+    *,
+    csym: str,
 ) -> str:
     """C stub for a method that returns one record struct by value (gh-244).
 
@@ -285,7 +291,7 @@ def _methods_c_stub_result_single(
     that fix this stub took only ``state``, while the generated binding called
     it with every declared param — a guaranteed "too many arguments".
     """
-    c_fn = c_fn or f"{component}_{name}"
+    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
     has_arg = arg_type != "void"
     params = params or []
@@ -307,7 +313,7 @@ def _methods_c_stub_result_single(
     lines = [
         "/* <<IMPLEMENT: compute and return the record >> */",
         ret_disp,
-        f"{c_fn}({component}_state_t *state{step_param})",
+        f"{c_fn}({csym}_state_t *state{step_param})",
         "{",
         "    (void)state;",
         suppress,
@@ -330,9 +336,11 @@ def _methods_c_stub_fixed(
     borrow: bool = False,
     record_dtype: str = "",
     c_fn: str = "",
+    *,
+    csym: str,
 ) -> str:
     """Generate a _core-level C stub for a fixed-output method."""
-    c_fn = c_fn or f"{component}_{name}"
+    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -348,7 +356,7 @@ def _methods_c_stub_fixed(
         else:
             in_part = ", size_t n"
             sup = "    (void)state; (void)n; (void)out;"
-        c_params = f"{component}_state_t *state{in_part}, {ret_disp} *out"
+        c_params = f"{csym}_state_t *state{in_part}, {ret_disp} *out"
         return (
             f"/* <<IMPLEMENT: {name} (1:1-rate batch) >> */\n"
             f"void\n{c_fn}({c_params})\n{{\n{sup}\n}}\n"
@@ -373,7 +381,7 @@ def _methods_c_stub_fixed(
         return (
             f"/* <<IMPLEMENT: {name} (borrowed view) >> */\n"
             f"{_borrow.element_type(record_dtype, ret_disp)} *\n"
-            f"{c_fn}({component}_state_t *state{sep})\n"
+            f"{c_fn}({csym}_state_t *state{sep})\n"
             f"{{\n{sup}\n"
             f"    /* Return a pointer into the state's own memory, or NULL\n"
             f"       to raise. The caller must not use the view after the\n"
@@ -400,7 +408,7 @@ def _methods_c_stub_fixed(
         suppress_parts = T.c_param_suppress(_pp)
         param_str = ", ".join(param_parts)
         c_params = (
-            f"{component}_state_t *state, {param_str}{extra_params}{out_param}"
+            f"{csym}_state_t *state, {param_str}{extra_params}{out_param}"
         )
         suppress_names = " ".join(suppress_parts)
         suppress = (
@@ -410,18 +418,20 @@ def _methods_c_stub_fixed(
         if T.is_array_param_type(arg_type):
             elem_disp = T.array_elem_ctype(arg_type)
             c_params = (
-                f"{component}_state_t *state, "
+                f"{csym}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
             )
             suppress = f"    (void)state; (void)x; (void)x_len;{extra_suppress}{out_suppress}"
         else:
             arg_disp = arg_type
-            c_params = f"{component}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            c_params = (
+                f"{csym}_state_t *state, {arg_disp} x{extra_params}{out_param}"
+            )
             suppress = (
                 f"    (void)state; (void)x;{extra_suppress}{out_suppress}"
             )
     else:
-        c_params = f"{component}_state_t *state{extra_params}{out_param}"
+        c_params = f"{csym}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
     zero = (
@@ -654,6 +664,8 @@ def _write_varargs_core_c(
     path: Path,
     component: str,
     method_name: str,
+    *,
+    csym: str,
 ) -> None:
     """Write the sacred *args/**kwargs binding file for a varargs method.
 
@@ -667,14 +679,14 @@ def _write_varargs_core_c(
     """
     text = (
         f"/*\n"
-        f" * {component}_{method_name}_core.c"
+        f" * {csym}_{method_name}_core.c"
         f" — varargs Python binding for {component}.{method_name}().\n"
         f" *\n"
         f" * Compiled into the Python extension DSO, not the pure-C core.\n"
         f" * To access the C state inside this function:\n"
         f" *   typedef struct {{ PyObject_HEAD;"
-        f" {component}_state_t *handle; }} Obj;\n"
-        f" *   {component}_state_t *state = ((Obj *)self)->handle;\n"
+        f" {csym}_state_t *handle; }} Obj;\n"
+        f" *   {csym}_state_t *state = ((Obj *)self)->handle;\n"
         f" */\n"
         f"#define PY_SSIZE_T_CLEAN\n"
         f"#include <Python.h>\n"
@@ -685,7 +697,7 @@ def _write_varargs_core_c(
         f" * Return NULL on error (exception must be set).\n"
         f" */\n"
         f"PyObject *\n"
-        f"{component}_{method_name}"
+        f"{csym}_{method_name}"
         f"(PyObject *self, PyObject *args, PyObject *kwargs)\n"
         f"{{\n"
         f"    (void)self; (void)args; (void)kwargs;\n"
@@ -715,6 +727,8 @@ def _build_method_prototype(
     record_dtype: str = "",
     borrow: bool = False,
     c_fn: str = "",
+    *,
+    csym: str,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
 
@@ -732,7 +746,7 @@ def _build_method_prototype(
     has to be drawn (the other two are ``make_methods_ctx``'s declaration
     chain and :func:`run`'s stub dispatch).
     """
-    c_fn = c_fn or f"{component}_{name}"
+    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -761,11 +775,9 @@ def _build_method_prototype(
         if _p_parts:
             step_param += ", " + ", ".join(_p_parts)
         if single:
-            return (
-                f"{ret_disp} {c_fn}({component}_state_t *state{step_param});"
-            )
+            return f"{ret_disp} {c_fn}({csym}_state_t *state{step_param});"
         return (
-            f"size_t {c_fn}({component}_state_t *state"
+            f"size_t {c_fn}({csym}_state_t *state"
             f"{step_param}, {ret_disp} *result, size_t max_results);"
         )
 
@@ -780,10 +792,7 @@ def _build_method_prototype(
             if has_arg
             else ", size_t n"
         )
-        return (
-            f"void {c_fn}({component}_state_t *state"
-            f"{in_part}, {ret_disp} *out);"
-        )
+        return f"void {c_fn}({csym}_state_t *state{in_part}, {ret_disp} *out);"
 
     # gh-1312: a borrow RETURNS a pointer into memory the state owns rather
     # than filling one the caller sized. Placed with `batch` above the
@@ -801,7 +810,7 @@ def _build_method_prototype(
         _bsep = ", " + ", ".join(_bparts) if _bparts else ""
         # gh-1310: `record_dtype` names the element, so it names this pointer.
         _belem = _borrow.element_type(record_dtype, ret_disp)
-        return f"{_belem} *{c_fn}({component}_state_t *state{_bsep});"
+        return f"{_belem} *{c_fn}({csym}_state_t *state{_bsep});"
 
     extra_params = "".join(
         f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
@@ -828,9 +837,8 @@ def _build_method_prototype(
         moc_decl, _ = _max_out_count_param(arg_type, params)
         return "\n".join(
             [
-                f"size_t {c_fn}_max_out({component}_state_t"
-                f" *state{moc_decl});",
-                f"size_t {c_fn}({component}_state_t *state"
+                f"size_t {c_fn}_max_out({csym}_state_t *state{moc_decl});",
+                f"size_t {c_fn}({csym}_state_t *state"
                 f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]
         )
@@ -841,21 +849,20 @@ def _build_method_prototype(
         parts = T.c_param_parts(
             ([("x", arg_type)] if has_arg else []) + list(params)
         )
-        c_params = f"{component}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
+        c_params = f"{csym}_state_t *state, {', '.join(parts)}{extra_params}{out_param}"
     elif has_arg:
         if T.is_array_param_type(arg_type):
             elem_disp = T.array_elem_ctype(arg_type)
             c_params = (
-                f"{component}_state_t *state, "
+                f"{csym}_state_t *state, "
                 f"const {elem_disp} *x, size_t x_len{extra_params}{out_param}"
             )
         else:
             c_params = (
-                f"{component}_state_t *state, "
-                f"{arg_type} x{extra_params}{out_param}"
+                f"{csym}_state_t *state, {arg_type} x{extra_params}{out_param}"
             )
     else:
-        c_params = f"{component}_state_t *state{extra_params}{out_param}"
+        c_params = f"{csym}_state_t *state{extra_params}{out_param}"
 
     return f"{ret_disp} {c_fn}({c_params});"
 
@@ -1315,6 +1322,9 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+    # gh-1591: the C symbol stem every derived name below starts with --
+    # resolved once, from the project that owns the object.
+    csym = CSYM.stem(cfg, object_name)
 
     # gh-1404: a declared SCALAR element's name stands for its width, so it
     # is substituted here, ONCE, before anything reads a type. Everything
@@ -1703,7 +1713,7 @@ def run(
     # it is already provided, and skips its prototype. Measured: 78 tests red
     # with `implicit declaration of nco_steps_ovf`, which is jm emitting a
     # call to a function it just decided not to declare.
-    _c_fn = fn or f"{object_name}_{method_name}"
+    _c_fn = C.method_c_symbol(csym, {"name": method_name, "fn": fn})
     _provided_by = already_provides(
         root,
         object_name,
@@ -1776,7 +1786,7 @@ def run(
             / object_name
             / f"{object_name}_{method_name}_core.c"
         )
-        _write_varargs_core_c(binding_c, object_name, method_name)
+        _write_varargs_core_c(binding_c, object_name, method_name, csym=csym)
     else:
         if result_fields and single:
             # gh-244: return one record by value (no results[] buffer).
@@ -1787,6 +1797,7 @@ def run(
                 return_type,
                 params=params,
                 c_fn=fn,
+                csym=csym,
             )
         elif result_fields and not _record.is_record_array(
             variable_output, record_dtype, borrow
@@ -1799,6 +1810,7 @@ def run(
                 max_results,
                 params=params,
                 c_fn=fn,
+                csym=csym,
             )
         elif variable_output:
             stub = _methods_c_stub_variable(
@@ -1817,6 +1829,7 @@ def run(
                 max_out=max_out,
                 pass_capacity=pass_capacity,
                 c_fn=fn,
+                csym=csym,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -1834,6 +1847,7 @@ def run(
                 borrow=borrow,
                 record_dtype=record_dtype,
                 c_fn=fn,
+                csym=csym,
             )
         if impl_body is not None:
             import re as _re
@@ -1894,6 +1908,7 @@ def run(
             record_dtype=record_dtype,
             borrow=borrow,
             c_fn=fn,
+            csym=csym,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -1902,7 +1917,7 @@ def run(
     # a surface anyone documents, so only the method itself is mapped.
     # gh-805 §A2: the skeleton is stamped above the symbol actually
     # declared, so an `fn`-overridden method gets one too.
-    _doc_members = {(fn or f"{object_name}_{method_name}"): method_name}
+    _doc_members = {_c_fn: method_name}
     # For variable_output methods the generated 4-arg declaration would
     # clobber a user-written declaration with a different arity (e.g. a
     # 5-arg version that passes capacity).  Preserve the existing decl and
@@ -2250,7 +2265,7 @@ def run(
         )
     elif varargs:
         print(
-            f"Done!  Implement {object_name}_{method_name}()"
+            f"Done!  Implement {csym}_{method_name}()"
             f" in {object_name}_{method_name}_core.c"
         )
     else:
@@ -2261,10 +2276,7 @@ def run(
         # header-only component that is the HEADER -- `core_c` does not exist,
         # and pointing at it sent the author somewhere that cannot work.
         _where = f"{object_name}_core.h" if _hdr_only else core_c.name
-        print(
-            f"Done!  Implement {fn or f'{object_name}_{method_name}'}()"
-            f" in {_where}"
-        )
+        print(f"Done!  Implement {_c_fn}() in {_where}")
         # gh-1319: printed AFTER the Done! line so it is the last thing on
         # screen -- the failure it prevents is a compile error three files
         # away, and a note scrolled off the top prevents nothing.

@@ -454,7 +454,7 @@ def _slot_for(ctype: str, expr: str) -> "tuple[str, str] | None":
     return conversion, f"{cast}{expr}"
 
 
-def _property_read(prop: dict, component: str) -> str:
+def _property_read(prop: dict, csym: str) -> str:
     """The C expression reading *prop*, or ``""`` if jm cannot read it here.
 
     Renders the property the way its own getset does, which is the whole
@@ -500,11 +500,11 @@ def _property_read(prop: dict, component: str) -> str:
         return f"({prop['expr']})"
     if prop.get("field"):
         return f"self->handle->{prop['field']}"
-    return f"{component}_get_{prop.get('name', '')}(self->handle)"
+    return f"{csym}_get_{prop.get('name', '')}(self->handle)"
 
 
 def message_slots(
-    m: dict, component: str = "", properties: "list[dict] | None" = None
+    m: dict, csym: str = "", properties: "list[dict] | None" = None
 ) -> "dict[str, tuple[str, str]]":
     """What a status message's ``{name}`` slots may refer to (gh-1426 C).
 
@@ -530,7 +530,7 @@ def message_slots(
         if slot:
             out[str(p.get("name", ""))] = slot
     for prop in properties or []:
-        expr = _property_read(prop, component)
+        expr = _property_read(prop, csym)
         if not expr:
             continue
         slot = _slot_for(str(prop.get("type", "")), expr)
@@ -542,7 +542,7 @@ def message_slots(
 def status_dispatch_c(
     m: dict,
     state_expr: str = "self->handle",
-    component: str = "",
+    csym: str = "",
     properties: "list[dict] | None" = None,
 ) -> str:
     """The NULL-path dispatch for a borrow: signals, then the status table.
@@ -597,7 +597,7 @@ def status_dispatch_c(
     out += (
         f"        switch ({status_fn(m)}({state_expr}, {count_param(m)})) {{\n"
     )
-    slots = message_slots(m, component, properties)
+    slots = message_slots(m, csym, properties)
     for row in rows:
         message = str(row.get("message", "") or "").strip()
         # gh-1426 C: `format_raise_c` falls back to `empty_raise_c` when the

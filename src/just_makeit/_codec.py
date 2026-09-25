@@ -475,6 +475,8 @@ def render_decode(
     Component: str,
     p: dict,
     cdc: dict,
+    *,
+    csym: str,
 ) -> tuple[str, str, list[str]]:
     """Render (decode-helper C, value expression, extra ``_core.h`` decls).
 
@@ -488,8 +490,8 @@ def render_decode(
     so it is emitted ``static`` in the ext (via the getter's inline ``fwd``).
     """
     pname = p["name"]
-    entry_fn = p.get("entry_fn") or f"{component}_{pname}_entry"
-    entry_t = p.get("entry_type") or f"{component}_{pname}_t"
+    entry_fn = p.get("entry_fn") or f"{csym}_{pname}_entry"
+    entry_t = p.get("entry_type") or f"{csym}_{pname}_t"
     tf = _entry_field(p, "type", "type")
     cf = _entry_field(p, "count", "count")
     vf = _entry_field(p, "value", "value")

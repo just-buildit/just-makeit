@@ -404,6 +404,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     no_state=C.is_no_state(cfg, comp),
                     serializable=C.is_serializable(cfg, comp),
                     codecs=C.codecs(cfg),
+                    csym=comp_ctx["csym"],
                 )
             )
             # NO_STEP components with no init_params have an empty
@@ -411,18 +412,19 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
             # In that case suppress method blocks (obj is unavailable)
             # and emit a TODO comment instead of a broken _create() call.
             if no_step:
+                csym = comp_ctx["csym"]
                 c_args = comp_ctx.get("c_create_args", "")
                 if c_args:
                     comp_ctx["bench_create_stmt"] = (
-                        f"    {comp}_state_t *obj = {comp}_create({c_args});"
+                        f"    {csym}_state_t *obj = {csym}_create({c_args});"
                     )
                     comp_ctx["bench_destroy_stmt"] = (
-                        f"    {comp}_destroy(obj);"
+                        f"    {csym}_destroy(obj);"
                     )
                 else:
                     comp_ctx["bench_create_stmt"] = (
-                        f"    /* TODO: {comp}_state_t *obj"
-                        f" = {comp}_create(...); */"
+                        f"    /* TODO: {csym}_state_t *obj"
+                        f" = {csym}_create(...); */"
                     )
                     comp_ctx["bench_destroy_stmt"] = ""
                     comp_ctx["bench_methods_timing_block"] = ""

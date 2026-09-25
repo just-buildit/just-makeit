@@ -175,6 +175,7 @@ def component_ctx(
             enums=C.enums(cfg),  # gh-1021
             records=C.records(cfg, object_name),  # gh-1405
             properties=C.properties(cfg, object_name),  # gh-1426
+            csym=ctx["csym"],
         )
     )
     for _slot in _override_slots:
@@ -205,6 +206,7 @@ def component_ctx(
             # same as the module path (_object); absent -> generic, unchanged.
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
             codecs=C.codecs(cfg),
+            csym=ctx["csym"],
         )
     )
     # gh-481: declared warnings. Re-rendered from the manifest on every pass,
@@ -224,6 +226,7 @@ def component_ctx(
             C.create_error(cfg, object_name),
             C.create_error_message(cfg, object_name),
             create_fn=C.object_create_fn(cfg, object_name),
+            csym=ctx["csym"],
         )
     )
     # gh-541/gh-544: the declared destructor contract. Regenerated from the
@@ -238,6 +241,7 @@ def component_ctx(
             class_name=C.class_name(cfg, object_name) or "",
             # gh-1323: pair the destructor with the declared creator.
             create_fn=C.object_create_fn(cfg, object_name) or "",
+            csym=ctx["csym"],
         )
     )
     ctx.update(
@@ -319,6 +323,7 @@ def component_ctx(
         raises=_cls_raises,
         warns=_cls_warns,
         enum_choices=_cls_enums,
+        csym=ctx["csym"],
     )
     # gh-644/gh-676: the runtime class docstring. The module aggregator has
     # derived this from create()'s @brief since gh-602; the standalone template
@@ -365,6 +370,7 @@ def component_ctx(
                 raises=_cls_raises,
                 warns=_cls_warns,
                 enum_choices=_cls_enums,
+                csym=ctx["csym"],
             )
         )
     # gh-1117: a STANDALONE object's own `.so` is its own extension module,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 
 from .. import _codec as _codec
+from .. import _config as C
 from .. import _coerce
 from .. import _enumc
 from .. import _borrow
@@ -346,6 +347,8 @@ def _bench_todo(
     component: str,
     methods: list[dict],
     functions: "list[str] | None" = None,
+    *,
+    csym: str,
 ) -> str:
     """The `TODO:` block for a benchmark jm could not populate (gh-840).
 
@@ -400,7 +403,7 @@ def _bench_todo(
             "codec).",
             "",
             "Candidates:",
-        ] + [f"  {component}_{n}(obj, ...)" for n in names]
+        ] + [f"  {csym}_{n}(obj, ...)" for n in names]
     else:
         body = [
             "jm did not generate a timing loop: this component has no",
@@ -412,7 +415,11 @@ def _bench_todo(
 
 
 def _bench_method_block(
-    component: str, m: dict, records: "list[dict] | None" = None
+    component: str,
+    m: dict,
+    records: "list[dict] | None" = None,
+    *,
+    csym: str,
 ) -> str:
     """Return a self-contained C bench timing block for method *m*.
 
@@ -460,7 +467,7 @@ def _bench_method_block(
     # gh-805 §A2: benchmark the C symbol the method actually binds. The local
     # variable names below stay keyed on `name` (they are C identifiers in the
     # generated bench, and `fn` may repeat across methods).
-    c_fn: str = m.get("fn", "") or f"{component}_{name}"
+    c_fn: str = C.method_c_symbol(csym, m)
     # gh-1404: the bench is a PEER of the binding's own type read below --
     # it emits C against the same prototype, so it resolves a declared
     # element the same way. Missed here first, and the generated benchmark
@@ -817,7 +824,11 @@ def state_blob_fields(
 
 
 def make_serializable_core_ctx(
-    component: str, serializable: bool, fields: "list[str] | None"
+    component: str,
+    serializable: bool,
+    fields: "list[str] | None",
+    *,
+    csym: str,
 ) -> dict:
     """The C triplet a ``serializable`` object's binding calls (gh-1509).
 
@@ -844,10 +855,10 @@ def make_serializable_core_ctx(
 
     Examples
     --------
-    >>> ctx = make_serializable_core_ctx("q", False, [])
+    >>> ctx = make_serializable_core_ctx("q", False, [], csym="q")
     >>> ctx["serializable_decls"], ctx["serializable_impls"]
     ('', '')
-    >>> print(make_serializable_core_ctx("q", True, ["x"])[
+    >>> print(make_serializable_core_ctx("q", True, ["x"], csym="q")[
     ...     "serializable_decls"].strip())
     /** @brief Bytes in the blob q_get_state() writes. */
     size_t q_state_bytes(const q_state_t *state);
@@ -860,7 +871,7 @@ def make_serializable_core_ctx(
     """
     if not serializable:
         return {"serializable_decls": "", "serializable_impls": ""}
-    c, st = component, f"{component}_state_t"
+    c, st = csym, f"{csym}_state_t"
     decls = (
         f"\n\n/** @brief Bytes in the blob {c}_get_state() writes. */"
         f"\nsize_t {c}_state_bytes(const {st} *state);"
@@ -916,7 +927,14 @@ def make_serializable_core_ctx(
 
 
 def _max_out_doc(
-    component, name, count_param, max_out_const, block_of, c_fn=""
+    component,
+    name,
+    count_param,
+    max_out_const,
+    block_of,
+    c_fn="",
+    *,
+    csym: str,
 ):
     """The doc for ``<name>_max_out``: header block if authored, else jm's.
 
@@ -930,7 +948,9 @@ def _max_out_doc(
     ``<name>_max_out`` for the reader — so the two are deliberately separate
     arguments rather than one. Defaults to the derived symbol.
     """
-    blk = block_of(f"{c_fn or f'{component}_{name}'}_max_out")
+    blk = block_of(
+        f"{C.method_c_symbol(csym, {'name': name, 'fn': c_fn})}_max_out"
+    )
     gm = max_out_method(name, count_param or "", int(max_out_const or 0))
     if blk is not None:
         # gh-1052: through the constructor, which also records that this
@@ -939,7 +959,9 @@ def _max_out_doc(
     return gm
 
 
-def _count_default_parts(expr: str, component: str) -> tuple[str, str]:
+def _count_default_parts(
+    expr: str, component: str, *, csym: str
+) -> tuple[str, str]:
     r"""Return ``(initialiser, state_alias_line)`` for a ``count_default``.
 
     gh-657. A void-input ``variable_output`` method binds its capacity as the
@@ -970,18 +992,18 @@ def _count_default_parts(expr: str, component: str) -> tuple[str, str]:
 
     Examples
     --------
-    >>> _count_default_parts("", "delay")
+    >>> _count_default_parts("", "delay", csym="delay")
     ('1', '')
-    >>> _count_default_parts("64", "delay")
+    >>> _count_default_parts("64", "delay", csym="delay")
     ('(Py_ssize_t)(64)', '')
-    >>> _count_default_parts("state->num_taps", "delay")
+    >>> _count_default_parts("state->num_taps", "delay", csym="delay")
     ('(Py_ssize_t)(state->num_taps)', '    delay_state_t *state = self->handle;\n')
     """
     if not expr:
         return "1", ""
     alias = ""
     if re.search(r"\bstate\b", expr):
-        alias = f"    {component}_state_t *state = self->handle;\n"
+        alias = f"    {csym}_state_t *state = self->handle;\n"
     return f"(Py_ssize_t)({expr})", alias
 
 
@@ -1232,6 +1254,8 @@ def make_methods_ctx(
     module: str = "",
     records: "list[dict] | None" = None,
     properties: "list[dict] | None" = None,
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1281,7 +1305,7 @@ def make_methods_ctx(
         # below — this branch renders the same template.
         "bench_elapsed_helper": "",
         "bench_timer_decls": "",
-        "bench_todo": _bench_todo(component, []),
+        "bench_todo": _bench_todo(component, [], csym=csym),
         "varargs_binding_files": [],
     }
     if not methods and not serializable:
@@ -1357,7 +1381,7 @@ def make_methods_ctx(
         # `fn` is already the spelling on properties, getters, setters,
         # composer fields and handle methods; this is that key reaching one
         # more place, not a new concept.
-        c_fn: str = m.get("fn", "") or f"{component}_{name}"
+        c_fn: str = C.method_c_symbol(csym, m)
 
         # Summary precedence: TOML `doc` override > header @brief > name
         # fallback. This one is still resolved here because the *runtime*
@@ -1375,9 +1399,11 @@ def make_methods_ctx(
         # another way -- where the stub's answer (gh-666: jm's own template
         # is not documentation) is the right one.
         _block = (doc_blocks or {}).get(c_fn) or (doc_blocks or {}).get(
-            f"{component}_{name}"
+            f"{csym}_{name}"
         )
-        _brief_text, _brief_is_stub = method_doc(component, m, doc_blocks)
+        _brief_text, _brief_is_stub = method_doc(
+            component, m, doc_blocks, csym=csym
+        )
         # The faces below distinguish "documented" from "fell back to the
         # name", so keep the empty-string spelling they were written against.
         _brief = "" if _brief_is_stub else _brief_text
@@ -1614,7 +1640,9 @@ def make_methods_ctx(
         # the user's C), so the manifest declares it.
         _count_default: str = str(m.get("count_default", "") or "").strip()
         _count_init, _count_alias = _count_default_parts(
-            _count_default, component
+            _count_default,
+            component,
+            csym=csym,
         )
         # gh-1074: what that synthesized argument is CALLED. Read once and
         # used at every site below — the name was spelled seven times, which
@@ -2002,7 +2030,7 @@ def make_methods_ctx(
         if batch:
             if has_arg:
                 decl_lines.append(
-                    f"void {c_fn}({component}_state_t *state,"
+                    f"void {c_fn}({csym}_state_t *state,"
                     f" const {arg_disp} *in, size_t n, {ret_disp} *out);"
                 )
                 # gh-222: fixed-size (1:1) batch methods accept an optional
@@ -2064,7 +2092,7 @@ def make_methods_ctx(
                 )
             else:
                 decl_lines.append(
-                    f"void {c_fn}({component}_state_t *state,"
+                    f"void {c_fn}({csym}_state_t *state,"
                     f" size_t n, {ret_disp} *out);"
                 )
                 # gh-222: count-driven batch generator with optional `out=`.
@@ -2206,9 +2234,9 @@ def make_methods_ctx(
             if has_arg:
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
-                    f"({component}_state_t *state{_moc_decl});\n"
+                    f"({csym}_state_t *state{_moc_decl});\n"
                     f"size_t {c_fn}"
-                    f"({component}_state_t *state,"
+                    f"({csym}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
@@ -2218,18 +2246,18 @@ def make_methods_ctx(
                 _vp_parts = c_param_parts(params)
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
-                    f"({component}_state_t *state{_moc_decl});\n"
+                    f"({csym}_state_t *state{_moc_decl});\n"
                     f"size_t {c_fn}"
-                    f"({component}_state_t *state,"
+                    f"({csym}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             else:
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
-                    f"({component}_state_t *state{_moc_decl});\n"
+                    f"({csym}_state_t *state{_moc_decl});\n"
                     f"size_t {c_fn}"
-                    f"({component}_state_t *state, size_t n,"
+                    f"({csym}_state_t *state, size_t n,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
         else:
@@ -2250,7 +2278,7 @@ def make_methods_ctx(
                 c_param_str = ", ".join(p_parts)
                 decl_lines.append(
                     f"{ret_disp} {c_fn}"
-                    f"({component}_state_t *state,"
+                    f"({csym}_state_t *state,"
                     f" {c_param_str}{extra_params}{out_type_param});"
                 )
             elif has_arg:
@@ -2258,20 +2286,20 @@ def make_methods_ctx(
                     _e_disp = array_elem_ctype(arg_type)
                     decl_lines.append(
                         f"{ret_disp} {c_fn}"
-                        f"({component}_state_t *state,"
+                        f"({csym}_state_t *state,"
                         f" const {_e_disp} *x, size_t x_len"
                         f"{extra_params}{out_type_param});"
                     )
                 else:
                     decl_lines.append(
                         f"{ret_disp} {c_fn}"
-                        f"({component}_state_t *state,"
+                        f"({csym}_state_t *state,"
                         f" {arg_disp} x{extra_params}{out_type_param});"
                     )
             else:
                 decl_lines.append(
                     f"{ret_disp} {c_fn}"
-                    f"({component}_state_t *state"
+                    f"({csym}_state_t *state"
                     f"{extra_params}{out_type_param});"
                 )
 
@@ -3163,6 +3191,7 @@ def make_methods_ctx(
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
+                            csym=csym,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3195,6 +3224,7 @@ def make_methods_ctx(
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
+                            csym=csym,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3565,7 +3595,7 @@ def make_methods_ctx(
                     # falling through IS the fallback below: a status with no
                     # row keeps `none_on_empty`, else the blanket raise.
                     + _borrow.status_dispatch_c(
-                        m, component=component, properties=properties
+                        m, csym=csym, properties=properties
                     )
                     # A NULL borrow ALWAYS raises, declared `error` or not --
                     # there is no count to report and no empty array to hand
@@ -3934,6 +3964,7 @@ def make_methods_ctx(
                 m.get("max_out", 0),
                 lambda k: (doc_blocks or {}).get(k),
                 c_fn=c_fn,
+                csym=csym,
             ).pyi_doc()
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
@@ -3961,7 +3992,7 @@ def make_methods_ctx(
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
     _method_bench_blocks = [
-        _bench_method_block(component, m, records) for m in methods
+        _bench_method_block(component, m, records, csym=csym) for m in methods
     ]
     _filled = [b for b in _method_bench_blocks if b]
     bench_methods_timing_block = "\n" + "\n\n".join(_filled) if _filled else ""
@@ -3997,7 +4028,9 @@ def make_methods_ctx(
         "bench_methods_timing_block": bench_methods_timing_block,
         "bench_elapsed_helper": (_BENCH_ELAPSED_HELPER if _has_timing else ""),
         "bench_timer_decls": _BENCH_TIMER_DECLS if _has_timing else "",
-        "bench_todo": ("" if _has_timing else _bench_todo(component, methods)),
+        "bench_todo": (
+            "" if _has_timing else _bench_todo(component, methods, csym=csym)
+        ),
         "varargs_binding_files": varargs_binding_files,
         **(
             {
@@ -4175,7 +4208,9 @@ def _property_enum(
     return name
 
 
-def container_fn_names(component: str, pname: str, p: dict) -> dict[str, str]:
+def container_fn_names(
+    component: str, pname: str, p: dict, *, csym: str
+) -> dict[str, str]:
     """Resolve a container property's three accessor names (gh-543).
 
     Each defaults from the component and property name -- mirroring how
@@ -4184,8 +4219,8 @@ def container_fn_names(component: str, pname: str, p: dict) -> dict[str, str]:
     """
     return {
         "count_fn": p.get("count_fn") or f"{component}_num_{pname}",
-        "key_fn": p.get("key_fn") or f"{component}_{pname}_key",
-        "value_fn": p.get("value_fn") or f"{component}_{pname}_value",
+        "key_fn": p.get("key_fn") or f"{csym}_{pname}_key",
+        "value_fn": p.get("value_fn") or f"{csym}_{pname}_value",
     }
 
 
@@ -4237,6 +4272,8 @@ def _container_getter(
     p: dict,
     guard: str,
     cdc: dict | None = None,
+    *,
+    csym: str,
 ) -> tuple[str, list[str]]:
     """Render a container property's getter, plus the decls it needs.
 
@@ -4250,9 +4287,9 @@ def _container_getter(
     """
     pname = p["name"]
     kind = p["type"]
-    fns = container_fn_names(component, pname, p)
+    fns = container_fn_names(component, pname, p, csym=csym)
     vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
-    state_t = f"const {component}_state_t *"
+    state_t = f"const {csym}_state_t *"
 
     decls = [
         f"/**\n"
@@ -4281,7 +4318,11 @@ def _container_getter(
         # hand-written value_fn — the value comes from a static decode helper
         # (emitted inline as `fwd`) over the entry_fn cursor.
         fwd, value_expr, _entry_decls = _codec.render_decode(
-            component, Component, p, cdc
+            component,
+            Component,
+            p,
+            cdc,
+            csym=csym,
         )
         decls.extend(_entry_decls)
     elif vtype == T.OBJECT_VALUE_TYPE:
@@ -4423,6 +4464,8 @@ def make_properties_ctx(
     doc_blocks: dict | None = None,
     enums: dict[str, list[str]] | None = None,
     codecs: dict | None = None,
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Generate getset_def and tp_getset_decl context keys for Python properties.
 
@@ -4558,7 +4601,12 @@ def make_properties_ctx(
                         f"'{p['codec']}', not declared in [codec.*]."
                     )
             getter, _c_decls = _container_getter(
-                component, Component, p, guard, cdc=_cdc
+                component,
+                Component,
+                p,
+                guard,
+                cdc=_cdc,
+                csym=csym,
             )
             if pname not in state_var_names:
                 decl_lines.extend(_c_decls)
@@ -4639,7 +4687,7 @@ def make_properties_ctx(
                 f"}}"
             )
         else:
-            _call = f"{component}_get_{pname}(self->handle)"
+            _call = f"{csym}_get_{pname}(self->handle)"
             implement_cmt = (
                 "    /* <<IMPLEMENT: return the computed or stored value>> */\n"
                 if pname not in state_var_names
@@ -4665,8 +4713,8 @@ def make_properties_ctx(
                     f" * @param state  Must be non-NULL.\n"
                     f" * @return Current {pname} value ({disp}).\n"
                     f" */\n"
-                    f"{disp} {component}_get_{pname}"
-                    f"(const {component}_state_t *state);"
+                    f"{disp} {csym}_get_{pname}"
+                    f"(const {csym}_state_t *state);"
                 )
 
         getter_parts.append(getter)
@@ -4718,9 +4766,7 @@ def make_properties_ctx(
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"
             else:
-                assign_line = (
-                    f"    {component}_set_{pname}(self->handle, v);\n"
-                )
+                assign_line = f"    {csym}_set_{pname}(self->handle, v);\n"
                 if pname not in state_var_names:
                     decl_lines.append(
                         f"/**\n"
@@ -4728,8 +4774,8 @@ def make_properties_ctx(
                         f" * @param state  Must be non-NULL.\n"
                         f" * @param val    New value ({disp}).\n"
                         f" */\n"
-                        f"void {component}_set_{pname}"
-                        f"({component}_state_t *state, {disp} val);"
+                        f"void {csym}_set_{pname}"
+                        f"({csym}_state_t *state, {disp} val);"
                     )
             setter = (
                 f"static int\n"
@@ -4761,7 +4807,7 @@ def make_properties_ctx(
         # the same sentence maintained twice and drifting independently.
         # gh-1394: the one chain, shared with `jm status --docs`, which
         # reports whichever properties it answers with a name stub.
-        _pdoc = property_doc(component, p, doc_blocks)[0]
+        _pdoc = property_doc(component, p, doc_blocks, csym=csym)[0]
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
             f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"

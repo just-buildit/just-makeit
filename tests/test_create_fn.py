@@ -87,14 +87,18 @@ class TestGeneration:
     def test_error_message_names_override(self):
         # gh-509: the NULL-return MemoryError names the function that actually
         # returned NULL, not a <comp>_create that may not exist.
-        ctx = Ctx.make_errors_ctx("widget", create_fn="widget_forge")
+        ctx = Ctx.make_errors_ctx(
+            "widget", create_fn="widget_forge", csym="widget"
+        )
         assert "widget_forge returned NULL" in ctx["create_fail_block"]
 
     def test_error_message_default_byte_identical(self):
         # Default (no override) preserves the historical text exactly.
         assert (
             "widget_create returned NULL"
-            in Ctx.make_errors_ctx("widget")["create_fail_block"]
+            in Ctx.make_errors_ctx("widget", csym="widget")[
+                "create_fail_block"
+            ]
         )
 
 

@@ -111,6 +111,7 @@ class TestDerivedDocstrings:
             [{"name": "scale", "arg_type": "float", "return_type": "float"}],
             pkg="dsp",
             doc_blocks={"mix_scale": blk},
+            csym="mix",
         )
         pmd = ctx["extra_methods_pymethoddef"]
         assert "Scale the input sample by the configured gain." in pmd
@@ -275,6 +276,7 @@ class TestDerivedDocstrings:
             "Mix",
             [{"name": "gain", "type": "float", "writable": True}],
             doc_blocks={"mix_get_gain": blk},
+            csym="mix",
         )
         assert (
             "The multiplicative gain applied per sample." in ctx["getset_def"]

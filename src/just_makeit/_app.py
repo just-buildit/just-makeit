@@ -820,6 +820,8 @@ def _c_io_loop(
     arg_t: str,
     ret_t: str,
     sample_type: bool = False,
+    *,
+    csym: str,
 ) -> str:
     """4-space-indented C body for the given object shape.
 
@@ -836,7 +838,7 @@ def _c_io_loop(
             f"    unsigned char jm_bytes[{n} * sizeof(double _Complex)];\n"
             f"    size_t k;\n"
             f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
-            f"        {component}_steps(state, inbuf, k, outbuf);\n"
+            f"        {csym}_steps(state, inbuf, k, outbuf);\n"
             f"        jm_write_block(out, outbuf, k, sample_type, endian,"
             f" file_type, jm_bytes);\n"
             f"    }}"
@@ -849,7 +851,7 @@ def _c_io_loop(
             f"    while (produced < count) {{\n"
             f"        size_t k = (count - produced) < {n}\n"
             f"                       ? (count - produced) : (size_t){n};\n"
-            f"        {component}_steps(state, outbuf, k);\n"
+            f"        {csym}_steps(state, outbuf, k);\n"
             f"        jm_write_block(out, outbuf, k, sample_type, endian,"
             f" file_type, jm_bytes);\n"
             f"        produced += k;\n"
@@ -859,7 +861,7 @@ def _c_io_loop(
         return (
             f"    {arg_t} x;\n"
             f"    while (fread(&x, sizeof x, 1, in) == 1) {{\n"
-            f"        {ret_t} y = {component}_step(state, x);\n"
+            f"        {ret_t} y = {csym}_step(state, x);\n"
             f"        fwrite(&y, sizeof y, 1, out);\n"
             f"    }}"
         )
@@ -871,7 +873,7 @@ def _c_io_loop(
             f"    {oe} outbuf[{n}];\n"
             f"    size_t k;\n"
             f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
-            f"        {component}_steps(state, inbuf, k, outbuf);\n"
+            f"        {csym}_steps(state, inbuf, k, outbuf);\n"
             f"        fwrite(outbuf, sizeof outbuf[0], k, out);\n"
             f"    }}"
         )
@@ -880,7 +882,7 @@ def _c_io_loop(
             f"    {arg_t} inbuf[{n}];\n"
             f"    size_t k;\n"
             f"    while ((k = fread(inbuf, sizeof inbuf[0], {n}, in)) > 0) {{\n"
-            f"        {component}_steps(state, inbuf, k);\n"
+            f"        {csym}_steps(state, inbuf, k);\n"
             f"    }}"
         )
     if shape == "generator":
@@ -890,7 +892,7 @@ def _c_io_loop(
             f"    while (produced < count) {{\n"
             f"        size_t k = (count - produced) < {n}\n"
             f"                       ? (count - produced) : (size_t){n};\n"
-            f"        {component}_steps(state, outbuf, k);\n"
+            f"        {csym}_steps(state, outbuf, k);\n"
             f"        fwrite(outbuf, sizeof outbuf[0], k, out);\n"
             f"        produced += k;\n"
             f"    }}"
@@ -1351,7 +1353,12 @@ def _build_ctx(
         )
         create_call = _create_call(parsed=True)
         io_loop = _c_io_loop(
-            shape, component, arg_t, ret_t, sample_type=sample_type
+            shape,
+            component,
+            arg_t,
+            ret_t,
+            sample_type=sample_type,
+            csym=csym,
         )
         helpers = _c_choice_parsers(parse_flags)
         if sample_type:

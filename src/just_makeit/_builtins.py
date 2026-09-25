@@ -233,6 +233,7 @@ def overridden_builtin_slots(
             single=bool(m.get("single")),
             record_dtype=m.get("record_dtype", ""),
             borrow=bool(m.get("borrow")),
+            csym=ctx["csym"],
         )
         builtin = ctx.get(_DECL_SLOT[m["name"]], "")
         # The built-in's slot may carry a Doxygen block above the declaration;
@@ -251,6 +252,16 @@ _BODY_SLOTS = {
     "reset": ("reset_c_open", "reset_assignments", "reset_c_close"),
     "steps": ("steps_c_impl",),
 }
+
+
+def _derived_symbol(cfg: dict, component: str, method: dict) -> str:
+    """The C symbol *method* of *component* binds: `C.method_c_symbol`
+    over the component's stem (gh-1591). A local import, as this module's
+    other readers of `_config` do."""
+    from . import _config as C
+    from . import _csym as CSYM
+
+    return C.method_c_symbol(CSYM.stem(cfg, component), method)
 
 
 def withdraw_overridden_builtin(
@@ -302,7 +313,8 @@ def withdraw_overridden_builtin(
     body = "".join(ctx.get(s, "") for s in slots)
     if not body or body not in text:
         return False, (
-            f"{core_c.relative_to(root)} still defines {component}_{name}(),"
+            f"{core_c.relative_to(root)} still defines "
+            f"{_derived_symbol(cfg, component, method)}(),"
             f" and its body is no longer jm's scaffold — so it was left"
             f" alone.\n"
             f"  The declared method '{name}' has a different signature, and"
@@ -389,7 +401,7 @@ def builtin_owned_members(root, cfg, component: str) -> "frozenset[str]":
         name = m.get("name", "")
         if name not in builtins or name not in members:
             continue
-        c_fn = m.get("fn", "") or f"{component}_{name}"
+        c_fn = _derived_symbol(cfg, component, m)
         if already_provides(root, component, c_fn, builtins):
             owned.add(name)
     return frozenset(owned)
