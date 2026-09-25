@@ -133,6 +133,40 @@ def _walk_managed(base: Path) -> list[Path]:
     return out
 
 
+def _unreconciled_buckets(
+    entries: list, reasons: dict, ahead: dict, refreshable: set
+) -> "dict[str, list]":
+    """Split the UNRECONCILED entries by what the reader should do.
+
+    gh-1566: the one classification both faces render. The text output
+    split these inline and `--json` never saw the split at all, so a
+    downstream automating on `--json` could not tell a fragment safe to
+    re-render (ACTIONABLE) from one whose re-render would DELETE a working
+    binding (BINDING AHEAD) -- the distinction gh-1447 ask 3 made for a human
+    reader. Keys are the JSON names, in the order the text prints them.
+    """
+    return {
+        # gh-848: the manifest moved and the file did not.
+        "actionable": [
+            e for e in entries if e[0] in reasons and e[0] not in ahead
+        ],
+        # gh-1447 ask 3: one member ahead of the manifest makes the whole
+        # file's delete-and-re-render advice wrong.
+        "binding_ahead": [
+            e for e in entries if e[0] in reasons and e[0] in ahead
+        ],
+        # gh-1192: `apply` refreshes these in place.
+        "apply_fixes": [
+            e for e in entries if e[0] not in reasons and e[0] in refreshable
+        ],
+        "unexplained": [
+            e
+            for e in entries
+            if e[0] not in reasons and e[0] not in refreshable
+        ],
+    }
+
+
 def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
     """Generated glue `apply` renders but never writes over an existing file.
 
@@ -1053,6 +1087,32 @@ def run(
                         for (o, n, m, h) in drift_entries
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
+                    # gh-1566: the UNRECONCILED buckets, from the same
+                    # classifier the text prints -- one source, two faces.
+                    "unreconciled": {
+                        bucket: [
+                            {
+                                "path": e[0],
+                                "reasons": dict(
+                                    sorted(
+                                        unreconciled_reasons.get(
+                                            e[0], {}
+                                        ).items()
+                                    )
+                                ),
+                                "binding_ahead": sorted(
+                                    unreconciled_ahead.get(e[0], ())
+                                ),
+                            }
+                            for e in rows
+                        ]
+                        for bucket, rows in _unreconciled_buckets(
+                            unreconciled_entries,
+                            unreconciled_reasons,
+                            unreconciled_ahead,
+                            refreshable,
+                        ).items()
+                    },
                     "manifest_doc_overflow": [
                         # gh-1164: `kind` distinguishes the two renderer
                         # defects — a machine reader could not tell a
@@ -1299,33 +1359,16 @@ def run(
             # `out=` (`"OO|O"`) its manifest never declared, and the advice
             # below was to delete the file. One ahead member is enough to
             # make that advice wrong for the whole file.
-            _ahead = [
-                e
-                for e in unreconciled_entries
-                if e[0] in unreconciled_reasons and e[0] in unreconciled_ahead
-            ]
-            _actionable = [
-                e
-                for e in unreconciled_entries
-                if e[0] in unreconciled_reasons
-                and e[0] not in unreconciled_ahead
-            ]
-            # gh-1192: the third bucket, and the one the other two were
-            # hiding. A signature difference is not the only kind `apply`
-            # answers — it also refreshes doc slots, splices a binding the
-            # manifest gained, and repairs `*_max_out` arity, all in place.
-            # Those were falling to the author-owned default because the
-            # split keyed on signature drift alone.
-            _refreshable = [
-                e
-                for e in unreconciled_entries
-                if e[0] not in unreconciled_reasons and e[0] in refreshable
-            ]
-            _authored = [
-                e
-                for e in unreconciled_entries
-                if e[0] not in unreconciled_reasons and e[0] not in refreshable
-            ]
+            _buckets = _unreconciled_buckets(
+                unreconciled_entries,
+                unreconciled_reasons,
+                unreconciled_ahead,
+                refreshable,
+            )
+            _actionable = _buckets["actionable"]
+            _ahead = _buckets["binding_ahead"]
+            _refreshable = _buckets["apply_fixes"]
+            _authored = _buckets["unexplained"]
             if _actionable:
                 print(
                     f"  ACTIONABLE ({len(_actionable)}) — the manifest moved "
