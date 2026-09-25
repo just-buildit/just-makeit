@@ -136,6 +136,10 @@ _EXEMPT = {"_csym.py"}
 #: one of these functions is exempt only if it is the same kind of thing,
 #: which review of that function sees.
 EXEMPT_FUNCS: "dict[tuple[str, str], str]" = {
+    ("_bind.py", "parse_header"): (
+        "reads a FOREIGN header to derive a manifest from it: `comp` is the "
+        "stem that header already spells, not one jm derives"
+    ),
     ("_composer.py", "render_serializers"): (
         "`static PyObject *<cname>_<name>` binders: file-local, never "
         "exported, so phase 2 does not prefix them"
@@ -154,13 +158,22 @@ EXEMPT_FUNCS: "dict[tuple[str, str], str]" = {
 
 def _raw_name(node) -> bool:
     """*node* formats a raw name: ``comp``, ``ctx["component"]``,
-    ``o.component``, or any of them ``.upper()``."""
+    ``o.component``, or any of them ``.upper()`` or ``re.escape(...)``d --
+    the regex spelling, which a text MATCHER uses (gh-1591 2b: `jm perf` and
+    the field-property injector matched the bare name and did nothing)."""
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "upper"
     ):
         node = node.func.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "escape"
+        and node.args
+    ):
+        node = node.args[0]
     if isinstance(node, ast.Name):
         return node.id in NAMES
     if isinstance(node, ast.Attribute):
@@ -183,9 +196,54 @@ def derivations(source: str) -> "list[int]":
     []
     >>> derivations('x = f"{comp}_{name}"\\n')
     [1]
+
+    Three more spellings reach the same place (gh-1591 2b found one of each
+    live): a concatenation, a regex, and ``str.format``.
+
+    >>> derivations('p = r"\\\\b" + re.escape(comp) + r"_step\\\\s*\\\\("\\n')
+    [1]
+    >>> derivations('p = rf"^{re.escape(comp)}_state_t;"\\n')
+    [1]
+    >>> derivations('x = "{}_state_t *state".format(component)\\n')
+    [1]
+    >>> derivations('x = comp + "_core.c"; y = "{}.c".format(comp)\\n')
+    []
     """
     out = []
     for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            # Flatten `a + b + c` (left-nested) and ask each adjacent pair.
+            parts, cur = [], node
+            while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Add):
+                parts.insert(0, cur.right)
+                cur = cur.left
+            parts.insert(0, cur)
+            # Only the outermost Add of a chain reports, once per chain.
+            for a, b in zip(parts, parts[1:]):
+                if (
+                    _raw_name(a)
+                    and isinstance(b, ast.Constant)
+                    and isinstance(b.value, str)
+                    and _SUFFIX.match(b.value)
+                ):
+                    out.append(node.lineno)
+            continue
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Constant)
+            and isinstance(node.func.value.value, str)
+        ):
+            text, args = node.func.value.value, node.args
+            for k, m in enumerate(re.finditer(r"\{\}", text)):
+                if (
+                    k < len(args)
+                    and _raw_name(args[k])
+                    and _SUFFIX.match(text[m.end() :])
+                ):
+                    out.append(node.lineno)
+            continue
         if not isinstance(node, ast.JoinedStr):
             continue
         vals = node.values

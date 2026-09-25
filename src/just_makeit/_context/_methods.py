@@ -2207,7 +2207,9 @@ def make_methods_ctx(
             # record by value instead of the results[]/max_results out-params.
             # It previously did neither, so a record method declared here got
             # a prototype the binding could not call.
-            _rf_parts = ["{}_state_t *state".format(component)]
+            # gh-1591: the symbol stem. `.format` hid this from the f-string
+            # ratchet, so a record method's prototype kept the bare type.
+            _rf_parts = [f"{csym}_state_t *state"]
             if has_arg:
                 _rf_parts += [f"const {arg_disp} *in", "size_t n_in"]
             _rf_parts += c_param_parts(params)

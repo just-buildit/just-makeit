@@ -55,6 +55,12 @@ def _write(path: Path, content: str) -> None:
     print(f"  create  {path}")
 
 
+#: `run`'s ``c_prefix`` when the caller says nothing: the project's name.
+#: A sentinel, not None, because None is a real answer -- "no prefix" -- that
+#: `--no-c-prefix` and the replay of an unprefixed project both give.
+DEFAULT_C_PREFIX = object()
+
+
 def run(
     project: str,
     dest: Path | None = None,
@@ -79,7 +85,7 @@ def run(
     c_style: str = "",
     c_format_command: list[str] | None = None,
     schema: int | None = None,
-    c_prefix: str | None = None,
+    c_prefix: "str | None | object" = DEFAULT_C_PREFIX,
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -88,6 +94,14 @@ def run(
     # project's schema, so a schema-8 project replays into its own layout.
     schema = C.CURRENT_SCHEMA if schema is None else schema
     owner = {"project": {"name": project, "schema": str(schema)}}
+    # gh-1591 (decided on the issue): a NEW project is namespaced from its
+    # first file, by its package name, so it never needs `jm upgrade`'s
+    # respell -- on every path that creates one, the CLI and the Python API
+    # the bundled examples use alike. `apply`'s replay passes the real
+    # project's own key, None included, so an existing project without one
+    # replays bare instead of acquiring this default.
+    if c_prefix is DEFAULT_C_PREFIX:
+        c_prefix = project
     # gh-1591: the C symbol prefix, validated before anything is written.
     # The replay passes the real project's, so a prefixed project replays
     # into its own symbols -- a replay without it would render every derived

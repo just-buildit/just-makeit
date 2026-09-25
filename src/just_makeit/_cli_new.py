@@ -244,13 +244,13 @@ def run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    # gh-1591 (decided on the issue): a NEW project is namespaced from its
-    # first file, by its package name, so it never needs `jm upgrade`'s
-    # respell. Here and not in `_new.run`, which `apply`'s replay calls with
-    # the real project's own key -- an existing project without one must
-    # replay bare, not acquire this default.
-    if c_prefix is None and not no_c_prefix:
-        c_prefix = project
+    # gh-1591: the default (the package name) is `_new.run`'s, one rule for
+    # the CLI and the Python API alike; `--no-c-prefix` is the explicit None.
+    prefix_arg = (
+        None
+        if no_c_prefix
+        else (c_prefix if c_prefix is not None else _new.DEFAULT_C_PREFIX)
+    )
 
     if windows:
         from . import _report
@@ -290,5 +290,5 @@ def run(args: list[str]) -> None:
         platforms=None,
         fragments=fragments,
         c_style=c_style,
-        c_prefix=c_prefix,
+        c_prefix=prefix_arg,
     )
