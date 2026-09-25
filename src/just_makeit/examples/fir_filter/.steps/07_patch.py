@@ -2,7 +2,7 @@
 
 Run from the project root: python3 .steps/07_patch.py
 
-Header: inserts fir_filter_step_batch() after my_fir_fir_filter_step().
+Header: inserts my_fir_fir_filter_step_batch() after my_fir_fir_filter_step().
 Source: replaces my_fir_fir_filter_steps() with JM_DEFINE_STEPS(...).
 """
 
@@ -23,7 +23,7 @@ insert_re = re.compile(
 )
 
 htext = header.read_text(encoding="utf-8")
-if "fir_filter_step_batch" in htext:
+if "my_fir_fir_filter_step_batch" in htext:
     print(f"{header}: step_batch already present, skipping")
 else:
     if not insert_re.search(htext):

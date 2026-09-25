@@ -34,7 +34,7 @@ that store with the accumulate.  Flags alone don't get you there.
 Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
-**1.** Add the constants and `fir_filter_step_batch()` to
+**1.** Add the constants and `my_fir_fir_filter_step_batch()` to
 `native/inc/my_fir/fir_filter/fir_filter_core.h` just after `my_fir_fir_filter_step()`:
 
 ```{07_step_batch.h}

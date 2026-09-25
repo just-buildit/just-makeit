@@ -89,8 +89,8 @@ means watching for name collisions with your own objects.
 
 Three more features round out the project:
 
-- **Module-level function** — `kitchen_sink_lerp(a, b, t)` is a free function in the `dsp`
-  module (not an object): `from kitchen_sink.dsp import kitchen_sink_lerp`.
+- **Module-level function** — `lerp(a, b, t)` is a free function in the `dsp`
+  module (not an object): `from kitchen_sink.dsp import lerp`.
 
 - **Reexported `no_generate` sibling** — `dsp_fn` is a *hand-written* CPython
   extension (jm only wires its `add_subdirectory`; the `.c`, CMakeLists, and

@@ -505,11 +505,11 @@ def run(root: Path) -> None:
         nogil=True,
     )
 
-    # module-level function (scalar kitchen_sink_lerp), with its C body inline
+    # module-level function (scalar lerp), with its C body inline
     q(
         jm_function,
         proj,
-        "kitchen_sink_lerp",
+        "lerp",
         "dsp",
         params=[("a", "double"), ("b", "double"), ("t", "double")],
         return_type="double",

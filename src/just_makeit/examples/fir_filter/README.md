@@ -287,7 +287,7 @@ that store with the accumulate.  Flags alone don't get you there.
 Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
-**1.** Add the constants and `fir_filter_step_batch()` to
+**1.** Add the constants and `my_fir_fir_filter_step_batch()` to
 `native/inc/my_fir/fir_filter/fir_filter_core.h` just after `my_fir_fir_filter_step()`:
 
 ```c
@@ -300,8 +300,9 @@ that stamps out the outer dispatch loop so you never write it by hand.
 
 #if JM_SIMD_WIDTH_F32 > 1
 JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch (my_fir_fir_filter_state_t *state,
-                       const float _Complex *window, float _Complex *out)
+my_fir_fir_filter_step_batch (my_fir_fir_filter_state_t *state,
+                              const float _Complex      *window,
+                              float _Complex            *out)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   for (int k = 0; k < FIR_TAPS; k++)
@@ -333,7 +334,7 @@ but you never write `steps()`.
 ```c
 #define FIR_CHUNK 256 /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS (fir_filter, my_fir_fir_filter_state_t, float _Complex,
+JM_DEFINE_STEPS (my_fir_fir_filter, my_fir_fir_filter_state_t, float _Complex,
                  FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 
@@ -381,6 +382,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 OBJ = "fir_filter"
@@ -397,13 +400,15 @@ def main() -> None:
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {OBJ} instance\..*?"
-        rf"(?={OBJ}_state_t \*{OBJ}_create)",
+        rf"(?={_csym.stem(header, OBJ)}_state_t \*{_csym.stem(header, OBJ)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {OBJ} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     header.write_text(text, encoding="utf-8")

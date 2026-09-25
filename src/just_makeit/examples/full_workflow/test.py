@@ -23,6 +23,8 @@ Also runnable directly: python3 examples/full_workflow/test.py
 from __future__ import annotations
 
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import shutil
 import subprocess
 import sys
@@ -100,13 +102,13 @@ def _enrich_headers(proj: Path) -> None:
         text = header.read_text(encoding="utf-8")
         scaffold_re = re.compile(
             rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
-            rf"(?={obj}_state_t \*{obj}_create)",
+            rf"(?={_csym.stem(header, obj)}_state_t \*{_csym.stem(header, obj)}_create)",
             re.DOTALL,
         )
         text, n = scaffold_re.subn(
             f"/**\n * @brief {summary}\n */\n", text, count=1
         )
-        assert n == 1, f"{obj}_create scaffold brief not found"
+        assert n == 1, f"{obj} create() scaffold brief not found"
 
         for decl, scaffold_pat, block in METHOD_DOCS.get(obj, []):
             # Replace the scaffold block rather than prepending a second one:

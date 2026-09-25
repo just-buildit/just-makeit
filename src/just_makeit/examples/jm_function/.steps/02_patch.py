@@ -3,8 +3,8 @@
 Run from the project root: python3 .steps/02_patch.py
 
 Patches three stubs:
-  1. my_utils_linear_to_db() in my_utils_linear_to_db.c — replaces placeholder with log10f body.
-  2. my_utils_clamp() in utils_core.h        — replaces placeholder with ternary body.
+  1. linear_to_db() in linear_to_db.c — replaces placeholder with log10f body.
+  2. clamp() in utils_core.h        — replaces placeholder with ternary body.
   3. my_utils_gain_step() in gain_core.h     — replaces unused-state placeholder with
                                       the multiplication that exercises state.
 
@@ -16,9 +16,9 @@ keeps the patch readable.
 import pathlib
 import sys
 
-# ── 1. my_utils_linear_to_db in my_utils_linear_to_db.c ───────────────────────────────────────
+# ── 1. linear_to_db in linear_to_db.c ───────────────────────────────────────
 
-core_c = pathlib.Path("native/src/utils/my_utils_linear_to_db.c")
+core_c = pathlib.Path("native/src/utils/linear_to_db.c")
 text = core_c.read_text(encoding="utf-8")
 
 # Add <math.h> if not already included.  The generated file only has
@@ -48,7 +48,7 @@ new_linear = (
 )
 if old_linear not in text:
     print(
-        "ERROR: my_utils_linear_to_db stub not found — already patched?",
+        "ERROR: linear_to_db stub not found — already patched?",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -56,7 +56,7 @@ text = text.replace(old_linear, new_linear)
 core_c.write_text(text, encoding="utf-8")
 print(f"patched {core_c}")
 
-# ── 2. my_utils_clamp (static inline) in utils_core.h ────────────────────────────────
+# ── 2. clamp (static inline) in utils_core.h ────────────────────────────────
 
 core_h = pathlib.Path("native/inc/my_utils/utils/utils_core.h")
 text = core_h.read_text(encoding="utf-8")
@@ -78,10 +78,7 @@ new_clamp = (
     "}"
 )
 if old_clamp not in text:
-    print(
-        "ERROR: my_utils_clamp stub not found — already patched?",
-        file=sys.stderr,
-    )
+    print("ERROR: clamp stub not found — already patched?", file=sys.stderr)
     sys.exit(1)
 text = text.replace(old_clamp, new_clamp)
 core_h.write_text(text, encoding="utf-8")

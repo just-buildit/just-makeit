@@ -128,13 +128,13 @@ def run(root: Path) -> None:
     jm_new("fn", fn, modules=["mathx"])
     jm_function(
         fn,
-        "fn_addn",
+        "addn",
         module="mathx",
         params=[("a", "float"), ("b", "float")],
         return_type="float",
         impl_body="return a + b;",
     )
-    jm_app(fn, target="c", name="addtool", function_="fn_addn")
+    jm_app(fn, target="c", name="addtool", function_="addn")
     app_c = (fn / "native" / "src" / "app" / "addtool.c").read_text(
         encoding="utf-8"
     )

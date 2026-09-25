@@ -10,8 +10,8 @@ this after the stubs are implemented; a follow-up ``jm apply`` regenerates the
 
 Free functions are an especially good home for doctests: they take plain
 scalars and return plain scalars, so the ``>>>`` lines read like ordinary
-Python. The two functions here — ``my_utils_linear_to_db`` (regular, its own ``.c``) and
-``my_utils_clamp`` (``--inline``, body in the header) — are both enriched the same way:
+Python. The two functions here — ``linear_to_db`` (regular, its own ``.c``) and
+``clamp`` (``--inline``, body in the header) — are both enriched the same way:
 the Doxygen sits above the declaration ``jm`` derives the stub from.
 
 Usage:  python3 .steps/03_doxygen.py     # run from the project root
@@ -23,22 +23,22 @@ import pathlib
 import sys
 
 # Each entry keys the C declaration the Doxygen block sits above. Both live in
-# the same module header: my_utils_linear_to_db as a bare prototype, my_utils_clamp as the
+# the same module header: linear_to_db as a bare prototype, clamp as the
 # `static inline` definition itself.
 BLOCKS = [
     (
         # Regular function: bare prototype in the module header. The body is in
-        # native/src/utils/my_utils_linear_to_db.c, but the docstring comes from here.
+        # native/src/utils/linear_to_db.c, but the docstring comes from here.
         "float my_utils_linear_to_db(float x);",
         "/**\n"
         " * @brief Convert linear amplitude to dB (20*log10(x)).\n"
         " * @param x  Linear amplitude (must be > 0).\n"
         " * @return The amplitude expressed in decibels.\n"
         " * @code\n"
-        " * >>> from my_utils.utils import my_utils_linear_to_db\n"
-        " * >>> my_utils_linear_to_db(1.0)\n"
+        " * >>> from my_utils.utils import linear_to_db\n"
+        " * >>> linear_to_db(1.0)\n"
         " * 0.0\n"
-        " * >>> my_utils_linear_to_db(10.0)\n"
+        " * >>> linear_to_db(10.0)\n"
         " * 20.0\n"
         " * @endcode\n"
         " */\n",
@@ -47,20 +47,20 @@ BLOCKS = [
         # Inline function: the `static inline` definition IS the declaration.
         # Anchor on the signature line, which is identical before and after
         # 02_patch.py swaps the placeholder body for the real ternary.
-        "static inline float\nclamp(float x, float lo, float hi)",
+        "static inline float\nmy_utils_clamp(float x, float lo, float hi)",
         "/**\n"
         " * @brief Clamp x to the closed interval [lo, hi].\n"
-        " * @param x   Value to my_utils_clamp.\n"
+        " * @param x   Value to clamp.\n"
         " * @param lo  Lower bound.\n"
         " * @param hi  Upper bound.\n"
         " * @return lo if x < lo, hi if x > hi, otherwise x.\n"
         " * @code\n"
-        " * >>> from my_utils.utils import my_utils_clamp\n"
-        " * >>> my_utils_clamp(5.0, 0.0, 3.0)\n"
+        " * >>> from my_utils.utils import clamp\n"
+        " * >>> clamp(5.0, 0.0, 3.0)\n"
         " * 3.0\n"
-        " * >>> my_utils_clamp(-1.0, 0.0, 3.0)\n"
+        " * >>> clamp(-1.0, 0.0, 3.0)\n"
         " * 0.0\n"
-        " * >>> my_utils_clamp(1.5, 0.0, 3.0)\n"
+        " * >>> clamp(1.5, 0.0, 3.0)\n"
         " * 1.5\n"
         " * @endcode\n"
         " */\n",
