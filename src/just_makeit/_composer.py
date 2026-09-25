@@ -33,6 +33,7 @@ from . import _procglobal
 from . import _enumc
 from . import _keys
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import (
@@ -407,15 +408,18 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     if not g:
         return None
     gen = g["generator"]
+    # gh-1591: the defaults are the generator's DERIVED symbols, so they
+    # come from its stem; a declared name is the author's and stays as is.
+    sym = CSYM.stem(cfg, gen)
     return {
         "generator": gen,
         "bridge_fn": g["bridge_fn"],
         "bridge_error_fn": g.get("bridge_error_fn", ""),
-        "state_type": g.get("state_type", f"{gen}_state_t"),
-        "steps_fn": g.get("steps_fn", f"{gen}_steps"),
-        "step_fn": g.get("step_fn", f"{gen}_step"),
-        "reset_fn": g.get("reset_fn", f"{gen}_reset"),
-        "destroy_fn": g.get("destroy_fn", f"{gen}_destroy"),
+        "state_type": g.get("state_type", f"{sym}_state_t"),
+        "steps_fn": g.get("steps_fn", f"{sym}_steps"),
+        "step_fn": g.get("step_fn", f"{sym}_step"),
+        "reset_fn": g.get("reset_fn", f"{sym}_reset"),
+        "destroy_fn": g.get("destroy_fn", f"{sym}_destroy"),
         "header": g.get("header", INC.core_include(gen, cfg)),
         "output_type": g.get("output_type", "float _Complex"),
     }
@@ -3839,7 +3843,7 @@ def render_bridge_h(cfg: dict, module: str) -> str:
     header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
     src_struct = C.composer_source(cfg, module)["struct"]
     mp = C.module_paths(module)
-    guard = f"{mp.cname.upper()}_BRIDGE_H"
+    guard = f"{CSYM.upper(cfg, mp.cname)}_BRIDGE_H"
 
     # The struct every prototype takes, and (for the bridge) the generator
     # state it returns. Carried here rather than left to the includer: a

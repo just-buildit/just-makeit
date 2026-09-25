@@ -2,8 +2,8 @@
  * @file /*<<module>>*/_core.h
  * @brief /*<<Module>>*/ module — public C API.
  */
-#ifndef /*<<MODULE>>*/_CORE_H
-#define /*<<MODULE>>*/_CORE_H
+#ifndef /*<<CSYM>>*/_CORE_H
+#define /*<<CSYM>>*/_CORE_H
 
 #include "/*<<inc_prefix>>*/clib_common.h"
 
@@ -17,4 +17,4 @@ extern "C" {
 }
 #endif
 
-#endif /* /*<<MODULE>>*/_CORE_H */
+#endif /* /*<<CSYM>>*/_CORE_H */

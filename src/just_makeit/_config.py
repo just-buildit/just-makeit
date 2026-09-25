@@ -4646,15 +4646,25 @@ def view_methods(view: dict) -> list[dict]:
     return list(view.get("methods", []))
 
 
-def method_c_symbol(component: str, entry: dict) -> str:
+def method_c_symbol(stem: str, entry: dict) -> str:
     """The C function a method entry binds.
 
-    ``fn`` when declared (gh-805 §A2), else the derived ``<comp>_<name>``.
+    ``fn`` when declared (gh-805 §A2), else the derived ``<stem>_<name>``.
     One derivation, because a view signature override is defined by having a
     *different* one and two spellings of "which symbol" would decide that
     differently.
+
+    *stem* is the object's C symbol stem -- ``_csym.stem(cfg, comp)``, or a
+    render context's ``csym`` (gh-1591) -- not its component name: the two
+    are equal until a project prefixes its symbols, and a derived name must
+    follow the prefix while an authored ``fn`` never does.
+
+    >>> method_c_symbol("psd", {"name": "sfdr"})
+    'psd_sfdr'
+    >>> method_c_symbol("psd", {"name": "sfdr", "fn": "psd_spur_free"})
+    'psd_spur_free'
     """
-    return entry.get("fn") or f"{component}_{entry['name']}"
+    return entry.get("fn") or f"{stem}_{entry['name']}"
 
 
 def view_signature_override_members(
@@ -5548,6 +5558,28 @@ def object_create_fn(cfg: dict, component: str) -> str | None:
     already generate — this overrides only the name, not the call shape.
     """
     return cfg.get(component, {}).get("create_fn") or None
+
+
+def object_create_name(cfg: dict, component: str) -> str:
+    """The C constructor an object's glue calls: THE one answer (gh-1591).
+
+    The declared ``create_fn`` (:func:`object_create_fn`) when there is one,
+    else ``<stem>_create`` -- the stem from :mod:`_csym`, the owner of every
+    symbol jm derives from a name. Every face that calls or names the
+    constructor asks here, so a project that prefixes its symbols cannot
+    have one face calling the old name.
+
+    >>> object_create_name({"project": {"name": "p"}, "g": {}}, "g")
+    'g_create'
+    >>> object_create_name({"project": {"name": "p"},
+    ...                     "g": {"create_fn": "g_open"}}, "g")
+    'g_open'
+    """
+    from . import _csym
+
+    return _csym.create_name(
+        _csym.stem(cfg, component), object_create_fn(cfg, component)
+    )
 
 
 # ── Destructor declaration ([<comp>.destroy], gh-541 / gh-544) ──────────────

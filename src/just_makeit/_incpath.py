@@ -53,8 +53,12 @@ Owner = Union[Path, dict]
 _CFG_CACHE: "dict[tuple[str, int], dict]" = {}
 
 
-def _cfg(owner: Owner) -> dict:
-    """The manifest *owner* stands for."""
+def manifest(owner: Owner) -> dict:
+    """The manifest *owner* stands for.
+
+    Shared with :mod:`_csym` (gh-1591), whose functions take the same kind
+    of owner: one answer to "which project is this", not two.
+    """
     if isinstance(owner, dict):
         return owner
     if isinstance(owner, str):
@@ -69,19 +73,19 @@ def _cfg(owner: Owner) -> dict:
         )
     here = Path(owner).resolve()
     for d in (here, *here.parents):
-        manifest = d / "just-makeit.toml"
-        if manifest.is_file():
+        toml = d / "just-makeit.toml"
+        if toml.is_file():
             break
     else:
         # No manifest above: not a project that has declared a schema, which
         # `C.schema_version` reads as schema 1 -- the legacy layout, the only
         # one there was before a manifest could say otherwise.
         return {}
-    key = (str(manifest), manifest.stat().st_mtime_ns)
+    key = (str(toml), toml.stat().st_mtime_ns)
     if key not in _CFG_CACHE:
         from . import _config as C
 
-        _CFG_CACHE[key] = C.load(manifest.parent)
+        _CFG_CACHE[key] = C.load(toml.parent)
     return _CFG_CACHE[key]
 
 
@@ -99,7 +103,7 @@ def prefixed(owner: Owner) -> bool:
     """
     from . import _config as C
 
-    return C.schema_version(_cfg(owner)) >= PREFIXED_SCHEMA
+    return C.schema_version(manifest(owner)) >= PREFIXED_SCHEMA
 
 
 def prefixed_owner(pkg: str) -> dict:
@@ -118,7 +122,7 @@ def prefixed_owner(pkg: str) -> dict:
 def _pkg(owner: Owner) -> str:
     from . import _config as C
 
-    return C.project_name(_cfg(owner))
+    return C.project_name(manifest(owner))
 
 
 def prefix(owner: Owner) -> str:
