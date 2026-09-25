@@ -201,6 +201,25 @@ Changing a prefix that is already applied (`a` to `b`), or removing the key
 from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it,
 naming the component and the prefix its header already carries (gh-1650).
 
+A prefix can derive a name your C **already uses**: with `c_prefix = "dp"`,
+component `syncword`'s method `find` derives `dp_syncword_find` -- and if
+you already wrote a `dp_syncword_find`, two different functions would
+become one. Worse, the respell would turn your wrapper's call to
+`syncword_find` into a call to itself. `apply` and `upgrade` refuse this
+before writing anything (gh-1657), naming each file and line, the name, and
+the component and method (or module function) it derives from:
+
+```
+error: native/inc/dp_syncword.h:99 already declares `dp_syncword_find`, the
+name [project] c_prefix = 'dp' derives from component `syncword`'s method
+`find` -- two different C symbols would become one. Rename yours, or choose
+another c_prefix
+```
+
+Rename your symbol out of the way, or pick another prefix. A name counts only
+where it is declared outside the files jm itself declares it in, so a tree
+already partly moved onto the prefix is not refused.
+
 ## Packaging (`adopt --packaging`)
 
 Three things carry what a C consumer reads through pkg-config and
