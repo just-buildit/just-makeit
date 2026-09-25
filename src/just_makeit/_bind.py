@@ -646,6 +646,15 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
 
     doc_blocks = _load_doc_blocks(root, component)
     ctx = _build_ctx(component, parsed, pkg, defaults, doc_blocks)
+    # gh-1583: the layout of the project the header is bound into; a
+    # header bound where no manifest exists yet gets a new project's.
+    ctx.update(
+        INC.ctx_slots(
+            root
+            if (root / C.FILENAME).is_file()
+            else {"project": {"name": pkg, "schema": str(C.CURRENT_SCHEMA)}}
+        )
+    )
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:

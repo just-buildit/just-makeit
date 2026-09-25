@@ -67,11 +67,14 @@ def run(root: Path) -> None:
     print("just-makeit: enabling perf annotations")
     print()
 
-    inc = INC.header_root(root, pkg)
+    inc = INC.header_root(root)
     perf_h = inc / "jm_perf.h"
     if not perf_h.exists():
         perf_h.parent.mkdir(parents=True, exist_ok=True)
-        _textio.write_text(perf_h, T.render(T.JM_PERF_H, {"package": pkg}))
+        _textio.write_text(
+            perf_h,
+            T.render(T.JM_PERF_H, {"package": pkg, **INC.ctx_slots(cfg)}),
+        )
         print(f"  create  {perf_h}")
 
     simd_h = inc / "jm_simd.h"

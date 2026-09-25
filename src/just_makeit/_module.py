@@ -115,7 +115,13 @@ def run(
     # prefix; for a flat module it equals `module`, so nothing below changes
     # for existing projects.
     cname = mp.cname
-    mod_ctx = {"module": cname, "Module": Module, "MODULE": cname.upper()}
+    mod_ctx = {
+        "module": cname,
+        "Module": Module,
+        "MODULE": cname.upper(),
+        # gh-1583: the header layout of the project the module goes in.
+        **INC.ctx_slots(cfg),
+    }
     # Render slots that split the module's roles (module=cname, module_leaf,
     # module_pypath, module_output_name, module_tp).
     # gh-523: `package` redirects the Python-side artifacts into a sibling
@@ -143,6 +149,7 @@ def run(
         [],
         module_doc_c=mod_slots["module_doc_c"],
         procglobal=_procglobal.rendezvous_c(cfg, module),
+        layout=INC.ctx_slots(cfg),
     )
     _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
 

@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _capsule, _composer, _handle, _procglobal
 from just_makeit import _render as R
+from just_makeit import _incpath as INC  # noqa: E402
 
 from _jmrun import JmRun, run_cli
 
@@ -314,20 +315,36 @@ class TestEveryEmitterSplicesIt:
     def test_object_module_aggregator(self):
         cfg = _cfg()
         block = _procglobal.rendezvous_c(cfg, "own")
-        out = R.render_module_ext_aggregator("own", [], procglobal=block)
+        out = R.render_module_ext_aggregator(
+            "own",
+            [],
+            procglobal=block,
+            layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+        )
         assert "PyCapsule_New(flag_state_ptr()" in out
 
     def test_object_module_empty_scaffold(self):
         cfg = _cfg()
         block = _procglobal.rendezvous_c(cfg, "own")
-        out = R.render_module_ext_c("own", [], procglobal=block)
+        out = R.render_module_ext_c(
+            "own",
+            [],
+            procglobal=block,
+            layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+        )
         assert "PyCapsule_New(flag_state_ptr()" in out
 
     def test_standalone_component_template_has_the_slot(self):
         """An unreplaced `/*<<procglobal>>*/` is a valid C comment, so a
         missing slot compiles and ships silently. Only a test sees it."""
         assert "/*<<procglobal>>*/" in R.COMPONENT_EXT_C
-        out = R.render(R.COMPONENT_EXT_C, {"procglobal": "    /*HERE*/\n"})
+        out = R.render(
+            R.COMPONENT_EXT_C,
+            {
+                "procglobal": "    /*HERE*/\n",
+                **INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+            },
+        )
         assert "    /*HERE*/" in out
         assert "/*<<procglobal>>*/" not in out
 

@@ -5400,6 +5400,7 @@ def from_new(
     perf: bool = False,
     pytest_: bool = False,
     pytest_benchmark_: bool = False,
+    schema: int | None = None,
 ) -> dict:
     return {
         "project": {
@@ -5409,7 +5410,7 @@ def from_new(
             "perf": "true" if perf else "false",
             "pytest": "true" if pytest_ else "false",
             "pytest_benchmark": "true" if pytest_benchmark_ else "false",
-            "schema": str(CURRENT_SCHEMA),
+            "schema": str(CURRENT_SCHEMA if schema is None else schema),
             "jm_version": jm_cli_version(),
         }
     }

@@ -78,8 +78,15 @@ def run(
     fragments: bool = False,
     c_style: str = "",
     c_format_command: list[str] | None = None,
+    schema: int | None = None,
 ) -> None:
     C.require_name(project, "project")
+    # gh-1583: the schema decides the header layout, and the manifest that
+    # records it is written last -- so the writers below are handed the
+    # manifest's [project] table as their owner. The replay passes the real
+    # project's schema, so a schema-8 project replays into its own layout.
+    schema = C.CURRENT_SCHEMA if schema is None else schema
+    owner = {"project": {"name": project, "schema": str(schema)}}
 
     root = dest or (Path.cwd() / project)
     if root.exists() and any(root.iterdir()):
@@ -90,6 +97,7 @@ def run(
         sys.exit(1)
 
     ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx.update(INC.ctx_slots(owner))
 
     def r(tmpl):
         return T.render(tmpl, ctx)
@@ -120,12 +128,12 @@ def run(
     _write(root / "zensical.toml", r(T.ZENSICAL_TOML))
     _write(root / "docs" / "index.md", r(T.DOCS_INDEX_MD))
     _write(root / "docs" / "api.md", r(T.DOCS_API_MD))
-    _write(INC.path(root, "clib_common.h", project), r(T.CLIB_COMMON_H))
-    _write(INC.path(root, "pyex_common.h", project), r(T.PYEX_COMMON_H))
-    _write(INC.path(root, f"{project}.h", project), r(T.UMBRELLA_H))
+    _write(INC.path(root, "clib_common.h", owner), r(T.CLIB_COMMON_H))
+    _write(INC.path(root, "pyex_common.h", owner), r(T.PYEX_COMMON_H))
+    _write(INC.path(root, f"{project}.h", owner), r(T.UMBRELLA_H))
     if perf:
-        _write(INC.path(root, "jm_perf.h", project), r(T.JM_PERF_H))
-        _write(INC.path(root, "jm_simd.h", project), T.JM_SIMD_H)
+        _write(INC.path(root, "jm_perf.h", owner), r(T.JM_PERF_H))
+        _write(INC.path(root, "jm_simd.h", owner), T.JM_SIMD_H)
 
     if build_system == "cmake":
         # gh-1589: both packaging templates are born owned -- `apply` renders
@@ -149,6 +157,7 @@ def run(
         perf=perf,
         pytest_=pytest_,
         pytest_benchmark_=pytest_benchmark_,
+        schema=schema,
     )
     # External-dep declarations land in [project] so jm apply's
     # _splice_cmake_external_deps picks them up and writes the

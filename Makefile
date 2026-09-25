@@ -245,6 +245,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1573_pc_requires_private.py \
                     tests/test_gh1576_dep_usage_both_faces.py \
                     tests/test_gh1584_consumer_matrix.py \
+                    tests/test_gh1583_schema8_consumer.py \
                     tests/test_gh1376_presets_build.py \
                     tests/test_gh1443_gate_a.py \
                     tests/test_gh1489_token_survives_ruff.py \

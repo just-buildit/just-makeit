@@ -1217,6 +1217,7 @@ def run(
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": version,
+            **INC.ctx_slots(cfg),
         }
     )
 

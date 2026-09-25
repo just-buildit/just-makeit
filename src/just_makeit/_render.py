@@ -283,14 +283,14 @@ def object_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core OBJECT fir_core.c)
     target_include_directories(
       fir_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
-                      ${CMAKE_SOURCE_DIR}/native/inc/fir)
+                      ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
     >>> print(object_core_decl("ring", header_only=True))
     # INTERFACE library — the core is header-only, so there is nothing to
     # compile, and an OBJECT library with no sources fails configure.
     add_library(ring_core INTERFACE)
     target_include_directories(
       ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
-                          ${CMAKE_SOURCE_DIR}/native/inc/ring)
+                          ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>ring)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -309,7 +309,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
             + inc
             + chr(10)
             + " " * len(head)
-            + f"{inc}/{component})"
+            + f"{inc}/<<inc_prefix>>{component})"
         )
     head = f"  {component}_core PUBLIC "
     return (
@@ -323,7 +323,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
         + inc
         + chr(10)
         + " " * len(head)
-        + f"{inc}/{component})"
+        + f"{inc}/<<inc_prefix>>{component})"
     )
 
 
@@ -406,7 +406,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core INTERFACE)
     target_include_directories(fir_core INTERFACE
         ${CMAKE_SOURCE_DIR}/native/inc
-        ${CMAKE_SOURCE_DIR}/native/inc/fir)
+        ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -423,7 +423,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
             + chr(10)
             + f"    {inc}"
             + chr(10)
-            + f"    {inc}/{component})"
+            + f"    {inc}/<<inc_prefix>>{component})"
         )
     return (
         "# OBJECT library — pure C core, no Python dependency."
@@ -437,7 +437,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
         + chr(10)
         + f"    {inc}"
         + chr(10)
-        + f"    {inc}/{component})"
+        + f"    {inc}/<<inc_prefix>>{component})"
     )
 
 
@@ -601,10 +601,20 @@ def render(template: str, ctx: dict) -> str:
     unnoticed through both branches of one function. Sweeping to a fixed point
     removes the question instead of answering it once.
     """
-    # gh-1583: the header layout's slots (`<<inc_dir>>`, `<<inc_prefix>>`) are
-    # filled here for every render, from the one owner of the layout -- so no
-    # context builder has to carry them, and none can spell them differently.
-    # A context that sets one explicitly wins.
+    # gh-1583: `<<inc_dir>>` (the -I directory, the same for every project) is
+    # filled here for every render. The PER-PROJECT slot -- `<<inc_prefix>>`
+    # -- depends on which layout the project is in, which only
+    # its manifest says, so a template that uses one refuses a context that
+    # does not carry it: a silent default would write the old layout into a
+    # schema-8 project. Build the context with `_incpath.ctx_slots(owner)`.
+    for _slot in INC.PROJECT_SLOTS:
+        if f"<<{_slot}>>" in template and _slot not in ctx:
+            raise ValueError(
+                f"render: the template uses <<{_slot}>> and the context does"
+                " not carry the project's header layout; add"
+                " `_incpath.ctx_slots(<project root or manifest>)` to it"
+                " (gh-1583)"
+            )
     ctx = {**INC.layout_slots(ctx), **ctx}
     result = template
     for _ in range(_RENDER_SWEEPS):
@@ -2016,6 +2026,7 @@ def render_module_ext_c(
     module_doc_c: str = "",
     fn_doc_blocks: "dict | None" = None,
     procglobal: str = "",
+    layout: "dict | None" = None,
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
@@ -2050,6 +2061,9 @@ def render_module_ext_c(
         else ""
     )
     header_ctx = {
+        # gh-1583: the project's header layout (`_incpath.ctx_slots`);
+        # render() refuses the header without it.
+        **(layout or {}),
         "module": module,
         "Module": Module,
         "object_list": object_list,
@@ -2315,6 +2329,7 @@ def render_module_ext_aggregator(
     module_doc_c: str = "",
     fn_doc_blocks: "dict | None" = None,
     procglobal: str = "",
+    layout: "dict | None" = None,
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -2352,6 +2367,9 @@ def render_module_ext_aggregator(
         else ""
     )
     header_ctx = {
+        # gh-1583: the project's header layout (`_incpath.ctx_slots`);
+        # render() refuses the header without it.
+        **(layout or {}),
         "module": module,
         "Module": Module,
         "object_list": object_list,

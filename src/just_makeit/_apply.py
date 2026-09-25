@@ -477,6 +477,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # declares its own.
         c_style=C.c_style(cfg),
         c_format_command=cfg.get("project", {}).get("c_format_command"),
+        # gh-1583: the schema decides the header layout; a replay in any
+        # other layout would put every header somewhere the project has none.
+        schema=C.schema_version(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
