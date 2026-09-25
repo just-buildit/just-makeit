@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
+from . import _csym
 from . import _incpath as INC
 
 
@@ -201,7 +202,7 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
             continue
         # `create_name`, not `create_fn`: the context publishes an object's
         # override under that key and never sets `create_fn` (gh-1494).
-        create_fn = ctx.get("create_name") or f"{comp}_create"
+        create_fn = _csym.ctx_create_name(ctx)
         declared = declared_params(root, comp, create_fn)
         if declared is None:
             continue

@@ -40,6 +40,7 @@ from typing import NamedTuple
 
 from . import _config as C
 from . import _incpath as INC
+from . import _csym as CSYM
 
 
 class SharedCore(NamedTuple):
@@ -327,20 +328,25 @@ def validate(cfg: dict) -> None:
 #: drifting. Both of these come from the tuple below, so they cannot disagree.
 _CONTRACT = (
     (
-        "void *{comp}_state_ptr(void);",
+        "void *{csym}_state_ptr(void);",
         "The address of this `.so`'s state — the OWNER module publishes it.",
     ),
     (
-        "void {comp}_state_adopt(void *shared);",
+        "void {csym}_state_adopt(void *shared);",
         "Point this `.so` at the owner's state — every OTHER module calls it.",
     ),
 )
 
 
-def contract_decls(comp: str, indent: int = 0) -> "list[str]":
-    """The two prototypes for *comp*, indented for their splice site."""
+def contract_decls(cfg: dict, comp: str, indent: int = 0) -> "list[str]":
+    """The two prototypes for *comp*, indented for their splice site.
+
+    Named from *comp*'s C symbol stem (gh-1591), which only the project's
+    manifest can say -- hence *cfg*.
+    """
     pad = " " * indent
-    return [pad + d.format(comp=comp) for d, _ in _CONTRACT]
+    csym = CSYM.stem(cfg, comp)
+    return [pad + d.format(csym=csym) for d, _ in _CONTRACT]
 
 
 def header_name(comp: str) -> str:
@@ -371,9 +377,13 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
     """
     if not (is_process_global(cfg, comp) if declared is None else declared):
         return ""
-    guard = f"{comp.upper()}_PROCGLOBAL_H"
+    # gh-1591: the guard, the prototypes, the `_PG_*` names and the example
+    # code all name C symbols, so they come from the stem; the FILE names and
+    # the `_jm_pg_<comp>` Python attribute stay the component's.
+    csym = CSYM.stem(cfg, comp)
+    guard = f"{CSYM.upper(cfg, comp)}_PROCGLOBAL_H"
     decls = "\n\n".join(
-        f"/* {why} */\n{decl.format(comp=comp)}" for decl, why in _CONTRACT
+        f"/* {why} */\n{decl.format(csym=csym)}" for decl, why in _CONTRACT
     )
     # gh-1128: the three names a HAND-WRITTEN binding needs to join the
     # rendezvous. They are jm's invention and appeared only inside another
@@ -382,7 +392,7 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
     # three from a different module's output. A `no_generate` module is
     # exactly the case that advice is for, so the names ship with the
     # contract that advice points at.
-    up = comp.upper()
+    up = CSYM.upper(cfg, comp)
     owner = owner_module(cfg, comp)
     names = (
         "/*\n"
@@ -393,13 +403,13 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
         " *\n"
         f" *     PyObject *own = PyImport_ImportModule({up}_PG_OWNER);\n"
         f" *     PyObject *cap = PyObject_GetAttrString(own, {up}_PG_ATTR);\n"
-        f" *     {comp}_state_adopt(\n"
+        f" *     {csym}_state_adopt(\n"
         f" *         PyCapsule_GetPointer(cap, {up}_PG_CAPSULE));\n"
         " *\n"
         " * To PUBLISH, when this module owns the state:\n"
         " *\n"
         f" *     PyModule_AddObject(m, {up}_PG_ATTR,\n"
-        f" *         PyCapsule_New({comp}_state_ptr(), {up}_PG_CAPSULE,\n"
+        f" *         PyCapsule_New({csym}_state_ptr(), {up}_PG_CAPSULE,\n"
         " *                       NULL));\n"
         " */\n"
         f'#define {up}_PG_OWNER   "'
@@ -425,12 +435,12 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
  *
  * Implement them in {comp}_core.c, holding the state behind one pointer:
  *
- *     static {comp}_state_t  g_own;
- *     static {comp}_state_t *g_cur = &g_own;
+ *     static {csym}_state_t  g_own;
+ *     static {csym}_state_t *g_cur = &g_own;
  *
- *     void *{comp}_state_ptr(void)  {{ return (void *)g_cur; }}
- *     void  {comp}_state_adopt(void *shared)
- *     {{ if (shared) g_cur = ({comp}_state_t *)shared; }}
+ *     void *{csym}_state_ptr(void)  {{ return (void *)g_cur; }}
+ *     void  {csym}_state_adopt(void *shared)
+ *     {{ if (shared) g_cur = ({csym}_state_t *)shared; }}
  *
  * and read through `g_cur` everywhere else. Adoption happens at import,
  * before any of your code runs, so nothing has to be thread-safe here.
@@ -515,8 +525,9 @@ def rendezvous_c(cfg: dict, module: str, *, var: str = "m") -> str:
                 f"    /* gh-1117: this module OWNS {comp}'s"
                 f" process-global state. */\n"
                 f"    {{\n"
-                + "".join(d + "\n" for d in contract_decls(comp, 8))
-                + f"        PyObject *_pg = PyCapsule_New({comp}_state_ptr(),"
+                + "".join(d + "\n" for d in contract_decls(cfg, comp, 8))
+                + f"        PyObject *_pg = PyCapsule_New("
+                f"{CSYM.stem(cfg, comp)}_state_ptr(),"
                 f' "{name}", NULL);\n'
                 f"        if (!_pg) {{ Py_DECREF({var}); return NULL; }}\n"
                 f'        if (PyModule_AddObject({var}, "_jm_pg_{comp}",'
@@ -531,7 +542,7 @@ def rendezvous_c(cfg: dict, module: str, *, var: str = "m") -> str:
                 f"    /* gh-1117: adopt {comp}'s process-global state from"
                 f" its owner. */\n"
                 f"    {{\n"
-                + "".join(d + "\n" for d in contract_decls(comp, 8))
+                + "".join(d + "\n" for d in contract_decls(cfg, comp, 8))
                 + f"        PyObject *_own ="
                 f' PyImport_ImportModule("{import_path(cfg, owner)}");\n'
                 f"        if (!_own) {{ Py_DECREF({var}); return NULL; }}\n"
@@ -543,7 +554,7 @@ def rendezvous_c(cfg: dict, module: str, *, var: str = "m") -> str:
                 f' "{name}");\n'
                 f"        Py_DECREF(_pg);\n"
                 f"        if (!_p) {{ Py_DECREF({var}); return NULL; }}\n"
-                f"        {comp}_state_adopt(_p);\n"
+                f"        {CSYM.stem(cfg, comp)}_state_adopt(_p);\n"
                 f"    }}\n"
             )
     return "".join(lines)

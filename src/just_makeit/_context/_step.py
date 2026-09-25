@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .. import _coerce, _ctorsig
+from .. import _csym as CSYM
 from .._types import (
     _CTYPE_META,
     _KIND_PY_ISINSTANCE,
@@ -224,21 +225,21 @@ def _header_example(
     -------
     dict
         ``lifecycle_summary``, ``create_example_c`` and ``step_example_c``
-        render slots. ``create_example_c`` reads ``component``,
+        render slots. ``create_example_c`` reads ``csym`` (gh-1591),
         ``create_name`` and ``create_params`` from *ctx*.
 
     Examples
     --------
-    >>> d = _header_example({"lifecycle_reset": ""}, [], [])
+    >>> d = _header_example({"csym": "q", "lifecycle_reset": ""}, [], [])
     >>> d["lifecycle_summary"], d["step_example_c"]
     ('create -> destroy', '')
-    >>> d = _header_example({}, ["steps"], ["q_steps(obj, in, 4, out);"])
+    >>> d = _header_example({"csym": "q"}, ["steps"], ["q_steps(obj, in, 4, out);"])
     >>> d["lifecycle_summary"]
     'create -> [steps / reset]* -> destroy'
     >>> print(d["step_example_c"], end="")
      * q_steps(obj, in, 4, out);
     >>> d = _header_example(
-    ...     {"component": "q", "create_params": "int level, const float *h"},
+    ...     {"csym": "q", "create_params": "int level, const float *h"},
     ...     [],
     ...     [],
     ... )
@@ -249,8 +250,9 @@ def _header_example(
     """
     if ctx.get("lifecycle_reset", " / reset"):
         verbs = [*verbs, "reset"]
-    component = ctx.get("component", "")
-    create = ctx.get("create_name") or f"{component}_create"
+    # gh-1591: the C stem the example's symbols derive from.
+    csym = ctx["csym"]
+    create = CSYM.ctx_create_name(ctx)
     # gh-1502: the create() call names one local per declared parameter,
     # each of the type the prototype declares, instead of freezing the
     # scaffold-time values into the call. The example is create-only -- jm
@@ -272,7 +274,7 @@ def _header_example(
         names.append(pname)
     create_lines = [
         *decls,
-        f"{component}_state_t *obj = {create}({', '.join(names)});",
+        f"{csym}_state_t *obj = {create}({', '.join(names)});",
     ]
     summary = (
         f"create -> [{' / '.join(verbs)}]* -> destroy"
@@ -315,6 +317,9 @@ def make_step_ctx(
     so every consumer gets the inlined version from a single header.
     """
     component = ctx["component"]
+    # gh-1591: every C symbol below derives from the stem; `component` stays
+    # for what is a FILE name (`<component>_core.c`).
+    csym = ctx["csym"]
     Component = ctx["Component"]
     ret_disp = ctx["return_ctype"]
     out_np_enum = ctx["out_np_enum"]
@@ -498,7 +503,7 @@ def make_step_ctx(
         # the object has. Found by gh-881's sweep, which is the argument for
         # that sweep: fixing one of two peer paths is the failure this repo
         # keeps repeating.
-        _bw_sblk = (doc_blocks or {}).get(f"{component}_steps")
+        _bw_sblk = (doc_blocks or {}).get(f"{csym}_steps")
         _bw_sig = _split_steps_stub_signature(pyi_steps) if pyi_steps else None
         if _bw_sig is not None and not _is_authored(_bw_sblk):
             _bw_desc = (
@@ -526,15 +531,15 @@ def make_step_ctx(
 
         steps_c_decl_bw = (
             f"void\n"
-            f"{component}_steps(\n"
-            f"    {component}_state_t *state,\n"
+            f"{csym}_steps(\n"
+            f"    {csym}_state_t *state,\n"
             f"    const {in_disp}     *in, size_t n,\n"
             f"    {out_disp}          *out{ctrl_c_sig});"
         )
         steps_c_impl_bw = (
             f"void\n"
-            f"{component}_steps(\n"
-            f"    {component}_state_t *state,\n"
+            f"{csym}_steps(\n"
+            f"    {csym}_state_t *state,\n"
             f"    const {in_disp}     *in, size_t n,\n"
             f"    {out_disp}          *out{ctrl_c_sig})\n"
             f"{{\n"
@@ -595,7 +600,7 @@ def make_step_ctx(
             f"            Py_DECREF(out_arr);\n"
             f"            return NULL;\n"
             f"        }}\n"
-            f"        {component}_steps(\n"
+            f"        {csym}_steps(\n"
             f"            self->handle,\n"
             f"            (const {in_disp} *)PyArray_DATA(x_arr),\n"
             f"            (size_t)n,\n"
@@ -607,7 +612,7 @@ def make_step_ctx(
             f"    PyObject *out = PyArray_SimpleNew(1, dims,"
             f" {out_np_enum_bw});\n"
             f"    if (!out) {{ Py_DECREF(x_arr); return NULL; }}\n"
-            f"    {component}_steps(\n"
+            f"    {csym}_steps(\n"
             f"        self->handle,\n"
             f"        (const {in_disp} *)PyArray_DATA(x_arr),\n"
             f"        (size_t)n,\n"
@@ -660,7 +665,7 @@ def make_step_ctx(
             f"    double _times_steps[ITERATIONS];\n"
             f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
             f"        t0 = jm_bench_now_ns();\n"
-            f"        {component}_steps(obj, in, BENCH_N, out"
+            f"        {csym}_steps(obj, in, BENCH_N, out"
             f"{ctrl_obj_args});\n"
             f"        t1 = jm_bench_now_ns();\n"
             f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
@@ -680,7 +685,7 @@ def make_step_ctx(
             f"    {{\n"
             f"        {in_disp} _bw_in[1]  = {{{in_zero}}};\n"
             f"        {out_disp} _bw_out[1] = {{{out_zero}}};\n"
-            f"        {component}_steps(obj, _bw_in, 1, _bw_out"
+            f"        {csym}_steps(obj, _bw_in, 1, _bw_out"
             f"{ctrl_obj_args});\n"
             f"    }}"
         )
@@ -744,7 +749,7 @@ def make_step_ctx(
         return {
             "step_header_decl": (
                 f"/* No inline step() for blockwise objects.\n"
-                f" * Implement {component}_steps() in {component}_core.c. */"
+                f" * Implement {csym}_steps() in {component}_core.c. */"
             ),
             "step_impl_def": "",
             "steps_c_decl": steps_c_decl_bw,
@@ -754,7 +759,7 @@ def make_step_ctx(
             "step_py_flags": "METH_VARARGS",
             # Warmup and bench: blockwise only has steps(); bench_step_timing_block
             # is intentionally empty to avoid declaring _times_steps twice.
-            "bench_warmup_fn": f"{component}_steps",
+            "bench_warmup_fn": f"{csym}_steps",
             # The warmup template calls warmup_fn(obj, <bench_step_input_arg>);
             # controllable steps() needs the extra field args appended so the
             # call matches the widened signature (collapses to a no-op when no
@@ -780,7 +785,7 @@ def make_step_ctx(
                 [
                     f"{in_disp} in[4] = {{{in_zero}}};",
                     f"{out_disp} out[4];",
-                    f"{component}_steps(obj, in, 4, out{ctrl_obj_args});",
+                    f"{csym}_steps(obj, in, 4, out{ctrl_obj_args});",
                 ],
             ),
         }
@@ -789,7 +794,7 @@ def make_step_ctx(
         step_header_decl = (
             f"/* step() is a static inline defined below (after the struct).\n"
             f" * External C consumers use"
-            f" {component}_steps() declared below. */"
+            f" {csym}_steps() declared below. */"
         )
         # Generator step() is METH_NOARGS by default; a control override flips
         # it to a positional-optional METH_VARARGS (step([gain]) — still no
@@ -833,19 +838,19 @@ def make_step_ctx(
                 step_impl_def = (
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
-                    f"void {component}_steps({component}_state_t *state,"
+                    f"void {csym}_steps({csym}_state_t *state,"
                     f" size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Advance state by one tick (no I/O).\n"
                     f" *\n"
-                    f" * Thin delegator to {component}_steps() (gh-208).\n"
+                    f" * Thin delegator to {csym}_steps() (gh-208).\n"
                     f" * @param state  Must be non-NULL; state is mutated.\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
-                    f"    {component}_steps(state, 1{ctrl_args});\n"
+                    f"    {csym}_steps(state, 1{ctrl_args});\n"
                     f"}}"
                 )
             else:
@@ -855,8 +860,8 @@ def make_step_ctx(
                     f" * @param state  Must be non-NULL; state is mutated.\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; /* TODO: implement */\n"
                     f"}}"
@@ -868,19 +873,19 @@ def make_step_ctx(
                 f" * @param state  Component state (mutated).\n"
                 f" * @param n     Number of iterations.\n"
                 f" */\n"
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
+                f"void {csym}_steps(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-tick algorithm lives here; step() delegates"
                     f" to it (gh-208).\n"
-                    f"     * Do NOT call {component}_step() here"
+                    f"     * Do NOT call {csym}_step() here"
                     f" (recurses). */\n"
                     f"    (void)state;\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)"
@@ -889,12 +894,12 @@ def make_step_ctx(
                 )
             else:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        {component}_step(state{ctrl_args});\n"
+                    f"        {csym}_step(state{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
@@ -906,7 +911,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{_gen_step_parse}"
-                f"    {component}_step(self->handle{ctrl_args});\n"
+                f"    {csym}_step(self->handle{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
@@ -919,7 +924,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{_gen_steps_parse}"
-                f"    {component}_steps(self->handle, (size_t)n{ctrl_args});\n"
+                f"    {csym}_steps(self->handle, (size_t)n{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
@@ -932,13 +937,13 @@ def make_step_ctx(
                 step_impl_def = (
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
-                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"void {csym}_steps({csym}_state_t *state,\n"
                     f"    {ret_disp} *output, size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Generate one output sample from internal"
                     f" state.\n"
                     f" *\n"
-                    f" * Thin delegator to {component}_steps() so the"
+                    f" * Thin delegator to {csym}_steps() so the"
                     f" per-sample algorithm\n"
                     f" * exists once and step() == steps(.., 1)"
                     f" byte-for-byte (gh-208).\n"
@@ -946,11 +951,11 @@ def make_step_ctx(
                     f" * @return Next output sample ({ret_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    {ret_disp} y;\n"
-                    f"    {component}_steps(state, &y, 1{ctrl_args});\n"
+                    f"    {csym}_steps(state, &y, 1{ctrl_args});\n"
                     f"    return y;\n"
                     f"}}"
                 )
@@ -963,8 +968,8 @@ def make_step_ctx(
                     f" * @return Next output sample ({ret_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
-                    f"{component}_step"
-                    f"({_state_qual}{component}_state_t *state{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({_state_qual}{csym}_state_t *state{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; /* TODO: implement */\n"
                     f"    return ({ret_disp})0;\n"
@@ -978,21 +983,21 @@ def make_step_ctx(
                 f" * @param output  Output array (length >= n).\n"
                 f" * @param n       Number of samples to generate.\n"
                 f" */\n"
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
+                f"void {csym}_steps(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    {ret_disp}          *output,\n"
                 f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    {ret_disp}          *output,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-sample algorithm lives here; step()"
                     f" delegates to it\n"
-                    f"     * (gh-208). Do NOT call {component}_step() here"
+                    f"     * (gh-208). Do NOT call {csym}_step() here"
                     f" (recurses). */\n"
                     f"    (void)state;\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
@@ -1002,13 +1007,13 @@ def make_step_ctx(
                 )
             else:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    {ret_disp}          *output,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        output[i] = {component}_step(state{ctrl_args});\n"
+                    f"        output[i] = {csym}_step(state{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
@@ -1021,7 +1026,7 @@ def make_step_ctx(
                 f"    }}\n"
                 f"{_gen_step_parse}"
                 f"    {ret_disp} y ="
-                f" {component}_step(self->handle{ctrl_args});\n"
+                f" {csym}_step(self->handle{ctrl_args});\n"
                 f"    return {step_return};\n"
                 f"}}"
             )
@@ -1041,7 +1046,7 @@ def make_step_ctx(
                 f"    if (!out_arr)\n"
                 f"        return NULL;\n"
                 f"\n"
-                f"    {component}_steps(\n"
+                f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        ({ret_disp} *)PyArray_DATA"
                 f"((PyArrayObject *)out_arr),\n"
@@ -1064,7 +1069,7 @@ def make_step_ctx(
         step_header_decl = (
             f"/* step() is a static inline defined below (after the struct).\n"
             f" * External C consumers use"
-            f" {component}_steps() declared below. */"
+            f" {csym}_steps() declared below. */"
         )
         if is_void_return:
             step_impl_def = (
@@ -1075,8 +1080,8 @@ def make_step_ctx(
                 f" * @param x_len  Number of elements in @p x.\n"
                 f" */\n"
                 f"{step_qualifier} void\n"
-                f"{component}_step(\n"
-                f"    {component}_state_t *state,\n"
+                f"{csym}_step(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    const {elem_disp} *x, size_t x_len{ctrl_c_sig})\n"
                 f"{{\n"
                 f"    (void)state; (void)x; (void)x_len;"
@@ -1106,7 +1111,7 @@ def make_step_ctx(
                 f"    const {elem_disp} *x = "
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
-                f"    {component}_step(self->handle, x, x_len{ctrl_args});\n"
+                f"    {csym}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -1121,8 +1126,8 @@ def make_step_ctx(
                 f" * @return Result ({ret_disp}).\n"
                 f" */\n"
                 f"{step_qualifier} {ret_disp}\n"
-                f"{component}_step(\n"
-                f"    {component}_state_t *state,\n"
+                f"{csym}_step(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    const {elem_disp} *x, size_t x_len{ctrl_c_sig})\n"
                 f"{{\n"
                 f"    (void)state; (void)x; (void)x_len;"
@@ -1154,7 +1159,7 @@ def make_step_ctx(
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
                 f"    {ret_disp} y ="
-                f" {component}_step(self->handle, x, x_len{ctrl_args});\n"
+                f" {csym}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
                 f"    return {step_return};\n"
                 f"}}"
@@ -1182,27 +1187,27 @@ def make_step_ctx(
         step_header_decl = (
             f"/* step() is a static inline defined below (after the struct).\n"
             f" * External C consumers use"
-            f" {component}_steps() declared below. */"
+            f" {csym}_steps() declared below. */"
         )
         if is_void_return:
             if delegate:
                 step_impl_def = (
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
-                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"void {csym}_steps({csym}_state_t *state,\n"
                     f"    const {arg_disp} *input, size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Consume one input sample (sink; no output).\n"
                     f" *\n"
-                    f" * Thin delegator to {component}_steps() (gh-208).\n"
+                    f" * Thin delegator to {csym}_steps() (gh-208).\n"
                     f" * @param state  Must be non-NULL.\n"
                     f" * @param x      Input sample ({arg_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
-                    f"    {component}_steps(state, &x, 1{ctrl_args});\n"
+                    f"    {csym}_steps(state, &x, 1{ctrl_args});\n"
                     f"}}"
                 )
             else:
@@ -1213,8 +1218,8 @@ def make_step_ctx(
                     f" * @param x      Input sample ({arg_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state; (void)x; /* TODO: implement */\n"
                     f"}}"
@@ -1227,21 +1232,21 @@ def make_step_ctx(
                 f" * @param input  Input array (length >= n).\n"
                 f" * @param n     Number of samples.\n"
                 f" */\n"
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
+                f"void {csym}_steps(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    const {arg_disp}    *input,\n"
                 f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    /* Per-sample algorithm lives here; step()"
                     f" delegates to it\n"
-                    f"     * (gh-208). Do NOT call {component}_step() here"
+                    f"     * (gh-208). Do NOT call {csym}_step() here"
                     f" (recurses). */\n"
                     f"    (void)state; (void)input;\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)"
@@ -1250,13 +1255,13 @@ def make_step_ctx(
                 )
             else:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        {component}_step(state, input[i]{ctrl_args});\n"
+                    f"        {csym}_step(state, input[i]{ctrl_args});\n"
                     f"}}"
                 )
             step_ext_fn = (
@@ -1269,7 +1274,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{step_parse}\n"
-                f"    {component}_step(self->handle, x{ctrl_args});\n"
+                f"    {csym}_step(self->handle, x{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
@@ -1314,7 +1319,7 @@ def make_step_ctx(
                 f"    if (!in_arr)\n"
                 f"        return NULL;\n"
                 f"\n"
-                f"    {component}_steps(\n"
+                f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
                 f"        (size_t)PyArray_SIZE(in_arr){ctrl_args});\n"
@@ -1332,13 +1337,13 @@ def make_step_ctx(
                 step_impl_def = (
                     f"/* Forward decl so the delegating step() below can call"
                     f" steps() (gh-208). */\n"
-                    f"void {component}_steps({component}_state_t *state,\n"
+                    f"void {csym}_steps({csym}_state_t *state,\n"
                     f"    const {arg_disp} *input, {ret_disp} *output,"
                     f" size_t n{ctrl_c_sig});\n"
                     f"/**\n"
                     f" * @brief Process one input sample.\n"
                     f" *\n"
-                    f" * Thin delegator to {component}_steps() so the"
+                    f" * Thin delegator to {csym}_steps() so the"
                     f" per-sample algorithm\n"
                     f" * exists once and step() == steps(.., 1)"
                     f" byte-for-byte (gh-208).\n"
@@ -1347,11 +1352,11 @@ def make_step_ctx(
                     f" * @return Output sample ({ret_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
-                    f"{component}_step"
-                    f"({component}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
+                    f"{csym}_step"
+                    f"({csym}_state_t *state, {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    {ret_disp} y;\n"
-                    f"    {component}_steps(state, &x, &y, 1{ctrl_args});\n"
+                    f"    {csym}_steps(state, &x, &y, 1{ctrl_args});\n"
                     f"    return y;\n"
                     f"}}"
                 )
@@ -1364,8 +1369,8 @@ def make_step_ctx(
                     f" * @return Output sample ({ret_disp}).\n"
                     f" */\n"
                     f"{step_qualifier} {ret_disp}\n"
-                    f"{component}_step"
-                    f"({_state_qual}{component}_state_t *state,"
+                    f"{csym}_step"
+                    f"({_state_qual}{csym}_state_t *state,"
                     f" {arg_disp} x{ctrl_c_sig})\n"
                     f"{{\n"
                     f"    (void)state;"
@@ -1383,16 +1388,16 @@ def make_step_ctx(
                 f" input for in-place).\n"
                 f" * @param n       Number of samples.\n"
                 f" */\n"
-                f"void {component}_steps(\n"
-                f"    {component}_state_t *state,\n"
+                f"void {csym}_steps(\n"
+                f"    {csym}_state_t *state,\n"
                 f"    const {arg_disp}    *input,\n"
                 f"    {ret_disp}          *output,\n"
                 f"    size_t               n{ctrl_c_sig});"
             )
             if delegate:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
                     f"    {ret_disp}          *output,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
@@ -1401,7 +1406,7 @@ def make_step_ctx(
                     f" delegates to it\n"
                     f"     * (gh-208), so the two stay byte-identical."
                     f" Vectorize freely;\n"
-                    f"     * do NOT call {component}_step() /"
+                    f"     * do NOT call {csym}_step() /"
                     f" JM_DEFINE_STEPS here (recurses). */\n"
                     f"    (void)state;\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
@@ -1411,14 +1416,14 @@ def make_step_ctx(
                 )
             else:
                 steps_c_impl = (
-                    f"void {component}_steps(\n"
-                    f"    {component}_state_t *state,\n"
+                    f"void {csym}_steps(\n"
+                    f"    {csym}_state_t *state,\n"
                     f"    const {arg_disp}    *input,\n"
                     f"    {ret_disp}          *output,\n"
                     f"    size_t               n{ctrl_c_sig})\n"
                     f"{{\n"
                     f"{omp_simd_hint}    for (size_t i = 0; i < n; i++)\n"
-                    f"        output[i] = {component}_step("
+                    f"        output[i] = {csym}_step("
                     f"state, input[i]{ctrl_args});\n"
                     f"}}"
                 )
@@ -1433,7 +1438,7 @@ def make_step_ctx(
                 f"    }}\n"
                 f"{step_parse}\n"
                 f"    {ret_disp} y ="
-                f" {component}_step(self->handle, x{ctrl_args});\n"
+                f" {csym}_step(self->handle, x{ctrl_args});\n"
                 f"    return {step_return};\n"
                 f"}}"
             )
@@ -1495,7 +1500,7 @@ def make_step_ctx(
                 f"            Py_DECREF(in_arr);\n"
                 f"            return NULL;\n"
                 f"        }}\n"
-                f"        {component}_steps(\n"
+                f"        {csym}_steps(\n"
                 f"            self->handle,\n"
                 f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
                 f"            ({ret_disp} *)PyArray_DATA(out_arr),\n"
@@ -1512,7 +1517,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"\n"
-                f"    {component}_steps(\n"
+                f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
                 f"        ({ret_disp} *)PyArray_DATA"
@@ -1533,7 +1538,7 @@ def make_step_ctx(
     if _is_arr:
         _inner = (
             f"        t0 = jm_bench_now_ns();\n"
-            f"        {_bsink}{component}_step"
+            f"        {_bsink}{csym}_step"
             f"(obj{_bsep}{_barg}{ctrl_obj_args});\n"
             f"        t1 = jm_bench_now_ns();\n"
         )
@@ -1541,7 +1546,7 @@ def make_step_ctx(
         _inner = (
             f"        t0 = jm_bench_now_ns();\n"
             f"        for (int i = 0; i < BENCH_N; i++)\n"
-            f"            {_bsink}{component}_step"
+            f"            {_bsink}{csym}_step"
             f"(obj{_bsep}{_barg}{ctrl_obj_args});\n"
             f"        t1 = jm_bench_now_ns();\n"
         )
@@ -1569,7 +1574,7 @@ def make_step_ctx(
             f"    double _times_steps[ITERATIONS];\n"
             f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
             f"        t0 = jm_bench_now_ns();\n"
-            f"        {component}_steps(obj,{si_arg}{so_arg}{ctrl_obj_args});\n"
+            f"        {csym}_steps(obj,{si_arg}{so_arg}{ctrl_obj_args});\n"
             f"        t1 = jm_bench_now_ns();\n"
             f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
             f"    }}\n"
@@ -1633,7 +1638,7 @@ def make_step_ctx(
     # help(Obj.step) matches the .pyi. (Scaffold @briefs are filtered out by
     # _load_doc_blocks, so the default stays canned and idempotent.)
     _db = doc_blocks or {}
-    _sblk = _db.get(f"{component}_step")
+    _sblk = _db.get(f"{csym}_step")
     if _sblk and _sblk.brief:
         _step_desc = _sblk.brief
 
@@ -1728,7 +1733,7 @@ def make_step_ctx(
             _steps_call = (
                 f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
             )
-        _ssblk = _db.get(f"{component}_steps")
+        _ssblk = _db.get(f"{csym}_steps")
         if _ssblk and _ssblk.brief:
             _steps_desc = _ssblk.brief
         # steps() takes the block form: an ndarray in, an ndarray out (or a
@@ -1782,7 +1787,7 @@ def make_step_ctx(
     _suffix = ctx.get("step_example_suffix", "")
     step_c_smoke_test = (
         f"    /* step: verify it runs without crashing */\n"
-        f"    (void){component}_step(obj{_suffix}{ctrl_obj_args});"
+        f"    (void){csym}_step(obj{_suffix}{ctrl_obj_args});"
     )
 
     in_py_hint = ctx.get("in_py_hint", "float")
@@ -1880,7 +1885,7 @@ def make_step_ctx(
         )
     elif _sblk and _sblk.brief:
         _pyi_step_doc = _swap_pyi_summary(_pyi_step_doc, _sblk.brief)
-    _ssb = _db.get(f"{component}_steps")
+    _ssb = _db.get(f"{csym}_steps")
     # gh-877: the unauthored fallback is the section skeleton here too. `step`
     # has rendered its sections since forever (the literals above); `steps` got
     # a one-line summary, which is backwards — `steps` is where the types are
@@ -2140,7 +2145,7 @@ def make_step_ctx(
         "step_ext_fn": step_ext_fn,
         "steps_ext_fn": steps_ext_fn,
         "step_py_flags": step_py_flags,
-        "bench_warmup_fn": f"{component}_step",
+        "bench_warmup_fn": f"{csym}_step",
         # The warmup template calls warmup_fn(obj, <bench_step_input_arg>);
         # append the control field args so the call matches step()'s widened
         # signature (no-op when nothing is controllable). The timing block
@@ -2164,7 +2169,7 @@ def make_step_ctx(
             # An array-input step() has no steps() beside it.
             ["step", "steps"] if steps_c_decl else ["step"],
             [
-                f"{ctx.get('step_example_lhs', '')}{component}_step("
+                f"{ctx.get('step_example_lhs', '')}{csym}_step("
                 f"obj{_suffix}{ctrl_obj_args});"
             ],
         ),

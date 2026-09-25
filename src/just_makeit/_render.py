@@ -28,6 +28,7 @@ from . import _config as C
 from . import _types as T
 from . import _record
 from . import _incpath as INC
+from . import _csym as CSYM
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -607,13 +608,32 @@ def render(template: str, ctx: dict) -> str:
     # its manifest says, so a template that uses one refuses a context that
     # does not carry it: a silent default would write the old layout into a
     # schema-8 project. Build the context with `_incpath.ctx_slots(owner)`.
-    for _slot in INC.PROJECT_SLOTS:
+    #
+    # gh-1591: the symbol stem (`<<csym>>`/`<<CSYM>>`) is the same kind of
+    # slot -- whether a project prefixes its symbols is a fact only its
+    # manifest states -- and so the same check, not a second one.
+    for _slot, _how in (
+        *(
+            (
+                s,
+                "the project's header layout; add `_incpath.ctx_slots("
+                "<project root or manifest>)` to it (gh-1583)",
+            )
+            for s in INC.PROJECT_SLOTS
+        ),
+        *(
+            (
+                s,
+                "the project's C symbol stem; add `_csym.slots(<project "
+                "root or manifest>, <name>)` to it (gh-1591)",
+            )
+            for s in CSYM.SLOTS
+        ),
+    ):
         if f"<<{_slot}>>" in template and _slot not in ctx:
             raise ValueError(
                 f"render: the template uses <<{_slot}>> and the context does"
-                " not carry the project's header layout; add"
-                " `_incpath.ctx_slots(<project root or manifest>)` to it"
-                " (gh-1583)"
+                f" not carry {_how}"
             )
     ctx = {**INC.layout_slots(ctx), **ctx}
     result = template
