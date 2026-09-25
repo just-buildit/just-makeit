@@ -97,6 +97,40 @@ def _release_tags() -> "list[str]":
     return [t for t in out.stdout.split() if t.startswith("v")][:3]
 
 
+def _release_commit(tag: str) -> str:
+    """The commit that made *tag*'s version -- its release commit.
+
+    NOT the tag's own commit. A release that fails before publish is re-cut
+    on the SAME number (``skills://release-process``: "a failed release
+    before publish does not burn the version"), so the tag moves to the
+    commit that fixed the defect, which is a source change by construction.
+    v0.90.0 is that case: its tag is on #1631, a workflow fix, and its
+    release commit is the bump before it. The property this file guards is
+    that the BUMP takes the fast path, so the bump is what is read -- the
+    newest commit reachable from the tag that wrote ``version = "<v>"``
+    into ``pyproject.toml``.
+    """
+    version = tag[1:]
+    out = subprocess.run(
+        [
+            "git",
+            "log",
+            "-1",
+            "--format=%H",
+            f'-Sversion = "{version}"',
+            tag,
+            "--",
+            "pyproject.toml",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    commit = out.stdout.strip()
+    assert commit, f"no commit reachable from {tag} sets version {version}"
+    return commit
+
+
 class TestTheWorkflowUsesTheStandard:
     def test_the_changes_job_calls_make_ci_changes(self):
         assert "make -s ci-changes" in _changes_job()
@@ -115,7 +149,7 @@ class TestJmsHistoryIsClassifiedRight:
         if not tags:
             pytest.skip("no release tags in this clone")
         for tag in tags:
-            got = _ci_changes(tag)
+            got = _ci_changes(_release_commit(tag))
             assert got == "src=false", (
                 f"{tag}'s release commit reads as {got!r}, so it runs the "
                 f"full matrix for a version string"

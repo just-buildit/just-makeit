@@ -1,5 +1,334 @@
 ## [Unreleased]
 
+## [0.90.0] — 2026-09-25
+
+### Breaking
+
+- **One library, one name** (gh-1581). The installed `.pc` is named for the
+    library -- `libmy_proj` ships `my_proj.pc` (was `my-proj.pc`), as the
+    pkg-config guide says: the file name IS the package name -- and the
+    exported CMake targets are `my_proj::my_proj` and
+    `my_proj::my_proj-static` (were `my_proj::my_proj_lib` and
+    `..._lib_static`), as cmake-packages(7) shows them. Consumers of a
+    project whose name contains `_` must update `pkg-config` and
+    `target_link_libraries` lines; a name without `_` keeps its `.pc`.
+    `jm upgrade` renames an existing `cmake/my-proj.pc.in` to
+    `cmake/my_proj.pc.in`, keeping its edits and jm's ownership of it.
+
+- **A project's headers live under `native/inc/<pkg>/`, and every include of
+    one is spelled `"<pkg>/..."`** (gh-1583, schema 8). An installed project's
+    headers land in `include/<pkg>/`, so two jm projects in one prefix no
+    longer collide over a component name, `clib_common.h` or `jm_perf.h`;
+    `-I` is still `native/inc`. `jm new` scaffolds the new layout, and `jm upgrade` moves an existing project: it moves `native/inc/*` one level down
+    and respells every `#include`, manifest string (`header =`, `core_header =`) and CMake path that resolves to a moved file, and prints each file it
+    changed. A header you add from now on goes under `native/inc/<pkg>/`, and
+    a consumer includes `"<pkg>/<comp>/<comp>_core.h"`. See
+    docs/upgrading.md.
+
+### Added
+
+- **The root `CMakeLists.txt`'s install section is jm's managed block**
+    (gh-1589, part 2). It runs from `# ── Install` to a new `# ── End install`
+    line, and `apply` renders it -- so the soname, the install-time `.pc`
+    prefix, the macOS install name, the build-tree export and every later
+    packaging fix reach an existing project, not only a new one. `apply`
+    compares the block by CMake command, so your formatter's layout is never
+    rewritten, and it never writes outside the block. The seven `ROOT CMAKE`
+    rows for fixes inside it become one, `install-block`. `jm adopt --packaging` hands an older project's section to jm, refusing (and
+    naming) any command no released jm rendered there; jm now records every
+    command and template line it ever shipped (`make install-history-update`),
+    so an older project's own templates adopt without `--accept`.
+
+- **jm owns the packaging templates, so a pkg-config or `find_package` fix
+    reaches an existing project** (gh-1589, part 1). `cmake/<pkg>.pc.in` and
+    `cmake/<pkg>-config.cmake.in` hold no authored content, but they were
+    create-only: every packaging fix reached new projects only. They are now
+    born carrying jm's ownership token, and `jm apply` renders them whole while
+    it is there; deleting the `# jm:generated` line hands a template to you for
+    good. A project scaffolded earlier: `jm status` lists each template that is
+    behind under a new **PACKAGING** section (advisory, never counted, also in
+    `--json`), and `jm adopt --packaging [--check] [--accept PATH]` hands them
+    to jm, refusing one whose adoption would drop a line today's render does
+    not keep. `jm adopt --help` now prints its usage (gh-1569).
+
+- **`[project] public_link_libs` and `public_defines`** (gh-1599): link
+    flags (`-lpthread`) and definitions (`_GNU_SOURCE`) the installed headers
+    need of every consumer. Each reaches this project's own compile and
+    executables, both combined libraries' public face and so the exported
+    targets, and the installed `.pc`'s `Libs:` and `Cflags:`. A CMake target
+    (`Threads::Threads`) is refused, pointing at `find_packages`. Removing a
+    dependency or flag from the manifest now also clears it from the root
+    `CMakeLists.txt`'s external-deps block; it used to linger there once the
+    last one was gone.
+
+- **Install components: `runtime` and `dev`** (gh-1601). jm's install rules
+    now carry the split a distribution builds `lib<name>` and
+    `lib<name>-dev` from: `cmake --install --component runtime` installs
+    exactly the shared library a program loads, `--component dev` the
+    headers, static library, unversioned `.so` link, CMake package and `.pc`.
+    A plain `cmake --install` installs both, as before. The rules live in
+    the managed install block, so an existing project gets them on `apply`.
+
+### Changed
+
+- **Internal: one owner of the header layout** (gh-1583, part 1 of 3). The
+    include root and every `#include` of a jm-generated header -- about 75
+    hand spellings across jm's modules and every C template -- now come from
+    `_incpath`, so moving headers under the package is a flag rather than an
+    edit at each. Generated projects are byte-identical to before.
+
+### Fixed
+
+- **The `nco_tone` and `kitchen_sink` examples now build against doppler on
+    macOS and Windows** (gh-1377). The example asked for doppler's macOS
+    build as `darwin-arm64`, a name doppler has never published (it is
+    `macos-arm64`), and had no Windows entry at all -- so on both the fetch
+    came back empty, the build step was skipped, and the test still reported
+    PASSED. It now reads doppler's real asset names, unpacks the Windows
+    `.zip`, and falls back to doppler 0.55.0 when the release list cannot be
+    reached. Set `JM_REQUIRE_DOPPLER=1` to make an unavailable doppler a
+    failure rather than a skip; jm's CI sets it on every leg that runs the
+    examples, and no longer deselects the two on Windows.
+
+- **A test or benchmark wired in `<dir>_extra.cmake` is no longer reported
+    `UNBUILT`** (gh-1432). The gh-806 scan read every `CMakeLists.txt` and the
+    root `Makefile` / `local.mk`, but not the `<dir>_extra.cmake` hook each
+    generated CMakeLists includes, which is where jm tells you to put hand
+    CMake. So a hand-written `bench_*_core.c` or `test_*_core.c` built there
+    was called "compiled by no build file" and `jm status --check` exited 1
+    on correct work; `jm bench` could not discover it either. The hook is now
+    read like any other build file, including a `file(GLOB` in it standing
+    the scan down.
+
+- **`status` no longer tells you to delete a binding that accepts more than
+    the manifest declares** (gh-1447). ACTIONABLE advised "Delete the file
+    and re-run `jm apply`" for every fragment whose calling convention
+    differed from the manifest, including one whose binding was the
+    superset -- doppler's `Resampler.execute_ctrl` (`"OO|O"` vs `"OO"`),
+    where following the advice deletes a working `out=`. Those fragments
+    now land in BINDING AHEAD, which says the manifest is behind, marks
+    each member `(binding ahead)`, and points at declaring the argument in
+    `just-makeit.toml` or keeping the file. The direction is
+    `_adopt.binding_ahead`, the same predicate `adopt --check` refuses on.
+
+- **Removing a module's last function removes its C test and bench too**
+    (gh-1479). The functions were the module's core, and with the last one
+    gone nothing builds it; its `test_<module>_core.c` and
+    `bench_<module>_core.c` stayed behind, compiled by nothing, and `jm status --check` failed UNBUILT on the tree `jm remove` had just produced.
+    They now go as an object's do on `jm remove object`, unless an object of
+    the module shares its name (then they are that object's).
+
+- **The `_core.h` example no longer hard-codes scaffold-time `create()`
+    values, and `jm status` flags one that falls behind** (gh-1502). The
+    `@code` example at the top of a new object's header now declares one
+    local per constructor parameter, with the prototype's type, and passes
+    them by name (`int level = 0; // your value` then `o_create(level)`).
+    It used to hard-code the scaffold's values. The header is yours, so
+    `jm apply` still never rewrites the example. After init params change,
+    `jm status` prints an advisory `EXAMPLE` section naming the line whose
+    `create()` call has a different argument count from the prototype. It
+    also appears as `create_example_drift` in `--json`. It does not fail
+    `--check`.
+
+- **Handle, capsule and composer args named after a generated C local are
+    refused** (gh-1525). The param-name rule from gh-1512 now covers the
+    three module kinds too. Before, a handle `create_args` entry named
+    `kwlist` or a method arg named `self` produced a binding that redeclared
+    the name and did not compile, and `jm apply` still exited 0. `jm apply`
+    now refuses such a name before it writes anything, and the error names
+    the arg and the local it collides with. The refused names are the
+    shared ones (`self`, `args`, `kwds`, `kwlist`, anything starting with
+    `_`, an array arg's `x_obj` / `x_arr` / `x_raw` / `x_len`) plus the
+    locals each kind's own wrapper declares: a capsule's `mod`, `w` and
+    `cap`; a handle method's result `r` and its array locals (`n_in`,
+    `in_data`, `out_data`, `view`, ...); a composer source field named
+    `fs`; and a serializer param named `segs`. The shared names are refused
+    on every kind, even where one wrapper happens not to declare them, so
+    a rename is the fix wherever the error appears.
+
+- **The scaffolded Python benchmark follows the constructor, like the
+    test** (gh-1528). `src/<pkg>/benchmarks/bench_<comp>.py` constructs the
+    object too, but it was written once and never again. So an init param
+    added later left it calling the old constructor, and running it raised
+    `TypeError`, with nothing reporting it. It is now born with the same
+    `# jm:generated` line the test got in 0.88: while the line is there,
+    `apply` keeps the file in step and `status --check` shows its drift.
+    Delete the line to make it yours. A project scaffolded before this has
+    no such line, and its benchmark stays untouched.
+
+- **Two composer settings named `x` and `x_set` compile** (gh-1560). Each
+    setting's was-it-passed flag in the generated `tp_init` was `_st_<n>_set`,
+    which is also the value local of a sibling named `<n>_set`, so the pair
+    declared one local twice. The flag is now `_stset_<n>`, which no value
+    local can spell. A composer that declares settings sees its generated
+    `_ext.c` change on the next `apply`; nothing to do by hand.
+
+- **A complex default means one value on every face** (gh-1561). `jm object zz --init-param "z:double _Complex"` no longer exits 1: jm refused its own
+    zero, `0.0 + 0.0 * I`, as a default. A complex default is now accepted as
+    `re`, `im * I` or `re + im * I`, and every face reads the same value.
+    Before, the `.pyi`, the docstring, the generated test and the generated
+    app all said `0j` whatever was declared (the app wrote `0.0 + 0.0 * I`,
+    a NameError). The binding's `Py_complex` seed is `{re, im}`: an init-param
+    default no longer emits C that does not compile, and a state default
+    feeding the constructor no longer reads 0 until `reset()`, which made a
+    fresh scaffold's own `test_reset` fail. The stub generator's Python-type
+    table is now derived from `scalar_py_annotation`, which it had drifted
+    from (`ptrdiff_t` and `long double _Complex` were missing).
+
+- **`jm status --json` carries the UNRECONCILED buckets** (gh-1566). A
+    new `unreconciled` key lists each fragment under `actionable`,
+    `binding_ahead`, `apply_fixes` or `unexplained`, with its per-member
+    reasons and the members whose binding is ahead of the manifest. Before,
+    a downstream automating on `--json` could not tell a fragment that is
+    safe to re-render from one whose re-render would delete a working
+    binding. Both faces now read one classifier.
+
+- **`jm adopt`'s usage names every form it accepts** (gh-1569). The first
+    line now reads `adopt --check [--module <id> | --all]`, in the command's
+    own usage and in `jm --help`: `--check` surveys the whole project unless
+    `--module` narrows it. The parser reads its options from that usage text,
+    so an option cannot be accepted without being advertised. `adopt --check <obj>` is refused: it used to ignore the name and survey every object.
+
+- **The combined `lib<pkg>` libraries now link their cores' `extra_link_libs`**
+    (gh-1572). The root folds each core in by its objects alone, and objects
+    carry no link requirements, so a core calling into an external package
+    left the shared library with those symbols undefined. macOS and Windows
+    refused to link it, and Linux linked it, leaving the failure to the first
+    C program that used the `.so`. Each component's CMakeLists now links the
+    libraries into `lib<pkg>` (PRIVATE) and `lib<pkg>_static` (PUBLIC), the
+    same fix doppler applies for `Threads::Threads`. The installed
+    `<pkg>-config.cmake` also gains a `find_dependency()` for each
+    `[project] find_packages` / `pkg_modules` entry, so a consumer of the
+    static library can resolve it. An existing project picks up the link lines
+    and the root variable on its next `jm apply`. `jm status` reports its
+    `cmake/<pkg>-config.cmake.in` as OUTDATED until that file is refreshed.
+
+- **The installed `.pc` now lists `[project] pkg_modules` as
+    `Requires.private`** (gh-1573). gh-1572 made the static library carry a
+    core's external link dependencies for `find_package` consumers. The `.pc`
+    still said only `-l<pkg> -lm`, though, so `pkg-config --static --libs`
+    left the archive's calls into the dependency undefined. A `pkg_modules`
+    entry is a pkg-config module name, so it now goes to `Requires.private`,
+    which `--static` follows. A `find_packages` entry has no pkg-config name
+    jm can derive, so it is not listed; `docs/c-library.md` says to declare
+    the dependency with `pkg_modules` when the pkg-config face matters. An
+    existing project's `cmake/<pkg>.pc.in` is reported OUTDATED until it is
+    refreshed.
+
+- **A consumer of your installed library can compile your headers when they
+    include a dependency's** (gh-1576). nco_tone's `tone_core.h` includes
+    doppler's `nco/nco_core.h`, and four of the eight ways to consume such a
+    project failed with `fatal error: nco/nco_core.h: No such file or directory`.
+
+    - **CMake:** the shared library links a dependency PRIVATE, so it passed
+        on none of it. It now passes on the dependency's include dirs,
+        definitions and options without re-linking it. That is
+        `$<COMPILE_ONLY:>`, written out so it works at the CMake 3.16 floor,
+        and measured identical on 3.16 and 3.28.
+    - **pkg-config:** a `[project] find_packages` entry may now be a table,
+        `{ name = "Doppler", pkg_config = "doppler" }`. The module name goes to
+        the installed `.pc`'s `Requires.private`, which carries its Cflags
+        always and its Libs with `--static`. `{ name, libs_private = "..." }`
+        covers a dependency that ships no `.pc`, via `Libs.private`. A bare
+        string still works through `find_package`. `jm status` lists it under
+        PKG-CONFIG, because the `.pc` cannot name it.
+    - The manifest writer no longer quotes a table inside a `[project]` list.
+    - `docs/c-library.md` has a new section, "When your library depends on
+        another package". It also drops the consumer's hand-written `-lm`,
+        which the package has carried itself since gh-1452.
+
+- **A `pkg_modules` entry may carry a version bound, and a dependency with
+    no `.pc` can put its compile flags in yours** (gh-1578, gh-1579).
+
+    - `pkg_modules = ["zlib >= 1.2"]` failed at configure: the whole string
+        became the `pkg_check_modules` prefix and module list, so CMake looked
+        for a module named `>=`. The entry is now split into a name and a
+        bound (`=`, `<`, `>`, `<=`, `>=`, pc(5)'s five). The name gives the
+        prefix and the `PkgConfig::ZLIB` target. The root and the installed
+        config pass `"zlib>=1.2"`, and the `.pc` lists `zlib >= 1.2` in
+        `Requires.private`. `jm apply` and `jm new` refuse any other
+        spelling before they write anything, including the `jm_version`
+        stamp.
+    - A `[project] find_packages` table entry takes `cflags` beside
+        `libs_private`. A dependency that ships no `.pc` had nowhere to put
+        its include flags, so a pkg-config consumer could not compile a header
+        of yours that includes one of its headers. pc(5) has no private
+        Cflags, so these go on the `.pc`'s own `Cflags` line. `jm status` no
+        longer lists an entry with `cflags` under PKG-CONFIG, and its advice
+        now names the key. An existing project's `cmake/<pkg>.pc.in` is
+        reported OUTDATED until it is refreshed.
+
+- **The installed `.pc` names where it was actually installed, and the
+    library is versioned** (gh-1582). The `.pc`'s `prefix` is now written
+    at INSTALL time, absolutely. `cmake --install --prefix B` used to leave
+    a `.pc` naming the configured prefix, where nothing was installed. A
+    `DESTDIR`-staged tree names its real target, which is what a distribution
+    package needs. Relocation is the consumer's side of pkg-config:
+    `PKG_CONFIG_SYSROOT_DIR` reads a staged tree, and
+    `pkg-config --define-prefix` reads a moved one (for `lib/pkgconfig`).
+    Under `/usr`, pkg-config still drops `-I/usr/include`. A
+    `CMAKE_INSTALL_LIBDIR` or `INCLUDEDIR` given as an absolute path (Nix,
+    Guix) is written as that path, where it used to be
+    `${exec_prefix}//abs/lib`. An empty optional field (`URL:`) is left out,
+    and the `.pc` no longer ends in blank lines. The shared library gets
+    `VERSION`/`SOVERSION` (`lib<pkg>.so.0.1` under 0.x, `.so.1` from 1.0),
+    and `find_package`'s version file is `SameMinorVersion` under 0.x, where
+    it used to accept a 0.2 for a 0.1 request. The build tree exports its
+    targets, so `find_package` works against a build directory with nothing
+    installed. The `.pc`'s `Description:` and `URL:` come from
+    `project(DESCRIPTION / HOMEPAGE_URL)`. An existing project gets new
+    `ROOT CMAKE` findings from `status` (`soversion`, `version-compat`,
+    `build-tree-export`, `pc-paths`, `pc-fields`), and its
+    `cmake/<pkg>.pc.in` is reported OUTDATED; the new `.pc.in` reads
+    variables only the new root sets, so take both together. A new
+    consumer-matrix test (`tests/test_gh1584_consumer_matrix.py`) builds and
+    runs a consumer through every route, layout and linkage.
+
+- **`jm script` replays a project's `[project]` dependencies** (gh-1587). It
+    rebuilt `jm new` from four hand-listed flags, so a project scaffolded
+    with `--find-package`, `--pkg-module` or `--c-dep` replayed as a bare
+    `jm new`, and its external-deps block, installed config and `.pc`
+    silently lost every dependency. Each entry now replays as its flag
+    (`--pkg-module "zlib >= 1.2"` quoted), and a table entry
+    (`{ name = ..., cflags = ... }`), which has no CLI spelling, is named in
+    a `# NOTE:` instead of dropped.
+
+- **`jm adopt --packaging` replays a project the way `apply` does**
+    (gh-1589). It called the manifest replay bare, outside the scopes
+    `apply` runs it in, so on a project whose module references a component
+    by `init_param object = ...` before that component's capsule property is
+    replayed -- doppler -- it refused with "publishes no capsule" and did
+    nothing. Both now go through one `replay_project`, and a test refuses
+    any other caller of the replay.
+
+- **macOS: a program linked by pkg-config can load an installed jm library**
+    (gh-1594). The installed `.dylib` was named `@rpath/lib<pkg>.dylib`, CMake's
+    default, so any program without an `LC_RPATH` -- everything but a
+    `find_package` consumer -- failed at launch with `Library not loaded`. The
+    library now names itself absolutely, at the prefix the install step used
+    (`cmake --install --prefix` included; CMake 3.16 names the configured
+    prefix). `status` reports an existing root `CMakeLists.txt` that lacks it
+    (`ROOT CMAKE install-name`).
+
+- **`apply` delivers an install-block change that follows a `#` inside a
+    bracket argument or a multi-line string** (gh-1604). jm read the root
+    `CMakeLists.txt` with a comment stripper that knew neither bracket
+    arguments (`[[ ... ]]`) nor quoted strings spanning lines, so a `#` in
+    either dropped the rest of its line. The managed install block's
+    `install(CODE [[ ... ]])` is one such argument, so a template change
+    after a `#` there compared equal and never reached an existing project.
+    The `ROOT CMAKE` rows read the file the same way and gain the same fix.
+
+- **A core's `extra_link_libs` naming the project's own object code no longer
+    doubles it in `lib<pkg>`** (gh-1613). Since gh-1572, each entry was
+    restated on both combined libraries, and only a bare `<x>_core` was
+    recognised as the project's own. So a `$<TARGET_OBJECTS:x>` entry, or a
+    bare OBJECT library not named `_core`, landed twice in a library the root
+    already folds it into: `multiple definition of ...` at link, or, for the
+    bare name on the archive, a CMake generate error (a target in no export
+    set). Both are now recognised, and the OBJECT libraries are read from the
+    real tree even while `apply` replays.
+
 ## [0.89.0] — 2026-09-24
 
 ### Breaking
