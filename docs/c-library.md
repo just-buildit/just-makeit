@@ -295,6 +295,36 @@ put this machine's layout into the installed package.
 
 ______________________________________________________________________
 
+## Flags your headers need of every consumer
+
+Some needs have no package to declare. An installed header with an inline
+function that calls pthread makes every consumer's own object call it, so
+every consumer links `-lpthread`. A header that names `MAP_ANONYMOUS` or calls
+`syscall()` compiles under `-std=c99` only if `_GNU_SOURCE` is defined before
+libc is first reached, so that definition has to be on every consumer's
+compile line:
+
+```toml
+[project]
+public_link_libs = ["-lpthread"]    # one linker flag per entry
+public_defines   = ["_GNU_SOURCE"]  # an identifier, optionally =value; no -D
+```
+
+Each reaches every face, from this manifest alone:
+
+| face                     | `public_link_libs`                                                        | `public_defines`                          |
+| ------------------------ | ------------------------------------------------------------------------- | ----------------------------------------- |
+| this project's own build | its tests, benchmarks and Python extensions link it                       | every target compiles with it             |
+| `find_package`           | the exported targets' link interface, shared and static                   | the exported targets' compile definitions |
+| pkg-config               | the `.pc`'s `Libs:` -- public, like `-lm`: the consumer's object calls it | the `.pc`'s `Cflags:`, as `-D<def>`       |
+
+An entry of `public_link_libs` is one linker flag (`-lpthread`, `-pthread`,
+`-ldl`), the spelling CMake and pkg-config read the same. A package with a
+CMake config or a `.pc` of its own (`Threads::Threads`) is a dependency, not a
+flag: declare it in `find_packages` above.
+
+______________________________________________________________________
+
 ## Calling it from C++11
 
 Every generated header carries an `extern "C"` guard, so a C++ translation

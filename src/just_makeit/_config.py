@@ -3590,6 +3590,90 @@ def pkg_modules(cfg: dict) -> list[str]:
     return [e.name for e in pkg_module_entries(cfg)]
 
 
+def _project_list(cfg: dict, key: str) -> list:
+    v = cfg.get("project", {}).get(key, [])
+    return list(v) if isinstance(v, (list, tuple)) else [v]
+
+
+#: A C preprocessor definition: an identifier, optionally ``=value``.
+_DEFINE_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(=\S*)?$")
+
+
+def public_link_libs(cfg: dict) -> list[str]:
+    """``[project] public_link_libs``: link flags a CONSUMER needs (gh-1599).
+
+    For a library whose installed headers call into a library that has no
+    package of its own -- an inline function or a header-only helper
+    calling pthread (``-lpthread``, ``-pthread``), ``dlopen`` (``-ldl``).
+    Each entry reaches every face spelled as written: the project's own
+    executables and extensions, both combined libraries' PUBLIC link (so
+    the exported targets carry it) and the installed ``.pc``'s ``Libs:`` --
+    public, not ``Libs.private``, for the gh-1452 reason ``-lm`` is: the
+    consumer's own object calls it.
+
+    An entry is one linker flag, starting with ``-``: the spelling CMake and
+    pkg-config both read the same. A bare name is refused (write
+    ``-l<name>``: CMake looks a bare word up as a target first, gh-1305),
+    and so is a CMake target (``Threads::Threads``), which is a package
+    dependency and belongs in ``[project] find_packages``.
+
+    >>> public_link_libs({"project": {"public_link_libs": ["-lpthread"]}})
+    ['-lpthread']
+    """
+    out: list[str] = []
+    errors: list[str] = []
+    for e in _project_list(cfg, "public_link_libs"):
+        if not isinstance(e, str) or not e.strip():
+            errors.append(
+                f"[project] public_link_libs entry {e!r} is not a link flag"
+            )
+        elif "::" in e:
+            errors.append(
+                f"[project] public_link_libs entry {e!r} is a CMake target:"
+                " a package dependency belongs in [project] find_packages"
+            )
+        elif not e.startswith("-") or any(c.isspace() for c in e):
+            errors.append(
+                f"[project] public_link_libs entry {e!r} is not one linker"
+                f" flag -- write `-l{e.strip()}` (CMake looks a bare name up"
+                " as a target first)"
+            )
+        else:
+            out.append(e)
+    if errors:
+        _refuse(errors)
+    return out
+
+
+def public_defines(cfg: dict) -> list[str]:
+    """``[project] public_defines``: definitions the installed headers need
+    (gh-1599) -- a feature-test macro such as ``_GNU_SOURCE`` that must be
+    set before libc is first included, or a header does not compile.
+
+    Each reaches the project's own compile (its cores, tests, benchmarks and
+    extensions), both combined libraries' PUBLIC definitions (so the
+    exported targets carry it) and the installed ``.pc``'s ``Cflags:`` as
+    ``-D<def>``. An entry is a C identifier, optionally ``=value``, written
+    without ``-D``.
+
+    >>> public_defines({"project": {"public_defines": ["_GNU_SOURCE", "N=2"]}})
+    ['_GNU_SOURCE', 'N=2']
+    """
+    out: list[str] = []
+    errors: list[str] = []
+    for e in _project_list(cfg, "public_defines"):
+        if isinstance(e, str) and _DEFINE_RE.match(e):
+            out.append(e)
+        else:
+            errors.append(
+                f"[project] public_defines entry {e!r} is not a C definition"
+                " -- an identifier, optionally `=value`, without `-D`"
+            )
+    if errors:
+        _refuse(errors)
+    return out
+
+
 def component_extra_link_libs(cfg: dict, component: str) -> list[str]:
     """Return hand-declared extra link targets for a standalone component.
 
