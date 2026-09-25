@@ -223,6 +223,8 @@ export(
 # JM_PC_RELOCATABLE=OFF.
 option(JM_PC_RELOCATABLE "Write the .pc prefix relative to its own location"
        ON)
+# Set ${out} to the absolute path ${full} spelled for the .pc: as
+# "${spelled}/<rel>" when it lies under ${base}, and as itself when not.
 function(jm_pc_path out full base spelled)
   file(RELATIVE_PATH rel "${base}" "${full}")
   if(IS_ABSOLUTE "${rel}" OR rel MATCHES "^\\.\\.(/|$)")
