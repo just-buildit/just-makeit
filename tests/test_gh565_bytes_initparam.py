@@ -28,7 +28,12 @@ from just_makeit._stubs import _obj_stub
 
 def _ctx():
     return make_state_ctx(
-        "plan", "Plan", [], no_state=True, init_params=[("blob", "bytes", "")]
+        "plan",
+        "Plan",
+        [],
+        no_state=True,
+        init_params=[("blob", "bytes", "")],
+        csym="plan",
     )
 
 
@@ -113,4 +118,5 @@ def test_bytes_rejects_array_dispatch_combo():
                 ("blob", "bytes", ""),
                 ("taps", "double[]", "", "", "", "", True, "alt_fn", False),
             ],
+            csym="plan",
         )

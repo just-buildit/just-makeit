@@ -12,8 +12,9 @@ Also runnable directly: python3 examples/bench_upgrade/test.py
 from __future__ import annotations
 
 import re
-import tempfile
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 
 def run(root: Path) -> None:
@@ -136,6 +137,6 @@ def run(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("bench_upgrade: PASSED")

@@ -32,6 +32,7 @@ from . import _borrow
 from . import _codec as _codec
 from . import _coerce
 from . import _config as C
+from . import _csym as CSYM
 from . import _gluedoc
 from . import _outbuf
 from . import _record
@@ -1313,7 +1314,7 @@ def class_docstring_block(
     is derived from its output, so both faces get the sections from that one
     derivation for free.
     """
-    create_blk = (doc_blocks or {}).get(create_fn or f"{obj}_create")
+    create_blk = (doc_blocks or {}).get(CSYM.create_name(obj, create_fn))
     brief = manifest_doc or (
         create_blk.brief if (create_blk and create_blk.brief) else ""
     )
@@ -1980,9 +1981,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # synthetic name exactly as it did (gh-685), and a method whose `fn`
         # carries no Doxygen falls back to where it used to look rather than
         # silently losing its documentation.
-        _blk = doc_blocks.get(C.method_c_symbol(obj, m)) or doc_blocks.get(
-            f"{obj}_{m_name}"
-        )
+        _blk = doc_blocks.get(
+            C.method_c_symbol(CSYM.stem(cfg, obj), m)
+        ) or doc_blocks.get(f"{obj}_{m_name}")
         # ...and the scaffold sentinel is judged against the member NAME, not
         # the symbol. jm writes its skeleton brief from the Python name
         # (`@brief block.`) while `parse_doxygen_block` recognises a scaffold
@@ -2278,7 +2279,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # fallback applies only when the header knows nothing about the
             # bound name at all (a first scaffold), never to overrule a
             # declaration that exists.
-            _mo_sym = f"{C.method_c_symbol(obj, m)}_max_out"
+            _mo_sym = f"{C.method_c_symbol(CSYM.stem(cfg, obj), m)}_max_out"
             _mo_fallback = f"{obj}_{m_name}_max_out"
             _mo_arity = (doc_blocks or {}).get(
                 max_out_arity_key()
@@ -2800,7 +2801,7 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     overlay["_doc_blocks"] = inherit_ctor_params(
         overlay["_doc_blocks"],
         view["create_fn"],
-        C.object_create_fn(cfg, obj) or f"{obj}_create",
+        C.object_create_name(cfg, obj),
     )
     return synth, {**cfg, synth: overlay}
 

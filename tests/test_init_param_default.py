@@ -75,6 +75,7 @@ class TestCtorScalarsParseTypeDefault:
             "Corr",
             state_vars=[("dwell", "size_t", "1"), ("nthreads", "int", "1")],
             **kw,
+            csym="corr",
         )
 
     def test_sizet_state_var_default_applied(self):
@@ -89,9 +90,7 @@ class TestCtorScalarsParseTypeDefault:
     def test_zero_default_still_zero(self):
         # A default of "0" must still emit parse_zero (0ULL), not an empty init.
         ctx = make_state_ctx(
-            "buf",
-            "Buf",
-            state_vars=[("capacity", "size_t", "0")],
+            "buf", "Buf", state_vars=[("capacity", "size_t", "0")], csym="buf"
         )
         assert "unsigned long long capacity_raw = 0" in ctx["init_locals"]
 
@@ -113,6 +112,7 @@ class TestCtorScalarsParseTypeDefault:
             "acc",
             "Acc",
             state_vars=[("acc", "double _Complex", "0.0 + 0.0 * I")],
+            csym="acc",
         )
         assert "Py_complex acc_raw = {0.0, 0.0};" in ctx["init_locals"]
         assert "0.0 + 0.0 * I;" not in ctx["init_locals"]

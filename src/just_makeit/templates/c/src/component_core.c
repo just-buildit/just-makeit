@@ -1,9 +1,9 @@
 #include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 /*<<state_struct_def>>*/
-/*<<component>>*/_state_t *
+/*<<csym>>*/_state_t *
 /*<<create_name>>*/(/*<<create_params>>*/)
 {
-    /*<<component>>*/_state_t *obj = calloc(1, sizeof(*obj));
+    /*<<csym>>*/_state_t *obj = calloc(1, sizeof(*obj));
     if (!obj)
         return NULL;
 /*<<create_assignments>>*/
@@ -11,7 +11,7 @@
 }
 
 /*<<destroy_c_ret>>*/
-/*<<component>>*/_destroy(/*<<component>>*/_state_t *state)
+/*<<csym>>*/_destroy(/*<<csym>>*/_state_t *state)
 {
 /*<<destroy_impl>>*/    free(state);/*<<destroy_ret_stmt>>*/
 }

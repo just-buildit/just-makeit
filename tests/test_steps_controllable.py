@@ -219,7 +219,7 @@ class TestConfig:
 
 class TestValidation:
     def _ctx(self, arg_type, return_type):
-        ctx = {"component": "c", "Component": "C"}
+        ctx = {"component": "c", "csym": "c", "Component": "C"}
         ctx.update(make_sample_ctx(arg_type, return_type))
         ctx.update(make_perf_ctx(False))
         return ctx

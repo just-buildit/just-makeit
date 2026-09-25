@@ -35,6 +35,7 @@ pep723   PEP 723 inline-script.  Generates <name>.py in the project root
 from __future__ import annotations
 
 from . import _incpath as INC
+from . import _csym as CSYM
 from . import _textio
 
 import json
@@ -1266,7 +1267,8 @@ def _build_ctx(
     # `<comp>_create`. A `create_fn` project's app linked against a symbol
     # the tree does not define -- the same root as the scaffold that would
     # not compile, reached through a third face.
-    create_name = C.object_create_fn(cfg, component) or f"{component}_create"
+    create_name = C.object_create_name(cfg, component)
+    csym = CSYM.stem(cfg, component)
 
     def _create_call(parsed: bool) -> str:
         a = _ctor_c_args(all_flags, parsed)
@@ -1423,12 +1425,13 @@ def _build_ctx(
         "version": version,
         "component": component,
         "Component": Component,
+        **CSYM.slots(cfg, component),
         "argparse_state_args": _argparse_block(argparse_flags),
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,
         "io_loop": io_loop,
         "helpers": helpers,
-        "app_create_line": f"    {component}_state_t *state = {create_call};",
+        "app_create_line": f"    {csym}_state_t *state = {create_call};",
         "create_name": create_name,
         "cleanup_tail": cleanup_tail,
         # gh-944: the same closes, one block deeper, for the `create() failed`

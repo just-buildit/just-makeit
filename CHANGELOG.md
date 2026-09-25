@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+## [0.90.1] — 2026-09-25
+
+**0.90.0 was tagged but never published.** Its pre-publish smoke failed on
+every attempt -- first on the pre-schema-8 paths in the release's own smoke
+(#1631), then on Windows' locked `.pyd` (#1637) -- so nothing reached PyPI.
+Everything listed under [0.90.0] below ships in this release, including its
+**Breaking** changes; read that section before upgrading from 0.89.
+
+### Changed
+
+- **Internal: one owner of the derived C symbol stem** (gh-1591, phase 1 of
+    3). Every C identifier jm derives from a component, module or function
+    name -- `<comp>_create`, `<comp>_state_t`, the `<COMP>_CORE_H` guard, a
+    method's `<comp>_<name>` -- now takes its stem from `_csym`, while the
+    name stays the file stem; the C templates read a new `<<csym>>` slot,
+    and a ratchet pins the Python sites still spelling one by hand (363 to 175).
+    This is what lets phase 2's `[project] c_prefix` namespace a
+    project's symbols in one place. Generated projects are byte-identical to
+    before.
+
+### Fixed
+
+- **`just-makeit example` no longer fails on Windows after the example
+    passes** (gh-1377). An example that imports the extension it built --
+    `nco_tone`, once Windows builds it -- left a loaded `.pyd` that
+    `TemporaryDirectory`'s cleanup could not delete, so the command raised
+    `PermissionError` after printing `PASSED`. Every bundled example now
+    builds into `_example.scratch_dir()`, whose cleanup is best effort.
+
 ## [0.90.0] — 2026-09-25
 
 ### Breaking

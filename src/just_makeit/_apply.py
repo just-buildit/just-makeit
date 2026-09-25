@@ -45,6 +45,7 @@ from . import _libwiring
 from . import _report
 from . import _stubs as S
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._init import _to_title
 
 
@@ -2829,7 +2830,7 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
 
     want: set = set()
     for m in C.methods(cfg, comp):
-        fn = m.get("fn") or f"{comp}_{m['name']}"
+        fn = C.method_c_symbol(CSYM.stem(cfg, comp), m)
         want.add(fn)
         want.add(f"{fn}_max_out")
     # gh-1509: the binding calls the serializable triplet the same way, and

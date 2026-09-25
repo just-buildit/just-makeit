@@ -21,6 +21,7 @@ from pathlib import Path
 from . import _config as C
 from . import _context as Ctx
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._init import _inject_decls_into_core_h, _to_title
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
@@ -92,9 +93,7 @@ def run(
     # even though it was no longer the parent's -- which blocks the shape
     # where the general constructor is the base and the specialised one is
     # the flavor (gh-1277).
-    parent_create = C.object_create_fn(cfg, object_name) or (
-        f"{object_name}_create"
-    )
+    parent_create = C.object_create_name(cfg, object_name)
     if create_fn == parent_create:
         _fail(
             f"--create-fn must differ from the parent's "
@@ -180,6 +179,7 @@ def run(
         state_vars,
         init_params=view_ip,
         create_fn=create_fn,
+        csym=CSYM.stem(cfg, object_name),
     )
     create_params = vctx["create_params"]
 
