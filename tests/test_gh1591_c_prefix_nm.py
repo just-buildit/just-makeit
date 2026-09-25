@@ -148,3 +148,30 @@ def test_it_builds_tests_and_imports(libs, row):
 
     r = run_cli("test", cwd=libs["_roots"][row])
     assert r.returncode == 0, (row, r.stdout[-3000:] + r.stderr[-3000:])
+
+
+def test_a_default_jm_new_exports_only_its_package_prefix(tmp_path):
+    """gh-1591 2b: `jm new` with NO prefix flag namespaces the project by its
+    package name, so a project nobody configured passes the gate above."""
+    from _jmrun import run_cli
+
+    root = tmp_path / "dflt"
+    for args, cwd in (
+        (
+            ("new", "dflt", "--object", "fir", "--state", "gain:double:1.0"),
+            tmp_path,
+        ),
+        (("module", "m"), root),
+        (("function", "mix", "--module", "m", "--param", "x:float"), root),
+    ):
+        r = run_cli(*args, cwd=cwd)
+        assert r.returncode == 0, (args, r.stdout + r.stderr)
+    assert C.c_prefix(C.load(root)) == "dflt"
+    b = root / "b"
+    _run(["cmake", "-S", ".", "-B", b, "-DBUILD_PYTHON=OFF"], root)
+    _run(["cmake", "--build", b], root)
+    static = next(b.rglob("libdflt.a"))
+    syms = _defined(_run(["nm", "-g", static], root))
+    assert {"dflt_fir_create", "dflt_mix"} <= syms, sorted(syms)
+    bad = sorted(s for s in syms if not s.startswith("dflt_"))
+    assert bad == [], bad

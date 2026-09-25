@@ -184,6 +184,31 @@ def test_an_existing_tree_that_adds_the_key_is_refused(tmp_path):
     assert run_cli("status", "--check", cwd=root).returncode == 1
 
 
+def test_jm_new_defaults_to_the_package_name(tmp_path):
+    """gh-1591 2b: a new project is namespaced from its first file."""
+    root = _new(tmp_path, "pkg", "--object", "fir")
+    assert C.c_prefix(C.load(root)) == "pkg"
+    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
+    assert "pkg_fir_state_t *pkg_fir_create(" in h, h
+
+
+def test_no_c_prefix_is_todays_bare_project(tmp_path):
+    """The opt-out writes no key and derives the bare names every project
+    made before 2b has -- the same tree, which is what makes it an opt-out
+    and not a third spelling."""
+    root = _new(tmp_path, "pkg", "--no-c-prefix", "--object", "fir")
+    assert "c_prefix" not in (root / C.FILENAME).read_text()
+    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
+    assert "fir_state_t *fir_create(" in h and "#ifndef FIR_CORE_H" in h, h
+    assert "pkg_fir" not in h
+
+
+def test_the_prefix_and_its_opt_out_are_exclusive(tmp_path):
+    r = run_cli("new", "p", "--c-prefix", "x", "--no-c-prefix", cwd=tmp_path)
+    assert r.returncode == 1 and "mutually exclusive" in r.stderr, r.stderr
+    assert not (tmp_path / "p").exists()
+
+
 @pytest.mark.parametrize("bad", ["dp_", "1x", "a-b", ""])
 def test_a_prefix_that_is_not_an_identifier_is_refused(tmp_path, bad):
     r = run_cli("new", "p", "--c-prefix", bad, cwd=tmp_path)
