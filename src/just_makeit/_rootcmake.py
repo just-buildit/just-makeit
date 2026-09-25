@@ -258,6 +258,15 @@ def _has_soversion(r: Root) -> bool:
     )
 
 
+def _has_install_name(r: Root) -> bool:
+    return any(
+        c.name in ("set_target_properties", "set_property")
+        and r.shared in c.args
+        and "INSTALL_NAME_DIR" in c.args
+        for c in r.calls
+    )
+
+
 def _version_file(r: Root) -> Optional[Call]:
     for c in r.calls:
         if c.name == "write_basic_package_version_file":
@@ -426,6 +435,16 @@ FIXES: "tuple[Fix, ...]" = (
         "installs over the last under one soname, and a program linked "
         "against an older ABI silently loads the new one",
         _has_soversion,
+        lambda r: bool(r.shared),
+    ),
+    Fix(
+        "install-name",
+        "gh-1594",
+        "macOS",
+        "the installed dylib is named @rpath/lib<pkg>.dylib, so a program "
+        "linked by pkg-config (or any build but CMake's) has no LC_RPATH and "
+        "dyld refuses to load it",
+        _has_install_name,
         lambda r: bool(r.shared),
     ),
     Fix(

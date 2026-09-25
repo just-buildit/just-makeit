@@ -162,6 +162,24 @@ enable_testing()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# gh-1594: on macOS the installed library names itself by its absolute path, as
+# Homebrew's and MacPorts' do. CMake's default install name is
+# @rpath/lib<name>.dylib, which only a program carrying an LC_RPATH can load:
+# find_package consumers get one from CMake, but a program linked by
+# pkg-config, a Makefile or Xcode does not, and dyld refuses to start it.
+# $<INSTALL_PREFIX> is the prefix the install step uses, so `cmake --install
+# --prefix B` is honoured as the .pc's prefix is; it needs CMake 3.17, and 3.16
+# names the configured prefix. No effect off Apple platforms.
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+  set(JM_INSTALL_NAME_DIR "${CMAKE_INSTALL_LIBDIR}")
+elseif(CMAKE_VERSION VERSION_LESS 3.17)
+  set(JM_INSTALL_NAME_DIR "${CMAKE_INSTALL_FULL_LIBDIR}")
+else()
+  set(JM_INSTALL_NAME_DIR "$<INSTALL_PREFIX>/${CMAKE_INSTALL_LIBDIR}")
+endif()
+set_target_properties(<<project_underscore>>_lib
+                      PROPERTIES INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}")
+
 install(
   TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
   EXPORT <<project_underscore>>-targets

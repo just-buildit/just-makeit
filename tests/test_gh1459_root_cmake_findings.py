@@ -71,6 +71,8 @@ SABOTAGE = {
     "win-defines": r"\b_USE_MATH_DEFINES\b(?=\))",
     "soversion": r"set_target_properties\(\s*p_lib\s+PROPERTIES\s+VERSION"
     r"[^)]*\)",
+    "install-name": r"set_target_properties\(\s*p_lib\s+PROPERTIES"
+    r"\s+INSTALL_NAME_DIR[^)]*\)",
     "version-compat": r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}",
     "build-tree-export": r"export\(\s*EXPORT[^)]*\)",
     "pc-paths": r'set\(\s*JM_PC_PREFIX\s+"%JM_INSTALL_PREFIX%"\s*\)',
