@@ -372,7 +372,9 @@ def _object_ctx(cfg: dict, comp: str, module: str | None) -> dict:
     }
 
 
-def replay_project(cfg: dict, temp_root: Path, project_root: Path) -> None:
+def replay_project(
+    cfg: dict, temp_root: Path, project_root: Path, *, prefix_checks=True
+) -> None:
     """Replay *cfg* into *temp_root* the one way `apply` does -- for anyone.
 
     The replay is not :func:`_replay` alone: it runs inside the scopes that
@@ -432,14 +434,36 @@ def replay_project(cfg: dict, temp_root: Path, project_root: Path) -> None:
             _replay(cfg, temp_root, project_root)
     finally:
         _obj_mod._DOC_ROOT_OVERRIDE = None
-    # gh-1591: a prefixed project's derived symbols, read from the render
-    # just made -- asked here so `apply` refuses before it writes anything
-    # and `status` reports the same refusal. Two names deriving one symbol
-    # cannot both exist; and the author's C still spelling the unprefixed
-    # names would not link against the render (`jm upgrade` respells them;
-    # until it can, this refuses).
-    if CSYM.prefix(cfg) is not None:
-        errors = CSYM.duplicates(temp_root, cfg)
+    if prefix_checks:
+        prefix_errors(cfg, temp_root, project_root)
+
+
+def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
+    """Refuse what `[project] c_prefix` cannot render into (gh-1591).
+
+    Asked of the render :func:`replay_project` just made, so `apply` refuses
+    before it writes anything and `status` reports the same refusal:
+
+    - a prefix CHANGED or REMOVED after the tree was prefixed -- not migrated;
+    - two names deriving one symbol, which cannot both exist;
+    - the author's C still spelling the unprefixed names, which would not
+      link against the render: `jm upgrade` respells those.
+    """
+    errors = []
+    for comp, had in sorted(CSYM.stray_prefixes(project_root, cfg).items()):
+        now = CSYM.prefix(cfg)
+        errors.append(
+            f"`{comp}`'s C symbols already carry the prefix `{had}`, but "
+            + (
+                f"[project] c_prefix is now {now!r}"
+                if now
+                else "[project] c_prefix is no longer set"
+            )
+            + " -- changing or removing a prefix is not migrated (gh-1650);"
+            f" restore c_prefix = {had!r}"
+        )
+    if CSYM.prefix(cfg) is not None and not errors:
+        errors += CSYM.duplicates(temp_root, cfg)
         stale = CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
         for rel, names in stale.items():
             errors.append(
@@ -447,11 +471,10 @@ def replay_project(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 + ", ".join(f"`{n}`" for n in names)
                 + f" -- [project] c_prefix = {CSYM.prefix(cfg)!r} renames"
                 " every C symbol jm derives, and the C you wrote has to"
-                " follow; `jm upgrade` will respell it (gh-1591), until then"
-                " rename these by hand or drop c_prefix"
+                " follow: run `jm upgrade`, which respells it"
             )
-        if errors:
-            C._refuse(errors)
+    if errors:
+        C._refuse(errors)
 
 
 def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:

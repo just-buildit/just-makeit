@@ -407,9 +407,9 @@ pb_fir_state_t *b = pb_fir_create (2.0);
 Set it with `jm new --c-prefix dp`. On an existing project it renames every
 derived symbol, which your C (the sacred `_core.h` / `_core.c`, module
 function sources, tests and benchmarks) must follow: `apply` refuses, naming
-each file and the old names it still spells, until they are respelled.
-`jm upgrade` support for that respell is coming ([upgrading](upgrading.md)).
-It is also an ABI change for your consumers -- say so in your release notes.
+each file and the old names it still spells, until `jm upgrade` respells
+them ([upgrading](upgrading.md#symbol-prefix-gh-1591)). It is also an ABI
+change for your consumers -- say so in your release notes.
 
 ## Calling it from C++11
 

@@ -271,7 +271,18 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     """
     stems = sources(cfg)
     out = {}
-    for name in _derived_by_dir(tree, cfg):
+    # Headers AND sources: a varargs method's binder (`<stem>_<name>` in
+    # its own create-only `_core.c`, called from the binding) is derived
+    # and declared in no header. Duplicates stay header-only -- there a
+    # declaration and its definition would count twice.
+    found = set(_derived_by_dir(tree, cfg))
+    for c in sorted((tree / "native").rglob("*.c")):
+        found |= {
+            n
+            for n in declared(c.read_text(encoding="utf-8", errors="replace"))
+            if _source_of(n, stems) is not None
+        }
+    for name in found:
         src = _source_of(name, stems)
         if src is None:
             continue
@@ -283,33 +294,82 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
 
 
 def _author_files(root: Path) -> "list[Path]":
-    """The C/C++ files under *root*'s ``native/`` whose content is the
-    author's: ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it
-    does not classify (a module function's ``.c``, a hand-written file).
-    What jm rewrites whole -- JM, RECONCILED, DERIVED -- is not asked."""
-    from . import _createonly
+    """The project's C/C++ files whose content is the author's:
+    ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it does not
+    classify (a module function's ``.c``, a hand-written file). What jm
+    rewrites whole -- JM, RECONCILED, DERIVED -- is not asked.
 
-    native = root / "native"
-    if not native.is_dir():
-        return []
-    out = []
-    for p in sorted(native.rglob("*")):
-        if (
-            p.suffix not in (".c", ".h", ".cc", ".cpp", ".hpp")
-            or not p.is_file()
-        ):
-            continue
-        rel = p.relative_to(root).as_posix()
-        if any(
-            part in ("build", "_deps") for part in p.relative_to(root).parts
-        ):
-            continue
-        rule = _createonly.classify(rel)
-        if rule is None or rule.kind in (
+    Walked by gh-1583's ``_upgrade._project_files`` -- the walk `jm upgrade`
+    respells over -- so the refusal never names a file the upgrade it points
+    to would not fix: a nested project's, a build tree's."""
+    from . import _createonly
+    from . import _upgrade
+
+    def mine(p: Path) -> bool:
+        if p.suffix not in _upgrade._C_SUFFIXES:
+            return False
+        rule = _createonly.classify(p.relative_to(root).as_posix())
+        return rule is None or rule.kind in (
             _createonly.AUTHOR,
             _createonly.PARTIAL,
-        ):
-            out.append(p)
+        )
+
+    return _upgrade._project_files(root, mine)
+
+
+def old_names_pattern(names: "dict[str, str]") -> "re.Pattern":
+    """One regex matching any OLD name in *names* as a whole identifier,
+    case-sensitive -- the one matcher the refusal (:func:`unrenamed`) and
+    `jm upgrade`'s respell share, so what one reports the other rewrites.
+
+    Whole identifier is what makes the respell idempotent: ``fir_create``
+    cannot match inside ``zz_fir_create``, because ``_`` is an identifier
+    character.
+
+    >>> p = old_names_pattern({"fir_create": "zz_fir_create"})
+    >>> [m.group(0) for m in p.finditer("zz_fir_create fir_create FIR_CREATE")]
+    ['fir_create']
+    """
+    return re.compile(
+        r"(?<![A-Za-z0-9_])("
+        + "|".join(map(re.escape, sorted(names, key=len, reverse=True)))
+        + r")(?![A-Za-z0-9_])"
+    )
+
+
+_GUARD_LINE = re.compile(r"^\s*#\s*ifndef\s+([A-Za-z_]\w*)_CORE_H\b", re.M)
+
+
+def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
+    """``{component: the prefix its header already carries}`` wherever that
+    differs from what *cfg* declares -- a ``c_prefix`` CHANGED (``a`` to
+    ``b``) or REMOVED after the tree was prefixed.
+
+    Read from each component's include guard in the real tree, the one line
+    jm always derives: ``#ifndef A_FIR_CORE_H`` under ``c_prefix = "b"``
+    says ``a``. Neither case is migrated (gh-1591 phase 3 moves a bare tree
+    onto a prefix, nothing else), so both are refused rather than half-done.
+    """
+    from . import _config as C
+
+    want = prefix(cfg)
+    out = {}
+    hroot = INC.header_root(root, cfg)
+    for comp in C.components(cfg):
+        h = hroot / comp / f"{comp}_core.h"
+        if not h.is_file():
+            continue
+        m = _GUARD_LINE.search(h.read_text(encoding="utf-8", errors="replace"))
+        if not m:
+            continue
+        guard, name = m.group(1), comp.upper()
+        expect = upper(cfg, comp)
+        if guard == expect or guard == name:
+            continue
+        if guard.endswith("_" + name):
+            had = guard[: -len(name) - 1].lower()
+            if had != (want or ""):
+                out[comp] = had
     return out
 
 
@@ -333,11 +393,7 @@ def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
 
     if not names:
         return {}
-    pat = re.compile(
-        r"(?<![A-Za-z0-9_])("
-        + "|".join(map(re.escape, sorted(names, key=len, reverse=True)))
-        + r")(?![A-Za-z0-9_])"
-    )
+    pat = old_names_pattern(names)
     out = {}
     for p in _author_files(root):
         mask = _code_mask(p.read_text(encoding="utf-8", errors="replace"))
