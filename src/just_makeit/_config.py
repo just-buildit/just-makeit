@@ -3379,15 +3379,20 @@ class FindPackage(NamedTuple):
     a dependency that ships a ``.pc`` goes to ``Requires.private``
     (*pkg_config*), and one that does not goes to ``Libs.private``
     (*libs_private*). A bare string entry carries neither (gh-1576).
+
+    *cflags* is the compile half of the no-``.pc`` case (gh-1579): pc(5) has
+    no ``Cflags.private``, so a dependency whose header a jm header includes
+    puts its include flags in the ``.pc``'s own ``Cflags``.
     """
 
     name: str
     pkg_config: str = ""
     libs_private: str = ""
+    cflags: str = ""
 
 
 #: The keys a table entry of ``find_packages`` may carry.
-_FIND_PACKAGE_KEYS = ("name", "pkg_config", "libs_private")
+_FIND_PACKAGE_KEYS = ("name", "pkg_config", "libs_private", "cflags")
 
 
 def find_package_entries(cfg: dict) -> "list[FindPackage]":
@@ -3403,6 +3408,7 @@ def find_package_entries(cfg: dict) -> "list[FindPackage]":
             "Fftw3",
             { name = "Doppler", pkg_config = "doppler" },
             { name = "Threads", libs_private = "-pthread" },
+            { name = "Hdr", cflags = "-I/opt/hdr/include" },
         ]
 
     A malformed entry is refused rather than skipped: dropping it would
@@ -3413,8 +3419,8 @@ def find_package_entries(cfg: dict) -> "list[FindPackage]":
     --------
     >>> find_package_entries({"project": {"find_packages": [
     ...     "A", {"name": "B", "pkg_config": "b"}]}})
-    [FindPackage(name='A', pkg_config='', libs_private=''), \
-FindPackage(name='B', pkg_config='b', libs_private='')]
+    [FindPackage(name='A', pkg_config='', libs_private='', cflags=''), \
+FindPackage(name='B', pkg_config='b', libs_private='', cflags='')]
     """
     v = cfg.get("project", {}).get("find_packages", [])
     if not isinstance(v, (list, tuple)):
@@ -3455,6 +3461,7 @@ FindPackage(name='B', pkg_config='b', libs_private='')]
                 entry["name"],
                 entry.get("pkg_config", ""),
                 entry.get("libs_private", ""),
+                entry.get("cflags", ""),
             )
         )
     if errors:
@@ -3473,21 +3480,113 @@ def find_packages(cfg: dict) -> list[str]:
     return [e.name for e in find_package_entries(cfg)]
 
 
+class PkgModule(NamedTuple):
+    """One ``[project] pkg_modules`` entry: a module and its version bound.
+
+    An entry is written the way pc(5) writes a ``Requires`` item -- a module
+    name, optionally followed by one of ``=``, ``<``, ``>``, ``<=``, ``>=``
+    and a version (``"zlib >= 1.2"``). Each face needs a different spelling
+    of it, and before gh-1578 every face got the raw string: the variable
+    prefix became ``ZLIB >= 1.2`` and ``pkg_check_modules`` read ``>=`` as a
+    module name, so configure failed.
+
+    Examples
+    --------
+    >>> m = PkgModule("zlib", ">=", "1.2")
+    >>> m.prefix, m.cmake_spec, m.pc_spec
+    ('ZLIB', 'zlib>=1.2', 'zlib >= 1.2')
+    >>> PkgModule("fftw3f").cmake_spec
+    'fftw3f'
+    """
+
+    name: str
+    op: str = ""
+    version: str = ""
+
+    @property
+    def prefix(self) -> str:
+        """The ``pkg_check_modules`` prefix: ``PkgConfig::<prefix>``."""
+        return self.name.upper()
+
+    @property
+    def cmake_spec(self) -> str:
+        """The module spec ``pkg_check_modules`` parses (no spaces)."""
+        return f"{self.name}{self.op}{self.version}"
+
+    @property
+    def pc_spec(self) -> str:
+        """The ``Requires.private`` item, spelled as pc(5) spells it."""
+        if not self.op:
+            return self.name
+        return f"{self.name} {self.op} {self.version}"
+
+
+#: A module name, then optionally a pc(5) comparison and a version. The
+#: operators are the five pc(5) and FindPkgConfig both accept; `<=`/`>=`
+#: come before `<`/`>`/`=` so the alternation takes the longer one.
+_PKG_MODULE_RE = _re.compile(
+    r"^\s*([A-Za-z0-9_][A-Za-z0-9_.+-]*)"
+    r"(?:\s*(<=|>=|=|<|>)\s*([A-Za-z0-9_][A-Za-z0-9_.+~-]*))?\s*$"
+)
+
+
+def pkg_module_entries(cfg: dict) -> "list[PkgModule]":
+    """``[project] pkg_modules``, each entry as a :class:`PkgModule`.
+
+    The one reader of the key: the ``pkg_check_modules`` lines in the root
+    and the installed config, and the ``.pc``'s ``Requires.private``, all
+    render from these. An entry that does not parse is refused -- the same
+    reasoning as :func:`find_package_entries`: a dropped entry is a
+    dependency the build then fails on, far from the manifest.
+
+    .. code-block:: toml
+
+        [project]
+        pkg_modules = ["fftw3f", "zlib >= 1.2"]
+
+    Examples
+    --------
+    >>> pkg_module_entries({"project": {"pkg_modules": [
+    ...     "fftw3f", "zlib >= 1.2", "gtk+-3.0<4"]}})
+    [PkgModule(name='fftw3f', op='', version=''), \
+PkgModule(name='zlib', op='>=', version='1.2'), \
+PkgModule(name='gtk+-3.0', op='<', version='4')]
+    """
+    v = cfg.get("project", {}).get("pkg_modules", [])
+    if not isinstance(v, (list, tuple)):
+        return []
+    out: list[PkgModule] = []
+    errors: list[str] = []
+    for entry in v:
+        m = _PKG_MODULE_RE.match(entry) if isinstance(entry, str) else None
+        if m is None:
+            errors.append(
+                f"[project] pkg_modules entry {entry!r} is not a pkg-config"
+                " module name, optionally followed by one of = < > <= >= and"
+                ' a version (e.g. "zlib >= 1.2")'
+            )
+            continue
+        out.append(PkgModule(m.group(1), m.group(2) or "", m.group(3) or ""))
+    if errors:
+        _refuse(errors)
+    return out
+
+
 def pkg_modules(cfg: dict) -> list[str]:
-    """Return pkg-config module names declared under [project].
+    """The pkg-config module NAMES declared under ``[project] pkg_modules``.
 
     Each name X is emitted as
     ``pkg_check_modules(X_upper REQUIRED IMPORTED_TARGET X)`` inside the
     ``# ── External deps`` block, maintained by ``jm apply``.  The
-    resulting imported target is ``PkgConfig::X_UPPER``.  Declare in TOML as:
+    resulting imported target is ``PkgConfig::X_UPPER``.  An entry may carry
+    a version bound; see :func:`pkg_module_entries`.  Declare in TOML as:
 
     .. code-block:: toml
 
         [project]
         pkg_modules = ["doppler"]
     """
-    v = cfg.get("project", {}).get("pkg_modules", [])
-    return list(v) if isinstance(v, (list, tuple)) else []
+    return [e.name for e in pkg_module_entries(cfg)]
 
 
 def component_extra_link_libs(cfg: dict, component: str) -> list[str]:

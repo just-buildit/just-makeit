@@ -23,6 +23,15 @@ Each consumer also bumps the dependency's counter through jm and directly:
 ``1,2`` is one copy of its state, which re-linking a static dependency into
 the consumer could break.
 
+Two more declarations, the same eight faces each:
+
+- gh-1578: ``pkg_modules = ["extdep >= 1.0"]``. The raw string was the
+  ``pkg_check_modules`` prefix and module list, so configure failed on a
+  module named ``>=``. The name is the prefix now; the bound rides along.
+- gh-1579: a ``find_packages`` dependency with no ``.pc``. ``libs_private``
+  gave static pkg-config consumers its libs, but nothing gave any of them
+  its Cflags; ``cflags`` does, into the ``.pc``'s own ``Cflags``.
+
 Lives on PROJECT_ENV_TESTS: it needs cmake, a C compiler and pkg-config.
 
 GATE: a consumer of an installed project whose header includes a
@@ -97,14 +106,44 @@ _CONSUMER = (
     "}\n"
 )
 
-#: project -> (the [project] declaration, the target a core links)
+#: project -> (the [project] declaration, the target a core links).
+#: ``{ext}`` in a declaration is the dependency's install prefix.
 _STYLES = {
     "pa": (
         {"find_packages": [{"name": "ExtDep", "pkg_config": "extdep"}]},
         "ExtDep::extdep",
     ),
     "pb": ({"pkg_modules": ["extdep"]}, "PkgConfig::EXTDEP"),
+    # gh-1578: a version bound. It reached the variable prefix and the
+    # module list, so configure failed before anything built.
+    "pv": ({"pkg_modules": ["extdep >= 1.0"]}, "PkgConfig::EXTDEP"),
+    # gh-1579: a dependency that ships no .pc -- nothing here names extdep's
+    # own, so pkg-config never reads it. The compile half reaches the
+    # installed .pc's Cflags only through the author's `cflags`.
+    "pn": (
+        {
+            "find_packages": [
+                {
+                    "name": "ExtDep",
+                    "cflags": "-I{ext}/include -DEXTDEP_API=1",
+                    "libs_private": "-L{ext}/lib -lextdep",
+                }
+            ]
+        },
+        "ExtDep::extdep",
+    ),
 }
+
+
+def _fill(decl, ext: Path):
+    """*decl* with ``{ext}`` replaced by the dependency's install prefix."""
+    if isinstance(decl, str):
+        return decl.replace("{ext}", str(ext))
+    if isinstance(decl, list):
+        return [_fill(v, ext) for v in decl]
+    if isinstance(decl, dict):
+        return {k: _fill(v, ext) for k, v in decl.items()}
+    return decl
 
 
 def _run(cmd, cwd, env):
@@ -130,7 +169,7 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     assert run_cli("new", name, "--object", "alpha", cwd=root).returncode == 0
     proj = root / name
     cfg = C.load(proj)
-    cfg["project"].update(decl)
+    cfg["project"].update(_fill(decl, ext_pfx))
     # A plain library name and a PATH beside the target, as real manifests
     # carry: the compile-usage lines must read properties of neither -- a
     # path inside `$<TARGET_EXISTS:>` fails configure outright.
@@ -183,8 +222,33 @@ def installed(tmp_path_factory):
     env["PKG_CONFIG_PATH"] = str(ext_pfx / "lib" / "pkgconfig")
     _cmake_install(ext, ext_pfx, env)
     (root / "c.c").write_text(_CONSUMER)
-    pfxs = {name: _project(root, name, env, ext_pfx) for name in _STYLES}
-    return root, ext_pfx, pfxs, env
+    return root, ext_pfx, _Installs(root, env, ext_pfx), env
+
+
+class _Installs(dict):
+    """Each style's install prefix, built on first use and kept.
+
+    Lazily, so a style that fails to build fails the tests that name it,
+    not every test in the module: a regression in one declaration should
+    read as that declaration. A failure is kept too, rather than retried
+    over the half-written project it left.
+    """
+
+    def __init__(self, root: Path, env: dict, ext_pfx: Path) -> None:
+        super().__init__()
+        self._args = (root, env, ext_pfx)
+        self._failed: dict[str, BaseException] = {}
+
+    def __missing__(self, name: str) -> Path:
+        if name in self._failed:
+            raise self._failed[name]
+        root, env, ext_pfx = self._args
+        try:
+            self[name] = _project(root, name, env, ext_pfx)
+        except BaseException as e:
+            self._failed[name] = e
+            raise
+        return self[name]
 
 
 def _consume_cmake(root, ext_pfx, name, pfx, target, env) -> str:
@@ -257,7 +321,7 @@ def test_the_export_carries_no_absolute_dependency_path(installed):
     """The compile usage is exported as expressions the consumer evaluates,
     never as the producer's paths (cmake-packages(7), relocatability)."""
     root, ext_pfx, pfxs, _ = installed
-    for pfx in pfxs.values():
+    for pfx in (pfxs[name] for name in sorted(_STYLES)):
         text = "".join(
             p.read_text() for p in (pfx / "lib" / "cmake").rglob("*.cmake")
         )

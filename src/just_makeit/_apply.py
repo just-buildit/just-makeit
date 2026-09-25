@@ -1382,7 +1382,7 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
     Returns True if the file was modified.  If both sentinel lines are absent
     and there is nothing to write, the file is left untouched."""
     find_pkgs = C.find_packages(cfg)
-    pkg_mods = C.pkg_modules(cfg)
+    pkg_mods = C.pkg_module_entries(cfg)
 
     real = real_path.read_text(encoding="utf-8")
 
@@ -1392,9 +1392,12 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
             lines.append(f"find_package({pkg} REQUIRED)\n")
     if pkg_mods:
         lines.append("find_package(PkgConfig REQUIRED)\n")
+        # gh-1578: the prefix (and so `PkgConfig::<PREFIX>`) is the module
+        # NAME; the quoted spec carries any version bound.
         for mod in pkg_mods:
             lines.append(
-                f"pkg_check_modules({mod.upper()} REQUIRED IMPORTED_TARGET {mod})\n"
+                f"pkg_check_modules({mod.prefix} REQUIRED IMPORTED_TARGET"
+                f' "{mod.cmake_spec}")\n'
             )
     if lines:
         # gh-1572: the archive's link interface names these packages'
@@ -1406,7 +1409,8 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
         if pkg_mods:
             deps.append("find_dependency(PkgConfig)")
             deps += [
-                f"pkg_check_modules({m.upper()} REQUIRED IMPORTED_TARGET {m})"
+                f"pkg_check_modules({m.prefix} REQUIRED IMPORTED_TARGET"
+                f' "{m.cmake_spec}")'
                 for m in pkg_mods
             ]
         body = "\n".join(["include(CMakeFindDependencyMacro)", *deps])
@@ -1421,7 +1425,7 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
         # break `pkg-config --cflags` for everyone.
         entries = C.find_package_entries(cfg)
         requires = [e.pkg_config for e in entries if e.pkg_config]
-        requires += [m for m in pkg_mods if m not in requires]
+        requires += [m.pc_spec for m in pkg_mods if m.name not in requires]
         if requires:
             lines.append(
                 "set(JM_PC_REQUIRES_PRIVATE "
@@ -1433,6 +1437,12 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
                 "set(JM_PC_LIBS_PRIVATE "
                 f'"Libs.private: {" ".join(libs_private)}")\n'
             )
+        # gh-1579: the compile half of the no-`.pc` case. pc(5) has no
+        # private Cflags -- a header's includes are needed however the
+        # consumer links -- so these append to the `.pc`'s own `Cflags`.
+        cflags = [e.cflags for e in entries if e.cflags]
+        if cflags:
+            lines.append(f'set(JM_PC_CFLAGS " {" ".join(cflags)}")\n')
 
     has_begin = _EXTDEPS_BEGIN in real
     has_end = _EXTDEPS_END in real
@@ -3281,6 +3291,11 @@ def run(
     except _procglobal.ProcGlobalRefusal as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+    # gh-1578: the external-deps readers refuse a malformed entry. Read them
+    # here, before the stamp below or any other write, so a refusal leaves
+    # the tree exactly as it was rather than half-applied.
+    C.find_package_entries(cfg)
+    C.pkg_module_entries(cfg)
     # gh-1128: an ADOPTER jm cannot generate into is reported, not refused.
     # Every other module still shares one state; this one keeps its own copy
     # until its author adds the adopt to the binding they already write, and
