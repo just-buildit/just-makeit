@@ -168,7 +168,11 @@ def run(root: Path) -> None:
     snippet = (STEPS / "02_step.c").read_text(encoding="utf-8")
     fn = snippet[snippet.index("static inline") :].rstrip() + "\n"
     core_h.write_text(
-        _replace_function(core_h.read_text(encoding="utf-8"), "ramp_step", fn),
+        _replace_function(
+            core_h.read_text(encoding="utf-8"),
+            "stream_source_demo_ramp_step",
+            fn,
+        ),
         encoding="utf-8",
     )
 

@@ -10,7 +10,7 @@ re-derives the glue (``.pyi`` included) from the edited header.
 
 View-specific note (verified empirically):
 
-  - The *parent* ``Acc`` class summary derives from ``acc_create``'s ``@brief``.
+  - The *parent* ``Acc`` class summary derives from ``acc_bank_acc_create``'s ``@brief``.
   - The *view* ``SeededAcc`` summary does NOT: the stub generator keys the
     class summary off ``<obj>_create``, and the view shares ``acc`` (there is
     no ``seededacc_create``), so its summary stays the generic
@@ -19,9 +19,9 @@ View-specific note (verified empirically):
     manifest ``jm property --doc`` value, not a header ``@brief`` — those
     getters are auto-implemented inline and have no header declaration.
 
-So the header-authored enrichment here is: a real ``@brief`` on ``acc_create``
+So the header-authored enrichment here is: a real ``@brief`` on ``acc_bank_acc_create``
 (the ``Acc`` summary) and a ``@brief`` / ``@return`` / ``@code`` doctest on the
-``acc_total`` named method.
+``acc_bank_acc_total`` named method.
 
 Usage:  python3 .steps/04b_doxygen.py     # run from the project root
 """
@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 OBJ = "acc"
@@ -37,13 +39,13 @@ OBJ = "acc"
 # The class summary for the parent object, injected over jm's scaffold brief.
 CREATE_BRIEF = "Create an empty accumulator (running sum), zeroed."
 
-# Doxygen blocks keyed by the C declaration they sit above. `acc_total`'s
+# Doxygen blocks keyed by the C declaration they sit above. `acc_bank_acc_total`'s
 # `@code` block becomes a runnable Examples doctest. `step()` returns the
 # running sum (this component's step is not void), so each `a.step(...)` line
 # echoes that sum — the expected-output lines reflect it.
 BLOCKS = [
     (
-        "double acc_total(",
+        "double acc_bank_acc_total(",
         "/**\n"
         " * @brief Return the running sum without mutating the accumulator.\n"
         " * @return The sum of every sample stepped so far.\n"
@@ -66,16 +68,18 @@ def main() -> None:
     header = pathlib.Path("native/inc/acc_bank") / OBJ / f"{OBJ}_core.h"
     text = header.read_text(encoding="utf-8")
 
-    # Replace jm's trivial scaffold brief on acc_create with a real summary.
+    # Replace jm's trivial scaffold brief on acc_bank_acc_create with a real summary.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {OBJ} instance\..*?"
-        rf"(?={OBJ}_state_t \*{OBJ}_create)",
+        rf"(?={_csym.stem(header, OBJ)}_state_t \*{_csym.stem(header, OBJ)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {OBJ} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     # Prepend each method's Doxygen block above its bare declaration.

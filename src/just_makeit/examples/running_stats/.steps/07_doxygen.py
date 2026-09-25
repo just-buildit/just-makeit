@@ -2,7 +2,7 @@
 ``@brief`` so the generated ``.pyi`` class docstring reads as a sentence.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``running_stats_create()`` and turns its ``@brief``
+``/** ... */`` comment on ``my_stats_running_stats_create()`` and turns its ``@brief``
 into the summary line of the Python class docstring. Straight off the scaffold
 that summary is the generic ``"RunningStats component."``; replacing the
 boilerplate ``@brief`` with a one-line description of what the object *does*
@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 OBJ = "running_stats"
@@ -42,13 +44,15 @@ def _enrich() -> None:
     # Parameters section of the .pyi still derives from the state fields).
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {OBJ} instance\..*?"
-        rf"(?={OBJ}_state_t \*{OBJ}_create)",
+        rf"(?={_csym.stem(header, OBJ)}_state_t \*{_csym.stem(header, OBJ)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {OBJ} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     header.write_text(text, encoding="utf-8")

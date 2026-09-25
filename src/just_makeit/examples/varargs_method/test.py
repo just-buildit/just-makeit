@@ -103,7 +103,7 @@ def run(root: Path) -> None:
     ext_c = proj / "native" / "src" / "filter" / "filter_ext.c"
     et = ext_c.read_text(encoding="utf-8")
     assert "extern PyObject *" in et
-    assert "filter_configure(" in et
+    assert "va_filter_filter_configure(" in et
     assert "METH_VARARGS | METH_KEYWORDS" in et
     assert "filter_configure_core.c" in et
 
@@ -223,7 +223,7 @@ def run(root: Path) -> None:
     # filter is a scalar step() object → jm app generates a working tool:
     # a real argv parser + read→step→write loop, no <<IMPLEMENT>> stub.
     assert "<<IMPLEMENT" not in app_text
-    assert "filter_step(state, x)" in app_text
+    assert "va_filter_filter_step(state, x)" in app_text
     assert '"--input"' in app_text and "(void)argc" not in app_text
 
 

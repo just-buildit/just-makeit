@@ -33,37 +33,37 @@ jm new my_dsp \
 ### `native/inc/my_dsp/my_filter/my_filter_core.h`
 
 ```c
-#ifndef MY_FILTER_CORE_H
-#define MY_FILTER_CORE_H
+#ifndef MY_DSP_MY_FILTER_CORE_H
+#define MY_DSP_MY_FILTER_CORE_H
 
 #include "my_dsp/clib_common.h"
 
 /* state struct — one entry per --state flag */
 typedef struct {
     float gain;
-} my_filter_state_t;
+} my_dsp_my_filter_state_t;
 
-my_filter_state_t *my_filter_create(float gain);
-void               my_filter_destroy(my_filter_state_t *state);
-void               my_filter_reset(my_filter_state_t *state);
+my_dsp_my_filter_state_t *my_dsp_my_filter_create(float gain);
+void               my_dsp_my_filter_destroy(my_dsp_my_filter_state_t *state);
+void               my_dsp_my_filter_reset(my_dsp_my_filter_state_t *state);
 
 /* inline step — declared in the header so callers can inline at -O2 */
 static inline float _Complex
-my_filter_step(const my_filter_state_t *state, float _Complex x)
+my_dsp_my_filter_step(const my_dsp_my_filter_state_t *state, float _Complex x)
 {
     (void)state; /* TODO: implement using state variables */
     return (float _Complex)x;
 }
 
-void my_filter_steps(my_filter_state_t *state,
+void my_dsp_my_filter_steps(my_dsp_my_filter_state_t *state,
                      const float _Complex *input,
                      float _Complex       *output,
                      size_t               n);
 
-float my_filter_get_gain(const my_filter_state_t *state);
-void  my_filter_set_gain(my_filter_state_t *state, float val);
+float my_dsp_my_filter_get_gain(const my_dsp_my_filter_state_t *state);
+void  my_dsp_my_filter_set_gain(my_dsp_my_filter_state_t *state, float val);
 
-#endif /* MY_FILTER_CORE_H */
+#endif /* MY_DSP_MY_FILTER_CORE_H */
 ```
 
 ### `native/src/my_filter/my_filter_core.c`
@@ -71,30 +71,30 @@ void  my_filter_set_gain(my_filter_state_t *state, float val);
 ```c
 #include "my_dsp/my_filter/my_filter_core.h"
 
-my_filter_state_t *
-my_filter_create(float gain)
+my_dsp_my_filter_state_t *
+my_dsp_my_filter_create(float gain)
 {
-    my_filter_state_t *obj = calloc(1, sizeof(*obj));
+    my_dsp_my_filter_state_t *obj = calloc(1, sizeof(*obj));
     if (!obj) return NULL;
     obj->gain = gain;
     return obj;
 }
 
-void my_filter_destroy(my_filter_state_t *state) { free(state); }
-void my_filter_reset(my_filter_state_t *state)   { state->gain = 1.0f; }
+void my_dsp_my_filter_destroy(my_dsp_my_filter_state_t *state) { free(state); }
+void my_dsp_my_filter_reset(my_dsp_my_filter_state_t *state)   { state->gain = 1.0f; }
 
 void
-my_filter_steps(my_filter_state_t *state,
+my_dsp_my_filter_steps(my_dsp_my_filter_state_t *state,
                 const float _Complex *input,
                 float _Complex       *output,
                 size_t               n)
 {
     for (size_t i = 0; i < n; i++)
-        output[i] = my_filter_step(state, input[i]);
+        output[i] = my_dsp_my_filter_step(state, input[i]);
 }
 
-float my_filter_get_gain(const my_filter_state_t *state) { return state->gain; }
-void  my_filter_set_gain(my_filter_state_t *state, float val) { state->gain = val; }
+float my_dsp_my_filter_get_gain(const my_dsp_my_filter_state_t *state) { return state->gain; }
+void  my_dsp_my_filter_set_gain(my_dsp_my_filter_state_t *state, float val) { state->gain = val; }
 ```
 
 ### `native/src/my_filter/my_filter_ext.c`
@@ -110,23 +110,23 @@ of it is meant to be edited.
 ```c
 int main(void) {
     int _fails = 0;
-    my_filter_state_t *obj = my_filter_create(1.0f);
+    my_dsp_my_filter_state_t *obj = my_dsp_my_filter_create(1.0f);
     CHECK(obj != NULL);
 
     /* gain: getter / setter */
-    CHECK(my_filter_get_gain(obj) == 1.0f);
-    my_filter_set_gain(obj, 2.0f);
-    CHECK(my_filter_get_gain(obj) == 2.0f);
+    CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
+    my_dsp_my_filter_set_gain(obj, 2.0f);
+    CHECK(my_dsp_my_filter_get_gain(obj) == 2.0f);
 
     /* step: verify it runs without crashing */
-    (void)my_filter_step(obj, 0.0f + 0.0f * I);
+    (void)my_dsp_my_filter_step(obj, 0.0f + 0.0f * I);
 
     /* reset restores defaults */
-    my_filter_set_gain(obj, 2.0f);
-    my_filter_reset(obj);
-    CHECK(my_filter_get_gain(obj) == 1.0f);
+    my_dsp_my_filter_set_gain(obj, 2.0f);
+    my_dsp_my_filter_reset(obj);
+    CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
 
-    my_filter_destroy(obj);
+    my_dsp_my_filter_destroy(obj);
     return _fails ? 1 : 0;
 }
 ```
@@ -146,11 +146,11 @@ class MyFilter:
 
 ## What you fill in
 
-One line in `my_filter_step()`. A first-order IIR is typical:
+One line in `my_dsp_my_filter_step()`. A first-order IIR is typical:
 
 ```c
 static inline float _Complex
-my_filter_step(const my_filter_state_t *state, float _Complex x)
+my_dsp_my_filter_step(const my_dsp_my_filter_state_t *state, float _Complex x)
 {
     return state->gain * x;   /* ← your math here */
 }

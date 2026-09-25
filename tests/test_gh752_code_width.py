@@ -13,6 +13,10 @@ it, per site, with the measured column count — and never edits the line: a
 ``>>>`` is executable and its trailing comment column is a deliberate choice.
 
 The design decision under test here is **measure, don't predict**. Predicting
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from the header meant guessing which blocks surface and at what indent, and
 the guess was wrong three ways on doppler (a ``create`` block renders into the
 *class* docstring at indent 4; a ``manual_stub`` member renders no docstring
@@ -71,7 +75,7 @@ class TestBudget:
 def _project(tmp_path, example_lines):
     """A component whose `step()` carries an authored ``@code`` block."""
     root = tmp_path / "proj"
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     object_run(root, "widget", None, state_vars=[("gain", "double", "1.0")])
     h = root / INC_ROOT / "widget" / "widget_core.h"
     text = h.read_text(encoding="utf-8")

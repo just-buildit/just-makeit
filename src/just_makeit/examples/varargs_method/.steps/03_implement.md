@@ -2,21 +2,21 @@
 
 Three stubs need bodies:
 
-- `filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
-- `filter_configure` in `native/src/filter/filter_configure_core.c` — parse
+- `va_filter_filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
+- `va_filter_filter_configure` in `native/src/filter/filter_configure_core.c` — parse
   the `gain=` keyword argument and write it to state.
-- `filter_current_gain` in `native/src/filter/filter_core.c` — return
+- `va_filter_filter_current_gain` in `native/src/filter/filter_core.c` — return
   `state->gain`.
 
 ```{03_patch.py}
 ```
 
-`filter_step` — one multiply:
+`va_filter_filter_step` — one multiply:
 
 ```{03_step.c}
 ```
 
-`filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`:
+`va_filter_filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`:
 
 ```{03_configure.c}
 ```
@@ -58,7 +58,7 @@ exercised from one example:
  * 6.0
  * @endcode
  */
-double filter_current_gain(filter_state_t *state);
+double va_filter_filter_current_gain(va_filter_filter_state_t *state);
 ```
 
 `just-makeit apply` re-derives the stub, and `src/my_filter/filter.pyi` now

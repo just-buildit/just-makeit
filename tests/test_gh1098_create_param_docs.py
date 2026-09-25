@@ -28,6 +28,10 @@ descriptions byte-for-byte, new names arrive **bare** for the author to fill
 (`scaffold_doc_block`'s rule, for its reasons), and names that are gone go.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -63,7 +67,7 @@ FRAG = (
 
 def _project(tmp_path: Path, name: str) -> Path:
     root = tmp_path / name
-    _quiet(new_run, name, root)
+    _quiet(new_run, name, root, c_prefix=None)
     _quiet(
         object_run,
         root,

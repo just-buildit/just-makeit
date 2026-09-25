@@ -93,9 +93,9 @@ I and Q parts as two `int16_t` values.  Returns the number of bytes written
 
 ```c
 static inline int32_t
-cf32_to_q15_step(const cf32_to_q15_state_t *state, float _Complex x);
+iqfile_cf32_to_q15_step(const iqfile_cf32_to_q15_state_t *state, float _Complex x);
 
-void cf32_to_q15_steps(cf32_to_q15_state_t *state,
+void iqfile_cf32_to_q15_steps(iqfile_cf32_to_q15_state_t *state,
                        const float _Complex *input,
                        int32_t             *output,
                        size_t               n);
@@ -109,9 +109,9 @@ descriptor stored in `fd` and returns it as a normalised `float _Complex`.
 
 ```c
 static inline float _Complex
-q15_to_cf32_step(const q15_to_cf32_state_t *state);
+iqfile_q15_to_cf32_step(const iqfile_q15_to_cf32_state_t *state);
 
-void q15_to_cf32_steps(q15_to_cf32_state_t *state,
+void iqfile_q15_to_cf32_steps(iqfile_q15_to_cf32_state_t *state,
                        float _Complex       *output,
                        size_t               n);
 ```
@@ -155,7 +155,7 @@ Three properties across the two types:
 struct and auto-implements the getter as `return state->samples_written` — no
 `<<IMPLEMENT>>` stub needed.
 
-**Computed** (`eof`, no `--field`): getter stub calls `q15_to_cf32_get_eof()`
+**Computed** (`eof`, no `--field`): getter stub calls `iqfile_q15_to_cf32_get_eof()`
 which you implement — returning 1 when the last `read()` returned 0 bytes.
 
 ---
@@ -163,7 +163,7 @@ which you implement — returning 1 when the last `read()` returned 0 bytes.
 ## 4. Implement the C kernels
 
 ```python
-"""Implement cf32_to_q15_step() and add the samples_written counter."""
+"""Implement iqfile_cf32_to_q15_step() and add the samples_written counter."""
 
 from pathlib import Path
 import sys
@@ -203,12 +203,12 @@ text = core_c.read_text(encoding="utf-8")
 
 OLD_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = cf32_to_q15_step(state, input[i]);
+        output[i] = iqfile_cf32_to_q15_step(state, input[i]);
 }"""
 
 NEW_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = cf32_to_q15_step(state, input[i]);
+        output[i] = iqfile_cf32_to_q15_step(state, input[i]);
     state->samples_written += (uint32_t)n;
 }"""
 
@@ -218,7 +218,7 @@ print(f"patched  {core_c.relative_to(root)}")
 ```
 
 ```python
-"""Implement q15_to_cf32_step(), samples_read counter, and eof getter."""
+"""Implement iqfile_q15_to_cf32_step(), samples_read counter, and eof getter."""
 
 from pathlib import Path
 import sys
@@ -262,11 +262,11 @@ assert OLD in text, "step stub not found — was it already patched?"
 text = text.replace(OLD, NEW, 1)
 
 # Add eof getter declaration before the closing header guard #endif
-guard = "#endif /* Q15_TO_CF32_CORE_H */"
+guard = "#endif /* IQFILE_Q15_TO_CF32_CORE_H */"
 assert guard in text, "header guard not found"
 text = text.replace(
     guard,
-    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n"
+    "int32_t iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state);\n\n"
     + guard,
     1,
 )
@@ -288,12 +288,12 @@ if "<unistd.h>" not in text:
 # Counter in steps()
 OLD_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = q15_to_cf32_step(state);
+        output[i] = iqfile_q15_to_cf32_step(state);
 }"""
 
 NEW_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = q15_to_cf32_step(state);
+        output[i] = iqfile_q15_to_cf32_step(state);
     state->samples_read += (uint32_t)n;
 }"""
 
@@ -303,9 +303,9 @@ text = text.replace(OLD_LOOP, NEW_LOOP, 1)
 # eof getter: `jm property` scaffolded a marked placeholder for it (step 3);
 # fill that in rather than writing a second definition beside it.
 OLD_EOF = """\
-/* <<IMPLEMENT: q15_to_cf32_get_eof>> */
+/* <<IMPLEMENT: iqfile_q15_to_cf32_get_eof>> */
 int32_t
-q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
+iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state)
 {
     (void)state;
     return 0; /* placeholder */
@@ -313,7 +313,7 @@ q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
 
 NEW_EOF = """\
 int32_t
-q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
+iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state)
 {
     if (state->fd < 0)
         return 1;
@@ -337,7 +337,8 @@ the two `int16_t` values, the step packs both into one `int32_t`
 
 ```c
 static inline int32_t
-cf32_to_q15_step (const cf32_to_q15_state_t *state, float _Complex x)
+iqfile_cf32_to_q15_step (const iqfile_cf32_to_q15_state_t *state,
+                         float _Complex x)
 {
   float   scale   = state->scale;
   int16_t i       = (int16_t)(crealf (x) * scale);
@@ -363,8 +364,8 @@ input never wraps around silently.
 Reads four bytes (two `int16_t`) from `state->fd` on every call:
 
 ```c
-static inline float _Complex q15_to_cf32_step (
-    const q15_to_cf32_state_t *state)
+static inline float _Complex iqfile_q15_to_cf32_step (
+    const iqfile_q15_to_cf32_state_t *state)
 {
   int16_t pair[2] = { 0, 0 };
   ssize_t n       = read ((int)state->fd, pair, sizeof (pair));
@@ -392,12 +393,12 @@ struct already has `uint32_t samples_written;` — so the patch adds a single
 line to each `_steps()` function:
 
 ```c
-state->samples_written += (uint32_t)n;   /* in cf32_to_q15_steps() */
-state->samples_read    += (uint32_t)n;   /* in q15_to_cf32_steps()  */
+state->samples_written += (uint32_t)n;   /* in iqfile_cf32_to_q15_steps() */
+state->samples_read    += (uint32_t)n;   /* in iqfile_q15_to_cf32_steps()  */
 ```
 
 `eof` is a **computed** property.  `jm property` left a marked placeholder for
-`q15_to_cf32_get_eof()` in `_core.c` (it returns 0, so the project built and
+`iqfile_q15_to_cf32_get_eof()` in `_core.c` (it returns 0, so the project built and
 imported before this step); the patch fills it in, using `lseek` to compare the
 current and end file positions:
 
@@ -419,7 +420,7 @@ once, and every surface inherits it:
 /**
  * @brief Pack complex float samples into interleaved q15 (int16 I/Q).
  */
-cf32_to_q15_state_t *cf32_to_q15_create(float scale);
+iqfile_cf32_to_q15_state_t *iqfile_cf32_to_q15_create(float scale);
 ```
 
 Property docstrings come from **whichever source actually backs the getter**:
@@ -439,7 +440,7 @@ docstring:
 /**
  * @brief True (1) once the backing file descriptor is exhausted.
  */
-int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);
+int32_t iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state);
 ```
 
 `jm apply` re-derives the stub, and `conv.pyi` now carries a real summary on
@@ -487,7 +488,7 @@ finding):
     a ``--field`` getter is auto-implemented inline, so there is no header
     declaration to annotate. Those docs are set in ``test.py`` / step 3.
   - A **computed** property's getter has a real declaration, so it CAN carry a
-    header ``@brief``. ``eof`` is computed (``q15_to_cf32_get_eof``), so its
+    header ``@brief``. ``eof`` is computed (``iqfile_q15_to_cf32_get_eof``), so its
     docstring is enriched here.
 
 iqfile exposes no named ``jm method`` (only ``step``/``steps`` plus
@@ -503,6 +504,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 # Class summaries, injected over jm's scaffold brief on each <obj>_create.
@@ -521,7 +524,7 @@ CREATE_BRIEFS = {
 GETTER_BLOCKS = {
     "q15_to_cf32": [
         (
-            "int32_t q15_to_cf32_get_eof(",
+            "int32_t iqfile_q15_to_cf32_get_eof(",
             "/**\n"
             " * @brief True (1) once the backing file descriptor is"
             " exhausted.\n"
@@ -538,13 +541,15 @@ def _enrich(obj: str) -> None:
     # Replace jm's trivial scaffold brief on <obj>_create with a real summary.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
-        rf"(?={obj}_state_t \*{obj}_create)",
+        rf"(?={_csym.stem(header, obj)}_state_t \*{_csym.stem(header, obj)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEFS[obj]}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {obj}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {obj} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     # Prepend each computed getter's Doxygen block above its declaration.

@@ -24,6 +24,10 @@ control proving it, because a guard that refused the working spelling too would
 satisfy every refusal test on its own.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import shutil
@@ -51,7 +55,7 @@ def _apply(tmp_path: Path, body: str) -> Path:
     root = tmp_path / "proj"
     frag = tmp_path / "frag.toml"
     frag.write_text(_HEAD + body, encoding="utf-8")
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     apply_run(root, fragment=frag)
     return root
 

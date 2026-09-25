@@ -19,6 +19,10 @@ override is still CHECKED (a drifted one is), and without an override the
 check is what it was.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -47,7 +51,7 @@ def _quiet(fn, *a, **kw):
 
 def _project(tmp_path: Path, no_state: bool = False) -> Path:
     root = tmp_path / "d1494"
-    _quiet(new_run, "d1494", root)
+    _quiet(new_run, "d1494", root, c_prefix=None)
     _quiet(module_run, root, "dsp")
     _quiet(
         object_run,

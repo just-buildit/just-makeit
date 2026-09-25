@@ -1,4 +1,4 @@
-"""Patch biquad_step stub: drop const, add DF2T body."""
+"""Patch my_filters_biquad_step stub: drop const, add DF2T body."""
 
 import pathlib
 import re
@@ -9,18 +9,19 @@ text = header.read_text(encoding="utf-8")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float\s*\n"
-    r"biquad_step\((?:const )?biquad_state_t \*state.*?\n\}",
+    r"my_filters_biquad_step\((?:const )?my_filters_biquad_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 m = stub_re.search(text)
 if not m:
     print(
-        "ERROR: biquad_step stub not found — already patched?", file=sys.stderr
+        "ERROR: my_filters_biquad_step stub not found — already patched?",
+        file=sys.stderr,
     )
     sys.exit(1)
 
 impl = (
-    "biquad_step(biquad_state_t *state, float x)\n"
+    "my_filters_biquad_step(my_filters_biquad_state_t *state, float x)\n"
     "{\n"
     "    float y  = state->b0 * x + state->w1;\n"
     "    state->w1 = state->b1 * x - state->a1 * y + state->w2;\n"

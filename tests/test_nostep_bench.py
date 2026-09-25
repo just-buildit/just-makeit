@@ -6,6 +6,10 @@ undeclared and the bench failed to compile. Since `create(void)` is callable,
 the bench must declare it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import contextlib
 import io
 import re
@@ -44,7 +48,7 @@ def _silent(fn, *a, **k):
 
 def test_nostep_void_create_bench_declares_obj(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest, fragments=True)
+    _silent(new_run, "p", dest, fragments=True, c_prefix=None)
     _silent(module_run, dest, "m")
     (dest / "objects").mkdir(exist_ok=True)
     (dest / "objects" / "cfg.toml").write_text(_CFG_FRAGMENT, encoding="utf-8")

@@ -20,6 +20,10 @@ check counter was wrong by one, in exactly the direction that keeps the banner
 showing after a real suite has been added.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
@@ -64,7 +68,7 @@ def _quiet(fn, *a, **kw):
 
 def _project(tmp_path, comp="telemetry", *, no_step=False) -> Path:
     root = tmp_path / "proj"
-    _quiet(new_run, "proj", root)
+    _quiet(new_run, "proj", root, c_prefix=None)
     _quiet(
         object_run,
         root,
@@ -302,7 +306,7 @@ class TestNoFalsePositives:
         # bench rule at all. Gating on that would fail every make project's CI
         # for something no `jm apply` can clear — the gap itself is gh-832.
         root = tmp_path / "mk"
-        _quiet(new_run, "mk", root, build_system="make")
+        _quiet(new_run, "mk", root, build_system="make", c_prefix=None)
         _quiet(object_run, root, "fir", None)
         assert (root / "native" / "benchmarks" / "bench_fir_core.c").is_file()
         assert _hollow.orphans(root, C.load(root)) == []
@@ -385,7 +389,7 @@ class TestTheSilentBenchmark:
         # section read 2x the files (doppler: 31 files, `SILENT (62)`).
         # One object, one file, one finding.
         root = tmp_path / "modproj"
-        _quiet(new_run, "modproj", root)
+        _quiet(new_run, "modproj", root, c_prefix=None)
         _quiet(module_run, root, "m")
         _quiet(
             object_run,

@@ -1,5 +1,9 @@
 """Integration tests for `just-makeit new`."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 import re
@@ -19,7 +23,7 @@ _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "my_filter"
-    run("my_filter", dest, ["my_filter"])
+    run("my_filter", dest, ["my_filter"], c_prefix=None)
     return dest
 
 
@@ -27,7 +31,7 @@ def project(tmp_path):
 @pytest.fixture()
 def scaffold(tmp_path):
     dest = tmp_path / "my_proj"
-    run("my_proj", dest)
+    run("my_proj", dest, c_prefix=None)
     return dest
 
 
@@ -183,6 +187,7 @@ class TestNewConfig:
             dest,
             ["comp"],
             [("cutoff", "double", "440.0"), ("order", "int", "4")],
+            c_prefix=None,
         )
         try:
             import tomllib
@@ -352,7 +357,7 @@ class TestNewContent:
         from just_makeit._init import run as init_run
 
         dest = tmp_path / "my_pkg"
-        run("my_pkg", dest)
+        run("my_pkg", dest, c_prefix=None)
         init_run(dest, "gain")
         umbrella = (dest / INC_ROOT / "my_pkg.h").read_text(encoding="utf-8")
         assert f'#include "{INC.core_include("gain", dest)}"' in umbrella
@@ -384,12 +389,12 @@ class TestMakeTestRunner:
 
     def _makefile(self, tmp_path, **kwargs) -> str:
         dest = tmp_path / "proj"
-        run("proj", dest, **kwargs)
+        run("proj", dest, **kwargs, c_prefix=None)
         return (dest / "Makefile").read_text(encoding="utf-8")
 
     def _makefile_simple(self, tmp_path, **kwargs) -> str:
         dest = tmp_path / "proj"
-        run("proj", dest, build_system="make", **kwargs)
+        run("proj", dest, build_system="make", **kwargs, c_prefix=None)
         return (dest / "Makefile").read_text(encoding="utf-8")
 
     # ── CMake Makefile (default) ───────────────────────────────────────────
@@ -445,7 +450,7 @@ class TestMakeTestRunner:
 class TestNewStateVars:
     def test_default_uses_gain(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, ["comp"])
+        run("comp", dest, ["comp"], c_prefix=None)
         core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
@@ -454,7 +459,13 @@ class TestNewStateVars:
 
     def test_custom_single_var(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, ["comp"], [("cutoff", "double", "0.0")])
+        run(
+            "comp",
+            dest,
+            ["comp"],
+            [("cutoff", "double", "0.0")],
+            c_prefix=None,
+        )
         core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
@@ -467,6 +478,7 @@ class TestNewStateVars:
             dest,
             ["comp"],
             [("gain", "double", "1.0"), ("order", "int", "4")],
+            c_prefix=None,
         )
         core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
@@ -476,7 +488,9 @@ class TestNewStateVars:
 
     def test_float_type(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, ["comp"], [("alpha", "float", "0.0f")])
+        run(
+            "comp", dest, ["comp"], [("alpha", "float", "0.0f")], c_prefix=None
+        )
         core_h = (dest / INC_ROOT / "comp" / "comp_core.h").read_text(
             encoding="utf-8"
         )
@@ -484,7 +498,7 @@ class TestNewStateVars:
 
     def test_reset_uses_default_not_zero(self, tmp_path):
         dest = tmp_path / "comp"
-        run("comp", dest, ["comp"], [("gain", "double", "1.5")])
+        run("comp", dest, ["comp"], [("gain", "double", "1.5")], c_prefix=None)
         c = (dest / "native" / "src" / "comp" / "comp_core.c").read_text(
             encoding="utf-8"
         )
@@ -494,13 +508,13 @@ class TestNewStateVars:
 class TestNewWithModules:
     def test_single_module_scaffolded(self, tmp_path):
         dest = tmp_path / "my_pkg"
-        run("my_pkg", dest, modules=["audio"])
+        run("my_pkg", dest, modules=["audio"], c_prefix=None)
         assert (dest / "native" / "src" / "audio" / "audio_ext.c").exists()
         assert (dest / "src" / "my_pkg" / "audio" / "__init__.py").exists()
 
     def test_multiple_modules_scaffolded(self, tmp_path):
         dest = tmp_path / "my_pkg"
-        run("my_pkg", dest, modules=["osc", "env"])
+        run("my_pkg", dest, modules=["osc", "env"], c_prefix=None)
         assert (dest / "native" / "src" / "osc" / "osc_ext.c").exists()
         assert (dest / "native" / "src" / "env" / "env_ext.c").exists()
 
@@ -508,13 +522,13 @@ class TestNewWithModules:
         from just_makeit._config import load, modules as cfg_modules
 
         dest = tmp_path / "my_pkg"
-        run("my_pkg", dest, modules=["osc", "env"])
+        run("my_pkg", dest, modules=["osc", "env"], c_prefix=None)
         cfg = load(dest)
         assert set(cfg_modules(cfg)) == {"osc", "env"}
 
     def test_module_add_subdirectory_in_cmake(self, tmp_path):
         dest = tmp_path / "my_pkg"
-        run("my_pkg", dest, modules=["audio"])
+        run("my_pkg", dest, modules=["audio"], c_prefix=None)
         cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/audio)" in cmake
 
@@ -522,22 +536,22 @@ class TestNewWithModules:
 class TestNewValidation:
     def test_invalid_name_digit_start(self, tmp_path):
         with pytest.raises(SystemExit):
-            run("1bad", tmp_path / "1bad")
+            run("1bad", tmp_path / "1bad", c_prefix=None)
 
     def test_invalid_name_hyphen(self, tmp_path):
         with pytest.raises(SystemExit):
-            run("my-filter", tmp_path / "my-filter")
+            run("my-filter", tmp_path / "my-filter", c_prefix=None)
 
     def test_nonempty_dest_fails(self, tmp_path):
         dest = tmp_path / "gain"
         dest.mkdir()
         (dest / "existing.txt").write_text("data")
         with pytest.raises(SystemExit):
-            run("gain", dest)
+            run("gain", dest, c_prefix=None)
 
     def test_single_word_name(self, tmp_path):
         dest = tmp_path / "gain"
-        run("gain", dest, ["gain"])
+        run("gain", dest, ["gain"], c_prefix=None)
         cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
         assert re.search(r"project\(\s*gain\b", cmake)
 
@@ -561,7 +575,7 @@ class TestNewBuild:
             pytest.skip("numpy not importable")
 
         root = tmp_path_factory.mktemp("built") / "gain"
-        run("gain", root, ["gain"])
+        run("gain", root, ["gain"], c_prefix=None)
 
         import subprocess
 
@@ -647,6 +661,7 @@ class TestVoidReturn:
             ["sink"],
             state_vars=[("volume", "double", "1.0")],
             return_type="void",
+            c_prefix=None,
         )
         return dest
 
@@ -660,6 +675,7 @@ class TestVoidReturn:
             state_vars=[("phase", "double", "0.0")],
             arg_type="void",
             return_type="void",
+            c_prefix=None,
         )
         return dest
 
@@ -756,6 +772,7 @@ class TestArrayArgType:
             ["filt"],
             arg_type="float _Complex[]",
             return_type="float _Complex",
+            c_prefix=None,
         )
         return dest
 

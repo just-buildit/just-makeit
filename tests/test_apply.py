@@ -1,5 +1,9 @@
 """Integration tests for `just-makeit apply`."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -23,7 +27,9 @@ _IGNORE = {"compile_commands.json"}
 
 def _scaffold(root: Path) -> None:
     """Build a project with a standalone object and a module object."""
-    new_run("proj", root, ["widget"], [("gain", "float", "0.0f")])
+    new_run(
+        "proj", root, ["widget"], [("gain", "float", "0.0f")], c_prefix=None
+    )
     object_run(root, "gadget", None, state_vars=[("g", "float", "1.0f")])
     module_run(root, "dsp")
     object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
@@ -109,7 +115,7 @@ class TestApplyReconcilesAggregates:
         from just_makeit._new import run as new_run
 
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         # Hand-author a fragment (the "compose" or "fresh-checkout" case).
         (proj / "objects").mkdir()
         (proj / "objects" / "agc.toml").write_text(
@@ -143,7 +149,7 @@ class TestApplyReconcilesAggregates:
         from just_makeit._new import run as new_run
 
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         (proj / "objects").mkdir()
         (proj / "objects" / "agc.toml").write_text(
             '[agc]\narg_type = "float _Complex"\n'
@@ -166,7 +172,7 @@ class TestApplyReconcilesAggregates:
         from just_makeit._new import run as new_run
 
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         (proj / "objects").mkdir()
         (proj / "objects" / "agc.toml").write_text(
             '[agc]\narg_type = "float _Complex"\n'
@@ -194,7 +200,7 @@ class TestApplyReconcilesAggregates:
         from just_makeit._new import run as new_run
 
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         # Inject a user-written vendored-libfoo block ABOVE the Install
         # section (i.e., between Modules sentinel and # ── Install).
         cmake = proj / "CMakeLists.txt"
@@ -253,7 +259,13 @@ class TestApplyImplInjection:
     def test_impl_injected_into_pre_existing_header(self, tmp_path):
         """impl added to TOML after jm object must appear in the header."""
         proj = tmp_path / "proj"
-        new_run("proj", proj, ["widget"], [("gain", "float", "0.0f")])
+        new_run(
+            "proj",
+            proj,
+            ["widget"],
+            [("gain", "float", "0.0f")],
+            c_prefix=None,
+        )
 
         # Simulate user manually adding impl to the TOML after initial scaffold.
         toml = proj / "just-makeit.toml"
@@ -270,7 +282,13 @@ class TestApplyImplInjection:
     def test_impl_injected_into_newly_created_header(self, tmp_path):
         """impl set in TOML before any files exist must appear in the header."""
         proj = tmp_path / "proj"
-        new_run("proj", proj, ["widget"], [("gain", "float", "0.0f")])
+        new_run(
+            "proj",
+            proj,
+            ["widget"],
+            [("gain", "float", "0.0f")],
+            c_prefix=None,
+        )
 
         toml = proj / "just-makeit.toml"
         self._add_impl_to_toml(toml, "widget", "return state->gain + 1.0f;")
@@ -293,7 +311,7 @@ class TestApplyErrors:
 
     def test_empty_manifest_exits(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         with pytest.raises(SystemExit):
             apply_run(proj)
 
@@ -324,7 +342,7 @@ class TestApplyModuleDirective:
     def test_module_objects_manifest_updated(self, tmp_path):
         """Composing a fragment with module='dsp' wires it into [module.dsp]."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
         frag.write_text(_COUNTER_FRAGMENT)
@@ -339,7 +357,7 @@ class TestApplyModuleDirective:
     def test_module_objects_no_standalone_ext(self, tmp_path):
         """Module objects get no standalone _ext.c; the module's ext.c is updated."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
         frag.write_text(_COUNTER_FRAGMENT)
@@ -363,7 +381,7 @@ class TestApplyModuleDirective:
     def test_module_directive_preserved_through_mutation(self, tmp_path):
         """The module = 'dsp' field survives a subsequent C.save() call."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
         frag.write_text(_COUNTER_FRAGMENT)
@@ -381,7 +399,7 @@ class TestApplyModuleDirective:
     def test_module_directive_unknown_module_errors(self, tmp_path):
         """Referencing a module that doesn't exist raises ValueError."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         # No module created — "dsp" doesn't exist in manifest.
         frag = tmp_path / "counter.toml"
         frag.write_text(_COUNTER_FRAGMENT)
@@ -397,7 +415,7 @@ class TestApplyModuleDirective:
         fragment itself, which is the expected state — apply should proceed
         directly to materialization rather than raising an error."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
 
         # Simulate the user manually copying the fragment into objects/.
@@ -428,7 +446,7 @@ class TestApplyModuleDirective:
     def test_fragment_already_in_objects_dir_no_duplicate_copy(self, tmp_path):
         """When the fragment is already in objects/, no second copy is made."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
 
         objects_dir = proj / "objects"
@@ -454,7 +472,7 @@ class TestApplyModuleDirective:
 class TestApplySelectiveOnly:
     def test_only_module_skips_other_module(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         module_run(proj, "util")
@@ -474,7 +492,7 @@ class TestApplySelectiveOnly:
 
     def test_only_comp_updates_owning_module(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         apply_run(proj)
@@ -492,7 +510,7 @@ class TestApplySelectiveOnly:
 
     def test_only_comp_skips_unrelated_module(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         module_run(proj, "util")
@@ -513,7 +531,7 @@ class TestApplySelectiveOnly:
 
     def test_only_unknown_exits(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         apply_run(proj)
@@ -528,7 +546,7 @@ class TestApplyExtraC:
 
     def test_extra_c_preserved_through_apply(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
 
@@ -544,7 +562,7 @@ class TestApplyExtraC:
 
     def test_extra_c_included_in_aggregator_after_apply(self, tmp_path):
         proj = tmp_path / "proj"
-        new_run("proj", proj, [], [])
+        new_run("proj", proj, [], [], c_prefix=None)
         module_run(proj, "dsp")
         object_run(proj, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         object_run(proj, "fir", "dsp", state_vars=[("taps", "float", "0.0f")])
@@ -565,7 +583,7 @@ class TestApplyExtraTypes:
     in PyInit_ and survives jm apply re-materialisation (gh-28 full fix)."""
 
     def _proj_with_extra_types(self, root):
-        new_run("proj", root, [], [])
+        new_run("proj", root, [], [], c_prefix=None)
         module_run(root, "dsp")
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
 
@@ -666,7 +684,7 @@ class TestMethodReplayArgType:
     (not 'float _Complex'), fixing gh#49."""
 
     def _apply_fragment(self, proj, frag_text):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "frag.toml"
         frag.write_text(frag_text)
         apply_run(proj, fragment=frag)
@@ -710,7 +728,7 @@ class TestMethodReplayArgType:
     def test_standard_object_reset_decl_present(self, tmp_path):
         """A normal object (no user reset method) still emits the builtin reset."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         object_run(proj, "osc", None, state_vars=[("phase", "float", "0.0f")])
         header = (proj / INC_ROOT / "osc" / "osc_core.h").read_text(
             encoding="utf-8"
@@ -723,7 +741,7 @@ class TestVariableOutputOutType:
     variable_output methods (gh#49 follow-up)."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "frag.toml"
         frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
         apply_run(proj, fragment=frag)
@@ -784,7 +802,7 @@ class TestCreateResetImpl:
     field-assignment blocks in component_core.c (gh#51)."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "lfsr.toml"
         frag.write_text(_CREATE_RESET_IMPL_FRAGMENT)
         apply_run(proj, fragment=frag)
@@ -838,7 +856,7 @@ class TestDestroyImpl:
     component_destroy() before the trailing free(state) (gh#51)."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "buf.toml"
         frag.write_text(_DESTROY_IMPL_FRAGMENT)
         apply_run(proj, fragment=frag)
@@ -908,7 +926,7 @@ class TestOpaqueState:
     Lifecycle is the user's responsibility via create_impl/destroy_impl."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "fft.toml"
         frag.write_text(_OPAQUE_FIELD_FRAGMENT)
         apply_run(proj, fragment=frag)
@@ -1030,7 +1048,7 @@ class TestNoCtorState:
     They are silently initialised to their TOML default in create_assignments."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "ring.toml"
         frag.write_text(_NO_CTOR_FRAGMENT)
         apply_run(proj, fragment=frag)
@@ -1085,7 +1103,7 @@ class TestNoCtorState:
         """Without create_impl the no_ctor fields must be auto-assigned their
         TOML default inside create_assignments."""
         proj = tmp_path / "proj"
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "ring2.toml"
         # Same but without create_impl so auto-assignments kick in.
         frag.write_text("""\
@@ -1165,7 +1183,7 @@ class TestOpaqueInModule:
     kwlist and binding wrappers, no getter/setter generated."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = proj.parent / "fft.toml"
         frag.write_text(_OPAQUE_MODULE_FRAGMENT)
@@ -1199,7 +1217,7 @@ class TestNoCtorInModule:
     from the C create() signature and the Python kwlist in the ext fragment."""
 
     def _apply(self, proj):
-        new_run("proj", proj)
+        new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = proj.parent / "ticker.toml"
         frag.write_text(_NO_CTOR_MODULE_FRAGMENT)
@@ -1259,7 +1277,7 @@ class TestApplyModuleFunctionImpl:
     dropped."""
 
     def _apply(self, proj_root):
-        new_run("proj", proj_root)
+        new_run("proj", proj_root, c_prefix=None)
         module_run(proj_root, "io")
         frag = proj_root.parent / "fns.toml"
         frag.write_text(_FN_IMPL_FRAGMENT)
@@ -1301,7 +1319,9 @@ class TestApplySacredGlueSplit:
     """
 
     def _project(self, root: Path) -> None:
-        new_run("proj", root, ["eng"], [("gain", "double", "1.0")])
+        new_run(
+            "proj", root, ["eng"], [("gain", "double", "1.0")], c_prefix=None
+        )
 
     def test_core_c_is_sacred_byte_identical(self, tmp_path):
         root = tmp_path / "proj"

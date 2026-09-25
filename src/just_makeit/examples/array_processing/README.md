@@ -67,8 +67,8 @@ Every `just-makeit object` generates both `step()` and `steps()`:
 
 | C function  | Signature                                                               |
 | ----------- | ----------------------------------------------------------------------- |
-| `ema_step`  | `float ema_step(ema_state_t *s, float x)`                               |
-| `ema_steps` | `void ema_steps(ema_state_t *s, const float *in, float *out, size_t n)` |
+| `my_arrays_ema_step`  | `float my_arrays_ema_step(my_arrays_ema_state_t *s, float x)`                               |
+| `my_arrays_ema_steps` | `void my_arrays_ema_steps(my_arrays_ema_state_t *s, const float *in, float *out, size_t n)` |
 
 `steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`
 once per sample. You implement `step()`; `steps()` comes for free.
@@ -96,7 +96,7 @@ nothing:
 
 ```c
 /* Output buffer must be pre-allocated by caller. */
-void ema_steps(ema_state_t       *state,
+void my_arrays_ema_steps(my_arrays_ema_state_t       *state,
                const float       *input,
                float             *output,
                size_t             n);
@@ -108,7 +108,7 @@ loop body (adding SIMD dispatch), not the signature or the allocation model.
 ### The Python ext — one malloc per call
 
 The ext is the only place an allocation happens. It calls `PyArray_SimpleNew`
-to create the output array, passes the raw pointer to `ema_steps`, then
+to create the output array, passes the raw pointer to `my_arrays_ema_steps`, then
 returns the numpy array to the caller:
 
 ```
@@ -116,7 +116,7 @@ call f.steps(block)
 │
 ├─ ext calls PyArray_SimpleNew(n)   ← one malloc, every call
 │
-├─ calls ema_steps(state, block.data, out.data, 1024)
+├─ calls my_arrays_ema_steps(state, block.data, out.data, 1024)
 │    └─ no allocation inside; fills out[] in place
 │
 └─ returns ndarray to caller
@@ -149,7 +149,7 @@ call f.steps(block, buf)
 │
 ├─ ext validates buf: dtype, C-contiguous, len == n
 │
-├─ calls ema_steps(state, block.data, buf.data, 1024)
+├─ calls my_arrays_ema_steps(state, block.data, buf.data, 1024)
 │    └─ no allocation; fills buf in place
 │
 └─ returns buf (same object, new reference)
@@ -170,10 +170,10 @@ typedef struct {
     float  coeffs[16];   /* inline — no extra malloc */
     float  delay[16];    /* inline */
     float  gain;
-} ema_state_t;
+} my_arrays_ema_state_t;
 ```
 
-`ema_create()` does exactly one `malloc` for the whole struct. There is no
+`my_arrays_ema_create()` does exactly one `malloc` for the whole struct. There is no
 `malloc` per field, no pointer to chase, and no fragmentation.
 
 Contrast this with a hypothetical `float *coeffs` pointer: that would require
@@ -199,29 +199,29 @@ just-makeit method ema quantize \
 The command appends a scalar C stub to `native/src/ema/ema_core.c`:
 
 ```c
-uint32_t ema_quantize(ema_state_t *state, float x);
+uint32_t my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x);
 ```
 
 For **1:1-rate batch work** (output count equals input count), write the
 `_steps()` companion by hand in the same file:
 
 ```c
-/* Hand-written batch companion for ema_quantize().
+/* Hand-written batch companion for my_arrays_ema_quantize().
  * Add this to native/src/ema/ema_core.c after implementing the scalar stub.
  * The Python ext allocates out[] via PyArray_SimpleNew before calling this;
  * the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
  */
 void
-ema_quantize_steps (ema_state_t *state, const float *in, uint32_t *out,
-                    size_t n)
+ema_quantize_steps (my_arrays_ema_state_t *state, const float *in,
+                    uint32_t *out, size_t n)
 {
   for (size_t i = 0; i < n; i++)
-    out[i] = ema_quantize (state, in[i]);
+    out[i] = my_arrays_ema_quantize (state, in[i]);
 }
 ```
 
-Then wire it into `native/src/ema/ema_ext.c` following the `ema_steps`
+Then wire it into `native/src/ema/ema_ext.c` following the `my_arrays_ema_steps`
 pattern already there.
 
 ### Array ownership for hand-written `_steps()`
@@ -235,7 +235,7 @@ call f.quantize_steps(block)
 ├─ ext calls PyArray_SimpleNew(n, uint32)   ← one malloc, every call
 │
 ├─ calls ema_quantize_steps(state, block.data, out.data, n)
-│    └─ loop: out[i] = ema_quantize(state, block[i])
+│    └─ loop: out[i] = my_arrays_ema_quantize(state, block[i])
 │
 └─ returns ndarray to caller
    ownership: caller
@@ -287,8 +287,8 @@ The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
 | Stub                                    | When called               | Your job                        |
 | --------------------------------------- | ------------------------- | ------------------------------- |
-| `hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
-| `hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
+| `my_decim_hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
+| `my_decim_hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
 
 Implement both:
 
@@ -303,7 +303,7 @@ Implement both:
  * defined and will likely produce a silent bug.
  */
 size_t
-hbdecim_execute_max_out (hbdecim_state_t *state)
+my_decim_hbdecim_execute_max_out (my_decim_hbdecim_state_t *state)
 {
   /* state->block_size is a constructor parameter (add with just-makeit add) */
   return (state->block_size + 1) / 2;
@@ -313,8 +313,9 @@ hbdecim_execute_max_out (hbdecim_state_t *state)
  * The caller (Python ext) supplies the pre-allocated output buffer.
  */
 size_t
-hbdecim_execute (hbdecim_state_t *state, const float _Complex *in, size_t n_in,
-                 float _Complex *out)
+my_decim_hbdecim_execute (my_decim_hbdecim_state_t *state,
+                          const float _Complex *in, size_t n_in,
+                          float _Complex *out)
 {
   size_t n_out = 0;
   for (size_t i = 0; i + 1 < n_in; i += 2)
@@ -349,7 +350,7 @@ out = d.execute(block)
 ├─ ext allocates a NumPy array of max(execute_max_out(), 1024)
 │  └─ the kernel writes straight into it — no copy
 │
-├─ calls hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
+├─ calls my_decim_hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
 │
 └─ returns it trimmed to 512
    ownership: the returned array owns its memory
@@ -411,8 +412,8 @@ just-makeit method hbdecim execute_ovf \
 Generated stubs appended to `hbdecim_core.c`:
 
 ```c
-size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);
-size_t hbdecim_execute_ovf(hbdecim_state_t    *state,
+size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state);
+size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t    *state,
                            const float _Complex *in, size_t n_in,
                            float _Complex       *out,
                            uint8_t             *ovf);
@@ -429,15 +430,16 @@ the object.  Your implementation fills both and returns the count:
  * Return the actual count written to both arrays.
  */
 size_t
-hbdecim_execute_ovf_max_out (hbdecim_state_t *state)
+my_decim_hbdecim_execute_ovf_max_out (my_decim_hbdecim_state_t *state)
 {
   return (state->block_size + 1) / 2;
 }
 
 size_t
-hbdecim_execute_ovf (hbdecim_state_t *state, const float _Complex *in,
-                     size_t n_in, float _Complex *out, /* primary */
-                     uint8_t *ovf)                     /* secondary */
+my_decim_hbdecim_execute_ovf (my_decim_hbdecim_state_t *state,
+                              const float _Complex *in, size_t n_in,
+                              float _Complex *out, /* primary */
+                              uint8_t        *ovf) /* secondary */
 {
   size_t n_out = 0;
   for (size_t i = 0; i + 1 < n_in; i += 2)
@@ -474,7 +476,7 @@ d = Hbdecim()
 
 samples, flags = d.execute_ovf(block)
 │
-├─ calls hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
+├─ calls my_decim_hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
 │
 ├─ returns (view into d._out_buf[:512],
 │           view into d._ovf_buf[:512])
@@ -511,7 +513,7 @@ just-makeit new my_buf \
 The generated `step()` takes a numpy array and a length:
 
 ```c
-int buf_proc_step(buf_proc_state_t *state,
+int my_buf_buf_proc_step(my_buf_buf_proc_state_t *state,
                   const float _Complex *x, size_t x_len)
 {
     (void)x;
@@ -566,7 +568,7 @@ Does output count equal input count?
 The sacred header is also the single source of truth for **documentation**. A
 Doxygen `/** ... */` comment on `create()` or a named method flows straight into
 the generated `.pyi` docstring, and a `@code` block on a method becomes a
-**runnable doctest**. Give `ema_quantize` a real body and a comment:
+**runnable doctest**. Give `my_arrays_ema_quantize` a real body and a comment:
 
 ```c
 /**
@@ -582,7 +584,7 @@ the generated `.pyi` docstring, and a `@code` block on a method becomes a
  * 4
  * @endcode
  */
-uint32_t ema_quantize(ema_state_t *state, float x);
+uint32_t my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x);
 ```
 
 `jm apply` re-derives the stub, and `src/my_arrays/ema.pyi` now carries the full

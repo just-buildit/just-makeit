@@ -21,6 +21,10 @@ The motivating consumer is doppler's telemetry attach face
                           const char *prefix, uint32_t decim);
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 import sys
@@ -83,7 +87,7 @@ def _foreign_header(dest: Path) -> None:
 
 def _scaffold_standalone(tmp_path: Path) -> Path:
     dest = tmp_path / "dsp"
-    new_run("dsp", dest)
+    new_run("dsp", dest, c_prefix=None)
     object_run(dest, "agc", module=None)
     _foreign_header(dest)
     cfg = C.load(dest)
@@ -95,7 +99,7 @@ def _scaffold_standalone(tmp_path: Path) -> Path:
 
 def _scaffold_module(tmp_path: Path) -> Path:
     dest = tmp_path / "dsp"
-    new_run("dsp", dest)
+    new_run("dsp", dest, c_prefix=None)
     module_run(dest, "track")
     object_run(dest, "agc", "track")
     _foreign_header(dest)
@@ -181,7 +185,7 @@ class TestHeaderAndPrototype:
         # A header key naming a file that doesn't exist under native/inc is
         # skipped (mirrors the gh-170 link-target rule) — no broken include.
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(dest, "agc", module=None)
         m = dict(SET_TELEMETRY)
         m["params"] = [dict(m["params"][0], header="nope/nope.h")] + [

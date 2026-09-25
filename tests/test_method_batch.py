@@ -6,6 +6,10 @@ must match that, not the scalar `(state, T x)` fall-through — otherwise the
 project fails to compile ("too many arguments to function").
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from just_makeit import _incpath as INC  # noqa: E402
 import contextlib
 import io
@@ -33,7 +37,7 @@ def _decl(dest: Path, comp: str, name: str) -> str:
 
 def test_batch_method_array_input_signature(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest, fragments=True)
+    _silent(new_run, "p", dest, fragments=True, c_prefix=None)
     _silent(module_run, dest, "dsp")
     _silent(
         object_run,
@@ -70,7 +74,7 @@ def test_batch_method_array_input_signature(tmp_path):
 
 def test_batch_method_void_input_signature(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest, fragments=True)
+    _silent(new_run, "p", dest, fragments=True, c_prefix=None)
     _silent(module_run, dest, "dsp")
     _silent(
         object_run,
@@ -109,7 +113,7 @@ def _gain_with_batch(tmp_path, arg_type="float", name="process_batch"):
     """Scaffold a standalone gain object with a 1:1 batch method; return its
     ext.c text (standalone so the glue lives in native/src/gain/gain_ext.c)."""
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(
         object_run,
         dest,

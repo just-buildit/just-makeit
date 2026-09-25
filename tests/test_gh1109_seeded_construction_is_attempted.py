@@ -75,7 +75,7 @@ class TestRenderedProbe:
 
     @pytest.fixture
     def rendered(self, tmp_path: Path) -> str:
-        assert _cli("new", "sd", cwd=tmp_path).returncode == 0
+        assert _cli("new", "sd", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "sd"
         assert (
             _cli(
@@ -121,7 +121,7 @@ class TestAgainstARealExtension:
 
     @pytest.fixture
     def scaffolded(self, tmp_path: Path) -> Path:
-        assert _cli("new", "sd", cwd=tmp_path).returncode == 0
+        assert _cli("new", "sd", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "sd"
         assert (
             _cli(

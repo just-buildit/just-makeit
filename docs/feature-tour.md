@@ -89,23 +89,23 @@ just-makeit property nco freq --module signal --type double --writable
 
 **What was created:**
 
-| File                                    | Purpose                                              |
-| --------------------------------------- | ---------------------------------------------------- |
-| `native/inc/dsp_demo/nco/nco_core.h`    | Struct + `static inline nco_step()` — implement here |
-| `native/src/nco/nco_core.c`             | `nco_steps()` + lifecycle stubs                      |
-| `native/src/signal/signal_ext_nco.c`    | CPython binding (auto-generated)                     |
-| `native/tests/test_nco_core.c`          | C lifecycle smoke test                               |
-| `src/dsp_demo/signal/tests/test_nco.py` | pytest integration test                              |
+| File                                    | Purpose                                                       |
+| --------------------------------------- | ------------------------------------------------------------- |
+| `native/inc/dsp_demo/nco/nco_core.h`    | Struct + `static inline dsp_demo_nco_step()` — implement here |
+| `native/src/nco/nco_core.c`             | `dsp_demo_nco_steps()` + lifecycle stubs                      |
+| `native/src/signal/signal_ext_nco.c`    | CPython binding (auto-generated)                              |
+| `native/tests/test_nco_core.c`          | C lifecycle smoke test                                        |
+| `src/dsp_demo/signal/tests/test_nco.py` | pytest integration test                                       |
 
 ______________________________________________________________________
 
 ## Step 3 — No-state filter: Fir
 
 A FIR filter owns its own state (coefficients + delay line), but that struct
-is defined and allocated in C — you write `fir_create()` yourself rather than
+is defined and allocated in C — you write `dsp_demo_fir_create()` yourself rather than
 having jm generate struct fields from TOML declarations. That is what
 `--no-state` means: jm skips the auto-generated struct and just wires the
-Python constructor to call your `fir_create()` with the init-params you
+Python constructor to call your `dsp_demo_fir_create()` with the init-params you
 declare.
 
 ```sh
@@ -126,7 +126,7 @@ The three init-params demonstrate the three kinds:
 | `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array  | `bank: NDArray[np.complex64] \| None = None` |
 
 When `bank` is provided, `fir_create_poly(dim0, dim1, ptr, n_taps)` is called
-instead of the default `fir_create(coeff_ptr, coeff_len, n_taps)`.
+instead of the default `dsp_demo_fir_create(coeff_ptr, coeff_len, n_taps)`.
 
 Add a read-only `length` property and a variable-output method that returns the
 current tap values:
@@ -138,7 +138,7 @@ just-makeit method fir taps --module signal \
 ```
 
 `--variable-output` means the output length is determined at runtime: the C
-helper `fir_taps_max_out(state, n)` bounds it, and the kernel reports the
+helper `dsp_demo_fir_taps_max_out(state, n)` bounds it, and the kernel reports the
 actual count. The Python binding allocates a NumPy-owned array per call and
 returns it trimmed to that count — each result is independent and safe to
 keep. See [Array memory ownership](memory-ownership.md).

@@ -21,6 +21,10 @@ frame, so they belong to the builder alone; that requires the materialising
 class to be the view, which requires the view to use ``frame_create``.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import sys
 from pathlib import Path
 
@@ -38,7 +42,7 @@ from just_makeit._view import run as view_run  # noqa: E402
 def project(tmp_path, capsys):
     """One module object, no view yet."""
     dest = tmp_path / "proj"
-    new_run("proj", dest, modules=["wfm"])
+    new_run("proj", dest, modules=["wfm"], c_prefix=None)
     object_run(
         dest,
         "frame",

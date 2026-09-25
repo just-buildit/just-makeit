@@ -359,23 +359,23 @@ Status legend: ✅ on main · 🟡 CLI flag pending (TOML works today).
 
 ### `[project]` keys
 
-| TOML key           | CLI flag                                  | Status       | Notes                                                                                                                                                                                                                                                                                                   |
-| ------------------ | ----------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`             | `jm new <NAME>`                           | ✅           | Required positional.                                                                                                                                                                                                                                                                                    |
-| `version`          | `jm config version X`                     | ✅           | Bumped by `jm app` / release tooling.                                                                                                                                                                                                                                                                   |
-| `build`            | `jm new --build-system cmake\|make`       | ✅           |                                                                                                                                                                                                                                                                                                         |
-| `perf`             | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.                                                                                                                                                                                                                                                                       |
-| `pytest`           | `jm new --pytest`                         | ✅           |                                                                                                                                                                                                                                                                                                         |
-| `pytest_benchmark` | `jm new --pytest-benchmark`               | ✅           |                                                                                                                                                                                                                                                                                                         |
-| `find_packages`    | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`; an entry may be `{ name, pkg_config }`, or `{ name, libs_private, cflags }` for a dependency with no `.pc`, for the installed `.pc` — see [c-library](c-library.md#when-your-library-depends-on-another-package).                                                  |
-| `pkg_modules`      | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`; an entry may carry a version bound, `"zlib >= 1.2"`.                                                                                                                                                                                                                |
-| `public_link_libs` | (manifest only)                           | ✅           | Link flags a consumer of the installed headers needs (`["-lpthread"]`): on this project's executables and extensions, both combined libraries' PUBLIC link, the exported targets and the `.pc`'s `Libs:` — see [c-library](c-library.md#flags-your-headers-need-of-every-consumer).                     |
-| `public_defines`   | (manifest only)                           | ✅           | Definitions the installed headers need (`["_GNU_SOURCE"]`, no `-D`): on this project's own compile, both combined libraries' PUBLIC definitions, the exported targets and the `.pc`'s `Cflags:`.                                                                                                        |
-| `c_deps`           | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                                                                                                                  |
-| `c_prefix`         | `jm new --c-prefix P`                     | ✅           | Namespaces every C symbol jm derives (`fir_create` becomes `P_fir_create`, `FIR_CORE_H` becomes `P_FIR_CORE_H`), so two installed packages may share a component name; never an author-named symbol or macro, the Python names, or file names — see [c-library](c-library.md#two-packages-one-program). |
-| `schema`           | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                                                                                                          |
-| `c_style`          | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                                                                                                                       |
-| `c_format_command` | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.                                                                                                                                                                                                                                                                     |
+| TOML key           | CLI flag                                  | Status       | Notes                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ----------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | `jm new <NAME>`                           | ✅           | Required positional.                                                                                                                                                                                                                                                                                                                                     |
+| `version`          | `jm config version X`                     | ✅           | Bumped by `jm app` / release tooling.                                                                                                                                                                                                                                                                                                                    |
+| `build`            | `jm new --build-system cmake\|make`       | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
+| `perf`             | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.                                                                                                                                                                                                                                                                                                                        |
+| `pytest`           | `jm new --pytest`                         | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
+| `pytest_benchmark` | `jm new --pytest-benchmark`               | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
+| `find_packages`    | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`; an entry may be `{ name, pkg_config }`, or `{ name, libs_private, cflags }` for a dependency with no `.pc`, for the installed `.pc` — see [c-library](c-library.md#when-your-library-depends-on-another-package).                                                                                                   |
+| `pkg_modules`      | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`; an entry may carry a version bound, `"zlib >= 1.2"`.                                                                                                                                                                                                                                                                 |
+| `public_link_libs` | (manifest only)                           | ✅           | Link flags a consumer of the installed headers needs (`["-lpthread"]`): on this project's executables and extensions, both combined libraries' PUBLIC link, the exported targets and the `.pc`'s `Libs:` — see [c-library](c-library.md#flags-your-headers-need-of-every-consumer).                                                                      |
+| `public_defines`   | (manifest only)                           | ✅           | Definitions the installed headers need (`["_GNU_SOURCE"]`, no `-D`): on this project's own compile, both combined libraries' PUBLIC definitions, the exported targets and the `.pc`'s `Cflags:`.                                                                                                                                                         |
+| `c_deps`           | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                                                                                                                                                                   |
+| `c_prefix`         | `jm new --c-prefix P` / `--no-c-prefix`   | ✅           | **Default for a new project: its package name.** Namespaces every C symbol jm derives (`fir_create` becomes `P_fir_create`, `FIR_CORE_H` becomes `P_FIR_CORE_H`), so two installed packages may share a component name; never an author-named symbol or macro, the Python names, or file names — see [c-library](c-library.md#two-packages-one-program). |
+| `schema`           | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                                                                                                                                                           |
+| `c_style`          | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                                                                                                                                                                        |
+| `c_format_command` | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.                                                                                                                                                                                                                                                                                                                      |
 
 ### Generated-C house style — `c_style` and `c_format_command`
 
@@ -467,7 +467,7 @@ A line wrapped to the header's own 79 columns is 74 columns of content once
 is why `jm apply` reports the concrete figure per site rather than a rule:
 
 ```
-native/inc/my_project/cvt/cvt_core.h: cvt_step(): @code line will be 82 columns in the
+native/inc/my_project/cvt/cvt_core.h: my_project_cvt_step(): @code line will be 82 columns in the
   stub; wrap at <= 71.
     >>> c.step(2.0)                    # beyond +1.0 -> saturates to int16 max
 ```
@@ -642,7 +642,7 @@ constructor's own message.
 ```
 SKIPPED: required constructor parameter(s) capacity, slots have no default;
          seed valid arguments to enable this smoke test:
-         allocator_create returned NULL
+         my_project_allocator_create returned NULL
 ```
 
 The decision is made when the test **runs**, not when it is written, which is
@@ -764,7 +764,7 @@ c_type  = "det_noise_mode_t"
 ```
 
 ```c
-detector_state_t *detector_create(det_noise_mode_t noise_mode);
+my_project_detector_state_t *my_project_detector_create(det_noise_mode_t noise_mode);
 ```
 
 ```python
@@ -790,7 +790,7 @@ derived = ["ny", "nx"]
 ```
 
 ```c
-corr2d_state_t *corr2d_create(const float _Complex *ref,
+my_project_corr2d_state_t *my_project_corr2d_create(const float _Complex *ref,
                               size_t ny, size_t nx, size_t dwell);
 ```
 
@@ -1655,7 +1655,7 @@ supplies the definitions:
 
 ```c
 /** @brief Process one input sample. ... */
-static inline int16_t f32_to_i16_step(const f32_to_i16_state_t *state, float x);
+static inline int16_t my_project_f32_to_i16_step(const my_project_f32_to_i16_state_t *state, float x);
 ...
 DECLARE_F32_TO_INT (f32_to_i16, int16_t, 32767.0f)
 ```

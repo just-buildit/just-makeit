@@ -20,6 +20,10 @@ The compiled class is the one that settles it. Text assertions cannot see an
 undefined symbol; `jm test` imports the module.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -61,7 +65,7 @@ def _cli(*args, cwd) -> JmRun:
 def _project(tmp_path: Path, shape: str) -> Path:
     """An object `o` and one property of *shape*, exactly as the CLI makes."""
     root = tmp_path / "p"
-    _quiet(new_run, "p", root)
+    _quiet(new_run, "p", root, c_prefix=None)
     _quiet(
         object_run,
         root,
@@ -123,7 +127,7 @@ class TestTheBodyIsScaffolded:
         """gh-1328: a definition may live in a sibling source; never add a
         second one."""
         root = tmp_path / "p"
-        _quiet(new_run, "p", root)
+        _quiet(new_run, "p", root, c_prefix=None)
         _quiet(object_run, root, "o", None, state_vars=[("n", "int", "0")])
         (root / "native" / "src" / "o" / "o_level.c").write_text(
             '#include "o/o_core.h"\n'

@@ -16,7 +16,7 @@ module emits:
 
 ```c
 /* Build the composed generator from a source config (source -> generator). */
-clip_state_t *clip_from_source(const clip_t *, double);
+studio_clip_state_t *clip_from_source(const clip_t *, double);
 
 /* Computed read-only property `duration`. */
 double clip_duration(const clip_t *);

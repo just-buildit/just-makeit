@@ -16,6 +16,10 @@ every shape that empties a different slot -- an empty slot is exactly what
 moves which two fragments meet.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -52,7 +56,7 @@ SHAPES = {
 
 def _header(tmp_path: Path, shape: dict) -> list[str]:
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("p", tmp_path)
+        new_run("p", tmp_path, c_prefix=None)
         object_run(tmp_path, "q", None, header_only=True, **shape)
     path = tmp_path / INC_ROOT / "q" / "q_core.h"
     return path.read_text(encoding="utf-8").splitlines()

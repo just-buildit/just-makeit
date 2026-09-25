@@ -176,8 +176,10 @@ def run(root: Path) -> None:
     #    embeds, so the taught functions are the compiled functions.
     core_c = proj / "native" / "src" / "drainer" / "drainer_core.c"
     text = core_c.read_text(encoding="utf-8")
-    text = _splice(text, "drainer_run_max_out", "02_max_out.c")
-    text = _splice(text, "drainer_run", "02_run.c")
+    text = _splice(
+        text, "stream_blockwise_demo_drainer_run_max_out", "02_max_out.c"
+    )
+    text = _splice(text, "stream_blockwise_demo_drainer_run", "02_run.c")
     core_c.write_text(text, encoding="utf-8")
 
     # 3. Build (cmake + ctest runs the generated C smoke test).

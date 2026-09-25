@@ -28,6 +28,10 @@ Measured after this change, on doppler: 71 prototypes (67 state-only, 4
 length-bearing), 61 stub accessors, **0 disagreeing with their prototype**.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -101,7 +105,7 @@ class TestScanMaxOutArity:
 
 def _project_with_variable_output(root: Path, module: str | None = None):
     """A component whose method has an array param and variable output."""
-    new_run("proj", root, fragments=True)
+    new_run("proj", root, fragments=True, c_prefix=None)
     if module:
         module_run(root, module)
     object_run(root, "widget", module, state_vars=[("gain", "double", "1.0")])
@@ -283,7 +287,7 @@ class TestTheWrapperCallsTheDeclaredArity:
         from just_makeit._apply import run as apply_run
 
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(
             root, "widget", None, state_vars=[("gain", "double", "1.0")]
         )
@@ -365,7 +369,7 @@ class TestRegeneratePreservesTheAuthorsPrototype:
         from just_makeit._regenerate import run as regenerate_run
 
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(
             root, "widget", None, state_vars=[("gain", "double", "1.0")]
         )
@@ -429,7 +433,7 @@ class TestRegeneratePreservesTheAuthorsPrototype:
         from just_makeit._regenerate import run as regenerate_run
 
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(
             root, "widget", None, state_vars=[("gain", "double", "1.0")]
         )

@@ -65,7 +65,9 @@ def run(root: Path) -> None:
     stub = (
         "    (void)state; /* TODO: implement */\n    return (float _Complex)0;"
     )
-    assert stub in text, "clip_step stub not found -- did the scaffold change?"
+    assert stub in text, (
+        "studio_clip_step stub not found -- did the scaffold change?"
+    )
     core_h.write_text(
         text.replace(stub, "    return (float _Complex)state->level;", 1),
         encoding="utf-8",
@@ -90,12 +92,14 @@ def run(root: Path) -> None:
     bridge = INC.header_root(proj) / "playlist" / "playlist_bridge.h"
     assert bridge.exists(), "gh-998: no bridge header was written"
     bt = bridge.read_text(encoding="utf-8")
-    assert "clip_state_t *clip_from_source(const clip_t *, double);" in bt
+    assert (
+        "studio_clip_state_t *clip_from_source(const clip_t *, double);" in bt
+    )
     assert "double clip_duration(const clip_t *);" in bt
     # Self-contained: a consumer must not have to work out the include order.
     assert '#include "studio/playlist/playlist_core.h"' in bt
     assert '#include "studio/clip/clip_core.h"' in bt
-    assert "PLAYLIST_BRIDGE_H" in bt, "no include guard"
+    assert "STUDIO_PLAYLIST_BRIDGE_H" in bt, "no include guard"
     # And the binding must INCLUDE it rather than re-declare the seams --
     # a second copy of a signature jm owns is the defect gh-998 removed.
     ext = (proj / "native" / "src" / "playlist" / "playlist_ext.c").read_text(

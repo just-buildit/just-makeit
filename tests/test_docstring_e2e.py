@@ -6,6 +6,10 @@ binding's PyMethodDef (via _context/_methods), with TOML override and a
 no-Doxygen fallback.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
@@ -33,7 +37,7 @@ _RICH_DOXYGEN = """\
 
 
 def _scaffold_with_method(dest: Path):
-    new_run("dsp", dest)
+    new_run("dsp", dest, c_prefix=None)
     module_run(dest, "sig")
     object_run(
         dest,
@@ -155,7 +159,7 @@ class TestDerivedDocstrings:
         and the apply/status path (temp-scaffold replay had a trivial header)
         re-renders from the real header so the drift gate agrees."""
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(
             dest,
             "gain",
@@ -190,7 +194,7 @@ class TestDerivedDocstrings:
         path (make_methods_ctx got no doc_blocks; the .pyi builder emitted no
         Examples) while module objects got the full treatment."""
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(
             dest,
             "gain",
@@ -237,7 +241,7 @@ class TestDerivedDocstrings:
         getter's @brief, like the module path. It was generic (make_properties_ctx
         got no doc_blocks on the standalone regen paths)."""
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(
             dest,
             "gain",
@@ -296,7 +300,7 @@ class TestDerivedDocstrings:
 
     def test_toml_doc_overrides_header_brief(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         module_run(dest, "sig")
         object_run(
             dest,
@@ -337,7 +341,7 @@ class TestDerivedDocstrings:
         from just_makeit._config import load, methods
 
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         module_run(dest, "sig")
         object_run(
             dest,

@@ -59,7 +59,7 @@ CREATE_BLOCK = (
     " * retunes that gain in place through a flexible **kwargs binding.\n"
     " * @param gain  Initial gain (default: 1.0).\n"
     " * @return Heap-allocated state, or NULL on allocation failure.\n"
-    " * @note Caller must call filter_destroy() when done.\n"
+    " * @note Caller must call va_filter_filter_destroy() when done.\n"
     " */\n"
 )
 
@@ -85,7 +85,9 @@ CURRENT_GAIN_BLOCK = (
     " */\n"
 )
 
-CURRENT_GAIN_DECL = "double filter_current_gain(filter_state_t *state);"
+CURRENT_GAIN_DECL = (
+    "double va_filter_filter_current_gain(va_filter_filter_state_t *state);"
+)
 
 
 def main() -> None:
@@ -94,12 +96,15 @@ def main() -> None:
     # 1. Swap the scaffold create() brief for a real one.
     scaffold_re = re.compile(
         r"/\*\*\n \* @brief Create a filter instance\..*?"
-        r"(?=filter_state_t \*filter_create)",
+        r"(?=va_filter_filter_state_t \*va_filter_filter_create)",
         re.DOTALL,
     )
     text, n = scaffold_re.subn(CREATE_BLOCK, text, count=1)
     if n != 1:
-        print("ERROR: filter_create scaffold brief not found", file=sys.stderr)
+        print(
+            "ERROR: va_filter_filter_create scaffold brief not found",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # 2. Prepend the Doxygen block above the bare current_gain declaration,

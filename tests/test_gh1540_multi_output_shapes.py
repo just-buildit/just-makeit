@@ -56,7 +56,7 @@ _HONOURED = {
 
 @pytest.fixture
 def proj(tmp_path):
-    assert run_cli("new", "p", cwd=tmp_path).returncode == 0
+    assert run_cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
     p = tmp_path / "p"
     assert run_cli("object", "w", "--no-step", cwd=p).returncode == 0
     return p

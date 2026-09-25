@@ -9,6 +9,10 @@ prototype, _core.c stub, and ext-binding call all carry the capacity (the
 buffer-cap field jm already maintains for grow-on-demand).
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
@@ -24,7 +28,7 @@ from just_makeit._apply import run as apply_run
 
 
 def _scaffold(root):
-    new_run("dsp", root)
+    new_run("dsp", root, c_prefix=None)
     init_run(root, "ddc")
     method_run(
         root,

@@ -42,7 +42,7 @@ def _ring(tmp_path: Path) -> Path:
     """An opaque, header-only-ish component to hang borrows off."""
     root = tmp_path / "w"
     root.mkdir()
-    assert run_cli("new", "q", cwd=root).returncode == 0
+    assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "q"
     r = run_cli(
         "object",
@@ -206,7 +206,7 @@ def test_the_module_stub_agrees_with_the_standalone_one(tmp_path):
     """
     root = tmp_path / "m"
     root.mkdir()
-    assert run_cli("new", "q", cwd=root).returncode == 0
+    assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "q"
     assert run_cli("module", "buf", cwd=proj).returncode == 0
     assert (

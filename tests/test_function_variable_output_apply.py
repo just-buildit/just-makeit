@@ -16,6 +16,10 @@ These tests pin three things end-to-end through the scaffold + apply path
 3. `apply` preserves all of the above (the regression itself).
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -45,7 +49,7 @@ def _scaffold(tmp_path: Path) -> Path:
     by a pure expression, and a two-array one whose size multiplies an input
     length by a scalar (the case the issue showed sizing wrongly as `x_len`)."""
     root = tmp_path / "wfmproj"
-    _silent(new_run, "wfmproj", root, modules=["wfm"])
+    _silent(new_run, "wfmproj", root, modules=["wfm"], c_prefix=None)
     _silent(
         function_run,
         root,

@@ -33,6 +33,10 @@ text reads as correct on both sides of the fix, and only a compiled call with
 ``n`` above the cap tells them apart.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -165,7 +169,7 @@ class TestRuntime:
 
         dest = tmp_path_factory.mktemp("gh920") / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", dest)
+            new_run("p", dest, c_prefix=None)
             object_run(
                 dest,
                 "nco",

@@ -26,6 +26,10 @@ of the `create()` prototype in the header. A check written against "expect one
 argument" would pass just as happily on a header that was also wrong.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -60,7 +64,7 @@ def _quiet(fn, *a, **kw):
 
 def _scaffold(root: Path) -> Path:
     proj = root / "demo"
-    _quiet(new_run, "demo", proj)
+    _quiet(new_run, "demo", proj, c_prefix=None)
     _quiet(
         object_run,
         proj,
@@ -115,7 +119,7 @@ class TestTheManifestKeepsIt:
         was reported -- the reported half is one member of the pair.
         """
         proj = tmp_path / "demo"
-        _quiet(new_run, "demo", proj)
+        _quiet(new_run, "demo", proj, c_prefix=None)
         _quiet(
             object_run,
             proj,

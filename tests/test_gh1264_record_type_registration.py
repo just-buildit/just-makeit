@@ -36,6 +36,10 @@ this feature and has not been regenerated); this fix's whole job is making
 sure something ALSO registers the type where jm's other faces say it lives.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
@@ -92,11 +96,7 @@ def _declare_hit_struct(header: Path) -> None:
 
 def _scaffold_standalone(tmp_path: Path) -> Path:
     root = tmp_path / "demo"
-    _quiet(
-        new_run,
-        "demo",
-        root,
-    )
+    _quiet(new_run, "demo", root, c_prefix=None)
     _quiet(
         object_run,
         root,
@@ -127,7 +127,7 @@ def _scaffold_standalone(tmp_path: Path) -> Path:
 
 def _scaffold_module(tmp_path: Path) -> Path:
     root = tmp_path / "demo"
-    _quiet(new_run, "demo", root)
+    _quiet(new_run, "demo", root, c_prefix=None)
     _quiet(module_run, root, "m")
     _quiet(
         object_run,
@@ -261,7 +261,7 @@ class TestStandaloneObject:
         """Zero-churn: the new template slots must vanish for every project
         this feature does not apply to, not just print an empty comment."""
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(
             object_run,
             root,

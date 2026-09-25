@@ -10,8 +10,8 @@ three or more streams.
 Generated stubs appended to `hbdecim_core.c`:
 
 ```c
-size_t hbdecim_execute_ovf_max_out(hbdecim_state_t *state);
-size_t hbdecim_execute_ovf(hbdecim_state_t    *state,
+size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state);
+size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t    *state,
                            const float _Complex *in, size_t n_in,
                            float _Complex       *out,
                            uint8_t             *ovf);
@@ -46,7 +46,7 @@ d = Hbdecim()
 
 samples, flags = d.execute_ovf(block)
 │
-├─ calls hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
+├─ calls my_decim_hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
 │
 ├─ returns (view into d._out_buf[:512],
 │           view into d._ovf_buf[:512])

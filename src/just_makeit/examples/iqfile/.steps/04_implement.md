@@ -51,12 +51,12 @@ struct already has `uint32_t samples_written;` — so the patch adds a single
 line to each `_steps()` function:
 
 ```c
-state->samples_written += (uint32_t)n;   /* in cf32_to_q15_steps() */
-state->samples_read    += (uint32_t)n;   /* in q15_to_cf32_steps()  */
+state->samples_written += (uint32_t)n;   /* in iqfile_cf32_to_q15_steps() */
+state->samples_read    += (uint32_t)n;   /* in iqfile_q15_to_cf32_steps()  */
 ```
 
 `eof` is a **computed** property.  `jm property` left a marked placeholder for
-`q15_to_cf32_get_eof()` in `_core.c` (it returns 0, so the project built and
+`iqfile_q15_to_cf32_get_eof()` in `_core.c` (it returns 0, so the project built and
 imported before this step); the patch fills it in, using `lseek` to compare the
 current and end file positions:
 
@@ -78,7 +78,7 @@ once, and every surface inherits it:
 /**
  * @brief Pack complex float samples into interleaved q15 (int16 I/Q).
  */
-cf32_to_q15_state_t *cf32_to_q15_create(float scale);
+iqfile_cf32_to_q15_state_t *iqfile_cf32_to_q15_create(float scale);
 ```
 
 Property docstrings come from **whichever source actually backs the getter**:
@@ -98,7 +98,7 @@ docstring:
 /**
  * @brief True (1) once the backing file descriptor is exhausted.
  */
-int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);
+int32_t iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state);
 ```
 
 `jm apply` re-derives the stub, and `conv.pyi` now carries a real summary on

@@ -24,6 +24,10 @@ The four faces that must agree, all asserted below:
 4. the `.pyi` and runtime `__doc__` -> one structured ndarray, no `out=`
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -64,7 +68,7 @@ FIELDS = [
 def _project(tmp_path: Path, fields=None, **kw) -> Path:
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(
             root, "telemetry", None, state_vars=[("cap", "size_t", "0")]
         )
@@ -291,7 +295,7 @@ class TestTheManifest:
     def test_it_needs_variable_output(self, tmp_path, capsys):
         root = tmp_path / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", root)
+            new_run("p", root, c_prefix=None)
             object_run(root, "thing", None, state_vars=[("g", "double", "1")])
         capsys.readouterr()
         with pytest.raises(SystemExit):
@@ -312,7 +316,7 @@ class TestTheManifest:
     def test_it_needs_result_fields(self, tmp_path, capsys):
         root = tmp_path / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", root)
+            new_run("p", root, c_prefix=None)
             object_run(root, "thing", None, state_vars=[("g", "double", "1")])
         capsys.readouterr()
         with pytest.raises(SystemExit):
@@ -335,7 +339,7 @@ class TestTheManifest:
         one would be a footgun."""
         root = tmp_path / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", root)
+            new_run("p", root, c_prefix=None)
             object_run(root, "thing", None, state_vars=[("g", "double", "1")])
         capsys.readouterr()
         with pytest.raises(SystemExit):
@@ -376,7 +380,7 @@ class TestTheCliFlag:
     def _fresh(self, tmp_path: Path) -> Path:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("proj", root)
+            new_run("proj", root, c_prefix=None)
             object_run(
                 root, "telemetry", None, state_vars=[("cap", "size_t", "0")]
             )
@@ -504,7 +508,7 @@ class TestTheIncrementalSplice:
     def _spliceable(self, tmp_path: Path) -> Path:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("proj", root)
+            new_run("proj", root, c_prefix=None)
             module_run(root, "tlm")
             object_run(
                 root, "telemetry", "tlm", state_vars=[("cap", "size_t", "0")]

@@ -2,12 +2,12 @@
 
 ### FIR filter
 
-Open `native/inc/my_filters/fir/fir_core.h` and replace `fir_step`.  The delay line
+Open `native/inc/my_filters/fir/fir_core.h` and replace `my_filters_fir_step`.  The delay line
 is mutated, so the signature drops `const`:
 
 ```c
 static inline float _Complex
-fir_step(fir_state_t *state, float _Complex x)
+my_filters_fir_step(my_filters_fir_state_t *state, float _Complex x)
 {
     memmove(&state->delay[1], &state->delay[0],
             (16 - 1) * sizeof(float _Complex));
@@ -22,12 +22,12 @@ fir_step(fir_state_t *state, float _Complex x)
 
 ### Biquad filter (Direct Form II transposed, real)
 
-Open `native/inc/my_filters/biquad/biquad_core.h` and replace `biquad_step`.
+Open `native/inc/my_filters/biquad/biquad_core.h` and replace `my_filters_biquad_step`.
 Delay states `w1`/`w2` are written each call, so `const` drops here too:
 
 ```c
 static inline float
-biquad_step(biquad_state_t *state, float x)
+my_filters_biquad_step(my_filters_biquad_state_t *state, float x)
 {
     double y   = state->b0 * (double)x + state->w1;
     state->w1  = state->b1 * (double)x - state->a1 * y + state->w2;
@@ -39,7 +39,7 @@ biquad_step(biquad_state_t *state, float x)
 `double` arithmetic avoids coefficient-quantisation noise accumulation in the
 delay states; the output is narrowed back to `float` on return.
 
-> **Note:** both `fir_steps()` and `biquad_steps()` in their respective
+> **Note:** both `my_filters_fir_steps()` and `my_filters_biquad_steps()` in their respective
 > `_core.c` files loop over `_step()` automatically — no changes needed there.
 
 While the headers are open, the `@brief` on each object's `create()` is the

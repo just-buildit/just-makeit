@@ -404,7 +404,14 @@ pa_fir_state_t *a = pa_fir_create (2.0);
 pb_fir_state_t *b = pb_fir_create (2.0);
 ```
 
-Set it with `jm new --c-prefix dp`. On an existing project it renames every
+**A new project has one by default:** `jm new dsp` writes `c_prefix = "dsp"`, so its symbols are `dsp_<comp>_*` from the first file. Pick a
+shorter one with `jm new --c-prefix dp`, or keep today's bare names with
+`--no-c-prefix`. A manifest you write by hand spells a sibling component's
+derived names prefixed too -- `type = "dsp_lfo_state_t *"`,
+`create_impl = "obj->osc = dsp_lfo_create(...)"`.
+
+A project made before this default has no key, and keeps its bare names
+until you add one. Adding it renames every
 derived symbol, which your C (the sacred `_core.h` / `_core.c`, module
 function sources, tests and benchmarks) must follow: `apply` refuses, naming
 each file and the old names it still spells, until `jm upgrade` respells
@@ -422,9 +429,9 @@ of your algorithms are C99 and some are C++11:
 #include <vector>
 
 std::vector<float _Complex> xs;      // C99's type, in a C++11 container
-engine_state_t *o = engine_create(2.0);
-float _Complex y = engine_step(o, xs.at(0));
-engine_destroy(o);
+<pkg>_engine_state_t *o = <pkg>_engine_create(2.0);
+float _Complex y = <pkg>_engine_step(o, xs.at(0));
+<pkg>_engine_destroy(o);
 ```
 
 Compile the C++ side with `-std=c++11` and link with the C++ driver (`g++` /
@@ -510,7 +517,7 @@ ______________________________________________________________________
 ls $PREFIX/include/my_project/my_project.h
 
 # library present and has expected symbols
-nm -D $PREFIX/lib/libmy_project.so | grep component_a_create
+nm -D $PREFIX/lib/libmy_project.so | grep my_project_component_a_create
 
 # pkg-config resolves
 pkg-config --modversion my_project

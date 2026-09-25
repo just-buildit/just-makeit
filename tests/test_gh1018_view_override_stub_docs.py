@@ -33,6 +33,10 @@ real-input face is a view with ``f32`` ``steps``/``bits`` — the exact shape
 gh-1012 was filed for.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 from just_makeit import _incpath as INC
@@ -53,7 +57,7 @@ SCAFFOLD_BRIEF = " * @brief block."
 def _base(tmp_path, *, override: bool):
     """A module object with a complex `block`, and a view over it."""
     dest = tmp_path / "demo"
-    new_run("demo", dest, [], [], build_system="cmake")
+    new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
     module_run(dest, "dsp")
     object_run(
         dest,

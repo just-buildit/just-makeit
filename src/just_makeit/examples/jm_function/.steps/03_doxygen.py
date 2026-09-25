@@ -29,7 +29,7 @@ BLOCKS = [
     (
         # Regular function: bare prototype in the module header. The body is in
         # native/src/utils/linear_to_db.c, but the docstring comes from here.
-        "float linear_to_db(float x);",
+        "float my_utils_linear_to_db(float x);",
         "/**\n"
         " * @brief Convert linear amplitude to dB (20*log10(x)).\n"
         " * @param x  Linear amplitude (must be > 0).\n"
@@ -47,7 +47,7 @@ BLOCKS = [
         # Inline function: the `static inline` definition IS the declaration.
         # Anchor on the signature line, which is identical before and after
         # 02_patch.py swaps the placeholder body for the real ternary.
-        "static inline float\nclamp(float x, float lo, float hi)",
+        "static inline float\nmy_utils_clamp(float x, float lo, float hi)",
         "/**\n"
         " * @brief Clamp x to the closed interval [lo, hi].\n"
         " * @param x   Value to clamp.\n"

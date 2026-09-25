@@ -1,5 +1,9 @@
 """Integration tests for `just-makeit method`."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
@@ -51,7 +55,7 @@ class TestMethodPreservesInitParams:
 
     def test_method_preserves_init_param_ctor(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(
             dest,
             "my_filter",
@@ -96,7 +100,7 @@ class TestMethodPreservesInitParams:
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")])
+    new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")], c_prefix=None)
     return dest
 
 
@@ -1147,7 +1151,7 @@ class TestMethodFixedMultiOutput:
 @pytest.fixture()
 def module_project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest)
+    new_run("dsp", dest, c_prefix=None)
     module_run(dest, "sig")
     object_run(dest, "nco", "sig", state_vars=[("freq", "double", "0.0")])
     return dest
@@ -1676,7 +1680,9 @@ class TestOutTypeScalarLength:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, ["nco"], [("freq", "double", "0.0")])
+        new_run(
+            "dsp", dest, ["nco"], [("freq", "double", "0.0")], c_prefix=None
+        )
         method_run(
             dest,
             "nco",
@@ -1829,7 +1835,9 @@ class TestMethodExtraArgsTomlKey:
     def test_extra_args_toml_replays_via_apply(self, tmp_path):
         """A method entry with extra_args survives jm apply unchanged."""
         proj = tmp_path / "dsp"
-        new_run("dsp", proj, ["nco"], [("freq", "double", "0.0")])
+        new_run(
+            "dsp", proj, ["nco"], [("freq", "double", "0.0")], c_prefix=None
+        )
         method_run(
             proj,
             "nco",
@@ -1988,7 +1996,9 @@ class TestMethodVarargs:
         import shutil
 
         proj = tmp_path / "dsp"
-        new_run("dsp", proj, ["nco"], [("freq", "double", "0.0")])
+        new_run(
+            "dsp", proj, ["nco"], [("freq", "double", "0.0")], c_prefix=None
+        )
         method_run(
             proj,
             "nco",
@@ -2023,7 +2033,7 @@ class TestMethodDefaultParams:
 
     def _scaffold(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest)
+        new_run("dsp", dest, c_prefix=None)
         object_run(
             dest,
             "filt",
@@ -2073,7 +2083,7 @@ class TestMethodSingleRecord:
 
     def _scaffold(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2136,7 +2146,7 @@ class TestMethodSingleRecord:
     # bug #3 (the single binding ignored method params -> too-few-arguments).
     def _scaffold_with_params(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2216,7 +2226,7 @@ class TestMethodSingleRecord:
         # C return type (tone_metrics_t would derive "ToneMetrics" anyway, so
         # use a distinct name to prove the override).
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2243,7 +2253,7 @@ class TestMethodSingleRecord:
 
     def test_record_name_round_trips_and_survives_apply(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2277,7 +2287,7 @@ class TestMethodSingleRecord:
         # gh-261 item 2: record_module sets the structseq __module__ to the
         # project's import path instead of the C component name.
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2311,7 +2321,7 @@ class TestMethodSingleRecord:
         # from (`p.tm`), the prefix the class's own tp_name carries. It was
         # the bare component (`tm`), a module that does not exist.
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2337,7 +2347,7 @@ class TestMethodSingleRecord:
 
     def test_record_module_round_trips_and_survives_apply(self, tmp_path):
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2370,7 +2380,7 @@ class TestMethodSingleRecord:
         # A single-record method with scalar params but NO input array
         # (arg_type void) -> keyword-only parse, no array handling.
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",
@@ -2406,7 +2416,7 @@ class TestMethodSingleRecord:
         # in Py_BEGIN/END_ALLOW_THREADS, hoisting the array fetch above it and
         # keeping the input's Py_DECREF under the GIL after.
         dest = tmp_path / "p"
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "tm",

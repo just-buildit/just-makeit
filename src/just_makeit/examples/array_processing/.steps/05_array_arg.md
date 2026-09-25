@@ -11,7 +11,7 @@ always eliminate.  Pass `[]` on the arg type to express this directly.
 The generated `step()` takes a numpy array and a length:
 
 ```c
-int buf_proc_step(buf_proc_state_t *state,
+int my_buf_buf_proc_step(my_buf_buf_proc_state_t *state,
                   const float _Complex *x, size_t x_len)
 {
     (void)x;

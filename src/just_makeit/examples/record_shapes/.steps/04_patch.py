@@ -12,7 +12,7 @@ HEADER = Path("native/inc/evlog/collector/collector_core.h")
 CORE = Path("native/src/collector/collector_core.c")
 
 STEP_BODY = """\
-collector_step(collector_state_t *state, double x)
+evlog_collector_step(evlog_collector_state_t *state, double x)
 {
     size_t slot = (size_t)(state->count % EVLOG_CAPACITY);
 
@@ -37,7 +37,7 @@ HELD = """\
  * reaches capacity, and reading past that returns whatever create() zeroed.
  */
 static size_t
-collector_held(const collector_state_t *state)
+collector_held(const evlog_collector_state_t *state)
 {
     return state->count < EVLOG_CAPACITY ? (size_t)state->count
                                          : (size_t)EVLOG_CAPACITY;
@@ -108,7 +108,7 @@ def main() -> None:
     h = HEADER.read_text(encoding="utf-8")
     h = _replace(
         h,
-        """collector_step(collector_state_t *state, double x)
+        """evlog_collector_step(evlog_collector_state_t *state, double x)
 {
     (void)state; (void)x; /* TODO: implement */
 }""",

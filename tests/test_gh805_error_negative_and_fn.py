@@ -36,6 +36,10 @@ right binding is the checked one exposed under the plain Python name.
 fields and handle methods, so this is one key reaching one more place.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -67,7 +71,7 @@ def _project(tmp_path: Path) -> Path:
     """A module object named for its C prefix, as doppler's telemetry is."""
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         module_run(root, MOD)
         object_run(
             root,

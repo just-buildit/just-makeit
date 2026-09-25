@@ -49,6 +49,10 @@ GATE: a program linked only against what an installed jm project advertises
       soname and find_package applies 0.x version matching.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 from just_makeit import _incpath as INC  # noqa: E402
@@ -141,6 +145,7 @@ def world(tmp_path_factory):
     r = run_cli(
         "new",
         NAME,
+        "--no-c-prefix",
         "--object",
         "gain",
         "--state",

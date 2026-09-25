@@ -66,8 +66,8 @@ the real part and sample variance into the imaginary part:
 
 ```c
 // before
-static inline float _Complex running_stats_step (
-    const running_stats_state_t *state, float _Complex x)
+static inline float _Complex my_stats_running_stats_step (
+    const my_stats_running_stats_state_t *state, float _Complex x)
 {
   (void)state; /* TODO: implement using state variables */
   return x;
@@ -78,8 +78,8 @@ static inline float _Complex running_stats_step (
 // base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
-static inline float _Complex running_stats_step (running_stats_state_t *state,
-                                                 float _Complex x)
+static inline float _Complex my_stats_running_stats_step (
+    my_stats_running_stats_state_t *state, float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;
@@ -147,22 +147,24 @@ After `make`, the combined shared library is at `build/libmy_stats.so`.
 int
 main (void)
 {
-  running_stats_state_t *s = running_stats_create (0, 0.0, 0.0);
+  my_stats_running_stats_state_t *s
+      = my_stats_running_stats_create (0, 0.0, 0.0);
 
   float data[] = { 2, 4, 4, 4, 5, 5, 7, 9 };
   float _Complex y;
   for (int i = 0; i < 8; i++)
-    y = running_stats_step (s, data[i] + 0.0f * I);
+    y = my_stats_running_stats_step (s, data[i] + 0.0f * I);
 
-  printf ("n:        %d\n", running_stats_get_n (s));      /* 8     */
-  printf ("mean:     %.4f\n", running_stats_get_mean (s)); /* 5.0000 */
-  printf ("variance: %.4f\n", (double)cimagf (y));         /* 4.0000 */
+  printf ("n:        %d\n", my_stats_running_stats_get_n (s)); /* 8     */
+  printf ("mean:     %.4f\n",
+          my_stats_running_stats_get_mean (s));    /* 5.0000 */
+  printf ("variance: %.4f\n", (double)cimagf (y)); /* 4.0000 */
 
-  running_stats_reset (s);
-  printf ("after reset: n=%d mean=%.1f\n", running_stats_get_n (s),
-          running_stats_get_mean (s)); /* n=0 mean=0.0 */
+  my_stats_running_stats_reset (s);
+  printf ("after reset: n=%d mean=%.1f\n", my_stats_running_stats_get_n (s),
+          my_stats_running_stats_get_mean (s)); /* n=0 mean=0.0 */
 
-  running_stats_destroy (s);
+  my_stats_running_stats_destroy (s);
   return 0;
 }
 ```
@@ -184,10 +186,10 @@ just-makeit add --state "min_val:double:0.0" --state "max_val:double:0.0"
 make test
 ```
 
-State is *structural*: `add` rewrites the `running_stats_state_t` struct and
+State is *structural*: `add` rewrites the `my_stats_running_stats_state_t` struct and
 the `create()` / `reset()` lifecycle, so it rebuilds the object from the
 manifest rather than splicing into your sources. That rebuild resets
-`running_stats_step()` back to a fresh stub, so re-run the implement step to
+`my_stats_running_stats_step()` back to a fresh stub, so re-run the implement step to
 restore the algorithm — now on top of the new `min_val` / `max_val` fields:
 
 ```c
@@ -195,8 +197,8 @@ restore the algorithm — now on top of the new `min_val` / `max_val` fields:
 // Input:  real part = new sample (imaginary part ignored)
 // Output: real = current mean, imag = sample variance (0 until n > 1)
 // State:  min_val / max_val track the smallest / largest sample seen so far.
-static inline float _Complex running_stats_step (running_stats_state_t *state,
-                                                 float _Complex x)
+static inline float _Complex my_stats_running_stats_step (
+    my_stats_running_stats_state_t *state, float _Complex x)
 {
   double sample = (double)crealf (x);
   state->n++;
@@ -218,7 +220,7 @@ static inline float _Complex running_stats_step (running_stats_state_t *state,
 ## 7. Give the Python class a real docstring
 
 The header is the single source of truth for docs, so replacing the scaffold's
-boilerplate `@brief` on `running_stats_create()` with a one-line description
+boilerplate `@brief` on `my_stats_running_stats_create()` with a one-line description
 turns the generated `.pyi` class summary from the generic
 `"RunningStats component."` into a sentence that says what the object does:
 
@@ -227,7 +229,7 @@ turns the generated `.pyi` class summary from the generic
 ``@brief`` so the generated ``.pyi`` class docstring reads as a sentence.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``running_stats_create()`` and turns its ``@brief``
+``/** ... */`` comment on ``my_stats_running_stats_create()`` and turns its ``@brief``
 into the summary line of the Python class docstring. Straight off the scaffold
 that summary is the generic ``"RunningStats component."``; replacing the
 boilerplate ``@brief`` with a one-line description of what the object *does*
@@ -246,6 +248,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 OBJ = "running_stats"
@@ -267,13 +271,15 @@ def _enrich() -> None:
     # Parameters section of the .pyi still derives from the state fields).
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {OBJ} instance\..*?"
-        rf"(?={OBJ}_state_t \*{OBJ}_create)",
+        rf"(?={_csym.stem(header, OBJ)}_state_t \*{_csym.stem(header, OBJ)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {OBJ} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     header.write_text(text, encoding="utf-8")

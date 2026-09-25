@@ -1,5 +1,9 @@
 """Integration tests for `just-makeit property`."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import re
 import sys
@@ -22,7 +26,9 @@ from just_makeit._config import load, properties
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, ["buf"], [("capacity", "size_t", "1024")])
+    new_run(
+        "dsp", dest, ["buf"], [("capacity", "size_t", "1024")], c_prefix=None
+    )
     return dest
 
 
@@ -173,7 +179,13 @@ class TestFieldInjectionIndentation:
     def test_integration_field_property_clean(self, tmp_path):
         # A real --field property must land aligned in the sacred struct.
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, ["buf"], [("capacity", "size_t", "1024")])
+        new_run(
+            "dsp",
+            dest,
+            ["buf"],
+            [("capacity", "size_t", "1024")],
+            c_prefix=None,
+        )
         property_run(dest, "buf", "level", None, "size_t", False, field=True)
         h = (dest / INC_ROOT / "buf" / "buf_core.h").read_text(
             encoding="utf-8"
@@ -401,7 +413,7 @@ class TestPropertyFieldModule:
     @pytest.fixture()
     def mod_project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, modules=["sig"])
+        new_run("dsp", dest, modules=["sig"], c_prefix=None)
         object_run(dest, "nco", "sig", [("freq", "float", "440.0f")])
         return dest
 
@@ -467,7 +479,7 @@ class TestPropertyFieldModule:
         """
 
         dest = tmp_path / "proj"
-        new_run("proj", dest, modules=["dsp"])
+        new_run("proj", dest, modules=["dsp"], c_prefix=None)
         object_run(dest, "mavg", "dsp", no_state=True, no_step=True)
         property_run(dest, "mavg", "out", "dsp", "float _Complex", False)
         h = (dest / INC_ROOT / "mavg" / "mavg_core.h").read_text(
@@ -484,7 +496,7 @@ class TestPropertyFieldModule:
         kept ``create(<params>)`` — a conflicting-types compile error.
         """
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, modules=["core"])
+        new_run("dsp", dest, modules=["core"], c_prefix=None)
         object_run(
             dest,
             "counter",
@@ -520,6 +532,7 @@ class TestFieldPropertyAliasesState:
             dest,
             ["reader"],
             [("num_samples", "size_t", "0"), ("position", "size_t", "0")],
+            c_prefix=None,
         )
         property_run(
             dest, "reader", "num_samples", None, "size_t", False, field=True

@@ -104,7 +104,7 @@ _SHAPES: dict[str, list[str]] = {
 def project(tmp_path_factory) -> Path:
     """One project holding an object per shape (scaffolding is the cost)."""
     base = tmp_path_factory.mktemp("gh1487")
-    r = run_cli("new", "p", cwd=base)
+    r = run_cli("new", "p", "--no-c-prefix", cwd=base)
     assert r.returncode == 0, r.stderr
     root = base / "p"
     for name, flags in _SHAPES.items():

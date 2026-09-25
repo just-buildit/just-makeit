@@ -153,7 +153,7 @@ just-makeit object gain \
 just-makeit object gain \
     --impl legacy/dsp.c::apply_gain \
     --replace apply_gain_state::gain_t \
-    --replace apply_gain::gain_step
+    --replace apply_gain::myproject_gain_step
 ```
 
 `--impl` extracts the body between the outermost braces of the target
@@ -498,7 +498,7 @@ regardless of the splice outcome:
 
 ```toml
 [engine]
-impl_file = "native/src/engine/engine_core.c::engine_step"
+impl_file = "native/src/engine/engine_core.c::myproject_engine_step"
 ```
 
 `jm regenerate` will then re-inject it automatically.

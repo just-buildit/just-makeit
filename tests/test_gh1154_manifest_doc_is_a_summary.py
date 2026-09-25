@@ -81,7 +81,7 @@ def _cli(*args, cwd) -> JmRun:
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
-    assert _cli("new", "pp", cwd=tmp_path).returncode == 0
+    assert _cli("new", "pp", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "pp"
     assert (
         _cli(

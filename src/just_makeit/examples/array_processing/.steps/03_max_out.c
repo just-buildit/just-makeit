@@ -8,7 +8,7 @@
  * defined and will likely produce a silent bug.
  */
 size_t
-hbdecim_execute_max_out (hbdecim_state_t *state)
+my_decim_hbdecim_execute_max_out (my_decim_hbdecim_state_t *state)
 {
   /* state->block_size is a constructor parameter (add with just-makeit add) */
   return (state->block_size + 1) / 2;
@@ -18,8 +18,9 @@ hbdecim_execute_max_out (hbdecim_state_t *state)
  * The caller (Python ext) supplies the pre-allocated output buffer.
  */
 size_t
-hbdecim_execute (hbdecim_state_t *state, const float _Complex *in, size_t n_in,
-                 float _Complex *out)
+my_decim_hbdecim_execute (my_decim_hbdecim_state_t *state,
+                          const float _Complex *in, size_t n_in,
+                          float _Complex *out)
 {
   size_t n_out = 0;
   for (size_t i = 0; i + 1 < n_in; i += 2)

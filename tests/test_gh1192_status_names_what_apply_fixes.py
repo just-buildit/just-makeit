@@ -78,7 +78,7 @@ def _frag(root: Path) -> Path:
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A module object with a property, applied and clean."""
-    assert _cli("new", "r", cwd=tmp_path).returncode == 0
+    assert _cli("new", "r", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "r"
     for step in (
         ("module", "m"),

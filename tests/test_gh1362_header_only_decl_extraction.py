@@ -18,6 +18,10 @@ prototype names its function AFTER at least a return type, and contains no
 ``=``. A statement fails one or the other.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -55,7 +59,7 @@ def _quiet(fn, *a, **kw):
 def _header_only(tmp_path: Path) -> Path:
     """A header-only `q`: state, a method and a computed property."""
     root = tmp_path / "p"
-    _quiet(new_run, "p", root)
+    _quiet(new_run, "p", root, c_prefix=None)
     _quiet(
         object_run,
         root,

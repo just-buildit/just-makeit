@@ -182,7 +182,7 @@ jm object my_fir --state "coeffs:float[64]" --state "n_taps:uint8_t:0"
 ```
 
 `coeffs[64]` lives in the struct; one alloc; populate inside
-`my_fir_create()` in `_core.c`, or via a custom setter method. Access
+`<pkg>_my_fir_create()` in `_core.c`, or via a custom setter method. Access
 in C as `state->coeffs[i]`.
 
 #### Vendor plan in opaque state
@@ -197,8 +197,8 @@ jm object my_fft \
 ```
 
 Renderer treats `plan` as a black box. You call `fftwf_plan_dft_1d()`
-inside `my_fft_create()` and `fftwf_destroy_plan()` inside
-`my_fft_destroy()`, both in `_core.c`. The state struct carries
+inside `<pkg>_my_fft_create()` and `fftwf_destroy_plan()` inside
+`<pkg>_my_fft_destroy()`, both in `_core.c`. The state struct carries
 `fftwf_plan plan;` verbatim.
 
 #### File / socket reader
@@ -211,7 +211,7 @@ jm object iq_reader --no-step \
 ```
 
 `filepath` is the user-facing ctor arg (parsed as Python `str`).
-`fd` lives in state, initialised inside `iq_reader_create()` after
+`fd` lives in state, initialised inside `<pkg>_iq_reader_create()` after
 `open()`.
 
 #### Function with output buffer
@@ -367,11 +367,11 @@ Getters return the exact NumPy scalar for the declared C type; setters accept
 the same type:
 
 ```c
-double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double val);
+double <pkg>_engine_get_gain(const <pkg>_engine_state_t *state);
+void   <pkg>_engine_set_gain(<pkg>_engine_state_t *state, double val);
 
-uint8_t engine_get_channel(const engine_state_t *state);
-void    engine_set_channel(engine_state_t *state, uint8_t val);
+uint8_t <pkg>_engine_get_channel(const <pkg>_engine_state_t *state);
+void    <pkg>_engine_set_channel(<pkg>_engine_state_t *state, uint8_t val);
 ```
 
 ```python

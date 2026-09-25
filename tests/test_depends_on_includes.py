@@ -7,6 +7,10 @@ compiles without a manual edit. Also covers the `mutable` synonym for `out` on
 a module-function array param (the related const-vs-writable observation).
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 import io
@@ -29,7 +33,7 @@ def _silent(fn, *a, **k):
 
 
 def _scaffold_dep_pair(dest: Path):
-    _silent(new_run, "tp", dest)
+    _silent(new_run, "tp", dest, c_prefix=None)
     _silent(
         object_run,
         dest,
@@ -84,7 +88,7 @@ def test_include_placement(tmp_path):
 # ── (c) mutable is a synonym for out on a module-function array param ─────────
 def test_function_mutable_param_is_non_const(tmp_path):
     dest = tmp_path / "tp"
-    _silent(new_run, "tp", dest, modules=["dsp"])
+    _silent(new_run, "tp", dest, modules=["dsp"], c_prefix=None)
     cfg = C.load(dest)
     cfg["module"]["dsp"]["functions"] = [
         {
@@ -168,7 +172,7 @@ def test_inject_skips_dep_without_a_header(tmp_path):
 
 def test_apply_skips_link_target_dep(tmp_path):
     # Full apply: a component depending on a bare link target gets no include.
-    _silent(new_run, "tp", tmp_path / "tp")
+    _silent(new_run, "tp", tmp_path / "tp", c_prefix=None)
     _silent(
         object_run,
         tmp_path / "tp",
@@ -211,7 +215,7 @@ def test_module_object_gets_depends_on_include(tmp_path):
     from just_makeit._module import run as module_run
 
     dest = tmp_path / "tp"
-    _silent(new_run, "tp", dest)
+    _silent(new_run, "tp", dest, c_prefix=None)
     _silent(module_run, dest, "sig")
     _silent(
         object_run,
@@ -244,7 +248,7 @@ def test_depends_on_links_dep_into_test_bench(tmp_path):
     from just_makeit._module import run as module_run
 
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "dsp")
     _silent(
         object_run,
@@ -313,7 +317,7 @@ class TestDependsOnLink:
 
     def test_link_dep_on_standalone_so(self, tmp_path):
         dest = tmp_path / "p"
-        _silent(new_run, "p", dest)
+        _silent(new_run, "p", dest, c_prefix=None)
         _silent(
             object_run,
             dest,
@@ -336,7 +340,7 @@ class TestDependsOnLink:
 
     def test_bare_dep_no_link_on_standalone_so(self, tmp_path):
         dest = tmp_path / "p"
-        _silent(new_run, "p", dest)
+        _silent(new_run, "p", dest, c_prefix=None)
         _silent(
             object_run,
             dest,
@@ -361,7 +365,7 @@ class TestDependsOnLink:
         from just_makeit._module import run as module_run
 
         dest = tmp_path / "p"
-        _silent(new_run, "p", dest)
+        _silent(new_run, "p", dest, c_prefix=None)
         _silent(
             object_run,
             dest,
@@ -385,7 +389,7 @@ class TestDependsOnLink:
 
     def test_link_flag_survives_toml_roundtrip(self, tmp_path):
         dest = tmp_path / "p"
-        _silent(new_run, "p", dest)
+        _silent(new_run, "p", dest, c_prefix=None)
         _silent(
             object_run,
             dest,

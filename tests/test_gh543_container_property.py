@@ -30,6 +30,10 @@ class (an unchecked pointer that segfaults rather than raising):
     scenario into exit 139.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 import ast
 import shutil
@@ -332,7 +336,7 @@ class TestStandaloneProject:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")])
+        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         property_run(
             dest,
             "rdr",
@@ -402,7 +406,7 @@ class TestModuleProject:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [])
+        new_run("dsp", dest, [], [], c_prefix=None)
         module_run(dest, "wfm", ["reader"])
         object_run(
             dest,
@@ -542,7 +546,9 @@ class TestBuildAndRun:
         if _SKIP:
             pytest.skip(_SKIP)
         root = tmp_path / "proj"
-        new_run("proj", root, ["rdr"], [("cap", "size_t", "16")])
+        new_run(
+            "proj", root, ["rdr"], [("cap", "size_t", "16")], c_prefix=None
+        )
         property_run(
             root, "rdr", "keywords", None, "dict", False, value_type="object"
         )
@@ -727,7 +733,7 @@ class TestCli:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")])
+        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         return dest
 
     def test_every_container_flag_reaches_the_manifest(

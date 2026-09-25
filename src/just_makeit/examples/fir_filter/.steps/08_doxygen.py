@@ -1,7 +1,7 @@
 """Enrich the sacred ``fir_filter_core.h`` header with a real class summary.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``fir_filter_create`` and turns its ``@brief`` into
+``/** ... */`` comment on ``my_fir_fir_filter_create`` and turns its ``@brief`` into
 the summary line of the generated ``.pyi`` class docstring. Out of the box the
 scaffold brief ("Create a fir_filter instance.") is generic, so jm falls back
 to a bland "FirFilter component." summary. Replacing it with a real sentence
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 OBJ = "fir_filter"
@@ -32,13 +34,15 @@ def main() -> None:
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {OBJ} instance\..*?"
-        rf"(?={OBJ}_state_t \*{OBJ}_create)",
+        rf"(?={_csym.stem(header, OBJ)}_state_t \*{_csym.stem(header, OBJ)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEF}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {OBJ}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {OBJ} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     header.write_text(text, encoding="utf-8")

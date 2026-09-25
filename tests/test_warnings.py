@@ -8,6 +8,10 @@ not "does it emit the call" but `TestWarningSurvivesRegeneration`: the warning
 has to come back from the manifest alone, with no human in the loop.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import re
 import subprocess
 import sys
@@ -43,7 +47,9 @@ _MSG = (
 def project(tmp_path):
     """A standalone object carrying the bool flag a warning keys off."""
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, ["acq"], [("underpowered", "int", "0")])
+    new_run(
+        "dsp", dest, ["acq"], [("underpowered", "int", "0")], c_prefix=None
+    )
     return dest
 
 
@@ -268,7 +274,7 @@ class TestWarningValidation:
 class TestWarningModuleObject:
     def test_module_object_gets_the_warning(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [], modules=["filt"])
+        new_run("dsp", dest, [], [], modules=["filt"], c_prefix=None)
         from just_makeit._object import run as object_run
 
         object_run(
@@ -441,7 +447,7 @@ class TestWarningCli:
 
     def test_cli_passes_module_through(self, tmp_path, capsys, monkeypatch):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [], modules=["filt"])
+        new_run("dsp", dest, [], [], modules=["filt"], c_prefix=None)
         from just_makeit._object import run as object_run
 
         object_run(
@@ -498,6 +504,6 @@ class TestWarningCli:
 class TestWarningModuleObjectErrors:
     def test_unknown_object_in_module(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [], modules=["filt"])
+        new_run("dsp", dest, [], [], modules=["filt"], c_prefix=None)
         with pytest.raises(SystemExit):
             warning_run(dest, "nosuch", "flag", "m", module="filt")

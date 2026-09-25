@@ -28,6 +28,10 @@ So the flag is opt-in, and the zero-guard survives it: `_method` scaffolds
 function must not allocate nothing and hand the kernel a buffer to overrun.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import contextlib
@@ -61,7 +65,7 @@ _SKIP = (
 def _project(tmp_path, *, exact: bool):
     root = tmp_path / "p"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("p", root, [], [])
+        new_run("p", root, [], [], c_prefix=None)
         object_run(
             root,
             "cic",
@@ -154,7 +158,7 @@ def test_the_cli_accepts_the_flag(tmp_path):
     """`--exact-max-out`, the peer of `--pass-capacity`."""
     root = tmp_path / "p"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("p", root, [], [])
+        new_run("p", root, [], [], c_prefix=None)
         object_run(
             root, "cic", None, arg_type="void", return_type="float _Complex"
         )
@@ -216,7 +220,7 @@ class TestExactMaxOutRuntime:
     def built(self, tmp_path_factory):
         dest = tmp_path_factory.mktemp("gh805d") / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", dest)
+            new_run("p", dest, c_prefix=None)
             object_run(
                 dest,
                 "cic",

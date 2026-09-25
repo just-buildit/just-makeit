@@ -283,7 +283,7 @@ class TestVoidArgTypeCLI:
         h = (dest / INC_ROOT / "nco" / "nco_core.h").read_text(
             encoding="utf-8"
         )
-        assert "nco_step(const nco_state_t *state)" in h
+        assert "gen_nco_step(const gen_nco_state_t *state)" in h
 
     def test_object_void_arg_type(self, tmp_path):
         dest = tmp_path / "proj"
@@ -314,7 +314,7 @@ class TestVoidArgTypeCLI:
         h = (dest / INC_ROOT / "osc" / "osc_core.h").read_text(
             encoding="utf-8"
         )
-        assert "osc_step(const osc_state_t *state)" in h
+        assert "proj_osc_step(const proj_osc_state_t *state)" in h
 
 
 class TestVoidReturnCLI:
@@ -1018,8 +1018,8 @@ class TestObjectMutableCLI:
         core_h = (dest / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
-        assert "nco_step(nco_state_t *state)" in core_h
-        assert "nco_step(const nco_state_t *state)" not in core_h
+        assert "proj_nco_step(proj_nco_state_t *state)" in core_h
+        assert "proj_nco_step(const proj_nco_state_t *state)" not in core_h
 
     def test_immutable_default_has_const(self, tmp_path):
         dest = tmp_path / "proj"
@@ -1036,7 +1036,7 @@ class TestObjectMutableCLI:
         core_h = (dest / INC_ROOT / "nco/nco_core.h").read_text(
             encoding="utf-8"
         )
-        assert "nco_step(const nco_state_t *state)" in core_h
+        assert "proj_nco_step(const proj_nco_state_t *state)" in core_h
 
     def test_mutable_scalar_arg_removes_const(self, tmp_path):
         dest = tmp_path / "proj"
@@ -1054,8 +1054,11 @@ class TestObjectMutableCLI:
         core_h = (dest / INC_ROOT / "filt/filt_core.h").read_text(
             encoding="utf-8"
         )
-        assert "filt_step(filt_state_t *state, float x)" in core_h
-        assert "filt_step(const filt_state_t *state, float x)" not in core_h
+        assert "proj_filt_step(proj_filt_state_t *state, float x)" in core_h
+        assert (
+            "proj_filt_step(const proj_filt_state_t *state, float x)"
+            not in core_h
+        )
 
     def test_mutable_persisted_in_toml(self, tmp_path):
         dest = tmp_path / "proj"

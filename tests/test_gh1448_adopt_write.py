@@ -36,7 +36,7 @@ GUARD = """    if (!self->handle) {
 
 @pytest.fixture
 def proj(tmp_path: Path) -> Path:
-    assert run_cli("new", "q", cwd=tmp_path).returncode == 0
+    assert run_cli("new", "q", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "q"
     assert run_cli("module", "dsp", cwd=root).returncode == 0
     r = run_cli(

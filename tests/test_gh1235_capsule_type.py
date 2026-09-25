@@ -23,6 +23,10 @@ reusing `ctype` would be one key answering two questions -- the trap this repo
 has paid for four times (`feedback-flag-standing-in`).
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import contextlib
@@ -48,7 +52,7 @@ CTYPE = "const dp_nco_desc_t *"
 def _project(tmp_path: Path, **prop_kw: object) -> Path:
     root = tmp_path / "dsp"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("dsp", root, ["nco"], [("cap", "size_t", "16")])
+        new_run("dsp", root, ["nco"], [("cap", "size_t", "16")], c_prefix=None)
         property_run(
             root,
             "nco",

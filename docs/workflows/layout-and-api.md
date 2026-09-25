@@ -68,33 +68,33 @@ name you pass to `just-makeit object`:
 
 ```c
 /* Constructor — one parameter per --state declaration */
-engine_state_t *engine_create(double gain);
+<pkg>_engine_state_t *<pkg>_engine_create(double gain);
 
 /* Destructor */
-void engine_destroy(engine_state_t *state);
+void <pkg>_engine_destroy(<pkg>_engine_state_t *state);
 
 /* Reset — restores every field to its declared default */
-void engine_reset(engine_state_t *state);
+void <pkg>_engine_reset(<pkg>_engine_state_t *state);
 
 /* Single sample — inline stub in _core.h; implement here */
 static inline float _Complex
-engine_step(const engine_state_t *state, float _Complex x);
+<pkg>_engine_step(const <pkg>_engine_state_t *state, float _Complex x);
 
 /* Block processor — in _core.c, loops over step() */
-void engine_steps(
-    engine_state_t       *state,
+void <pkg>_engine_steps(
+    <pkg>_engine_state_t       *state,
     const float _Complex  *input,
     float _Complex        *output,
     size_t                n);
 
 /* Generator (--arg-type void) — no input parameter */
 static inline float
-nco_step(const nco_state_t *state);
-void nco_steps(nco_state_t *state, float *output, size_t n);
+<pkg>_nco_step(const <pkg>_nco_state_t *state);
+void <pkg>_nco_steps(<pkg>_nco_state_t *state, float *output, size_t n);
 
 /* Getter and setter for each --state variable */
-double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double val);
+double <pkg>_engine_get_gain(const <pkg>_engine_state_t *state);
+void   <pkg>_engine_set_gain(<pkg>_engine_state_t *state, double val);
 ```
 
 ______________________________________________________________________

@@ -15,6 +15,10 @@ rejected at generation with a clean error. Declaration is TOML-first
 (``controllable_names`` threaded through generation).
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import shutil
 import subprocess
@@ -54,7 +58,7 @@ def amp(tmp_path):
     """Standalone blockwise object (float[] -> float[]) with a controllable
     ``gain`` field defaulting to 2.0."""
     root = tmp_path / "proj"
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     init_run(
         root,
         "amp",
@@ -128,7 +132,7 @@ class TestModuleStub:
     @pytest.fixture()
     def mod(self, tmp_path):
         root = tmp_path / "proj"
-        new_run("proj", root, modules=["dsp"])
+        new_run("proj", root, modules=["dsp"], c_prefix=None)
         object_run(
             root,
             "fir",
@@ -185,7 +189,7 @@ class TestModuleStub:
         self, tmp_path, comp, at, rt, step_sig, steps_sub
     ):
         root = tmp_path / "proj"
-        new_run("proj", root, modules=["dsp"])
+        new_run("proj", root, modules=["dsp"], c_prefix=None)
         object_run(
             root,
             comp,
@@ -329,7 +333,7 @@ def scalar(tmp_path):
     """Standalone scalar->scalar object (float -> float) with a controllable
     ``gain`` field; step() is positional, steps() keyword-capable."""
     root = tmp_path / "proj"
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     init_run(
         root,
         "amp",
@@ -402,7 +406,7 @@ class TestOutUnification:
 
     def test_plain_scalar_steps_is_keyword_capable(self, tmp_path):
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         init_run(
             root, "plain", arg_type="float", return_type="float"
         )  # no controllable
@@ -418,7 +422,7 @@ class TestOutUnification:
         if _SKIP:
             pytest.skip(_SKIP)
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         init_run(root, "plain", arg_type="float", return_type="float")
         _cmake_build(root)
         script = (
@@ -485,7 +489,7 @@ def test_scalar_controllable_e2e(scalar):
 
 
 def _make(root, comp, at, rt):
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     init_run(
         root,
         comp,
@@ -502,7 +506,7 @@ class TestGeneratorFlip:
 
     def test_noncontrollable_generator_is_noargs(self, tmp_path):
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         init_run(root, "osc", arg_type="void", return_type="float")
         ext = (root / "native/src/osc/osc_ext.c").read_text()
         assert "Osc_step(OscObject *self, PyObject *Py_UNUSED" in ext
@@ -600,7 +604,7 @@ class TestPerfMacro:
         # A --perf project emits jm_perf.h with the EX form + the plain
         # forwarder, so a hand-written SIMD steps() can thread control params.
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         init_run(root, "c", arg_type="float", return_type="float", perf=True)
         perf_h = (root / INC_ROOT / "jm_perf.h").read_text()
         assert "JM_DEFINE_STEPS_EX(" in perf_h
@@ -622,7 +626,7 @@ def test_perf_controllable_macro_e2e(tmp_path):
     if _SKIP:
         pytest.skip(_SKIP)
     root = tmp_path / "proj"
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     init_run(
         root,
         "c",

@@ -23,6 +23,10 @@ report and silently merge every jm-authored glue docstring into a blob, so
 :class:`TestJmsOwnProseIsUnaffected` is what makes the fix a fix.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -68,7 +72,7 @@ def _doc(root: Path, name: str) -> str:
 
 def _project(tmp_path: Path, *, author_accessor: bool) -> Path:
     root = tmp_path / "demo"
-    _quiet(new_run, "demo", root)
+    _quiet(new_run, "demo", root, c_prefix=None)
     _quiet(
         object_run,
         root,
@@ -173,7 +177,7 @@ class TestJmsOwnProseIsUnaffected:
     def test_a_multi_paragraph_glue_method_stays_separated(self, tmp_path):
         """`set_state` is jm's, has two paragraphs, and has no header."""
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(
             object_run,
             root,

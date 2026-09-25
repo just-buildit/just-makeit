@@ -43,6 +43,7 @@ def _scaffold(tmp_path: Path, documented: bool) -> Path:
         run_cli(
             "new",
             "p",
+            "--no-c-prefix",
             "--object",
             "psd",
             "--arg-type",
@@ -130,7 +131,7 @@ class TestTheReportIsNotAGate:
         """Silence reads as a command that did not run."""
         root = tmp_path / "bare"
         root.mkdir()
-        assert run_cli("new", "q", cwd=root).returncode == 0
+        assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
         out = run_cli("status", "--docs", cwd=root / "q")
         assert out.returncode == 0, out.stderr
         assert "every member carries a docstring" in out.stdout
@@ -169,6 +170,7 @@ class TestMethods:
             run_cli(
                 "new",
                 "p",
+                "--no-c-prefix",
                 "--object",
                 "psd",
                 "--arg-type",
@@ -237,7 +239,7 @@ class TestModuleFunctions:
     def _project(self, tmp_path: Path) -> Path:
         root = tmp_path / "f"
         root.mkdir()
-        assert run_cli("new", "p", cwd=root).returncode == 0
+        assert run_cli("new", "p", "--no-c-prefix", cwd=root).returncode == 0
         proj = root / "p"
         assert run_cli("module", "dsp", cwd=proj).returncode == 0
         r = run_cli(
@@ -292,6 +294,7 @@ class TestRecordFields:
             run_cli(
                 "new",
                 "p",
+                "--no-c-prefix",
                 "--object",
                 "meter",
                 "--arg-type",

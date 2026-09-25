@@ -81,7 +81,7 @@ def project(tmp_path: Path) -> Path:
     only state in which this bug exists. The view is here because its fragment
     carries inherited copies of the same two members.
     """
-    assert _cli("new", "r", cwd=tmp_path).returncode == 0
+    assert _cli("new", "r", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "r"
     for step in (
         ("module", "m"),
@@ -257,7 +257,7 @@ class TestTheHeaderPathIsUnchanged:
     def test_a_header_brief_still_reaches_the_fragment(
         self, tmp_path: Path
     ) -> None:
-        assert _cli("new", "r", cwd=tmp_path).returncode == 0
+        assert _cli("new", "r", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "r"
         for step in (
             ("module", "m"),

@@ -82,8 +82,8 @@ just-makeit method integrator step_controlled \
 Generated C signature:
 
 ```c
-float _Complex integrator_step_controlled(
-    integrator_state_t *state, float _Complex x, bool dump_now);
+float _Complex my_project_integrator_step_controlled(
+    my_project_integrator_state_t *state, float _Complex x, bool dump_now);
 ```
 
 Generated Python stub:
@@ -117,7 +117,7 @@ you a no-argument method:
 just-makeit method my_obj flush   # method with no params
 ```
 
-The C stub is `T my_obj_flush(my_obj_state_t *state)` and the Python binding
+The C stub is `T my_project_my_obj_flush(my_project_my_obj_state_t *state)` and the Python binding
 calls it as `obj.flush()`.
 
 ______________________________________________________________________

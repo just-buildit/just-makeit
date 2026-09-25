@@ -14,6 +14,10 @@ survived Debug and Release and was discarded by ``-Wl,--gc-sections``, which
 is why the table also carries ``retain``.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import contextlib
@@ -54,7 +58,7 @@ def _project(tmp_path: Path) -> Path:
     """A standalone `o` (with a computed property) and a module object `w`
     (with a method), each added by the verb an author would use."""
     root = tmp_path / "p"
-    _quiet(new_run, "p", root)
+    _quiet(new_run, "p", root, c_prefix=None)
     _quiet(object_run, root, "o", None, state_vars=[("n", "int", "0")])
     _quiet(property_run, root, "o", "level", None, "double", False)
     _quiet(module_run, root, "m")

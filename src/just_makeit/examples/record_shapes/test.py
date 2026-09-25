@@ -122,15 +122,15 @@ def run(root: Path) -> None:
         INC.header_root(proj) / "collector" / "collector_core.h"
     ).read_text(encoding="utf-8")
     assert (
-        "evlog_summary_t collector_summary(collector_state_t *state);"
+        "evlog_summary_t evlog_collector_summary(evlog_collector_state_t *state);"
         in header
     ), "single: the kernel must return the record BY VALUE"
     assert (
-        "size_t collector_read(collector_state_t *state, size_t n,"
+        "size_t evlog_collector_read(evlog_collector_state_t *state, size_t n,"
         " evlog_rec_t *out);" in header
     ), "record_dtype: the kernel must fill a caller-sized <struct> *out"
     assert (
-        "size_t collector_peaks(collector_state_t *state,"
+        "size_t evlog_collector_peaks(evlog_collector_state_t *state,"
         " evlog_peak_t *result, size_t max_results);" in header
     ), "neither: the kernel must fill <row> *result with a max_results cap"
 

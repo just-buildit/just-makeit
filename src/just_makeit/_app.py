@@ -1135,7 +1135,11 @@ def _build_fn_ctx(
         "arg_parse_block": _c_argv_parser(
             name, fn_flags, want_in=False, want_out=False
         ),
-        "call_and_print": _c_call_print(function, ret_t, pnames),
+        # gh-1591: the C call names the function's SYMBOL stem (`<p>_<fn>`
+        # under a c_prefix); `function` above stays the Python name.
+        "call_and_print": _c_call_print(
+            CSYM.stem(cfg, function), ret_t, pnames
+        ),
         "py_call_args": ", ".join(f"args.{n}" for n in pnames),
     }
 

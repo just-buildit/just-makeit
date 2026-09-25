@@ -34,6 +34,10 @@ rule one command over: a name jm will not accept must not leave a half-made
 tree behind for someone to clean up.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import os
@@ -60,14 +64,14 @@ _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 def _plain(root: Path, monkeypatch) -> Path:
     """An object with a scalar field, so the accessor pair exists."""
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     monkeypatch.chdir(root)
     _cli_object.run(["osc", "--state", "gain:double:1.0"])
     return root
 
 
 def _streamable(root: Path, monkeypatch) -> Path:
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     monkeypatch.chdir(root)
     _cli_object.run(
         ["osc", "--arg-type", "void", "--return-type", "float", "--streamable"]
@@ -76,7 +80,7 @@ def _streamable(root: Path, monkeypatch) -> Path:
 
 
 def _serializable(root: Path, monkeypatch) -> Path:
-    new_run("proj", root)
+    new_run("proj", root, c_prefix=None)
     monkeypatch.chdir(root)
     _cli_object.run(["osc", "--state", "gain:double:1.0", "--serializable"])
     return root
@@ -151,7 +155,7 @@ class TestReservedNamesAreRefused:
             'return_type = "double"\n',
             encoding="utf-8",
         )
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         with pytest.raises(SystemExit):
             apply_run(root, fragment=frag)
         assert "the teardown binding" in capsys.readouterr().err
@@ -209,7 +213,7 @@ class TestAbsorbableNamesStayAccepted:
             'return_type = "double"\n',
             encoding="utf-8",
         )
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         apply_run(root, fragment=frag)
         ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         assert len(re.findall(r'\{"destroy",', ext)) == 1

@@ -363,7 +363,7 @@ def __init__(
     rate: float = ...,
 ) -> None: ...
 # bank → fir_create_poly(d0,d1,ptr,rate)
-# None → fir_create(rate)
+# None → <pkg>_fir_create(rate)
 ```
 
 </td>

@@ -11,7 +11,7 @@ Generated project (module `dsp`):
   - lfo    — generator void->complex64, --class-name Lfo, --mutable
   - meter  — consumer float->void, --field property
   - resamp — variable_output + pass_capacity + nogil execute (decimate by 2)
-  - mixer  — depends_on ["lfo"]: opaque sibling lfo_state_t* (header auto-incl)
+  - mixer  — depends_on ["lfo"]: opaque sibling kitchen_sink_lfo_state_t* (header auto-incl)
   - config — vendored cJSON: opaque cJSON*, component extra_link_libs +
              extra_include_dirs (the gh-174 path)
   - cjson  — a [project] c_deps OBJECT lib (vendored, no Python wrapper)
@@ -143,16 +143,16 @@ mutable = "true"
 depends_on = ["lfo"]
 
 create_impl = """
-obj->osc = lfo_create(0, 858993459u);
+obj->osc = kitchen_sink_lfo_create(0, 858993459u);
 if (!obj->osc) { free(obj); return NULL; }
 """
 destroy_impl = """
-lfo_destroy(state->osc);
+kitchen_sink_lfo_destroy(state->osc);
 """
 
 [[mixer.state]]
 name = "osc"
-type = "lfo_state_t *"
+type = "kitchen_sink_lfo_state_t *"
 opaque = true
 '''
 
@@ -368,7 +368,7 @@ def _implement_c_bodies(proj: Path):
         inc / "mixer" / "mixer_core.h",
         "    (void)state; /* TODO: implement using state variables */\n"
         "    return (float _Complex)x;",
-        "    return x * lfo_step(state->osc);",
+        "    return x * kitchen_sink_lfo_step(state->osc);",
     )
     # resamp — variable_output + pass_capacity + nogil (decimate by 2)
     # gh-607: with pass_capacity, the allocation is exactly max_out(state,

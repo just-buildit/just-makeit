@@ -90,7 +90,7 @@ def _definitions(text: str, comp: str) -> list[str]:
 def project(tmp_path_factory) -> Path:
     """One tree, every shape the triplet has to take."""
     base = tmp_path_factory.mktemp("gh1509")
-    _cli("new", "demo", "--object", "gain", cwd=base)
+    _cli("new", "demo", "--no-c-prefix", "--object", "gain", cwd=base)
     root = base / "demo"
     # Plain fields, including a fixed array: the working implementation.
     _cli(
@@ -214,7 +214,7 @@ class TestExistingProject:
 
     @pytest.fixture
     def old(self, tmp_path) -> Path:
-        _cli("new", "old", cwd=tmp_path)
+        _cli("new", "old", "--no-c-prefix", cwd=tmp_path)
         root = tmp_path / "old"
         _cli("module", "m", cwd=root)
         for args in (

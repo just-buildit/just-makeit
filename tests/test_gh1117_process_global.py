@@ -466,7 +466,7 @@ class TestApplyActuallyEmitsIt:
 
     @pytest.fixture
     def project(self, tmp_path: Path) -> Path:
-        assert _cli("new", "p", cwd=tmp_path).returncode == 0
+        assert _cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "p"
         assert _cli("module", "own", cwd=root).returncode == 0
         # The owner is a MODULE object -- doppler's shape, and the path whose
@@ -539,7 +539,7 @@ class TestApplyActuallyEmitsIt:
 
     def test_no_declaration_no_rendezvous(self, tmp_path: Path):
         """The control at the CLI level: an ordinary project is untouched."""
-        assert _cli("new", "q", cwd=tmp_path).returncode == 0
+        assert _cli("new", "q", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "q"
         assert (
             _cli(

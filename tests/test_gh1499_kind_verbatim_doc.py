@@ -431,7 +431,7 @@ def _layout(text: str, proj: Path) -> str:
 @pytest.fixture(scope="module")
 def built(tmp_path_factory) -> "tuple[Path, dict]":
     root = tmp_path_factory.mktemp("gh1499")
-    assert run_cli("new", "vk", cwd=root).returncode == 0
+    assert run_cli("new", "vk", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "vk"
     mods = proj / "modules"
     mods.mkdir(exist_ok=True)
@@ -534,7 +534,7 @@ def test_a_getter_doc_backing_several_properties_is_refused(tmp_path) -> None:
     documents -- the rule a header `@brief` already follows there. Refused
     with the fix named, rather than dropped (what it was) or copied onto
     every field (a text the author wrote for none of them)."""
-    assert run_cli("new", "rg", cwd=tmp_path).returncode == 0
+    assert run_cli("new", "rg", "--no-c-prefix", cwd=tmp_path).returncode == 0
     proj = tmp_path / "rg"
     (proj / "modules").mkdir(exist_ok=True)
     manifest = _HANDLE.replace(

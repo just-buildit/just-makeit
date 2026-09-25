@@ -22,6 +22,10 @@ be inside an `if (...)`. A fourth emitter is covered without being added to a
 list.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -105,7 +109,7 @@ def _every_borrow_shape(dest: Path) -> Path:
     rendered directly below, because it needs an opaque struct field that
     `jm object` has no flag for.
     """
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(
         object_run,
         dest,
@@ -391,7 +395,7 @@ class TestTheBorrowShape:
 
     @staticmethod
     def _project(root, **kw):
-        _silent(new_run, "p", root)
+        _silent(new_run, "p", root, c_prefix=None)
         _silent(
             object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
         )
@@ -471,7 +475,7 @@ class TestBothFacesAgree:
 
     @staticmethod
     def _project(root):
-        _silent(new_run, "p", root)
+        _silent(new_run, "p", root, c_prefix=None)
         _silent(
             object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
         )
@@ -594,7 +598,7 @@ class TestItActuallyBorrows:
 
     @classmethod
     def _built(cls, root: Path, implement: bool):
-        _silent(new_run, "p", root)
+        _silent(new_run, "p", root, c_prefix=None)
         _silent(
             object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
         )

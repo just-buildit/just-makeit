@@ -16,6 +16,10 @@ the kernel is told its exact capacity via the 5-arg form and the clamp is
 dropped, trusting the bound the kernel itself now enforces.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -39,7 +43,7 @@ from just_makeit._object import run as object_run
 
 def _scaffold(tmp_path):
     root = tmp_path / "dsp"
-    new_run("dsp", root)
+    new_run("dsp", root, c_prefix=None)
     object_run(
         root,
         "ddc",
@@ -364,7 +368,7 @@ class TestPassCapacityOutBufferAcceptsExactMaxOutRuntime:
     def built(self, tmp_path_factory):
         dest = tmp_path_factory.mktemp("gh607review") / "p"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", dest)
+            new_run("p", dest, c_prefix=None)
             object_run(
                 dest,
                 "rc",

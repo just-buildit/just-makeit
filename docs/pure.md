@@ -26,10 +26,10 @@ The default shape: a C struct holds state between calls; `step()` takes a
 `const` pointer to that struct and a single input sample.
 
 ```c
-typedef struct { double gain; } engine_state_t;
+typedef struct { double gain; } my_proj_engine_state_t;
 
 static inline float _Complex
-engine_step(const engine_state_t *state, float _Complex x)
+my_proj_engine_step(const my_proj_engine_state_t *state, float _Complex x)
 {
     /* <<IMPLEMENT>> */
     return x;
@@ -58,7 +58,7 @@ increments its phase, a counter, a PRNG.
 
 ```c
 static inline float _Complex
-nco_step(nco_state_t *state)   /* no const */
+my_proj_nco_step(my_proj_nco_state_t *state)   /* no const */
 {
     /* advance phase, return sample */
 }
@@ -85,9 +85,9 @@ mutating state (a counter, a clock).
 ```c
 /* no input parameter */
 static inline float _Complex
-tone_gen_step(tone_gen_state_t *state) { … }
+my_proj_tone_gen_step(my_proj_tone_gen_state_t *state) { … }
 
-void tone_gen_steps(tone_gen_state_t *state, float _Complex *output, size_t n);
+void my_proj_tone_gen_steps(my_proj_tone_gen_state_t *state, float _Complex *output, size_t n);
 ```
 
 Python side:
@@ -111,7 +111,7 @@ drop the return value from `step()` and `steps()`.
 
 ```c
 static inline void
-iq_writer_step(const iq_writer_state_t *state, float _Complex x) { … }
+my_proj_iq_writer_step(const my_proj_iq_writer_state_t *state, float _Complex x) { … }
 ```
 
 Python side:
@@ -139,12 +139,12 @@ stubs).
 
 ```c
 /* No state struct generated.  You define storage in the create stub. */
-clipper_state_t *clipper_create(float threshold);
-void             clipper_destroy(clipper_state_t *state);
-void             clipper_reset(clipper_state_t *state);
+my_proj_clipper_state_t *my_proj_clipper_create(float threshold);
+void             my_proj_clipper_destroy(my_proj_clipper_state_t *state);
+void             my_proj_clipper_reset(my_proj_clipper_state_t *state);
 
 static inline float _Complex
-clipper_step(const clipper_state_t *state, float _Complex x) { … }
+my_proj_clipper_step(const my_proj_clipper_state_t *state, float _Complex x) { … }
 ```
 
 Use `--no-state` when the constructor signature cannot be expressed as a flat

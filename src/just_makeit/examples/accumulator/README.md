@@ -104,9 +104,9 @@ Before reaching for named methods, notice what jm scaffolds automatically:
 
 | jm pattern      | accumulator meaning            | generated C               |
 | --------------- | ------------------------------ | ------------------------- |
-| `step(x)`       | push one sample                | `acc_f32_step(state, x)`  |
-| `steps(x[])`    | batch-add an array of samples  | `acc_f32_steps(state, x, n)` |
-| `reset()`       | zero the accumulator           | `acc_f32_reset(state)`    |
+| `step(x)`       | push one sample                | `my_acc_acc_f32_step(state, x)`  |
+| `steps(x[])`    | batch-add an array of samples  | `my_acc_acc_f32_steps(state, x, n)` |
+| `reset()`       | zero the accumulator           | `my_acc_acc_f32_reset(state)`    |
 
 `step(x) -> void` with `--mutable` and `--return-type void` is exactly a push
 operation.  `steps()` is the auto-generated batch loop that calls `step()` in a
@@ -247,7 +247,7 @@ stub. The only difference between the two is the C type — the logic is
 
 ```c
 static inline void
-acc_f32_step(acc_f32_state_t *state, float x)
+my_acc_acc_f32_step(my_acc_acc_f32_state_t *state, float x)
 {
     state->acc += x;
 }
@@ -257,7 +257,7 @@ acc_f32_step(acc_f32_state_t *state, float x)
 
 ```c
 static inline void
-acc_cf64_step(acc_cf64_state_t *state, double _Complex x)
+my_acc_acc_cf64_step(my_acc_acc_cf64_state_t *state, double _Complex x)
 {
     state->acc += x;
 }
@@ -273,13 +273,13 @@ then zero, then return the captured value. The order matters.
 
 ```c
 float
-acc_f32_get(acc_f32_state_t *state)
+my_acc_acc_f32_get(my_acc_acc_f32_state_t *state)
 {
     return state->acc;
 }
 
 float
-acc_f32_dump(acc_f32_state_t *state)
+my_acc_acc_f32_dump(my_acc_acc_f32_state_t *state)
 {
     float v = state->acc;
     state->acc = 0.0f;
@@ -287,8 +287,8 @@ acc_f32_dump(acc_f32_state_t *state)
 }
 
 void
-acc_f32_madd(
-    acc_f32_state_t *state,
+my_acc_acc_f32_madd(
+    my_acc_acc_f32_state_t *state,
     const float *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -298,15 +298,15 @@ acc_f32_madd(
 }
 
 void
-acc_f32_add2d(acc_f32_state_t *state, const float *x, size_t x_len)
+my_acc_acc_f32_add2d(my_acc_acc_f32_state_t *state, const float *x, size_t x_len)
 {
     for (size_t i = 0; i < x_len; i++)
         state->acc += x[i];
 }
 
 void
-acc_f32_madd2d(
-    acc_f32_state_t *state,
+my_acc_acc_f32_madd2d(
+    my_acc_acc_f32_state_t *state,
     const float *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -324,13 +324,13 @@ precision in the intermediate result.
 
 ```c
 double _Complex
-acc_cf64_get(acc_cf64_state_t *state)
+my_acc_acc_cf64_get(my_acc_acc_cf64_state_t *state)
 {
     return state->acc;
 }
 
 double _Complex
-acc_cf64_dump(acc_cf64_state_t *state)
+my_acc_acc_cf64_dump(my_acc_acc_cf64_state_t *state)
 {
     double _Complex v = state->acc;
     state->acc = 0.0 + 0.0 * I;
@@ -338,8 +338,8 @@ acc_cf64_dump(acc_cf64_state_t *state)
 }
 
 void
-acc_cf64_madd(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_madd(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -349,8 +349,8 @@ acc_cf64_madd(
 }
 
 void
-acc_cf64_add2d(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_add2d(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len)
 {
     for (size_t i = 0; i < x_len; i++)
@@ -358,8 +358,8 @@ acc_cf64_add2d(
 }
 
 void
-acc_cf64_madd2d(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_madd2d(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -381,7 +381,7 @@ python3 .steps/04_patch_cf64.py
 The sacred header is also the single source of truth for **documentation**. A
 Doxygen `/** ... */` comment on `create()` or a named method flows straight
 into the generated `.pyi` docstring, and a `@code` block on a method becomes a
-**runnable doctest**. Add a comment to `acc_f32_get`:
+**runnable doctest**. Add a comment to `my_acc_acc_f32_get`:
 
 ```c
 /**
@@ -395,7 +395,7 @@ into the generated `.pyi` docstring, and a `@code` block on a method becomes a
  * 6.0
  * @endcode
  */
-float acc_f32_get(acc_f32_state_t *state);
+float my_acc_acc_f32_get(my_acc_acc_f32_state_t *state);
 ```
 
 `jm apply` re-derives the stub, and `src/my_acc/accumulator/accumulator.pyi`
@@ -692,11 +692,11 @@ Stage 1 to stage 2 adds `-ffast-math` and `-march=native`.  `-ffast-math` allows
 the compiler to reassociate the reduction — a prerequisite for vectorisation.
 So why does stage 2 show no gain?
 
-The generated `acc_f32_steps()` signature is:
+The generated `my_acc_acc_f32_steps()` signature is:
 
 ```c
-void acc_f32_steps(
-    acc_f32_state_t *state,
+void my_acc_acc_f32_steps(
+    my_acc_acc_f32_state_t *state,
     const float     *input,
     size_t           n)
 ```
@@ -726,7 +726,7 @@ The replacement in `native/src/acc_f32/acc_f32_core.c`:
 ```c
 #if JM_SIMD_WIDTH_F32 > 1
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     JM_VEC_F32 vacc = JM_ZERO_F32();
@@ -739,7 +739,7 @@ acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
 }
 #else
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     for (size_t i = 0; i < n; i++)
@@ -770,7 +770,7 @@ machine with no SIMD support.
 ### 7.7 `AccCf64` and complex SIMD
 
 The `AccCf64` benchmarks show no improvement because the same aliasing problem
-applies to `acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
+applies to `my_acc_acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
 `JM_RESTRICT` there follows the same pattern.  Explicit SIMD for `double
 _Complex` is more involved: the storage is two consecutive doubles (real then
 imaginary), so you need `JM_VEC_F64` with stride-2 access or interleaved

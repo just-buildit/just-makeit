@@ -13,6 +13,10 @@ The fix routes both through the ``...`` sentinel the stub machinery already
 understands, and drops the ``, default …`` clause when there is no default.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import ast
 import sys
@@ -81,7 +85,7 @@ def test_null_is_none_not_an_empty_string():
 
 def _project_with_init_param(root: Path, ptype: str) -> Path:
     """Scaffold a --no-state object whose init-param has no default."""
-    new_run("probe", root)
+    new_run("probe", root, c_prefix=None)
     manifest = root / "just-makeit.toml"
     manifest.write_text(
         manifest.read_text(encoding="utf-8")
@@ -231,7 +235,7 @@ def test_path_with_optional_array_is_rejected(tmp_path, capsys):
     gh-219 release can be placed. jm refuses rather than generate a leak.
     """
     root = tmp_path / "p"
-    new_run("probe", root)
+    new_run("probe", root, c_prefix=None)
     manifest = root / "just-makeit.toml"
     manifest.write_text(
         manifest.read_text(encoding="utf-8")
@@ -269,7 +273,7 @@ create_fn = "rdr_create_taps"
 
 
 def _apply_manifest(root: Path, body: str) -> Path:
-    new_run("probe", root)
+    new_run("probe", root, c_prefix=None)
     manifest = root / "just-makeit.toml"
     manifest.write_text(
         manifest.read_text(encoding="utf-8") + body, encoding="utf-8"

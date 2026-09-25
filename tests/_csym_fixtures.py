@@ -224,6 +224,10 @@ def build(where: Path, *extra_new_args: str) -> "dict[str, Path]":
     oracle mean nothing.
     """
     roots = {}
+    # gh-1591 2b: `jm new` prefixes by default, so the BARE build -- the
+    # oracles' reference -- says so explicitly.
+    if "--c-prefix" not in extra_new_args:
+        extra_new_args = ("--no-c-prefix", *extra_new_args)
     for row, (new_args, steps) in PROJECTS.items():
         r = run_cli("new", *new_args, *extra_new_args, cwd=where)
         assert r.returncode == 0, f"{row}: new: {r.stdout}{r.stderr}"

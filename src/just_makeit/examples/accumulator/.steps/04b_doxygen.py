@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 # Per-object enrichment: the class summary (on <obj>_create) plus a Doxygen
@@ -24,7 +26,7 @@ ENRICHMENTS = {
         "create_brief": "Create a 32-bit float accumulator (running sum), zeroed.",
         "blocks": [
             (
-                "float acc_f32_get(",
+                "float my_acc_acc_f32_get(",
                 "/**\n"
                 " * @brief Return the current accumulated sum.\n"
                 " * @return The running sum of every sample added so far.\n"
@@ -38,14 +40,14 @@ ENRICHMENTS = {
                 " */\n",
             ),
             (
-                "float acc_f32_dump(",
+                "float my_acc_acc_f32_dump(",
                 "/**\n"
                 " * @brief Return the accumulated sum and reset it to zero.\n"
                 " * @return The sum accumulated since the last reset or dump.\n"
                 " */\n",
             ),
             (
-                "void acc_f32_madd(",
+                "void my_acc_acc_f32_madd(",
                 "/**\n"
                 " * @brief Multiply-accumulate: add the weighted sum"
                 " sum(x[i]*h[i]).\n"
@@ -68,7 +70,7 @@ ENRICHMENTS = {
         "create_brief": "Create a complex128 accumulator (running sum), zeroed.",
         "blocks": [
             (
-                "double _Complex acc_cf64_get(",
+                "double _Complex my_acc_acc_cf64_get(",
                 "/**\n"
                 " * @brief Return the current accumulated complex sum.\n"
                 " * @return The running sum of every sample added so far.\n"
@@ -82,7 +84,7 @@ ENRICHMENTS = {
                 " */\n",
             ),
             (
-                "double _Complex acc_cf64_dump(",
+                "double _Complex my_acc_acc_cf64_dump(",
                 "/**\n"
                 " * @brief Return the accumulated sum and reset it to zero.\n"
                 " * @return The sum accumulated since the last reset or dump.\n"
@@ -100,13 +102,15 @@ def _enrich(obj: str, spec: dict) -> None:
     # Replace jm's trivial scaffold brief on <obj>_create with a real one.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
-        rf"(?={obj}_state_t \*{obj}_create)",
+        rf"(?={_csym.stem(header, obj)}_state_t \*{_csym.stem(header, obj)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {spec['create_brief']}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {obj}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {obj} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     # Prepend each method's Doxygen block above its bare declaration.

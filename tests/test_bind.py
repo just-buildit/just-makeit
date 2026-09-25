@@ -11,6 +11,10 @@ character of the output, including doctest defaults sourced from the
 ``<comp>_core.c`` reset body.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -32,7 +36,13 @@ from just_makeit._bind import (
 
 def _scaffold_filter(root: Path) -> Path:
     """Scaffold a default filter; return the path to <comp>_ext.c."""
-    new_run("my_dsp", root, ["my_filter"], [("gain", "float", "1.0f")])
+    new_run(
+        "my_dsp",
+        root,
+        ["my_filter"],
+        [("gain", "float", "1.0f")],
+        c_prefix=None,
+    )
     return root / "native" / "src" / "my_filter" / "my_filter_ext.c"
 
 
@@ -52,7 +62,7 @@ class TestBindByteIdenticalToScaffold:
     def test_multi_field_state_roundtrips(self, tmp_path):
         """Multiple scalar state fields of different types must still round-trip."""
         root = tmp_path / "proj"
-        new_run("my_dsp", root, [], [])
+        new_run("my_dsp", root, [], [], c_prefix=None)
         object_run(
             root,
             "accumulator",

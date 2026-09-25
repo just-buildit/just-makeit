@@ -138,7 +138,7 @@ def run(root: Path) -> None:
         INC.header_root(proj) / "allocator" / "allocator_core.h"
     ).read_text(encoding="utf-8")
     assert (
-        "allocator_state_t *allocator_create(size_t capacity, size_t slots);"
+        "budget_allocator_state_t *budget_allocator_create(size_t capacity, size_t slots);"
         in header
     ), "the derived state fields must not be constructor parameters"
 

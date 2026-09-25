@@ -20,6 +20,10 @@ inside a consumer ``.so`` that was compiled separately, and possibly by a
 different jm. That is the ABI hazard the capsule triangle exists to avoid.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -47,7 +51,7 @@ def _project(tmp_path: Path, *, module: str | None = None) -> Path:
     """A producer that publishes a capsule, and a consumer that names it."""
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         if module:
             module_run(root, module)
         object_run(root, "frame", module, state_vars=[("n", "size_t", "0")])

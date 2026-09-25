@@ -40,7 +40,7 @@ def _project(tmp_path: Path) -> Path:
     """
     root = tmp_path / "w"
     root.mkdir()
-    assert run_cli("new", "p", cwd=root).returncode == 0
+    assert run_cli("new", "p", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "p"
     assert run_cli("module", "dsp", cwd=proj).returncode == 0
     r = run_cli(

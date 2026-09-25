@@ -41,6 +41,7 @@ def run(args: list[str]) -> None:
     windows = False
     c_style = ""
     c_prefix: str | None = None
+    no_c_prefix = False
 
     remaining = args[1:]
     i = 0
@@ -166,6 +167,11 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             c_prefix = remaining[i]
             i += 1
+        elif tok == "--no-c-prefix":
+            # gh-1591: opt out of the default below -- bare derived names,
+            # as every project had before it.
+            no_c_prefix = True
+            i += 1
         elif tok == "--fragments":
             # Deprecated no-op: fragments is the default layout now.
             i += 1
@@ -232,6 +238,20 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    if no_c_prefix and c_prefix is not None:
+        print(
+            "error: --c-prefix and --no-c-prefix are mutually exclusive.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # gh-1591: the default (the package name) is `_new.run`'s, one rule for
+    # the CLI and the Python API alike; `--no-c-prefix` is the explicit None.
+    prefix_arg = (
+        None
+        if no_c_prefix
+        else (c_prefix if c_prefix is not None else _new.DEFAULT_C_PREFIX)
+    )
+
     if windows:
         from . import _report
 
@@ -270,5 +290,5 @@ def run(args: list[str]) -> None:
         platforms=None,
         fragments=fragments,
         c_style=c_style,
-        c_prefix=c_prefix,
+        c_prefix=prefix_arg,
     )

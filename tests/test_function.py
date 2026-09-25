@@ -1,5 +1,9 @@
 """Integration tests for `just-makeit function`."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -34,7 +38,7 @@ def _fn_c(root, module, fn):
 @pytest.fixture()
 def fft_module(tmp_path):
     root = tmp_path / "dsp"
-    new_run("dsp", root, modules=["fft"])
+    new_run("dsp", root, modules=["fft"], c_prefix=None)
     function_run(root, "fft_global_setup", "fft", doc="Initialize FFT.")
     return root
 
@@ -42,7 +46,7 @@ def fft_module(tmp_path):
 @pytest.fixture()
 def two_functions(tmp_path):
     root = tmp_path / "dsp"
-    new_run("dsp", root, modules=["fft"])
+    new_run("dsp", root, modules=["fft"], c_prefix=None)
     function_run(root, "fft_global_setup", "fft")
     function_run(root, "fft1d_execute", "fft", doc="Execute 1-D FFT.")
     return root
@@ -51,7 +55,7 @@ def two_functions(tmp_path):
 @pytest.fixture()
 def module_with_objects_and_functions(tmp_path):
     root = tmp_path / "dsp"
-    new_run("dsp", root, modules=["dsp"])
+    new_run("dsp", root, modules=["dsp"], c_prefix=None)
     object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
     function_run(root, "global_setup", "dsp", doc="DSP global setup.")
     return root
@@ -201,7 +205,7 @@ class TestFunctionDefaultParams:
 
     def test_pyi_shows_default(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["dsp"])
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
         function_run(
             root,
             "scaled",
@@ -224,7 +228,7 @@ class TestFunctionOutParamRoundTrip:
 
     def test_three_tuple_out_param_persists_and_renders(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["dsp"])
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
         function_run(
             root,
             "envelope_power",
@@ -254,17 +258,17 @@ class TestModuleScaffold:
 
     def test_core_h_exists(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         assert (root / INC_ROOT / "fft/fft_core.h").exists()
 
     def test_core_c_exists(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         assert (root / "native/src/fft/fft_core.c").exists()
 
     def test_core_h_has_guard(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         text = (root / INC_ROOT / "fft/fft_core.h").read_text(encoding="utf-8")
         assert "#ifndef FFT_CORE_H" in text
         assert "#define FFT_CORE_H" in text
@@ -272,7 +276,7 @@ class TestModuleScaffold:
 
     def test_core_c_includes_header(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         text = (root / "native/src/fft/fft_core.c").read_text(encoding="utf-8")
         assert f'#include "{INC.core_include("fft", root)}"' in text
 
@@ -330,7 +334,7 @@ class TestExtCHeader:
         # Gap #5: phantom include — module-level core.h must NOT appear when
         # there are no module-level functions (it is only needed by those fns).
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert f'#include "{INC.core_include("fft", root)}"' not in ext
 
@@ -362,7 +366,7 @@ class TestExtCFooter:
 
     def test_m_methods_null_without_functions(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         ext = (root / "native/src/fft/fft_ext.c").read_text(encoding="utf-8")
         assert ".m_methods = NULL," in ext
 
@@ -467,7 +471,7 @@ class TestConfig:
 
     def test_config_empty_when_no_functions(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         cfg = load(root)
         assert cfg_module_functions(cfg, "fft") == []
 
@@ -499,7 +503,7 @@ class TestCoexistenceWithObjects:
 
     def test_adding_object_after_function_preserves_methods(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["dsp"])
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
         function_run(root, "global_setup", "dsp")
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
@@ -508,7 +512,7 @@ class TestCoexistenceWithObjects:
 
     def test_adding_function_after_object_preserves_object(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["dsp"])
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         function_run(root, "global_setup", "dsp")
         ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
@@ -528,7 +532,7 @@ class TestCollocatedModuleFunction:
     @pytest.fixture()
     def collocated(self, tmp_path):
         root = tmp_path / "proj"
-        new_run("proj", root, modules=["fft"])
+        new_run("proj", root, modules=["fft"], c_prefix=None)
         object_run(
             root,
             "fft",
@@ -567,7 +571,7 @@ class TestCollocatedModuleFunction:
 class TestValidation:
     def test_nonexistent_module_exits(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         with pytest.raises(SystemExit):
             function_run(root, "my_fn", "nonexistent")
 
@@ -577,7 +581,7 @@ class TestValidation:
 
     def test_invalid_name_exits(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         with pytest.raises(SystemExit):
             function_run(root, "1bad_name", "fft")
 
@@ -589,7 +593,7 @@ class TestFunctionTyped:
     @pytest.fixture()
     def typed_fn(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "compute_window",
@@ -644,7 +648,7 @@ class TestFunctionTyped:
 
     def test_complex_param_uses_raw_var(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "mix",
@@ -658,7 +662,7 @@ class TestFunctionTyped:
 
     def test_void_return_no_return_stmt_in_core(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "reset_fft",
@@ -671,7 +675,7 @@ class TestFunctionTyped:
 
     def test_void_return_py_return_none_in_ext(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "reset_fft",
@@ -704,7 +708,7 @@ class TestFunctionTyped:
 
     def test_config_no_return_type_for_void(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "reset_fft",
@@ -737,7 +741,7 @@ class TestFunctionWithArrayParam:
     @pytest.fixture()
     def arr_fn(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "apply_window",
@@ -750,7 +754,7 @@ class TestFunctionWithArrayParam:
     @pytest.fixture()
     def mixed_fn(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(
             root,
             "scale_buffer",
@@ -875,7 +879,7 @@ class TestInlineFunction:
     @pytest.fixture()
     def inline_fn(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["cvt"])
+        new_run("dsp", root, modules=["cvt"], c_prefix=None)
         function_run(
             root,
             "f32_to_i16",
@@ -939,7 +943,7 @@ class TestInlineFunction:
     def test_non_inline_function_unaffected(self, tmp_path):
         """A regular (non-inline) function goes in its own <fn>.c file."""
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["fft"])
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
         function_run(root, "fft_setup", "fft", return_type="void")
         c = _fn_c(root, "fft", "fft_setup")
         assert "fft_setup" in c
@@ -964,7 +968,7 @@ class TestOutTypeScalarParam:
     @pytest.fixture()
     def scalar_sized(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root, modules=["resample"])
+        new_run("dsp", root, modules=["resample"], c_prefix=None)
         function_run(
             root,
             "ciccompmf",
@@ -1015,7 +1019,7 @@ class TestOutArrayParamNotConst:
     @pytest.fixture()
     def out_param_fn(self, tmp_path):
         root = tmp_path / "pkg"
-        new_run("pkg", root, modules=["io"])
+        new_run("pkg", root, modules=["io"], c_prefix=None)
         function_run(
             root,
             "convert",
@@ -1165,7 +1169,7 @@ class TestModuleFunctionDocstring:
     manifest-only rebuild is unchanged (idempotence)."""
 
     def _scaffold(self, root):
-        new_run("dsp", root, modules=["dsp"])
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
         function_run(
             root,
             "enbw",
@@ -1232,7 +1236,7 @@ class TestVariableOutputArraySignature:
         from just_makeit._method import run as method_run
 
         root = tmp_path / "blk"
-        new_run("blk", root, modules=["dsp"])
+        new_run("blk", root, modules=["dsp"], c_prefix=None)
         object_run(
             root,
             "proc",

@@ -71,7 +71,7 @@ appended, ready for you to implement.
 | `--error EXC`                 | Exception `--error-negative` raises (default `ValueError`); one of jm's [error categories](#just-makeit-error). Persists as `error = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `--error-message TEXT`        | Text for that exception; jm appends `(rc=%d)`. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `--record-dtype STRUCT`       | With `--variable-output` or `--borrow`: return **one** numpy structured array whose dtype is that C struct's own layout, one row per record. Its columns come from `[[<obj>.records]]` when the struct is declared there (`just-makeit record`), and from `--result-field` when it is not — restating them beside a declared record is refused, because a restatement drifts (gh-1407). The dtype is built at runtime by the generated C from `offsetof`/`sizeof` — jm never sees the struct, so it cannot guess C's padding (gh-788). Contrast `--single`, which returns one record; see [Record shapes](#record-shapes) below.                                 |
-| `--borrow`                    | Return a zero-copy numpy **view** of memory the C state already owns. The kernel returns a pointer (`<T> *comp_wait(comp_state_t *, size_t n)`) instead of filling a buffer, and the view pins the object so its memory outlives any reference to it. Returning `NULL` raises — `--error` / `--error-message` choose which exception. The view is **read-only** unless `--borrow-writeable`, and it is a **usage contract**: valid until the author's own release call, after which it reads whatever the producer has written since. See [Array memory ownership](../memory-ownership.md). Persists as `borrow = "true"`.                                       |
+| `--borrow`                    | Return a zero-copy numpy **view** of memory the C state already owns. The kernel returns a pointer (`<T> *<pkg>_comp_wait(<pkg>_comp_state_t *, size_t n)`) instead of filling a buffer, and the view pins the object so its memory outlives any reference to it. Returning `NULL` raises — `--error` / `--error-message` choose which exception. The view is **read-only** unless `--borrow-writeable`, and it is a **usage contract**: valid until the author's own release call, after which it reads whatever the producer has written since. See [Array memory ownership](../memory-ownership.md). Persists as `borrow = "true"`.                           |
 | `--borrow-count NAME`         | Which param carries the borrowed view's element count. Defaulted from the sole param, and **required** when there is more than one — sizing a view from the wrong argument reaches past what the state owns and reads as data rather than as an error. Persists as `borrow_count = "…"`.                                                                                                                                                                                                                                                                                                                                                                         |
 | `--borrow-writeable`          | Let the caller write through a borrowed view. Off by default: a consumer holding a view into a producer's region should not be writing through it. Persists as `borrow_writeable = "true"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `--no-bench`                  | Exclude this method from the generated C benchmark.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -96,7 +96,7 @@ Generated C stub:
 
 ```c
 void
-nco_configure(nco_state_t *state, float freq, float phase, int32_t mode)
+<pkg>_nco_configure(<pkg>_nco_state_t *state, float freq, float phase, int32_t mode)
 {
     (void)state; (void)freq; (void)phase; (void)mode;
 }
@@ -125,7 +125,7 @@ Generated C stub:
 
 ```c
 size_t
-resamp_execute_ctrl(resamp_state_t *state,
+<pkg>_resamp_execute_ctrl(<pkg>_resamp_state_t *state,
                     const float _Complex *ctrl, size_t ctrl_len)
 {
     (void)state; (void)ctrl; (void)ctrl_len;
@@ -160,7 +160,7 @@ just-makeit method filter configure --varargs
 
     ```c
     PyObject *
-    filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
+    <pkg>_filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
     {
         (void)self; (void)args; (void)kwargs;
         Py_RETURN_NONE;
@@ -173,10 +173,10 @@ just-makeit method filter configure --varargs
 
     ```c
     extern PyObject *
-    filter_configure(PyObject *, PyObject *, PyObject *);
+    <pkg>_filter_configure(PyObject *, PyObject *, PyObject *);
 
     /* in PyMethodDef array: */
-    {"configure", (PyCFunction)(void *)filter_configure,
+    {"configure", (PyCFunction)(void *)<pkg>_filter_configure,
      METH_VARARGS | METH_KEYWORDS, "configure(*args, **kwargs)."},
     ```
 
@@ -199,8 +199,8 @@ The `self` pointer is a `<Comp>Object *` (the Python object), not the raw
 state struct. Cast it to reach the handle:
 
 ```c
-typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
-filter_state_t *state = ((Obj *)self)->handle;
+typedef struct { PyObject_HEAD; <pkg>_filter_state_t *handle; } Obj;
+<pkg>_filter_state_t *state = ((Obj *)self)->handle;
 ```
 
 The comment at the top of the generated sacred file shows this cast
@@ -237,8 +237,8 @@ just-makeit method nco steps_ctrl --module source \
 Generated C stubs:
 
 ```c
-void nco_steps_u32(nco_state_t *state, size_t n, uint32_t *out);
-void nco_steps_ctrl(nco_state_t *state, const float *in, size_t n, float *out);
+void <pkg>_nco_steps_u32(<pkg>_nco_state_t *state, size_t n, uint32_t *out);
+void <pkg>_nco_steps_ctrl(<pkg>_nco_state_t *state, const float *in, size_t n, float *out);
 ```
 
 Python calls:
@@ -272,10 +272,10 @@ Generated C stubs:
 
 ```c
 /* Return maximum output samples possible given current state. */
-size_t hbdecim_execute_max_out(hbdecim_state_t *state);
+size_t <pkg>_hbdecim_execute_max_out(<pkg>_hbdecim_state_t *state);
 
 /* Process n_in samples; write up to _max_out results; return actual count. */
-size_t hbdecim_execute(hbdecim_state_t *state,
+size_t <pkg>_hbdecim_execute(<pkg>_hbdecim_state_t *state,
                        const float _Complex *in, size_t n_in,
                        float _Complex *out);
 ```
@@ -526,18 +526,18 @@ struct is deliberately private: a file handle, a scratch buffer, a decoded
 header. jm declares
 
 ```c
-int rdr_get_fd(const rdr_state_t *state);
+int <pkg>_rdr_get_fd(const <pkg>_rdr_state_t *state);
 ```
 
 which takes a *pointer* to the state, so an incomplete type is fine — you can
-forward-declare `typedef struct rdr_state rdr_state_t;` in the header and keep
+forward-declare `typedef struct <pkg>_rdr_state <pkg>_rdr_state_t;` in the header and keep
 the definition in your `_core.c`. The generated binding never touches a member.
 
 The other three kinds read a member directly, so they need the definition. With
 an opaque struct a `--field` property fails at compile time:
 
 ```text
-rdr_ext.c:115:46: error: invalid use of incomplete typedef 'rdr_state_t'
+rdr_ext.c:115:46: error: invalid use of incomplete typedef '<pkg>_rdr_state_t'
 ```
 
 If you see that, the property wants to be computed.
@@ -610,9 +610,9 @@ the refcounting and every error path; you supply the accessors.
 [[reader.properties]]
 name       = "keywords"
 type       = "dict"
-count_fn   = "reader_num_keywords"    # size_t       (const state *)
-key_fn     = "reader_keyword_tag"     # const char * (const state *, size_t)
-value_fn   = "reader_keyword_value"   # <value_type> (const state *, size_t)
+count_fn   = "<pkg>_reader_num_keywords"    # size_t       (const state *)
+key_fn     = "<pkg>_reader_keyword_tag"     # const char * (const state *, size_t)
+value_fn   = "<pkg>_reader_keyword_value"   # <value_type> (const state *, size_t)
 value_type = "object"
 ```
 
@@ -639,7 +639,7 @@ Prefer a C type. Your accessor returns an ordinary C value, jm converts it, and
 your core never includes `Python.h`:
 
 ```c
-const char *rc_stage_name(const rc_state_t *state, size_t i);   /* -> list[str] */
+const char *<pkg>_rc_stage_name(const <pkg>_rc_state_t *state, size_t i);   /* -> list[str] */
 ```
 
 Reach for `object` when the value's Python type is **data-dependent** and so
@@ -649,7 +649,7 @@ keyword yields a `str`, the next an `int`, the next a `list[float]`. There,
 `value_fn` returns a `PyObject *` directly:
 
 ```c
-PyObject *reader_keyword_value(const reader_state_t *state, size_t i);
+PyObject *<pkg>_reader_keyword_value(const <pkg>_reader_state_t *state, size_t i);
 ```
 
 It must return a **new reference**, or `NULL` with an exception set. Because it
@@ -824,7 +824,7 @@ just-makeit view acc SeededAcc --module bank \
 ```
 
 This records a `[[<obj>.views]]` entry, injects
-`acc_state_t *acc_create_seeded(double seed);` into `<obj>_core.h`, appends an
+`<pkg>_acc_state_t *acc_create_seeded(double seed);` into `<obj>_core.h`, appends an
 `<<IMPLEMENT>>` stub for it to the sacred `<obj>_core.c` (so the module still
 compiles before you have written a line), and regenerates the module glue with
 the extra class registered. The view lands in its own binding fragment,
@@ -896,21 +896,21 @@ through a different symbol — which is exactly what `--fn` supplies:
 # doc-only: same signature, the view just words it differently
 just-makeit method acc plain --module bank --view SeededAcc \
     --doc "seeded plain"
-#   -> View 'SeededAcc' overrides the doc of 'plain' (shares acc_plain)
+#   -> View 'SeededAcc' overrides the doc of 'plain' (shares <pkg>_acc_plain)
 
 # signature override: its own arg_type, so its own C function
 just-makeit method acc scaled --module bank --view SeededAcc \
-    --fn acc_scaled_seeded --arg-type float --return-type double \
+    --fn <pkg>_acc_scaled_seeded --arg-type float --return-type double \
     --doc "seeded scale"
-#   -> Implement acc_scaled_seeded() in acc_core.c
+#   -> Implement <pkg>_acc_scaled_seeded() in acc_core.c
 ```
 
 Both prototypes then stand side by side in the sacred header, and only the
 view's fragment calls the override:
 
 ```c
-double acc_scaled(acc_state_t *state, double x);         /* parent */
-double acc_scaled_seeded(acc_state_t *state, float x);   /* the view's */
+double <pkg>_acc_scaled(<pkg>_acc_state_t *state, double x);         /* parent */
+double <pkg>_acc_scaled_seeded(<pkg>_acc_state_t *state, float x);   /* the view's */
 ```
 
 **A differing signature without `--fn` is refused**, rather than silently
@@ -919,7 +919,7 @@ symbol, so the declaration could only ever have been dropped:
 
 ```text
 error: view 'SeededAcc' redeclares parent method 'scaled' with a different arg_type.
-  Without --fn the view calls the parent's acc_scaled, which has the parent's
+  Without --fn the view calls the parent's <pkg>_acc_scaled, which has the parent's
   signature, so this could only be ignored.
   Pass --fn <symbol> to bind its own C function (gh-1012), or drop the
   differing key(s) for a doc-only override.
@@ -931,7 +931,7 @@ entry carrying nothing but `doc` is a doc-only override and stays legal. And
 the C compiler to report as a conflicting redefinition:
 
 ```text
-error: view 'SeededAcc' overrides method 'scaled' with fn 'acc_scaled', which is
+error: view 'SeededAcc' overrides method 'scaled' with fn '<pkg>_acc_scaled', which is
 the symbol the parent already binds.
   A signature override needs its OWN C function — give --fn a different name, or
   drop it for a doc-only override.

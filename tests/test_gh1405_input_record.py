@@ -55,6 +55,7 @@ def _declare(tmp_path: Path) -> Path:
     r = run_cli(
         "new",
         "p",
+        "--no-c-prefix",
         "--object",
         "ring",
         "--arg-type",
@@ -105,6 +106,7 @@ class TestTheDeclaration:
             run_cli(
                 "new",
                 "p",
+                "--no-c-prefix",
                 "--object",
                 "ring",
                 "--arg-type",
@@ -136,6 +138,7 @@ class TestTheDeclaration:
             run_cli(
                 "new",
                 "p",
+                "--no-c-prefix",
                 "--object",
                 "ring",
                 "--arg-type",

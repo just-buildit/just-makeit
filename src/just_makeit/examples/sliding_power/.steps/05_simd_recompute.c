@@ -6,7 +6,7 @@
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */
 static inline float
-power_est_recompute (power_est_state_t *state)
+power_est_recompute (my_power_power_est_state_t *state)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   JM_UNROLL (4)

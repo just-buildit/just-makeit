@@ -130,8 +130,8 @@ ______________________________________________________________________
 
 #ifdef __AVX512F__
 JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch(
-    fir_filter_state_t     *state,
+my_filter_fir_filter_step_batch(
+    my_filter_fir_filter_state_t     *state,
     const float _Complex    *window,
     float _Complex          *out)
 {
@@ -156,7 +156,7 @@ history, index `FIR_LENGTH` = current sample).
 ```c
 #define FIR_CHUNK 256  /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS(fir_filter, fir_filter_state_t, float _Complex,
+JM_DEFINE_STEPS(my_filter_fir_filter, my_filter_fir_filter_state_t, float _Complex,
                 FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 
@@ -221,7 +221,7 @@ Handles the SIMD loop and scalar tail automatically.
 ```c
 /* step_batch: compute one output sample from JM_SIMD_WIDTH_F32 inputs */
 JM_FORCEINLINE JM_HOT void
-fir_step_batch(fir_state_t *state, const float *window, float *out)
+my_filter_fir_step_batch(my_filter_fir_state_t *state, const float *window, float *out)
 {
     JM_VEC_F32 acc = JM_ZERO_F32();
     for (int k = 0; k < N_TAPS; k++)

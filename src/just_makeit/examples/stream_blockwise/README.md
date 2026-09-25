@@ -84,8 +84,8 @@ block by block and stops the moment it returns an empty block.
 ## 2. Implement the producer
 
 A `--variable-output` method generates two stubs in
-`native/src/drainer/drainer_core.c`: `drainer_run_max_out()` (the upper bound
-on output size) and `drainer_run()` (the producer itself). Fill them in.
+`native/src/drainer/drainer_core.c`: `stream_blockwise_demo_drainer_run_max_out()` (the upper bound
+on output size) and `stream_blockwise_demo_drainer_run()` (the producer itself). Fill them in.
 
 The bound — one call can at most return the whole remaining source:
 
@@ -97,7 +97,8 @@ The bound — one call can at most return the whole remaining source:
  * allocates for each call.
  */
 size_t
-drainer_run_max_out (drainer_state_t *state, size_t n)
+stream_blockwise_demo_drainer_run_max_out (
+    stream_blockwise_demo_drainer_state_t *state, size_t n)
 {
   (void)n;
   return (size_t)state->total;
@@ -114,7 +115,9 @@ The producer — emit up to `n` samples, advance `pos`, and return the count:
  * what makes stream() terminate.
  */
 size_t
-drainer_run (drainer_state_t *state, size_t n, float _Complex *out)
+stream_blockwise_demo_drainer_run (
+    stream_blockwise_demo_drainer_state_t *state, size_t n,
+    float _Complex *out)
 {
   int32_t avail = state->total - state->pos;
   if (avail < 0)
@@ -216,6 +219,6 @@ has already used (or copied) the block, so the buffer is free to be refilled on
 the next pull. A *source* producer (`steps`) has no such rule — see the
 `stream_source` example.
 
-The hand-written Doxygen `@brief` on `drainer_create()` in the sacred
+The hand-written Doxygen `@brief` on `stream_blockwise_demo_drainer_create()` in the sacred
 `native/inc/stream_blockwise_demo/drainer/drainer_core.h` header drives the generated `drainer.pyi`
 class docstring — `jm apply` re-derives the stub from that comment.

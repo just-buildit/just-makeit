@@ -87,7 +87,7 @@ def project(tmp_path_factory) -> Path:
     before it was written.
     """
     tmp = tmp_path_factory.mktemp("cxx")
-    assert _cli("new", "yy", cwd=tmp).returncode == 0
+    assert _cli("new", "yy", "--no-c-prefix", cwd=tmp).returncode == 0
     root = tmp / "yy"
     assert (
         _cli(

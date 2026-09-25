@@ -123,7 +123,7 @@ What each one is really doing:
 
 Both method flags need `--return-type int`. That is not cosmetic:
 `--status-return` with `--return-type size_t` is accepted and generates
-`int _rc = allocator_take(...)` against a `size_t` prototype, which compiles
+`int _rc = budget_allocator_take(...)` against a `size_t` prototype, which compiles
 and silently truncates.
 
 ---
@@ -145,7 +145,7 @@ CORE = Path("native/src/allocator/allocator_core.c")
 CTEST = Path("native/tests/test_allocator_core.c")
 
 CREATE_OLD = """\
-    allocator_state_t *obj = calloc(1, sizeof(*obj));
+    budget_allocator_state_t *obj = calloc(1, sizeof(*obj));
     if (!obj)
         return NULL;
     obj->n_slots = 0;
@@ -154,7 +154,7 @@ CREATE_OLD = """\
     return obj;"""
 
 CREATE_NEW = """\
-    allocator_state_t *obj;
+    budget_allocator_state_t *obj;
 
     /* Channel 1 -- refuse. NULL is the ONLY failure signal create() has, so
      * every reason to refuse funnels through it and arrives in Python as the
@@ -176,14 +176,14 @@ CREATE_NEW = """\
     return obj;"""
 
 TAKE_OLD = """\
-allocator_take(allocator_state_t *state, size_t x)
+budget_allocator_take(budget_allocator_state_t *state, size_t x)
 {
     (void)state; (void)x;
     return (int)0;
 }"""
 
 TAKE_NEW = """\
-allocator_take(allocator_state_t *state, size_t x)
+budget_allocator_take(budget_allocator_state_t *state, size_t x)
 {
     /* Channel 3 -- status only. 0 is success; the value of a non-zero code
      * is reported in the exception message but carries no result.
@@ -195,14 +195,14 @@ allocator_take(allocator_state_t *state, size_t x)
 }"""
 
 PEEK_OLD = """\
-allocator_peek(allocator_state_t *state, size_t x)
+budget_allocator_peek(budget_allocator_state_t *state, size_t x)
 {
     (void)state; (void)x;
     return (int)0;
 }"""
 
 PEEK_NEW = """\
-allocator_peek(allocator_state_t *state, size_t x)
+budget_allocator_peek(budget_allocator_state_t *state, size_t x)
 {
     /* Channel 4 -- a value, unless it is negative. A valid slot returns a
      * count the caller keeps; an invalid one returns a negative code that
@@ -228,20 +228,20 @@ allocator_peek(allocator_state_t *state, size_t x)
 # is left here is ADDING the refusal cases, which is the part that was ever
 # about this example.
 CTEST_OLD = """\
-    allocator_state_t *obj = allocator_create(1024, 4);
+    budget_allocator_state_t *obj = budget_allocator_create(1024, 4);
     REQUIRE(obj != NULL);"""
 
 CTEST_NEW = """\
     /* create() refuses what it cannot serve -- 2 units over 3 slots. */
-    CHECK(allocator_create(2, 3) == NULL);
-    CHECK(allocator_create(9, 0) == NULL);
+    CHECK(budget_allocator_create(2, 3) == NULL);
+    CHECK(budget_allocator_create(9, 0) == NULL);
 
-    allocator_state_t *obj = allocator_create(9, 3);
+    budget_allocator_state_t *obj = budget_allocator_create(9, 3);
     REQUIRE(obj != NULL);
     /* An exact fit is not degraded; 10 over 3 would be. */
-    CHECK(allocator_get_degraded(obj) == false);
-    CHECK(allocator_get_n_slots(obj) == 3);
-    CHECK(allocator_get_remaining(obj) == 9);"""
+    CHECK(budget_allocator_get_degraded(obj) == false);
+    CHECK(budget_allocator_get_n_slots(obj) == 3);
+    CHECK(budget_allocator_get_remaining(obj) == 9);"""
 
 
 def _replace(text: str, old: str, new: str, what: str) -> str:

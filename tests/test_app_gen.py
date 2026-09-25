@@ -238,7 +238,8 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     # C: includes the module core, parses each param, calls + prints result.
     assert "mathx/mathx_core.h" in c
     assert "float a = " in c and '"--a"' in c
-    assert "float result = addn(a, b);" in c
+    # gh-1591: C calls the prefixed symbol; the Python face below keeps `addn`.
+    assert "float result = proj_addn(a, b);" in c
     assert "printf(" in c
     # Python: imports from the module subpackage, required args, prints result.
     assert "from .mathx import addn" in cli

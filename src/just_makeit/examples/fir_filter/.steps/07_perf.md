@@ -34,8 +34,8 @@ that store with the accumulate.  Flags alone don't get you there.
 Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
-**1.** Add the constants and `fir_filter_step_batch()` to
-`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
+**1.** Add the constants and `my_fir_fir_filter_step_batch()` to
+`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `my_fir_fir_filter_step()`:
 
 ```{07_step_batch.h}
 ```
@@ -56,12 +56,12 @@ no-op, and `step_batch()` is never called.
 `step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
 but you never write `steps()`.
 
-**2.** Replace `fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
+**2.** Replace `my_fir_fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
 
 ```{07_kernel.c}
 ```
 
-`JM_DEFINE_STEPS` generates `fir_filter_steps()` from the macro in `jm_perf.h`:
+`JM_DEFINE_STEPS` generates `my_fir_fir_filter_steps()` from the macro in `jm_perf.h`:
 it owns the scratch buffer, the chunked fill, and the scalar tail.  You write
 `step()`.  You write `step_batch()`.  The rest is infrastructure.
 

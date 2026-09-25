@@ -21,6 +21,10 @@ generated text would prove the template contains a printf, not that the number
 it prints is right — and the count is the whole mechanism.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR  # noqa: E402
 
@@ -56,7 +60,7 @@ def _project(dest: Path) -> Path:
     (`_init.py` and `_object.py`), and a header written by only one of them
     is the peer bug this repo has hit repeatedly.
     """
-    new_run("tp", dest, object_names=["alpha"])
+    new_run("tp", dest, object_names=["alpha"], c_prefix=None)
     object_run(dest, "beta", None)
     module_run(dest, "filt")
     object_run(dest, "gamma", "filt")
@@ -97,7 +101,7 @@ class TestOneCopy:
         untested — which is the same peer trap the write sites themselves are.
         """
         root = tmp_path / "tp"
-        new_run("tp", root)
+        new_run("tp", root, c_prefix=None)
         hdr = root / "native" / "tests" / "jm_test.h"
         assert not hdr.exists()
 
@@ -121,7 +125,7 @@ class TestOneCopy:
         nothing reports drift on it.
         """
         root = tmp_path / "tp"
-        new_run("tp", root, object_names=["alpha"])
+        new_run("tp", root, object_names=["alpha"], c_prefix=None)
         hdr = root / "native" / "tests" / "jm_test.h"
         hdr.write_text(
             hdr.read_text(encoding="utf-8")
@@ -216,7 +220,7 @@ class TestRuntimeBehaviour:
 
     def test_scaffold_only_says_so_then_stops_saying_it(self, tmp_path):
         root = tmp_path / "tp"
-        new_run("tp", root, object_names=["alpha"])
+        new_run("tp", root, object_names=["alpha"], c_prefix=None)
 
         out = self._build_and_run(root, "alpha", tmp_path)
         assert out.returncode == 0, out.stderr
@@ -242,7 +246,7 @@ class TestRuntimeBehaviour:
 
     def test_a_failure_exits_nonzero_and_is_reported(self, tmp_path):
         root = tmp_path / "tp"
-        new_run("tp", root, object_names=["alpha"])
+        new_run("tp", root, object_names=["alpha"], c_prefix=None)
         src = root / "native" / "tests" / "test_alpha_core.c"
         src.write_text(
             src.read_text(encoding="utf-8").replace(
@@ -265,7 +269,7 @@ class TestRuntimeBehaviour:
         and report fused into the epilogue, anything before it is counted.
         """
         root = tmp_path / "tp"
-        new_run("tp", root, object_names=["alpha"])
+        new_run("tp", root, object_names=["alpha"], c_prefix=None)
         src = root / "native" / "tests" / "test_alpha_core.c"
         src.write_text(
             src.read_text(encoding="utf-8").replace(

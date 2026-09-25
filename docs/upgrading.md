@@ -155,8 +155,11 @@ until then `apply` leaves both names alone and `status` names the old one.
 ## Symbol prefix (gh-1591)
 
 `[project] c_prefix` renames every C symbol jm derives
-([c-library](c-library.md#two-packages-one-program)). A project created with
-`jm new --c-prefix` is prefixed from its first file. On an existing project
+([c-library](c-library.md#two-packages-one-program)). **`jm new` writes one
+by default** -- the package name -- so a project created now is prefixed
+from its first file (`--no-c-prefix` opts out). **A project created before
+keeps its bare names**: nothing changes until you set the key and run
+`jm upgrade`, and an upgrade to this jm never adds it for you. On an existing project
 the key renames symbols your own C already calls, so until that C follows,
 `apply` refuses -- naming each file and the old names it still spells -- and
 writes nothing. `jm upgrade` moves it:

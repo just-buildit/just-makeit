@@ -36,6 +36,10 @@ stale instead of quietly covering less, which is the failure mode this repo
 keeps meeting from the other side.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
@@ -297,7 +301,7 @@ class TestThroughTheCliInterface:
 
     def _project(self, tmp_path: Path) -> Path:
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
         return root
 
@@ -372,7 +376,7 @@ class TestItActuallyCompiles:
 
     def test_the_header_is_valid_c(self, tmp_path):
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
         _quiet(
             function_run,

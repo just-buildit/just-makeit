@@ -13,7 +13,7 @@ stub. The only difference between the two is the C type — the logic is
 
 ```c
 static inline void
-acc_f32_step(acc_f32_state_t *state, float x)
+my_acc_acc_f32_step(my_acc_acc_f32_state_t *state, float x)
 {
     state->acc += x;
 }
@@ -23,7 +23,7 @@ acc_f32_step(acc_f32_state_t *state, float x)
 
 ```c
 static inline void
-acc_cf64_step(acc_cf64_state_t *state, double _Complex x)
+my_acc_acc_cf64_step(my_acc_acc_cf64_state_t *state, double _Complex x)
 {
     state->acc += x;
 }
@@ -39,13 +39,13 @@ then zero, then return the captured value. The order matters.
 
 ```c
 float
-acc_f32_get(acc_f32_state_t *state)
+my_acc_acc_f32_get(my_acc_acc_f32_state_t *state)
 {
     return state->acc;
 }
 
 float
-acc_f32_dump(acc_f32_state_t *state)
+my_acc_acc_f32_dump(my_acc_acc_f32_state_t *state)
 {
     float v = state->acc;
     state->acc = 0.0f;
@@ -53,8 +53,8 @@ acc_f32_dump(acc_f32_state_t *state)
 }
 
 void
-acc_f32_madd(
-    acc_f32_state_t *state,
+my_acc_acc_f32_madd(
+    my_acc_acc_f32_state_t *state,
     const float *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -64,15 +64,15 @@ acc_f32_madd(
 }
 
 void
-acc_f32_add2d(acc_f32_state_t *state, const float *x, size_t x_len)
+my_acc_acc_f32_add2d(my_acc_acc_f32_state_t *state, const float *x, size_t x_len)
 {
     for (size_t i = 0; i < x_len; i++)
         state->acc += x[i];
 }
 
 void
-acc_f32_madd2d(
-    acc_f32_state_t *state,
+my_acc_acc_f32_madd2d(
+    my_acc_acc_f32_state_t *state,
     const float *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -90,13 +90,13 @@ precision in the intermediate result.
 
 ```c
 double _Complex
-acc_cf64_get(acc_cf64_state_t *state)
+my_acc_acc_cf64_get(my_acc_acc_cf64_state_t *state)
 {
     return state->acc;
 }
 
 double _Complex
-acc_cf64_dump(acc_cf64_state_t *state)
+my_acc_acc_cf64_dump(my_acc_acc_cf64_state_t *state)
 {
     double _Complex v = state->acc;
     state->acc = 0.0 + 0.0 * I;
@@ -104,8 +104,8 @@ acc_cf64_dump(acc_cf64_state_t *state)
 }
 
 void
-acc_cf64_madd(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_madd(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -115,8 +115,8 @@ acc_cf64_madd(
 }
 
 void
-acc_cf64_add2d(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_add2d(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len)
 {
     for (size_t i = 0; i < x_len; i++)
@@ -124,8 +124,8 @@ acc_cf64_add2d(
 }
 
 void
-acc_cf64_madd2d(
-    acc_cf64_state_t *state,
+my_acc_acc_cf64_madd2d(
+    my_acc_acc_cf64_state_t *state,
     const double _Complex *x, size_t x_len,
     const float *h, size_t h_len)
 {
@@ -147,7 +147,7 @@ python3 .steps/04_patch_cf64.py
 The sacred header is also the single source of truth for **documentation**. A
 Doxygen `/** ... */` comment on `create()` or a named method flows straight
 into the generated `.pyi` docstring, and a `@code` block on a method becomes a
-**runnable doctest**. Add a comment to `acc_f32_get`:
+**runnable doctest**. Add a comment to `my_acc_acc_f32_get`:
 
 ```c
 /**
@@ -161,7 +161,7 @@ into the generated `.pyi` docstring, and a `@code` block on a method becomes a
  * 6.0
  * @endcode
  */
-float acc_f32_get(acc_f32_state_t *state);
+float my_acc_acc_f32_get(my_acc_acc_f32_state_t *state);
 ```
 
 `jm apply` re-derives the stub, and `src/my_acc/accumulator/accumulator.pyi`

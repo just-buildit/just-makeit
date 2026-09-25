@@ -17,6 +17,10 @@ Comparing the descr against jm's own construction of it is the emitter's own
 traversal agreeing with itself; only the compiler knows what it laid out.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -73,7 +77,7 @@ IQ_FIELDS = [
 def _declare(root: Path, fields=None, **kw):
     """A ring whose `wait(n)` borrows a view of records."""
     fields = IQ_FIELDS if fields is None else fields
-    _silent(new_run, "p", root)
+    _silent(new_run, "p", root, c_prefix=None)
     _silent(
         object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
     )
@@ -106,7 +110,7 @@ class TestItCanBeDeclaredAtAll:
         """Decoupled from `variable_output`, NOT unconditional -- a record
         element type with neither owner has no array to be the element of."""
         root = tmp_path / "p"
-        _silent(new_run, "p", root)
+        _silent(new_run, "p", root, c_prefix=None)
         _silent(
             object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
         )
@@ -129,7 +133,7 @@ class TestItCanBeDeclaredAtAll:
         """`borrow` and `variable_output` remain different answers to who
         owns the result; gh-1310 shares the ELEMENT TYPE, not the owner."""
         root = tmp_path / "p"
-        _silent(new_run, "p", root)
+        _silent(new_run, "p", root, c_prefix=None)
         _silent(
             object_run, root, "ring", None, state_vars=[("cap", "size_t", "8")]
         )

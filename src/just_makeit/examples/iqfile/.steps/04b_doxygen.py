@@ -18,7 +18,7 @@ finding):
     a ``--field`` getter is auto-implemented inline, so there is no header
     declaration to annotate. Those docs are set in ``test.py`` / step 3.
   - A **computed** property's getter has a real declaration, so it CAN carry a
-    header ``@brief``. ``eof`` is computed (``q15_to_cf32_get_eof``), so its
+    header ``@brief``. ``eof`` is computed (``iqfile_q15_to_cf32_get_eof``), so its
     docstring is enriched here.
 
 iqfile exposes no named ``jm method`` (only ``step``/``steps`` plus
@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import sys
 
 # Class summaries, injected over jm's scaffold brief on each <obj>_create.
@@ -52,7 +54,7 @@ CREATE_BRIEFS = {
 GETTER_BLOCKS = {
     "q15_to_cf32": [
         (
-            "int32_t q15_to_cf32_get_eof(",
+            "int32_t iqfile_q15_to_cf32_get_eof(",
             "/**\n"
             " * @brief True (1) once the backing file descriptor is"
             " exhausted.\n"
@@ -69,13 +71,15 @@ def _enrich(obj: str) -> None:
     # Replace jm's trivial scaffold brief on <obj>_create with a real summary.
     scaffold_re = re.compile(
         rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
-        rf"(?={obj}_state_t \*{obj}_create)",
+        rf"(?={_csym.stem(header, obj)}_state_t \*{_csym.stem(header, obj)}_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {CREATE_BRIEFS[obj]}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
-        print(f"ERROR: {obj}_create scaffold brief not found", file=sys.stderr)
+        print(
+            f"ERROR: {obj} create() scaffold brief not found", file=sys.stderr
+        )
         sys.exit(1)
 
     # Prepend each computed getter's Doxygen block above its declaration.

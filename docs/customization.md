@@ -150,7 +150,7 @@ ______________________________________________________________________
 ## Typical workflow after scaffolding
 
 1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
-1. Open `native/src/fir/fir_core.c` — implement `fir_step()`.
+1. Open `native/src/fir/fir_core.c` — implement `my_filter_fir_step()`.
 1. Build and test: `make && make test`.
 1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → **rebuilds** the object from the manifest, so keep your algorithm in the TOML `impl`/`create_impl` (or `git stash` first); the new field lands in the struct, constructor, getter/setter, and reset.
 1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to the struct in `native/inc/my_filter/fir/fir_core.h` — the struct is sacred, so `jm apply` never re-renders it and your extra fields survive (a `jm add`/`jm regenerate` rebuild does re-stub the struct from the manifest, so re-add them after).

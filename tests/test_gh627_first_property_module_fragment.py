@@ -26,6 +26,10 @@ and binds, the user implements the accessor, and an unimplemented one is a
 loud link error rather than a silently absent attribute.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import contextlib
 import io
@@ -49,7 +53,7 @@ PROP = '\n[[reader.properties]]\nname = "thing"\ntype = "int"\n'
 def _project(tmp_path, *, module, seed_property=False):
     root = tmp_path / "dsp"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("dsp", root, [], [])
+        new_run("dsp", root, [], [], c_prefix=None)
         if module:
             module_run(root, "wfm", ["reader"])
         object_run(

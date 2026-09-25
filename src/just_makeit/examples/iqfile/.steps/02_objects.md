@@ -15,9 +15,9 @@ I and Q parts as two `int16_t` values.  Returns the number of bytes written
 
 ```c
 static inline int32_t
-cf32_to_q15_step(const cf32_to_q15_state_t *state, float _Complex x);
+iqfile_cf32_to_q15_step(const iqfile_cf32_to_q15_state_t *state, float _Complex x);
 
-void cf32_to_q15_steps(cf32_to_q15_state_t *state,
+void iqfile_cf32_to_q15_steps(iqfile_cf32_to_q15_state_t *state,
                        const float _Complex *input,
                        int32_t             *output,
                        size_t               n);
@@ -31,9 +31,9 @@ descriptor stored in `fd` and returns it as a normalised `float _Complex`.
 
 ```c
 static inline float _Complex
-q15_to_cf32_step(const q15_to_cf32_state_t *state);
+iqfile_q15_to_cf32_step(const iqfile_q15_to_cf32_state_t *state);
 
-void q15_to_cf32_steps(q15_to_cf32_state_t *state,
+void iqfile_q15_to_cf32_steps(iqfile_q15_to_cf32_state_t *state,
                        float _Complex       *output,
                        size_t               n);
 ```

@@ -9,6 +9,10 @@ placeholder leaked into the generated file and broke the build. This guards
 that apply resolves it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
@@ -46,7 +50,7 @@ def _silent(fn, *a, **k):
 
 def test_apply_resolves_collocated_object_core_link(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "ddc")
     # Collocated object: object name == module name.
     _silent(
@@ -76,7 +80,7 @@ def test_apply_resolves_collocated_object_core_link(tmp_path):
 
 def test_apply_no_extra_libs_leaves_no_object_core_link(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "ddc")
     _silent(
         object_run,
@@ -98,7 +102,7 @@ def test_apply_no_extra_libs_leaves_no_object_core_link(tmp_path):
 # ── gh-174: component-level extra_link_libs reach a module object via apply ───
 def test_apply_injects_module_object_component_link(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "mymod")
     _silent(
         object_run,
@@ -130,7 +134,7 @@ def test_apply_injects_module_object_component_link(tmp_path):
 
 def test_apply_no_component_libs_leaves_module_object_cmake(tmp_path):
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "mymod")
     _silent(
         object_run,
@@ -168,7 +172,7 @@ def _link_block(cmake, target):
 def _collocated_with_dep(dest):
     """Module ddc with a sibling `lo` and a collocated `ddc` object that
     composes `lo` via depends_on link=true (the doppler ddc/ddcr shape)."""
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "ddc")
     _silent(
         object_run,
@@ -222,7 +226,7 @@ def test_collocated_no_dep_has_no_object_core_link(tmp_path):
     # TARGET first, so `jm module m` shadowed the math library and the link
     # failed on `undefined reference to sqrt`.
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "ddc")
     _silent(
         object_run,
@@ -285,7 +289,7 @@ def test_collocated_dedup_dep_and_extra_lib(tmp_path):
     # A dep core that also appears in the module's extra_link_libs must be
     # linked once, not twice (dedup of extra_libs ∪ dep cores).
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "ddc")
     _silent(
         object_run,
@@ -322,7 +326,7 @@ def _measure_module(dest):
     """Module `measure` with non-collocated `base`, `extra`, and a `tone`
     object that initially depends only on `base` (the doppler `measure` shape:
     object name never equals the module name)."""
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "measure")
     for obj in ("base", "extra"):
         _silent(
@@ -447,7 +451,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
     if _SKIP:
         pytest.skip(_SKIP)
     dest = tmp_path / "p"
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "measure")
     _silent(
         object_run,
@@ -535,7 +539,7 @@ target_link_libraries(bench_fft_core PRIVATE fft_core m)
 def _module_with_hand_owned_fft(dest):
     """Module `dsp` with a hand-owned `fft` (vendored pocketfft/PFFFT sources,
     per-source properties) plus a pure-jm `tone` — the doppler shape."""
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "dsp")
     for obj in ("fft", "tone"):
         _silent(
@@ -608,7 +612,7 @@ def test_hand_owned_detection():
 def _chain_module(dest):
     """Module `spectral` with a fft <- corr <- detector chain where each object
     declares only its DIRECT dep (the doppler spectral shape)."""
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "spectral")
     _silent(
         object_run,

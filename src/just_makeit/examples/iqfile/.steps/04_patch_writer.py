@@ -1,4 +1,4 @@
-"""Implement cf32_to_q15_step() and add the samples_written counter."""
+"""Implement iqfile_cf32_to_q15_step() and add the samples_written counter."""
 
 from pathlib import Path
 import sys
@@ -38,12 +38,12 @@ text = core_c.read_text(encoding="utf-8")
 
 OLD_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = cf32_to_q15_step(state, input[i]);
+        output[i] = iqfile_cf32_to_q15_step(state, input[i]);
 }"""
 
 NEW_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = cf32_to_q15_step(state, input[i]);
+        output[i] = iqfile_cf32_to_q15_step(state, input[i]);
     state->samples_written += (uint32_t)n;
 }"""
 

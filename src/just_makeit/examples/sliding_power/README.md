@@ -14,7 +14,7 @@ Two update strategies are shown:
   clean demonstration of the `jm_simd.h` macro set.
 
 The generated `.pyi` also carries a hand-authored class summary lifted from
-the `@brief` on `power_est_create()` in the sacred header.
+the `@brief` on `my_power_power_est_create()` in the sacred header.
 
 ## TL;DR — see it work first
 
@@ -71,7 +71,7 @@ the recursive O(1) update.  The delay line stores `|x|²` for each past sample;
 
 ```c
 JM_FORCEINLINE JM_HOT float
-power_est_step (power_est_state_t *state, float _Complex x)
+my_power_power_est_step (my_power_power_est_state_t *state, float _Complex x)
 {
   float re = crealf (x), im = cimagf (x);
   float mag_sq = re * re + im * im;
@@ -177,7 +177,7 @@ Add this function to `native/src/power_est/power_est_core.c` (it needs
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */
 static inline float
-power_est_recompute (power_est_state_t *state)
+power_est_recompute (my_power_power_est_state_t *state)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   JM_UNROLL (4)

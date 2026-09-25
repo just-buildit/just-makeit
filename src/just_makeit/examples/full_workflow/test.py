@@ -23,6 +23,8 @@ Also runnable directly: python3 examples/full_workflow/test.py
 from __future__ import annotations
 
 import re
+
+from just_makeit import _csym  # gh-1591: the derived symbol stem
 import shutil
 import subprocess
 import sys
@@ -65,8 +67,8 @@ CLASS_SUMMARIES = {
 METHOD_DOCS = {
     "gain": [
         (
-            "float gain_scale(",
-            r"/\*\*\n \* @brief scale\..*?(?=float gain_scale\()",
+            "float my_dsp_gain_scale(",
+            r"/\*\*\n \* @brief scale\..*?(?=float my_dsp_gain_scale\()",
             "/**\n"
             " * @brief Scale one sample by the gain and return it.\n"
             " * @param x  Input sample.\n"
@@ -100,13 +102,13 @@ def _enrich_headers(proj: Path) -> None:
         text = header.read_text(encoding="utf-8")
         scaffold_re = re.compile(
             rf"/\*\*\n \* @brief Create a {obj} instance\..*?"
-            rf"(?={obj}_state_t \*{obj}_create)",
+            rf"(?={_csym.stem(header, obj)}_state_t \*{_csym.stem(header, obj)}_create)",
             re.DOTALL,
         )
         text, n = scaffold_re.subn(
             f"/**\n * @brief {summary}\n */\n", text, count=1
         )
-        assert n == 1, f"{obj}_create scaffold brief not found"
+        assert n == 1, f"{obj} create() scaffold brief not found"
 
         for decl, scaffold_pat, block in METHOD_DOCS.get(obj, []):
             # Replace the scaffold block rather than prepending a second one:
@@ -375,7 +377,7 @@ def run(root: Path) -> None:
     assert "import pytest" in ema_test
     assert "import unittest" not in ema_test
 
-    # 4. Implement gain_step and ema_step
+    # 4. Implement my_dsp_gain_step and my_dsp_ema_step
     _cmd(
         [
             sys.executable,
@@ -386,7 +388,7 @@ import pathlib
 p = pathlib.Path('native/src/gain/gain_core.c')
 src = p.read_text()
 src = src.replace('return (float)0;', 'return x * state->gain;')
-# gain_scale's stub -- the doctest in the header asserts this kernel, so a
+# my_dsp_gain_scale's stub -- the doctest in the header asserts this kernel, so a
 # wrong body here fails `pytest --doctest-glob='*.pyi'` in step 9b.
 src = src.replace(
     '    (void)state; (void)x;\n    return (float)0.0f;',

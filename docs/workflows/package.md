@@ -51,21 +51,21 @@ No manual edits required.
 
 ## 3. Implement both objects
 
-`gain_step` (read-only state):
+`dsp_toolkit_gain_step` (read-only state):
 
 ```c
 static inline float
-gain_step(const gain_state_t *state, float x)
+dsp_toolkit_gain_step(const dsp_toolkit_gain_state_t *state, float x)
 {
     return state->gain * x;
 }
 ```
 
-`ema_step` (writes back to state — drop `const`):
+`dsp_toolkit_ema_step` (writes back to state — drop `const`):
 
 ```c
 static inline float
-ema_step(ema_state_t *state, float x)
+dsp_toolkit_ema_step(dsp_toolkit_ema_state_t *state, float x)
 {
     float y = (float)state->alpha * x
             + (float)(1.0 - state->alpha) * state->prev;

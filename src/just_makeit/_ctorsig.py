@@ -167,8 +167,11 @@ def declared_params(root: Path, component: str, create_fn: str) -> str | None:
     # the symbol, and everything up to the closing paren. Anchored to a
     # statement start so a `create()` named inside a Doxygen block or an
     # example line is not mistaken for the declaration.
+    # The SYMBOL stem (gh-1591): under c_prefix the type is `<p>_<comp>_state_t`,
+    # and the bare spelling found nothing -- which reads as "no declaration",
+    # so the whole gh-1076 check went blind on a prefixed project.
     m = re.search(
-        rf"^\s*{re.escape(component)}_state_t\s*\*\s*"
+        rf"^\s*{re.escape(_csym.stem(root, component))}_state_t\s*\*\s*"
         rf"{re.escape(create_fn)}\s*\(([^;]*?)\)\s*;",
         text,
         re.M | re.S,
@@ -279,7 +282,8 @@ def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
         if block is None:
             continue
         call = re.search(
-            rf"\b{re.escape(comp)}_state_t\s*\*\s*\w+\s*=\s*(\w+)\s*\(",
+            rf"\b{re.escape(_csym.stem(cfg, comp))}_state_t"
+            r"\s*\*\s*\w+\s*=\s*(\w+)\s*\(",
             block.group(1),
         )
         if call is None:

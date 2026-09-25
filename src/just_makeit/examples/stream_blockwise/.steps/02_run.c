@@ -5,7 +5,9 @@
  * what makes stream() terminate.
  */
 size_t
-drainer_run (drainer_state_t *state, size_t n, float _Complex *out)
+stream_blockwise_demo_drainer_run (
+    stream_blockwise_demo_drainer_state_t *state, size_t n,
+    float _Complex *out)
 {
   int32_t avail = state->total - state->pos;
   if (avail < 0)

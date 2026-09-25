@@ -50,6 +50,10 @@ a scaffolded project — the unit layer localises a break, the project layer is
 the one that was actually broken.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -228,7 +232,7 @@ METH_VARARGS | METH_KEYWORDS,
 def project(tmp_path: Path) -> tuple[Path, Path]:
     """A module object with an authored header; returns (root, fragment)."""
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     module_run(root, "detection")
     object_run(
         root,

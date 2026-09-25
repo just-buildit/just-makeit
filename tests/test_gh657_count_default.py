@@ -16,6 +16,10 @@ jm cannot derive the right default — the object's natural capacity lives in
 the user's C — so ``count_default`` declares it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import sys
@@ -33,7 +37,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 
 def _scaffold(tmp_path: Path, *, count_default: str = "") -> Path:
     root = tmp_path / "dsp"
-    new_run("dsp", root)
+    new_run("dsp", root, c_prefix=None)
     object_run(
         root,
         "delay",

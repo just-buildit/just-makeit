@@ -184,12 +184,12 @@ def run(root: Path) -> None:
     h_f32 = (INC.header_root(dest) / "acc_f32" / "acc_f32_core.h").read_text(
         encoding="utf-8"
     )
-    assert "state->acc += x;" in h_f32, "acc_f32_step not patched"
+    assert "state->acc += x;" in h_f32, "my_acc_acc_f32_step not patched"
 
     h_cf64 = (
         INC.header_root(dest) / "acc_cf64" / "acc_cf64_core.h"
     ).read_text(encoding="utf-8")
-    assert "state->acc += x;" in h_cf64, "acc_cf64_step not patched"
+    assert "state->acc += x;" in h_cf64, "my_acc_acc_cf64_step not patched"
 
     # ── 5b. Enrich the headers with Doxygen, regenerate the stubs ─────────────
     # The sacred header is the single source of truth for docs: hand-written

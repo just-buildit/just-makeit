@@ -22,8 +22,8 @@ and marks the spot to fill in:
  *
  * Compiled into the Python extension DSO, not the pure-C core.
  * To access the C state inside this function:
- *   typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
- *   filter_state_t *state = ((Obj *)self)->handle;
+ *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
+ *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -34,7 +34,7 @@ and marks the spot to fill in:
  * Return NULL on error (exception must be set).
  */
 PyObject *
-filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
+va_filter_filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
 {
     (void)self; (void)args; (void)kwargs;
     Py_RETURN_NONE;

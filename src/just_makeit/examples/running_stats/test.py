@@ -89,7 +89,7 @@ def run(root: Path) -> None:
 
     # 4. Add min/max state variables. `jm add` is structural: it rewrites the
     #    state struct and rebuilds the object from the manifest, which resets
-    #    the hand-written running_stats_step() body back to a fresh stub.
+    #    the hand-written my_stats_running_stats_step() body back to a fresh stub.
     #    This is the canonical loop — add state, then re-implement on top of it.
     jm_add(
         proj,

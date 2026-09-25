@@ -1,10 +1,10 @@
-"""Replace the generated acc_f32_steps() with an explicit SIMD version.
+"""Replace the generated my_acc_acc_f32_steps() with an explicit SIMD version.
 
 Patches native/src/acc_f32/acc_f32_core.c — run from inside my_acc/.
 
 The generated loop is a serial dependency chain:
     for (size_t i = 0; i < n; i++)
-        acc_f32_step(state, input[i]);  /* state->acc += input[i] */
+        my_acc_acc_f32_step(state, input[i]);  /* state->acc += input[i] */
 
 Each iteration waits for the previous float add to complete (~4 cycle latency).
 The replacement uses JM_VEC_F32 to accumulate JM_SIMD_WIDTH_F32 independent
@@ -19,7 +19,7 @@ import sys
 NEW_STEPS = """\
 #if JM_SIMD_WIDTH_F32 > 1
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     JM_VEC_F32 vacc = JM_ZERO_F32();
@@ -32,7 +32,7 @@ acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
 }
 #else
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     for (size_t i = 0; i < n; i++)
@@ -43,9 +43,9 @@ acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
 core = pathlib.Path("native/src/acc_f32/acc_f32_core.c")
 text = core.read_text(encoding="utf-8")
 
-start = text.find("void acc_f32_steps(")
+start = text.find("void my_acc_acc_f32_steps(")
 if start < 0:
-    print("ERROR: acc_f32_steps not found", file=sys.stderr)
+    print("ERROR: my_acc_acc_f32_steps not found", file=sys.stderr)
     sys.exit(1)
 
 brace_open = text.find("{", start)

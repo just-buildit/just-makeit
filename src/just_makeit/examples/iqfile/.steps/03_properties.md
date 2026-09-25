@@ -15,5 +15,5 @@ Three properties across the two types:
 struct and auto-implements the getter as `return state->samples_written` — no
 `<<IMPLEMENT>>` stub needed.
 
-**Computed** (`eof`, no `--field`): getter stub calls `q15_to_cf32_get_eof()`
+**Computed** (`eof`, no `--field`): getter stub calls `iqfile_q15_to_cf32_get_eof()`
 which you implement — returning 1 when the last `read()` returned 0 bytes.

@@ -5,15 +5,16 @@
  * Return the actual count written to both arrays.
  */
 size_t
-hbdecim_execute_ovf_max_out (hbdecim_state_t *state)
+my_decim_hbdecim_execute_ovf_max_out (my_decim_hbdecim_state_t *state)
 {
   return (state->block_size + 1) / 2;
 }
 
 size_t
-hbdecim_execute_ovf (hbdecim_state_t *state, const float _Complex *in,
-                     size_t n_in, float _Complex *out, /* primary */
-                     uint8_t *ovf)                     /* secondary */
+my_decim_hbdecim_execute_ovf (my_decim_hbdecim_state_t *state,
+                              const float _Complex *in, size_t n_in,
+                              float _Complex *out, /* primary */
+                              uint8_t        *ovf) /* secondary */
 {
   size_t n_out = 0;
   for (size_t i = 0; i + 1 < n_in; i += 2)

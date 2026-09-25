@@ -22,6 +22,7 @@ from pathlib import Path
 from . import _config as C
 from . import _render as T
 from . import _incpath as INC
+from . import _csym as CSYM
 
 
 def _patch_core_h(header: Path, comp: str) -> bool:
@@ -33,8 +34,12 @@ def _patch_core_h(header: Path, comp: str) -> bool:
     # Any mention of the header counts as present, however it is spaced.
     if f'"{INC.include("jm_perf.h", header)}"' not in text:
         text = text.replace(common, f"{common}\n{perf}")
+    # gh-1591: step() is spelled with the SYMBOL stem -- under c_prefix it is
+    # `<p>_<comp>_step`, and matching the bare name retrofitted nothing.
     qualifier_re = re.compile(
-        r"\bstatic inline\b(\s+\S.*?\n" + re.escape(comp) + r"_step\b)"
+        r"\bstatic inline\b(\s+\S.*?\n"
+        + re.escape(CSYM.stem(header, comp))
+        + r"_step\b)"
     )
     text = qualifier_re.sub(r"JM_FORCEINLINE JM_HOT\1", text)
     if text != original:

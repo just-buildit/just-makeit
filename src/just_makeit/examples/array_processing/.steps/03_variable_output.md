@@ -11,8 +11,8 @@ The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
 
 | Stub                                    | When called               | Your job                        |
 | --------------------------------------- | ------------------------- | ------------------------------- |
-| `hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
-| `hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
+| `my_decim_hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
+| `my_decim_hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
 
 Implement both:
 
@@ -42,7 +42,7 @@ out = d.execute(block)
 ├─ ext allocates a NumPy array of max(execute_max_out(), 1024)
 │  └─ the kernel writes straight into it — no copy
 │
-├─ calls hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
+├─ calls my_decim_hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
 │
 └─ returns it trimmed to 512
    ownership: the returned array owns its memory
