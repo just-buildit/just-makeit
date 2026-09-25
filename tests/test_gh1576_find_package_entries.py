@@ -108,15 +108,23 @@ def test_both_pc_fields_reach_the_root(project):
     assert "\nCflags: -I${includedir}@JM_PC_CFLAGS@\n" in pc_in
 
 
-def test_a_pc_in_without_the_cflags_slot_is_outdated(project):
-    """An existing project's create-only `.pc.in` predates the slot, so
-    `cflags` would reach nothing there: `status` says the file is behind."""
+def test_a_pc_in_without_the_cflags_slot_is_reported_behind(project):
+    """An existing project's `.pc.in` predates the slot, so `cflags` would
+    reach nothing there: `status` says the file is behind.
+
+    gh-1589: a project that old also predates the ownership token, so the
+    template is one `apply` does not render, and PACKAGING names it (it was
+    OUTDATED while the templates were create-only)."""
+    from just_makeit import _render as R
+
     pc_in = next((project / "cmake").glob("*.pc.in"))
     s = pc_in.read_text()
     assert s.count("@JM_PC_CFLAGS@") == 1
-    pc_in.write_text(s.replace("@JM_PC_CFLAGS@", ""))
+    head = R.owned_token(pc_in.name) + "\n" + R.OWNED_PACKAGING_NOTE
+    assert s.startswith(head)
+    pc_in.write_text(s[len(head) :].replace("@JM_PC_CFLAGS@", ""))
     out = run_cli("status", cwd=project).stdout
-    block = out[out.index("OUTDATED") :].split("\n\n")[0]
+    block = out[out.index("PACKAGING") :].split("\n\n")[0]
     assert f"cmake/{pc_in.name}" in block, out
 
 

@@ -724,6 +724,35 @@ An object flips only when nothing refuses it and every differing unit is
 accepted; otherwise nothing is written for it. A unit that exists only on
 disk always refuses — move it to the `_extra.c` beside the fragment.
 
+### `just-makeit adopt --packaging`
+
+Make the packaging templates — `cmake/<pkg>.pc.in` and
+`cmake/<pkg>-config.cmake.in` — jm's, so `apply` renders them and every
+pkg-config and `find_package` fix reaches the project (gh-1589). A project
+scaffolded since gh-1589 has them born owned (their first line is
+`# jm:generated <file>`); an older one has them token-less, and `jm status`
+names each that is behind under **PACKAGING**.
+
+```sh
+just-makeit adopt --packaging --check                       # diffs, and what would be dropped; writes nothing
+just-makeit adopt --packaging                               # take every template that loses nothing
+just-makeit adopt --packaging --accept my_proj-config.cmake.in   # take one anyway
+```
+
+| Flag            | Description                                                                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--packaging`   | Act on the packaging templates. Takes no objects, `--module`, `--all` or `--accept-additions`.                                                                 |
+| `--check`       | Print each template's verdict, its diff against today's render, and every line adopting would drop. Writes nothing; exits non-zero when a template is refused. |
+| `--accept PATH` | Take a refused template anyway, by path (`cmake/p.pc.in`) or file name. Repeatable.                                                                            |
+
+A line on disk that the render does not keep refuses its template. An older
+jm's line that today's render only extends (`Cflags: -I${includedir}` →
+`Cflags: -I${includedir}@JM_PC_CFLAGS@`) is kept; one jm has since respelled
+cannot be told from a line you wrote, so it is listed and `--accept` takes it
+after you have read the diff. To keep something of yours, set it as a CMake
+variable in the root `CMakeLists.txt` that the template reads. Deleting the
+`# jm:generated` line afterwards hands a template back to you for good.
+
 ## `just-makeit script`
 
 Print a shell script to stdout that fully reconstructs the current project

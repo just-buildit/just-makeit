@@ -149,11 +149,22 @@ RULES: tuple[Rule, ...] = (
     Rule("Doxyfile", JM, "jm's doxygen configuration."),
     Rule("zensical.toml", JM, "jm's docs-site configuration."),
     Rule("bootstrap.toml", JM, "jm's CI bootstrap declaration."),
+    # gh-1589: the packaging templates, owned exactly as the scaffolded test
+    # is (gh-1489): born with the token, rendered whole by `apply` while it is
+    # there. A project scaffolded before the token has none, so these are
+    # never reported OUTDATED -- `status`'s PACKAGING section reports such a
+    # file instead, and `jm adopt --packaging` hands it to jm.
     Rule(
-        "cmake/*",
-        JM,
-        "packaging plumbing (`.pc.in`, `-config.cmake.in`) rendered from the"
-        " manifest; nothing here is authored.",
+        "cmake/*.pc.in",
+        RECONCILED,
+        "the pkg-config template, jm's while it carries `# jm:generated`;"
+        " every value in it arrives through a CMake variable (gh-1589).",
+    ),
+    Rule(
+        "cmake/*-config.cmake.in",
+        RECONCILED,
+        "the find_package config template, jm's while it carries"
+        " `# jm:generated` (gh-1589).",
     ),
     Rule("native/inc/jm_perf.h", JM, "the JM_DEFINE_STEPS macro is jm's."),
     Rule("native/inc/jm_simd.h", JM, "jm's SIMD helpers."),

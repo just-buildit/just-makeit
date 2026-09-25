@@ -277,10 +277,18 @@ def run(root: Path) -> None:
     # jm's render the same way, by deleting it and letting apply write today's.
     status = log.jm("status")
     assert "ROOT CMAKE" not in status, status
-    outdated = re.findall(r"^  ↑ (\S+)$", status, re.MULTILINE)
+    block = status[status.index("OUTDATED (") :].split("\n\n")[0]
+    outdated = re.findall(r"^  ↑ (\S+)$", block, re.MULTILINE)
     assert "native/inc/clib_common.h" in outdated, outdated
     for rel in outdated:
         (proj / rel).unlink()
+    # gh-1589: the packaging templates are jm's to own, not files to delete.
+    # The lines --check says adopting would drop are 0.33.14's own spelling
+    # of the paths and description, which today's render replaced; nothing
+    # was written into them here, so the render is accepted.
+    assert "PACKAGING (2)" in status, status
+    log.jm("adopt", "--packaging", "--check", expect=1)
+    log.jm("adopt", "--packaging", "--accept", "stale.pc.in")
     # jb.toml was renamed bootstrap.toml (gh-935). Step 3's apply held the
     # new one back and said why; upgrade, above, moved the old one across --
     # and, never edited here, it is OUTDATED like the rest and was just

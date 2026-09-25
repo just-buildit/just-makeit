@@ -352,7 +352,10 @@ def test_the_pc_names_the_prefix_it_was_installed_under(world, layout):
     lay = layouts[layout]
     text = _pc_file(lay).read_text()
     assert "${pcfiledir}" not in text, text
-    assert text.splitlines()[0] == f"prefix={lay.pc_prefix}", text
+    # The first FIELD: gh-1589's ownership token and note lead the file as
+    # comments.
+    fields = [ln for ln in text.splitlines() if not ln.startswith("#")]
+    assert fields[0] == f"prefix={lay.pc_prefix}", text
 
 
 @pytest.mark.parametrize("layout", ["install-prefix", "destdir"])
@@ -400,11 +403,16 @@ def test_a_system_prefix_emits_no_system_flags(world):
 def test_the_pc_has_no_empty_field_or_blank_tail(world, layout):
     """An optional field with nothing to say is left out rather than written
     as `URL:`, and the template's empty slots leave no blank lines."""
-    _, _, _, layouts = world
-    text = _pc_file(layouts[layout]).read_text()
+    root, _, _, layouts = world
+    lay = layouts[layout]
+    text = _pc_file(lay).read_text()
     empty = [ln for ln in text.splitlines() if re.fullmatch(r"[\w.]+:\s*", ln)]
     assert empty == [], empty
     assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-40:])
+    # gh-1589: the template's ownership token and note arrive as comments;
+    # pkg-config must still take the file as valid.
+    assert text.startswith(f"# jm:generated {NAME}.pc.in\n"), text[:80]
+    _run(["pkg-config", "--validate", PC_NAME], root, _pc_env(lay))
 
 
 ABI = ".".join(VERSION.split(".")[:2])

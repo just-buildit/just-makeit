@@ -127,12 +127,16 @@ def run(
         _write(root / "native" / "inc" / "jm_simd.h", T.JM_SIMD_H)
 
     if build_system == "cmake":
+        # gh-1589: both packaging templates are born owned -- `apply` renders
+        # them whole while the token names the file.
+        pc_in = f"{project.replace('_', '-')}.pc.in"
         _write(
-            root / "cmake" / f"{project.replace('_', '-')}.pc.in",
-            r(T.CMAKE_PC_IN),
+            root / "cmake" / pc_in, T.owned_packaging(r(T.CMAKE_PC_IN), pc_in)
         )
+        config_in = f"{project}-config.cmake.in"
         _write(
-            root / "cmake" / f"{project}-config.cmake.in", r(T.CMAKE_CONFIG_IN)
+            root / "cmake" / config_in,
+            T.owned_packaging(r(T.CMAKE_CONFIG_IN), config_in),
         )
         _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
 

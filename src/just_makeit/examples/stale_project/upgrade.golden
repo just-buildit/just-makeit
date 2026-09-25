@@ -36,12 +36,10 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (7) — create-only file(s) behind jm's current version:
+OUTDATED (5) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
-  ↑ cmake/stale-config.cmake.in
-  ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
   jm owns the content of these and ships a newer one, but `apply` will NOT
@@ -68,6 +66,13 @@ ROOT CMAKE (14) — fixes jm's root CMakeLists.txt template carries that yours l
   from. A fix you do not want: name it in [project] status_allow as
   `CMakeLists.txt:<fix>`. Not counted.
 
+PACKAGING (2) — packaging template(s) jm does not own, behind today's render:
+  ↑ cmake/stale.pc.in (4 line(s) of yours?)
+  ↑ cmake/stale-config.cmake.in
+  Without the `# jm:generated` line `apply` never renders these, so no
+  packaging fix reaches them. `jm adopt --packaging --check` shows each
+  diff; `jm adopt --packaging` hands them to jm. Not counted.
+
 UNWIRED (2) — component core(s) folded into no C library:
   ⊘ dsp_core (native/src/dsp) — missing from stale_lib, stale_lib_static
   ⊘ gain_core (native/src/gain) — missing from stale_lib_static
@@ -84,7 +89,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 14 root-cmake, 2 unwired (!).
+summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 5 outdated, 14 root-cmake, 2 packaging, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -134,12 +139,10 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (7) — create-only file(s) behind jm's current version:
+OUTDATED (5) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
-  ↑ cmake/stale-config.cmake.in
-  ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
   jm owns the content of these and ships a newer one, but `apply` will NOT
@@ -166,6 +169,13 @@ ROOT CMAKE (14) — fixes jm's root CMakeLists.txt template carries that yours l
   from. A fix you do not want: name it in [project] status_allow as
   `CMakeLists.txt:<fix>`. Not counted.
 
+PACKAGING (2) — packaging template(s) jm does not own, behind today's render:
+  ↑ cmake/stale.pc.in (4 line(s) of yours?)
+  ↑ cmake/stale-config.cmake.in
+  Without the `# jm:generated` line `apply` never renders these, so no
+  packaging fix reaches them. `jm adopt --packaging --check` shows each
+  diff; `jm adopt --packaging` hands them to jm. Not counted.
+
 SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
@@ -175,7 +185,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 14 root-cmake.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 14 root-cmake; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -223,30 +233,95 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   above) and left alone.
   None of this counts as drift for `--check`.
 
-OUTDATED (8) — create-only file(s) behind jm's current version:
+OUTDATED (6) — create-only file(s) behind jm's current version:
   ↑ .gitignore
   ↑ Doxyfile
   ↑ Makefile
   ↑ bootstrap.toml
-  ↑ cmake/stale-config.cmake.in
-  ↑ cmake/stale.pc.in
   ↑ native/benchmarks/jm_bench.h
   ↑ native/inc/clib_common.h
   jm owns the content of these and ships a newer one, but `apply` will NOT
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
+PACKAGING (2) — packaging template(s) jm does not own, behind today's render:
+  ↑ cmake/stale.pc.in (4 line(s) of yours?)
+  ↑ cmake/stale-config.cmake.in
+  Without the `# jm:generated` line `apply` never renders these, so no
+  packaging fix reaches them. `jm adopt --packaging --check` shows each
+  diff; `jm adopt --packaging` hands them to jm. Not counted.
+
 SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 8 outdated.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
         whose content is yours — _core.c, your C and Python tests, README,
         pyproject.toml — which differ from their scaffold as soon as the
         project is real. `apply` rewrites neither kind; see docs/upgrading.md.
+
+$ jm adopt --packaging --check   # exit 1
+adopt --packaging --check — jm owns cmake/'s packaging templates where nothing is lost
+  REFUSES             cmake/stale.pc.in
+      would drop: prefix=@CMAKE_INSTALL_PREFIX@
+      would drop: libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+      would drop: includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+      would drop: Description: stale C library
+--- a/cmake/stale.pc.in
++++ b/cmake/stale.pc.in (jm's render)
+@@ -1,10 +1,14 @@
+-prefix=@CMAKE_INSTALL_PREFIX@
++# jm:generated stale.pc.in
++# just-makeit regenerates the project's cmake/ template of this file on
++# apply while the line above is there; deleting that line there makes
++# the template the project's own.
++prefix=@JM_PC_PREFIX@
+ exec_prefix=${prefix}
+-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
++libdir=@JM_PC_LIBDIR@
++includedir=@JM_PC_INCLUDEDIR@
+ 
+ Name: stale
+-Description: stale C library
+-Version: @PROJECT_VERSION@
+-Libs: -L${libdir} -lstale
+-Cflags: -I${includedir}
++Description: @PROJECT_DESCRIPTION@
++@JM_PC_EXTRA_FIELDS@Version: @PROJECT_VERSION@
++Libs: -L${libdir} -lstale@JM_PC_LIBM@
++Cflags: -I${includedir}@JM_PC_CFLAGS@
+  would adopt         cmake/stale-config.cmake.in (takes the render)
+--- a/cmake/stale-config.cmake.in
++++ b/cmake/stale-config.cmake.in (jm's render)
+@@ -1,4 +1,12 @@
++# jm:generated stale-config.cmake.in
++# just-makeit regenerates the project's cmake/ template of this file on
++# apply while the line above is there; deleting that line there makes
++# the template the project's own.
+ @PACKAGE_INIT@
++
++# gh-1572: the packages whose targets the exported libraries link, from
++# `[project] find_packages` / `pkg_modules`; empty when there are none.
++@JM_FIND_DEPENDENCIES@
+ 
+ include("${CMAKE_CURRENT_LIST_DIR}/stale-targets.cmake")
+ 
+
+  A line on disk that jm's render does not keep is refused: adopting would
+  drop it. jm cannot tell a line you wrote from one an older jm rendered
+  and has since respelled, so it asks rather than guesses: read the diff
+  (`--check`), move anything of yours into the root CMakeLists.txt as a
+  CMake variable the template reads, then take the render with
+  `jm adopt --packaging --accept <path>`.
+
+$ jm adopt --packaging --accept stale.pc.in   # exit 0
+adopt --packaging — jm owns cmake/'s packaging templates where nothing is lost
+  adopted             cmake/stale.pc.in (takes the render)
+  adopted             cmake/stale-config.cmake.in (takes the render)
 
 $ jm apply   # exit 0
 just-makeit: applying just-makeit.toml
@@ -256,14 +331,12 @@ warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest 
   create  Doxyfile
   create  Makefile
   create  bootstrap.toml
-  create  cmake/stale-config.cmake.in
-  create  cmake/stale.pc.in
   create  native/benchmarks/bench_fir_core.c
   create  native/benchmarks/bench_gain_core.c
   create  native/benchmarks/jm_bench.h
   create  native/inc/clib_common.h
 
-Done!  Materialized 10 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
+Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 0 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm adopt --check   # exit 1
