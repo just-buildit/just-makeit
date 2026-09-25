@@ -24,6 +24,10 @@ the cause. That is the half most easily forgotten by hand, and the argument for
 generating it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -72,7 +76,7 @@ typedef struct { size_t magic; } dp_tlm_t;
 def _project(tmp_path: Path, *, with_header: bool = True) -> Path:
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         if with_header:
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
@@ -183,7 +187,7 @@ class TestTheBinding:
         with pytest.raises(ValueError, match="cannot declare a default"):
             with contextlib.redirect_stdout(io.StringIO()):
                 root = tmp_path / "p2"
-                new_run("p2", root)
+                new_run("p2", root, c_prefix=None)
                 object_run(
                     root,
                     "c2",
@@ -258,7 +262,7 @@ class TestDeclaredAfterADefaultedParam:
     def _root(self, tmp_path: Path) -> Path:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("proj", root)
+            new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
@@ -329,7 +333,7 @@ class TestWithAPathParam:
     def _ext_of(self, tmp_path: Path) -> str:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("proj", root)
+            new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)
@@ -564,7 +568,7 @@ class TestItCompilesAndRuns:
     def _duo(self, tmp_path: Path) -> Path:
         root = tmp_path / "proj"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("proj", root)
+            new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
             (d / "telemetry.h").write_text(FOREIGN_H)

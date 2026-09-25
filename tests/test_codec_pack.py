@@ -9,6 +9,10 @@ real; the unit tests pin the generated C / `.pyi` / round-trip without a
 compiler.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -63,7 +67,7 @@ def _q(fn, *a, **k):
 
 def _module_with_codec_method(tmp: Path) -> Path:
     d = tmp / "proj"
-    _q(new_run, "proj", d, [], [])
+    _q(new_run, "proj", d, [], [], c_prefix=None)
     _q(module_run, d, "widget", ["gizmo"])
     _q(
         object_run,

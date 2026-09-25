@@ -19,6 +19,10 @@ walked `C.components(cfg)`, i.e. objects only, so the detector written to find
 exactly this shape was blind to the one file jm now creates already in it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import io
@@ -44,7 +48,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 def project(tmp_path):
     dest = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", dest, modules=["util"])
+        new_run("proj", dest, modules=["util"], c_prefix=None)
         fn_run(
             dest,
             "ema_step",
@@ -152,7 +156,7 @@ class TestZeroChurnForEverythingElse:
     def test_a_module_with_no_functions_gets_neither(self, tmp_path):
         dest = tmp_path / "p2"
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p2", dest, modules=["holder"])
+            new_run("p2", dest, modules=["holder"], c_prefix=None)
         assert not (dest / "native/tests/test_holder_core.c").exists()
         assert not (dest / "native/benchmarks/bench_holder_core.c").exists()
         assert "bench_holder_core" not in (

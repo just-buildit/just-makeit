@@ -22,6 +22,10 @@ without `field = true` has always been accessor-backed
 (`<comp>_get_<name>(self->handle)`), so properties never forced the struct open.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import io
 import contextlib
@@ -47,7 +51,7 @@ def _q(fn, *a, **k):
 @pytest.fixture()
 def proj(tmp_path):
     d = tmp_path / "p"
-    _q(new_run, "p", d, [], [])
+    _q(new_run, "p", d, [], [], c_prefix=None)
     return d
 
 

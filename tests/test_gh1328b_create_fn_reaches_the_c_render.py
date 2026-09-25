@@ -34,6 +34,10 @@ sources. `test_it_compiles_and_passes` is the end-to-end proof and skips
 without a compiler; these cannot, so the property stays armed everywhere.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -60,7 +64,7 @@ def _silent(fn, *a, **k):
 
 
 def _scaffold(root: Path, create_fn: str | None) -> Path:
-    _silent(new_run, "q", root)
+    _silent(new_run, "q", root, c_prefix=None)
     kw = {"create_fn": create_fn} if create_fn else {}
     _silent(
         object_run,
@@ -172,7 +176,7 @@ class TestAnOptionalArrayAlsoHonoursTheObjectLevelName:
         sacred `_core.c` defines the real constructor, plus an optional
         array with its own."""
         root = tmp_path / "q"
-        _silent(new_run, "q", root)
+        _silent(new_run, "q", root, c_prefix=None)
         kw = {"create_fn": "acq_create_continuous"} if object_level else {}
         _silent(
             object_run,
@@ -298,7 +302,7 @@ class TestTheAdjacentShapes:
         from just_makeit._view import run as view_run
 
         root = tmp_path / "q"
-        _silent(new_run, "q", root)
+        _silent(new_run, "q", root, c_prefix=None)
         _silent(module_run, root, "tlm")
         _silent(
             object_run,
@@ -328,7 +332,7 @@ class TestTheAdjacentShapes:
         from just_makeit._apply import run as apply_run
 
         root = tmp_path / "q"
-        _silent(new_run, "q", root)
+        _silent(new_run, "q", root, c_prefix=None)
         _silent(
             object_run,
             root,

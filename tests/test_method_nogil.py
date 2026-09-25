@@ -7,6 +7,10 @@ buffer accessors hoisted out first so no Python C-API runs while the GIL is
 dropped — instead of the binding being hand-patched.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import io
 import contextlib
 import sys
@@ -40,7 +44,7 @@ _EXEC_METHOD = {
 
 
 def _scaffold_with_execute(dest: Path, nogil: bool):
-    _silent(new_run, "p", dest)
+    _silent(new_run, "p", dest, c_prefix=None)
     _silent(module_run, dest, "sig")
     _silent(
         object_run,

@@ -1,5 +1,9 @@
 """Tests for the --perf scaffold and `just-makeit perf` upgrade command."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 import re
@@ -32,14 +36,14 @@ _SKIP = _skip_reason()
 @pytest.fixture()
 def perf_project(tmp_path):
     dest = tmp_path / "myproj"
-    new_run("myproj", dest, ["mycomp"], perf=True)
+    new_run("myproj", dest, ["mycomp"], perf=True, c_prefix=None)
     return dest
 
 
 @pytest.fixture()
 def plain_project(tmp_path):
     dest = tmp_path / "myproj"
-    new_run("myproj", dest, ["mycomp"])
+    new_run("myproj", dest, ["mycomp"], c_prefix=None)
     return dest
 
 
@@ -63,7 +67,7 @@ class TestPerfFilePresence:
         from just_makeit._object import run as object_run
 
         dest = tmp_path / "pm"
-        new_run("pm", dest, modules=["dsp"])
+        new_run("pm", dest, modules=["dsp"], c_prefix=None)
         object_run(dest, "fir", "dsp", perf=True)
         assert (dest / INC_ROOT / "jm_perf.h").exists()
         assert (dest / INC_ROOT / "jm_simd.h").exists()
@@ -226,7 +230,7 @@ class TestPerfUpgrade:
     @pytest.fixture()
     def upgraded(self, tmp_path):
         dest = tmp_path / "myproj"
-        new_run("myproj", dest, ["mycomp"])
+        new_run("myproj", dest, ["mycomp"], c_prefix=None)
         perf_run(dest)
         return dest
 
@@ -275,7 +279,7 @@ class TestPerfUpgrade:
 
     def test_multi_component(self, tmp_path):
         dest = tmp_path / "multi"
-        new_run("multi", dest, ["alpha"])
+        new_run("multi", dest, ["alpha"], c_prefix=None)
         init_run(dest, "beta")
         perf_run(dest)
         for comp in ("alpha", "beta"):
@@ -286,7 +290,7 @@ class TestPerfUpgrade:
 
     def test_already_perf_is_noop(self, tmp_path, capsys):
         dest = tmp_path / "already"
-        new_run("already", dest, ["mycomp"], perf=True)
+        new_run("already", dest, ["mycomp"], perf=True, c_prefix=None)
         perf_run(dest)
         out = capsys.readouterr().out
         assert "already enabled" in out
@@ -304,7 +308,7 @@ class TestJmSimdHPresence:
 
     def test_written_by_perf_upgrade(self, tmp_path):
         dest = tmp_path / "upg"
-        new_run("upg", dest, ["mycomp"])
+        new_run("upg", dest, ["mycomp"], c_prefix=None)
         assert not (dest / INC_ROOT / "jm_simd.h").exists()
         perf_run(dest)
         assert (dest / INC_ROOT / "jm_simd.h").exists()
@@ -429,7 +433,7 @@ class TestStepStepsFmaConsistency:
         if _SKIP:
             pytest.skip(_SKIP)
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         init_run(
             root,
             "c",

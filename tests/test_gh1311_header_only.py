@@ -20,6 +20,10 @@ the wiring line, `apply` DETECTS and removes it. Wiring only the detecting
 half looks correct until you build a freshly created project.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -71,7 +75,7 @@ LAYOUTS = (True, False)
 def _project(
     root: Path, header_only: bool = True, fragments: bool = True
 ) -> Path:
-    _silent(new_run, "p", root, fragments=fragments)
+    _silent(new_run, "p", root, fragments=fragments, c_prefix=None)
     _silent(
         object_run,
         root,

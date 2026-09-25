@@ -10,6 +10,10 @@ The load-bearing test is `TestCreateErrorEndToEnd`: a component whose
 other test here is a detail by comparison.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import re
 import subprocess
 import sys
@@ -38,7 +42,7 @@ _MSG = "invalid acquisition parameters: pd unreachable at this reps/cn0_dbhz"
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "dsp"
-    new_run("dsp", dest, ["acq"], [("reps", "int", "1")])
+    new_run("dsp", dest, ["acq"], [("reps", "int", "1")], c_prefix=None)
     return dest
 
 
@@ -286,7 +290,7 @@ class TestCreateErrorCli:
         from just_makeit._object import run as object_run
 
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [], modules=["filt"])
+        new_run("dsp", dest, [], [], modules=["filt"], c_prefix=None)
         object_run(dest, "fir", module="filt", state_vars=[("n", "int", "1")])
         r = _cli(
             "error",

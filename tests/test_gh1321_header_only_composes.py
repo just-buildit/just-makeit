@@ -19,6 +19,10 @@ is `static declaration of 'f' follows non-static declaration`, so relocating
 the body alone trades a link error for a compile error.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -84,7 +88,7 @@ SHAPE_IDS = ["standalone", "module"]
 
 
 def _ring(root: Path, header_only: bool = True, module: str | None = None):
-    _silent(new_run, "p", root)
+    _silent(new_run, "p", root, c_prefix=None)
     if module:
         from just_makeit._module import run as module_run
 

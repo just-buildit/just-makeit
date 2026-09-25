@@ -22,6 +22,10 @@ link line in the same file. A test asserting "the call has two arguments"
 would pass just as happily against a wrong prototype.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -104,7 +108,7 @@ class TestAnOutTypeFunctionIsNotCalled:
         self, tmp_path, params
     ):
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
         _quiet(
             function_run,
@@ -137,7 +141,7 @@ class TestAnOutTypeFunctionIsNotCalled:
         the smoke test gh-1034 exists to provide.
         """
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
         _quiet(
             function_run,
@@ -158,7 +162,7 @@ class TestTheModulePairLinksWhatTheSoLinks:
 
     def _project(self, tmp_path: Path) -> Path:
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "win")
         _quiet(
             function_run,
@@ -210,7 +214,7 @@ class TestTheModulePairLinksWhatTheSoLinks:
         dependency, nothing else added -- is what it still asserts.
         """
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
         _quiet(
             function_row := function_run,
@@ -245,7 +249,7 @@ class TestItActuallyBuilds:
         self, tmp_path
     ):
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "win")
         _quiet(function_run, root, "window", "win", params=[("n", "int")])
         _quiet(module_run, root, "dsp", extra_link_libs=["win_core"])

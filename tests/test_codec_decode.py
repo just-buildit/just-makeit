@@ -8,6 +8,10 @@ on the write side it never declares the sink) — the user owns those. The build
 test decodes a real dict end-to-end.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -159,7 +163,7 @@ def _skip_build() -> str | None:
 @pytest.mark.skipif(bool(_skip_build()), reason=_skip_build() or "")
 def test_build_and_decode(tmp_path):
     d = tmp_path / "proj"
-    _q(new_run, "proj", d, [], [])
+    _q(new_run, "proj", d, [], [], c_prefix=None)
     _q(module_run, d, "widget", ["gizmo"])
     _q(
         object_run,

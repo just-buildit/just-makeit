@@ -22,6 +22,10 @@ templates every existing project renders, so an object without the flag must
 still produce exactly the previous bytes.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import re
 import subprocess
@@ -79,7 +83,9 @@ def _mentions_reset(project, *, allow_manifest=True):
 def plain(tmp_path):
     """A project whose single object does NOT declare no_reset."""
     dest = tmp_path / "plain"
-    new_run("plain", dest, ["keeper"], [("gain", "double", "1.0")])
+    new_run(
+        "plain", dest, ["keeper"], [("gain", "double", "1.0")], c_prefix=None
+    )
     return dest
 
 
@@ -87,7 +93,9 @@ def plain(tmp_path):
 def flagged(tmp_path):
     """A project whose single standalone object declares no_reset."""
     dest = tmp_path / "flag"
-    new_run("flag", dest, ["writerx"], [("gain", "double", "1.0")])
+    new_run(
+        "flag", dest, ["writerx"], [("gain", "double", "1.0")], c_prefix=None
+    )
     object_run(
         dest,
         "writerx2",
@@ -228,6 +236,7 @@ class TestRemovedFromEveryArtifact:
             ["writerx"],
             [("gain", "double", "1.0")],
             no_reset=True,
+            c_prefix=None,
         )
         assert _mentions_reset(dest) == []
 
@@ -279,7 +288,9 @@ class TestModuleObject:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "mod"
-        new_run("mod", dest, ["anchor"], [("gain", "double", "1.0")])
+        new_run(
+            "mod", dest, ["anchor"], [("gain", "double", "1.0")], c_prefix=None
+        )
         module_run(dest, "filt")
         object_run(
             dest,
@@ -321,7 +332,9 @@ class TestView:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "vw"
-        new_run("vw", dest, ["anchor"], [("gain", "double", "1.0")])
+        new_run(
+            "vw", dest, ["anchor"], [("gain", "double", "1.0")], c_prefix=None
+        )
         module_run(dest, "vm")
         object_run(
             dest,
@@ -350,7 +363,7 @@ class TestNoResetWithNoState:
 
     def test_no_state_alone_still_has_reset(self, tmp_path):
         dest = tmp_path / "ns"
-        new_run("ns", dest, ["sink"], None, no_state=True)
+        new_run("ns", dest, ["sink"], None, no_state=True, c_prefix=None)
         h = _read(dest / INC_ROOT / "sink" / "sink_core.h")
         assert "sink_reset(sink_state_t *state);" in h
         ext = _read(dest / "native" / "src" / "sink" / "sink_ext.c")
@@ -358,7 +371,15 @@ class TestNoResetWithNoState:
 
     def test_both_flags_remove_it(self, tmp_path):
         dest = tmp_path / "both"
-        new_run("both", dest, ["sink"], None, no_state=True, no_reset=True)
+        new_run(
+            "both",
+            dest,
+            ["sink"],
+            None,
+            no_state=True,
+            no_reset=True,
+            c_prefix=None,
+        )
         assert _mentions_reset(dest) == []
 
 
@@ -415,7 +436,13 @@ class TestNoResetEndToEnd:
 
     def test_builds_imports_and_has_no_reset(self, tmp_path):
         dest = tmp_path / "e2e"
-        new_run("e2e", dest, ["writerx"], [("gain", "double", "1.0")])
+        new_run(
+            "e2e",
+            dest,
+            ["writerx"],
+            [("gain", "double", "1.0")],
+            c_prefix=None,
+        )
         # Rebuild writerx with the flag (new_run's first object is the
         # unflagged control below).
         object_run(
@@ -487,7 +514,12 @@ class TestNoResetEndToEnd:
         build."""
         dest = tmp_path / "mt"
         new_run(
-            "mt", dest, ["writerx"], [("gain", "double", "1.0")], no_reset=True
+            "mt",
+            dest,
+            ["writerx"],
+            [("gain", "double", "1.0")],
+            no_reset=True,
+            c_prefix=None,
         )
         object_run(dest, "sinkx", None, no_state=True, no_reset=True)
         build = subprocess.run(

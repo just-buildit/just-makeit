@@ -16,6 +16,10 @@ must render exactly as it did before the feature existed, because these slots
 were cut into templates every project already uses.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import re
 import subprocess
@@ -79,7 +83,7 @@ def _declare(project, obj, table):
 @pytest.fixture()
 def project(tmp_path):
     dest = tmp_path / "cap"
-    new_run("cap", dest, ["wfm_writer"], [("fail", "int", "0")])
+    new_run("cap", dest, ["wfm_writer"], [("fail", "int", "0")], c_prefix=None)
     return dest
 
 
@@ -218,7 +222,7 @@ class TestSacredSignature:
         # The scaffold path: the templates carry the signature slot, so a
         # component generated with the table already in hand needs no patch.
         dest = tmp_path / "cap"
-        new_run("cap", dest, [], [])
+        new_run("cap", dest, [], [], c_prefix=None)
         object_run(
             dest,
             "wfm_writer",
@@ -308,7 +312,7 @@ class TestStubs:
         from just_makeit._stubs import make_module_pyi
 
         dest = tmp_path / "modp"
-        new_run("modp", dest, [], [])
+        new_run("modp", dest, [], [], c_prefix=None)
         module_run(dest, "io")
         object_run(dest, "rdr", "io", state_vars=[("fail", "int", "0")])
         _declare(dest, "rdr", _TABLE)

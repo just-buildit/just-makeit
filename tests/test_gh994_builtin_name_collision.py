@@ -27,6 +27,10 @@ a manifest jm knows about the method before it writes ``_core.c`` and lets it
 win; adding one later, the built-in is already in a file jm must not rewrite.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -97,7 +101,7 @@ _CASES = [
 
 def _via_cli(dest: Path, name, arg_type, return_type, params, var_out) -> Path:
     """`jm object` then `jm method` — the built-in is already on disk."""
-    new_run("proj", dest)
+    new_run("proj", dest, c_prefix=None)
     object_run(dest, "osc", None, state_vars=_STATE)
     method_run(
         dest,
@@ -139,7 +143,7 @@ def _via_apply(dest, name, arg_type, return_type, params, var_out) -> Path:
     frag = dest.parent / "frag.toml"
     frag.parent.mkdir(parents=True, exist_ok=True)
     frag.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    new_run("proj", dest)
+    new_run("proj", dest, c_prefix=None)
     apply_run(dest, fragment=frag)
     return dest
 
@@ -430,7 +434,7 @@ class TestHandWrittenBodyIsNeverDeleted:
 
     def test_authored_body_survives_and_is_reported(self, tmp_path, capsys):
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(root, "osc", None, state_vars=_STATE)
         core_c = root / "native/src/osc/osc_core.c"
         core_c.write_text(

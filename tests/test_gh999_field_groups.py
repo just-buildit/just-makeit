@@ -1,6 +1,10 @@
 """gh-999: declare a repeated field group once, instantiate it under a prefix.
 
 jm's type vocabulary has no struct in either direction, so a C descriptor built
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from N repeats of the same small field group had to be flattened into one long
 name-prefixed constructor list, written out once per repeat. doppler's
 `wfm_frame_t` is three instances of one 11-field group: ~34 hand-written
@@ -117,7 +121,7 @@ def _quiet(fn, *a, **kw):
 
 def _project(tmp_path: Path, name: str, extra: str, group: bool) -> Path:
     root = tmp_path / name
-    _quiet(new_run, name, root)
+    _quiet(new_run, name, root, c_prefix=None)
     _quiet(
         object_run,
         root,

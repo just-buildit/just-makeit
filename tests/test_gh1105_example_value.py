@@ -42,6 +42,10 @@ After: **215 passed, 0 skipped, 0 failed** across the fleet, 21 of 26 examples
 carrying at least one real test. No example regressed.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import contextlib
@@ -88,7 +92,7 @@ def _ip(name, *, example="", required=True):
 
 def _project(tmp_path, name, init_params, state=None):
     root = tmp_path / name
-    _quiet(new_run, name, root)
+    _quiet(new_run, name, root, c_prefix=None)
     _quiet(
         object_run,
         root,

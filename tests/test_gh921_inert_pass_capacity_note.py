@@ -26,6 +26,10 @@ a wall of lines arriving exactly when the reader is watching for what changed.
 This is a standing property of the manifest, not an event.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -66,7 +70,7 @@ def _scaffold(dest: Path, *, state_only: bool, **method_over) -> Path:
     from just_makeit._apply import run as apply_run
 
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("p", dest)
+        new_run("p", dest, c_prefix=None)
         object_run(
             dest,
             "nco",
@@ -172,7 +176,7 @@ class TestTheDetector:
         from just_makeit._apply import run as apply_run
 
         with contextlib.redirect_stdout(io.StringIO()):
-            new_run("p", dest)
+            new_run("p", dest, c_prefix=None)
             object_run(
                 dest,
                 "nco",

@@ -27,6 +27,10 @@ jm *injects* that declaration, so this is jm verifying what it wrote rather
 than learning anything new about the project.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -55,7 +59,7 @@ def _quiet(fn, *a, **kw):
 
 def _project(tmp_path: Path, module: str | None) -> Path:
     root = tmp_path / "d76"
-    _quiet(new_run, "d76", root)
+    _quiet(new_run, "d76", root, c_prefix=None)
     if module:
         _quiet(module_run, root, module)
     _quiet(

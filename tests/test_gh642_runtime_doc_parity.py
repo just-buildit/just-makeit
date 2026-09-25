@@ -24,6 +24,10 @@ Two layers, deliberately:
    failure mode the four brief-only shapes represented.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -202,7 +206,7 @@ def _stub_doc(pyi: str, method: str) -> list[str]:
 def project(tmp_path: Path) -> Path:
     """A scaffold whose run() carries a fully authored Doxygen block."""
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     object_run(
         root,
         "fir",
@@ -283,7 +287,7 @@ class TestGeneratedProject:
         `@brief`, let alone params or returns. Same invariant, same renderer.
         """
         root = tmp_path / "demo"
-        new_run("demo", root)
+        new_run("demo", root, c_prefix=None)
         module_run(root, "win")
         function_run(
             root,
@@ -327,7 +331,7 @@ class TestGeneratedProject:
         every other doc literal.
         """
         root = tmp_path / "demo"
-        new_run("demo", root)
+        new_run("demo", root, c_prefix=None)
         module_run(root, "win")
         function_run(
             root,
@@ -346,7 +350,7 @@ class TestGeneratedProject:
     def test_undocumented_method_keeps_the_synthesised_demo(self, tmp_path):
         """The fallback still fires when the header says nothing."""
         root = tmp_path / "demo"
-        new_run("demo", root)
+        new_run("demo", root, c_prefix=None)
         object_run(
             root,
             "fir",
@@ -414,7 +418,7 @@ _BRIEF_ONLY = """/**
 def _detector(tmp_path: Path, block: str | None) -> Path:
     """A standalone object whose built-in step() carries *block*."""
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     object_run(
         root,
         "det",

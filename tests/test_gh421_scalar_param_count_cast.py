@@ -7,6 +7,10 @@ if it were a size: ``size_t _need = (size_t)x;``. A pushed value has no
 ``<name>_max_out()``, per the standard variable_output triplet.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import sys
 from pathlib import Path
 
@@ -37,13 +41,17 @@ def _ext(project, name="push_ptr", arg_type="void"):
 class TestScalarOnlyParamUsesMaxOut:
     def test_no_raw_value_cast_to_size_t(self, tmp_path):
         project = tmp_path / "dsp"
-        new_run("dsp", project, ["delay"], [("n", "size_t", "0")])
+        new_run(
+            "dsp", project, ["delay"], [("n", "size_t", "0")], c_prefix=None
+        )
         ext = _ext(project)
         assert "(size_t)x" not in ext
 
     def test_growth_fallback_uses_max_out(self, tmp_path):
         project = tmp_path / "dsp"
-        new_run("dsp", project, ["delay"], [("n", "size_t", "0")])
+        new_run(
+            "dsp", project, ["delay"], [("n", "size_t", "0")], c_prefix=None
+        )
         ext = _ext(project)
         assert "size_t _need = delay_push_ptr_max_out(self->handle);" in ext
 
@@ -62,7 +70,9 @@ class TestScalarOnlyParamUsesMaxOut:
         legal) made `_min_cap` zero and any buffer acceptable.
         """
         project = tmp_path / "dsp"
-        new_run("dsp", project, ["delay"], [("n", "size_t", "0")])
+        new_run(
+            "dsp", project, ["delay"], [("n", "size_t", "0")], c_prefix=None
+        )
         ext = _ext(project)
         assert '"push_ptr_max_out"' in ext
         assert "_omax" in ext

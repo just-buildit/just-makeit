@@ -22,6 +22,10 @@ false positive would train users to ignore the warning, which is worse than
 not having it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 import contextlib
 import io
 import sys
@@ -51,7 +55,7 @@ SCALAR_METHOD = (
 def project(tmp_path):
     root = tmp_path / "dsp"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("dsp", root, [], [])
+        new_run("dsp", root, [], [], c_prefix=None)
         module_run(root, "wfm", ["reader"])
         object_run(root, "reader", "wfm", state_vars=[("fs", "double", "0.0")])
     return root

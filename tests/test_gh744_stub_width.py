@@ -30,6 +30,10 @@ bottom now *enumerates* producers rather than listing them — because naming
 them is precisely how the two were missed.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -95,7 +99,7 @@ def _document_create(root, comp, brief, param, pname):
 def project(tmp_path):
     """A standalone object whose header is documented past the column limit."""
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     object_run(
         root,
         "receiver",
@@ -117,7 +121,7 @@ def project(tmp_path):
 def module_project(tmp_path):
     """The same documentation, through the module aggregator instead."""
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     module_run(root, "radio")
     object_run(
         root,

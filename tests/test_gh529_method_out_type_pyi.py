@@ -21,6 +21,10 @@ together so a future edit cannot fix one and leave the other, which is the
 single most repeated failure mode in this codebase.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import ast
 import shutil
@@ -70,7 +74,7 @@ class TestStandaloneStub:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")])
+        new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         _add_read_method(dest, "rdr", None)
         return dest
 
@@ -97,7 +101,7 @@ class TestModuleStub:
     @pytest.fixture()
     def project(self, tmp_path):
         dest = tmp_path / "dsp"
-        new_run("dsp", dest, [], [])
+        new_run("dsp", dest, [], [], c_prefix=None)
         module_run(dest, "io", ["rdr"])
         object_run(
             dest, "rdr", module="io", state_vars=[("cap", "size_t", "16")]
@@ -133,13 +137,13 @@ class TestBothGeneratorsAgree:
     def test_same_annotation(self, tmp_path, out_type, expected):
         # standalone
         s = tmp_path / "s"
-        new_run("s", s, ["rdr"], [("cap", "size_t", "16")])
+        new_run("s", s, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         _add_read_method(s, "rdr", None, out_type=out_type)
         s_pyi = (s / "src" / "s" / "rdr.pyi").read_text()
 
         # module
         m = tmp_path / "m"
-        new_run("m", m, [], [])
+        new_run("m", m, [], [], c_prefix=None)
         module_run(m, "io", ["rdr"])
         object_run(m, "rdr", module="io", state_vars=[("cap", "size_t", "16")])
         _add_read_method(m, "rdr", "io", out_type=out_type)
@@ -158,7 +162,9 @@ class TestBuildAndRun:
         if _SKIP:
             pytest.skip(_SKIP)
         root = tmp_path / "proj"
-        new_run("proj", root, ["rdr"], [("cap", "size_t", "16")])
+        new_run(
+            "proj", root, ["rdr"], [("cap", "size_t", "16")], c_prefix=None
+        )
         _add_read_method(root, "rdr", None)
         core = root / "native" / "src" / "rdr" / "rdr_core.c"
         body = core.read_text().replace(

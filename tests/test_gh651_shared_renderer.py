@@ -15,6 +15,10 @@ can express: *the same manifest and the same header produce the same
 docstring, whether or not the object lives in a module.*
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -62,7 +66,7 @@ def _annotate(dest: Path, comp: str, c_func: str, block: str) -> None:
 
 
 def _scaffold(dest: Path, *, module: str | None) -> Path:
-    new_run("dsp", dest)
+    new_run("dsp", dest, c_prefix=None)
     if module:
         module_run(dest, module)
     object_run(

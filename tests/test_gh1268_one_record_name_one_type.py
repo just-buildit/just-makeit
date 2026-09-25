@@ -37,6 +37,10 @@ The fix moves the rule to :func:`_record.resolve`, over a namespace the
   the segfault above. ``jm method`` refuses it before writing anything.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
@@ -90,7 +94,7 @@ def _scaffold(tmp_path: Path) -> Path:
     tool produces, and this bug lives in what the tool produces.
     """
     root = tmp_path / "demo"
-    _quiet(new_run, "demo", root)
+    _quiet(new_run, "demo", root, c_prefix=None)
     _quiet(module_run, root, "m")
     _quiet(
         object_run,
@@ -328,7 +332,7 @@ class TestTheCliRefusesBeforeWriting:
 
     def _two_objects(self, tmp_path: Path) -> Path:
         root = tmp_path / "demo"
-        _quiet(new_run, "demo", root)
+        _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "m")
         for obj in ("a", "b"):
             _quiet(

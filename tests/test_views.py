@@ -1,5 +1,9 @@
 """Tests for `[[<obj>.views]]` — a second class over one C core (gh-504)."""
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -180,7 +184,7 @@ def _module_cfg_with_view():
 def view_project(tmp_path):
     """A module project with one object + one view over it."""
     dest = tmp_path / "demo"
-    new_run("demo", dest, [], [], build_system="cmake")
+    new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
     module_run(dest, "dsp")
     object_run(
         dest,
@@ -268,7 +272,7 @@ class TestScaffold:
 class TestValidation:
     def test_rejects_create_fn_equal_to_parent(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("r", "double", "1.0")]
@@ -278,7 +282,7 @@ class TestValidation:
 
     def test_rejects_unknown_exclude_property(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("r", "double", "1.0")]
@@ -295,7 +299,7 @@ class TestValidation:
 
     def test_rejects_duplicate_class_name(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("r", "double", "1.0")]
@@ -306,7 +310,7 @@ class TestValidation:
 
     def test_requires_module(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("r", "double", "1.0")]
@@ -319,7 +323,7 @@ class TestValidation:
         # arg-parse block and blanks create_line, so create_fn can't be honoured
         # — v1 rejects it up front rather than silently ignoring the view's ctor.
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest,
@@ -352,7 +356,7 @@ class TestCliAndScript:
     def _project_with_view_via_cli(self, dest, monkeypatch):
         from just_makeit import _cli_view
 
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("rate", "double", "1.0")]
@@ -420,7 +424,7 @@ class TestCliAndScript:
 def view_project_with_excluded_method(tmp_path):
     """A module object with a declared method + a view that excludes it."""
     dest = tmp_path / "demo"
-    new_run("demo", dest, [], [], build_system="cmake")
+    new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
     module_run(dest, "dsp")
     object_run(
         dest,
@@ -505,7 +509,7 @@ class TestExcludeMethods:
 
     def test_rejects_unknown_exclude_method(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acc", module="dsp", state_vars=[("s", "double", "0.0")]
@@ -540,7 +544,7 @@ def diverging_view_project(tmp_path):
     parent property/method's doc — the doppler Acquisition/BurstAcquisition
     shape in miniature."""
     dest = tmp_path / "demo"
-    new_run("demo", dest, [], [], build_system="cmake")
+    new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
     module_run(dest, "dsp")
     object_run(
         dest,
@@ -688,7 +692,7 @@ class TestDivergingSurfaces:
 
     def test_rejects_add_and_exclude_same_property(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
@@ -711,7 +715,7 @@ class TestDivergingSurfaces:
 
     def test_rejects_property_on_missing_view(self, tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]
@@ -731,7 +735,7 @@ class TestDivergingSurfaces:
     @staticmethod
     def _module_object_with_view(tmp_path):
         dest = tmp_path / "demo"
-        new_run("demo", dest, [], [], build_system="cmake")
+        new_run("demo", dest, [], [], build_system="cmake", c_prefix=None)
         module_run(dest, "dsp")
         object_run(
             dest, "acq", module="dsp", state_vars=[("s", "double", "0.0")]

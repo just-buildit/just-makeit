@@ -22,6 +22,10 @@ both were exactly right about the cell they looked at.
 The causes were four separate missing lookups, not one, so the guard here is
 the whole matrix rather than any single path: `_glue` never passed `doc_blocks`
 to `make_state_ctx`/`make_step_ctx`; `_apply` re-rendered only the temp `.pyi`
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from the real header; the standalone `_ext.c` template hard-coded `tp_doc`; and
 `_object` never passed `doc_blocks` to `make_state_ctx` either.
 
@@ -61,7 +65,7 @@ _MARKS = {
 
 def _scaffold(tmp_path: Path, *, module: bool) -> Path:
     root = tmp_path / "demo"
-    new_run("demo", root)
+    new_run("demo", root, c_prefix=None)
     if module:
         module_run(root, "filt")
     object_run(

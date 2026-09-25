@@ -31,6 +31,10 @@ break a documented contract — so `TestOnlyTheShapeWithNoFloor` asserts the
 guard is absent from those, and runs one to prove the old behaviour survives.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 
 import contextlib
@@ -60,7 +64,7 @@ def _quiet(fn, *a, **kw):
 
 def _project(tmp_path: Path, name: str, **method_kw) -> Path:
     root = tmp_path / name
-    _quiet(new_run, name, root)
+    _quiet(new_run, name, root, c_prefix=None)
     _quiet(
         object_run,
         root,
@@ -363,7 +367,7 @@ class TestItActuallyRuns:
         """The documented contract, kept. An `arg_type` method whose
         `max_out()` returns 0 sizes from the input, exactly as before."""
         root = tmp_path / "ok"
-        _quiet(new_run, "ok", root)
+        _quiet(new_run, "ok", root, c_prefix=None)
         _quiet(
             object_run,
             root,

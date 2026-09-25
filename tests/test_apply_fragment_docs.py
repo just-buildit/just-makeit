@@ -10,6 +10,10 @@ bindings the manifest can't express survive, *_extra.c is untouched,
 idempotent.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from _jminc import INC_ROOT  # noqa: E402
 import io
 import re
@@ -62,7 +66,7 @@ def _mark_body(frag: Path, wrapper: str, marker: str):
 
 
 def _scaffold(dest: Path, module="sig"):
-    _silent(new_run, "dsp", dest)
+    _silent(new_run, "dsp", dest, c_prefix=None)
     _silent(module_run, dest, module)
     _silent(
         object_run,
@@ -229,7 +233,7 @@ def test_apply_skips_no_generate_module(tmp_path):
 # ── (g) standalone object generation not regressed by the module pass ────────
 def test_apply_standalone_object_not_regressed(tmp_path):
     dest = tmp_path / "dsp"
-    _silent(new_run, "dsp", dest)
+    _silent(new_run, "dsp", dest, c_prefix=None)
     _silent(
         object_run,
         dest,

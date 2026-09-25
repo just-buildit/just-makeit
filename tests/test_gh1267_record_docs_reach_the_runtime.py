@@ -34,6 +34,10 @@ manifest and the header, and the author's channel for the prose is those, so a
 slot disagreeing with the reference is stale by construction.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
@@ -157,7 +161,7 @@ def _scaffold(tmp_path: Path) -> Path:
     the manifest are still bare is what freezes the `NULL`s in place.
     """
     root = tmp_path / "demo"
-    _quiet(new_run, "demo", root)
+    _quiet(new_run, "demo", root, c_prefix=None)
     _quiet(module_run, root, "mm")
     _quiet(
         object_run,

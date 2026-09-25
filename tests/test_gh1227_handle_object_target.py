@@ -19,6 +19,10 @@ inferred from the component id because an object producer has no way to state
 one (gh-1235). This resolver is the better-founded of the two.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
@@ -69,7 +73,7 @@ def _project(
     """
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(root, "seg", None, state_vars=[("k", "size_t", "0")])
     if with_header:
         h = root / INC_ROOT / "wfm" / "wfm_writer.h"

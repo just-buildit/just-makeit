@@ -33,6 +33,10 @@ string changed but that CTOR passes against a real typedef'd header and
 `apply` stops rewriting it.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -63,7 +67,7 @@ def _quiet(fn, *a, **kw):
 def _project(tmp_path: Path, name: str, init_params: str) -> Path:
     """A scaffolded object whose manifest carries *init_params* verbatim."""
     root = tmp_path / name
-    _quiet(new_run, name, root)
+    _quiet(new_run, name, root, c_prefix=None)
     _quiet(
         object_run,
         root,

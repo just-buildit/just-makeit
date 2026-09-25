@@ -20,6 +20,10 @@ The sentinel has two strengths, and the difference is the point:
   only counts when nothing else in the block was filled in.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -212,7 +216,7 @@ class TestMethodScaffoldEndToEnd:
     @staticmethod
     def _project(tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root)
+        new_run("dsp", root, c_prefix=None)
         object_run(
             root,
             "fir",
@@ -276,7 +280,7 @@ class TestScaffoldedHeaderDerivesNothing:
 
     def test_fresh_header_yields_no_doc_blocks(self, tmp_path):
         root = tmp_path / "dsp"
-        new_run("dsp", root)
+        new_run("dsp", root, c_prefix=None)
         object_run(
             root,
             "fir",

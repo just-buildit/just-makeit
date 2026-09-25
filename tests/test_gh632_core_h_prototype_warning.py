@@ -20,6 +20,10 @@ So the decision is: replace-by-name stays, both docstrings now say so, and
 the rewrite warns.
 """
 
+# gh-1591: this file's hand-written C and expectations spell jm's bare
+# derived names, so its projects opt out of the prefix `jm new` now
+# defaults to; the default is gated by tests/test_gh1591_*.py.
+
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
@@ -178,7 +182,7 @@ class TestTheReportedReproduction:
         self, tmp_path, capsys
     ):
         root = tmp_path / "proj"
-        new_run("proj", root)
+        new_run("proj", root, c_prefix=None)
         object_run(root, "gain", None, state_vars=[("g", "double", "1.0")])
         method_run(
             root,
