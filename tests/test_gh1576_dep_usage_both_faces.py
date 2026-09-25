@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -292,12 +293,15 @@ def _consume_pc(root, name, pfx, static, env) -> str:
         libs = [f for f in pc("--static", "--libs") if f != f"-l{name}"]
         link = [str(pfx / "lib" / f"lib{name}.a"), *libs]
     else:
-        # An rpath, as docs/c-library.md tells a consumer to: macOS resolves
-        # the installed `@rpath/lib<pkg>.dylib` only through the executable's
-        # rpath and ignores LD_LIBRARY_PATH, so that worked on Linux alone.
-        link = [*pc("--libs"), f"-Wl,-rpath,{pfx / 'lib'}"]
+        # Exactly what pkg-config hands out, no rpath: on macOS the installed
+        # library names itself absolutely (gh-1594). A temp prefix is on no
+        # Linux search path, so LD_LIBRARY_PATH there (ld.so(8)).
+        link = pc("--libs")
     _run(["cc", *pc("--cflags"), "c.c", *link, "-o", str(exe)], root, pc_env)
-    return _run([str(exe)], root, pc_env).stdout
+    run_env = dict(pc_env)
+    if sys.platform.startswith("linux"):
+        run_env["LD_LIBRARY_PATH"] = str(pfx / "lib")
+    return _run([str(exe)], root, run_env).stdout
 
 
 @pytest.mark.parametrize("name", sorted(_STYLES))

@@ -48,7 +48,7 @@ OUTDATED (7) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (14) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -58,6 +58,7 @@ ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
   ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
   ↑ soversion (gh-1582) [Linux, macOS]: the shared library has no VERSION/SOVERSION, so every release installs over the last under one soname, and a program linked against an older ABI silently loads the new one
+  ↑ install-name (gh-1594) [macOS]: the installed dylib is named @rpath/lib<pkg>.dylib, so a program linked by pkg-config (or any build but CMake's) has no LC_RPATH and dyld refuses to load it
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc's prefix is not written at install time (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR and the install(CODE) that fills them): today's cmake/<pkg>.pc.in writes no usable prefix without them, and the older one names the CONFIGURED prefix, so `cmake --install --prefix` leaves a .pc pointing where nothing was installed
@@ -83,7 +84,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 13 root-cmake, 2 unwired (!).
+summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 7 outdated, 14 root-cmake, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -145,7 +146,7 @@ OUTDATED (7) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (14) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -155,6 +156,7 @@ ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
   ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
   ↑ soversion (gh-1582) [Linux, macOS]: the shared library has no VERSION/SOVERSION, so every release installs over the last under one soname, and a program linked against an older ABI silently loads the new one
+  ↑ install-name (gh-1594) [macOS]: the installed dylib is named @rpath/lib<pkg>.dylib, so a program linked by pkg-config (or any build but CMake's) has no LC_RPATH and dyld refuses to load it
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc's prefix is not written at install time (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR and the install(CODE) that fills them): today's cmake/<pkg>.pc.in writes no usable prefix without them, and the older one names the CONFIGURED prefix, so `cmake --install --prefix` leaves a .pc pointing where nothing was installed
@@ -173,7 +175,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 13 root-cmake.
+OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 7 outdated; 14 root-cmake.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones

@@ -109,6 +109,10 @@ class Layout(NamedTuple):
     pc_args: "tuple[str, ...]" = ()
     #: a path no installed .pc or .cmake file may name.
     forbidden: "Path | None" = None
+    #: False when the files are not where they were installed to (moved, or
+    #: staged under DESTDIR), so the library's install name does not point
+    #: at them; on macOS the consumer then sets DYLD_LIBRARY_PATH.
+    in_place: bool = True
 
 
 def _build(proj: Path, bdir: Path, pfx: Path, *extra: str) -> None:
@@ -182,6 +186,7 @@ def world(tmp_path_factory):
         real,
         pc_env={"PKG_CONFIG_SYSROOT_DIR": str(stage)},
         forbidden=stage,
+        in_place=False,
     )
 
     frm, to = root / "mv_from", root / "mv_to"
@@ -190,7 +195,7 @@ def world(tmp_path_factory):
     _run(["cmake", "--install", bm], proj)
     shutil.move(str(frm), str(to))
     layouts["moved"] = Layout(
-        to, to / "lib", frm, pc_args=("--define-prefix",)
+        to, to / "lib", frm, pc_args=("--define-prefix",), in_place=False
     )
 
     absp = root / "absp"
@@ -226,7 +231,9 @@ def _pc_file(lay: Layout) -> Path:
     return lay.libdir / "pkgconfig" / f"{PC_NAME}.pc"
 
 
-def _find_package(root, name, linkage, where: "list[str]") -> str:
+def _find_package(
+    root, name, linkage, where: "list[str]", lay: "Layout | None" = None
+) -> str:
     cons = root / f"fp_{name}_{linkage}"
     cons.mkdir()
     (cons / "CMakeLists.txt").write_text(
@@ -238,7 +245,12 @@ def _find_package(root, name, linkage, where: "list[str]") -> str:
     )
     _run(["cmake", "-S", ".", "-B", "b", *where], cons)
     _run(["cmake", "--build", "b"], cons)
-    return _run([cons / "b" / "c"], cons).stdout
+    # A moved or staged tree needs the loader told, on this route as on
+    # pkg-config's: the macOS install name is absolute (gh-1594) and names
+    # where the library was installed, which CMake's build rpath does not
+    # override.
+    env = _loader_env(dict(os.environ), lay) if lay else None
+    return _run([cons / "b" / "c"], cons, env).stdout
 
 
 def _pc_env(lay: Layout) -> "dict[str, str]":
@@ -265,9 +277,28 @@ def _pkg_config(root, name, linkage, lay: Layout) -> str:
         libs = [f for f in pc("--static", "--libs") if f != f"-l{NAME}"]
         link = [str(Path(libdir) / f"lib{NAME}.a"), *libs]
     else:
-        link = [*pc("--libs"), f"-Wl,-rpath,{libdir}"]
+        # Exactly what pkg-config hands out: no rpath. gh-1594 was hidden for
+        # as long as this line added one.
+        link = pc("--libs")
     _run(["cc", *pc("--cflags"), "c.c", *link, "-o", exe], root, env)
-    return _run([exe], root, env).stdout
+    return _run([exe], root, _loader_env(env, lay)).stdout
+
+
+def _loader_env(env: "dict[str, str]", lay: Layout) -> "dict[str, str]":
+    """What running the consumer needs from the dynamic loader.
+
+    Linux: a temp prefix is on no search path, so LD_LIBRARY_PATH, the
+    loader's documented way in (ld.so(8)). macOS: NOTHING for an install in
+    place -- the library names itself absolutely (gh-1594), which is what is
+    under test -- and DYLD_LIBRARY_PATH only where the files were moved or
+    staged, so the install name points elsewhere.
+    """
+    env = dict(env)
+    if sys.platform.startswith("linux"):
+        env["LD_LIBRARY_PATH"] = str(lay.libdir)
+    elif sys.platform == "darwin" and not lay.in_place:
+        env["DYLD_LIBRARY_PATH"] = str(lay.libdir)
+    return env
 
 
 ALL_LAYOUTS = [
@@ -293,7 +324,7 @@ def test_find_package_installed(world, layout, linkage):
         f"-DCMAKE_PREFIX_PATH={lay.prefix}",
         f"-D{NAME}_DIR={lay.libdir / 'cmake' / NAME}",
     ]
-    out = _find_package(root, layout, linkage, where)
+    out = _find_package(root, layout, linkage, where, lay)
     assert out == "ran 1\n", out
 
 
@@ -394,8 +425,12 @@ def test_the_shared_library_has_a_versioned_soname(world):
     elif sys.platform == "darwin":
         real = lib / f"lib{NAME}.{VERSION}.dylib"
         assert real.is_file() and not real.is_symlink()
-        idn = _run(["otool", "-D", real], lib).stdout
-        assert f"@rpath/lib{NAME}.{ABI}.dylib" in idn, idn
+        # gh-1594: the install name is absolute -- not @rpath/..., which a
+        # program linked by pkg-config cannot load.
+        idn = _run(["otool", "-D", real], lib).stdout.splitlines()[-1]
+        assert idn.startswith("/"), idn
+        assert Path(idn).name == f"lib{NAME}.{ABI}.dylib", idn
+        assert os.path.samefile(Path(idn).parent, lib), idn
     else:
         pytest.fail(f"no soname check written for {sys.platform}")
 

@@ -324,9 +324,16 @@ ______________________________________________________________________
 
 ## Runtime loading (rpath)
 
-The installed `.so` is not automatically on the dynamic linker's search path
-unless you installed to `/usr/local` (or ran `ldconfig` after a system-wide
-install).
+**macOS needs nothing.** The installed `.dylib` names itself by its absolute
+path (its install name is `<prefix>/lib/lib<pkg>.<ABI>.dylib`, as Homebrew's
+libraries are), so a program linked by pkg-config, `find_package`, a Makefile
+or Xcode loads it wherever the prefix is. If you move the installed tree
+afterwards, point `DYLD_LIBRARY_PATH` at its new `lib/`, or rewrite the name
+with `install_name_tool`.
+
+**Linux:** the installed `.so` is not automatically on the dynamic linker's
+search path unless you installed to `/usr/local` (or ran `ldconfig` after a
+system-wide install).
 
 For a custom prefix, embed the library path in the binary at link time:
 
