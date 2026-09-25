@@ -322,6 +322,7 @@ class TestEveryEmitterSplicesIt:
             [],
             procglobal=block,
             layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+            owner={"project": {"name": "p"}},
         )
         assert "PyCapsule_New(flag_state_ptr()" in out
 
@@ -333,6 +334,7 @@ class TestEveryEmitterSplicesIt:
             [],
             procglobal=block,
             layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+            owner={"project": {"name": "p"}},
         )
         assert "PyCapsule_New(flag_state_ptr()" in out
 

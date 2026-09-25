@@ -205,7 +205,9 @@ def _module_bench_target(cname: str, libs: str) -> str:
     )
 
 
-def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
+def module_fn_smoke_calls(
+    functions: list[dict], *, owner: "INC.Owner"
+) -> "tuple[str, int]":
     """Body of a module's C smoke test, and its scaffold-check count.
 
     Mirrors an object's `step_c_smoke_test`, which is a `(void)`-cast call
@@ -237,7 +239,8 @@ def module_fn_smoke_calls(functions: list[dict]) -> "tuple[str, int]":
         zeros = [
             _CTYPE_META.get(p.get("type", ""), {}).get("zero") for p in params
         ]
-        name = fn["name"]
+        # gh-1591: the call names the function's C symbol.
+        name = CSYM.stem(owner, fn["name"])
         if fn.get("out_type"):
             lines.append(
                 f"    /* TODO: {name}(...) writes into a caller-sized output"
@@ -761,14 +764,14 @@ def render_component_test_c(ctx: dict) -> str:
 
 COMPONENT_TYPE_SECTION = """\
 /* ======================================================== */
-/* <<Component>>Object — wraps <<component>>_state_t *       */
+/* <<Component>>Object — wraps <<csym>>_state_t *       */
 /* ======================================================== */
 
 #include "<<inc_prefix>><<component>>/<<component>>_core.h"
 
 typedef struct {
     PyObject_HEAD
-    <<component>>_state_t *handle;
+    <<csym>>_state_t *handle;
 <<extra_buf_fields>><<capsule_owner_fields>>} <<Component>>Object;
 
 static void
@@ -1532,11 +1535,14 @@ def _py_wrapper_for_function(
     # NAMING the choices — the wording a method parameter for the same enum
     # has had since gh-1021, and this face had not.
     enums: "dict[str, list[str]] | None" = None,
+    *,
+    c_name: str,
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
-    The C function is assumed to be declared in <module>_core.h and named
-    exactly fn_name (public, no prefix).
+    The C function is declared in <module>_core.h as *c_name*, the
+    function's C symbol (``_csym.stem``, gh-1591); *fn_name* is its
+    manifest name, which names the static ``_bind_<fn_name>`` binder.
 
     out_type: if set, allocates a 1-D ndarray of this type (length = first
     array param's length) and passes it after the array args, before scalars.
@@ -1574,13 +1580,13 @@ def _py_wrapper_for_function(
         # appended a bare `size_t max_results`, so the call passes the literal.
         if max_results_param:
             _max_expr = f"(size_t){max_results_param}"
-            _call = f"{fn_name}({call_args}, _results)"
+            _call = f"{c_name}({call_args}, _results)"
         else:
             _max_expr = str(max_results)
             _call = (
-                f"{fn_name}({call_args}, _results, _max)"
+                f"{c_name}({call_args}, _results, _max)"
                 if call_args
-                else f"{fn_name}(_results, _max)"
+                else f"{c_name}(_results, _max)"
             )
         ret_line = (
             f"    size_t _max = {_max_expr};\n"
@@ -1645,7 +1651,7 @@ def _py_wrapper_for_function(
             f"    size_t _cap = (size_t)({len_expr});\n"
             f"    char *_buf = (char *)malloc(_cap + 1);\n"
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
-            f"    size_t _n = (size_t){fn_name}({_call_with_out});\n"
+            f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
             f"{cleanup}"
             f"    if (_n > _cap) _n = _cap;\n"
             f"    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
@@ -1686,7 +1692,7 @@ def _py_wrapper_for_function(
         if _trim:
             ret_line = (
                 _alloc
-                + f"    size_t _n = (size_t){fn_name}({_call_with_out});\n"
+                + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
                 + cleanup
                 + "    PyArray_DIMS((PyArrayObject *)_out)[0] ="
                 " (npy_intp)_n;\n"
@@ -1695,7 +1701,7 @@ def _py_wrapper_for_function(
         else:
             ret_line = (
                 _alloc
-                + f"    {fn_name}({_call_with_out});\n"
+                + f"    {c_name}({_call_with_out});\n"
                 + cleanup
                 + "    return _out;"
             )
@@ -1735,7 +1741,7 @@ def _py_wrapper_for_function(
             f"    PyObject *_out ="
             f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
             f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
-            f"    {fn_name}({_call_with_out});\n"
+            f"    {c_name}({_call_with_out});\n"
             f"{cleanup}"
             f"    return _out;"
         )
@@ -1748,11 +1754,11 @@ def _py_wrapper_for_function(
         # the rc first, run any array/path cleanup, then check + raise.
         _rt_disp = return_type
         ret_line = (
-            f"    {_rt_disp} _rc = {fn_name}({call_args});\n"
+            f"    {_rt_disp} _rc = {c_name}({call_args});\n"
             f"{cleanup}"
             f"    if (_rc != 0) {{\n"
             f"        PyErr_Format(PyExc_RuntimeError,\n"
-            f'            "{fn_name} failed (rc=%d)", (int)_rc);\n'
+            f'            "{c_name} failed (rc=%d)", (int)_rc);\n'
             f"        return NULL;\n"
             f"    }}\n"
             f"    Py_RETURN_NONE;"
@@ -1774,16 +1780,16 @@ def _py_wrapper_for_function(
         if cleanup:
             _rt_disp = return_type
             ret_line = (
-                f"    {_rt_disp} _r = {fn_name}({call_args});\n"
+                f"    {_rt_disp} _r = {c_name}({call_args});\n"
                 f"{cleanup}"
                 f"    return {ret_meta['to_py']('_r')};"
             )
         else:
-            ret_expr = ret_meta["to_py"](f"{fn_name}({call_args})")
+            ret_expr = ret_meta["to_py"](f"{c_name}({call_args})")
             ret_line = f"    return {ret_expr};"
     else:
         call_line = (
-            f"    {fn_name}({call_args});" if params else f"    {fn_name}();"
+            f"    {c_name}({call_args});" if params else f"    {c_name}();"
         )
         ret_line = call_line + f"\n{cleanup}    Py_RETURN_NONE;"
 
@@ -1834,6 +1840,8 @@ def make_functions_ctx(
     functions: list[dict],
     enums: "dict[str, list[str]] | None" = None,
     doc_blocks: "dict | None" = None,
+    *,
+    owner: "INC.Owner",
 ) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
@@ -1878,6 +1886,9 @@ def make_functions_ctx(
     entries: list[str] = []
     for fn in functions:
         name = fn["name"]
+        # gh-1591: the function's C symbol -- its manifest name through the
+        # project's stem -- which the header block and the call both name.
+        c_name = CSYM.stem(owner, name)
         params = list(fn.get("params", []))
         return_type = fn.get("return_type", "void")
         # gh-643: was `fn.get("doc", f"{name}.")` — the manifest override or a
@@ -1885,7 +1896,7 @@ def make_functions_ctx(
         # params/returns/examples, while the .pyi beside it carried all of it
         # (gh-384). The manifest `doc` stays the summary override; it is passed
         # to the renderer rather than replacing it.
-        _blk = (doc_blocks or {}).get(name)
+        _blk = (doc_blocks or {}).get(c_name)
         # gh-1493: the manifest `doc` and each param's, as written -- the stub
         # beside this renders from the same inputs (`_stubs._fn_stub`).
         _pdocs = authored_param_docs(fn)
@@ -1935,6 +1946,7 @@ def make_functions_ctx(
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
                 enums=enums,
+                c_name=c_name,
             )
         )
         # `doc` is already a C string literal (escaped, possibly multi-line) —
@@ -2047,6 +2059,8 @@ def render_module_ext_c(
     fn_doc_blocks: "dict | None" = None,
     procglobal: str = "",
     layout: "dict | None" = None,
+    *,
+    owner: "INC.Owner",
 ) -> str:
     """Render a multi-object module _ext.c from a list of component contexts.
 
@@ -2068,7 +2082,12 @@ def render_module_ext_c(
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
 
     fn_ctx = make_functions_ctx(
-        module, Module, list(functions), enums, fn_doc_blocks
+        module,
+        Module,
+        list(functions),
+        enums,
+        fn_doc_blocks,
+        owner=owner,
     )
     # Only include the module-level core header when there are module functions
     # that use it.  Objects have their own per-component includes in
@@ -2350,6 +2369,8 @@ def render_module_ext_aggregator(
     fn_doc_blocks: "dict | None" = None,
     procglobal: str = "",
     layout: "dict | None" = None,
+    *,
+    owner: "INC.Owner",
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -2378,7 +2399,12 @@ def render_module_ext_aggregator(
     Module = "".join(w.title() for w in module.split("_"))
     object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
     fn_ctx = make_functions_ctx(
-        module, Module, list(functions), enums, fn_doc_blocks
+        module,
+        Module,
+        list(functions),
+        enums,
+        fn_doc_blocks,
+        owner=owner,
     )
     has_module_fns = bool(functions)
     module_core_include = (

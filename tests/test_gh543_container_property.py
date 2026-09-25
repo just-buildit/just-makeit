@@ -85,7 +85,7 @@ TUPLE_F64 = {"name": "gains", "type": "tuple", "value_type": "double"}
 
 
 def _getset(props):
-    return make_properties_ctx("rdr", "Rdr", props)["getset_def"]
+    return make_properties_ctx("rdr", "Rdr", props, csym="rdr")["getset_def"]
 
 
 class TestContainerConstruction:
@@ -182,14 +182,14 @@ class TestAccessorDefaults:
     """Unspecified accessors derive from the component and property name."""
 
     def test_defaults(self):
-        assert container_fn_names("rdr", "keywords", {}) == {
+        assert container_fn_names("rdr", "keywords", {}, csym="rdr") == {
             "count_fn": "rdr_num_keywords",
             "key_fn": "rdr_keywords_key",
             "value_fn": "rdr_keywords_value",
         }
 
     def test_explicit_names_win(self):
-        got = container_fn_names("rdr", "keywords", DICT_OBJ)
+        got = container_fn_names("rdr", "keywords", DICT_OBJ, csym="rdr")
         assert got["key_fn"] == "rdr_keyword_tag"
 
 
@@ -197,7 +197,9 @@ class TestCoreHeaderDecls:
     """Only the pure-C accessors belong in the sacred header."""
 
     def test_plain_c_accessors_are_declared(self):
-        decls = make_properties_ctx("rdr", "Rdr", [DICT_OBJ])["property_decls"]
+        decls = make_properties_ctx("rdr", "Rdr", [DICT_OBJ], csym="rdr")[
+            "property_decls"
+        ]
         assert "size_t rdr_num_keywords(const rdr_state_t *state);" in decls
         assert (
             "const char *rdr_keyword_tag(const rdr_state_t *state, size_t i);"
@@ -207,18 +209,24 @@ class TestCoreHeaderDecls:
     def test_pyobject_value_fn_is_not_declared_in_the_header(self):
         """It needs Python.h. Putting it in _core.h would force the pure-C
         library to depend on CPython -- the thing the escape hatch avoids."""
-        decls = make_properties_ctx("rdr", "Rdr", [DICT_OBJ])["property_decls"]
+        decls = make_properties_ctx("rdr", "Rdr", [DICT_OBJ], csym="rdr")[
+            "property_decls"
+        ]
         assert "rdr_keyword_value" not in decls
 
     def test_typed_value_fn_is_declared_in_the_header(self):
-        decls = make_properties_ctx("rdr", "Rdr", [LIST_STR])["property_decls"]
+        decls = make_properties_ctx("rdr", "Rdr", [LIST_STR], csym="rdr")[
+            "property_decls"
+        ]
         assert (
             "const char *rdr_stages_value(const rdr_state_t *state, size_t i);"
             in decls
         )
 
     def test_list_and_tuple_declare_no_key_accessor(self):
-        decls = make_properties_ctx("rdr", "Rdr", [LIST_STR])["property_decls"]
+        decls = make_properties_ctx("rdr", "Rdr", [LIST_STR], csym="rdr")[
+            "property_decls"
+        ]
         assert "_key" not in decls
 
 
@@ -235,17 +243,22 @@ class TestStub:
         ids=["dict", "list", "tuple"],
     )
     def test_annotation(self, prop, annotation):
-        pyi = make_properties_ctx("rdr", "Rdr", [prop])["property_stubs_pyi"]
+        pyi = make_properties_ctx("rdr", "Rdr", [prop], csym="rdr")[
+            "property_stubs_pyi"
+        ]
         assert f"-> {annotation}:" in pyi
 
     def test_stub_parses(self):
         pyi = make_properties_ctx(
-            "rdr", "Rdr", [DICT_OBJ, LIST_STR, TUPLE_F64]
+            "rdr",
+            "Rdr",
+            [DICT_OBJ, LIST_STR, TUPLE_F64],
+            csym="rdr",
         )["property_stubs_pyi"]
         ast.parse("class Rdr:\n" + pyi)
 
     def test_no_setter_is_advertised(self):
-        pyi = make_properties_ctx("rdr", "Rdr", [DICT_OBJ])[
+        pyi = make_properties_ctx("rdr", "Rdr", [DICT_OBJ], csym="rdr")[
             "property_stubs_pyi"
         ]
         assert ".setter" not in pyi
@@ -283,7 +296,10 @@ class TestDiagnostics:
     def test_render_raises_rather_than_emitting_bad_c(self):
         with pytest.raises(ValueError):
             make_properties_ctx(
-                "rdr", "Rdr", [{"name": "k", "type": "dict", "writable": True}]
+                "rdr",
+                "Rdr",
+                [{"name": "k", "type": "dict", "writable": True}],
+                csym="rdr",
             )
 
 

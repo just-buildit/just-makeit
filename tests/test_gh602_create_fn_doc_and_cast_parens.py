@@ -149,6 +149,7 @@ class TestDocstringTransplantFollowsCreateFn:
             "carrier=0.05",
             doc_blocks={"acq_create_continuous": _Block()},
             create_fn="acq_create_continuous",
+            csym="acq",
         )
         assert "continuous-mode acquisition engine" in doc
 
@@ -164,6 +165,7 @@ class TestDocstringTransplantFollowsCreateFn:
             "from dsp.mod import Acq",
             "carrier=0.05",
             doc_blocks={},
+            csym="acq",
         )
         assert "Acq type." in doc or "Acq component" in doc
 

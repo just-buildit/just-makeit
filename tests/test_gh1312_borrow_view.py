@@ -165,6 +165,7 @@ class TestEverySetBaseObjectIsChecked:
             {},
             [],
             {},
+            csym="ring",
         )
         body = next(
             v
@@ -206,6 +207,7 @@ class TestTheTwoPinShapesShareOneEmitter:
             {},
             [],
             {},
+            csym="ring",
         )
         body = next(
             v
@@ -252,6 +254,7 @@ class TestTheWriteabilityAsymmetryIsDeliberate:
             {},
             [],
             {},
+            csym="ring",
         )
         body = next(
             v

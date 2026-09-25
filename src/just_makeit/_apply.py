@@ -1093,6 +1093,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
     for comp in all_comps:
         if C.is_no_step(cfg, comp):
             continue
+        csym = CSYM.stem(cfg, comp)
         sec = cfg.get(comp, {})
         if not sec.get("impl") and not sec.get("impl_file"):
             continue
@@ -1106,7 +1107,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         original = h_path.read_text(encoding="utf-8")
         marker = _impl_marker(comp, root)
         marked_body = f"{marker}\n{impl_body}"
-        updated = I.patch_function_body(original, f"{comp}_step", marked_body)
+        updated = I.patch_function_body(original, f"{csym}_step", marked_body)
         if updated != original:
             # Strip any existing marker line (whatever it said, however
             # stale) before comparing, so the warning tracks real code drift
@@ -1114,14 +1115,14 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
             # reworded) text.
             original_unmarked = _MARKER_LINE_RE.sub("", original, count=1)
             updated_unmarked = I.patch_function_body(
-                original_unmarked, f"{comp}_step", impl_body
+                original_unmarked, f"{csym}_step", impl_body
             )
             content_changed = updated_unmarked != original_unmarked
             if content_changed and _STUB_MARKER not in original:
                 rel = h_path.relative_to(root)
                 owner_rel = _impl_owner_rel(comp, root)
                 _report.warn(
-                    f"{rel}: {comp}_step body differs from the"
+                    f"{rel}: {csym}_step body differs from the"
                     f" [{comp}] impl/impl_file in {owner_rel}; the"
                     " manifest is the source of truth — overwriting"
                     " the header from it. If you meant to change the"
@@ -1179,12 +1180,13 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
     for comp in all_comps:
         if not C.destroy_returns_int(cfg, comp):
             continue
-        void_decl = re.compile(rf"\bvoid(\s+){comp}_destroy\b")
+        csym = CSYM.stem(cfg, comp)
+        void_decl = re.compile(rf"\bvoid(\s+){csym}_destroy\b")
 
         h_path = INC.core_h(root, comp)
         if h_path.exists():
             text = h_path.read_text(encoding="utf-8")
-            new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
+            new = void_decl.sub(rf"int\g<1>{csym}_destroy", text)
             if new != text:
                 _textio.write_text(h_path, new)
                 patched.append(h_path)
@@ -1193,11 +1195,11 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
         if not c_path.exists():
             continue
         text = c_path.read_text(encoding="utf-8")
-        new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
+        new = void_decl.sub(rf"int\g<1>{csym}_destroy", text)
         # Give the stub a success path. Located by the definition's own
         # opening brace so a `<comp>_destroy` mentioned in a comment or a
         # sibling function cannot be mistaken for it.
-        idx = new.find(f"{comp}_destroy")
+        idx = new.find(f"{csym}_destroy")
         while idx != -1:
             brace = new.find("{", idx)
             paren = new.find("(", idx)
@@ -1211,7 +1213,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
                         + new[end - 1 :]
                     )
                 break
-            idx = new.find(f"{comp}_destroy", idx + 1)
+            idx = new.find(f"{csym}_destroy", idx + 1)
         if new != text:
             _textio.write_text(c_path, new)
             patched.append(c_path)
@@ -2878,6 +2880,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             p["name"],
             ctype,
             str(p.get("writable", "")).lower() in ("true", "1", "yes"),
+            csym=CSYM.stem(cfg, comp),
         )
     return out
 
@@ -3029,7 +3032,8 @@ def _serializable_triplet(cfg: dict, comp: str) -> frozenset:
     if not C.is_serializable(cfg, comp):
         return frozenset()
     return frozenset(
-        f"{comp}_{n}" for n in ("state_bytes", "get_state", "set_state")
+        f"{CSYM.stem(cfg, comp)}_{n}"
+        for n in ("state_bytes", "get_state", "set_state")
     )
 
 

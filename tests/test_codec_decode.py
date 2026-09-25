@@ -67,7 +67,11 @@ def _q(fn, *a, **k):
 class TestRenderDecode:
     def _ctx(self):
         return Ctx.make_properties_ctx(
-            "gizmo", "Gizmo", [dict(_PROP)], codecs={"kw": _CODEC}
+            "gizmo",
+            "Gizmo",
+            [dict(_PROP)],
+            codecs={"kw": _CODEC},
+            csym="gizmo",
         )
 
     def test_c_has_decode_helper_and_switch(self):
@@ -87,7 +91,11 @@ class TestRenderDecode:
     def test_no_scalar_collapse_when_off(self):
         cdc = {**_CODEC, "scalar_collapse": False}
         gs = Ctx.make_properties_ctx(
-            "gizmo", "Gizmo", [dict(_PROP)], codecs={"kw": cdc}
+            "gizmo",
+            "Gizmo",
+            [dict(_PROP)],
+            codecs={"kw": cdc},
+            csym="gizmo",
         )["getset_def"]
         assert "PyList_GET_ITEM(_lst, 0)" not in gs
 
@@ -101,7 +109,11 @@ class TestRenderDecode:
     def test_jm_does_not_declare_entry_fn(self):
         # the entry_fn/struct are the user's — jm emits no _core.h decl for them.
         _fn_c, _expr, decls = K.render_decode(
-            "gizmo", "Gizmo", dict(_PROP), _CODEC
+            "gizmo",
+            "Gizmo",
+            dict(_PROP),
+            _CODEC,
+            csym="gizmo",
         )
         assert decls == []
 

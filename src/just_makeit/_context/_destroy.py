@@ -81,7 +81,7 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 _DEFAULT_CATEGORY = "RuntimeError"
 
 
-def c_fn(component: str, spec: dict, create_fn: str = "") -> str:
+def c_fn(csym: str, spec: dict, create_fn: str = "") -> str:
     """The C function the binding calls to DESTROY the object.
 
     gh-1323. `create_fn` names the C jm calls to construct, and until now
@@ -127,7 +127,7 @@ def c_fn(component: str, spec: dict, create_fn: str = "") -> str:
         return declared
     if create_fn.endswith("_create"):
         return create_fn[: -len("_create")] + "_destroy"
-    return f"{component}_destroy"
+    return f"{csym}_destroy"
 
 
 def validate_destroy_spec(
@@ -450,7 +450,7 @@ def _exit_raise(
     )
 
 
-def _exit_body(component: str, method: dict, raise_pair) -> str:
+def _exit_body(component: str, method: dict, raise_pair, *, csym: str) -> str:
     """``__exit__``'s body when ``exit`` names a finalizing method (gh-805 §H).
 
     Two differences from `_teardown_body`, and both are the point:
@@ -479,8 +479,8 @@ def _exit_body(component: str, method: dict, raise_pair) -> str:
     """
     from ._diagnostics import _rc_raise_c
 
-    name = method.get("name", "")
-    c_fn = method.get("fn", "") or f"{component}_{name}"
+    method.get("name", "")
+    c_fn = C.method_c_symbol(csym, method)
 
     # The handle guard is an early return rather than a wrapping `if`, so the
     # `_rc != 0` test lands at indent 4 — the shape `_rc_raise_c` renders its
@@ -517,6 +517,8 @@ def make_destroy_ctx(
     methods: "list[dict] | None",
     class_name: str = "",
     create_fn: str = "",
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -571,14 +573,15 @@ def make_destroy_ctx(
 
     Examples
     --------
-    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [])
+    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [], csym="acq")
     >>> print(ctx["destroy_dealloc_call"], end="")
         if (self->handle)
             acq_destroy(self->handle);
     >>> ctx["destroy_c_ret"], ctx["destroy_ret_stmt"]
     ('void', '')
     >>> ctx = make_destroy_ctx("w", "WObj", {"name": "close",
-    ...                                      "aliases": ["destroy"]}, [])
+    ...                                      "aliases": ["destroy"]}, [],
+    ...                        csym="w")
     >>> [ln for ln in ctx["destroy_pymethoddef"].splitlines()
     ...  if "PyCFunction" in ln]
     ['    {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,', \
@@ -594,7 +597,7 @@ def make_destroy_ctx(
     # gh-1323: ONE resolution of "which C function destroys this", threaded
     # into every emitter below. Each used to build `<comp>_destroy` itself, so
     # `create_fn` could name a constructor whose counterpart jm never called.
-    dfn = c_fn(component, spec, create_fn)
+    dfn = c_fn(csym, spec, create_fn)
     validate_destroy_spec(component, spec)
     fallible = spec.get("returns") == "int"
 
@@ -762,7 +765,7 @@ def make_destroy_ctx(
         # DIFFERENT C calls, and the agreement that matters moves with it —
         # __exit__ now shares its raise semantics with the finalizer it calls.
         "destroy_exit_body": (
-            _exit_body(component, exit_method, _exit_pair)
+            _exit_body(component, exit_method, _exit_pair, csym=csym)
             if exit_method
             else body
         ),

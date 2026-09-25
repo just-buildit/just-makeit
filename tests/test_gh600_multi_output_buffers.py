@@ -74,7 +74,9 @@ MULTI_CTRL = dict(
 
 
 def _c(method: dict) -> str:
-    return make_methods_ctx("nco", "Nco", [method])["extra_methods_c"]
+    return make_methods_ctx("nco", "Nco", [method], csym="nco")[
+        "extra_methods_c"
+    ]
 
 
 class TestSignatureMatchesBody:
@@ -96,7 +98,7 @@ class TestSignatureMatchesBody:
     def test_keyword_methoddef_casts_through_void(self):
         # A METH_KEYWORDS wrapper is a PyCFunctionWithKeywords; casting it
         # straight to PyCFunction is an incompatible function-pointer cast.
-        pmd = make_methods_ctx("nco", "Nco", [MULTI_CTRL])[
+        pmd = make_methods_ctx("nco", "Nco", [MULTI_CTRL], csym="nco")[
             "extra_methods_pymethoddef"
         ]
         assert "(PyCFunction)(void *)Nco_steps_ovf_ctrl" in pmd
@@ -107,7 +109,7 @@ class TestNoSharedBuffer:
     """Bug 2: no instance buffer means nothing to overflow."""
 
     def test_no_buffer_fields_declared(self):
-        ctx = make_methods_ctx("nco", "Nco", [MULTI])
+        ctx = make_methods_ctx("nco", "Nco", [MULTI], csym="nco")
         assert "_steps_ovf_buf" not in ctx["extra_buf_fields"]
         assert ctx["extra_buf_alloc"] == ""
         assert "_steps_ovf_buf" not in ctx["extra_buf_free"]
@@ -155,7 +157,7 @@ class TestNoSharedBuffer:
         """
         single = dict(MULTI)
         del single["multi_output"]
-        ctx = make_methods_ctx("nco", "Nco", [single])
+        ctx = make_methods_ctx("nco", "Nco", [single], csym="nco")
         assert ctx["extra_buf_fields"] == ""
         assert ctx["extra_buf_alloc"] == ""
         assert ctx["extra_buf_free"] == ""
@@ -170,7 +172,12 @@ class TestNoSharedBuffer:
 class TestStubSuppressesEveryOutput:
     def test_extra_output_is_voided(self):
         stub = _methods_c_stub_variable(
-            "nco", "steps_ovf", "void", "uint32_t", ["uint8_t"]
+            "nco",
+            "steps_ovf",
+            "void",
+            "uint32_t",
+            ["uint8_t"],
+            csym="nco",
         )
         # Without (void)out1 the fresh scaffold warns before any user code.
         assert "(void)out; (void)out1;" in stub

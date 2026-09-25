@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Union
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _record
 from . import _render as T
 from . import _incpath as INC
@@ -65,6 +66,8 @@ def _write_function_c(
     max_results_param: str = "",
     variable_output: bool = False,
     impl_body: str | None = None,
+    *,
+    c_name: str,
 ) -> None:
     """Write the standalone <fn_name>.c for a module-level function.
 
@@ -72,7 +75,7 @@ def _write_function_c(
     includes the module's public header and carries exactly one definition.
     """
     stub = T.fn_c_stub(
-        fn_name,
+        c_name,
         params,
         return_type,
         out_type=out_type,
@@ -106,9 +109,12 @@ def _inject_into_core_h(
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
     variable_output: bool = False,
+    *,
+    c_name: str,
+    csym: str,
 ) -> None:
     decl = T.fn_c_decl(
-        fn_name,
+        c_name,
         params,
         return_type,
         out_type=out_type,
@@ -126,7 +132,7 @@ def _inject_into_core_h(
             cplusplus_end, f"{decl}\n\n{cplusplus_end}"
         )
     else:
-        marker = f"#endif /* {cname.upper()}_CORE_H */"
+        marker = f"#endif /* {csym.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{decl}\n{marker}")
     _textio.write_text(path, existing)
     print(f"  update  {path}")
@@ -138,6 +144,9 @@ def _inject_inline_into_core_h(
     params: list[FnParam],
     return_type: str,
     cname: str,
+    *,
+    c_name: str,
+    csym: str,
 ) -> None:
     """Inject a ``static inline`` body stub into ``_core.h``.
 
@@ -145,7 +154,7 @@ def _inject_inline_into_core_h(
     every translation unit that includes it sees the body and the compiler can
     inline at call sites.  No entry is written to ``_core.c``.
     """
-    stub = T.fn_c_inline_stub(fn_name, params, return_type)
+    stub = T.fn_c_inline_stub(c_name, params, return_type)
     existing = path.read_text(encoding="utf-8")
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
@@ -153,7 +162,7 @@ def _inject_inline_into_core_h(
             cplusplus_end, f"{stub}\n\n{cplusplus_end}"
         )
     else:
-        marker = f"#endif /* {cname.upper()}_CORE_H */"
+        marker = f"#endif /* {csym.upper()}_CORE_H */"
         existing = existing.replace(marker, f"{stub}\n{marker}")
     _textio.write_text(path, existing)
     print(f"  update  {path}")
@@ -292,6 +301,11 @@ def run(
     # written, and died with a traceback. The split is `C.module_paths`, the
     # same call `_module.run` makes when it writes those files.
     cname = C.module_paths(module).cname
+    # gh-1591: the function's C symbol and the module's stem (its header's
+    # include guard) -- the manifest names through the project's `_csym`.
+    # The FILE stays `<fn_name>.c`.
+    c_name = CSYM.stem(cfg, fn_name)
+    csym = CSYM.stem(cfg, cname)
 
     fn_c = root / "native" / "src" / cname / f"{fn_name}.c"
     core_h = INC.core_h(root, cname)
@@ -306,7 +320,7 @@ def run(
     # the warning would be spurious.
     if core_c.exists() and not in_core and not inline:
         core_text = core_c.read_text(encoding="utf-8")
-        full_name = f"{cname}_{fn_name}"
+        full_name = c_name
         if full_name in core_text:
             print(
                 f"WARNING: '{full_name}' appears to be implemented in "
@@ -319,14 +333,22 @@ def run(
 
     if inline:
         # Inline functions live entirely in the header — no .c entry.
-        _inject_inline_into_core_h(core_h, fn_name, params, return_type, cname)
+        _inject_inline_into_core_h(
+            core_h,
+            fn_name,
+            params,
+            return_type,
+            cname,
+            c_name=c_name,
+            csym=csym,
+        )
     elif in_core:
         # gh-247: append the stub to the shared <module>_core.c (which already
         # includes the header), exactly like `jm method` appends to an object
         # core. Shared `static` helpers can then live once, and CMakeLists
         # lists only <module>_core.c.
         stub = T.fn_c_stub(
-            fn_name,
+            c_name,
             params,
             return_type,
             out_type=out_type,
@@ -351,6 +373,8 @@ def run(
             result_fields=result_fields,
             max_results_param=max_results_param,
             variable_output=variable_output,
+            c_name=c_name,
+            csym=csym,
         )
     else:
         # Each function gets its own sacred <fn_name>.c translation unit.
@@ -365,6 +389,7 @@ def run(
             max_results_param=max_results_param,
             variable_output=variable_output,
             impl_body=impl_body,
+            c_name=c_name,
         )
 
         # Inject declaration into <module>_core.h
@@ -378,6 +403,8 @@ def run(
             result_fields=result_fields,
             max_results_param=max_results_param,
             variable_output=variable_output,
+            c_name=c_name,
+            csym=csym,
         )
 
     # Update config

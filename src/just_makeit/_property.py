@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _glue
 from . import _linkcheck
 from . import _types as T
@@ -36,7 +37,12 @@ from ._init import (
 
 
 def plain_accessor_decls(
-    object_name: str, prop_name: str, ctype: str, writable: bool
+    object_name: str,
+    prop_name: str,
+    ctype: str,
+    writable: bool,
+    *,
+    csym: str,
 ) -> list[str]:
     """Prototypes for a plain getter/setter-backed property.
 
@@ -49,14 +55,10 @@ def plain_accessor_decls(
     two copies of a signature rule is how they drift.
     """
     disp = ctype
-    decls = [
-        f"{disp} {object_name}_get_{prop_name}"
-        f"(const {object_name}_state_t *state);"
-    ]
+    decls = [f"{disp} {csym}_get_{prop_name}(const {csym}_state_t *state);"]
     if writable:
         decls.append(
-            f"void {object_name}_set_{prop_name}"
-            f"({object_name}_state_t *state, {disp} val);"
+            f"void {csym}_set_{prop_name}({csym}_state_t *state, {disp} val);"
         )
     return decls
 
@@ -261,6 +263,8 @@ def run(
             sys.exit(1)
 
     cfg = C.load(root)
+    # gh-1591: the stem every derived accessor name below starts with.
+    csym = CSYM.stem(cfg, object_name)
     # gh-1321: a header-only component has no `_core.c`, so the guidance below
     # must not send the author there. The getter/setter bodies are the
     # author's either way; only the file named changes.
@@ -445,8 +449,8 @@ def run(
     #                    the glue instead -- see _methods._container_getter.
     core_h = INC.core_h(root, object_name)
     if container:
-        fns = container_fn_names(object_name, prop_name, prop_entry)
-        state_t = f"const {object_name}_state_t *"
+        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
+        state_t = f"const {csym}_state_t *"
         decls = [f"size_t {fns['count_fn']}({state_t}state);"]
         if ctype == "dict":
             decls.append(
@@ -481,7 +485,9 @@ def run(
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
     elif not buf_field and not expr and not capsule:
-        decls = plain_accessor_decls(object_name, prop_name, ctype, writable)
+        decls = plain_accessor_decls(
+            object_name, prop_name, ctype, writable, csym=csym
+        )
         scaffold_accessor_bodies(root, object_name, decls)  # first; see above
         if _inject_decls_into_core_h(
             core_h, object_name, decls, family=C.core_family(cfg, object_name)
@@ -498,8 +504,8 @@ def run(
     print()
     rw = "read/write" if writable else "read-only"
     if container and codec:
-        fns = container_fn_names(object_name, prop_name, prop_entry)
-        e_fn = entry_fn or f"{object_name}_{prop_name}_entry"
+        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
+        e_fn = entry_fn or f"{csym}_{prop_name}_entry"
         core_c = _body_file
         todo = [fns["count_fn"]]
         if ctype == "dict":
@@ -512,7 +518,7 @@ def run(
             f"  [{ctype}, {rw}]"
         )
     elif container:
-        fns = container_fn_names(object_name, prop_name, prop_entry)
+        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
         todo = [fns["count_fn"]]
         if ctype == "dict":
             todo.append(fns["key_fn"])
@@ -537,11 +543,11 @@ def run(
     elif field:
         print(
             f"Done!  Struct field '{prop_name}' added to"
-            f" {object_name}_state_t; getter/setter auto-implemented.  [{rw}]"
+            f" {csym}_state_t; getter/setter auto-implemented.  [{rw}]"
         )
     else:
         print(
-            f"Done!  Implement {object_name}_get_{prop_name}() in"
+            f"Done!  Implement {csym}_get_{prop_name}() in"
             f" {_body_file}"
             f"  [{rw}]"
         )

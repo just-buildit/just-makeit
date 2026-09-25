@@ -75,7 +75,11 @@ def _ctx(state_only: bool, **over):
         else {}
     )
     return make_methods_ctx(
-        "nco", "Nco", [dict(GENERATOR, **over)], doc_blocks=blocks
+        "nco",
+        "Nco",
+        [dict(GENERATOR, **over)],
+        doc_blocks=blocks,
+        csym="nco",
     )
 
 

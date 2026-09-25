@@ -137,6 +137,7 @@ class TestEveryFaceNamesTheChoices:
                 }
             ],
             enums=self.ENUMS,
+            owner={"project": {"name": "p"}},
         )
         assert "(choices: raw, json, csv)" in ctx["function_wrappers"]
 
@@ -162,6 +163,7 @@ class TestEveryFaceNamesTheChoices:
                 }
             ],
             enums=self.ENUMS,
+            csym="acq",
         )
         assert "(choices: raw, json, csv)" in ctx["extra_methods_c"]
 

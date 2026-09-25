@@ -63,6 +63,7 @@ import re
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _record
 from ._docstring import class_import_line as _class_import_line
 from ._context._state import _unseedable_required
@@ -366,7 +367,7 @@ def render(
             # A struct element's round trip needs the binding's own dtype;
             # gh-1414 covers it. The input face above already runs.
             continue
-        if kernel_is_stub(core_c, f"{comp}_{p.reader}"):
+        if kernel_is_stub(core_c, f"{CSYM.stem(cfg, comp)}_{p.reader}"):
             continue
         lines += round_trip_block(p, cls, create, _dtype_expr(rec))
     # gh-1432: every pair may be skipped -- a struct element whose reader is

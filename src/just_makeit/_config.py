@@ -3265,12 +3265,16 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     declared = str(prop.get("capsule_type") or "").strip()
     if declared:
         return (declared, capsule, INC.core_include(comp, cfg), cls)
+    # gh-1591: the producer's state type derives from its C symbol stem.
+    from . import _csym
+
+    _csym_state = f"{_csym.stem(cfg, comp)}_state_t *"
     expr = str(prop.get("expr") or "").strip()
     if expr and expr != "self->handle":
         raise ValueError(
             f"init_param object = '{ref}': component '{comp}' publishes its "
             f'capsule over `expr = "{expr}"`, so the pointer it carries is '
-            f"not the object's `{comp}_state_t *` and jm cannot know what it "
+            f"not the object's `{_csym_state}` and jm cannot know what it "
             f"is. Say so on the producer (gh-1235):\n"
             f"    jm property {comp} {prop.get('name', '_capsule')} "
             f"--type capsule --capsule {capsule} "
@@ -3279,7 +3283,7 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             f"    --init-param '<name>:<the C type> *:capsule:{capsule}"
             f":<header>'"
         )
-    return (f"{comp}_state_t *", capsule, INC.core_include(comp, cfg), cls)
+    return (_csym_state, capsule, INC.core_include(comp, cfg), cls)
 
 
 def enum_doc_key(ptype: str) -> str:

@@ -188,6 +188,7 @@ class TestTheHeaderBriefIsHonoured:
             [method],
             pkg="d40",
             doc_blocks=blocks,
+            csym="amp",
         )
 
     def test_a_header_brief_reaches_both_faces(self):

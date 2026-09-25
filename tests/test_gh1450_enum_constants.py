@@ -97,7 +97,9 @@ def test_a_module_function_binds_constants() -> None:
             "params": [{"name": "level", "type": "int", "enum": "lvl"}],
         }
     ]
-    w = make_functions_ctx("m", "M", fns, C.enums(CFG))
+    w = make_functions_ctx(
+        "m", "M", fns, C.enums(CFG), owner={"project": {"name": "p"}}
+    )
     assert "_enum_lvl_c[" in w["function_wrappers"]
     assert "LVL_WARN" in w["function_enum_tables"]
 

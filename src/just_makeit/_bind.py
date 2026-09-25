@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
@@ -301,7 +302,7 @@ def parse_header(path: Path) -> dict:
         ret_ct = _normalize_ctype(ret_raw_m)
         if ret_ct not in T._CTYPE_META and ret_ct != "void":
             warnings.warn(
-                f"jm bind: skipping method '{comp}_{verb}' — "
+                f"jm bind: skipping method '{mcomp}_{verb}' — "
                 f"return type '{ret_ct}' not in type allowlist",
                 stacklevel=2,
             )
@@ -315,7 +316,7 @@ def parse_header(path: Path) -> dict:
             marg = _normalize_ctype(arg_raw.strip())
             if marg not in T._CTYPE_META and marg != "void":
                 warnings.warn(
-                    f"jm bind: skipping method '{comp}_{verb}' — "
+                    f"jm bind: skipping method '{mcomp}_{verb}' — "
                     f"arg type '{marg}' not in type allowlist "
                     f"(use TOML for array or multi-param methods)",
                     stacklevel=2,
@@ -498,6 +499,7 @@ def _build_ctx(
             # Enrich method docstrings from the header's Doxygen (same as the
             # module path); None -> generic stub, unchanged.
             doc_blocks=doc_blocks,
+            csym=ctx["csym"],
         )
     )
     ctx.update(
@@ -515,6 +517,7 @@ def _build_ctx(
             # Enrich property docstrings from the getter's @brief (same as the
             # module path); None -> generic, unchanged.
             doc_blocks=doc_blocks,
+            csym=ctx["csym"],
         )
     )
     # gh-481: `bind` reflects a hand-written _core.h rather than the manifest,
@@ -526,7 +529,7 @@ def _build_ctx(
     # gh-482: same reasoning — a create_error is authored intent, not something
     # recoverable from a header, so `bind` renders the MemoryError fallback
     # exactly as it did before.
-    ctx.update(Ctx.make_errors_ctx(ctx["component"]))
+    ctx.update(Ctx.make_errors_ctx(ctx["component"], csym=ctx["csym"]))
     # gh-541/gh-544: same reasoning again — a destructor's Python name and
     # whether its status is fatal are authored intent, not something a header
     # reflects. `bind` therefore renders the undeclared default, which is the
@@ -535,7 +538,9 @@ def _build_ctx(
     # gh-856: no spec is passed here by design (see above), so there is no
     # `exit` to resolve and [] is the truth rather than a stand-in.
     ctx.update(
-        Ctx.make_destroy_ctx(ctx["component"], ctx["ComponentW"], None, [])
+        Ctx.make_destroy_ctx(
+            ctx["component"], ctx["ComponentW"], None, [], csym=ctx["csym"]
+        )
     )
 
     # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
@@ -581,13 +586,14 @@ def _build_ctx(
         ctx.get("py_create_args", ""),
         doc_blocks=doc_blocks,
         custom_reset=bool(init_params),
+        csym=ctx["csym"],
     )
     # gh-676/gh-644: the runtime class docstring, on the same precedence
     # every other regeneration path uses. bind reads the header alone, so
     # without this it rendered the seeded default while `jm apply` rendered
     # the author's create() @brief -- and the two write the SAME file, so the
     # example's bind round-trip caught them disagreeing.
-    _tp = authored_class_brief(doc_blocks, f"{comp}_create")
+    _tp = authored_class_brief(doc_blocks, CSYM.create_name(ctx["csym"]))
     if _tp:
         # gh-642: the whole class block, from the same builder that produced
         # `class_docstring` above, so the two faces of this file agree.
@@ -602,6 +608,7 @@ def _build_ctx(
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
                 custom_reset=bool(init_params),
+                csym=ctx["csym"],
             )
         )
     return ctx

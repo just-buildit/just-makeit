@@ -25,21 +25,20 @@ symbol is never a finding:
    ``<<component>>`` / ``<<COMPONENT>>`` / ``<<module>>`` / ``<<MODULE>>``
    slot is never followed by ``_<identifier>``: a symbol reads
    ``<<csym>>`` / ``<<CSYM>>``. This one is strict -- zero.
-2. **A ratchet on the Python sites.** An f-string that formats a raw name
-   (a variable named ``comp``, ``component``, ``obj``, ``cname``, ``module``
-   ...) directly before a derived-symbol suffix (``_create``, ``_state_t``,
-   ``_steps``, ``_CORE_H`` ...) or before ``_{...}`` (a method's
-   ``<comp>_<name>``) is a hand-spelled symbol. 175 remain after phase 1
-   (363 before it); phase 1b, gh-1633, moves them, and phase 2 cannot land
-   until it has. The vocabulary is a heuristic, so a suffix outside it is
-   not counted -- phase 2's `nm` gate is the oracle that catches those. The
-   count per file is pinned in
-   :data:`BASELINE` and may only shrink. A file over its pin fails with the
-   new site's line; a file UNDER its pin fails too, until the pin is
-   lowered, so the ratchet never holds slack a new site could hide in.
+2. **No Python site spells one by hand.** An f-string that formats a raw
+   name (a variable named ``comp``, ``component``, ``obj``, ``cname``,
+   ``module`` ...) directly before a derived-symbol suffix (``_create``,
+   ``_state_t``, ``_steps``, ``_CORE_H`` ...) or before ``_{...}`` (a
+   method's ``<comp>_<name>``) is a hand-spelled symbol. 363 before phase 1,
+   175 after it, **0** after phase 1b (gh-1633) -- so this is strict now:
+   :data:`BASELINE` is empty and any new site fails with its line. The only
+   escapes are :data:`EXEMPT_FUNCS`, each a function whose spellings are not
+   derived exported symbols, with the reason. The vocabulary is a
+   heuristic; `tests/test_gh1633_stem_reaches_every_symbol.py` is the oracle
+   that needs none (it renders under a stem override and reads the C).
 
 GATE: no C/H template derives a symbol from <<component>>/<<module>>, and no
-      module spells more derived symbols by hand than its pinned count.
+      module spells a derived symbol by hand.
 """
 
 from __future__ import annotations
@@ -123,12 +122,34 @@ NAMES = frozenset(
 #: here: it is the file stem and the CMake target, which stay the name's.
 _SUFFIX = re.compile(
     r"_(create|destroy|reset|step|steps|step_batch|state_t|t|state_ptr|"
-    r"state_adopt|CORE_H|BRIDGE_H|PROCGLOBAL_H)(?![A-Za-z0-9_])"
+    r"state_adopt|state_bytes|get_state|set_state|CORE_H|BRIDGE_H|"
+    r"PROCGLOBAL_H)(?![A-Za-z0-9_])"
 )
 _JOIN = re.compile(r"_(get_|set_)?$")
 
 #: The owner, and modules that are not jm's (the examples' own scripts).
 _EXEMPT = {"_csym.py"}
+
+#: Functions whose ``{name}_...`` spellings are NOT derived exported symbols,
+#: each with the reason (gh-1633). Keyed by function, not line, so an edit
+#: elsewhere cannot move a real site under an exemption -- and a NEW site in
+#: one of these functions is exempt only if it is the same kind of thing,
+#: which review of that function sees.
+EXEMPT_FUNCS: "dict[tuple[str, str], str]" = {
+    ("_composer.py", "render_serializers"): (
+        "`static PyObject *<cname>_<name>` binders: file-local, never "
+        "exported, so phase 2 does not prefix them"
+    ),
+    ("_composer.py", "_settings_getset_c"): (
+        "`static` getset binders: file-local, never exported"
+    ),
+    ("_composer.py", "arg_scopes"): (
+        "names the static binder whose locals gh-1512 checks, not a symbol"
+    ),
+    ("_method.py", "_varargs_core_c"): (
+        "a FILE name (`<obj>_<method>_core.c`), which stays the object's"
+    ),
+}
 
 
 def _raw_name(node) -> bool:
@@ -191,42 +212,42 @@ def _counts() -> "dict[str, int]":
         rel = path.relative_to(PKG)
         if {"templates", "examples"} & set(rel.parts) or rel.name in _EXEMPT:
             continue
-        n = len(derivations(path.read_text(encoding="utf-8")))
+        src = path.read_text(encoding="utf-8")
+        lines = derivations(src)
+        exempt = [
+            f
+            for f in ast.walk(ast.parse(src))
+            if isinstance(f, ast.FunctionDef)
+            and (rel.as_posix(), f.name) in EXEMPT_FUNCS
+        ]
+        n = sum(
+            1
+            for ln in lines
+            if not any(f.lineno <= ln <= f.end_lineno for f in exempt)
+        )
         if n:
             out[rel.as_posix()] = n
     return out
 
 
-#: gh-1591 phase 1: the hand-spelled derived symbols left per module. May
-#: only shrink -- lower a pin in the same change that moves a site.
-BASELINE = {
-    "_app.py": 6,
-    "_apply.py": 9,
-    "_bind.py": 3,
-    "_borrow.py": 1,
-    "_builtins.py": 2,
-    "_codec.py": 2,
-    "_composer.py": 8,
-    "_config.py": 2,
-    "_context/_destroy.py": 2,
-    "_context/_methods.py": 28,
-    "_context/_state.py": 22,
-    "_ctorsig.py": 1,
-    "_docgaps.py": 3,
-    "_docstring.py": 3,
-    "_error.py": 1,
-    "_function.py": 3,
-    "_init.py": 4,
-    "_invariants.py": 1,
-    "_method.py": 36,
-    "_object.py": 4,
-    "_property.py": 8,
-    "_remove.py": 6,
-    "_status.py": 2,
-    "_stubs.py": 11,
-    "_upgrade.py": 5,
-    "_view.py": 2,
-}
+def test_every_exempt_function_exists():
+    """An exemption naming a function that is gone exempts nothing, and
+    would quietly exempt a new function that took the name."""
+    missing = []
+    for (rel, name), _why in EXEMPT_FUNCS.items():
+        src = (PKG / rel).read_text(encoding="utf-8")
+        if not any(
+            isinstance(f, ast.FunctionDef) and f.name == name
+            for f in ast.walk(ast.parse(src))
+        ):
+            missing.append(f"{rel}:{name}")
+    assert missing == [], missing
+
+
+#: The hand-spelled derived symbols left per module. EMPTY since gh-1633:
+#: a site that reappears fails. Kept as a table so a future carve-out is a
+#: visible, reviewed pin rather than a quiet exemption.
+BASELINE: "dict[str, int]" = {}
 
 
 def test_hand_spelled_symbols_only_shrink():

@@ -100,6 +100,7 @@ class TestPrototype:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=True,
+            csym="meter",
         )
         assert proto == (
             "ber_align_t meter_align(meter_state_t *state,"
@@ -118,6 +119,7 @@ class TestPrototype:
             params=[("t0", "size_t"), ("pfa", "double")],
             result_fields=RESULT_FIELDS,
             single=True,
+            csym="meter",
         )
         assert proto == (
             "ber_align_t meter_align(meter_state_t *state,"
@@ -135,6 +137,7 @@ class TestPrototype:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=False,
+            csym="meter",
         )
         assert proto == (
             "size_t meter_scan(meter_state_t *state,"
@@ -153,6 +156,7 @@ class TestPrototype:
             params=[("lo", "double")],
             result_fields=RESULT_FIELDS,
             single=True,
+            csym="tm",
         )
         assert proto == (
             "tone_metrics_t tm_analyze(tm_state_t *state,"
@@ -177,9 +181,15 @@ class TestStubMatchesPrototype:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=True,
+            csym="meter",
         )
         stub = _methods_c_stub_result_single(
-            "meter", "align", "void", "ber_align_t", params=ARRAY_PARAMS
+            "meter",
+            "align",
+            "void",
+            "ber_align_t",
+            params=ARRAY_PARAMS,
+            csym="meter",
         )
         assert self._sig_of(proto) in stub
         # every param silenced, including the synthesised length
@@ -196,9 +206,16 @@ class TestStubMatchesPrototype:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=False,
+            csym="meter",
         )
         stub = _methods_c_stub_result_fields(
-            "meter", "scan", "void", "ber_hit_t", 64, params=ARRAY_PARAMS
+            "meter",
+            "scan",
+            "void",
+            "ber_hit_t",
+            64,
+            params=ARRAY_PARAMS,
+            csym="meter",
         )
         assert self._sig_of(proto) in stub
 
@@ -224,7 +241,9 @@ class TestDeclPeerAgrees:
     def _decls_for(self, method):
         from just_makeit._context._methods import make_methods_ctx
 
-        return make_methods_ctx("meter", "Meter", [method])["method_decls"]
+        return make_methods_ctx("meter", "Meter", [method], csym="meter")[
+            "method_decls"
+        ]
 
     def _method_entry(self, **over):
         entry = {
@@ -253,6 +272,7 @@ class TestDeclPeerAgrees:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=True,
+            csym="meter",
         )
         assert expected in decls
 
@@ -268,6 +288,7 @@ class TestDeclPeerAgrees:
             params=ARRAY_PARAMS,
             result_fields=RESULT_FIELDS,
             single=False,
+            csym="meter",
         )
         assert expected in decls
 

@@ -31,7 +31,9 @@ from just_makeit._stubs import _fn_stub
 
 
 def test_check_return_binding_raises_on_nonzero():
-    src = R._py_wrapper_for_function("commit", [], "int", check_return=True)
+    src = R._py_wrapper_for_function(
+        "commit", [], "int", check_return=True, c_name="commit"
+    )
     assert "int _rc = commit();" in src
     assert "PyErr_Format(PyExc_RuntimeError," in src
     assert '"commit failed (rc=%d)", (int)_rc);' in src
@@ -60,6 +62,7 @@ def test_check_return_composes_with_path_and_enum():
         ],
         "int",
         check_return=True,
+        c_name="write_hdr",
     )
     # path borrow released BEFORE the rc check (after the call), enum validated.
     assert "_enum_index(_enum_stype, st)" in src
@@ -91,7 +94,9 @@ _FNS = [
 
 @pytest.mark.skipif(_CC is None, reason="no C compiler available")
 def test_check_return_compiles_and_raises(tmp_path):
-    w = make_functions_ctx("iom", "Iom", _FNS, {})
+    w = make_functions_ctx(
+        "iom", "Iom", _FNS, {}, owner={"project": {"name": "p"}}
+    )
     src = f"""
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

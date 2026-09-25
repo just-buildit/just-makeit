@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _csym as CSYM
 from . import _glue
 
 
@@ -166,7 +167,11 @@ def run(
     if category != "MemoryError":
         # Name the constructor this translation actually covers: a view is
         # backed by its own create_fn, not <object>_create.
-        cfn = v["create_fn"] if view else f"{object_name}_create"
+        cfn = (
+            v["create_fn"]
+            if view
+            else CSYM.create_name(CSYM.stem(cfg, object_name))
+        )
         print()
         print(
             f"Note: every {cfn}() failure now reports as"

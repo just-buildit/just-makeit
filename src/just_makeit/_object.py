@@ -26,6 +26,7 @@ from typing import Iterator
 
 from . import _color as Color
 from . import _config as C
+from . import _csym as CSYM
 from ._docstring import class_import_line
 from . import _modplatforms
 from . import _procglobal
@@ -209,10 +210,14 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     }
     if _structs:
         out[struct_members_key()] = _structs
+    # gh-1591: a declaration's C name starts with the object's STEM.
+    stem = CSYM.stem(doc_root, obj)
     for cname, block_text in raw.items():
-        # strip the comp_ prefix to recover the bare method/verb name for the
+        # strip the stem_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).
-        verb = cname[len(obj) + 1 :] if cname.startswith(obj + "_") else cname
+        verb = (
+            cname[len(stem) + 1 :] if cname.startswith(stem + "_") else cname
+        )
         parsed = parse_doxygen_block(block_text, name=verb)
         if parsed is None:
             continue
@@ -249,7 +254,7 @@ def init_param_drift(
     reported — a false negative here is fine, a false positive is not.
     """
     doc_blocks = _load_doc_blocks(root, obj)
-    create_blk = doc_blocks.get(f"{obj}_create")
+    create_blk = doc_blocks.get(CSYM.create_name(CSYM.stem(cfg, obj)))
     if create_blk is None:
         return []
     drift: list[tuple[str, str, str]] = []
@@ -316,7 +321,7 @@ def inert_pass_capacity(
         if not m.get("variable_output"):
             continue
         name = m.get("name", "")
-        c_fn = m.get("fn", "") or f"{obj}_{name}"
+        c_fn = C.method_c_symbol(CSYM.stem(cfg, obj), m)
         if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
             inert.append((name, c_fn))
     return inert
@@ -1244,6 +1249,7 @@ def _make_view_ctx(
             enums=C.enums(cfg),  # gh-1021
             records=C.records(cfg, obj),  # gh-1405
             properties=C.properties(cfg, obj),  # gh-1426
+            csym=ctx["csym"],
         )
     )
     for _slot in _override_slots:
@@ -1269,6 +1275,7 @@ def _make_view_ctx(
             doc_blocks=doc_blocks,
             enums=C.enums(cfg),  # gh-519
             codecs=C.codecs(cfg),  # gh-554
+            csym=ctx["csym"],
         )
     )
     # gh-509: a view declares its OWN warnings ([[<obj>.views.warnings]]) —
@@ -1293,6 +1300,7 @@ def _make_view_ctx(
             C.view_create_error(cfg, obj, view),
             C.view_create_error_message(cfg, obj, view),
             create_fn=view["create_fn"],
+            csym=ctx["csym"],
         )
     )
     # gh-541: a view is a second Python type over the SAME core, so it shares
@@ -1309,6 +1317,7 @@ def _make_view_ctx(
             # gh-1323: so the destructor is the counterpart of whatever
             # `create_fn` names, not always `<comp>_destroy`.
             create_fn=C.object_create_fn(cfg, obj) or "",
+            csym=ctx["csym"],
         )
     )
     ctx.update(
@@ -1387,6 +1396,7 @@ def _make_view_ctx(
                 state_docs=C.state_docs(cfg, obj),
                 custom_reset=bool(_vinit) or C.is_no_reset(cfg, obj),
                 create_fn=view["create_fn"],
+                csym=ctx["csym"],
             )
         )
     else:
@@ -1499,6 +1509,7 @@ def build_component_ctxs(
                 enums=C.enums(cfg),  # gh-1021
                 records=C.records(cfg, obj),  # gh-1405
                 properties=C.properties(cfg, obj),  # gh-1426
+                csym=ctx["csym"],
             )
         )
         for _slot in _override_slots:
@@ -1522,6 +1533,7 @@ def build_component_ctxs(
                 doc_blocks=_doc_blocks,
                 enums=C.enums(cfg),  # gh-519
                 codecs=C.codecs(cfg),  # gh-554
+                csym=ctx["csym"],
             )
         )
         # Declared warnings (gh-481) for a module object, filled into its
@@ -1539,6 +1551,7 @@ def build_component_ctxs(
                 C.create_error(cfg, obj),
                 C.create_error_message(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),
+                csym=ctx["csym"],
             )
         )
         # gh-541/gh-544: a module object's declared destructor contract,
@@ -1553,6 +1566,7 @@ def build_component_ctxs(
                 # gh-1326: this path dropped it, so `create_fn` derived
                 # nothing here even though the resolver was right.
                 create_fn=C.object_create_fn(cfg, obj) or "",
+                csym=ctx["csym"],
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -1608,6 +1622,7 @@ def build_component_ctxs(
                 raises=_cls_raises,
                 warns=_cls_warns,
                 enum_choices=_cls_enums,
+                csym=ctx["csym"],
             )
             # gh-805 §F: a manifest-declared failure is as much a reason to
             # build the block as an authored @brief — and unlike doc_blocks it
@@ -1751,7 +1766,7 @@ def _write_module_test_and_bench(
     regeneration that stamped over a written benchmark would delete the one
     thing jm cannot produce. Same contract as the object pair.
     """
-    smoke, checks = R.module_fn_smoke_calls(fns)
+    smoke, checks = R.module_fn_smoke_calls(fns, owner=root)
     ctx = {
         # gh-1583: the tests include the project's headers, in its layout.
         **INC.ctx_slots(root),
@@ -1759,7 +1774,9 @@ def _write_module_test_and_bench(
         "scaffold_checks": str(checks),
         "module_fn_smoke_calls": smoke,
         "bench_todo": Ctx.bench_todo_for_functions(
-            cname, [f["name"] for f in fns]
+            cname,
+            [CSYM.stem(root, f["name"]) for f in fns],
+            csym=CSYM.stem(root, cname),
         ),
     }
     for sub, stem, tmpl, shared, shared_tmpl in (
@@ -1877,6 +1894,7 @@ def render_module_ext_c(
         fn_doc_blocks=_load_module_doc_blocks(root, module),
         procglobal=_procglobal.rendezvous_c(cfg, module),
         layout=INC.ctx_slots(cfg),
+        owner=cfg,
     )
 
 
@@ -2472,7 +2490,8 @@ def run(
     if opaque_state and not no_step:
         print(
             "error: --opaque-state requires --no-step.\n"
-            f"The generated {object_name}_step() is `static inline` in the "
+            f"The generated {CSYM.stem(root, object_name)}_step() is "
+            "`static inline` in the "
             "public header and\ndereferences the state, which an opaque type "
             "cannot satisfy. Use --no-step,\nor drop --opaque-state.",
             file=sys.stderr,
@@ -2640,6 +2659,7 @@ def run(
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
             serializable=serializable,
+            csym=ctx["csym"],
         )
     )
     # gh-1509: the C triplet the binding calls, declared in the sacred
@@ -2650,6 +2670,7 @@ def run(
             ctx["component"],
             serializable,
             Ctx.state_blob_fields(vars_, opaque_fields, array_args),
+            csym=ctx["csym"],
         )
     )
     # gh-481: a fresh object declares no warnings, but the slot must resolve
@@ -2657,7 +2678,11 @@ def run(
     ctx.update(Ctx.make_warnings_ctx(ctx["component"], ctx["Component"], []))
     # gh-482: undeclared at creation -> the historical MemoryError block.
     # gh-509: name the override constructor in the NULL message when set.
-    ctx.update(Ctx.make_errors_ctx(ctx["component"], create_fn=create_fn))
+    ctx.update(
+        Ctx.make_errors_ctx(
+            ctx["component"], create_fn=create_fn, csym=ctx["csym"]
+        )
+    )
     # gh-541/gh-544: same as the standalone path in _init.run — this render
     # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
     ctx.update(
@@ -2680,6 +2705,7 @@ def run(
             # the site that dropped `create_fn` -- the derivation was correct
             # in isolation and never reached the render.
             create_fn=create_fn or "",
+            csym=ctx["csym"],
         )
     )
 
@@ -2826,7 +2852,9 @@ def run(
         from . import _impl as I
 
         h_text = core_h_path.read_text(encoding="utf-8")
-        h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
+        h_text = I.patch_function_body(
+            h_text, f"{CSYM.stem(root, comp)}_step", impl_body
+        )
         _textio.write_text(core_h_path, h_text)
     # gh-1321: the peer of the same guard in `_init.run`. A header-only
     # component has nothing out-of-line to scaffold, and writing an empty

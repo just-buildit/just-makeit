@@ -226,6 +226,7 @@ class TestGeneratedCode:
                 {"name": "idx", "type": "ptrdiff_t"},
                 {"name": "tag", "type": "const char *"},
             ],
+            c_name="find",
         )
         assert (
             'Py_BuildValue("(NN)", '

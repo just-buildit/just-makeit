@@ -30,7 +30,9 @@ _ENUMS = {"log_kind": ["raw", "json", "csv"]}
 
 
 def _ctx(fns, enums=None):
-    return make_functions_ctx("logm", "Logm", fns, enums)
+    return make_functions_ctx(
+        "logm", "Logm", fns, enums, owner={"project": {"name": "p"}}
+    )
 
 
 def test_path_arg_emits_fsconverter_and_post_call_xdecref():

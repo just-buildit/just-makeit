@@ -368,6 +368,7 @@ class TestRenderModuleExtCPeer:
             "m",
             comp_ctxs,
             layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+            owner={"project": {"name": "p"}},
         )
         assert (
             "Sync_find_type = PyStructSequence_NewType(&Sync_find_desc)" in out

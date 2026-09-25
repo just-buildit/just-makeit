@@ -47,7 +47,7 @@ from ._types import (
 )
 
 
-def accessor_block(component: str, fn: str, doc_blocks: "dict | None"):
+def accessor_block(csym: str, fn: str, doc_blocks: "dict | None"):
     """The authored :class:`DoxyBlock` for accessor *fn*, or ``None``.
 
     gh-684. A state accessor is generated, but jm declares it in the sacred
@@ -60,12 +60,15 @@ def accessor_block(component: str, fn: str, doc_blocks: "dict | None"):
     templates (``Get current gain.``, ``Set gain.``), so an un-authored header
     yields ``None`` here and both faces keep their canned text -- which is what
     keeps a freshly scaffolded project idempotent.
+
+    *csym* is the component's C symbol stem (``_csym.stem``, gh-1591): the
+    block is keyed by the accessor's C name, which is the stem's.
     """
-    return (doc_blocks or {}).get(f"{component}_{fn}")
+    return (doc_blocks or {}).get(f"{csym}_{fn}")
 
 
 def accessor_canned(
-    fn: str, canned: str, doc_blocks: "dict | None", component: str
+    fn: str, canned: str, doc_blocks: "dict | None", csym: str
 ) -> str:
     """The fallback text for accessor *fn* when its header says nothing.
 
@@ -78,19 +81,18 @@ def accessor_canned(
     Below an authored accessor ``@brief`` (the caller checks that first), so
     nothing already documented changes; this only replaces the name stub.
 
-    gh-1300: read from *component*'s own state struct. A same-named field of
-    any struct its header includes used to answer instead.
+    gh-1300: read from the component's own state struct, named by its C
+    symbol stem *csym* (gh-1591). A same-named field of any struct its header
+    includes used to answer instead.
     """
     field = fn.split("_", 1)[1] if "_" in fn else fn
-    return (
-        struct_member_doc(doc_blocks, f"{component}_state_t", field) or canned
-    )
+    return struct_member_doc(doc_blocks, f"{csym}_state_t", field) or canned
 
 
 def state_accessor_stubs(
     scalar_vars: list[tuple[str, str, str]],
     array_info: list[tuple[str, str, int]],
-    component: str = "",
+    csym: str,
     doc_blocks: "dict | None" = None,
 ) -> str:
     """`.pyi` method stubs for a component's state get_/set_ accessors.
@@ -110,9 +112,9 @@ def state_accessor_stubs(
 
     def _doc(fn: str, py_params, ret_ann: str, canned: str) -> list[str]:
         """Docstring lines for one accessor: header when authored, else canned."""
-        blk = accessor_block(component, fn, doc_blocks)
+        blk = accessor_block(csym, fn, doc_blocks)
         if blk is None:
-            _canned = accessor_canned(fn, canned, doc_blocks, component)
+            _canned = accessor_canned(fn, canned, doc_blocks, csym)
             return [f'        """{_canned}"""']
         return render_numpy_doc(blk, fn, py_params, ret_ann, indent=8)
 
@@ -176,6 +178,8 @@ def _build_no_state_init_ctx(
     init_post_parse_impl: str = "",
     create_blk=None,
     create_fn: "str | None" = None,
+    *,
+    csym: str,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -211,7 +215,7 @@ def _build_no_state_init_ctx(
     ``<component>_create`` directly — a view never takes those paths (its
     generator rejects array-dispatch parents).
     """
-    _create = CSYM.create_name(component, create_fn)
+    _create = CSYM.create_name(csym, create_fn)
     # ── Classify params ───────────────────────────────────────────────────
 
     arr_ip: list[tuple[str, str, int, str]] = []
@@ -1045,7 +1049,7 @@ def _build_no_state_init_ctx(
             )
             aapb_lines.append(
                 f"    /* dtype dispatch: {real_adisp} → {d_create_fn},"
-                f" {complex_adisp} → {component}_create */\n"
+                f" {complex_adisp} → {csym}_create */\n"
                 f"    {{\n"
                 f"        PyArrayObject *_{aname}_probe ="
                 f" (PyArrayObject *)PyArray_CheckFromAny(\n"
@@ -1499,7 +1503,7 @@ def _build_no_state_init_ctx(
         # and the bench must declare `obj` (else the unconditional destroy(obj)
         # below references an undeclared variable and the bench fails to build).
         "bench_create_stmt": (
-            f"    {component}_state_t *obj = {_c_render_name}({c_create_args});"
+            f"    {csym}_state_t *obj = {_c_render_name}({c_create_args});"
         ),
         # gh-1328: every C face -- the `_core.c` definition, the `_core.h`
         # declaration, the CTest smoke test and the bench -- names the
@@ -1507,7 +1511,7 @@ def _build_no_state_init_ctx(
         # caller (`_ext.c`) without renaming the callee. Defaults to
         # `<comp>_create`, byte-identical for every project without one.
         "create_name": _c_render_name,
-        "bench_destroy_stmt": f"    {component}_destroy(obj);",
+        "bench_destroy_stmt": f"    {csym}_destroy(obj);",
         "getter_setter_test_py": (
             test_obj
             + "\n        assert obj is not None  # no auto-state; add yours here"
@@ -1634,105 +1638,6 @@ def _pyi_examples_block(
 
 
 # ---------------------------------------------------------------------------
-# _make_gs_decls_impls
-# ---------------------------------------------------------------------------
-
-
-def _make_gs_decls_impls(
-    component: str,
-    scalar_vars: list[tuple[str, str, str]],
-    array_info: list[tuple[str, str, int]],
-    type_suffix: str,
-    ptr_name: str,
-) -> tuple[str, str]:
-    """Generate getter/setter C declarations and implementations.
-
-    type_suffix: 'state' or 'params'  (produces <comp>_<type_suffix>_t)
-    ptr_name:    'state' or 'params'  (the C variable name)
-    """
-    full_type = f"{component}_{type_suffix}_t"
-    decl_parts = []
-    for name, ct, _ in scalar_vars:
-        decl_parts.append(
-            f"/**\n"
-            f" * @brief Get current {name}.\n"
-            f" */\n"
-            f"{ct} {component}_get_{name}(const {full_type} *{ptr_name});\n"
-            f"\n"
-            f"/**\n"
-            f" * @brief Set {name}.\n"
-            f" */\n"
-            f"void {component}_set_{name}"
-            f"({full_type} *{ptr_name}, {ct} {name});"
-        )
-    for name, elem_ct, size in array_info:
-        decl_parts.append(
-            f"/**\n"
-            f" * @brief Copy {name} into dest.\n"
-            f" */\n"
-            f"void {component}_get_{name}"
-            f"(const {full_type} *{ptr_name}, {elem_ct} *dest);\n"
-            f"\n"
-            f"/**\n"
-            f" * @brief Return a read-only pointer to {name}.\n"
-            f" */\n"
-            f"const {elem_ct} *{component}_get_{name}_view"
-            f"(const {full_type} *{ptr_name});\n"
-            f"\n"
-            f"/**\n"
-            f" * @brief Set {name} from src.\n"
-            f" */\n"
-            f"void {component}_set_{name}"
-            f"({full_type} *{ptr_name}, const {elem_ct} *src);"
-        )
-    decls = "\n\n".join(decl_parts)
-
-    impl_parts = []
-    for name, ct, _ in scalar_vars:
-        impl_parts.append(
-            f"{ct}\n"
-            f"{component}_get_{name}(const {full_type} *{ptr_name})\n"
-            f"{{\n"
-            f"    return {ptr_name}->{name};\n"
-            f"}}\n"
-            f"\n"
-            f"void\n"
-            f"{component}_set_{name}"
-            f"({full_type} *{ptr_name}, {ct} {name})\n"
-            f"{{\n"
-            f"    {ptr_name}->{name} = {name};\n"
-            f"}}"
-        )
-    for name, elem_ct, size in array_info:
-        impl_parts.append(
-            f"void\n"
-            f"{component}_get_{name}"
-            f"(const {full_type} *{ptr_name}, {elem_ct} *dest)\n"
-            f"{{\n"
-            f"    memcpy(dest, {ptr_name}->{name},"
-            f" {size} * sizeof({elem_ct}));\n"
-            f"}}\n"
-            f"\n"
-            f"const {elem_ct} *\n"
-            f"{component}_get_{name}_view"
-            f"(const {full_type} *{ptr_name})\n"
-            f"{{\n"
-            f"    return {ptr_name}->{name};\n"
-            f"}}\n"
-            f"\n"
-            f"void\n"
-            f"{component}_set_{name}"
-            f"({full_type} *{ptr_name}, const {elem_ct} *src)\n"
-            f"{{\n"
-            f"    memcpy({ptr_name}->{name}, src,"
-            f" {size} * sizeof({elem_ct}));\n"
-            f"}}"
-        )
-    impls = "\n\n".join(impl_parts)
-    return decls, impls
-
-
-# ---------------------------------------------------------------------------
 # make_state_ctx
 # ---------------------------------------------------------------------------
 
@@ -1797,6 +1702,8 @@ def _ctor_seed_slots(
     init_params: list,
     Component: str = "",
     py_create_args: str = "",
+    *,
+    csym: str,
 ) -> dict:
     """Smoke-test slots that depend on whether the constructor can be seeded.
 
@@ -1868,7 +1775,7 @@ def _ctor_seed_slots(
         "obj_null_check": (
             "    if (!obj) {\n"
             f"        /* {names}: required with no default — a validating\n"
-            f"           {component}_create() may reject the zero-seeded call\n"
+            f"           {csym}_create() may reject the zero-seeded call\n"
             "           above. Pass valid arguments to smoke-test further. */\n"
             f'        printf("test_{component}_core SKIPPED'
             f' ({names} need seeding)\\n");\n'
@@ -1984,7 +1891,7 @@ _RESET_SLOTS = (
 )
 
 
-def _reset_wrapper_slots(component: str) -> dict[str, str]:
+def _reset_wrapper_slots(component: str, *, csym: str) -> dict[str, str]:
     """Default text for the slots that *wrap* a reset body (gh-542).
 
     These were hardcoded in the templates until `no_reset` needed to remove
@@ -1999,16 +1906,14 @@ def _reset_wrapper_slots(component: str) -> dict[str, str]:
 
     Examples
     --------
-    >>> print(_reset_wrapper_slots("acq")["reset_c_open"], end="")
+    >>> print(_reset_wrapper_slots("acq", csym="acq")["reset_c_open"], end="")
     <BLANKLINE>
     void
     acq_reset(acq_state_t *state)
     {
     """
     return {
-        "reset_c_open": (
-            f"\nvoid\n{component}_reset({component}_state_t *state)\n{{\n"
-        ),
+        "reset_c_open": (f"\nvoid\n{csym}_reset({csym}_state_t *state)\n{{\n"),
         "reset_c_close": "\n}\n",
         "reset_test_py_def": "\n    def test_reset(self):\n",
         "reset_test_py_pure_def": "\ndef test_reset():\n",
@@ -2336,6 +2241,8 @@ def _state_struct_decl(
     fields: str,
     opaque: bool = False,
     create_name: str = "",
+    *,
+    csym: str,
 ) -> str:
     """The state struct as the PUBLIC header declares it.
 
@@ -2359,7 +2266,7 @@ def _state_struct_decl(
     # gh-1328: the doc comment names the constructor the author actually
     # calls. Naming `<comp>_create()` under a `create_fn` project points the
     # reader at a function the tree does not contain.
-    _cn = CSYM.create_name(component, create_name)
+    _cn = CSYM.create_name(csym, create_name)
     if opaque:
         return (
             f"/**\n"
@@ -2369,7 +2276,7 @@ def _state_struct_decl(
             f" * exports only the handle type. Allocate with\n"
             f" * {_cn}().\n"
             f" */\n"
-            f"typedef struct {component}_state {component}_state_t;"
+            f"typedef struct {csym}_state {csym}_state_t;"
         )
     return (
         f"/**\n"
@@ -2379,11 +2286,11 @@ def _state_struct_decl(
         f" */\n"
         f"typedef struct {{\n"
         f"{fields}/*<<property_struct_fields>>*/\n"
-        f"}} {component}_state_t;"
+        f"}} {csym}_state_t;"
     )
 
 
-def _state_struct_def(component: str, fields: str, opaque: bool) -> str:
+def _state_struct_def(csym: str, fields: str, opaque: bool) -> str:
     """The state struct's *definition*, for ``_core.c`` (gh-588).
 
     Empty unless ``opaque_state`` — and empty renders as the blank line that
@@ -2397,11 +2304,14 @@ def _state_struct_def(component: str, fields: str, opaque: bool) -> str:
     """
     if not opaque:
         return ""
-    return f"\nstruct {component}_state {{\n{fields}}};\n"
+    return f"\nstruct {csym}_state {{\n{fields}}};\n"
 
 
 def _reset_docs(
-    component: str, doc_blocks: "dict | None"
+    component: str,
+    doc_blocks: "dict | None",
+    *,
+    csym: str,
 ) -> "tuple[str, str]":
     """``(runtime_c_literal, pyi_body)`` for the built-in ``reset()``.
 
@@ -2427,7 +2337,7 @@ def _reset_docs(
     ``_object._load_doc_blocks``) yields the canned text, which is what keeps a
     fresh scaffold idempotent.
     """
-    blk = (doc_blocks or {}).get(f"{component}_reset")
+    blk = (doc_blocks or {}).get(f"{csym}_reset")
     canned = "Reset state to post-create defaults."
     if blk is None or not blk.brief:
         return _build_ml_doc([canned]), f'        """{canned}"""\n'
@@ -2615,7 +2525,7 @@ def make_state_ctx(
     """
     _create = CSYM.create_name(csym, create_fn)
     # gh-676/gh-644: one lookup, both faces, both branches below.
-    _reset_rt, _reset_pyi = _reset_docs(component, doc_blocks)
+    _reset_rt, _reset_pyi = _reset_docs(component, doc_blocks, csym=csym)
     if no_state:
         _ns_reset_fn = f"{Component}Obj_reset"
         base = {
@@ -2729,9 +2639,10 @@ def make_state_ctx(
                     list(array_args),
                     init_post_parse_impl=init_post_parse_impl,
                     create_fn=create_fn,
+                    csym=csym,
                 )
             )
-        base.update(_reset_wrapper_slots(component))
+        base.update(_reset_wrapper_slots(component, csym=csym))
         if opaque_fields:
             base["state_struct_fields"] = "\n".join(
                 f"    {ct} {name};" for name, ct in opaque_fields
@@ -2742,6 +2653,7 @@ def make_state_ctx(
             base["state_struct_fields"] + "\n",
             opaque_state,
             _create,
+            csym=csym,
         )
         base["state_struct_def"] = _state_struct_def(
             component, base["state_struct_fields"] + "\n", opaque_state
@@ -2752,6 +2664,7 @@ def make_state_ctx(
                 list(init_params),
                 Component,
                 base.get("py_create_args", ""),
+                csym=csym,
             )
         )
         return _apply_no_reset(base, no_reset)
@@ -3189,12 +3102,10 @@ def make_state_ctx(
 
     def _rt(fn: str, canned: str) -> str:
         """The runtime doc for one accessor -- header brief when authored."""
-        blk = accessor_block(component, fn, doc_blocks)
+        blk = accessor_block(csym, fn, doc_blocks)
         if blk and blk.brief:
             return _build_ml_doc([blk.brief])
-        return _build_ml_doc(
-            [accessor_canned(fn, canned, doc_blocks, component)]
-        )
+        return _build_ml_doc([accessor_canned(fn, canned, doc_blocks, csym)])
 
     pmd_lines = []
     for name, _, __ in scalar_vars:
@@ -3247,7 +3158,7 @@ def make_state_ctx(
     )
 
     getter_setter_stubs_pyi = state_accessor_stubs(
-        scalar_vars, array_info, component, doc_blocks
+        scalar_vars, array_info, csym, doc_blocks
     )
 
     # ── Shared: create args ──────────────────────────────────────────────
@@ -3455,6 +3366,7 @@ def make_state_ctx(
             state_struct_fields + "\n",
             opaque_state,
             _create,
+            csym=csym,
         ),
         "state_struct_def": _state_struct_def(
             component, state_struct_fields + "\n", opaque_state
@@ -3575,6 +3487,7 @@ def make_state_ctx(
             list(array_args),
             init_post_parse_impl=init_post_parse_impl,
             create_fn=create_fn,
+            csym=csym,
         )
         # gh-122: _build_no_state_init_ctx generates empty create-arg strings
         # when an init_param has no explicit default. Fall back to the matching
@@ -3712,7 +3625,8 @@ def make_state_ctx(
             list(init_params),
             Component,
             result.get("py_create_args", ""),
+            csym=csym,
         )
     )
-    result.update(_reset_wrapper_slots(component))
+    result.update(_reset_wrapper_slots(component, csym=csym))
     return _apply_no_reset(result, no_reset)

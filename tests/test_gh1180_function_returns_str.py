@@ -99,7 +99,9 @@ def _wrapper(**over) -> str:
         out_size=FN["out_size"],
     )
     kw.update(over)
-    return R._py_wrapper_for_function(FN["fn_name"], **kw)
+    return R._py_wrapper_for_function(
+        FN["fn_name"], c_name=FN["fn_name"], **kw
+    )
 
 
 class TestTheCSurfaceIsChar:

@@ -1970,7 +1970,7 @@ class TestMethodVarargs:
         from just_makeit._context._methods import _bench_method_block
 
         m = {"name": "configure", "varargs": True}
-        assert _bench_method_block("nco", m) == ""
+        assert _bench_method_block("nco", m, csym="nco") == ""
 
     def test_cmake_idempotent_second_add(self, varargs_project):
         """Splicing again when the file is already in CMakeLists is a no-op."""

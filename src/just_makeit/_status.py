@@ -1809,8 +1809,8 @@ def run(
         )
         for d in _ctor_drift:
             print(f"  ! {d.rel}")
-            print(f"      header:   {d.component}_create({d.declared})")
-            print(f"      manifest: {d.component}_create({d.rendered})")
+            print(f"      header:   {d.csym}_create({d.declared})")
+            print(f"      manifest: {d.csym}_create({d.rendered})")
         print(
             "  jm injects that declaration, so this is jm checking what it"
             " wrote. It cannot\n"

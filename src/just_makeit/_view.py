@@ -173,18 +173,20 @@ def run(
 
     state_vars = C.state_vars(cfg, object_name)
     view_ip = C.view_init_params(cfg, object_name, view_entry)
+    # gh-1591: the view constructs the PARENT's state, named by its stem.
+    csym = CSYM.stem(cfg, object_name)
     vctx = Ctx.make_state_ctx(
         object_name,
         class_name,
         state_vars,
         init_params=view_ip,
         create_fn=create_fn,
-        csym=CSYM.stem(cfg, object_name),
+        csym=csym,
     )
     create_params = vctx["create_params"]
 
     core_h = INC.core_h(root, object_name)
-    proto = f"{object_name}_state_t *{create_fn}({create_params});"
+    proto = f"{csym}_state_t *{create_fn}({create_params});"
     if _inject_decls_into_core_h(
         core_h, object_name, [proto], family=C.core_family(cfg, object_name)
     ):
@@ -197,7 +199,7 @@ def run(
         # when this constructor is not already defined (re-run / apply replay).
         if not re.search(r"\b" + re.escape(create_fn) + r"\s*\(", core_text):
             stub = (
-                f"{object_name}_state_t *\n"
+                f"{csym}_state_t *\n"
                 f"{create_fn}({create_params})\n"
                 f"{{\n"
                 f"    /* <<IMPLEMENT>>: build the state for the "

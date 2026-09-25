@@ -63,12 +63,13 @@ class CtorDrift:
     rel: str  #: POSIX path of the header, relative to the project root
     declared: str  #: the parameter list as the header spells it
     rendered: str  #: the parameter list the manifest renders
+    csym: str  #: the component's C symbol stem (gh-1591)
 
     def describe(self) -> str:
         """One warning, naming both sides and what to do about it."""
         return (
             f"{self.rel}\n"
-            f"  {self.component}_create() takes different parameters in the"
+            f"  {self.csym}_create() takes different parameters in the"
             " header than the\n"
             "  manifest renders. jm cannot tell which side is stale.\n"
             f"    header:   ({self.declared})\n"
@@ -214,6 +215,7 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
                 rel=INC.core_rel(comp, root),
                 declared=declared,
                 rendered=_norm(rendered),
+                csym=_csym.stem(cfg, comp),
             )
         )
     return out

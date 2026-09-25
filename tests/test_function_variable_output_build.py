@@ -82,7 +82,9 @@ size_t nonneg(const float *x, size_t n, float *out) {
 
 
 def _build(tmp: Path):
-    w = make_functions_ctx("wfm", "Wfm", _FNS)
+    w = make_functions_ctx(
+        "wfm", "Wfm", _FNS, owner={"project": {"name": "p"}}
+    )
     src = f"""
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

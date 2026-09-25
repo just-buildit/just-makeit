@@ -46,7 +46,7 @@ ENUMS = {"ftype": ["raw", "wav", "blue"]}
 
 
 def _ctx(props, **kw):
-    return make_properties_ctx("rdr", "Rdr", props, **kw)
+    return make_properties_ctx("rdr", "Rdr", props, csym="rdr", **kw)
 
 
 def _tables(props, **kw):
@@ -308,7 +308,10 @@ class TestNoEnumIsByteIdentical:
 
     def test_empty_property_list_supplies_the_new_slot(self):
         assert (
-            make_properties_ctx("rdr", "Rdr", [])["pyi_property_typing"] == ""
+            make_properties_ctx("rdr", "Rdr", [], csym="rdr")[
+                "pyi_property_typing"
+            ]
+            == ""
         )
 
 
