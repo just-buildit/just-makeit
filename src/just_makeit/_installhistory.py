@@ -84,6 +84,15 @@ CALLS: frozenset = frozenset(
             "install",
             (
                 "CODE",
+                '\nfile(READ "${JM_PC_FILE}.configured" _jm_pc)\nstring(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")\nfile(REMOVE "${JM_PC_FILE}")\nfile(WRITE "${JM_PC_FILE}" "${_jm_pc}")\n',
+                "COMPONENT",
+                "dev",
+            ),
+        ),
+        (
+            "install",
+            (
+                "CODE",
                 '\nfile(READ "${JM_PC_FILE}.configured" _jm_pc)\nstring(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")\nfile(WRITE "${JM_PC_FILE}" "${_jm_pc}")\n',
             ),
         ),

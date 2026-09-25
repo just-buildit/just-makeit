@@ -349,13 +349,17 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   # path set by the first rule is seen by the second. The bracket argument is
   # not expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step
   # has. The configured path does not depend on the configuration, so a
-  # multi-config generator installs the same.
+  # multi-config generator installs the same. The written file is removed
+  # first: a `sudo cmake --install` leaves it owned by root, and the next
+  # install as the user (a stage, a DESTDIR, a second prefix) could not rewrite
+  # it -- but may unlink it, as the build directory is the user's.
   install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc\")"
           COMPONENT dev)
   install(
     CODE [[
 file(READ "${JM_PC_FILE}.configured" _jm_pc)
 string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
+file(REMOVE "${JM_PC_FILE}")
 file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]]
     COMPONENT dev)
