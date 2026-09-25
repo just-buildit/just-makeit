@@ -27,6 +27,14 @@ on:
           makes this usable as a pre-publish gate.
         type: string
         required: false
+      quick:
+        description: >
+          One leg per job instead of the full matrix: ci.yml's per-PR run
+          (gh-1632). The release keeps the full matrix; the steps are the
+          same file either way, so a PR runs exactly what the release runs.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   smoke:
@@ -43,8 +51,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        # gh-1632: `quick` is ci.yml's per-PR leg. Outside a workflow_call
+        # the input is null, which reads as the full matrix.
+        os: ${{ fromJSON(inputs.quick && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]') }}
 
     steps:
       - name: Set up Python
@@ -330,6 +340,8 @@ jobs:
           grep "fir_core"    native/src/filter/CMakeLists.txt
           grep "biquad_core" native/src/filter/CMakeLists.txt
           # OBJECT-only CMakeLists — no Python3_add_library
+          test -f native/src/fir/CMakeLists.txt
+          test -f native/src/biquad/CMakeLists.txt
           ! grep "Python3_add_library" native/src/fir/CMakeLists.txt
           ! grep "Python3_add_library" native/src/biquad/CMakeLists.txt
 
@@ -691,7 +703,7 @@ jobs:
         # The bounds jm supports plus the middle: every leg is a full Windows
         # build, so the POSIX job's six versions would be six times the cost
         # for the part of the matrix this job adds nothing to.
-        python-version: ["3.9", "3.12", "3.14"]
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.14"]') }}
     defaults:
       run:
         shell: bash

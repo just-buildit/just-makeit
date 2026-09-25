@@ -485,6 +485,10 @@ just-buildit/.github README under "Makefile standard".
     packages and their dependencies to the DEFAULT prefix and consumes them
     by the official pkg-config and CMake instructions, with no hints: the
     acceptance test for epic gh-1584. Locally it uses a temp prefix.
+- `Artifact smoke` in `ci.yml` (gh-1632) — the release's pre-publish
+    `artifact.yml`, one leg per job (`quick: true`), from the wheel
+    `make wheel` builds. It ran only on a tag until v0.90.0 failed before
+    publish on a layout three PRs had changed.
 - `release.yml` — tag `v*` → test matrix → build wheel → PyPI publish →
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images

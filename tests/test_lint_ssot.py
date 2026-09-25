@@ -379,10 +379,12 @@ class TestCIActuallyGates:
         )
 
     def test_ci_passed_requires_lint(self):
-        ci = _read(CI)
-        m = re.search(r"^\s*needs: \[(changes,[^\]]*)\]", ci, re.M)
-        assert m, "could not find the ci-passed aggregator's needs list"
-        assert "lint" in [n.strip() for n in m.group(1).split(",")], (
+        import yaml
+
+        # The aggregator BY NAME: a regex for the first `needs: [changes,`
+        # matched whichever job came first, which since gh-1632 is not it.
+        needs = yaml.safe_load(_read(CI))["jobs"]["ci-passed"]["needs"]
+        assert "lint" in needs, (
             "`lint` must be in the CI-passed aggregator's needs, or the "
             "branch ruleset will merge PRs that fail lint"
         )
