@@ -10,10 +10,40 @@ test) inside a temporary directory, printing live output.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import Iterator
+
+
+@contextlib.contextmanager
+def scratch_dir() -> "Iterator[str]":
+    """The scratch directory a bundled example builds into, run standalone.
+
+    Every example's ``__main__`` builds a real project in here, and several
+    import the extension they built. On Windows a loaded ``.pyd`` cannot be
+    deleted until the process exits, so ``tempfile.TemporaryDirectory``'s
+    cleanup raised ``PermissionError`` AFTER the example had passed -- which
+    failed v0.90.0's pre-publish Windows smoke on ``nco_tone``, the first
+    example to build its extension there (gh-1377). Cleanup is best effort:
+    what the OS will not let go of is left for the temp reaper, and the
+    example's own result stands. (``ignore_cleanup_errors`` is Python 3.10+;
+    jm supports 3.9.)
+
+    >>> with scratch_dir() as d:
+    ...     _ = (Path(d) / "x").write_text("x")
+    >>> Path(d).exists()
+    False
+    """
+    path = tempfile.mkdtemp()
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _examples_root() -> Path | None:

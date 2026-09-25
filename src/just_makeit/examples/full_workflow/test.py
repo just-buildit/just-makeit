@@ -26,9 +26,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from just_makeit import _incpath as INC
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 from just_makeit._bench import child_pytest_env
 
@@ -561,6 +562,6 @@ p.write_text(src)
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("full_workflow: PASSED")

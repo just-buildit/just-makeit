@@ -34,8 +34,9 @@ Also runnable directly: python3 examples/ring_buffer/test.py
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+from just_makeit._example import scratch_dir
 
 CAP_CF32 = 64  # complex samples
 CAP_IQ16 = 128  # int16 storage slots == 64 samples
@@ -631,6 +632,6 @@ print("ring_buffer: both rings OK")
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
+    with scratch_dir() as tmp:
         run(Path(tmp))
     print("ring_buffer: PASSED")
