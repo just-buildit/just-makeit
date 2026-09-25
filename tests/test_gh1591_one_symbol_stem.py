@@ -122,7 +122,8 @@ NAMES = frozenset(
 #: here: it is the file stem and the CMake target, which stay the name's.
 _SUFFIX = re.compile(
     r"_(create|destroy|reset|step|steps|step_batch|state_t|t|state_ptr|"
-    r"state_adopt|CORE_H|BRIDGE_H|PROCGLOBAL_H)(?![A-Za-z0-9_])"
+    r"state_adopt|state_bytes|get_state|set_state|CORE_H|BRIDGE_H|"
+    r"PROCGLOBAL_H)(?![A-Za-z0-9_])"
 )
 _JOIN = re.compile(r"_(get_|set_)?$")
 

@@ -2652,7 +2652,10 @@ def refresh_module_fragment_docs(
                     else ctx["Component"]
                 )
                 c_funcs, pmd, _ = serializable_triplet_parts(
-                    comp, ctx["Component"], wp
+                    comp,
+                    ctx["Component"],
+                    wp,
+                    csym=ctx["csym"],
                 )
                 updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:

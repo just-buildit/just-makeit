@@ -54,6 +54,9 @@ _LIFECYCLE = (
     "state_t",
     "state_ptr",
     "state_adopt",
+    "state_bytes",
+    "get_state",
+    "set_state",
 )
 
 

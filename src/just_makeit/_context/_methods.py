@@ -685,7 +685,7 @@ def _bench_method_block(
 
 
 def serializable_triplet_parts(
-    component: str, Component: str, wrapper_prefix: str
+    component: str, Component: str, wrapper_prefix: str, *, csym: str
 ) -> tuple[list[str], str, str]:
     """The gh-400 state-blob binding for one object, as reusable text.
 
@@ -712,7 +712,7 @@ def serializable_triplet_parts(
             f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
             f"{{\n{guard}"
             f"    return PyLong_FromSize_t("
-            f"{component}_state_bytes(self->handle));\n"
+            f"{csym}_state_bytes(self->handle));\n"
             f"}}"
         ),
         (
@@ -720,12 +720,12 @@ def serializable_triplet_parts(
             f"{_W}_get_state"
             f"({Component}Object *self, PyObject *Py_UNUSED(ignored))\n"
             f"{{\n{guard}"
-            f"    size_t _n = {component}_state_bytes(self->handle);\n"
+            f"    size_t _n = {csym}_state_bytes(self->handle);\n"
             f"    PyObject *_b = PyBytes_FromStringAndSize"
             f"(NULL, (Py_ssize_t)_n);\n"
             f"    if (!_b)\n"
             f"        return NULL;\n"
-            f"    {component}_get_state(self->handle, PyBytes_AS_STRING(_b));\n"
+            f"    {csym}_get_state(self->handle, PyBytes_AS_STRING(_b));\n"
             f"    return _b;\n"
             f"}}"
         ),
@@ -739,12 +739,12 @@ def serializable_triplet_parts(
             f"        return NULL;\n"
             f"    }}\n"
             f"    if ((size_t)PyBytes_GET_SIZE(arg)"
-            f" != {component}_state_bytes(self->handle)) {{\n"
+            f" != {csym}_state_bytes(self->handle)) {{\n"
             f"        PyErr_SetString(PyExc_ValueError,"
             f' "state blob size mismatch");\n'
             f"        return NULL;\n"
             f"    }}\n"
-            f"    if ({component}_set_state(self->handle,"
+            f"    if ({csym}_set_state(self->handle,"
             f" PyBytes_AS_STRING(arg)) != 0) {{\n"
             f"        PyErr_SetString(PyExc_ValueError,"
             f' "set_state rejected the blob");\n'
@@ -3983,7 +3983,10 @@ def make_methods_ctx(
     # module's is the author's.
     if serializable:
         _c_funcs, _pmd, _pyi = serializable_triplet_parts(
-            component, Component, wrapper_prefix
+            component,
+            Component,
+            wrapper_prefix,
+            csym=csym,
         )
         method_c_parts.extend(_c_funcs)
         pmd_lines.append(_pmd)
