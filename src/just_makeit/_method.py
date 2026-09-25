@@ -1007,7 +1007,7 @@ def _module_record_regs(
     objs = C.module_objects(cfg, module) if module else [object_name]
     out: list = []
     for obj in objs:
-        prefix = C.class_name(cfg, obj) or C.default_class_name(obj)
+        prefix = C.resolved_class_name(cfg, obj)
         out += _record.registrations(C.methods(cfg, obj), prefix)
         for view in C.views(cfg, obj):
             out += _record.registrations(

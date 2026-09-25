@@ -282,7 +282,7 @@ def render(
     """
     if not found:
         return ""
-    cls = C.class_name(cfg, comp) or C.default_class_name(comp)
+    cls = C.resolved_class_name(cfg, comp)
     recs = {str(r.get("name") or ""): r for r in C.records(cfg, comp)}
     create = _create_args(cfg, comp, pkg, root)
     # gh-1432: a required init-param with no default is seeded `0`, and a

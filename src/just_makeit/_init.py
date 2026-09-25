@@ -133,9 +133,16 @@ def standalone_extra_include(root: Path, component: str) -> str:
 
 def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
     csym = CSYM.stem(owner, component)
+    # gh-1651: the class name the manifest declares, not only the default.
+    # Every caller used to override the seed itself, and the standalone
+    # re-render in `_glue.component_ctx` did not -- so `jm apply` registered
+    # a `--class-name Renamed` object as `Named`. A caller with a name the
+    # manifest does not hold yet (a view, `jm object --class-name` before the
+    # component is saved) still overrides after this.
+    cls = C.resolved_class_name(INC.manifest(owner), component)
     return {
         "component": component,
-        "Component": _to_title(component),
+        "Component": cls,
         "COMPONENT": component.upper(),
         # gh-1591: the stem the component's C symbols derive from, which
         # only its project's manifest can say -- beside the file stem above,
@@ -182,9 +189,7 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # this slot replaced, so a path that does not derive (a view, a fresh
         # scaffold with no header yet) renders byte-identically to before.
         # _glue.component_ctx overrides it from create()'s @brief.
-        "tp_doc": (
-            f'"{_to_title(component)} component. Wraps {csym}_state_t."'
-        ),
+        "tp_doc": (f'"{cls} component. Wraps {csym}_state_t."'),
         # gh-543: a standalone object's hand-written `<comp>_ext_extra.c`,
         # #included when it exists. Module objects have had this since the
         # aggregator was introduced; a standalone object had no hook at all,

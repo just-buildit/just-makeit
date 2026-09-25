@@ -3060,7 +3060,7 @@ def object_ref_classes(cfg: dict, component: str) -> list[str]:
     only knew component class names would reject the one reference the feature
     was written for.
     """
-    own = class_name(cfg, component) or default_class_name(component)
+    own = resolved_class_name(cfg, component)
     out = [own]
     for view in views(cfg, component):
         cls = view.get("class_name")
@@ -5656,6 +5656,26 @@ def return_type(cfg: dict, component: str) -> str:
 def class_name(cfg: dict, component: str) -> str | None:
     """Return the overridden Python class name, or None to use title-cased component."""
     return cfg.get(component, {}).get("class_name") or None
+
+
+def resolved_class_name(cfg: dict, component: str) -> str:
+    """The Python class *component* renders under: its ``class_name``, else
+    :func:`default_class_name` -- the one answer to that question.
+
+    Spelled at seven call sites as ``class_name(cfg, c) or default...(c)``
+    until gh-1651, and one that computed only the default -- the standalone
+    re-render in ``_glue.component_ctx`` -- made `jm apply` register a
+    ``--class-name Renamed`` object as ``Named``: its ``tp_name``, its
+    ``PyModule_AddObject`` and its ``.pyi`` class, while ``__init__.py`` still
+    imported ``Renamed``. The import failed, and `status` agreed with the
+    replay that produced it.
+
+    >>> resolved_class_name({"fir_filter": {}}, "fir_filter")
+    'FirFilter'
+    >>> resolved_class_name({"named": {"class_name": "Renamed"}}, "named")
+    'Renamed'
+    """
+    return class_name(cfg, component) or default_class_name(component)
 
 
 def default_class_name(component: str) -> str:

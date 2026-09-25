@@ -212,6 +212,9 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         out[struct_members_key()] = _structs
     # gh-1591: a declaration's C name starts with the object's STEM.
     stem = CSYM.stem(doc_root, obj)
+    # gh-1651: the class the header was rendered with, so its `reset`
+    # boilerplate (which names the CLASS) is recognised under a class_name.
+    cls = C.resolved_class_name(INC.manifest(doc_root), obj)
     for cname, block_text in raw.items():
         # strip the stem_ prefix to recover the bare method/verb name for the
         # triviality check (e.g. ddc_execute -> execute).
@@ -221,7 +224,7 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
         parsed = parse_doxygen_block(block_text, name=verb)
         if parsed is None:
             continue
-        if _is_scaffold_brief(obj, verb, parsed):
+        if _is_scaffold_brief(obj, verb, parsed, cls):
             continue
         out[cname] = parsed
     # gh-761: the `_max_out` prototypes' arity, from the same header read.
@@ -363,7 +366,7 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     return out
 
 
-def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
+def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
     Thin owner-aware wrapper over :func:`_docstring.is_scaffold_doc`, which is
@@ -374,7 +377,7 @@ def _is_scaffold_brief(obj: str, verb: str, block) -> bool:
     ``@param`` at all, so the method skeleton, which does carry generated
     ``@param`` lines, was derived into the ``.pyi`` as if authored.
     """
-    return is_scaffold_doc(block, verb, obj)
+    return is_scaffold_doc(block, verb, obj, cls)
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:

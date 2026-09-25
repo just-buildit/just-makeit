@@ -1247,7 +1247,7 @@ _STEP_SCAFFOLD_BRIEFS = frozenset(
 )
 
 
-def scaffold_briefs(member: str, owner: str = "") -> set[str]:
+def scaffold_briefs(member: str, owner: str = "", cls: str = "") -> set[str]:
     """Normalized briefs jm itself scaffolds for *member* of *owner*.
 
     These are jm's **specific** template strings — ``Get current gain.``,
@@ -1258,7 +1258,11 @@ def scaffold_briefs(member: str, owner: str = "") -> set[str]:
     *member* is the bare verb (``execute``, ``get_gain``, ``create``), not the
     ``<owner>_``-prefixed C name. *owner* is the component or module; the
     lifecycle templates interpolate it, so omitting it simply drops those
-    entries rather than matching the wrong thing.
+    entries rather than matching the wrong thing. *cls* is the class name
+    the header was rendered with, when a ``class_name`` overrides the default
+    (gh-1651): ``reset``'s template interpolates the CLASS, so a
+    ``--class-name Renamed`` object's header says ``Reset Renamed ...``,
+    which no spelling of ``named`` folds to.
 
     Parameters
     ----------
@@ -1289,6 +1293,8 @@ def scaffold_briefs(member: str, owner: str = "") -> set[str]:
             _norm_brief(f"Destroy a {owner} instance and release all memory"),
             _norm_brief(f"Reset {owner} to its post-create state"),
         }
+    if cls:
+        out.add(_norm_brief(f"Reset {cls} to its post-create state"))
     if member.startswith("get_"):
         field = member[4:]
         out |= {
@@ -1308,7 +1314,7 @@ def scaffold_briefs(member: str, owner: str = "") -> set[str]:
 
 
 def is_scaffold_doc(
-    block: DoxyBlock, member: str = "", owner: str = ""
+    block: DoxyBlock, member: str = "", owner: str = "", cls: str = ""
 ) -> bool:
     """True when *block* is jm's own scaffold boilerplate, not authored doc.
 
@@ -1369,7 +1375,7 @@ def is_scaffold_doc(
     brief = _norm_brief(block.brief)
     if not brief or not member:
         return False
-    if _fold(brief) in {_fold(s) for s in scaffold_briefs(member, owner)}:
+    if _fold(brief) in {_fold(s) for s in scaffold_briefs(member, owner, cls)}:
         return True
     if _fold(brief) != _fold(member):
         return False

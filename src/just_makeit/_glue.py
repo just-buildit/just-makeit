@@ -35,7 +35,6 @@ from . import _types as T
 from ._builtins import builtin_owned_members, overridden_builtin_slots
 from ._init import (
     _make_component_ctx,
-    _to_title,
     standalone_extra_include,
 )
 
@@ -77,7 +76,7 @@ def component_ctx(
     # component lives in one. The manifest records membership one way, so
     # ask it here; "" for a standalone object leaves the line unchanged.
     _module_id = C.module_of(cfg, object_name)
-    Component = _to_title(object_name)
+    Component = C.resolved_class_name(cfg, object_name)
     state_vars_list = C.state_vars(cfg, object_name)
     arg_type_ = C.arg_type(cfg, object_name)
     return_type_ = C.return_type(cfg, object_name)
