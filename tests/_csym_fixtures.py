@@ -294,6 +294,28 @@ def derived(cfg: dict) -> "list[re.Pattern]":
     return pats
 
 
+def author_names(node, out: "set | None" = None) -> "set[str]":
+    """Every value of a manifest key that NAMES a C symbol or type for jm to
+    use -- ``fn``, any ``*_fn``, ``struct``, ``record_dtype`` -- walked, not
+    listed, so a new such key is covered by its spelling. None of them is
+    ever prefixed (gh-1591)."""
+    out = set() if out is None else out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and (
+                k == "fn"
+                or k.endswith("_fn")
+                or k in ("struct", "record_dtype")
+            ):
+                out.add(v)
+            else:
+                author_names(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            author_names(v, out)
+    return out
+
+
 def stripped(data: bytes) -> bytes:
     """*data* with the stem mark removed, both cases."""
     return data.replace(MARK.encode(), b"").replace(MARK.upper().encode(), b"")

@@ -78,32 +78,12 @@ def test_no_derived_symbol_escapes_the_prefix(trees):
     )
 
 
-def _author_names(node, out: set) -> set:
-    """Every value of a manifest key that NAMES a C symbol or type for jm to
-    use -- ``fn``, any ``*_fn``, ``struct``, ``record_dtype`` -- walked, not
-    listed, so a new such key is covered by its spelling."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if isinstance(v, str) and (
-                k == "fn"
-                or k.endswith("_fn")
-                or k in ("struct", "record_dtype")
-            ):
-                out.add(v)
-            else:
-                _author_names(v, out)
-    elif isinstance(node, list):
-        for v in node:
-            _author_names(v, out)
-    return out
-
-
 def test_an_author_named_symbol_is_never_prefixed(trees):
     _plain, pre = trees
     checked = 0
     bad = []
     for row, root in pre.items():
-        names = _author_names(C.load(root), set())
+        names = FX.author_names(C.load(root))
         code = "\n".join(
             p.read_text(encoding="utf-8")
             for p in sorted((root / "native").rglob("*"))
