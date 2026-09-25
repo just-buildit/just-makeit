@@ -57,22 +57,21 @@ Cflags: -I${includedir}
 
 ### Anatomy
 
-- **`prefix`** — relative to the `.pc` file's own location,
-    `${pcfiledir}/../..`, computed in CMake with `file(RELATIVE_PATH)` from
-    the pkgconfig directory back to `CMAKE_INSTALL_PREFIX`. The file then
-    stays right when the tree is installed with `cmake --install --prefix`,
-    staged with `DESTDIR`, or moved, as CMake's own config (`PACKAGE_INIT`)
-    does. The exception is a system prefix (`/usr`). pkg-config drops
-    `-I`/`-L` for its system dirs only when they are spelled literally, so
-    `${pcfiledir}/../..` there would put `-I/usr/include` on every consumer.
-    jm's root template writes the `.pc` absolutely for any prefix in
-    `JM_PC_SYSTEM_PREFIXES` (default `/usr`), and an explicit
-    `JM_PC_RELOCATABLE` overrides that (gh-1582).
-- **`libdir` / `includedir`** — `${exec_prefix}/<rel>` when the
-    `CMAKE_INSTALL_FULL_*` path is under the prefix, and that absolute path
-    when it is not. `GNUInstallDirs` may itself be given absolute paths (Nix
-    and Guix do), so `${exec_prefix}/@CMAKE_INSTALL_LIBDIR@` can come out as
-    `${exec_prefix}//nix/store/.../lib`.
+- **`prefix`** — the absolute prefix the files were INSTALLED under, written
+    at install time. `configure_file` leaves a marker
+    (`prefix=%JM_INSTALL_PREFIX%`), and an `install(CODE)` declared before the
+    `install(FILES)` replaces it with `${CMAKE_INSTALL_PREFIX}` as the install
+    step sees it, so `cmake --install --prefix` is honoured. `DESTDIR` is not
+    part of it: a staged tree names its real target. An absolute prefix is
+    also what lets pkg-config drop `-I`/`-L` for its system dirs under
+    `/usr`, which it does only for a literal path. A `${pcfiledir}`-relative
+    prefix defeats that, so don't use one. Relocation belongs to the
+    consumer: `pkg-config --define-prefix` for a moved tree,
+    `PKG_CONFIG_SYSROOT_DIR` for a staged one (gh-1582).
+- **`libdir` / `includedir`** — `${exec_prefix}/@CMAKE_INSTALL_LIBDIR@` when
+    that is relative, and the path itself when it is absolute.
+    `GNUInstallDirs` may be given absolute paths (Nix and Guix do), and the
+    naive form then comes out as `${exec_prefix}//nix/store/.../lib`.
 - **`Requires`** — public dependencies: consumers need them at link time.
 - **`Requires.private`** — private dependencies: only needed when linking
     statically against your library. Omit from `Requires` to keep consumer
@@ -91,17 +90,22 @@ Cflags: -I${includedir}
 libdir=/usr/local/lib
 includedir=/usr/local/include
 
-# RIGHT — relative to the prefix, which is relative to the file
-prefix=${pcfiledir}/../..
+# RIGHT — the dirs follow the prefix, which is filled in at install
+prefix=@PC_PREFIX@
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include
 ```
 
-**Baking in `CMAKE_INSTALL_PREFIX` or `@CMAKE_INSTALL_FULL_LIBDIR@`.**
-Either fixes the prefix at configure time, so the file is wrong when the
-package is installed elsewhere: `cmake --install --prefix`, `DESTDIR`
-staging, or a moved tree. Compute the relative forms in CMake instead, and
-fall back to the absolute path only for a directory outside the prefix.
+**Baking in the configure-time `CMAKE_INSTALL_PREFIX`.**
+`cmake --install --prefix` chooses the prefix at install time, so a
+`.pc` written at configure time names a prefix where nothing was
+installed. Write the prefix from an `install(CODE)`.
+
+**A `${pcfiledir}`-relative prefix.** It survives a moved tree, but
+pkg-config then cannot recognise `/usr` as a system prefix: every
+consumer gets `-I/usr/include`, which breaks `#include_next`, and
+`-L/usr/lib` ahead of its own `-L`. Moving a tree is what
+`pkg-config --define-prefix` is for.
 
 **Over-populating `Requires`.**
 If your shared library links `libfftw3` with `PRIVATE` visibility, the
@@ -258,20 +262,15 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mylib
 )
 
-# 5. Generate and install the pkg-config file, whose paths are relative to
-#    its own location (see "Anatomy"; jm's root template also handles a
-#    libdir outside the prefix)
-file(RELATIVE_PATH _up "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
-     "${CMAKE_INSTALL_PREFIX}")
-set(PC_PREFIX "\${pcfiledir}/${_up}")
+# 5. Generate the pkg-config file, and write its prefix at INSTALL time
+#    (the prefix `cmake --install --prefix` chose; not DESTDIR)
+set(PC_PREFIX "%INSTALL_PREFIX%")
 set(PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 set(PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
-configure_file(
-    cmake/mylib.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
-    @ONLY
-)
-
+configure_file(cmake/mylib.pc.in mylib.pc.tmpl @ONLY)
+install(CODE "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc.tmpl\" pc)
+string(REPLACE %INSTALL_PREFIX% \"\${CMAKE_INSTALL_PREFIX}\" pc \"\${pc}\")
+file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc\" \"\${pc}\")")
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
@@ -420,8 +419,9 @@ ______________________________________________________________________
     `SameMajorVersion` from 1.0
 - [ ] `VERSION` / `SOVERSION` on the shared library, by the same rule
 - [ ] `export(EXPORT ...)` so the build tree is a package too
-- [ ] `cmake/mylib.pc.in`: `prefix` relative to `${pcfiledir}`, and
-    libdir/includedir relative to it unless they are outside the prefix
+- [ ] `.pc` prefix: absolute, written at install time (honours
+    `--prefix`, not `DESTDIR`); libdir/includedir follow it unless they
+    were given as absolute paths
 - [ ] Private deps in `Requires.private` / `Libs.private`, not `Requires`
 - [ ] Post-install smoke test that covers both pkg-config and CMake consumers
 - [ ] Document the `PKG_CONFIG_PATH` and `CMAKE_PREFIX_PATH` overrides for

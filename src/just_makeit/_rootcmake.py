@@ -295,14 +295,17 @@ _PC_VARS = ("JM_PC_PREFIX", "JM_PC_LIBDIR", "JM_PC_INCLUDEDIR")
 
 
 def _has_pc_paths(r: Root) -> bool:
-    # `set(JM_PC_PREFIX ...)` or the template's `jm_pc_path(JM_PC_LIBDIR ...)`:
-    # either way the first argument is the variable the .pc.in reads.
-    defined = {
-        c.args[0]
+    # The variables the .pc.in reads, AND an install(CODE) that fills in the
+    # prefix the files were installed under: the template sets JM_PC_PREFIX
+    # to a marker only that step replaces, so either half alone is broken.
+    defined = {c.args[0] for c in r.calls if c.args and c.name == "set"}
+    writes_at_install = any(
+        c.name == "install"
+        and "CODE" in c.args
+        and any("CMAKE_INSTALL_PREFIX" in w for w in c.args)
         for c in r.calls
-        if c.args and c.name in ("set", "jm_pc_path")
-    }
-    return all(v in defined for v in _PC_VARS)
+    )
+    return writes_at_install and all(v in defined for v in _PC_VARS)
 
 
 def _configures_pc(r: Root) -> bool:
@@ -322,13 +325,6 @@ def _has_pc_tidy(r: Root) -> bool:
         and len(c.args) > 1
         and c.args[0].endswith(".pc.in")
         and not c.args[1].endswith(".pc")
-        for c in r.calls
-    )
-
-
-def _has_system_prefixes(r: Root) -> bool:
-    return any(
-        c.name == "set" and c.args[:1] == ("JM_PC_SYSTEM_PREFIXES",)
         for c in r.calls
     )
 
@@ -456,24 +452,14 @@ FIXES: "tuple[Fix, ...]" = (
         "pc-paths",
         "gh-1582",
         "all",
-        "the .pc paths are not computed ("
+        "the .pc's prefix is not written at install time ("
         + ", ".join(_PC_VARS)
-        + "): today's cmake/<pkg>.pc.in writes an empty prefix without "
-        "them, and the older one hard-codes the install prefix, so a moved "
-        "or staged prefix points consumers at the old path",
+        + " and the install(CODE) that fills them): today's "
+        "cmake/<pkg>.pc.in writes no usable prefix without them, and the "
+        "older one names the CONFIGURED prefix, so `cmake --install "
+        "--prefix` leaves a .pc pointing where nothing was installed",
         _has_pc_paths,
         _configures_pc,
-    ),
-    Fix(
-        "pc-system-prefix",
-        "gh-1582",
-        "Linux",
-        "JM_PC_SYSTEM_PREFIXES is not set, so a .pc installed under /usr "
-        "is written relative to itself; pkg-config then cannot recognise "
-        "its system dirs, and every consumer gets -I/usr/include and "
-        "-L/usr/lib ahead of its own flags",
-        _has_system_prefixes,
-        lambda r: _configures_pc(r) and _has_pc_paths(r),
     ),
     Fix(
         "pc-tidy",

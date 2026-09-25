@@ -73,8 +73,7 @@ SABOTAGE = {
     r"[^)]*\)",
     "version-compat": r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}",
     "build-tree-export": r"export\(\s*EXPORT[^)]*\)",
-    "pc-paths": r"jm_pc_path\(\s*JM_PC_LIBDIR[^)]*\)",
-    "pc-system-prefix": r"set\(\s*JM_PC_SYSTEM_PREFIXES\b[^)]*\)",
+    "pc-paths": r'set\(\s*JM_PC_PREFIX\s+"%JM_INSTALL_PREFIX%"\s*\)',
     # Configure straight to the .pc, which is the pre-tidy shape.
     "pc-tidy": r"(?<=p\.pc)\.raw(?=\s+@ONLY)",
 }
@@ -184,6 +183,15 @@ def test_an_equivalent_spelling_is_not_reported(fresh, key, find, replace):
     text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
     assert len(re.findall(find, text, re.S)) == 1
     assert _keys(re.sub(find, lambda _m: replace, text, flags=re.S)) == []
+
+
+def test_pc_paths_without_the_install_time_write_is_missing(fresh):
+    """gh-1582: the variables alone leave the marker in the installed .pc;
+    the row needs the install(CODE) that replaces it too."""
+    text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert _keys(_drop(text, r"install\(\s*CODE\s*\[\[.*?\]\]\)")) == [
+        "pc-paths"
+    ]
 
 
 def test_same_major_version_is_right_from_one_point_oh(fresh):

@@ -212,67 +212,33 @@ export(
   FILE "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-targets.cmake"
   NAMESPACE <<project_underscore>>::)
 
-# gh-1582: the .pc's paths. `prefix` is relative to ${pcfiledir}, so a prefix
-# that is copied, staged or moved (DESTDIR, conda, a relocated tarball) keeps
-# working, as the CMake config (PACKAGE_INIT) already does. A libdir or
-# includedir outside the prefix -- GNUInstallDirs given an absolute path, as
-# Nix and Guix do -- is written as that absolute path, never as
-# `${exec_prefix}//abs`.
+# gh-1582: the .pc names where its files were ACTUALLY installed, as an
+# absolute prefix, and that is decided at INSTALL time -- `cmake --install
+# --prefix B` chooses the prefix then, and a configure-time prefix named one
+# where nothing was installed. DESTDIR is not part of it: a staged tree names
+# its real target, which is what a distribution package needs. Relocation is
+# the consumer's side of pkg-config: a moved tree is read with `pkg-config
+# --define-prefix`, a staged one with PKG_CONFIG_SYSROOT_DIR. An absolute
+# prefix is also what lets pkg-config drop -I/-L for its system dirs under
+# /usr, which it does only for a path spelled literally.
 #
-# Except under a SYSTEM prefix. pkg-config drops -I/-L for its system dirs only
-# when they are spelled literally; `${pcfiledir}/../..` defeats that, and every
-# consumer of a /usr install would get -I/usr/include (which breaks
-# #include_next and reorders system headers) and -L/usr/lib ahead of its own
-# -L. So a prefix in JM_PC_SYSTEM_PREFIXES is written absolutely. Its default
-# is /usr alone: measured, pkgconf 2.5.1 and pkg-config 0.29 filter /usr's
-# include and lib dirs and not /usr/local's. An explicit -DJM_PC_RELOCATABLE
-# wins either way.
-set(JM_PC_SYSTEM_PREFIXES
-    "/usr"
-    CACHE STRING "Install prefixes whose .pc is written absolutely")
-if(DEFINED CACHE{JM_PC_RELOCATABLE})
-  set(JM_PC_RELOCATE ${JM_PC_RELOCATABLE})
-elseif(CMAKE_INSTALL_PREFIX IN_LIST JM_PC_SYSTEM_PREFIXES)
-  set(JM_PC_RELOCATE OFF)
-else()
-  set(JM_PC_RELOCATE ON)
+# A libdir or includedir given as an absolute path (GNUInstallDirs under Nix or
+# Guix) is where the files are whatever the prefix, so it is written as itself,
+# never as `${exec_prefix}//abs`; a relative one follows the prefix.
+set(JM_PC_PREFIX "%JM_INSTALL_PREFIX%")
+set(JM_PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+  set(JM_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
 endif()
-# Set ${out} to the absolute path ${full} spelled for the .pc: as
-# "${spelled}/<rel>" when it lies under ${base}, and as itself when not.
-function(jm_pc_path out full base spelled)
-  file(RELATIVE_PATH rel "${base}" "${full}")
-  if(IS_ABSOLUTE "${rel}" OR rel MATCHES "^\\.\\.(/|$)")
-    set(${out}
-        "${full}"
-        PARENT_SCOPE)
-  elseif(rel STREQUAL "")
-    set(${out}
-        "${spelled}"
-        PARENT_SCOPE)
-  else()
-    set(${out}
-        "${spelled}/${rel}"
-        PARENT_SCOPE)
-  endif()
-endfunction()
-set(JM_PC_PREFIX "${CMAKE_INSTALL_PREFIX}")
-if(JM_PC_RELOCATE)
-  file(RELATIVE_PATH JM_PC_UP "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
-       "${CMAKE_INSTALL_PREFIX}")
-  string(REGEX REPLACE "/$" "" JM_PC_UP "${JM_PC_UP}")
-  if(JM_PC_UP MATCHES "^(\\.\\./)*\\.\\.$")
-    set(JM_PC_PREFIX "\${pcfiledir}/${JM_PC_UP}")
-  endif()
+set(JM_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+  set(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
 endif()
-jm_pc_path(JM_PC_LIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}"
-           "${CMAKE_INSTALL_PREFIX}" "\${exec_prefix}")
-jm_pc_path(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}"
-           "${CMAKE_INSTALL_PREFIX}" "\${prefix}")
 # gh-1582: an optional field with nothing to say is left out, not written as an
 # empty `URL:` -- and the slots the template leaves empty leave no blank lines
 # behind. Name, Description and Version stay: pkg-config 0.29 refuses a .pc
-# without them. The final copy is COPYONLY, so the .pc is rewritten only when
-# its content changes.
+# without them. The template copy is COPYONLY, so it is rewritten only when its
+# content changes.
 configure_file(cmake/<<project>>.pc.in <<project>>.pc.raw @ONLY)
 file(READ "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.raw" JM_PC_TEXT)
 set(JM_PC_EMPTY_FIELD
@@ -283,6 +249,19 @@ endwhile()
 string(REGEX REPLACE "\n+$" "\n" JM_PC_TEXT "${JM_PC_TEXT}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy" "${JM_PC_TEXT}")
 configure_file("${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy"
-               <<project>>.pc COPYONLY)
+               <<project>>.pc.tmpl COPYONLY)
+# Runs at install time, before the install(FILES) below copies its result:
+# install rules run in the order they are declared, in one script, so the path
+# set by the first rule is seen by the second. The bracket argument is not
+# expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step has.
+# The template path does not depend on the configuration, so a multi-config
+# generator installs the same.
+install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc\")")
+install(
+  CODE [[
+file(READ "${JM_PC_FILE}.tmpl" _jm_pc)
+string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
+file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
+]])
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

@@ -10,36 +10,43 @@ The table is the design. A later PR widens the matrix by adding a row, not a
 test: #1581 changes :data:`TARGETS` and :data:`PC_NAME`, #1580 adds a
 FetchContent route, #1583 adds a layout with two projects in one prefix.
 
-Rows (gh-1582):
+The .pc names the prefix its files were installed under, absolutely, written
+at install time (gh-1582). Relocation is the CONSUMER's side of pkg-config,
+and each layout says what the consumer passes:
 
 - ``standard``: a plain install. The baseline every other row differs from.
 - ``install-prefix``: configured for one prefix, installed with
-  ``cmake --install --prefix`` into another -- CMake's documented way to
-  choose the prefix at install time. The ``.pc`` used to name the
+  ``cmake --install --prefix`` into another. The .pc used to name the
   configured one, where nothing was ever installed.
-- ``relocated``: installed into a staging prefix, then MOVED. The staging
-  path no longer exists, so a ``.pc`` or CMake config that remembered it
-  fails to compile or link, and the test also asserts the text is gone.
-- ``abs-libdir``: ``CMAKE_INSTALL_LIBDIR`` given as an absolute path under
-  the prefix, as GNUInstallDirs is by Nix and Guix. The ``.pc`` used to say
+- ``destdir``: staged with ``DESTDIR``, as a distribution package is. The .pc
+  names the REAL target, not the staging dir; the consumer reads the staged
+  tree with ``PKG_CONFIG_SYSROOT_DIR``.
+- ``moved``: installed, then moved; the consumer passes
+  ``pkg-config --define-prefix``, which derives the prefix from where the
+  .pc now is (correct for ``lib/pkgconfig``; wrong for a multiarch
+  ``lib/<triplet>/pkgconfig``, which is pkg-config's limitation).
+- ``abs-libdir``: ``CMAKE_INSTALL_LIBDIR`` given as an absolute path, as
+  GNUInstallDirs is by Nix and Guix. The .pc used to say
   ``${exec_prefix}//abs/lib64``.
-- ``abs-libdir-outside``: an absolute libdir OUTSIDE the prefix (a split
-  output). The ``.pc`` must spell it absolutely rather than relative to a
-  prefix it is not under.
+- ``abs-libdir-outside``: an absolute libdir outside the prefix.
+- ``system-prefix``: a prefix whose include and lib dirs pkg-config treats as
+  system dirs, as /usr's are. It must emit no -I/-L for them, which it does
+  only for a path spelled literally.
 - the ``build-tree`` route: ``find_package`` pointed at the BUILD directory,
   with nothing installed.
 
-Beside the matrix: the soname chain (a versioned shared library), and 0.x
-version matching (``SameMinorVersion``: 0.1.1 accepts 0.1.3, 0.0.5 and 0.2
-do not).
+Beside the matrix: the soname chain, 0.x version matching
+(``SameMinorVersion``), and .pc hygiene (no empty ``Key:`` line, no blank
+tail).
 
 Lives on PROJECT_ENV_TESTS: it needs cmake, a C compiler and pkg-config.
 
 GATE: a program linked only against what an installed jm project advertises
       builds and runs through find_package (installed and build tree) and
-      pkg-config, shared and static, from a moved prefix and under an
-      absolute libdir; the shared library carries a versioned soname and
-      find_package applies 0.x version matching.
+      pkg-config, shared and static, whether the prefix was chosen at install
+      time, staged, moved or given an absolute libdir; the .pc names the
+      prefix it was installed under; the shared library carries a versioned
+      soname and find_package applies 0.x version matching.
 """
 
 from __future__ import annotations
@@ -89,11 +96,18 @@ def _run(cmd, cwd, env=None, ok=True):
 
 
 class Layout(NamedTuple):
-    """Where one install puts things, as a consumer must be told."""
+    """Where one install's files are, and how a consumer is told."""
 
+    #: where the files are on disk now.
     prefix: Path
     libdir: Path
-    #: the path an install once used and must no longer be referenced.
+    #: what the installed .pc's `prefix=` must say.
+    pc_prefix: Path
+    #: extra environment a pkg-config consumer sets for this layout.
+    pc_env: "dict[str, str]" = {}
+    #: extra pkg-config arguments a consumer passes for this layout.
+    pc_args: "tuple[str, ...]" = ()
+    #: a path no installed .pc or .cmake file may name.
     forbidden: "Path | None" = None
 
 
@@ -145,46 +159,71 @@ def world(tmp_path_factory):
     b = proj / "b"
     _build(proj, b, std)
     _run(["cmake", "--install", b], proj)
-    layouts["standard"] = Layout(std, std / "lib")
+    layouts["standard"] = Layout(std, std / "lib", std)
 
-    # `cmake --install --prefix` overrides the configured prefix at install
-    # time; a .pc that baked the configured one in points at a tree that was
-    # never installed.
     other, configured = root / "other", root / "configured"
     bp = proj / "bp"
     _build(proj, bp, configured)
     _run(["cmake", "--install", bp, "--prefix", other], proj)
-    layouts["install-prefix"] = Layout(other, other / "lib", configured)
+    layouts["install-prefix"] = Layout(
+        other, other / "lib", other, forbidden=configured
+    )
 
-    # Built for the staging prefix, installed there, then moved away from it.
-    stage, moved = root / "stage", root / "moved"
-    bs = proj / "bs"
-    _build(proj, bs, stage)
-    _run(["cmake", "--install", bs], proj)
-    shutil.move(str(stage), str(moved))
-    layouts["relocated"] = Layout(moved, moved / "lib", forbidden=stage)
+    # The real target is never created; the staged copy is what exists.
+    real, stage = root / "real", root / "stage"
+    bd = proj / "bd"
+    _build(proj, bd, real)
+    env = dict(os.environ, DESTDIR=str(stage))
+    _run(["cmake", "--install", bd], proj, env)
+    staged = Path(str(stage) + str(real))
+    layouts["destdir"] = Layout(
+        staged,
+        staged / "lib",
+        real,
+        pc_env={"PKG_CONFIG_SYSROOT_DIR": str(stage)},
+        forbidden=stage,
+    )
+
+    frm, to = root / "mv_from", root / "mv_to"
+    bm = proj / "bm"
+    _build(proj, bm, frm)
+    _run(["cmake", "--install", bm], proj)
+    shutil.move(str(frm), str(to))
+    layouts["moved"] = Layout(
+        to, to / "lib", frm, pc_args=("--define-prefix",)
+    )
 
     absp = root / "absp"
     ba = proj / "ba"
     _build(proj, ba, absp, f"-DCMAKE_INSTALL_LIBDIR={absp / 'lib64'}")
     _run(["cmake", "--install", ba], proj)
-    layouts["abs-libdir"] = Layout(absp, absp / "lib64")
+    layouts["abs-libdir"] = Layout(absp, absp / "lib64", absp)
 
     outp, outlib = root / "outp", root / "split" / "lib"
     bo = proj / "bo"
     _build(proj, bo, outp, f"-DCMAKE_INSTALL_LIBDIR={outlib}")
     _run(["cmake", "--install", bo], proj)
-    layouts["abs-libdir-outside"] = Layout(outp, outlib)
+    layouts["abs-libdir-outside"] = Layout(outp, outlib, outp)
 
-    # A prefix declared a SYSTEM prefix, standing in for /usr: its .pc must
-    # be written absolutely, or pkg-config cannot filter its system dirs.
     sysp = root / "sysp"
     bsy = proj / "bsy"
-    _build(proj, bsy, sysp, f"-DJM_PC_SYSTEM_PREFIXES={sysp}")
+    _build(proj, bsy, sysp)
     _run(["cmake", "--install", bsy], proj)
-    layouts["system-prefix"] = Layout(sysp, sysp / "lib")
+    layouts["system-prefix"] = Layout(
+        sysp,
+        sysp / "lib",
+        sysp,
+        pc_env={
+            "PKG_CONFIG_SYSTEM_INCLUDE_PATH": str(sysp / "include"),
+            "PKG_CONFIG_SYSTEM_LIBRARY_PATH": str(sysp / "lib"),
+        },
+    )
 
     return root, proj, b, layouts
+
+
+def _pc_file(lay: Layout) -> Path:
+    return lay.libdir / "pkgconfig" / f"{PC_NAME}.pc"
 
 
 def _find_package(root, name, linkage, where: "list[str]") -> str:
@@ -202,15 +241,22 @@ def _find_package(root, name, linkage, where: "list[str]") -> str:
     return _run([cons / "b" / "c"], cons).stdout
 
 
-def _pkg_config(root, name, linkage, lay: Layout) -> str:
+def _pc_env(lay: Layout) -> "dict[str, str]":
     env = dict(os.environ)
     env["PKG_CONFIG_PATH"] = str(lay.libdir / "pkgconfig")
+    env.update(lay.pc_env)
+    return env
+
+
+def _pkg_config(root, name, linkage, lay: Layout) -> str:
+    env = _pc_env(lay)
 
     def pc(*args):
-        return _run(["pkg-config", *args, PC_NAME], root, env).stdout.split()
+        cmd = ["pkg-config", *lay.pc_args, *args, PC_NAME]
+        return _run(cmd, root, env).stdout.split()
 
     (libdir,) = pc("--variable=libdir")
-    # What the .pc says must be where the library IS, not where it was.
+    # What the consumer is told must be where the library IS.
     assert Path(libdir).resolve() == lay.libdir.resolve(), libdir
     exe = root / f"pc_{name}_{linkage}"
     if linkage == "static":
@@ -220,23 +266,22 @@ def _pkg_config(root, name, linkage, lay: Layout) -> str:
         link = [str(Path(libdir) / f"lib{NAME}.a"), *libs]
     else:
         link = [*pc("--libs"), f"-Wl,-rpath,{libdir}"]
-    flags = [*pc("--cflags"), *link]
-    if lay.forbidden:
-        assert not any(str(lay.forbidden) in f for f in flags), flags
     _run(["cc", *pc("--cflags"), "c.c", *link, "-o", exe], root, env)
     return _run([exe], root, env).stdout
 
 
-LAYOUT_NAMES = [
+ALL_LAYOUTS = [
     "standard",
     "install-prefix",
-    "relocated",
+    "destdir",
+    "moved",
     "abs-libdir",
     "abs-libdir-outside",
+    "system-prefix",
 ]
-#: every layout; pkg-config consumers build against LAYOUT_NAMES only,
-#: because a system prefix's flags are (rightly) filtered to nothing.
-ALL_LAYOUTS = [*LAYOUT_NAMES, "system-prefix"]
+#: a system prefix's -I/-L are (rightly) filtered to nothing, so a compiler
+#: given only pkg-config's output cannot find a stand-in prefix's headers.
+PC_LAYOUTS = [n for n in ALL_LAYOUTS if n != "system-prefix"]
 
 
 @pytest.mark.parametrize("linkage", ["shared", "static"])
@@ -253,7 +298,7 @@ def test_find_package_installed(world, layout, linkage):
 
 
 @pytest.mark.parametrize("linkage", ["shared", "static"])
-@pytest.mark.parametrize("layout", LAYOUT_NAMES)
+@pytest.mark.parametrize("layout", PC_LAYOUTS)
 def test_pkg_config(world, layout, linkage):
     root, _, _, layouts = world
     out = _pkg_config(root, layout, linkage, layouts[layout])
@@ -268,13 +313,25 @@ def test_find_package_build_tree(world, linkage):
     assert out == "ran 1\n", out
 
 
-@pytest.mark.parametrize("layout", ["relocated", "install-prefix"])
-def test_a_moved_prefix_names_nothing_from_where_it_was(world, layout):
+@pytest.mark.parametrize("layout", ALL_LAYOUTS)
+def test_the_pc_names_the_prefix_it_was_installed_under(world, layout):
+    """Absolute, and chosen at install time: not the configured prefix, not
+    the staging dir, and not a path relative to the file."""
+    _, _, _, layouts = world
+    lay = layouts[layout]
+    text = _pc_file(lay).read_text()
+    assert "${pcfiledir}" not in text, text
+    assert text.splitlines()[0] == f"prefix={lay.pc_prefix}", text
+
+
+@pytest.mark.parametrize("layout", ["install-prefix", "destdir"])
+def test_nothing_installed_names_a_path_it_was_not_installed_under(
+    world, layout
+):
     """Every installed text file, not just what one consumer happened to
     read: the .pc and the CMake config and targets files alike."""
     _, _, _, layouts = world
     lay = layouts[layout]
-    assert not lay.forbidden.exists()
     stale = [
         str(p.relative_to(lay.prefix))
         for p in lay.prefix.rglob("*")
@@ -286,31 +343,24 @@ def test_a_moved_prefix_names_nothing_from_where_it_was(world, layout):
 
 
 def test_the_pc_spells_an_absolute_libdir_once(world):
-    """`${exec_prefix}//abs` was the shape; an absolute libdir is written as
-    itself, and one under the prefix still relocates."""
+    """`${exec_prefix}//abs` was the shape; an absolute libdir is where the
+    files are whatever the prefix, so it is written as itself."""
     _, _, _, layouts = world
     for name in ("abs-libdir", "abs-libdir-outside"):
         lay = layouts[name]
-        text = (lay.libdir / "pkgconfig" / f"{PC_NAME}.pc").read_text()
+        text = _pc_file(lay).read_text()
         assert "}//" not in text, text
-    inside = layouts["abs-libdir"].libdir / "pkgconfig" / f"{PC_NAME}.pc"
-    assert "libdir=${exec_prefix}/lib64" in inside.read_text()
+        assert f"libdir={lay.libdir}\n" in text, text
 
 
 def test_a_system_prefix_emits_no_system_flags(world):
-    """Under a system prefix pkg-config must be able to drop -I/-L: it does
-    so only for a LITERAL system dir, and `${pcfiledir}/../..` is not one.
-    The env points pkg-config's system dirs at the stand-in prefix, as
-    /usr's are by default."""
+    """pkg-config drops -I/-L for its system dirs only when the .pc spells
+    them literally. The env points its system dirs at the stand-in prefix,
+    as /usr's are by default."""
     root, _, _, layouts = world
     lay = layouts["system-prefix"]
-    env = dict(os.environ)
-    env["PKG_CONFIG_PATH"] = str(lay.libdir / "pkgconfig")
-    env["PKG_CONFIG_SYSTEM_INCLUDE_PATH"] = str(lay.prefix / "include")
-    env["PKG_CONFIG_SYSTEM_LIBRARY_PATH"] = str(lay.libdir)
-    out = _run(
-        ["pkg-config", "--cflags", "--libs", PC_NAME], root, env
-    ).stdout.split()
+    cmd = ["pkg-config", "--cflags", "--libs", PC_NAME]
+    out = _run(cmd, root, _pc_env(lay)).stdout.split()
     assert not [f for f in out if f[:2] in ("-I", "-L")], out
     assert f"-l{NAME}" in out, out
 
@@ -320,7 +370,7 @@ def test_the_pc_has_no_empty_field_or_blank_tail(world, layout):
     """An optional field with nothing to say is left out rather than written
     as `URL:`, and the template's empty slots leave no blank lines."""
     _, _, _, layouts = world
-    text = (layouts[layout].libdir / "pkgconfig" / f"{PC_NAME}.pc").read_text()
+    text = _pc_file(layouts[layout]).read_text()
     empty = [ln for ln in text.splitlines() if re.fullmatch(r"[\w.]+:\s*", ln)]
     assert empty == [], empty
     assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-40:])

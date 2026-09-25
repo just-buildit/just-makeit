@@ -100,21 +100,25 @@ or at install time; both work:
 cmake --install build --prefix "$HOME/.local"
 ```
 
-The installed tree **locates itself**. The `.pc` computes its `prefix` from its
-own location (`${pcfiledir}`), and the CMake config does the same, so a prefix
-you copy, stage with `DESTDIR` or move afterwards keeps working. A
-`CMAKE_INSTALL_LIBDIR` given as an absolute path, as Nix and Guix do, is
-written as that path.
+The `.pc` names the prefix its files were **installed** under, as an absolute
+path, written at install time. So `cmake --install --prefix` is honoured, and
+under `/usr` pkg-config can leave out `-I/usr/include` and `-L/usr/lib...` as
+it does for every system package. A `CMAKE_INSTALL_LIBDIR` given as an
+absolute path, as Nix and Guix do, is written as that path.
 
-The exception is a **system prefix**, `/usr` by default. pkg-config leaves out
-`-I/usr/include` and `-L/usr/lib...` only when the `.pc` spells them
-literally. A self-locating `/usr` install would put them on every consumer's
-command line, which breaks `#include_next` and puts `/usr/lib` ahead of the
-consumer's own `-L`. So a prefix listed in `JM_PC_SYSTEM_PREFIXES` (a
-`;`-separated cache list) gets an absolute `.pc`. `/usr/local` is not in the
-default list, because pkgconf and pkg-config 0.29 both emit its flags anyway.
-To choose outright, pass `-DJM_PC_RELOCATABLE=ON` or `OFF`, which wins over
-the list either way.
+Relocating an installed tree is the **consumer's** side of pkg-config:
+
+| the tree was...        | the consumer runs                               |
+| ---------------------- | ----------------------------------------------- |
+| staged with `DESTDIR`  | `PKG_CONFIG_SYSROOT_DIR=<stage> pkg-config ...` |
+| moved after installing | `pkg-config --define-prefix ...`                |
+
+A staged `.pc` names the real target, not the staging directory, which is
+what a distribution package needs. `--define-prefix` derives the prefix from
+where the `.pc` now sits, which is right for `lib/pkgconfig`. It is wrong for
+a multiarch `lib/<triplet>/pkgconfig`, where pkg-config takes `lib` as the
+prefix: that is a pkg-config limitation, so reinstall instead. The CMake
+config needs neither, since it locates itself.
 
 ### Versions and ABI
 
