@@ -16,7 +16,7 @@ wrote the pre-schema-8 layout. Two things let that reach a tag:
 GATE: every ci.yml job but the aggregator and what runs after it feeds
       `CI passed`; ci.yml runs the artifact smoke from the wheel `make wheel`
       builds; no workflow step negates a grep of a file it has not proven
-      exists.
+      exists, or negates any command, which bash -e would not stop on.
 """
 
 from __future__ import annotations
@@ -124,4 +124,53 @@ def test_no_step_negates_a_grep_of_a_file_it_has_not_proven():
     assert bad == [], (
         "`! grep X path` passes when path does not exist (grep exits 2); "
         "precede it with `test -f path`:\n" + "\n".join(bad)
+    )
+
+
+_HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
+
+
+def inert_negations(script: str) -> "list[str]":
+    """The standalone ``! cmd`` lines of *script*, outside heredoc bodies.
+
+    GitHub runs a step with ``bash -e``, and bash exempts a ``!`` pipeline
+    from errexit: ``! grep X f`` exits 1 when X is found, and the step goes
+    on. Such a line fails the step only by being its last command, which the
+    next line appended silently undoes -- the ``--mutable`` NCO check was
+    inert that way, and wrong too, matching a getter that is const by
+    design (gh-1591 2b). Spell a negative check so it can fail:
+    ``if grep -q X f; then exit 1; fi``.
+
+    >>> inert_negations('! grep x a.h\\ngrep y a.h')
+    ['! grep x a.h']
+    >>> inert_negations('if grep -q x a.h; then exit 1; fi')
+    []
+    >>> inert_negations("python3 - <<'PY'\\n! not shell\\nPY")
+    []
+    """
+    bad = []
+    until = None
+    for line in script.splitlines():
+        if until is not None:
+            if line.strip() == until:
+                until = None
+            continue
+        m = _HEREDOC.search(line)
+        if m:
+            until = m.group(1)
+        if re.match(r"^\s*!\s+\S", line):
+            bad.append(line.strip())
+    return bad
+
+
+def test_no_step_has_a_negated_command_errexit_ignores():
+    bad = []
+    for wf in sorted(WF.glob("*.yml")):
+        for name, job in _jobs(wf.name).items():
+            for step in job.get("steps", []) or []:
+                for line in inert_negations(step.get("run") or ""):
+                    bad.append(f"{wf.name}:{name}: {line}")
+    assert bad == [], (
+        "bash -e does not stop on a failed `! cmd`, so this line cannot "
+        "fail its step; use `if cmd; then exit 1; fi`:\n" + "\n".join(bad)
     )
