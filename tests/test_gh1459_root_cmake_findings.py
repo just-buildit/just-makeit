@@ -69,6 +69,13 @@ SABOTAGE = {
     "msvc-runtime": r"set\(\s*CMAKE_MSVC_RUNTIME_LIBRARY\b[^)]*\)",
     "complex-range": r"add_compile_options\(\s*/clang:-fcx-limited-range\s*\)",
     "win-defines": r"\b_USE_MATH_DEFINES\b(?=\))",
+    "soversion": r"set_target_properties\(\s*p_lib\s+PROPERTIES\s+VERSION"
+    r"[^)]*\)",
+    "version-compat": r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}",
+    "build-tree-export": r"export\(\s*EXPORT[^)]*\)",
+    "pc-paths": r'set\(\s*JM_PC_PREFIX\s+"%JM_INSTALL_PREFIX%"\s*\)',
+    # Configure straight to the .pc, which is the pre-tidy shape.
+    "pc-fields": r'set\(\s*JM_PC_EXTRA_FIELDS\s+""\s*\)',
 }
 
 
@@ -164,12 +171,40 @@ def test_removing_a_fix_reports_exactly_that_fix(fresh, key):
             r"target_link_libraries\(\s*\$\{lib_target\}\s+PUBLIC[^)]*\)",
             "target_link_libraries(${lib_target} PUBLIC m)",
         ),
+        # gh-1582: the literal a 0.x project would write by hand.
+        (
+            "version-compat",
+            r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}",
+            "SameMinorVersion",
+        ),
     ],
 )
 def test_an_equivalent_spelling_is_not_reported(fresh, key, find, replace):
     text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
     assert len(re.findall(find, text, re.S)) == 1
     assert _keys(re.sub(find, lambda _m: replace, text, flags=re.S)) == []
+
+
+def test_pc_paths_without_the_install_time_write_is_missing(fresh):
+    """gh-1582: the variables alone leave the marker in the installed .pc;
+    the row needs the install(CODE) that replaces it too."""
+    text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert _keys(_drop(text, r"install\(\s*CODE\s*\[\[.*?\]\]\)")) == [
+        "pc-paths"
+    ]
+
+
+def test_same_major_version_is_right_from_one_point_oh(fresh):
+    """gh-1582: the row is about 0.x; a 1.x project's SameMajorVersion is
+    the correct choice, not a finding."""
+    text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
+    compat = r"(?<=COMPATIBILITY )\$\{JM_VERSION_COMPATIBILITY\}"
+    version = r"(?<=VERSION )0\.1\.0\b"
+    for pat in (compat, version):
+        assert len(re.findall(pat, text)) == 1, pat
+    zero = re.sub(compat, "SameMajorVersion", text)
+    assert _keys(zero) == ["version-compat"]
+    assert _keys(re.sub(version, "1.2.0", zero)) == []
 
 
 def test_a_static_name_equal_to_the_shared_one_is_the_collision(fresh):

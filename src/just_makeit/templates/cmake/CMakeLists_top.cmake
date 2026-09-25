@@ -15,6 +15,7 @@ endif()
 project(
   <<project_underscore>>
   VERSION <<version>>
+  DESCRIPTION "<<project>> C library"
   LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
@@ -130,6 +131,23 @@ endif()
 # elsewhere.
 set_target_properties(<<project_underscore>>_lib
                       PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# gh-1582: the ABI version. The shared library installs as lib<name>.so.X.Y.Z
+# with the soname lib<name>.so.<ABI> and a lib<name>.so link, so a release that
+# breaks the ABI installs BESIDE the old library instead of over it, and a
+# program linked against the old one keeps loading it. Under 0.x every minor
+# release may break (semver), so the ABI is major.minor there and major from
+# 1.0 on -- the rule find_package's version file below applies too. macOS takes
+# SOVERSION as the dylib's compatibility_version; a Windows DLL ignores it.
+if(PROJECT_VERSION_MAJOR EQUAL 0)
+  set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+  set(JM_VERSION_COMPATIBILITY SameMinorVersion)
+else()
+  set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR})
+  set(JM_VERSION_COMPATIBILITY SameMajorVersion)
+endif()
+set_target_properties(
+  <<project_underscore>>_lib PROPERTIES VERSION ${PROJECT_VERSION}
+                                        SOVERSION ${JM_ABI_VERSION})
 
 enable_testing()
 
@@ -172,10 +190,12 @@ configure_package_config_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
+# gh-1582: SameMinorVersion under 0.x, where a minor release may break; see
+# JM_ABI_VERSION above.
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+  COMPATIBILITY ${JM_VERSION_COMPATIBILITY})
 
 install(
   FILES
@@ -183,6 +203,67 @@ install(
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
-configure_file(cmake/<<project>>.pc.in <<project>>.pc @ONLY)
+# gh-1582: the build tree is a package too. The config and version files above
+# are written into it already; exporting the targets beside them lets a sibling
+# build use this one without installing it: `cmake
+# -D<<project_underscore>>_DIR=<this build dir>`.
+export(
+  EXPORT <<project_underscore>>-targets
+  FILE "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-targets.cmake"
+  NAMESPACE <<project_underscore>>::)
+
+# gh-1582: the .pc names where its files were ACTUALLY installed, as an
+# absolute prefix, and that is decided at INSTALL time -- `cmake --install
+# --prefix B` chooses the prefix then, and a configure-time prefix named one
+# where nothing was installed. DESTDIR is not part of it: a staged tree names
+# its real target, which is what a distribution package needs. Relocation is
+# the consumer's side of pkg-config: a moved tree is read with `pkg-config
+# --define-prefix`, a staged one with PKG_CONFIG_SYSROOT_DIR. An absolute
+# prefix is also what lets pkg-config drop -I/-L for its system dirs under
+# /usr, which it does only for a path spelled literally.
+#
+# A libdir or includedir given as an absolute path (GNUInstallDirs under Nix or
+# Guix) is where the files are whatever the prefix, so it is written as itself,
+# never as `${exec_prefix}//abs`; a relative one follows the prefix.
+set(JM_PC_PREFIX "%JM_INSTALL_PREFIX%")
+set(JM_PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+  set(JM_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+endif()
+set(JM_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+  set(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+endif()
+# gh-1582: the optional fields, each rendered only when it has something to
+# say, so no `.pc` carries an empty `URL:` or a blank line for an absent one.
+# The template puts this slot at the START of its `Version:` line and each
+# field ends its own line, so an empty slot leaves nothing behind. (A slot on a
+# line of its own cannot: configure_file ends every output line with a newline,
+# so an empty one is a blank line.) Requires.private / Libs.private are the
+# complete lines the external-deps block above sets.
+set(JM_PC_EXTRA_FIELDS "")
+if(NOT PROJECT_HOMEPAGE_URL STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "URL: ${PROJECT_HOMEPAGE_URL}\n")
+endif()
+if(NOT "${JM_PC_REQUIRES_PRIVATE}" STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_REQUIRES_PRIVATE}\n")
+endif()
+if(NOT "${JM_PC_LIBS_PRIVATE}" STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_LIBS_PRIVATE}\n")
+endif()
+configure_file(cmake/<<project>>.pc.in <<project>>.pc.configured @ONLY)
+# Runs at install time, before the install(FILES) below copies its result:
+# install rules run in the order they are declared, in one script, so the path
+# set by the first rule is seen by the second. The bracket argument is not
+# expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step has.
+# The configured path does not depend on the configuration, so a multi-config
+# generator installs the same.
+install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc\")")
+install(
+  CODE [[
+file(READ "${JM_PC_FILE}.configured" _jm_pc)
+string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
+file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
+]])
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

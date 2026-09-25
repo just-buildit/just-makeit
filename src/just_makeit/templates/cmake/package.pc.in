@@ -1,12 +1,10 @@
-prefix=@CMAKE_INSTALL_PREFIX@
+prefix=@JM_PC_PREFIX@
 exec_prefix=${prefix}
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+libdir=@JM_PC_LIBDIR@
+includedir=@JM_PC_INCLUDEDIR@
 
 Name: <<project>>
-Description: <<project>> C library
-Version: @PROJECT_VERSION@
+Description: @PROJECT_DESCRIPTION@
+@JM_PC_EXTRA_FIELDS@Version: @PROJECT_VERSION@
 Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@
 Cflags: -I${includedir}@JM_PC_CFLAGS@
-@JM_PC_REQUIRES_PRIVATE@
-@JM_PC_LIBS_PRIVATE@

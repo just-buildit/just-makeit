@@ -249,6 +249,84 @@ def _has_win_defines(r: Root) -> bool:
     return all(d in defined for d in _WIN_DEFINES)
 
 
+def _has_soversion(r: Root) -> bool:
+    return any(
+        c.name in ("set_target_properties", "set_property")
+        and r.shared in c.args
+        and "SOVERSION" in c.args
+        for c in r.calls
+    )
+
+
+def _version_file(r: Root) -> Optional[Call]:
+    for c in r.calls:
+        if c.name == "write_basic_package_version_file":
+            return c
+    return None
+
+
+def _major_zero(r: Root) -> bool:
+    for c in r.calls:
+        if c.name == "project":
+            return (_after(c.args, "VERSION") or "").startswith("0.")
+    return False
+
+
+def _has_zero_compat(r: Root) -> bool:
+    # Under 0.x a minor release may break, so SameMajorVersion (and the
+    # looser AnyNewerVersion) accept an incompatible install. A variable is
+    # the template's own spelling, which chooses by the major version.
+    c = _version_file(r)
+    got = _after(c.args, "COMPATIBILITY") if c else None
+    return bool(got) and got not in ("SameMajorVersion", "AnyNewerVersion")
+
+
+def _has_build_tree_export(r: Root) -> bool:
+    return any(c.name == "export" and "EXPORT" in c.args for c in r.calls)
+
+
+def _installs_export(r: Root) -> bool:
+    return any(
+        c.name == "install" and c.args[:1] == ("EXPORT",) for c in r.calls
+    )
+
+
+_PC_VARS = ("JM_PC_PREFIX", "JM_PC_LIBDIR", "JM_PC_INCLUDEDIR")
+
+
+def _has_pc_paths(r: Root) -> bool:
+    # The variables the .pc.in reads, AND an install(CODE) that fills in the
+    # prefix the files were installed under: the template sets JM_PC_PREFIX
+    # to a marker only that step replaces, so either half alone is broken.
+    defined = {c.args[0] for c in r.calls if c.args and c.name == "set"}
+    writes_at_install = any(
+        c.name == "install"
+        and "CODE" in c.args
+        and any("CMAKE_INSTALL_PREFIX" in w for w in c.args)
+        for c in r.calls
+    )
+    return writes_at_install and all(v in defined for v in _PC_VARS)
+
+
+def _configures_pc(r: Root) -> bool:
+    return any(
+        c.name == "configure_file"
+        and c.args[:1]
+        and c.args[0].endswith(".pc.in")
+        for c in r.calls
+    )
+
+
+def _has_pc_fields(r: Root) -> bool:
+    # The variable today's .pc.in ends in: the optional fields, each present
+    # only when set. Unset, the slot renders empty and every optional field
+    # -- URL, Requires.private, Libs.private -- is silently dropped.
+    return any(
+        c.name == "set" and c.args[:1] == ("JM_PC_EXTRA_FIELDS",)
+        for c in r.calls
+    )
+
+
 class Fix(NamedTuple):
     """One fix the root template carries outside jm's managed blocks.
 
@@ -339,6 +417,58 @@ FIXES: "tuple[Fix, ...]" = (
         + "): "
         "M_PI is undefined and every portable C99 call warns",
         _has_win_defines,
+    ),
+    Fix(
+        "soversion",
+        "gh-1582",
+        "Linux, macOS",
+        "the shared library has no VERSION/SOVERSION, so every release "
+        "installs over the last under one soname, and a program linked "
+        "against an older ABI silently loads the new one",
+        _has_soversion,
+        lambda r: bool(r.shared),
+    ),
+    Fix(
+        "version-compat",
+        "gh-1582",
+        "all",
+        "the package version file is SameMajorVersion under 0.x, so "
+        "find_package(<pkg> 0.1) accepts 0.2, whose minor release may break",
+        _has_zero_compat,
+        lambda r: _major_zero(r) and _version_file(r) is not None,
+    ),
+    Fix(
+        "build-tree-export",
+        "gh-1582",
+        "all",
+        "the targets are not export()ed into the build tree, so "
+        "find_package() finds the project only after it is installed",
+        _has_build_tree_export,
+        _installs_export,
+    ),
+    Fix(
+        "pc-paths",
+        "gh-1582",
+        "all",
+        "the .pc's prefix is not written at install time ("
+        + ", ".join(_PC_VARS)
+        + " and the install(CODE) that fills them): today's "
+        "cmake/<pkg>.pc.in writes no usable prefix without them, and the "
+        "older one names the CONFIGURED prefix, so `cmake --install "
+        "--prefix` leaves a .pc pointing where nothing was installed",
+        _has_pc_paths,
+        _configures_pc,
+    ),
+    Fix(
+        "pc-fields",
+        "gh-1582",
+        "all",
+        "JM_PC_EXTRA_FIELDS is not assembled: today's cmake/<pkg>.pc.in "
+        "carries URL, Requires.private and Libs.private only through it, so "
+        "without it they are dropped, and the older .pc.in writes an empty "
+        "`URL:` and blank lines where they are absent",
+        _has_pc_fields,
+        _configures_pc,
     ),
 )
 

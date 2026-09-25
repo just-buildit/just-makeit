@@ -39,13 +39,14 @@ ______________________________________________________________________
 ## The pkg-config Template (`mylib.pc.in`)
 
 ```ini
-prefix=@CMAKE_INSTALL_PREFIX@
+prefix=@PC_PREFIX@
 exec_prefix=${prefix}
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+libdir=@PC_LIBDIR@
+includedir=@PC_INCLUDEDIR@
 
 Name: mylib
-Description: One-line description of what the library does
+Description: @PROJECT_DESCRIPTION@
+URL: @PROJECT_HOMEPAGE_URL@
 Version: @PROJECT_VERSION@
 Requires: libzmq
 Requires.private: libfftw3
@@ -56,18 +57,29 @@ Cflags: -I${includedir}
 
 ### Anatomy
 
-- **`prefix`** — set from `@CMAKE_INSTALL_PREFIX@` at configure time.
-    The `${prefix}` variable lets consumers use
-    `pkg-config --define-variable=prefix=...` to relocate the package
-    without regenerating it.
-- **`libdir` / `includedir`** — built from `prefix` + the relative path
-    from `GNUInstallDirs`. Never hardcode these.
+- **`prefix`** — the absolute prefix the files were INSTALLED under, written
+    at install time. `configure_file` leaves a marker
+    (`prefix=%JM_INSTALL_PREFIX%`), and an `install(CODE)` declared before the
+    `install(FILES)` replaces it with `${CMAKE_INSTALL_PREFIX}` as the install
+    step sees it, so `cmake --install --prefix` is honoured. `DESTDIR` is not
+    part of it: a staged tree names its real target. An absolute prefix is
+    also what lets pkg-config drop `-I`/`-L` for its system dirs under
+    `/usr`, which it does only for a literal path. A `${pcfiledir}`-relative
+    prefix defeats that, so don't use one. Relocation belongs to the
+    consumer: `pkg-config --define-prefix` for a moved tree,
+    `PKG_CONFIG_SYSROOT_DIR` for a staged one (gh-1582).
+- **`libdir` / `includedir`** — `${exec_prefix}/@CMAKE_INSTALL_LIBDIR@` when
+    that is relative, and the path itself when it is absolute.
+    `GNUInstallDirs` may be given absolute paths (Nix and Guix do), and the
+    naive form then comes out as `${exec_prefix}//nix/store/.../lib`.
 - **`Requires`** — public dependencies: consumers need them at link time.
 - **`Requires.private`** — private dependencies: only needed when linking
     statically against your library. Omit from `Requires` to keep consumer
     link lines clean.
 - **`Libs.private`** — same idea for `-l` flags. `-lm` and `-lpthread`
-    almost always belong here, not in `Libs`.
+    usually belong here, not in `Libs` -- unless a public header calls into
+    them inline. jm's headers do (`step()` is `static inline`), so jm puts
+    `-lm` in `Libs` (gh-1452).
 
 ### Common Pitfalls
 
@@ -78,15 +90,29 @@ Cflags: -I${includedir}
 libdir=/usr/local/lib
 includedir=/usr/local/include
 
-# RIGHT — use variables
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+# RIGHT — the dirs follow the prefix, which is filled in at install
+prefix=@PC_PREFIX@
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
 ```
 
-**Using `@CMAKE_INSTALL_FULL_LIBDIR@` (the expanded absolute path).**
-This bakes the prefix in at configure time. The file will be wrong if
-the package is installed to a different prefix later (common with
-`DESTDIR` staging for distribution packages).
+**Baking in the configure-time `CMAKE_INSTALL_PREFIX`.**
+`cmake --install --prefix` chooses the prefix at install time, so a
+`.pc` written at configure time names a prefix where nothing was
+installed. Write the prefix from an `install(CODE)`.
+
+**A `${pcfiledir}`-relative prefix.** It survives a moved tree, but
+pkg-config then cannot recognise `/usr` as a system prefix: every
+consumer gets `-I/usr/include`, which breaks `#include_next`, and
+`-L/usr/lib` ahead of its own `-L`. Moving a tree is what
+`pkg-config --define-prefix` is for.
+
+**Writing an optional field that may be empty.** `URL: @PROJECT_HOMEPAGE_URL@`
+comes out as a bare `URL:` when `project()` has no `HOMEPAGE_URL`, and a slot
+on a line of its own leaves a blank line, because `configure_file` ends every
+output line with a newline. jm assembles the optional fields in CMake, each
+ending its own line and only when set (`JM_PC_EXTRA_FIELDS`), and puts that
+one slot at the start of the `Version:` line (gh-1582).
 
 **Over-populating `Requires`.**
 If your shared library links `libfftw3` with `PRIVATE` visibility, the
@@ -243,13 +269,15 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mylib
 )
 
-# 5. Generate and install the pkg-config file
-configure_file(
-    cmake/mylib.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
-    @ONLY
-)
-
+# 5. Generate the pkg-config file, and write its prefix at INSTALL time
+#    (the prefix `cmake --install --prefix` chose; not DESTDIR)
+set(PC_PREFIX "%INSTALL_PREFIX%")
+set(PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
+set(PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+configure_file(cmake/mylib.pc.in mylib.pc.configured @ONLY)
+install(CODE "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc.configured\" pc)
+string(REPLACE %INSTALL_PREFIX% \"\${CMAKE_INSTALL_PREFIX}\" pc \"\${pc}\")
+file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc\" \"\${pc}\")")
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
@@ -266,7 +294,11 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
 | `AnyNewerVersion`  | 2.0 satisfies a request for 1.0 (dangerous, avoid)       |
 | `ExactVersion`     | Only exact match (too strict for most use)               |
 
-`SameMajorVersion` is the right default for any library following semver.
+`SameMajorVersion` is the right default for a semver library at 1.0 or later.
+Under `0.x` semver lets any minor release break, so there it is
+`SameMinorVersion`. jm's root template picks by `PROJECT_VERSION_MAJOR` and
+sets the shared library's `SOVERSION` by the same rule (`0.y`, then `x`), so
+the soname and `find_package` agree about what is compatible (gh-1582).
 
 ### NAMESPACE Convention
 
@@ -390,8 +422,13 @@ ______________________________________________________________________
 - [ ] `install(TARGETS ... EXPORT ...)` with `LIBRARY`, `ARCHIVE`, `RUNTIME`
 - [ ] `install(EXPORT ... NAMESPACE mylib:: ...)` for the Targets file
 - [ ] `configure_package_config_file` (not `configure_file`) for the Config
-- [ ] `write_basic_package_version_file` with `SameMajorVersion`
-- [ ] `cmake/mylib.pc.in` uses `${prefix}` variables, not absolute paths
+- [ ] `write_basic_package_version_file`: `SameMinorVersion` under 0.x,
+    `SameMajorVersion` from 1.0
+- [ ] `VERSION` / `SOVERSION` on the shared library, by the same rule
+- [ ] `export(EXPORT ...)` so the build tree is a package too
+- [ ] `.pc` prefix: absolute, written at install time (honours
+    `--prefix`, not `DESTDIR`); libdir/includedir follow it unless they
+    were given as absolute paths
 - [ ] Private deps in `Requires.private` / `Libs.private`, not `Requires`
 - [ ] Post-install smoke test that covers both pkg-config and CMake consumers
 - [ ] Document the `PKG_CONFIG_PATH` and `CMAKE_PREFIX_PATH` overrides for
