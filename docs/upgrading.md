@@ -184,7 +184,20 @@ spelling to its new one. It is rewritten:
 - in every C and C++ file of the project -- the sacred `_core.h` /
     `_core.c`, module function sources, tests, benchmarks, `native/examples/`
     -- but not in a **nested project** (a directory with its own
-    `just-makeit.toml`), which its own `jm upgrade` moves.
+    `just-makeit.toml`), which its own `jm upgrade` moves;
+- in the **C your manifest holds** (gh-1653), which jm renders into the C
+    again whenever it re-renders from the manifest: every `*_impl` body, and
+    every state, init-param and method-param `type` -- a `depends_on`
+    sibling's `lo_state_t *` becomes `dp_lo_state_t *`. Each value is
+    replaced where it stands, so the file's layout and comments are kept.
+    An `*_impl_file = "path::fn"` whose file is one of the above has its
+    `fn` follow the file. Keys naming a function you wrote (`fn`,
+    `create_fn`, ...) are never touched;
+- in a **`JM_DEFINE_STEPS (fir, ...)`** call, whose first argument is the
+    stem the macro pastes `fir_step` / `fir_steps` / `fir_step_batch` from:
+    that argument moves, and so does your `fir_step_batch`. The bare stem
+    moves nowhere else -- `fir` is also a file, a directory and a Python
+    name.
 
 A second `jm upgrade` changes nothing. It prints the table as `old<TAB>new`
 lines, so the code jm does not own can follow from it:
@@ -194,8 +207,9 @@ jm upgrade | awk -F'\t' 'NF == 2'     # the rename table, as a TSV
 ```
 
 It will NOT touch: your own macros, another language's FFI declarations (a
-Rust `extern "C"` block), C in documentation code fences, or a nested
-project. Respell those from the table.
+Rust `extern "C"` block), C in documentation code fences, a nested project,
+or a manifest `replace = { ... }` table (gh-1656). Respell those from the
+table.
 
 Changing a prefix that is already applied (`a` to `b`), or removing the key
 from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it,
