@@ -123,6 +123,14 @@ PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
             ("method", "ser", "call", "--varargs"),
         ],
     ),
+    "kinds": (
+        ("kd",),
+        [
+            ("object", "clip", "--state", "gain:double:1.0"),
+            ("module", "own"),
+            ("object", "flag", "--module", "own", "--state", "n:int:0"),
+        ],
+    ),
     "mod": (
         ("md",),
         [
@@ -149,6 +157,63 @@ PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
 }
 
 
+#: Manifest tables a row needs that no CLI verb writes: the `kind` modules
+#: and `process_global`. Merged into the manifest after the CLI steps, then
+#: `apply` renders them -- the path a hand-edited manifest takes.
+MANIFEST: "dict[str, dict]" = {
+    "kinds": {
+        "flag": {"process_global": "true"},
+        "module": {
+            "playlist": {
+                "kind": "composer",
+                "backing": "playlist",
+                "composes": ["clip"],
+                "source": {
+                    "object": "clip",
+                    "struct": "clip_t",
+                    "type_name": "Clip",
+                    "fields": [
+                        {"name": "gain", "type": "double", "default": "1.0"}
+                    ],
+                    "generates": {
+                        "generator": "clip",
+                        "bridge_fn": "clip_from_source",
+                    },
+                    "computed": [
+                        {"name": "dur", "type": "double", "fn": "clip_dur"}
+                    ],
+                },
+                "segment": {
+                    "type_name": "Track",
+                    "struct": "track_t",
+                    "sources": "multi",
+                    "fields": [{"name": "n", "type": "size_t"}],
+                },
+                "oo": {"composer_type_name": "Mix"},
+            },
+            "hand": {
+                "kind": "handle",
+                "backing": "b",
+                "header": "kd/b.h",
+                "type_name": "H",
+                "close_fn": "b_close",
+                "create_fn": "b_open",
+                "create_args": [],
+                "depends_on": [{"name": "flag", "link": True}],
+            },
+        },
+    },
+}
+
+
+def _merge(dst: dict, src: dict) -> None:
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _merge(dst[k], v)
+        else:
+            dst[k] = v
+
+
 def build(where: Path) -> "dict[str, Path]":
     """Scaffold every project in :data:`PROJECTS` under *where*, then
     ``apply`` each, and return ``{row: project root}``.
@@ -164,6 +229,12 @@ def build(where: Path) -> "dict[str, Path]":
         for step in steps:
             r = run_cli(*step, cwd=root)
             assert r.returncode == 0, f"{row}: {step}: {r.stdout}{r.stderr}"
+        if row in MANIFEST:
+            from just_makeit import _config as C
+
+            cfg = C.load(root)
+            _merge(cfg, MANIFEST[row])
+            C.save(root, cfg)
         r = run_cli("apply", cwd=root)
         assert r.returncode == 0, f"{row}: apply: {r.stdout}{r.stderr}"
         roots[row] = root
