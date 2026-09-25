@@ -404,7 +404,14 @@ pa_fir_state_t *a = pa_fir_create (2.0);
 pb_fir_state_t *b = pb_fir_create (2.0);
 ```
 
-Set it with `jm new --c-prefix dp`. On an existing project it renames every
+**A new project has one by default:** `jm new dsp` writes `c_prefix = "dsp"`, so its symbols are `dsp_<comp>_*` from the first file. Pick a
+shorter one with `jm new --c-prefix dp`, or keep today's bare names with
+`--no-c-prefix`. A manifest you write by hand spells a sibling component's
+derived names prefixed too -- `type = "dsp_lfo_state_t *"`,
+`create_impl = "obj->osc = dsp_lfo_create(...)"`.
+
+A project made before this default has no key, and keeps its bare names
+until you add one. Adding it renames every
 derived symbol, which your C (the sacred `_core.h` / `_core.c`, module
 function sources, tests and benchmarks) must follow: `apply` refuses, naming
 each file and the old names it still spells, until `jm upgrade` respells
