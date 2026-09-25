@@ -108,12 +108,6 @@ EOF
 # the run until it is removed, so the list only shrinks. Each issue's fix
 # removes its entry.
 KNOWN_BROKEN=" disjoint-install prefixed-include " # gh-1583
-# gh-1594: the installed dylib's install name is @rpath/..., so a program
-# linked by pkg-config (no LC_RPATH) cannot load it. find_package programs
-# carry CMake's build rpath and are unaffected.
-if [[ $(uname -s) == Darwin ]]; then
-    KNOWN_BROKEN+=" pc-dylib-install-name "
-fi
 
 expect() { # id, description, command...
     local id=$1 what=$2
@@ -264,14 +258,13 @@ EOF
         # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
         $CC "$dir/only.c" $link $(pkg-config $static --cflags --libs "$name") \
             -o "$dir/only-pc$static"
-        check "pkg-config $static $link: $name alone" "$dir/only-pc$static" 3 \
-            pc-dylib-install-name
+        check "pkg-config $static $link: $name alone" "$dir/only-pc$static" 3
         # shellcheck disable=SC2046,SC2086
         $CC "$dir/both.c" $link \
             $(pkg-config $static --cflags --libs "$name" alpha) \
             -o "$dir/both-pc$static"
         check "pkg-config $static $link: $name + alpha" \
-            "$dir/both-pc$static" 1,2 pc-dylib-install-name
+            "$dir/both-pc$static" 1,2
     done
     for p in only both; do
         cmake -S "$dir/$p" -B "$dir/$p/build" >/dev/null
