@@ -109,7 +109,11 @@ class TestRenderDecode:
     def test_jm_does_not_declare_entry_fn(self):
         # the entry_fn/struct are the user's — jm emits no _core.h decl for them.
         _fn_c, _expr, decls = K.render_decode(
-            "gizmo", "Gizmo", dict(_PROP), _CODEC
+            "gizmo",
+            "Gizmo",
+            dict(_PROP),
+            _CODEC,
+            csym="gizmo",
         )
         assert decls == []
 

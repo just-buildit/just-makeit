@@ -739,12 +739,13 @@ def property_doc(
 
     Examples
     --------
-    >>> property_doc("psd", {"name": "nfft", "doc": "Transform length."}, {})
+    >>> property_doc("psd", {"name": "nfft", "doc": "Transform length."}, {},
+    ...              csym="psd")
     ('Transform length.', False)
-    >>> property_doc("psd", {"name": "nfft"}, {})
+    >>> property_doc("psd", {"name": "nfft"}, {}, csym="psd")
     ('Nfft.', True)
     >>> blocks = {struct_members_key(): {"psd_state_t": {"n": "Frame len."}}}
-    >>> property_doc("psd", {"name": "n"}, blocks)
+    >>> property_doc("psd", {"name": "n"}, blocks, csym="psd")
     ('Frame len.', False)
     """
     name = str(prop.get("name") or "")
@@ -783,9 +784,10 @@ def method_doc(
 
     Examples
     --------
-    >>> method_doc("psd", {"name": "sfdr", "doc": "Spur-free range."}, {})
+    >>> method_doc("psd", {"name": "sfdr", "doc": "Spur-free range."}, {},
+    ...            csym="psd")
     ('Spur-free range.', False)
-    >>> method_doc("psd", {"name": "sfdr"}, {})
+    >>> method_doc("psd", {"name": "sfdr"}, {}, csym="psd")
     ('Sfdr.', True)
     """
     from ._config import method_c_symbol
