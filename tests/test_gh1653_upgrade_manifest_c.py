@@ -49,7 +49,7 @@ def test_the_manifests_c_is_respelled(tree):
     root, *_ = tree
     frag = (root / "objects" / "mixer.toml").read_text()
     assert f'type = "{P}_lo_state_t *"' in frag, frag
-    assert f"obj->osc = {P}_lo_create(2.0f);" in frag, frag
+    assert f"{P}_lo_state_t *lo = {P}_lo_create(2.0f);" in frag, frag
     assert f"{P}_lo_destroy(state->osc);" in frag, frag
 
 
@@ -69,9 +69,11 @@ def test_the_macro_stem_and_step_batch_are_respelled(tree):
 
 
 def test_the_bare_stem_moves_nowhere_else(tree):
-    """`lo` alone is also a file stem, a directory, a CMake target and a
-    Python module: only the macro argument is the symbol stem."""
+    """`lo` alone is also a local, a file stem, a directory, a CMake target
+    and a Python module: only the macro argument is the symbol stem."""
     root, *_ = tree
+    frag = (root / "objects" / "mixer.toml").read_text()
+    assert "obj->osc = lo;" in frag, frag
     assert (root / "native" / "src" / "lo" / "lo_core.c").is_file()
     c = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
     assert '#include "q/lo/lo_core.h"' in c, c

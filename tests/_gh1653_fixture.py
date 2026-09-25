@@ -9,6 +9,8 @@
   `lo_step_batch`, which no render declares but the macro pastes.
 - An author macro and a comment that quote `lo_state_t` / `lo_create`, which
   must not move.
+- A local named after the component, `lo`: the bare stem, in code, outside
+  the macro -- which must not move either.
 
 Built by running jm (`_new.run`, the CLI, `apply`), never hand-written; the
 author edits are the ones a person makes by hand.
@@ -32,8 +34,9 @@ mutable = "true"
 depends_on = [{ name = "lo", link = true }]
 
 create_impl = """
-obj->osc = lo_create(2.0f); /* lo_create: quoted in a comment */
-if (!obj->osc) { free(obj); return NULL; }
+lo_state_t *lo = lo_create(2.0f); /* lo_create: quoted in a comment */
+if (!lo) { free(obj); return NULL; }
+obj->osc = lo;
 """
 destroy_impl = """
 lo_destroy(state->osc);
@@ -44,6 +47,12 @@ name = "osc"
 type = "lo_state_t *"
 opaque = true
 '''
+
+#: The mixer's sacred files: every line of C in them came from MIXER_TOML.
+MIXER_SACRED = (
+    "native/inc/q/mixer/mixer_core.h",
+    "native/src/mixer/mixer_core.c",
+)
 
 AUTHOR_MACRO = "#define LO_STATE_MAGIC 0x10 /* an author macro: lo_state_t */"
 

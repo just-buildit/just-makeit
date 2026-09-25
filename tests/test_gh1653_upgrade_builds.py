@@ -9,7 +9,8 @@ state struct (a manifest `type`), on `lo_create` in its `create()` (a
 manifest `create_impl`), and on `lo_steps` / `lo_step_batch` the macro
 pasted from its unmoved `lo` argument.
 
-GATE: set `c_prefix` -> `jm upgrade` -> `jm apply` -> CMake build, ctest,
+GATE: set `c_prefix` -> `jm upgrade` -> the mixer's sacred files rendered
+      again from its manifest by `jm apply` -> CMake build, ctest,
       `jm test` (build + import + pytest), and every defined global in
       lib<pkg> starts with the prefix.
 """
@@ -32,30 +33,61 @@ def _run(cmd, cwd):
     r = subprocess.run(
         [str(c) for c in cmd], cwd=cwd, capture_output=True, text=True
     )
-    assert r.returncode == 0, (cmd, r.stdout[-3000:], r.stderr[-3000:])
-    return r.stdout
+    return r.returncode, r.stdout[-3000:] + r.stderr[-3000:]
+
+
+# The fixtures record every step and assert nothing: a step failing inside a
+# fixture reports as a setup ERROR, which names no test, so a sabotage that
+# breaks the build would read as the gate never having run (gh-1430). Each
+# test asserts the steps it needs instead.
 
 
 @pytest.fixture(scope="module")
 def upgraded(tmp_path_factory):
     root = FX.build(tmp_path_factory.mktemp("g1653b"))
     FX.set_prefix(root)
-    for cmd in ("upgrade", "apply"):
-        r = run_cli(cmd, cwd=root)
-        assert r.returncode == 0, (cmd, r.stdout + r.stderr)
-    return root
+    steps = []
+    r = run_cli("upgrade", cwd=root)
+    steps.append(("upgrade", r.returncode, r.stdout + r.stderr))
+    # The mixer's author C lives ONLY in its manifest. On the upgraded tree
+    # its sacred files already exist, and the C-file respell (phase 3) fixes
+    # them, so a stale manifest is latent: it bites whenever jm renders from
+    # the manifest again -- here `apply` restoring files that are missing,
+    # the path the issue measured. Deleting them makes the manifest the
+    # only source of the mixer's C.
+    for rel in FX.MIXER_SACRED:
+        (root / rel).unlink()
+    r = run_cli("apply", cwd=root)
+    steps.append(("apply", r.returncode, r.stdout + r.stderr))
+    for rel in FX.MIXER_SACRED:
+        steps.append((f"{rel} restored", int(not (root / rel).is_file()), ""))
+    return root, steps
 
 
 @pytest.fixture(scope="module")
 def built(upgraded):
-    b = upgraded / "b"
-    _run(["cmake", "-S", ".", "-B", b, "-DBUILD_PYTHON=OFF"], upgraded)
-    _run(["cmake", "--build", b], upgraded)
-    return b
+    root, steps = upgraded
+    b = root / "b"
+    steps = list(steps)
+    for cmd in (
+        ["cmake", "-S", ".", "-B", b, "-DBUILD_PYTHON=OFF"],
+        ["cmake", "--build", b],
+        ["ctest", "--test-dir", b, "--output-on-failure"],
+    ):
+        rc, out = _run(cmd, root)
+        steps.append((cmd[:2], rc, out))
+        if rc:
+            break
+    return root, b, steps
 
 
-def test_the_upgraded_tree_builds_and_its_c_tests_pass(upgraded, built):
-    _run(["ctest", "--test-dir", built, "--output-on-failure"], upgraded)
+def _ok(steps):
+    for what, rc, out in steps:
+        assert rc == 0, (what, out)
+
+
+def test_the_upgraded_tree_builds_and_its_c_tests_pass(built):
+    _ok(built[2])
 
 
 @pytest.mark.skipif(
@@ -63,12 +95,16 @@ def test_the_upgraded_tree_builds_and_its_c_tests_pass(upgraded, built):
     reason="COFF import libraries carry __imp_ stubs, not the export table "
     "this reads; tests/test_gh1591_c_prefix_nm.py documents the same split",
 )
-def test_every_export_carries_the_prefix(upgraded, built):
+def test_every_export_carries_the_prefix(built):
+    root, b, steps = built
+    _ok(steps)
     assert shutil.which("nm"), "nm is required on this host"
-    static = list(built.rglob("libq.a"))
-    assert static, sorted(built.rglob("libq*"))
+    static = list(b.rglob("libq.a"))
+    assert static, sorted(b.rglob("libq*"))
+    rc, out = _run(["nm", "-g", static[0]], root)
+    assert rc == 0, out
     syms = set()
-    for line in _run(["nm", "-g", static[0]], upgraded).splitlines():
+    for line in out.splitlines():
         parts = line.split()
         if len(parts) == 3 and parts[1] not in ("U", "w", "v"):
             name = parts[2]
@@ -84,5 +120,7 @@ def test_every_export_carries_the_prefix(upgraded, built):
 
 
 def test_the_upgraded_tree_imports_and_its_python_tests_pass(upgraded):
-    r = run_cli("test", cwd=upgraded)
+    root, steps = upgraded
+    _ok(steps)
+    r = run_cli("test", cwd=root)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
