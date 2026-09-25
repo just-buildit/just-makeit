@@ -278,7 +278,13 @@ TEST_ALL_DEPS = test test-examples
 # name -- so `gates-home-check` (the reverse direction of `gates-check`, added
 # to the standard for just-makeit#1158) reports it, correctly, and it is named
 # in GATES_LOCAL_ONLY below with the reason.
-GATES_DEPS    = lint test test-examples coverage-gate bench docs-check
+#
+# `consumer-smoke` (gh-1590) is a gate CI runs by name. Locally it installs to
+# a temp prefix and consumes with the documented hints; only CI, on a
+# throwaway runner, installs to the default prefix with none
+# (CONSUMER_SMOKE_DEFAULT_PREFIX=1) -- so `make gates` never sudo-installs.
+GATES_DEPS    = lint test test-examples coverage-gate bench docs-check \
+                consumer-smoke
 
 # `docs-check` is a pre-push AGGREGATE, and every check it performs already
 # gates a merge under another name -- measured rather than assumed:
