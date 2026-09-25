@@ -152,20 +152,51 @@ In the project, `jm upgrade` renames `cmake/my-proj.pc.in` to
 `cmake/my_proj.pc.in` (its edits, and jm's ownership of it, come along);
 until then `apply` leaves both names alone and `status` names the old one.
 
-## A C symbol prefix on an existing project (gh-1591)
+## Symbol prefix (gh-1591)
 
 `[project] c_prefix` renames every C symbol jm derives
 ([c-library](c-library.md#two-packages-one-program)). A project created with
-`jm new --c-prefix` is prefixed from its first file. Adding the key to an
-existing project renames symbols your own C already calls, so `apply` refuses
-it -- naming each file (the sacred `_core.h` / `_core.c`, module function
-sources, tests, benchmarks) and the unprefixed names it still spells -- and
-writes nothing.
+`jm new --c-prefix` is prefixed from its first file. On an existing project
+the key renames symbols your own C already calls, so until that C follows,
+`apply` refuses -- naming each file and the old names it still spells -- and
+writes nothing. `jm upgrade` moves it:
 
-`jm upgrade` will respell those files for you; that support is coming. Until
-then, respell the names `apply` lists by hand, or leave the key out. The
-names are matched case-sensitively and as whole identifiers, so your own
-macros (`FIR_STATE_MAGIC`) are never among them.
+```sh
+# 1. set the key in just-makeit.toml:   [project]  c_prefix = "dp"
+jm upgrade    # respells your C, then prints each file and the rename table
+# 2. review the files it printed
+jm apply      # regenerates the glue onto the prefix
+# 3. rebuild and run your tests
+```
+
+The rename set is not a pattern: it is exactly the identifiers jm's render
+of your manifest declares prefixed -- `fir_create`, `fir_state_t`,
+`FIR_CORE_H`, a method's `fir_<name>`, a module function `mix` -- each old
+spelling to its new one. It is rewritten:
+
+- in **code only**: a comment or string literal that quotes `fir_create`
+    keeps it (gh-1382);
+- as **whole identifiers, case-sensitively**: `fir_state_t` moves; your own
+    `FIR_STATE_MAGIC`, or a `fir_create_default` you wrote, does not;
+- in every C and C++ file of the project -- the sacred `_core.h` /
+    `_core.c`, module function sources, tests, benchmarks, `native/examples/`
+    -- but not in a **nested project** (a directory with its own
+    `just-makeit.toml`), which its own `jm upgrade` moves.
+
+A second `jm upgrade` changes nothing. It prints the table as `old<TAB>new`
+lines, so the code jm does not own can follow from it:
+
+```sh
+jm upgrade | awk -F'\t' 'NF == 2'     # the rename table, as a TSV
+```
+
+It will NOT touch: your own macros, another language's FFI declarations (a
+Rust `extern "C"` block), C in documentation code fences, or a nested
+project. Respell those from the table.
+
+Changing a prefix that is already applied (`a` to `b`), or removing the key
+from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it,
+naming the component and the prefix its header already carries (gh-1650).
 
 ## Packaging (`adopt --packaging`)
 

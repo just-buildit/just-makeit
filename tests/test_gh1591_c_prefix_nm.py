@@ -62,11 +62,35 @@ def _defined(nm_out: str) -> "set[str]":
     return out
 
 
-@pytest.fixture(scope="module")
-def libs(tmp_path_factory):
+def _upgraded(where):
+    """The fixture built BARE, then moved onto ``c_prefix = "zz"`` by `jm
+    upgrade` and `apply` -- gh-1591 phase 3's path."""
+    from _jmrun import run_cli
+
+    roots = FX.build(where)
+    for row in ROWS:
+        root = roots[row]
+        toml = root / C.FILENAME
+        text = toml.read_text(encoding="utf-8")
+        toml.write_text(
+            text.replace("[project]\n", '[project]\nc_prefix = "zz"\n', 1),
+            encoding="utf-8",
+        )
+        for cmd in ("upgrade", "apply"):
+            r = run_cli(cmd, cwd=root)
+            assert r.returncode == 0, (row, cmd, r.stdout + r.stderr)
+    return roots
+
+
+@pytest.fixture(scope="module", params=["fresh", "upgraded"])
+def libs(tmp_path_factory, request):
     assert shutil.which("nm"), "nm is required on this host"
-    roots = FX.build(tmp_path_factory.mktemp("nm"), "--c-prefix", "zz")
-    out = {}
+    where = tmp_path_factory.mktemp(f"nm-{request.param}")
+    if request.param == "fresh":
+        roots = FX.build(where, "--c-prefix", "zz")
+    else:
+        roots = _upgraded(where)
+    out = {"_roots": roots}
     for row in ROWS:
         root = roots[row]
         b = root / "b"
@@ -99,3 +123,28 @@ def test_every_export_carries_the_prefix(libs, row):
         f"{row}: lib exports symbols without the c_prefix and not named by "
         f"the manifest: {bad}"
     )
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        pytest.param(
+            "std",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="gh-1651: apply drops --class-name from the module "
+                "init, so `from std import Renamed` fails -- with or without "
+                "a prefix",
+            ),
+        ),
+        *[r for r in ROWS if r != "std"],
+    ],
+)
+def test_it_builds_tests_and_imports(libs, row):
+    """`jm test`: the CMake build with the Python extension, ctest, and the
+    generated pytest suite, which imports every class -- the declarations
+    the upgrade respelled and the definitions it respelled agree."""
+    from _jmrun import run_cli
+
+    r = run_cli("test", cwd=libs["_roots"][row])
+    assert r.returncode == 0, (row, r.stdout[-3000:] + r.stderr[-3000:])

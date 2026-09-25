@@ -8,5 +8,5 @@
     name that already starts with the prefix keeps it once (`dp_tlm` stays
     `dp_tlm_create`). `apply` refuses two names that derive one symbol, and
     refuses the key on an existing project whose C still spells the
-    unprefixed names, naming each file; `jm upgrade` support for that
-    respell is coming. Without the key nothing changes.
+    unprefixed names, naming each file, until `jm upgrade` respells it.
+    Without the key nothing changes.
