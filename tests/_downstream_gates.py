@@ -94,7 +94,9 @@ def findings(root: Path) -> "set[str]":
             # file is one file for every platform.
             return text.replace(os.sep, "/") if os.sep != "/" else text
 
-        st = run_cli("status", "--check", cwd=proj)
+        # `--diff` changes no section and no exit code; it is here so a new
+        # finding's output shows WHAT differs, not only which file.
+        st = run_cli("status", "--check", "--diff", cwd=proj)
         if st.returncode != 0:
             # gh-1619: kept, so a new status finding names its files in the
             # CI log rather than only its section.
