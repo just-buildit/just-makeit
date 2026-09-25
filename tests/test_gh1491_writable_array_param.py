@@ -62,7 +62,7 @@ def _project(tmp_path: Path) -> Path:
     Each takes ``x`` (input) and ``buf`` (the caller's buffer), declared
     through the CLI, so the flag is part of what is under test.
     """
-    assert run_cli("new", "p", cwd=tmp_path).returncode == 0
+    assert run_cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
     proj = tmp_path / "p"
     for args in (
         ("module", "m"),
@@ -197,7 +197,9 @@ class TestTheScriptReplaysIt:
         fragment is not rewritten by a later `apply` (gh-1448), and a test
         that flipped the key after scaffolding asserted on stale text.
         """
-        assert run_cli("new", "p", cwd=tmp_path).returncode == 0
+        assert (
+            run_cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
+        )
         proj = tmp_path / "p"
         for args in (
             ("module", "m"),

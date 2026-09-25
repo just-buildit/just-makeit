@@ -426,31 +426,6 @@ def _merge_struct_fields(new_fields: str, old_fields: str) -> str:
     return new_fields.rstrip("\n") + "\n" + "\n".join(extra)
 
 
-def _step_func_span(source: str, comp: str) -> tuple[int, int] | None:
-    """(start, end) spanning the inline ``<comp>_step`` name, parameter list
-    and body, or None when there is no inline step definition.
-
-    The leading ``JM_FORCEINLINE``/return-type line is excluded so it stays
-    in sync with the template; the name onward (including a hand-edited
-    non-const ``state`` parameter) is preserved.
-    """
-    pat = re.compile(r"\b" + re.escape(comp) + r"_step\s*\(")
-    for m in pat.finditer(source):
-        i = m.end()
-        depth = 1
-        while i < len(source) and depth:
-            if source[i] == "(":
-                depth += 1
-            elif source[i] == ")":
-                depth -= 1
-            i += 1
-        while i < len(source) and source[i] in " \t\r\n":
-            i += 1
-        if i < len(source) and source[i] == "{":
-            return m.start(), _matching_brace(source, i)
-    return None
-
-
 # Qualifiers that decorate a prototype without changing the function it
 # declares. The user may add `JM_RESTRICT` (perf) or drop a `const` on a
 # mutable buffer param to their hand-tuned header decl; `apply` must treat such
@@ -784,8 +759,11 @@ def _inject_struct_field(path: Path, comp: str, field_decl: str) -> bool:
     # the brace's indent stuck in front of the field (double-indented it) and
     # de-indented the closing brace — mangling any struct nested inside an
     # `extern "C"` block (e.g. doppler's acq_state_t).
+    # The SYMBOL stem (gh-1591): the struct is `<p>_<comp>_state_t` under a
+    # c_prefix, and the bare match silently added nothing.
     close_re = re.compile(
-        rf"^([ \t]*)\}}[ \t]*{re.escape(comp)}_state_t;", re.MULTILINE
+        rf"^([ \t]*)\}}[ \t]*{re.escape(CSYM.stem(path, comp))}_state_t;",
+        re.MULTILINE,
     )
     m = close_re.search(text)
     if not m:

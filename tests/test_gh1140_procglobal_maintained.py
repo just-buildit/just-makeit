@@ -69,7 +69,7 @@ def project(tmp_path: Path) -> Path:
     exist at all. A standalone `solo` is here so that a finding about a module
     object is visibly not a finding about every component.
     """
-    assert _cli("new", "pgdemo", cwd=tmp_path).returncode == 0
+    assert _cli("new", "pgdemo", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "pgdemo"
     for mod in ("own", "other"):
         assert _cli("module", mod, cwd=root).returncode == 0

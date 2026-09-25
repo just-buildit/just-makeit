@@ -52,7 +52,7 @@ _KINDS = [
 
 
 def _new(base: Path) -> Path:
-    r = run_cli("new", "p", cwd=base)
+    r = run_cli("new", "p", "--no-c-prefix", cwd=base)
     assert r.returncode == 0, r.stderr
     return base / "p"
 

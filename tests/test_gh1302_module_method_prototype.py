@@ -72,7 +72,7 @@ def _header(root: Path) -> Path:
 @pytest.fixture
 def project(tmp_path) -> Path:
     """A MODULE object with a TOML-declared method."""
-    assert _cli("new", "z", cwd=tmp_path).returncode == 0
+    assert _cli("new", "z", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "z"
     assert _cli("module", "m", cwd=root).returncode == 0
     assert (
@@ -119,7 +119,7 @@ class TestThePrototypeArrives:
 
     def test_the_standalone_path_is_unchanged(self, tmp_path):
         """It always worked there; this must not have moved it."""
-        assert _cli("new", "z", cwd=tmp_path).returncode == 0
+        assert _cli("new", "z", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "z"
         assert (
             _cli("object", "o", "--state", "n:int:0", cwd=root).returncode == 0

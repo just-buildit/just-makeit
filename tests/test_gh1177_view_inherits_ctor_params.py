@@ -60,7 +60,7 @@ def _build(tmp_path: Path, *, view_brief: str = "") -> Path:
     A fixture that edits only the ``@param`` reproduces nothing, at any
     version. That cost a first repro attempt here.
     """
-    assert _cli("new", "d", cwd=tmp_path).returncode == 0
+    assert _cli("new", "d", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "d"
     assert _cli("module", "tr", cwd=root).returncode == 0
     assert (
@@ -206,7 +206,7 @@ class TestZeroChurn:
         """`_docsync` refreshes a `tp_doc` only while `_is_generic_tp_doc`
         recognises it, so widening the runtime gate must not turn the bare
         placeholder into a full block for a view that documents nothing."""
-        assert _cli("new", "e", cwd=tmp_path).returncode == 0
+        assert _cli("new", "e", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "e"
         assert _cli("module", "tr", cwd=root).returncode == 0
         assert (

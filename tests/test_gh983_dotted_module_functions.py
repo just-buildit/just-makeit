@@ -77,7 +77,7 @@ def _cli(*args, cwd) -> JmRun:
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
-    assert _cli("new", "p", cwd=tmp_path).returncode == 0
+    assert _cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "p"
     assert _cli("module", DOTTED, cwd=root).returncode == 0
     return root
@@ -286,7 +286,7 @@ def test_the_flat_case_is_untouched(project: Path, tmp_path: Path):
     """cname == leaf == pypath == id for a dotless module, so every path this
     fix rewrote must land where it always did. A rename that broke the common
     case while fixing the rare one would pass every assertion above."""
-    assert _cli("new", "q", cwd=tmp_path).returncode == 0
+    assert _cli("new", "q", "--no-c-prefix", cwd=tmp_path).returncode == 0
     flat = tmp_path / "q"
     assert _cli("module", "filters", cwd=flat).returncode == 0
     assert (

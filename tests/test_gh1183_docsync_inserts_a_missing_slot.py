@@ -68,7 +68,7 @@ def project(tmp_path: Path) -> Path:
     generic placeholder, and an assertion on it cannot pass by accident. `o`
     itself carries a method and a property so all three slot kinds exist.
     """
-    assert _cli("new", "sw", cwd=tmp_path).returncode == 0
+    assert _cli("new", "sw", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "sw"
     for step in (
         ("module", "m"),

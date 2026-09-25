@@ -49,7 +49,7 @@ def _cli(*args, cwd) -> JmRun:
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """One object, two `field = true` properties, one comment form each."""
-    assert _cli("new", "d", cwd=tmp_path).returncode == 0
+    assert _cli("new", "d", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "d"
     assert _cli("object", "o", cwd=root).returncode == 0
     for name in ("span", "width"):
@@ -108,7 +108,7 @@ class TestBothCommentForms:
     ) -> None:
         """Both on one member: the trailing comment is attached to that
         declaration specifically, so it wins."""
-        assert _cli("new", "e", cwd=tmp_path).returncode == 0
+        assert _cli("new", "e", "--no-c-prefix", cwd=tmp_path).returncode == 0
         root = tmp_path / "e"
         assert _cli("object", "o", cwd=root).returncode == 0
         assert (

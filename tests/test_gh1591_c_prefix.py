@@ -154,7 +154,7 @@ def test_an_existing_tree_that_adds_the_key_is_refused(tmp_path):
     """Its sacred C still spells the unprefixed names, and would not link
     against the render. Case-sensitive and whole identifiers: the author's
     own `FIR_STATE_MAGIC` beside the derived `fir_state_t` is not jm's."""
-    root = _new(tmp_path, "old", "--object", "fir")
+    root = _new(tmp_path, "old", "--no-c-prefix", "--object", "fir")
     h = next((root / "native" / "inc").rglob("fir_core.h"))
     h.write_text(
         h.read_text().replace(

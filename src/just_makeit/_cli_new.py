@@ -41,6 +41,7 @@ def run(args: list[str]) -> None:
     windows = False
     c_style = ""
     c_prefix: str | None = None
+    no_c_prefix = False
 
     remaining = args[1:]
     i = 0
@@ -166,6 +167,11 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             c_prefix = remaining[i]
             i += 1
+        elif tok == "--no-c-prefix":
+            # gh-1591: opt out of the default below -- bare derived names,
+            # as every project had before it.
+            no_c_prefix = True
+            i += 1
         elif tok == "--fragments":
             # Deprecated no-op: fragments is the default layout now.
             i += 1
@@ -231,6 +237,20 @@ def run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    if no_c_prefix and c_prefix is not None:
+        print(
+            "error: --c-prefix and --no-c-prefix are mutually exclusive.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # gh-1591 (decided on the issue): a NEW project is namespaced from its
+    # first file, by its package name, so it never needs `jm upgrade`'s
+    # respell. Here and not in `_new.run`, which `apply`'s replay calls with
+    # the real project's own key -- an existing project without one must
+    # replay bare, not acquire this default.
+    if c_prefix is None and not no_c_prefix:
+        c_prefix = project
 
     if windows:
         from . import _report

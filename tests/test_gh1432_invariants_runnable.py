@@ -77,7 +77,7 @@ def _project(tmp_path: Path, *, real_kernels: bool) -> Path:
     """A module object with a record written AND read -- the pair shape."""
     root = tmp_path / "w"
     root.mkdir()
-    assert run_cli("new", "q", cwd=root).returncode == 0
+    assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "q"
     assert run_cli("module", "m", cwd=proj).returncode == 0
     assert (

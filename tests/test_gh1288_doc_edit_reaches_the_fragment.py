@@ -107,7 +107,7 @@ def _frag(root: Path) -> str:
 
 @pytest.fixture
 def project(tmp_path) -> Path:
-    assert _cli("new", "r", cwd=tmp_path).returncode == 0
+    assert _cli("new", "r", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "r"
     for args in (
         ("module", "m"),

@@ -63,6 +63,7 @@ def _pair_project(tmp_path: Path) -> Path:
         run_cli(
             "new",
             "p",
+            "--no-c-prefix",
             "--object",
             "ring",
             "--arg-type",
@@ -247,6 +248,7 @@ class TestTheGeneratedInvariant:
             run_cli(
                 "new",
                 "q",
+                "--no-c-prefix",
                 "--object",
                 "solo",
                 "--arg-type",

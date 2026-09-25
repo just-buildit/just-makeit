@@ -43,7 +43,7 @@ EXT = Path("native") / "src" / "ring" / "ring_ext.c"
 def _ring(tmp_path: Path, *, prop: bool = True) -> Path:
     root = tmp_path / "w"
     root.mkdir()
-    assert run_cli("new", "q", cwd=root).returncode == 0
+    assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
     proj = root / "q"
     r = run_cli(
         "object",
@@ -122,7 +122,7 @@ class TestAMessageCanNameTheNumbers:
         """
         root = tmp_path / "w"
         root.mkdir()
-        assert run_cli("new", "q", cwd=root).returncode == 0
+        assert run_cli("new", "q", "--no-c-prefix", cwd=root).returncode == 0
         proj = root / "q"
         assert (
             run_cli(
@@ -263,7 +263,7 @@ class TestTheModuleShapeDopplerActuallyUses:
     def test_a_property_slot_resolves_in_a_module_object(self, tmp_path):
         root = tmp_path / "w"
         root.mkdir()
-        assert run_cli("new", "dp", cwd=root).returncode == 0
+        assert run_cli("new", "dp", "--no-c-prefix", cwd=root).returncode == 0
         proj = root / "dp"
         assert run_cli("module", "buffer", cwd=proj).returncode == 0
         assert (

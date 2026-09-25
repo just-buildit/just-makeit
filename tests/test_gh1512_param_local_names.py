@@ -84,7 +84,7 @@ def _ok(*args: str, cwd: Path) -> None:
 def sentinel_tree(tmp_path_factory) -> Path:
     """Every param-bearing shape, params named only with sentinels."""
     base = tmp_path_factory.mktemp("gh1512")
-    _ok("new", "p", cwd=base)
+    _ok("new", "p", "--no-c-prefix", cwd=base)
     root = base / "p"
     _ok(
         "object",
@@ -290,7 +290,7 @@ _REFUSED = [
 
 @pytest.fixture()
 def project(tmp_path: Path) -> Path:
-    _ok("new", "p", cwd=tmp_path)
+    _ok("new", "p", "--no-c-prefix", cwd=tmp_path)
     root = tmp_path / "p"
     _ok("object", "w", "--no-step", cwd=root)
     _ok("module", "mod", cwd=root)

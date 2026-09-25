@@ -797,8 +797,12 @@ def run(root: Path) -> None:
         new_flags.append(_bool_flag("--pytest-benchmark"))
     # gh-1591: first, because every component the script adds after derives
     # its C symbols from it -- a prefix applied later would leave them bare.
+    # A project WITHOUT one says so: `jm new` defaults the prefix to the
+    # package name, so a bare `jm new` would replay a different project.
     if C.c_prefix(cfg):
         new_flags.append(_flag("--c-prefix", C.c_prefix(cfg)))
+    else:
+        new_flags.append(_bool_flag("--no-c-prefix"))
     # gh-1587: the `[project]` dependencies `jm new` spells as flags. The
     # replay enumerated only the four above, so every dependency was dropped
     # and the replayed project's external-deps block, installed config and

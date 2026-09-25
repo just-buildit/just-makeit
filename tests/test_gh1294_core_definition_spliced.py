@@ -68,7 +68,7 @@ def _core_c(root: Path) -> Path:
 
 @pytest.fixture
 def project(tmp_path) -> Path:
-    assert _cli("new", "z", cwd=tmp_path).returncode == 0
+    assert _cli("new", "z", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "z"
     assert _cli("object", "o", "--state", "n:int:0", cwd=root).returncode == 0
     frag = root / "objects" / "o.toml"
@@ -95,7 +95,7 @@ def _strip_fin(path: Path) -> None:
 @pytest.fixture
 def module_project(tmp_path) -> Path:
     """The same object, inside a module — where gh-275's guard survives."""
-    assert _cli("new", "z", cwd=tmp_path).returncode == 0
+    assert _cli("new", "z", "--no-c-prefix", cwd=tmp_path).returncode == 0
     root = tmp_path / "z"
     assert _cli("module", "m", cwd=root).returncode == 0
     assert (
