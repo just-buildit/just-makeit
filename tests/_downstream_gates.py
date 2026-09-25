@@ -96,6 +96,9 @@ def findings(root: Path) -> "set[str]":
 
         st = run_cli("status", "--check", cwd=proj)
         if st.returncode != 0:
+            # gh-1619: kept, so a new status finding names its files in the
+            # CI log rather than only its section.
+            STATUS_OUT[tag] = st.stdout
             sections = _SECTION.findall(st.stdout) or ["(no section)"]
             for s in sections:
                 out.add(f"{tag}\tstatus --check\t{s}")
@@ -120,6 +123,11 @@ def findings(root: Path) -> "set[str]":
 
 
 _PATHISH = re.compile(r"[\w.-]+(?:/[\w.-]+)+|[\w-]+\.\w+")
+
+
+#: `status --check`'s output per project from the last :func:`findings`,
+#: printed when a status finding is new.
+STATUS_OUT: "dict[str, str]" = {}
 
 
 def _applies(finding: str, root: Path) -> bool:
@@ -169,6 +177,10 @@ def check(name: str, root: Path) -> None:
             f"gh-1443 Gate A: example {name!r} fails a downstream gate it"
             " did not fail before:\n  " + "\n  ".join(new)
         )
+        for tag in sorted(
+            {f.split("\t", 1)[0] for f in new if "\tstatus --check\t" in f}
+        ):
+            msg.append(f"`jm status --check` in {tag}:\n{STATUS_OUT[tag]}")
     if gone:
         msg.append(
             f"gh-1443 Gate A: {ratchet.name} lists findings that no longer"

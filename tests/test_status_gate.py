@@ -94,10 +94,14 @@ def test_diff_shows_unified_diff(drifted):
     assert "# hand drift" in out
 
 
-def test_check_suppresses_listing(drifted):
+def test_check_lists_what_it_counts(drifted):
+    # gh-1619: --check keeps the STALE listing -- it is what the exit code
+    # counts, and a CI log that says "1 stale" should say which -- while the
+    # advisory listings stay collapsed (tests/test_gh1619_*).
     _, out = _run(drifted, check=True)
-    assert "STALE (" not in out
-    assert "summary:" in out  # one-line summary still printed
+    assert "STALE (1)" in out
+    assert "src/proj/widget.pyi" in out
+    assert "summary:" in out
 
 
 def test_clean_project_returns_zero(tmp_path):
