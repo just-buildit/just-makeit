@@ -50,21 +50,39 @@ from . import _incpath as INC
 SLOTS = ("csym", "CSYM")
 
 
+def prefix(owner: INC.Owner) -> "str | None":
+    """*owner*'s ``[project] c_prefix``, or None (gh-1591 phase 2).
+
+    >>> prefix({"project": {"c_prefix": "dp"}}), prefix({"project": {}})
+    ('dp', None)
+    """
+    from . import _config as C
+
+    return C.c_prefix(INC.manifest(owner))
+
+
 def stem(owner: INC.Owner, name: str) -> str:
     """The C stem jm derives *name*'s symbols from, in *owner*'s project.
 
     *name* is a component, a module (its C name, ``cname``) or a module
-    function. Today it is *name* itself; phase 2 of gh-1591 prefixes it when
-    the project declares ``c_prefix``.
-
-    The owner is validated even though nothing reads it yet, so every
-    caller already passes the project that phase 2 will ask.
+    function. Without ``[project] c_prefix`` it is *name* itself; with one it
+    is ``<prefix>_<name>`` -- unless *name* already starts with
+    ``<prefix>_``, which is used as is: doppler's ``dp_tlm`` stays
+    ``dp_tlm_create``, not ``dp_dp_tlm_create``. The collision that rule can
+    open -- ``x`` and ``dp_x`` both deriving ``dp_x_create`` -- is refused
+    over the whole derived set by :func:`duplicates`.
 
     >>> stem({"project": {"name": "p"}}, "fir")
     'fir'
+    >>> stem({"project": {"c_prefix": "dp"}}, "fir")
+    'dp_fir'
+    >>> stem({"project": {"c_prefix": "dp"}}, "dp_tlm")
+    'dp_tlm'
     """
-    INC.manifest(owner)
-    return name
+    p = prefix(owner)
+    if p is None or name.startswith(f"{p}_"):
+        return name
+    return f"{p}_{name}"
 
 
 def upper(owner: INC.Owner, name: str) -> str:

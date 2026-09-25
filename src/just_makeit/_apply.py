@@ -481,6 +481,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-1583: the schema decides the header layout; a replay in any
         # other layout would put every header somewhere the project has none.
         schema=C.schema_version(cfg),
+        # gh-1591: and the C symbol prefix, for the same reason: a replay that
+        # renders bare names makes the real project's prefixed ones "missing".
+        c_prefix=C.c_prefix(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.

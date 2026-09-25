@@ -3759,6 +3759,39 @@ def public_link_libs(cfg: dict) -> list[str]:
     return out
 
 
+_C_PREFIX_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*[A-Za-z0-9]$|^[A-Za-z]$")
+
+
+def c_prefix(cfg: dict) -> "str | None":
+    """``[project] c_prefix``: the namespace every C symbol jm DERIVES from
+    a name carries (gh-1591), or None when the project declares none.
+
+    A C identifier, written without the joining underscore (``"dp"``, not
+    ``"dp_"``). Read here and consumed only by :func:`_csym.stem`. What
+    moves: the functions jm derives (``<comp>_create``, a method's
+    ``<comp>_<name>``, a module function), the ``<comp>_state_t`` type, and
+    jm's own include guards and ``process_global`` defines. What does not:
+    anything the author named -- a manifest ``fn =`` / ``create_fn`` /
+    ``type_name`` / ``record_dtype``, and the author's own macros in the
+    sacred ``_core.h`` (doppler's ``ACC_F32_STATE_MAGIC``) -- nor the Python
+    names, nor the file names.
+
+    >>> c_prefix({"project": {"c_prefix": "dp"}}), c_prefix({"project": {}})
+    ('dp', None)
+    """
+    raw = (cfg.get("project") or {}).get("c_prefix")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not _C_PREFIX_RE.match(raw):
+        _refuse(
+            [
+                f"[project] c_prefix {raw!r} is not a C identifier -- write "
+                'it without the joining underscore, e.g. c_prefix = "dp"'
+            ]
+        )
+    return raw
+
+
 def public_defines(cfg: dict) -> list[str]:
     """``[project] public_defines``: definitions the installed headers need
     (gh-1599) -- a feature-test macro such as ``_GNU_SOURCE`` that must be

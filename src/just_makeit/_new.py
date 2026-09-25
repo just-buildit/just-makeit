@@ -79,6 +79,7 @@ def run(
     c_style: str = "",
     c_format_command: list[str] | None = None,
     schema: int | None = None,
+    c_prefix: str | None = None,
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -87,6 +88,13 @@ def run(
     # project's schema, so a schema-8 project replays into its own layout.
     schema = C.CURRENT_SCHEMA if schema is None else schema
     owner = {"project": {"name": project, "schema": str(schema)}}
+    # gh-1591: the C symbol prefix, validated before anything is written.
+    # The replay passes the real project's, so a prefixed project replays
+    # into its own symbols -- a replay without it would render every derived
+    # name bare and `apply` would splice those into the sacred header.
+    if c_prefix is not None:
+        owner["project"]["c_prefix"] = c_prefix
+        C.c_prefix(owner)
 
     root = dest or (Path.cwd() / project)
     if root.exists() and any(root.iterdir()):
@@ -159,6 +167,8 @@ def run(
         pytest_benchmark_=pytest_benchmark_,
         schema=schema,
     )
+    if c_prefix is not None:
+        cfg.setdefault("project", {})["c_prefix"] = c_prefix
     # External-dep declarations land in [project] so jm apply's
     # _splice_cmake_external_deps picks them up and writes the
     # `# ── External deps` sentinel block in the top CMakeLists.txt.
