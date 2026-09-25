@@ -84,8 +84,6 @@ foreach(lib_target <<project_underscore>>_lib
   target_include_directories(
     ${lib_target} PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/<<inc_dir>>>
                          $<INSTALL_INTERFACE:include>)
-  set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME
-                                                 <<project_underscore>>)
   # gh-1452: libm is part of this library's LINK INTERFACE, not a private
   # detail. jm's headers DEFINE -- `step()` is `static inline` by default,
   # `JM_FORCEINLINE` under --perf -- so a consumer that calls it compiles the
@@ -107,23 +105,6 @@ foreach(lib_target <<project_underscore>>_lib
                            $<INSTALL_INTERFACE:-lm>)
   endif()
 endforeach()
-# gh-1368: one OUTPUT_NAME for both is unambiguous on Linux and macOS
-# (lib<name>.so vs lib<name>.a) and a collision on Windows, where the SHARED
-# library's import library and the STATIC library are both <name>.lib --
-# `ninja: error: multiple rules generate <name>.lib`, before any C compiles.
-# Renamed only where it has to be, as doppler's own CMake does.
-if(WIN32)
-  set_target_properties(<<project_underscore>>_lib_static
-                        PROPERTIES OUTPUT_NAME <<project_underscore>>_static)
-endif()
-# gh-1368: a Windows DLL exports only what is marked __declspec(dllexport), and
-# jm marks nothing -- so the shared library's import library was empty and a C
-# consumer linking it failed on every symbol (`undefined symbol:
-# <comp>_create`), found by the Windows artifact smoke. Exporting all is the
-# DLL equivalent of an ELF shared library's default visibility. No effect
-# elsewhere.
-set_target_properties(<<project_underscore>>_lib
-                      PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 enable_testing()
 

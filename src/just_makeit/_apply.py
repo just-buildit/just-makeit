@@ -1640,11 +1640,7 @@ _WIRED_CORE = re.compile(
     r"^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:(\w+)>\)[ \t]*\n"
 )
 
-_SUBDIR_BLOCK = re.compile(
-    r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
-    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)[ \t]*\n)*",
-    re.MULTILINE,
-)
+_SUBDIR_BLOCK = _libwiring.SUBDIR_BLOCK
 
 
 def _splice_cmake_components(

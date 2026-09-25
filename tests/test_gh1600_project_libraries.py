@@ -97,6 +97,83 @@ def test_a_core_also_folded_into_lib_pkg_is_refused(tmp_path):
     assert "`util_obj` is also folded into p_lib" in r.stderr, r.stderr
 
 
+def test_status_check_names_a_core_hand_folded_into_lib_pkg(tmp_path):
+    """The line added after a clean apply: `status` replays the project the
+    way apply does, and the replay refuses -- so `--check` fails, by name."""
+    root = _project(tmp_path, _UTIL)
+    assert run_cli("apply", cwd=root).returncode == 0
+    cm = root / "CMakeLists.txt"
+    cm.write_text(
+        cm.read_text()
+        + "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n"
+    )
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "`util_obj` is also folded into p_lib" in r.stderr, r.stderr
+
+
+def _under_subdir(root: Path, comp: str, line: str) -> None:
+    """Put *line* directly beneath jm's ``add_subdirectory`` for *comp* --
+    where jm's own wiring run sits, and where an author would write theirs."""
+    cm = root / "CMakeLists.txt"
+    text = cm.read_text(encoding="utf-8")
+    sub = f"add_subdirectory(native/src/{comp})\n"
+    assert text.count(sub) == 1, text
+    cm.write_text(text.replace(sub, sub + line), encoding="utf-8")
+
+
+def test_an_authors_line_under_jms_subdirectory_is_still_the_authors(
+    tmp_path,
+):
+    """jm writes only ``<X>_core`` lines under an ``add_subdirectory`` it
+    manages; any other target there is the author's. So the one pattern
+    (`_libwiring.SUBDIR_BLOCK`) that apply lifts and that the refusal
+    excuses as jm's must not reach it: here it would excuse the fold."""
+    root = _project(tmp_path, _UTIL)
+    assert run_cli("apply", cwd=root).returncode == 0
+    _under_subdir(
+        root,
+        "util",
+        "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "`util_obj` is also folded into p_lib" in r.stderr, r.stderr
+
+
+def test_apply_keeps_an_authors_wiring_under_a_no_generate_module(tmp_path):
+    """A ``no_generate`` module gets a bare ``add_subdirectory`` and no
+    wiring, so its author folds a non-``_core`` core in by hand, beneath it.
+    apply replaces jm's blocks from the replay; a pattern that took that line
+    as jm's would delete it on every apply."""
+    r = run_cli("new", "p", "--object", "g", cwd=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    root = tmp_path / "p"
+    toml = root / "just-makeit.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8")
+        + "\n[module.timing]\nno_generate = true\nobjects = []\n"
+        + 'no_generate_reason = "hand-written"\n',
+        encoding="utf-8",
+    )
+    d = root / "native" / "src" / "timing"
+    d.mkdir(parents=True)
+    (d / "t.c").write_text("int p_t(void) { return 1; }\n")
+    (d / "CMakeLists.txt").write_text(
+        _OBJ_CMAKE.replace("util_obj", "timing_obj").replace("util.c", "t.c")
+    )
+    assert run_cli("apply", cwd=root).returncode == 0
+    wiring = "".join(
+        f"target_sources({t} PRIVATE $<TARGET_OBJECTS:timing_obj>)\n"
+        for t in ("p_lib", "p_lib_static")
+    )
+    _under_subdir(root, "timing", wiring)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    cm = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "add_subdirectory(native/src/timing)\n" + wiring in cm, cm
+
+
 @pytest.mark.parametrize(
     "table, why",
     [

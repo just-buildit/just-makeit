@@ -63,16 +63,11 @@ def _drop(text: str, pattern: "str | tuple[str, ...]") -> str:
 # regexes over the text, so they do not share a parser with the detector.
 SABOTAGE = {
     "libm": r"target_link_libraries\(\s*\$\{lib_target\}\s+PUBLIC[^)]*\)",
-    "static-name": r"set_target_properties\(\s*p_lib_static\s+PROPERTIES"
-    r"\s+OUTPUT_NAME\s+p_static\s*\)",
-    # gh-1600: set in the author's region AND by the managed per-library
-    # loop (every library a project installs needs it), so removing the fix
-    # means removing both -- either one alone still exports all.
-    "export-all": (
-        r"set_target_properties\(\s*p_lib\s+PROPERTIES"
-        r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON\s*\)",
-        r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON(?=\))",
-    ),
+    # gh-1600: both Windows library fixes are set once, for every library
+    # the project installs, by the per-library loop in the install block.
+    "static-name": r"set_target_properties\(\s*\$\{_jm_lib\}_lib_static"
+    r"\s+PROPERTIES\s+OUTPUT_NAME\s+\$\{_jm_lib\}_static\s*\)",
+    "export-all": r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON(?=\))",
     "build-type": r"set\(\s*CMAKE_BUILD_TYPE\b[^)]*\)",
     "msvc-runtime": r"set\(\s*CMAKE_MSVC_RUNTIME_LIBRARY\b[^)]*\)",
     "complex-range": r"add_compile_options\(\s*/clang:-fcx-limited-range\s*\)",
@@ -156,9 +151,8 @@ def test_removing_a_fix_reports_exactly_that_fix(fresh, key):
         # The project-wide variable instead of the target property.
         (
             "export-all",
-            r"set_target_properties\(\s*p_lib\s+PROPERTIES"
-            r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON\s*\)",
-            "set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)",
+            r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON\)",
+            ")\nset(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)",
         ),
         # The -D spelling.
         (
@@ -188,7 +182,10 @@ def test_a_static_name_equal_to_the_shared_one_is_the_collision(fresh):
     text = (fresh / "CMakeLists.txt").read_text(encoding="utf-8")
     find = SABOTAGE["static-name"]
     assert len(re.findall(find, text, re.S)) == 1
-    same = "set_target_properties(p_lib_static PROPERTIES OUTPUT_NAME p)"
+    same = (
+        "set_target_properties(${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME"
+        " ${_jm_lib})"
+    )
     assert _keys(re.sub(find, same, text, flags=re.S)) == ["static-name"]
 
 

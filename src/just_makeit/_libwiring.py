@@ -196,7 +196,15 @@ def shipped_cores(root: Path) -> set[str]:
     ``OBJECT`` is excluded for the same reason one step earlier: an OBJECT
     library is what is being *placed*, not somewhere to place it.
     """
-    shipped: set[str] = set()
+    return {core for _, core in _shipped_pairs(root)}
+
+
+def _shipped_pairs(root: Path) -> "set[tuple[str, str]]":
+    """Every ``(library, core)`` folded in as an ``add_library(NAME
+    SHARED|STATIC $<TARGET_OBJECTS:core> ...)`` argument (gh-991), in the
+    root CMakeLists or any under ``native/``. :func:`shipped_cores` asks
+    WHETHER a core ships; gh-1600's exclusivity rule asks WHICH library."""
+    pairs: set[tuple[str, str]] = set()
     files = [root / "CMakeLists.txt"]
     if (root / "native").is_dir():
         files += sorted((root / "native").rglob("CMakeLists.txt"))
@@ -205,8 +213,10 @@ def shipped_cores(root: Path) -> set[str]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in _DECLARES_SHIPPED_LIB.finditer(text):
-            shipped |= set(_TARGET_OBJECTS.findall(m.group(2)))
-    return shipped
+            pairs |= {
+                (m.group(1), c) for c in _TARGET_OBJECTS.findall(m.group(2))
+            }
+    return pairs
 
 
 def wired_pairs(root: Path) -> "set[tuple[str, str]]":
@@ -469,27 +479,24 @@ def folded_pairs(root: Path) -> "set[tuple[str, str]]":
     (gh-991, doppler's own). :func:`shipped_cores` asks the second spelling
     WHETHER; gh-1600's exclusivity rule needs WHICH library.
     """
-    pairs = set(wired_pairs(root))
-    files = [root / "CMakeLists.txt"]
-    if (root / "native").is_dir():
-        files += sorted((root / "native").rglob("CMakeLists.txt"))
-    for path in files:
-        if path.is_file():
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for m in _DECLARES_SHIPPED_LIB.finditer(text):
-                pairs |= {
-                    (m.group(1), c)
-                    for c in _TARGET_OBJECTS.findall(m.group(2))
-                }
-    return pairs
+    return wired_pairs(root) | _shipped_pairs(root)
 
 
-#: jm's own wiring in the root: the ``target_sources`` lines it writes
-#: directly under an ``add_subdirectory(native/src/X)`` it manages -- the runs
-#: `apply` rebuilds from the replay (`_apply._SUBDIR_BLOCK`).
-_JM_SUBDIR_RUN = re.compile(
-    r"^add_subdirectory\(native/src/\w+\)[ \t]*\n"
-    r"((?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+>\)[ \t]*\n)*)",
+#: jm's own wiring in the root: an ``add_subdirectory(native/src/X)`` and
+#: the ``target_sources`` run jm writes directly beneath it. ``apply`` lifts
+#: each whole block out of the replay and replaces the real one with it, and
+#: gh-1600 subtracts the run from the project's claims on a core -- one
+#: pattern, so what apply rewrites and what is excused as jm's cannot differ.
+#:
+#: Only ``<X>_core`` lines belong to the run, because they are the only ones
+#: jm writes (:func:`dep_core_libs`, ``<comp>_core``, and a generated module's
+#: own ``add_library``); a c_dep or a ``no_generate`` module gets a bare
+#: ``add_subdirectory``. Any other target under it is the author's: widening
+#: this would have apply DELETE that line, and excuse it from the refusal.
+SUBDIR_BLOCK = re.compile(
+    r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
+    r"((?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)"
+    r"[ \t]*\n)*)",
     re.M,
 )
 
@@ -501,8 +508,8 @@ def _jm_wired_pairs(root: Path) -> "set[tuple[str, str]]":
     if not path.is_file():
         return set()
     runs = "".join(
-        m.group(1)
-        for m in _JM_SUBDIR_RUN.finditer(path.read_text(encoding="utf-8"))
+        m.group(2)
+        for m in SUBDIR_BLOCK.finditer(path.read_text(encoding="utf-8"))
     )
     return set(_WIRING.findall(runs))
 
@@ -669,7 +676,7 @@ def splice_cmake_component(
     on its own.
 
     Keeping the wiring adjacent to the ``add_subdirectory`` is what lets
-    ``_apply._SUBDIR_BLOCK`` lift the whole block as a unit when it
+    :data:`SUBDIR_BLOCK` lift the whole block as a unit when it
     reconciles a real project against a fresh replay.
     """
     cmake_path = root / "CMakeLists.txt"
