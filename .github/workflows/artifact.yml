@@ -342,8 +342,13 @@ jobs:
           # OBJECT-only CMakeLists — no Python3_add_library
           test -f native/src/fir/CMakeLists.txt
           test -f native/src/biquad/CMakeLists.txt
-          ! grep "Python3_add_library" native/src/fir/CMakeLists.txt
-          ! grep "Python3_add_library" native/src/biquad/CMakeLists.txt
+          # Not `! grep`: bash -e exempts a `!` command, so only a last line
+          # could ever fail the step.
+          for c in fir biquad; do
+            if grep -q "Python3_add_library" native/src/$c/CMakeLists.txt; then
+              echo "::error::native/src/$c builds its own extension"; exit 1
+            fi
+          done
 
       - name: Patch fir_step and biquad_step stubs
         working-directory: filter_module_test/my_filters
