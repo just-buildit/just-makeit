@@ -448,8 +448,9 @@ _C_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"}
 _INCLUDE_LINE = re.compile(
     r'^([ \t]*#[ \t]*include[ \t]*)(["<])([^">\n]+)([">])', re.M
 )
-#: A quoted TOML string (basic or literal) -- a manifest's header references.
-_TOML_STRING = re.compile(r"""(["'])([^"'\n]+)\1""")
+#: A TOML string value -- a manifest's header references (gh-1583). The one
+#: pattern `_csym` also rewrites the C-bearing values with (gh-1653).
+_TOML_STRING = CSYM.TOML_STRING
 
 
 def _nested_projects(root: Path) -> "list[Path]":
@@ -705,15 +706,25 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
         return [], {}
     with tempfile.TemporaryDirectory() as tmp:
         _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
-        names = CSYM.renames(Path(tmp), cfg)
-    if not names:
+        # gh-1653: plus `<stem>_step_batch`, which no render declares but
+        # `JM_DEFINE_STEPS` pastes from the stem.
+        names = CSYM.with_macro_names(CSYM.renames(Path(tmp), cfg))
+    stems = CSYM.macro_stems(cfg)
+    if not names and not stems:
         return [], {}
-    pat = CSYM.old_names_pattern(names)
-    pairs = [(pat, None)]
     changed = []
     for path in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
         text = path.read_text(encoding="utf-8")
-        new = _respell_code_only(text, pairs, repl=lambda m: names[m.group(0)])
+        new = CSYM.respell_c(text, names, stems)
+        if new != text:
+            _textio.write_text(path, new)
+            changed.append(path)
+    # gh-1653: the author's C that lives in the MANIFEST -- `*_impl` bodies
+    # and a sibling's `type` -- which jm copies into the C verbatim. Each
+    # value is replaced in place; the file is never re-serialised.
+    for path in CSYM._manifest_files(root):
+        text = path.read_text(encoding="utf-8")
+        new = CSYM.respell_manifest(text, names, stems)
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)
