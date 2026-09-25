@@ -103,7 +103,10 @@ cd "$WORK"
 
 # ── alpha: the dependency ────────────────────────────────────────────────────
 say "alpha"
-"$JM" new alpha --object alpha >/dev/null
+"$JM" new alpha --object acore >/dev/null
+# A hand-written header at the package root of the include tree, spelled the
+# way every include should be: "alpha/alpha_api.h".
+mkdir -p alpha/native/inc/alpha
 cat >alpha/native/inc/alpha/alpha_api.h <<'EOF'
 #ifndef ALPHA_API_H
 #define ALPHA_API_H
@@ -112,7 +115,7 @@ typedef struct { int k; } alpha_cfg_t;
 int alpha_bump (void);
 #endif
 EOF
-cat >>alpha/native/src/alpha/alpha_core.c <<'EOF'
+cat >>alpha/native/src/acore/acore_core.c <<'EOF'
 
 #include "alpha/alpha_api.h"
 static int alpha_count;
@@ -121,18 +124,19 @@ EOF
 install_project alpha
 
 # ── beta and gamma: packages that depend on alpha ────────────────────────────
-dependent() { # name, the [project] declaration, the target its core links
-    local name=$1 decl=$2 target=$3 guard
+dependent() { # name, component, the [project] declaration, its core's link
+    local name=$1 comp=$2 decl=$3 target=$4 guard
     # macOS ships bash 3.2, which has no ${name^^}.
     guard=$(printf '%s_API_H' "$name" | tr '[:lower:]' '[:upper:]')
     say "$name ($decl)"
-    "$JM" new "$name" --object "$name" >/dev/null
+    "$JM" new "$name" --object "$comp" >/dev/null
     toml_add "$name/just-makeit.toml" project "$decl"
-    toml_add "$name/objects/$name.toml" "$name" \
+    toml_add "$name/objects/$comp.toml" "$comp" \
         "extra_link_libs = [\"$target\"]"
     (cd "$name" && "$JM" apply >/dev/null)
     # The dependent's PUBLIC header includes alpha's: a consumer compiling it
     # needs alpha's compile usage, which only the dependency metadata carries.
+    mkdir -p "$name/native/inc/$name"
     cat >"$name/native/inc/$name/${name}_api.h" <<EOF
 #ifndef $guard
 #define $guard
@@ -140,7 +144,7 @@ dependent() { # name, the [project] declaration, the target its core links
 int ${name}_via_alpha (const alpha_cfg_t *cfg);
 #endif
 EOF
-    cat >>"$name/native/src/$name/${name}_core.c" <<EOF
+    cat >>"$name/native/src/$comp/${comp}_core.c" <<EOF
 
 #include "$name/${name}_api.h"
 int ${name}_via_alpha (const alpha_cfg_t *cfg) { return cfg->k * alpha_bump (); }
@@ -148,9 +152,9 @@ EOF
     install_project "$name"
 }
 
-dependent beta 'find_packages = [{ name = "alpha", pkg_config = "alpha" }]' \
+dependent beta bcore 'find_packages = [{ name = "alpha", pkg_config = "alpha" }]' \
     'alpha::alpha_lib'
-dependent gamma 'pkg_modules = ["alpha >= 0.1"]' 'PkgConfig::ALPHA'
+dependent gamma gcore 'pkg_modules = ["alpha >= 0.1"]' 'PkgConfig::ALPHA'
 
 # ── consumers: the official instructions, verbatim ───────────────────────────
 # Two programs per dependent, because the docs give two instructions:
@@ -250,4 +254,56 @@ EOF
 
 consume beta
 consume gamma
+
+# ── packages side by side (gh-1583) ──────────────────────────────────────────
+# A jm package and its jm dependencies share one prefix and one consumer. Each
+# must own its files, and a consumer must name each one's headers without
+# ambiguity: `#include "<pkg>/<comp>/<comp>_core.h"` with -I${includedir}.
+#
+# KNOWN_BROKEN is a ratchet: a check listed here that fails is reported, not
+# fatal; a listed check that PASSES fails the run until it is removed, so the
+# list only shrinks. gh-1583's PR empties it.
+KNOWN_BROKEN=" disjoint-install prefixed-include " # gh-1583
+
+expect() { # id, description, command...
+    local id=$1 what=$2
+    shift 2
+    if "$@"; then
+        [[ $KNOWN_BROKEN != *" $id "* ]] \
+            || die "$id passes now: remove it from KNOWN_BROKEN"
+        echo "ok  $what"
+    else
+        [[ $KNOWN_BROKEN == *" $id "* ]] || die "$what"
+        echo "known broken (gh-1583): $what"
+    fi
+}
+
+# No file one package installs may be a file another installed: the second
+# install overwrites it, and the first package's consumers get the other's.
+disjoint_installs() {
+    local clash
+    clash=$(cat "$WORK"/{alpha,beta,gamma}/build/install_manifest.txt \
+        | sort | uniq -d)
+    [[ -z $clash ]] || { printf '%s\n' "$clash" | sed 's/^/  /'; return 1; }
+}
+
+# One translation unit including a generated header from each package, by
+# the prefixed path, with only the flags pkg-config hands out.
+prefixed_include() {
+    local tu="$WORK/side-by-side.c"
+    printf '%s\n' '#include "alpha/acore/acore_core.h"' \
+        '#include "beta/bcore/bcore_core.h"' 'int main (void) { return 0; }' \
+        >"$tu"
+    # shellcheck disable=SC2046 # splitting the flags IS the usage
+    $CC -c "$tu" $(pkg-config --cflags beta alpha) -o "$WORK/side-by-side.o" \
+        2>"$WORK/side-by-side.err" \
+        || { sed 's/^/  /' "$WORK/side-by-side.err" | head -5; return 1; }
+}
+
+say "packages side by side"
+expect disjoint-install "alpha, beta and gamma install disjoint files" \
+    disjoint_installs
+expect prefixed-include "\"alpha/acore/...\" and \"beta/bcore/...\" in one TU" \
+    prefixed_include
+
 say "every consumer built and ran"
