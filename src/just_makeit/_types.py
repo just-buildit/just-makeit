@@ -267,6 +267,113 @@ _C_NUMERIC_LITERAL = _re.compile(
 )
 
 
+_C_NUMBER = r"(?:0[xX][0-9a-fA-F]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)"
+#: gh-1561: the complex literals jm can restate in Python -- ``re``,
+#: ``im * I`` and ``re + im * I`` / ``re - im * I``, each number carrying any
+#: C suffix. jm's own zero (``0.0 + 0.0 * I``) is the third form.
+_C_COMPLEX_LITERAL = _re.compile(
+    rf"""^\s*(?:
+        (?P<re>[+-]?{_C_NUMBER})[uUlLfF]*\s*(?P<sign>[+-])\s*
+            (?P<im>{_C_NUMBER})[uUlLfF]*\s*\*\s*I
+      | (?P<im_only>[+-]?{_C_NUMBER})[uUlLfF]*\s*\*\s*I
+      | (?P<re_only>[+-]?{_C_NUMBER})[uUlLfF]*
+    )\s*$""",
+    _re.VERBOSE,
+)
+
+
+def _c_number(text: str) -> float:
+    """A C number's value; hex is an integer constant."""
+    body = text.lstrip("+-")
+    sign = -1.0 if text.startswith("-") else 1.0
+    if body[:2].lower() == "0x":
+        return sign * int(body, 16)
+    return sign * float(body)
+
+
+def _complex_default(default: str) -> "complex | None":
+    """A complex *default*'s value, or ``None`` when it is not a literal."""
+    m = _C_COMPLEX_LITERAL.match(default)
+    if not m:
+        return None
+    if m.group("re_only") is not None:
+        return complex(_c_number(m.group("re_only")), 0.0)
+    if m.group("im_only") is not None:
+        return complex(0.0, _c_number(m.group("im_only")))
+    im = _c_number(m.group("im"))
+    return complex(
+        _c_number(m.group("re")), -im if m.group("sign") == "-" else im
+    )
+
+
+def complex_default_py(default: str) -> "str | None":
+    """A complex *default*'s Python literal, or ``None`` when it is not one.
+
+    gh-1561. There was no single answer to "what is this complex default":
+    :func:`default_type_error` accepted only a bare real number (so jm refused
+    its own zero, ``0.0 + 0.0 * I``, when the CLI supplied it for an init-param
+    with no default), and both ``_py_default`` peers returned ``0j`` for EVERY
+    complex default -- a declared ``1.5`` compiled as 1.5 in C and read as
+    ``0j`` in the stub, the docstring and the generated test. This is the
+    one parser; each of those faces asks it.
+
+    The literal is Python's own ``repr`` of the value, so it is valid Python
+    and zero stays ``0j``, byte-identical to what every face emitted before.
+
+    Examples
+    --------
+    >>> complex_default_py("0.0 + 0.0 * I"), complex_default_py("0.0f + 0.0f * I")
+    ('0j', '0j')
+    >>> complex_default_py("1.5"), complex_default_py("2.0 * I")
+    ('(1.5+0j)', '2j')
+    >>> complex_default_py("1.0 - 0.5f * I"), complex_default_py("-3")
+    ('(1-0.5j)', '(-3+0j)')
+    >>> complex_default_py("CPLX_ONE") is None
+    True
+    """
+    value = _complex_default(default)
+    return None if value is None else repr(value)
+
+
+def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
+    """The initializer of a ``parse_type`` scalar's ``<name>_raw`` local.
+
+    The binding parses into ``<parse_type> <name>_raw`` and converts from
+    it, so the declared default has to seed that local: PyArg leaves an
+    omitted keyword's local untouched. gh-1561: this was written twice, and
+    for ``Py_complex`` -- a STRUCT, so it takes ``{re, im}``, never a
+    complex expression -- the two copies were wrong in opposite ways. The
+    init-param one emitted the default verbatim (``Py_complex z_raw = 0.0 +
+    0.0 * I;``, which does not compile), and the state-driven one dropped
+    every declared default for the struct's zero, so an omitted keyword
+    silently read 0.
+
+    Examples
+    --------
+    >>> parse_seed("size_t", "16"), parse_seed("size_t", "", "N_MAX")
+    ('16', 'N_MAX')
+    >>> parse_seed("double _Complex", ""), parse_seed("double _Complex", "0.0 + 0.0 * I")
+    ('{0.0, 0.0}', '{0.0, 0.0}')
+    >>> parse_seed("double _Complex", "1.0 - 0.5 * I")
+    '{1.0, -0.5}'
+    >>> parse_seed("float _Complex", "", "CPLX_ONE")
+    '{crealf(CPLX_ONE), cimagf(CPLX_ONE)}'
+    """
+    meta = _CTYPE_META[ctype]
+    zero = meta["parse_zero"]
+    if not zero.startswith("{"):
+        return default_raw or default or zero
+    c_text = default_raw or default
+    if not c_text.strip():
+        return zero
+    value = None if default_raw else _complex_default(default)
+    if value is not None:
+        return f"{{{value.real!r}, {value.imag!r}}}"
+    # A C constant: C evaluates it, jm only splits it into the struct.
+    f = "f" if ctype.startswith("float") else ("l" if "long" in ctype else "")
+    return f"{{creal{f}({c_text}), cimag{f}({c_text})}}"
+
+
 def strip_c_literal_suffix(default: str) -> str:
     """A C numeric literal's Python spelling: the value without its suffix.
 
@@ -460,6 +567,18 @@ def default_type_error(ctype: str, default: str) -> str:
     kind = meta["kind"]
     if kind == "str":
         return ""
+    if kind == "complex":
+        # gh-1561: one parser, shared with every Python face.
+        if complex_default_py(default) is not None:
+            return ""
+        return (
+            f"default `{default}` is not a valid `{ctype}` literal. Write it"
+            " as `re`, `im * I` or `re + im * I` (for example"
+            " `1.0 + 0.5 * I`).\n"
+            f"  If `{default}` is a C constant, declare it as `default_raw ="
+            f' "{default}"` -- that emits it into the C unchanged and leaves'
+            " the Python side with no default."
+        )
     if ctype == "bool":
         # `bool`'s kind is "int", so this must dispatch on the concrete ctype
         # — the same reason gh-610 gave for the branch in `_py_default`.
@@ -512,9 +631,9 @@ def is_c_only_default(ctype: str, default: str) -> bool:
 
     The predicate is the numeric-literal pattern :func:`default_type_error`
     already accepts, so "a literal" means one thing in both places; for
-    ``bool`` it is :data:`BOOL_LITERALS`. ``const char *`` and the complex
-    kinds are never C-only: each ``_py_default``
-    peer spells them without reading the text as a number.
+    ``bool`` it is :data:`BOOL_LITERALS`; for the complex kinds it is
+    :func:`complex_default_py` (gh-1561). ``const char *`` is never C-only:
+    each ``_py_default`` peer spells it without reading it as a number.
 
     Examples
     --------
@@ -527,6 +646,10 @@ def is_c_only_default(ctype: str, default: str) -> bool:
     >>> is_c_only_default("int", ""), is_c_only_default("bool", "true")
     (False, False)
     >>> is_c_only_default("const char *", "NULL")
+    False
+    >>> is_c_only_default("double _Complex", "CPLX_ONE")
+    True
+    >>> is_c_only_default("double _Complex", "1.0 + 2.0 * I")
     False
 
     gh-1506: a ``bool`` default is C-only when it is not one of the
@@ -541,6 +664,8 @@ def is_c_only_default(ctype: str, default: str) -> bool:
     if ctype == "bool":
         return default.strip().lower() not in BOOL_LITERALS
     meta = _CTYPE_META.get(ctype)
+    if meta is not None and meta["kind"] == "complex":
+        return complex_default_py(default) is None
     if meta is None or meta["kind"] not in ("int", "float"):
         return False
     return not _C_NUMERIC_LITERAL.match(default)
