@@ -29,7 +29,7 @@ symbol is never a finding:
    (a variable named ``comp``, ``component``, ``obj``, ``cname``, ``module``
    ...) directly before a derived-symbol suffix (``_create``, ``_state_t``,
    ``_steps``, ``_CORE_H`` ...) or before ``_{...}`` (a method's
-   ``<comp>_<name>``) is a hand-spelled symbol. 180 remain after phase 1
+   ``<comp>_<name>``) is a hand-spelled symbol. 175 remain after phase 1
    (363 before it); phase 1b, gh-1633, moves them, and phase 2 cannot land
    until it has. The vocabulary is a heuristic, so a suffix outside it is
    not counted -- phase 2's `nm` gate is the oracle that catches those. The
@@ -209,9 +209,8 @@ BASELINE = {
     "_composer.py": 8,
     "_config.py": 2,
     "_context/_destroy.py": 2,
-    "_context/_diagnostics.py": 1,
     "_context/_methods.py": 28,
-    "_context/_state.py": 24,
+    "_context/_state.py": 22,
     "_ctorsig.py": 1,
     "_docgaps.py": 3,
     "_docstring.py": 3,
@@ -224,9 +223,9 @@ BASELINE = {
     "_property.py": 8,
     "_remove.py": 6,
     "_status.py": 2,
-    "_stubs.py": 12,
+    "_stubs.py": 11,
     "_upgrade.py": 5,
-    "_view.py": 3,
+    "_view.py": 2,
 }
 
 
@@ -259,6 +258,48 @@ def test_hand_spelled_symbols_only_shrink():
             f"  {f}: {n} < pinned {pin}"
             for f, (n, pin) in sorted(under.items())
         )
+    )
+
+
+def create_fallbacks(source: str) -> "list[int]":
+    """Lines of *source* that re-spell the create-name RULE: an ``or``
+    whose fallback is an f-string ending ``_create``.
+
+    `_csym.create_name` is that rule's one spelling; a copy picks the stem
+    it happens to have and decides "declared name, else default" again,
+    which is the pair that drifts (gh-1591).
+
+    >>> create_fallbacks('x = fn or f"{comp}_create"\\n')
+    [1]
+    >>> create_fallbacks('x = CSYM.create_name(comp, fn)\\n')
+    []
+    """
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)):
+            continue
+        last = node.values[-1]
+        if (
+            isinstance(last, ast.JoinedStr)
+            and last.values
+            and isinstance(last.values[-1], ast.Constant)
+            and str(last.values[-1].value).endswith("_create")
+        ):
+            out.append(node.lineno)
+    return out
+
+
+def test_the_create_name_rule_is_spelled_once():
+    bad = []
+    for path in sorted(PKG.rglob("*.py")):
+        rel = path.relative_to(PKG)
+        if {"templates", "examples"} & set(rel.parts) or rel.name in _EXEMPT:
+            continue
+        for line in create_fallbacks(path.read_text(encoding="utf-8")):
+            bad.append(f"{rel.as_posix()}:{line}")
+    assert bad == [], (
+        "the `<declared> or <stem>_create` rule is `_csym.create_name` "
+        "(gh-1591); call it with the stem you have:\n" + "\n".join(bad)
     )
 
 

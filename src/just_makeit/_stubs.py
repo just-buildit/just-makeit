@@ -1314,7 +1314,7 @@ def class_docstring_block(
     is derived from its output, so both faces get the sections from that one
     derivation for free.
     """
-    create_blk = (doc_blocks or {}).get(create_fn or f"{obj}_create")
+    create_blk = (doc_blocks or {}).get(CSYM.create_name(obj, create_fn))
     brief = manifest_doc or (
         create_blk.brief if (create_blk and create_blk.brief) else ""
     )

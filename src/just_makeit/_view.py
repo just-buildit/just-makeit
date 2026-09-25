@@ -93,9 +93,7 @@ def run(
     # even though it was no longer the parent's -- which blocks the shape
     # where the general constructor is the base and the specialised one is
     # the flavor (gh-1277).
-    parent_create = C.object_create_fn(cfg, object_name) or (
-        f"{object_name}_create"
-    )
+    parent_create = C.object_create_name(cfg, object_name)
     if create_fn == parent_create:
         _fail(
             f"--create-fn must differ from the parent's "

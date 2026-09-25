@@ -211,7 +211,7 @@ def _build_no_state_init_ctx(
     ``<component>_create`` directly — a view never takes those paths (its
     generator rejects array-dispatch parents).
     """
-    _create = create_fn or f"{component}_create"
+    _create = CSYM.create_name(component, create_fn)
     # ── Classify params ───────────────────────────────────────────────────
 
     arr_ip: list[tuple[str, str, int, str]] = []
@@ -2359,7 +2359,7 @@ def _state_struct_decl(
     # gh-1328: the doc comment names the constructor the author actually
     # calls. Naming `<comp>_create()` under a `create_fn` project points the
     # reader at a function the tree does not contain.
-    _cn = create_name or f"{component}_create"
+    _cn = CSYM.create_name(component, create_name)
     if opaque:
         return (
             f"/**\n"
