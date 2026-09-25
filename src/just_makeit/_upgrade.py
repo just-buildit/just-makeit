@@ -183,8 +183,11 @@ _COMPLEX_SPELLING = (
 )
 
 
-def _respell_code_only(text: str) -> str:
-    """*text* with the old complex spelling rewritten in CODE only.
+def _respell_code_only(text: str, pairs=None, repl=None) -> str:
+    """*text* with *pairs* (``(pattern, replacement)``, longest first;
+    default the old complex spelling) rewritten in CODE only. A pair whose
+    replacement is None takes it from ``repl(match)`` instead -- one pattern
+    over a whole rename map (gh-1591).
 
     gh-1382: comments and string literals are prose, and rewriting prose
     changes what it says. doppler's `dp_complex.h` explains why the UCRT's
@@ -208,14 +211,22 @@ def _respell_code_only(text: str) -> str:
 
     mask = _code_mask(text)
     spans = []
-    for pat, repl in _COMPLEX_SPELLING:
+    for pat, fixed in _COMPLEX_SPELLING if pairs is None else pairs:
         for m in pat.finditer(mask):
             # Longest first: a span inside one already taken (`double complex`
             # inside `long double complex`) is the same rewrite, once.
             if not any(a <= m.start() < b for a, b, _ in spans):
-                spans.append((m.start(), m.end(), repl))
-    for a, b, repl in sorted(spans, reverse=True):
-        text = text[:a] + repl + text[b:]
+                # The mask keeps code characters as they are, so a match on
+                # it is the original's text there.
+                spans.append(
+                    (
+                        m.start(),
+                        m.end(),
+                        fixed if fixed is not None else repl(m),
+                    )
+                )
+    for a, b, new in sorted(spans, reverse=True):
+        text = text[:a] + new + text[b:]
     return text
 
 
@@ -661,6 +672,79 @@ def _rename_superseded(root: Path) -> None:
         print(f"\nrenamed {old} -> {new}; your edits came along.")
 
 
+def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
+    """Respell the project's own C onto its ``[project] c_prefix`` (gh-1591
+    phase 3): every derived identifier jm renders prefixed, where the tree
+    still spells it bare.
+
+    The rename set is not a pattern: it is :func:`_csym.renames` of a replay
+    -- exactly the identifiers jm's render of THIS manifest declares, old
+    spelling to new -- the same map `apply`'s refusal asks about. The
+    matcher is the refusal's too (:func:`_csym.old_names_pattern`): whole
+    identifier and case-sensitive, so ``acc_state_t`` moves and an author's
+    ``ACC_STATE_MAGIC`` does not; and it rewrites code only
+    (:func:`_respell_code_only`), so a comment or string that quotes a name
+    keeps it. The file set is gh-1583's walk (:func:`_project_files`):
+    every C/C++ file of the project, ``native/examples/`` included, nested
+    projects not.
+
+    Idempotent: a respelled ``zz_fir_create`` cannot match ``fir_create``.
+    Returns the files changed and the map, both empty when nothing changed.
+    """
+    import tempfile
+
+    from . import _apply
+
+    cfg = C.load(root)
+    if CSYM.prefix(cfg) is None:
+        return [], {}
+    stray = CSYM.stray_prefixes(root, cfg)
+    if stray:
+        # Refused by `apply` too; said here first, so upgrade does not
+        # report "nothing to do" over a tree apply will then refuse.
+        _apply.prefix_errors(cfg, root, root)
+    with tempfile.TemporaryDirectory() as tmp:
+        _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
+        names = CSYM.renames(Path(tmp), cfg)
+    if not names:
+        return [], {}
+    pat = CSYM.old_names_pattern(names)
+    pairs = [(pat, None)]
+    changed = []
+    for path in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
+        text = path.read_text(encoding="utf-8")
+        new = _respell_code_only(text, pairs, repl=lambda m: names[m.group(0)])
+        if new != text:
+            _textio.write_text(path, new)
+            changed.append(path)
+    return changed, names if changed else {}
+
+
+def _report_c_prefix(root: Path) -> None:
+    changed, names = _respell_c_prefix(root)
+    if not changed:
+        return
+    cfg = C.load(root)
+    print(
+        f"\nrespelled {len(changed)} file(s) onto [project] c_prefix = "
+        f"{C.c_prefix(cfg)!r} (gh-1591):"
+    )
+    for path in changed:
+        print(f"  {path.relative_to(root)}")
+    # One line per rename, `old<TAB>new` and nothing else on it, so the
+    # table is a TSV as printed -- `awk -F'\t' 'NF == 2'` lifts it for
+    # code jm does not own (another language's FFI, docs) with no flag or
+    # file this command would otherwise need.
+    print(f"\nthe rename table ({len(names)}), old<TAB>new:")
+    for old in sorted(names):
+        print(f"{old}\t{names[old]}")
+    print(
+        "\n  Comments, strings and your own macros are unchanged. Review the"
+        " files above,\n  then `jm apply` and rebuild. Consumers of the"
+        " installed library see a new ABI."
+    )
+
+
 def _report_repairs(root: Path) -> None:
     """Run the schema-independent repairs and say what they changed.
 
@@ -670,6 +754,7 @@ def _report_repairs(root: Path) -> None:
     it never ran for anybody who was up to date, which is everybody it is for.
     """
     _rename_superseded(root)
+    _report_c_prefix(root)
     fixed = _repair_complex_spelling(root)
     if not fixed:
         return
