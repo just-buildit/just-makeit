@@ -267,7 +267,34 @@ def _is_project_core(lib: str) -> bool:
     return "::" not in lib and lib.endswith("_core")
 
 
-def combined_link_c(libs: "list[str]", header_only: bool) -> str:
+#: A link item that is an object library's OBJECTS rather than a target.
+_OBJECTS_ITEM = re.compile(r"^\s*\$<TARGET_OBJECTS:(\w+)>\s*$")
+
+
+def _is_project_objects(lib: str, objects: "frozenset[str]") -> bool:
+    """Whether a link item is object code this project builds.
+
+    gh-1613: :func:`_is_project_core` recognised it by jm's ``_core`` naming
+    alone, and doppler names one ``dp_interrupt_obj`` and links it as
+    ``$<TARGET_OBJECTS:dp_interrupt_obj>``. Its objects reached
+    ``libdoppler.so`` twice -- ``multiple definition of dp_interrupt_*`` --
+    and the bare name on the archive is a target in no export set, a CMake
+    GENERATE error. ``$<TARGET_OBJECTS:>`` can only name a target of this
+    build, so it is always the project's; a bare name is, when the tree
+    declares it (*objects*, from :func:`declared_cores`).
+    """
+    return (
+        _is_project_core(lib)
+        or bool(_OBJECTS_ITEM.match(lib))
+        or lib in objects
+    )
+
+
+def combined_link_c(
+    libs: "list[str]",
+    header_only: bool,
+    objects: "frozenset[str]" = frozenset(),
+) -> str:
     """Restate a core's external libraries on both combined libraries.
 
     The root folds a core into ``lib<pkg>`` by its objects alone
@@ -325,8 +352,12 @@ def combined_link_c(libs: "list[str]", header_only: bool) -> str:
     ('', '')
     >>> combined_link_c(["cjson_core"], False)
     ''
+    >>> combined_link_c(["$<TARGET_OBJECTS:dp_obj>"], False)
+    ''
+    >>> combined_link_c(["dp_obj"], False, frozenset({"dp_obj"}))
+    ''
     """
-    libs = [lib for lib in libs if not _is_project_core(lib)]
+    libs = [lib for lib in libs if not _is_project_objects(lib, objects)]
     if not libs or header_only:
         return ""
     joined = "\n      ".join(libs)

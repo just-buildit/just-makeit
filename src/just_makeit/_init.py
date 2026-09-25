@@ -33,6 +33,7 @@ from ._libwiring import (  # noqa: F401
     cmake_core_wiring,
     combined_link_c,
     component_core_libs,
+    declared_cores,
     dep_core_libs,
     splice_cmake_component,
 )
@@ -1075,6 +1076,13 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     print(f"  update  {init_py}")
 
 
+def _real_root(root: Path) -> Path:
+    """The project a replay renders for, or *root* outside one."""
+    from . import _object
+
+    return _object._DOC_ROOT_OVERRIDE or root
+
+
 def run(
     root: Path,
     component: str,
@@ -1491,7 +1499,14 @@ def run(
     # `PUBLIC` is not merely wrong there -- CMake refuses the target.
     ctx["extra_link_on_core"] = R.core_link_c(
         comp, list(extra_link_libs or []), header_only, include=False
-    ) + combined_link_c(list(extra_link_libs or []), header_only)
+    ) + combined_link_c(
+        list(extra_link_libs or []),
+        header_only,
+        # gh-1613: the REAL tree's object libraries. `apply` renders into a
+        # temp replay tree that has no hand-written c_deps directory in it;
+        # the replay names the real one, as it does for gh-1046's targets.
+        frozenset(declared_cores(_real_root(root))),
+    )
     # extra_include_dirs_on_core: PUBLIC include dirs on the OBJECT library so
     # downstream consumers (Python ext, test, bench) inherit them transitively.
     ctx["extra_include_dirs_on_core"] = R.core_link_c(
