@@ -696,13 +696,13 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     from . import _apply
 
     cfg = C.load(root)
+    # A prefix changed or REMOVED is refused before anything else, so
+    # upgrade never reports "nothing to do" over a tree `apply` would then
+    # refuse -- and a removed key is exactly the case with no prefix to read.
+    if CSYM.stray_prefixes(root, cfg):
+        _apply.prefix_errors(cfg, root, root)
     if CSYM.prefix(cfg) is None:
         return [], {}
-    stray = CSYM.stray_prefixes(root, cfg)
-    if stray:
-        # Refused by `apply` too; said here first, so upgrade does not
-        # report "nothing to do" over a tree apply will then refuse.
-        _apply.prefix_errors(cfg, root, root)
     with tempfile.TemporaryDirectory() as tmp:
         _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
         names = CSYM.renames(Path(tmp), cfg)

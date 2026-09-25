@@ -271,7 +271,18 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     """
     stems = sources(cfg)
     out = {}
-    for name in _derived_by_dir(tree, cfg):
+    # Headers AND sources: a varargs method's binder (`<stem>_<name>` in
+    # its own create-only `_core.c`, called from the binding) is derived
+    # and declared in no header. Duplicates stay header-only -- there a
+    # declaration and its definition would count twice.
+    found = set(_derived_by_dir(tree, cfg))
+    for c in sorted((tree / "native").rglob("*.c")):
+        found |= {
+            n
+            for n in declared(c.read_text(encoding="utf-8", errors="replace"))
+            if _source_of(n, stems) is not None
+        }
+    for name in found:
         src = _source_of(name, stems)
         if src is None:
             continue
@@ -283,34 +294,27 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
 
 
 def _author_files(root: Path) -> "list[Path]":
-    """The C/C++ files under *root*'s ``native/`` whose content is the
-    author's: ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it
-    does not classify (a module function's ``.c``, a hand-written file).
-    What jm rewrites whole -- JM, RECONCILED, DERIVED -- is not asked."""
-    from . import _createonly
+    """The project's C/C++ files whose content is the author's:
+    ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it does not
+    classify (a module function's ``.c``, a hand-written file). What jm
+    rewrites whole -- JM, RECONCILED, DERIVED -- is not asked.
 
-    native = root / "native"
-    if not native.is_dir():
-        return []
-    out = []
-    for p in sorted(native.rglob("*")):
-        if (
-            p.suffix not in (".c", ".h", ".cc", ".cpp", ".hpp")
-            or not p.is_file()
-        ):
-            continue
-        rel = p.relative_to(root).as_posix()
-        if any(
-            part in ("build", "_deps") for part in p.relative_to(root).parts
-        ):
-            continue
-        rule = _createonly.classify(rel)
-        if rule is None or rule.kind in (
+    Walked by gh-1583's ``_upgrade._project_files`` -- the walk `jm upgrade`
+    respells over -- so the refusal never names a file the upgrade it points
+    to would not fix: a nested project's, a build tree's."""
+    from . import _createonly
+    from . import _upgrade
+
+    def mine(p: Path) -> bool:
+        if p.suffix not in _upgrade._C_SUFFIXES:
+            return False
+        rule = _createonly.classify(p.relative_to(root).as_posix())
+        return rule is None or rule.kind in (
             _createonly.AUTHOR,
             _createonly.PARTIAL,
-        ):
-            out.append(p)
-    return out
+        )
+
+    return _upgrade._project_files(root, mine)
 
 
 def old_names_pattern(names: "dict[str, str]") -> "re.Pattern":
