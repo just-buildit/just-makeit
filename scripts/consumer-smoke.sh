@@ -6,6 +6,7 @@
 #   alpha   a jm package
 #   beta    depends on alpha through [project] find_packages (pkg_config)
 #   gamma   depends on alpha through [project] pkg_modules, version-bounded
+#   delta   installs more than one library ([project.libraries], gh-1600)
 #
 # Each dependent's public header includes alpha's, and each is consumed by
 # `pkg-config [--static] --cflags --libs` and by `find_package` with the
@@ -280,6 +281,154 @@ EOF
 consume beta
 consume gamma
 
+# ── delta: one project, more than one library (gh-1600) ──────────────────────
+# `[project.libraries.<name>]` installs lib<pkg>_<name> beside lib<pkg>: its own
+# .pc (`Requires: delta`) and exported targets delta::<name> /
+# delta::<name>-static in delta's package, a COMPONENT of it. `ext` calls INTO
+# libdelta; `twin` is guarded to the platforms this runs on, so it takes the
+# guarded path and is built; `winonly` is guarded to Windows, so here it must
+# be absent -- nothing installed, and a COMPONENTS request for it not found.
+say "delta ([project.libraries])"
+"$JM" new delta --object dcore >/dev/null
+mkdir -p delta/native/inc/delta/ext
+cat >delta/native/inc/delta/delta_base.h <<'EOF'
+#ifndef DELTA_BASE_H
+#define DELTA_BASE_H
+int delta_base (int x);
+#endif
+EOF
+cat >>delta/native/src/dcore/dcore_core.c <<'EOF'
+
+#include "delta/delta_base.h"
+int delta_base (int x) { return x + 1; }
+EOF
+cat >delta/native/inc/delta/ext/ext.h <<'EOF'
+#ifndef DELTA_EXT_H
+#define DELTA_EXT_H
+int delta_ext (int x); /* 10 * delta_base (x), from libdelta */
+int delta_twin (void);
+#endif
+EOF
+for obj in ext twin winonly; do
+    mkdir -p "delta/native/src/$obj"
+    cat >"delta/native/src/$obj/CMakeLists.txt" <<EOF
+add_library(${obj}_obj OBJECT $obj.c)
+set_target_properties(${obj}_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(${obj}_obj PUBLIC \${CMAKE_SOURCE_DIR}/native/inc)
+EOF
+done
+cat >delta/native/src/ext/ext.c <<'EOF'
+#include "delta/delta_base.h"
+#include "delta/ext/ext.h"
+int delta_ext (int x) { return 10 * delta_base (x); }
+EOF
+echo 'int delta_twin (void) { return 7; }' >delta/native/src/twin/twin.c
+echo 'int delta_winonly (void) { return 9; }' >delta/native/src/winonly/winonly.c
+toml_add delta/just-makeit.toml project 'c_deps = ["ext", "twin", "winonly"]'
+cat >>delta/just-makeit.toml <<'EOF'
+
+[project.libraries.ext]
+cores = ["ext_obj"]
+description = "delta's extension layer"
+
+[project.libraries.twin]
+cores = ["twin_obj"]
+platforms = ["linux", "macos"]
+
+[project.libraries.winonly]
+cores = ["winonly_obj"]
+platforms = ["windows"]
+EOF
+(cd delta && "$JM" apply >/dev/null)
+install_project delta
+
+delta_use="$WORK/use-delta"
+mkdir -p "$delta_use/fp"
+# One program, both libraries: libdelta_ext's own symbol, which calls into
+# libdelta, and libdelta's directly -- both on one link line.
+cat >"$delta_use/use.c" <<'EOF'
+#include <stdio.h>
+#include "delta/delta_base.h"
+#include "delta/ext/ext.h"
+int main (void)
+{
+  int e = delta_ext (2), b = delta_base (4), t = delta_twin ();
+  printf ("%d,%d,%d\n", e, b, t);
+  return !(e == 30 && b == 5 && t == 7);
+}
+EOF
+delta_runs() { # program
+    local out
+    out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+    [[ $out == "30,5,7" ]] || { echo "  printed '$out', not 30,5,7"; return 1; }
+}
+say "consume delta"
+for static in "" --static; do
+    link=
+    [[ -n $static && $(uname -s) == Linux ]] && link=-static
+    # The program names only the additional libraries; libdelta arrives
+    # through their `Requires: delta`, which is the point of saying it there.
+    # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
+    $CC "$delta_use/use.c" $link \
+        $(pkg-config $static --cflags --libs delta_ext delta_twin) \
+        -o "$delta_use/use-pc$static"
+    expect - "delta  pkg-config $static $link: delta_ext delta_twin" \
+        delta_runs "$delta_use/use-pc$static"
+done
+cat >"$delta_use/fp/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.16)
+project(use_delta C)
+find_package(delta REQUIRED COMPONENTS ext twin)
+find_package(delta COMPONENTS winonly)
+if(delta_winonly_FOUND)
+  message(FATAL_ERROR "winonly is Windows-only, yet it was found here")
+endif()
+add_executable(use_shared ../use.c)
+target_link_libraries(use_shared PRIVATE delta::ext delta::twin)
+add_executable(use_static ../use.c)
+target_link_libraries(use_static PRIVATE delta::ext-static delta::twin-static)
+EOF
+cmake -S "$delta_use/fp" -B "$delta_use/fp/build" >/dev/null
+cmake --build "$delta_use/fp/build" >/dev/null
+for kind in shared static; do
+    expect - "delta  find_package COMPONENTS ext twin, $kind" \
+        delta_runs "$delta_use/fp/build/use_$kind"
+done
+
+# `winonly` is not built here, so nothing of it may be installed.
+no_winonly() {
+    ! grep -q winonly "$WORK/delta/build/install_manifest.txt"
+}
+expect - "delta  a library guarded to other platforms installs nothing here" \
+    no_winonly
+
+# gh-1601's split holds for every library: `runtime` is exactly the versioned
+# shared libraries, `dev` everything a build needs -- each additional
+# library's .pc and archive included.
+component_split() {
+    local rt="$WORK/delta-rt" dev="$WORK/delta-dev" f bad=0
+    cmake --install "$WORK/delta/build" --component runtime --prefix "$rt" \
+        >/dev/null
+    cmake --install "$WORK/delta/build" --component dev --prefix "$dev" \
+        >/dev/null
+    for f in libdelta_ext libdelta_twin libdelta; do
+        [[ -n $(find "$rt" -name "$f.so.*" -o -name "$f.*.dylib") ]] \
+            || { echo "  runtime lacks $f"; bad=1; }
+    done
+    while IFS= read -r f; do
+        case $f in
+            *.so.* | *.dylib) ;;
+            *) echo "  runtime has $f"; bad=1 ;;
+        esac
+    done < <(find "$rt" -type f)
+    for f in delta_ext.pc delta_twin.pc libdelta_ext.a libdelta_twin.a; do
+        [[ -n $(find "$dev" -name "$f") ]] || { echo "  dev lacks $f"; bad=1; }
+    done
+    return $bad
+}
+expect - "delta  cmake --install --component runtime|dev splits every library" \
+    component_split
+
 # ── packages side by side (gh-1583) ──────────────────────────────────────────
 # A jm package and its jm dependencies share one prefix and one consumer. Each
 # must own its files, and a consumer must name each one's headers without
@@ -290,7 +439,7 @@ consume gamma
 # install overwrites it, and the first package's consumers get the other's.
 disjoint_installs() {
     local clash
-    clash=$(cat "$WORK"/{alpha,beta,gamma}/build/install_manifest.txt \
+    clash=$(cat "$WORK"/{alpha,beta,gamma,delta}/build/install_manifest.txt \
         | sort | uniq -d)
     [[ -z $clash ]] || { printf '%s\n' "$clash" | sed 's/^/  /'; return 1; }
 }

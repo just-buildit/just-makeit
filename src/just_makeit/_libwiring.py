@@ -454,7 +454,152 @@ def lib_targets(cmake_text: str, pkg: str) -> list[str]:
     existed has only some of them. A project that declares none has nothing
     for a core to be missing from, and every question here answers empty.
     """
-    return [t for t in _DECLARES_LIB.findall(cmake_text) if t.startswith(pkg)]
+    # gh-1600: exactly lib<pkg>'s two targets. `startswith(pkg)` also read an
+    # ADDITIONAL library's `<pkg>_<name>_lib` as lib<pkg>, and every core jm
+    # wires would then have been folded into it too -- the table of which
+    # library a core belongs to is `[project.libraries]`, not the name.
+    main = (f"{pkg}_lib", f"{pkg}_lib_static")
+    return [t for t in _DECLARES_LIB.findall(cmake_text) if t in main]
+
+
+def folded_pairs(root: Path) -> "set[tuple[str, str]]":
+    """Every ``(library target, core)`` the project folds objects into, by
+    either spelling: a ``target_sources`` line (:func:`wired_pairs`) or an
+    ``add_library(NAME SHARED|STATIC $<TARGET_OBJECTS:x> ...)`` argument
+    (gh-991, doppler's own). :func:`shipped_cores` asks the second spelling
+    WHETHER; gh-1600's exclusivity rule needs WHICH library.
+    """
+    pairs = set(wired_pairs(root))
+    files = [root / "CMakeLists.txt"]
+    if (root / "native").is_dir():
+        files += sorted((root / "native").rglob("CMakeLists.txt"))
+    for path in files:
+        if path.is_file():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for m in _DECLARES_SHIPPED_LIB.finditer(text):
+                pairs |= {
+                    (m.group(1), c)
+                    for c in _TARGET_OBJECTS.findall(m.group(2))
+                }
+    return pairs
+
+
+#: jm's own wiring in the root: the ``target_sources`` lines it writes
+#: directly under an ``add_subdirectory(native/src/X)`` it manages -- the runs
+#: `apply` rebuilds from the replay (`_apply._SUBDIR_BLOCK`).
+_JM_SUBDIR_RUN = re.compile(
+    r"^add_subdirectory\(native/src/\w+\)[ \t]*\n"
+    r"((?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+>\)[ \t]*\n)*)",
+    re.M,
+)
+
+
+def _jm_wired_pairs(root: Path) -> "set[tuple[str, str]]":
+    """The ``(target, core)`` pairs jm's own root wiring states -- which the
+    next `apply` rewrites, so they are not the project's claim on a core."""
+    path = root / "CMakeLists.txt"
+    if not path.is_file():
+        return set()
+    runs = "".join(
+        m.group(1)
+        for m in _JM_SUBDIR_RUN.finditer(path.read_text(encoding="utf-8"))
+    )
+    return set(_WIRING.findall(runs))
+
+
+def library_cores(cfg: dict) -> "set[str]":
+    """Every core an additional library (gh-1600) claims -- none of which jm
+    folds into lib<pkg>."""
+    if not (cfg.get("project") or {}).get("libraries"):
+        return set()
+    return {c for lib in C.project_libraries(cfg) for c in lib.cores}
+
+
+def library_tree_errors(root: Path, cfg: dict) -> "list[str]":
+    """What in the REAL tree stops ``[project.libraries]`` building (gh-1600).
+
+    A library names OBJECT libraries by target, so each must be one the tree
+    declares -- ``$<TARGET_OBJECTS:>`` on a missing target is a CMake
+    configure error (gh-988). And a core belongs to ONE library: one the
+    project also folds into lib<pkg> would put its objects in a consumer's
+    link twice, so it is refused here rather than left to the linker.
+    """
+    libs = C.project_libraries(cfg)
+    if not libs:
+        return []
+    pkg = C.project_name(cfg)
+    declared = declared_cores(root)
+    main = {f"{pkg}_lib", f"{pkg}_lib_static"}
+    # jm's own lines are not counted: a core jm wired into lib<pkg> before it
+    # was claimed is unwired by the very apply this runs in (the replay
+    # skips claimed cores). Counting them refused that apply forever.
+    folded = folded_pairs(root) - _jm_wired_pairs(root)
+    out: "list[str]" = []
+    for lib in libs:
+        where = f"[project.libraries.{lib.name}]"
+        for core in lib.cores:
+            if core not in declared:
+                out.append(
+                    f"{where}: `{core}` is not an OBJECT library the tree"
+                    " declares (add_library(<name> OBJECT ...) under"
+                    " native/src)"
+                )
+            both = sorted(t for t, c in folded if c == core and t in main)
+            if both:
+                out.append(
+                    f"{where}: `{core}` is also folded into "
+                    + ", ".join(both)
+                    + "; a core belongs to one library -- remove that"
+                    " line, or drop it from this library"
+                )
+    return out
+
+
+def _cmake_quote(text: str) -> str:
+    return (
+        '"'
+        + text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+        + '"'
+    )
+
+
+def libraries_cmake(cfg: dict) -> str:
+    """The ``[project.libraries]`` section of the managed install block.
+
+    Each additional library's two targets, folded from its cores by
+    ``add_library`` arguments (the spelling :func:`shipped_cores` and
+    :func:`folded_pairs` read), linked PUBLIC to lib<pkg>'s matching form --
+    the CMake face of its ``.pc``'s ``Requires: <pkg>``, and what lets a
+    cross-library call resolve on Mach-O -- and appended to
+    ``JM_LIBRARIES``, the one list every per-library packaging rule below
+    runs over. A library that declares ``platforms`` does all of that only
+    there. Empty for a project that declares none.
+    """
+    from . import _modplatforms
+
+    pkg = C.project_name(cfg)
+    out: "list[str]" = []
+    for lib in C.project_libraries(cfg):
+        objs = " ".join(f"$<TARGET_OBJECTS:{c}>" for c in lib.cores)
+        body = (
+            f"add_library({lib.target}_lib SHARED {objs})\n"
+            f"add_library({lib.target}_lib_static STATIC {objs})\n"
+            f"target_link_libraries({lib.target}_lib PUBLIC {pkg}_lib)\n"
+            f"target_link_libraries({lib.target}_lib_static PUBLIC"
+            f" {pkg}_lib_static)\n"
+            f"set(JM_LIBRARY_{lib.target}_DESCRIPTION"
+            f" {_cmake_quote(lib.description)})\n"
+            f'list(APPEND JM_LIBRARIES "{lib.target}:{lib.name}")\n'
+        )
+        if lib.platforms:
+            test = _modplatforms.platform_test(lib.platforms)
+            body = (
+                f"if({test})\n"
+                + "".join(f"  {ln}\n" for ln in body.splitlines())
+                + "endif()\n"
+            )
+        out.append(body)
+    return "".join(out)
 
 
 def dep_core_libs(depends_on: list) -> list[str]:
@@ -539,7 +684,15 @@ def splice_cmake_component(
             text = text[:idx] + sub + text[idx:]
         else:
             text += sub
-    wiring = cmake_core_wiring(text, pkg, cores, externally_wired(root))
+    # gh-1600: a core an additional library claims is never folded into
+    # lib<pkg> too. Asked of the REAL project: under `apply` this runs in a
+    # temp replay whose manifest carries no `[project.libraries]` (the
+    # replay's `_object._DOC_ROOT_OVERRIDE`, as gh-1046's check reads it).
+    from . import _object
+
+    real = _object._DOC_ROOT_OVERRIDE or root
+    skip = externally_wired(root) | library_cores(C.load(real))
+    wiring = cmake_core_wiring(text, pkg, cores, skip)
     if wiring:
         idx = text.index("\n", text.index(sub)) + 1
         text = text[:idx] + wiring + text[idx:]

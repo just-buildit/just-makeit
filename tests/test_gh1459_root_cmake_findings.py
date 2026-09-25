@@ -49,11 +49,14 @@ def _keys(text: str) -> "list[str]":
     return [f.key for f in R.FIXES if f.applies(r) and not f.present(r)]
 
 
-def _drop(text: str, pattern: str) -> str:
-    """Remove the one match of *pattern*; fail loudly on zero or several."""
-    found = re.findall(pattern, text, re.S)
-    assert len(found) == 1, (pattern, len(found))
-    return re.sub(pattern, "", text, count=1, flags=re.S)
+def _drop(text: str, pattern: "str | tuple[str, ...]") -> str:
+    """Remove the one match of *pattern* -- of each, for a fix spelled in more
+    than one place; fail loudly on zero or several."""
+    for pat in (pattern,) if isinstance(pattern, str) else pattern:
+        found = re.findall(pat, text, re.S)
+        assert len(found) == 1, (pat, len(found))
+        text = re.sub(pat, "", text, count=1, flags=re.S)
+    return text
 
 
 # One sabotage per row: the fresh render with that fix's CODE removed. Plain
@@ -62,8 +65,14 @@ SABOTAGE = {
     "libm": r"target_link_libraries\(\s*\$\{lib_target\}\s+PUBLIC[^)]*\)",
     "static-name": r"set_target_properties\(\s*p_lib_static\s+PROPERTIES"
     r"\s+OUTPUT_NAME\s+p_static\s*\)",
-    "export-all": r"set_target_properties\(\s*p_lib\s+PROPERTIES"
-    r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON\s*\)",
+    # gh-1600: set in the author's region AND by the managed per-library
+    # loop (every library a project installs needs it), so removing the fix
+    # means removing both -- either one alone still exports all.
+    "export-all": (
+        r"set_target_properties\(\s*p_lib\s+PROPERTIES"
+        r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON\s*\)",
+        r"\s+WINDOWS_EXPORT_ALL_SYMBOLS\s+ON(?=\))",
+    ),
     "build-type": r"set\(\s*CMAKE_BUILD_TYPE\b[^)]*\)",
     "msvc-runtime": r"set\(\s*CMAKE_MSVC_RUNTIME_LIBRARY\b[^)]*\)",
     "complex-range": r"add_compile_options\(\s*/clang:-fcx-limited-range\s*\)",

@@ -100,12 +100,16 @@ def test_both_pc_fields_reach_the_root(project):
     pc_in = next((project / "cmake").glob("*.pc.in")).read_text()
     # gh-1582: both reach the .pc through the one optional-fields slot, which
     # the root assembles from exactly these lines.
-    assert "@JM_PC_EXTRA_FIELDS@" in pc_in
+    assert "@JM_PC_ROW_FIELDS@" in pc_in
+    # gh-1600: lib<pkg>'s row takes them; an additional library's takes
+    # `Requires: <pkg>` instead.
+    assert 'set(JM_PC_ROW_FIELDS "${JM_PC_EXTRA_FIELDS}")' in root
     for var in ("JM_PC_REQUIRES_PRIVATE", "JM_PC_LIBS_PRIVATE"):
         assert f'string(APPEND JM_PC_EXTRA_FIELDS "${{{var}}}\\n")' in root
     # gh-1579: appended to the one Cflags line, not a second field --
     # pc(5) has no private Cflags.
-    assert "\nCflags: -I${includedir}@JM_PC_CFLAGS@\n" in pc_in
+    assert "\nCflags: -I${includedir}@JM_PC_ROW_CFLAGS@\n" in pc_in
+    assert 'set(JM_PC_ROW_CFLAGS "${JM_PC_CFLAGS}")' in root
 
 
 def test_a_pc_in_without_the_cflags_slot_is_reported_behind(project):
@@ -119,10 +123,10 @@ def test_a_pc_in_without_the_cflags_slot_is_reported_behind(project):
 
     pc_in = next((project / "cmake").glob("*.pc.in"))
     s = pc_in.read_text()
-    assert s.count("@JM_PC_CFLAGS@") == 1
+    assert s.count("@JM_PC_ROW_CFLAGS@") == 1
     head = R.owned_token(pc_in.name) + "\n" + R.OWNED_PACKAGING_NOTE
     assert s.startswith(head)
-    pc_in.write_text(s[len(head) :].replace("@JM_PC_CFLAGS@", ""))
+    pc_in.write_text(s[len(head) :].replace("@JM_PC_ROW_CFLAGS@", ""))
     out = run_cli("status", cwd=project).stdout
     block = out[out.index("PACKAGING") :].split("\n\n")[0]
     assert f"cmake/{pc_in.name}" in block, out

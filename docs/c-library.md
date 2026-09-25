@@ -325,6 +325,47 @@ flag: declare it in `find_packages` above.
 
 ______________________________________________________________________
 
+## More than one library
+
+A project installs `lib<pkg>` and, for each `[project.libraries.<name>]`
+table, one more library built from the OBJECT libraries it names. It is how a
+project ships an optional layer (a network transport, say) that a consumer who
+does not need it never links:
+
+```toml
+[project.libraries.stream]
+cores = ["stream_core_obj"]   # OBJECT libraries, by CMake target name
+description = "the stream layer"
+platforms = ["linux", "macos"]   # optional; built only there
+```
+
+| face       | `lib<pkg>`                            | `[project.libraries.stream]`            |
+| ---------- | ------------------------------------- | --------------------------------------- |
+| file       | `lib<pkg>.so` / `.a`                  | `lib<pkg>_stream.so` / `.a`             |
+| pkg-config | `<pkg>`                               | `<pkg>_stream`, with `Requires: <pkg>`  |
+| CMake      | `<pkg>::<pkg>`, `<pkg>::<pkg>-static` | `<pkg>::stream`, `<pkg>::stream-static` |
+
+It links `lib<pkg>` publicly, so a consumer that names only the additional
+library gets both, by either route:
+
+```sh
+cc app.c $(pkg-config --cflags --libs <pkg>_stream)
+```
+
+```cmake
+find_package(<pkg> REQUIRED COMPONENTS stream)
+target_link_libraries(app PRIVATE <pkg>::stream)
+```
+
+Each library gets everything `lib<pkg>` gets -- its soname, its install name,
+its runtime/dev install components, its `.pc` -- from the same rules. A library
+declared for other platforms is not built, installed or exported where it does
+not apply, and `find_package(<pkg> COMPONENTS <name>)` does not find it there.
+
+A core belongs to one library: `apply` refuses one also folded into
+`lib<pkg>`, one claimed by two libraries, and one the tree does not declare as
+an OBJECT library. jm never folds a claimed core into `lib<pkg>` itself.
+
 ## Calling it from C++11
 
 Every generated header carries an `extern "C"` guard, so a C++ translation

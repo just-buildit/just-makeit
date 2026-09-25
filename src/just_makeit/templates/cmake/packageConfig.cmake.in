@@ -6,4 +6,16 @@
 
 include("${CMAKE_CURRENT_LIST_DIR}/<<project_underscore>>-targets.cmake")
 
+# gh-1600: a library a project installs besides lib<<project_underscore>> is a
+# COMPONENT of the package -- `find_package(<<project_underscore>> REQUIRED
+# COMPONENTS <name>)` -- found when its target was built and exported here,
+# which a library declared for other platforms is not.
+foreach(_jm_comp IN LISTS <<project_underscore>>_FIND_COMPONENTS)
+  if(TARGET <<project_underscore>>::${_jm_comp})
+    set(<<project_underscore>>_${_jm_comp}_FOUND TRUE)
+  else()
+    set(<<project_underscore>>_${_jm_comp}_FOUND FALSE)
+  endif()
+endforeach()
+
 check_required_components(<<project_underscore>>)

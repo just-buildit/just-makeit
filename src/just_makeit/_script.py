@@ -803,6 +803,13 @@ def run(root: Path) -> None:
                 f"# CLI flag — re-add it to just-makeit.toml and run"
                 f" `just-makeit apply`.\n"
             )
+    # gh-1600: an additional library is a manifest-only table too; dropped in
+    # silence, the replayed project would install lib<pkg> alone.
+    for name in cfg.get("project", {}).get("libraries") or {}:
+        lines.append(
+            f"# NOTE: [project.libraries.{name}] has no CLI flag — re-add"
+            " the table to just-makeit.toml and run `just-makeit apply`.\n"
+        )
 
     # gh-1489: [[enum]] has no CLI verb, and every `enum:<name>` a later
     # command replays -- an `--init-param`, a function `--param` -- is

@@ -43,10 +43,15 @@ def test_every_face_carries_the_librarys_name(proj):
     assert (proj / "cmake" / "my_proj.pc.in").is_file()
     assert not (proj / "cmake" / "my-proj.pc.in").exists()
     pc_in = (proj / "cmake" / "my_proj.pc.in").read_text(encoding="utf-8")
-    assert "\nName: my_proj\n" in pc_in, pc_in
+    # gh-1600: the name is the library's row, `<target stem>:<exported
+    # name>`, and the one template and the one loop spell every face of it.
+    assert "\nName: @JM_PC_NAME@\n" in pc_in, pc_in
+    assert "-l@JM_PC_NAME@" in pc_in, pc_in
     root = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert "EXPORT_NAME my_proj)" in root
-    assert "EXPORT_NAME my_proj-static)" in root
+    assert 'set(JM_LIBRARIES "my_proj:my_proj")' in root
+    assert "EXPORT_NAME ${jm_export}" in root
+    assert "${jm_export}-static)" in root
+    assert "set(JM_PC_NAME ${jm_lib})" in root
     assert "my-proj" not in root, "a hyphenated name is left in the root file"
 
 
