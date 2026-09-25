@@ -39,9 +39,9 @@ the files `apply` *merges* rather than overwrites (the package
               project's file lacks. The file is the author's there, so
               `apply` never adds it; one line per fix, never counted,
               and `--diff` prints the file against today's render.
-  - PKG-CONFIG — (gh-1576) a `[project] find_packages` entry with neither
-              `pkg_config` nor `libs_private`, which the installed `.pc`
-              therefore cannot name. Advisory and never counted: the
+  - PKG-CONFIG — (gh-1576) a `[project] find_packages` entry with none of
+              `pkg_config`, `libs_private` or `cflags` (gh-1579), which the
+              installed `.pc` therefore cannot name. Advisory and never counted: the
               project works through find_package either way.
   - NOTE    — (gh-921) a method sets `pass_capacity` while its header still
               declares `max_out(state)`, so the exact allocation the opt-in
@@ -1560,7 +1560,7 @@ def run(
     _unnamed = [
         e.name
         for e in C.find_package_entries(cfg)
-        if not (e.pkg_config or e.libs_private)
+        if not (e.pkg_config or e.libs_private or e.cflags)
     ]
     if _unnamed:
         print(
@@ -1576,9 +1576,10 @@ def run(
             " for these and,\n"
             "  linking static, no libs. Say which: in [project] find_packages"
             " write\n"
-            '  { name = "<Pkg>", pkg_config = "<module>" }, or'
-            ' libs_private = "<flags>"\n'
-            "  when it ships no .pc. Not drift."
+            '  { name = "<Pkg>", pkg_config = "<module>" }, or, when it ships'
+            " no .pc,\n"
+            '  libs_private = "<link flags>" and cflags = "<compile flags>".'
+            " Not drift."
         )
         print()
 

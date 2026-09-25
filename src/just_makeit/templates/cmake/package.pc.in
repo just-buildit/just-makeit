@@ -7,6 +7,6 @@ Name: <<project>>
 Description: <<project>> C library
 Version: @PROJECT_VERSION@
 Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@
-Cflags: -I${includedir}
+Cflags: -I${includedir}@JM_PC_CFLAGS@
 @JM_PC_REQUIRES_PRIVATE@
 @JM_PC_LIBS_PRIVATE@

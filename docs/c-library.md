@@ -183,8 +183,9 @@ it with the name each consumer face needs:
 find_packages = [
     { name = "Doppler", pkg_config = "doppler" },   # ships a CMake config and a .pc
     { name = "Threads", libs_private = "-pthread" }, # no .pc of its own
+    { name = "Kiss", cflags = "-I/opt/kiss/include", libs_private = "-L/opt/kiss/lib -lkiss" },
 ]
-pkg_modules = ["fftw3f"]                             # found through pkg-config
+pkg_modules = ["fftw3f", "zlib >= 1.2"]              # found through pkg-config
 
 [tone]
 extra_link_libs = ["doppler::doppler-static"]
@@ -198,18 +199,28 @@ extra_link_libs = ["doppler::doppler-static"]
     one fact you state rather than jm derives.
 - **`libs_private`** is for a dependency that ships no `.pc`. Its flags go to
     the `.pc`'s `Libs.private`, pkg-config's field for exactly that case.
+- **`cflags`** is the compile half of the same case. When one of your headers
+    includes a header of a dependency with no `.pc`, a consumer needs its
+    include flags to compile yours. pc(5) has no private Cflags, because a
+    header's includes are needed however the consumer links, so these go on
+    the `.pc`'s own `Cflags` line.
 - **`pkg_modules`** entries are already pkg-config module names, so they reach
-    `Requires.private` with nothing more to say.
+    `Requires.private` with nothing more to say. An entry may carry a version
+    bound the way pc(5) writes one: a name, then one of `=`, `<`, `>`, `<=`,
+    `>=` and a version (`"zlib >= 1.2"`). The name alone gives the target
+    (`PkgConfig::ZLIB`). The bound reaches `pkg_check_modules` in the root and
+    in the installed config, and the `.pc`'s `Requires.private`. `jm apply`
+    refuses any other spelling.
 
 With that, a consumer of the installed project gets the dependency on every
 face, and names nothing but your project:
 
-| consumer               | compiling your headers                  | linking                                    |
-| ---------------------- | --------------------------------------- | ------------------------------------------ |
-| `find_package`, shared | the dependency's include dirs and flags | already resolved inside `libmy_project.so` |
-| `find_package`, static | the same                                | the dependency, through the link interface |
-| `pkg-config`, shared   | its `Cflags`, from `Requires.private`   | already resolved inside `libmy_project.so` |
-| `pkg-config --static`  | the same                                | its `Libs`, or your `libs_private`         |
+| consumer               | compiling your headers                                | linking                                    |
+| ---------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| `find_package`, shared | the dependency's include dirs and flags               | already resolved inside `libmy_project.so` |
+| `find_package`, static | the same                                              | the dependency, through the link interface |
+| `pkg-config`, shared   | its `Cflags` via `Requires.private`, or your `cflags` | already resolved inside `libmy_project.so` |
+| `pkg-config --static`  | the same                                              | its `Libs`, or your `libs_private`         |
 
 "Compiling your headers" matters whenever a header of yours includes one of
 the dependency's, as nco_tone's `tone_core.h` includes doppler's

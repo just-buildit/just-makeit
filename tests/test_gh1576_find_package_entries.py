@@ -27,12 +27,14 @@ def test_string_and_table_entries_read_alike():
             "Fftw3",
             {"name": "Doppler", "pkg_config": "doppler"},
             {"name": "Threads", "libs_private": "-pthread"},
+            {"name": "Hdr", "cflags": "-I/opt/hdr/include"},
         )
     )
     assert got == [
         C.FindPackage("Fftw3"),
         C.FindPackage("Doppler", pkg_config="doppler"),
         C.FindPackage("Threads", libs_private="-pthread"),
+        C.FindPackage("Hdr", cflags="-I/opt/hdr/include"),
     ]
     assert C.find_packages(_cfg("A", {"name": "B"})) == ["A", "B"]
 
@@ -44,6 +46,7 @@ def test_string_and_table_entries_read_alike():
         {"name": "X", "pkgconfig": "x"},  # misspelt key
         {"name": "X", "pkg_config": ""},  # empty value
         {"name": "X", "pkg_config": 3},  # not a string
+        {"name": "X", "cflags": ""},  # empty value (gh-1579)
         7,  # neither a name nor a table
     ],
 )
@@ -81,6 +84,7 @@ def test_both_pc_fields_reach_the_root(project):
     cfg["project"]["find_packages"] = [
         {"name": "Doppler", "pkg_config": "doppler"},
         {"name": "Threads", "libs_private": "-pthread"},
+        {"name": "Hdr", "cflags": "-I/opt/hdr/include -DHDR=1"},
     ]
     cfg["project"]["pkg_modules"] = ["zlib"]
     C.save(project, cfg)
@@ -92,9 +96,25 @@ def test_both_pc_fields_reach_the_root(project):
         root
     )
     assert 'set(JM_PC_LIBS_PRIVATE "Libs.private: -pthread")' in root
+    assert 'set(JM_PC_CFLAGS " -I/opt/hdr/include -DHDR=1")' in root
     pc_in = next((project / "cmake").glob("*.pc.in")).read_text()
     assert "@JM_PC_REQUIRES_PRIVATE@" in pc_in
     assert "@JM_PC_LIBS_PRIVATE@" in pc_in
+    # gh-1579: appended to the one Cflags line, not a second field --
+    # pc(5) has no private Cflags.
+    assert "\nCflags: -I${includedir}@JM_PC_CFLAGS@\n" in pc_in
+
+
+def test_a_pc_in_without_the_cflags_slot_is_outdated(project):
+    """An existing project's create-only `.pc.in` predates the slot, so
+    `cflags` would reach nothing there: `status` says the file is behind."""
+    pc_in = next((project / "cmake").glob("*.pc.in"))
+    s = pc_in.read_text()
+    assert s.count("@JM_PC_CFLAGS@") == 1
+    pc_in.write_text(s.replace("@JM_PC_CFLAGS@", ""))
+    out = run_cli("status", cwd=project).stdout
+    block = out[out.index("OUTDATED") :].split("\n\n")[0]
+    assert f"cmake/{pc_in.name}" in block, out
 
 
 def test_status_names_a_dependency_the_pc_cannot(project):
@@ -110,12 +130,17 @@ def test_status_names_a_dependency_the_pc_cannot(project):
     block = out[out.index("PKG-CONFIG (1)") :]
     assert "~ Fftw3" in block.splitlines()[1], block
     assert "Doppler" not in block.split("\n\n")[0], block
+    # gh-1579: the advice names the compile half, not only the link half.
+    assert 'cflags = "<compile flags>"' in block.split("\n\n")[0], block
 
 
 def test_status_is_quiet_when_every_dependency_is_named(project):
     cfg = C.load(project)
     cfg["project"]["find_packages"] = [
-        {"name": "Doppler", "pkg_config": "doppler"}
+        {"name": "Doppler", "pkg_config": "doppler"},
+        # gh-1579: a header-only dependency with no .pc is named by its
+        # compile flags alone.
+        {"name": "Hdr", "cflags": "-I/opt/hdr/include"},
     ]
     C.save(project, cfg)
     assert run_cli("apply", cwd=project).returncode == 0

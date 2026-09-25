@@ -229,6 +229,13 @@ def run(args: list[str]) -> None:
             gates=False,
         )
 
+    # gh-1578: the one reader refuses a module it cannot split, and here that
+    # has to happen before `_new.run` scaffolds a tree around it; otherwise
+    # the refusal would surface only at the first `apply`.
+    from . import _config as C
+
+    C.pkg_module_entries({"project": {"pkg_modules": pkg_modules}})
+
     _new.run(
         project,
         dest,
