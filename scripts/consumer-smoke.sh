@@ -102,6 +102,32 @@ open(path, "w").write(text.replace(header, header + line + "\n"))
 EOF
 }
 
+# ── the ratchet ──────────────────────────────────────────────────────────────
+# KNOWN_BROKEN names checks that fail today, each with its issue. A listed
+# check that fails is reported, not fatal; a listed check that PASSES fails
+# the run until it is removed, so the list only shrinks. Each issue's fix
+# removes its entry.
+KNOWN_BROKEN=" disjoint-install prefixed-include " # gh-1583
+# gh-1594: the installed dylib's install name is @rpath/..., so a program
+# linked by pkg-config (no LC_RPATH) cannot load it. find_package programs
+# carry CMake's build rpath and are unaffected.
+if [[ $(uname -s) == Darwin ]]; then
+    KNOWN_BROKEN+=" pc-dylib-install-name "
+fi
+
+expect() { # id, description, command...
+    local id=$1 what=$2
+    shift 2
+    if "$@"; then
+        [[ $KNOWN_BROKEN != *" $id "* ]] \
+            || die "$id passes now: remove it from KNOWN_BROKEN"
+        echo "ok  $what"
+    else
+        [[ $KNOWN_BROKEN == *" $id "* ]] || die "$what"
+        echo "known broken: $what"
+    fi
+}
+
 cd "$WORK"
 
 # ── alpha: the dependency ────────────────────────────────────────────────────
@@ -217,11 +243,13 @@ add_executable(both_static ../both.c)
 target_link_libraries(both_static PRIVATE $name::${name}_lib_static
                                           alpha::alpha_lib_static)
 EOF
-    check() { # label, program, expected output
+    runs() { # program, expected output
         local out
-        out=$("$2") || die "$name, $1: exited $? (printed '$out')"
-        [[ $out == "$3" ]] || die "$name, $1: printed '$out', not $3"
-        echo "ok  $name  $1"
+        out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+        [[ $out == "$2" ]] || { echo "  printed '$out', not $2"; return 1; }
+    }
+    check() { # label, program, expected output, [ratchet id]
+        expect "${4:--}" "$name  $1" runs "$2" "$3"
     }
     say "consume $name"
     for static in "" --static; do
@@ -236,13 +264,14 @@ EOF
         # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
         $CC "$dir/only.c" $link $(pkg-config $static --cflags --libs "$name") \
             -o "$dir/only-pc$static"
-        check "pkg-config $static $link: $name alone" "$dir/only-pc$static" 3
+        check "pkg-config $static $link: $name alone" "$dir/only-pc$static" 3 \
+            pc-dylib-install-name
         # shellcheck disable=SC2046,SC2086
         $CC "$dir/both.c" $link \
             $(pkg-config $static --cflags --libs "$name" alpha) \
             -o "$dir/both-pc$static"
         check "pkg-config $static $link: $name + alpha" \
-            "$dir/both-pc$static" 1,2
+            "$dir/both-pc$static" 1,2 pc-dylib-install-name
     done
     for p in only both; do
         cmake -S "$dir/$p" -B "$dir/$p/build" >/dev/null
@@ -263,23 +292,6 @@ consume gamma
 # must own its files, and a consumer must name each one's headers without
 # ambiguity: `#include "<pkg>/<comp>/<comp>_core.h"` with -I${includedir}.
 #
-# KNOWN_BROKEN is a ratchet: a check listed here that fails is reported, not
-# fatal; a listed check that PASSES fails the run until it is removed, so the
-# list only shrinks. gh-1583's PR empties it.
-KNOWN_BROKEN=" disjoint-install prefixed-include " # gh-1583
-
-expect() { # id, description, command...
-    local id=$1 what=$2
-    shift 2
-    if "$@"; then
-        [[ $KNOWN_BROKEN != *" $id "* ]] \
-            || die "$id passes now: remove it from KNOWN_BROKEN"
-        echo "ok  $what"
-    else
-        [[ $KNOWN_BROKEN == *" $id "* ]] || die "$what"
-        echo "known broken (gh-1583): $what"
-    fi
-}
 
 # No file one package installs may be a file another installed: the second
 # install overwrites it, and the first package's consumers get the other's.
