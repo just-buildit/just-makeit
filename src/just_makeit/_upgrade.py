@@ -280,6 +280,7 @@ def _build_ctx(cfg: dict) -> dict[str, str]:
         "project": name.replace("_", "-"),
         "project_underscore": name,
         "version": C.project_version(cfg),
+        **INC.ctx_slots(cfg),
     }
 
 
@@ -334,6 +335,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     "project": pkg.replace("_", "-"),
                     "project_underscore": pkg,
                     "version": version,
+                    **INC.ctx_slots(cfg),
                 }
             )
             arg_type = C.arg_type(cfg, comp)

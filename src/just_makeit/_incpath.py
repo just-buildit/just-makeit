@@ -11,14 +11,13 @@ prefix ``native/inc`` today, and the distinction is the point of this module:
   the spelling is bare (``gain/gain_core.h``). gh-1583's decision is to
   prefix it all the way -- headers under ``native/inc/<pkg>/``, included as
   ``<pkg>/gain/gain_core.h`` -- so an installed project's headers cannot
-  collide with another's. That is :data:`PREFIXED`, and flipping it is the
-  whole of the layout change: every path jm writes or reads, and every
-  ``#include`` it emits, comes from here.
+  collide with another's. A project is prefixed from manifest schema
+  :data:`PREFIXED_SCHEMA` on (:func:`prefixed`): every path jm writes or
+  reads, and every ``#include`` it emits, comes from here.
 
-Every function takes an *owner*: the package name, or a project root whose
-manifest names it. The name is only read when :data:`PREFIXED` is on, so an
-unprefixed layout never touches a manifest -- including a scratch tree that
-has not written one yet.
+Every function takes an *owner*: a path inside the project, or its manifest
+as a dict. Not a bare package name -- the name alone does not say which
+layout the project is in.
 
 A test (``tests/test_gh1583_include_layout.py``) refuses a hand-spelled
 ``native/inc`` anywhere else in jm's modules, and an ``#include`` of a
@@ -39,47 +38,85 @@ INC_DIR = "native/inc"
 #: The same directory as CMake names it in a generated ``CMakeLists.txt``.
 CMAKE_INC = "${CMAKE_SOURCE_DIR}/" + INC_DIR
 
-#: gh-1583: headers live under ``INC_DIR/<pkg>/`` and every ``#include`` of
-#: one is spelled ``<pkg>/...``. Off until the layout change lands.
-PREFIXED = False
+#: gh-1583: the manifest schema from which a project's headers live under
+#: ``INC_DIR/<pkg>/`` and every ``#include`` of one is spelled ``<pkg>/...``.
+#: The layout is a fact about each PROJECT, not a switch in jm: a project
+#: scaffolded at an older schema keeps its layout until `jm upgrade` moves
+#: it, so `apply` never writes the new layout beside the old one.
+PREFIXED_SCHEMA = 8
 
-Owner = Union[str, Path]
+#: A path inside the project (its root, or any file under it: the nearest
+#: directory holding a manifest names it), or the project's manifest itself
+#: as a dict. Never a bare package name: a name does not say which layout.
+Owner = Union[Path, dict]
 
-_PKG_CACHE: "dict[tuple[str, int], str]" = {}
+_CFG_CACHE: "dict[tuple[str, int], dict]" = {}
 
 
-def _pkg(owner: Owner) -> str:
-    """The package name *owner* stands for.
-
-    A string is the name. A path is the project root, or any path inside the
-    project: the nearest directory holding a manifest names it -- which is
-    what lets a writer that knows only the file it writes (an umbrella
-    header, a ``_core.c``) spell that project's includes.
-    """
-    if isinstance(owner, str):
+def _cfg(owner: Owner) -> dict:
+    """The manifest *owner* stands for."""
+    if isinstance(owner, dict):
         return owner
+    if isinstance(owner, str):
+        raise TypeError(
+            f"_incpath owner {owner!r} is a bare name: pass a path inside "
+            "the project, or its manifest -- a name does not say which "
+            "layout the project is in (gh-1583)"
+        )
+    if owner is None:
+        raise TypeError(
+            "_incpath owner is None: pass the project's root or manifest"
+        )
     here = Path(owner).resolve()
     for d in (here, *here.parents):
         manifest = d / "just-makeit.toml"
         if manifest.is_file():
             break
     else:
-        raise FileNotFoundError(f"no just-makeit.toml at or above {owner}")
+        # No manifest above: not a project that has declared a schema, which
+        # `C.schema_version` reads as schema 1 -- the legacy layout, the only
+        # one there was before a manifest could say otherwise.
+        return {}
     key = (str(manifest), manifest.stat().st_mtime_ns)
-    if key not in _PKG_CACHE:
+    if key not in _CFG_CACHE:
         from . import _config as C
 
-        _PKG_CACHE[key] = C.project_name(C.load(manifest.parent))
-    return _PKG_CACHE[key]
+        _CFG_CACHE[key] = C.load(manifest.parent)
+    return _CFG_CACHE[key]
+
+
+def prefixed(owner: Owner) -> bool:
+    """Whether *owner*'s headers are prefixed with its package (gh-1583).
+
+    THE one answer: every path and spelling below asks it, and
+    ``tests/test_gh1583_one_layout_question.py`` refuses the question being
+    asked anywhere else.
+
+    >>> prefixed({"project": {"name": "p", "schema": "7"}})
+    False
+    >>> prefixed({"project": {"name": "p", "schema": "8"}})
+    True
+    """
+    from . import _config as C
+
+    return C.schema_version(_cfg(owner)) >= PREFIXED_SCHEMA
+
+
+def _pkg(owner: Owner) -> str:
+    from . import _config as C
+
+    return C.project_name(_cfg(owner))
 
 
 def prefix(owner: Owner) -> str:
     """What every ``#include`` of *owner*'s own headers starts with.
 
-    >>> prefix("my_proj")
+    >>> prefix({"project": {"name": "my_proj", "schema": "7"}})
     ''
+    >>> prefix({"project": {"name": "my_proj", "schema": "8"}})
+    'my_proj/'
     """
-    return f"{_pkg(owner)}/" if PREFIXED else ""
+    return f"{_pkg(owner)}/" if prefixed(owner) else ""
 
 
 def include(name: str, owner: Owner) -> str:
@@ -88,8 +125,10 @@ def include(name: str, owner: Owner) -> str:
     *name* is relative to the header root: ``gain/gain_core.h``,
     ``clib_common.h``, ``my_proj.h``.
 
-    >>> include("clib_common.h", "my_proj")
+    >>> include("clib_common.h", {"project": {"name": "my_proj", "schema": "7"}})
     'clib_common.h'
+    >>> include("clib_common.h", {"project": {"name": "my_proj", "schema": "8"}})
+    'my_proj/clib_common.h'
     """
     return prefix(owner) + name
 
@@ -97,8 +136,8 @@ def include(name: str, owner: Owner) -> str:
 def core_include(comp: str, owner: Owner) -> str:
     """How an ``#include`` spells *comp*'s ``_core.h``.
 
-    >>> core_include("gain", "my_proj")
-    'gain/gain_core.h'
+    >>> core_include("gain", {"project": {"name": "my_proj", "schema": "8"}})
+    'my_proj/gain/gain_core.h'
     """
     return include(f"{comp}/{comp}_core.h", owner)
 
@@ -106,7 +145,7 @@ def core_include(comp: str, owner: Owner) -> str:
 def rel(name: str, owner: Owner) -> str:
     """*name*'s path relative to the project root, POSIX-spelled.
 
-    >>> rel("gain/gain_core.h", "my_proj")
+    >>> rel("gain/gain_core.h", {"project": {"name": "my_proj", "schema": "7"}})
     'native/inc/gain/gain_core.h'
     """
     return f"{INC_DIR}/{include(name, owner)}"
@@ -115,8 +154,8 @@ def rel(name: str, owner: Owner) -> str:
 def core_rel(comp: str, owner: Owner) -> str:
     """*comp*'s ``_core.h``, relative to the project root.
 
-    >>> core_rel("gain", "my_proj")
-    'native/inc/gain/gain_core.h'
+    >>> core_rel("gain", {"project": {"name": "my_proj", "schema": "8"}})
+    'native/inc/my_proj/gain/gain_core.h'
     """
     return rel(f"{comp}/{comp}_core.h", owner)
 
@@ -124,13 +163,20 @@ def core_rel(comp: str, owner: Owner) -> str:
 def rel_glob(pattern: str) -> str:
     """A project-relative glob for headers *pattern* matches, in ANY project.
 
-    For a path table that cannot know the package (`_createonly`'s rules):
-    under :data:`PREFIXED` the package's directory is a wildcard.
+    For a path table that cannot know the package or the layout
+    (`_createonly`'s rules): it matches the header at the ``-I`` root and
+    under a package directory alike. fnmatch's ``*`` crosses ``/``, so a
+    pattern that already starts with one needs nothing; a bare name gets a
+    leading ``*`` that is empty for the old layout and ``<pkg>/`` for the
+    new one.
 
     >>> rel_glob("*/*_core.h")
     'native/inc/*/*_core.h'
+    >>> rel_glob("clib_common.h")
+    'native/inc/*clib_common.h'
     """
-    return f"{INC_DIR}/{'*/' if PREFIXED else ''}{pattern}"
+    star = "" if pattern.startswith("*") else "*"
+    return f"{INC_DIR}/{star}{pattern}"
 
 
 def inc_dir(root: Path) -> Path:
@@ -157,14 +203,32 @@ def core_h(root: Path, comp: str, owner: "Owner | None" = None) -> Path:
     return path(root, f"{comp}/{comp}_core.h", owner)
 
 
-def layout_slots(ctx: dict) -> "dict[str, str]":
-    """The template slots the layout owns, for a render of *ctx*.
+#: The template slots whose value depends on which layout a project is in.
+#: `render()` refuses a template that uses one when its context lacks it.
+PROJECT_SLOTS = ("inc_prefix",)
 
-    ``<<inc_dir>>`` is :data:`INC_DIR`; ``<<inc_prefix>>`` leads every
-    ``#include`` of a jm-generated header. The package is the context's
-    ``project_underscore`` (or ``package``) when :data:`PREFIXED` needs one.
+
+def layout_slots(ctx: dict) -> "dict[str, str]":
+    """The layout slot every project shares, filled under *ctx* by `render()`.
+
+    Only ``<<inc_dir>>``: the per-project slots (:data:`PROJECT_SLOTS`) come
+    from :func:`ctx_slots`, and `render()` refuses a template needing one
+    that its context does not carry.
     """
-    if not PREFIXED:
-        return {"inc_dir": INC_DIR, "inc_prefix": ""}
-    pkg = ctx.get("project_underscore") or ctx.get("package") or ""
-    return {"inc_dir": INC_DIR, "inc_prefix": prefix(pkg) if pkg else ""}
+    return {"inc_dir": INC_DIR}
+
+
+def ctx_slots(owner: Owner) -> "dict[str, str]":
+    """The layout's template slots for a render of *owner*'s files.
+
+    ``<<inc_prefix>>`` leads every ``#include`` of a jm-generated header.
+
+    ``jm_simd.h`` and ``jm_perf.h`` keep ONE include guard in every layout:
+    they define fixed-name inline functions and macros each ``_core.h``
+    calls, so a per-package guard would define them twice in a translation
+    unit that includes two packages (gh-1583; version skew is gh-1606).
+
+    >>> ctx_slots({"project": {"name": "p", "schema": "8"}})
+    {'inc_dir': 'native/inc', 'inc_prefix': 'p/'}
+    """
+    return {"inc_dir": INC_DIR, "inc_prefix": prefix(owner)}

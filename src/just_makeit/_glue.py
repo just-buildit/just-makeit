@@ -22,6 +22,7 @@ from . import _textio
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from . import _procglobal
 from . import _record
 from . import _report
@@ -89,6 +90,7 @@ def component_ctx(
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": C.project_version(cfg),
+            **INC.ctx_slots(cfg),
         }
     )
     ctx.update(Ctx.make_sample_ctx(arg_type_, return_type_))

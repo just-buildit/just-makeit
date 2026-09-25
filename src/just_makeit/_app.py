@@ -34,6 +34,7 @@ pep723   PEP 723 inline-script.  Generates <name>.py in the project root
 
 from __future__ import annotations
 
+from . import _incpath as INC
 from . import _textio
 
 import json
@@ -1614,7 +1615,8 @@ def _run_c(
     app_dir = root / "native" / "src" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     main_c = app_dir / f"{name}.c"
-    rendered = R.render(tmpl, ctx)
+    # gh-1583: the app includes the project's headers, in its layout.
+    rendered = R.render(tmpl, {**INC.ctx_slots(root), **ctx})
     # gh-962: this file is regenerated wholesale, by `jm app` AND by every
     # `jm apply` (the replay re-runs the verb from `[app]`). Nothing preserves
     # a body here the way `_restore_c_function_bodies` preserves `_core.c`, and

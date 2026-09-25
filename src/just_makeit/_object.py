@@ -411,6 +411,7 @@ def _make_object_ctx(
     doc_blocks: dict | None = None,
     block_sizes: "list[int] | None" = None,
     create_fn: str | None = None,
+    layout: "dict | None" = None,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
 
@@ -431,6 +432,8 @@ def _make_object_ctx(
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": version,
+            # gh-1583: render() refuses a header template without it.
+            **(layout or {}),
         }
     )
     ctx.update(Ctx.make_sample_ctx(arg_type, return_type, block_sizes))
@@ -1195,6 +1198,7 @@ def _make_view_ctx(
         controllable=C.controllable_state_vars(cfg, obj),
         doc_blocks=doc_blocks,
         block_sizes=C.project_bench_block_sizes(cfg),
+        layout=INC.ctx_slots(cfg),
     )
     # gh-504: a view's surface is the parent's, minus excludes, with its OWN
     # members merged over by name — an own entry OVERRIDES a parent one of the
@@ -1471,6 +1475,7 @@ def build_component_ctxs(
             doc_blocks=_doc_blocks,
             block_sizes=C.project_bench_block_sizes(cfg),
             create_fn=C.object_create_fn(cfg, obj),
+            layout=INC.ctx_slots(cfg),
         )
         _override_slots = overridden_builtin_slots(
             ctx["component"], C.methods(cfg, obj), ctx
@@ -1745,6 +1750,8 @@ def _write_module_test_and_bench(
     """
     smoke, checks = R.module_fn_smoke_calls(fns)
     ctx = {
+        # gh-1583: the tests include the project's headers, in its layout.
+        **INC.ctx_slots(root),
         "module": cname,
         "scaffold_checks": str(checks),
         "module_fn_smoke_calls": smoke,
@@ -1866,6 +1873,7 @@ def render_module_ext_c(
         # stub carry the same text.
         fn_doc_blocks=_load_module_doc_blocks(root, module),
         procglobal=_procglobal.rendezvous_c(cfg, module),
+        layout=INC.ctx_slots(cfg),
     )
 
 
@@ -2613,6 +2621,7 @@ def run(
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
+        layout=INC.ctx_slots(cfg),
     )
     ctx.update(
         Ctx.make_methods_ctx(

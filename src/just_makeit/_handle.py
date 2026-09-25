@@ -1762,7 +1762,7 @@ def render_ext(
         )
 
     # gh-1583: the include of a jm header is spelled by the layout.
-    _common_h = INC.include("clib_common.h", C.project_name(cfg))
+    _common_h = INC.include("clib_common.h", cfg)
     parts = [
         f"""/*
  * {mp.cname}_ext.c — handle extension: typed `{tname}` over `{backing}` (jm; gh-306).

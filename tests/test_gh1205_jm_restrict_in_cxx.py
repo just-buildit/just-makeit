@@ -39,10 +39,18 @@ SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
 from just_makeit import _render as R  # noqa: E402
+from just_makeit import _incpath as INC  # noqa: E402
 
 
 def _perf_h() -> str:
-    return R.render(R.JM_PERF_H, {"package": "p", "PACKAGE": "P"})
+    return R.render(
+        R.JM_PERF_H,
+        {
+            "package": "p",
+            "PACKAGE": "P",
+            **INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
+        },
+    )
 
 
 class TestTheCxxSpelling:
