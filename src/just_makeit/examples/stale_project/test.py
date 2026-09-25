@@ -283,12 +283,13 @@ def run(root: Path) -> None:
     for rel in outdated:
         (proj / rel).unlink()
     # gh-1589: the packaging templates are jm's to own, not files to delete.
-    # The lines --check says adopting would drop are 0.33.14's own spelling
-    # of the paths and description, which today's render replaced; nothing
-    # was written into them here, so the render is accepted.
+    # Every line in them is one a released jm rendered (0.33.14's), so
+    # adopting loses nothing and needs no --accept; a line of the author's
+    # would be refused and named. (Step 4 already took the root file whole,
+    # managed install block included.)
     assert "PACKAGING (2)" in status, status
-    log.jm("adopt", "--packaging", "--check", expect=1)
-    log.jm("adopt", "--packaging", "--accept", "stale.pc.in")
+    log.jm("adopt", "--packaging", "--check")
+    log.jm("adopt", "--packaging")
     # jb.toml was renamed bootstrap.toml (gh-935). Step 3's apply held the
     # new one back and said why; upgrade, above, moved the old one across --
     # and, never edited here, it is OUTDATED like the rest and was just

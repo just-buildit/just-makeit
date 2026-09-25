@@ -13,7 +13,7 @@ LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install
                 complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
-                doppler-pin-check consumer-smoke
+                doppler-pin-check consumer-smoke install-history-update
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -193,3 +193,11 @@ gates-declared-check: ## Verify no gate has dropped its declared obligation
 # runner to install to the default prefix and consume with no hints at all.
 consumer-smoke: ## Install jm packages, consume them by the official instructions
 	bash scripts/consumer-smoke.sh
+
+# gh-1589: the commands every released jm rendered in the root install
+# section, so `jm adopt --packaging` can tell an older jm's command from one
+# an author added. It only grows; a test fails when the current template
+# renders a command it lacks, so run this with any change to that section.
+install-history-update: ## Record the root install section's commands for adopt
+	@python3 scripts/install_history.py
+	@$(RUFF) format -q src/just_makeit/_installhistory.py

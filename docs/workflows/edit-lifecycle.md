@@ -24,7 +24,10 @@ Four of these have more to them:
     the part of the template outside its marked blocks never reaches it.
     `jm status` names each one it lacks under `ROOT CMAKE`, with what breaks
     without it, and `jm status --diff` shows the file against today's render
-    to merge from.
+    to merge from. Its install section is one of those marked blocks (from
+    `# ── Install` to `# ── End install`, gh-1589), so packaging fixes do
+    arrive; an older file without the end line is adopted with
+    `jm adopt --packaging`.
 - **A component's `CMakeLists.txt`** is regenerated, but a rule the manifest
     cannot express survives: an extra source in `<comp>_core`'s
     `add_library` or a per-source property leaves the file untouched, and an

@@ -1436,6 +1436,40 @@ CMAKE_SPLICE_ANCHORS = {
 }
 
 
+def _splice_root_install(real_path: Path, temp_path: Path) -> bool:
+    """Render the root CMakeLists's managed install block (gh-1589).
+
+    The block is everything between ``# ── Install`` and ``# ── End install``
+    (:func:`_rootcmake.install_block`): the targets' install rules, the
+    soname, the package config and version files, the build-tree export and
+    the ``.pc``. Every packaging fix of epic gh-1584 lives there, and before
+    this the section was create-only, so none reached an existing project.
+
+    The block is replaced only when its CMake COMMANDS differ from the
+    render's (:func:`_rootcmake.calls`: comments dropped, layout ignored), so
+    a project whose formatter reflowed the block is not rewritten on every
+    apply, and a comment-only template change is not worth a rewrite. A file
+    without both sentinels is left alone: its install section is the
+    author's until `jm adopt --packaging` hands it over, and `status`
+    reports it (``ROOT CMAKE install-block``).
+
+    Returns True if the file was modified.
+    """
+    from . import _rootcmake
+
+    real = real_path.read_text(encoding="utf-8")
+    temp = temp_path.read_text(encoding="utf-8")
+    rs = _rootcmake.install_block(real)
+    ts = _rootcmake.install_block(temp)
+    if rs is None or ts is None:
+        return False
+    old, new = real[rs[0] : rs[1]], temp[ts[0] : ts[1]]
+    if _rootcmake.calls(old) == _rootcmake.calls(new):
+        return False
+    _textio.write_text(real_path, real[: rs[0]] + new + real[rs[1] :])
+    return True
+
+
 def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
     """Insert or replace the managed external-deps block in the top CMakeLists.
 
@@ -2280,6 +2314,11 @@ def _sync_aggregates(
     # Maintain the external-deps sentinel block regardless of --only.
     if real_cmake.exists():
         if _splice_cmake_external_deps(real_cmake, cfg):
+            if real_cmake not in updated:
+                updated.append(real_cmake)
+    # gh-1589: and the managed install block, likewise.
+    if real_cmake.exists() and temp_cmake.exists():
+        if _splice_root_install(real_cmake, temp_cmake):
             if real_cmake not in updated:
                 updated.append(real_cmake)
 

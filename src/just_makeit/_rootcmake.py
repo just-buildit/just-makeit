@@ -121,9 +121,43 @@ class Root(NamedTuple):
     calls: "tuple[Call, ...]"
     shared: Optional[str]
     static: Optional[str]
+    #: gh-1589: the file carries jm's managed install block (both sentinel
+    #: lines, once each, in order). Read from the raw text, because the
+    #: sentinels are comments and :attr:`calls` has none.
+    managed_install: bool = False
 
     def words(self) -> "set[str]":
         return {w for c in self.calls for w in c.args}
+
+
+#: gh-1589: the managed install block runs from the line after the begin
+#: sentinel to the end sentinel. The begin line is the ``# ── Install`` header
+#: every jm scaffold has carried, so an older project already has one of the
+#: two; the end line is what makes the section jm's.
+INSTALL_BEGIN = re.compile(r"^# ── Install\b.*$", re.M)
+INSTALL_END = re.compile(r"^# ── End install\b.*$", re.M)
+
+
+def install_block(text: str) -> "Optional[tuple[int, int]]":
+    """The span of the managed install block's CONTENT in *text*.
+
+    From the start of the line after the begin sentinel to the start of the
+    end sentinel's line, or ``None`` when the file does not carry each
+    sentinel exactly once, begin first -- a file `apply` must then leave
+    alone, and `status` reports.
+
+    >>> t = "a\\n# ── Install ──\\nx()\\n# ── End install ──\\nb\\n"
+    >>> s, e = install_block(t)
+    >>> t[s:e]
+    'x()\\n'
+    >>> install_block("# ── Install ──\\nx()\\n") is None
+    True
+    """
+    b = list(INSTALL_BEGIN.finditer(text))
+    e = list(INSTALL_END.finditer(text))
+    if len(b) != 1 or len(e) != 1 or e[0].start() < b[0].end():
+        return None
+    return b[0].end() + 1, e[0].start()
 
 
 def parse(text: str) -> Root:
@@ -136,7 +170,7 @@ def parse(text: str) -> Root:
             shared = shared or c.args[0]
         if c.args[1] == "STATIC" and c.args[0].endswith("_lib_static"):
             static = static or c.args[0]
-    return Root(cs, shared, static)
+    return Root(cs, shared, static, install_block(text) is not None)
 
 
 _TRUE = {"ON", "TRUE", "YES", "Y", "1"}
@@ -201,16 +235,6 @@ def _has_export_all(r: Root) -> bool:
     )
 
 
-def _has_runtime_dest(r: Root) -> bool:
-    return any(
-        c.name == "install"
-        and "TARGETS" in c.args
-        and r.shared in c.args
-        and "RUNTIME" in c.args
-        for c in r.calls
-    )
-
-
 def _has_default_build_type(r: Root) -> bool:
     # Decided BEFORE project(): that is where CMake fills in its own default,
     # which is Debug for clang-cl.
@@ -249,91 +273,7 @@ def _has_win_defines(r: Root) -> bool:
     return all(d in defined for d in _WIN_DEFINES)
 
 
-def _has_soversion(r: Root) -> bool:
-    return any(
-        c.name in ("set_target_properties", "set_property")
-        and r.shared in c.args
-        and "SOVERSION" in c.args
-        for c in r.calls
-    )
-
-
-def _has_install_name(r: Root) -> bool:
-    return any(
-        c.name in ("set_target_properties", "set_property")
-        and r.shared in c.args
-        and "INSTALL_NAME_DIR" in c.args
-        for c in r.calls
-    )
-
-
-def _version_file(r: Root) -> Optional[Call]:
-    for c in r.calls:
-        if c.name == "write_basic_package_version_file":
-            return c
-    return None
-
-
-def _major_zero(r: Root) -> bool:
-    for c in r.calls:
-        if c.name == "project":
-            return (_after(c.args, "VERSION") or "").startswith("0.")
-    return False
-
-
-def _has_zero_compat(r: Root) -> bool:
-    # Under 0.x a minor release may break, so SameMajorVersion (and the
-    # looser AnyNewerVersion) accept an incompatible install. A variable is
-    # the template's own spelling, which chooses by the major version.
-    c = _version_file(r)
-    got = _after(c.args, "COMPATIBILITY") if c else None
-    return bool(got) and got not in ("SameMajorVersion", "AnyNewerVersion")
-
-
-def _has_build_tree_export(r: Root) -> bool:
-    return any(c.name == "export" and "EXPORT" in c.args for c in r.calls)
-
-
-def _installs_export(r: Root) -> bool:
-    return any(
-        c.name == "install" and c.args[:1] == ("EXPORT",) for c in r.calls
-    )
-
-
 _PC_VARS = ("JM_PC_PREFIX", "JM_PC_LIBDIR", "JM_PC_INCLUDEDIR")
-
-
-def _has_pc_paths(r: Root) -> bool:
-    # The variables the .pc.in reads, AND an install(CODE) that fills in the
-    # prefix the files were installed under: the template sets JM_PC_PREFIX
-    # to a marker only that step replaces, so either half alone is broken.
-    defined = {c.args[0] for c in r.calls if c.args and c.name == "set"}
-    writes_at_install = any(
-        c.name == "install"
-        and "CODE" in c.args
-        and any("CMAKE_INSTALL_PREFIX" in w for w in c.args)
-        for c in r.calls
-    )
-    return writes_at_install and all(v in defined for v in _PC_VARS)
-
-
-def _configures_pc(r: Root) -> bool:
-    return any(
-        c.name == "configure_file"
-        and c.args[:1]
-        and c.args[0].endswith(".pc.in")
-        for c in r.calls
-    )
-
-
-def _has_pc_fields(r: Root) -> bool:
-    # The variable today's .pc.in ends in: the optional fields, each present
-    # only when set. Unset, the slot renders empty and every optional field
-    # -- URL, Requires.private, Libs.private -- is silently dropped.
-    return any(
-        c.name == "set" and c.args[:1] == ("JM_PC_EXTRA_FIELDS",)
-        for c in r.calls
-    )
 
 
 class Fix(NamedTuple):
@@ -385,15 +325,6 @@ FIXES: "tuple[Fix, ...]" = (
         lambda r: bool(r.shared),
     ),
     Fix(
-        "runtime-dest",
-        "gh-1368",
-        "Windows",
-        "install(TARGETS) has no RUNTIME DESTINATION, so the DLL is never "
-        "installed beside its import library",
-        _has_runtime_dest,
-        lambda r: bool(r.shared),
-    ),
-    Fix(
         "build-type",
         "gh-1368",
         "Windows (clang-cl)",
@@ -428,66 +359,14 @@ FIXES: "tuple[Fix, ...]" = (
         _has_win_defines,
     ),
     Fix(
-        "soversion",
-        "gh-1582",
-        "Linux, macOS",
-        "the shared library has no VERSION/SOVERSION, so every release "
-        "installs over the last under one soname, and a program linked "
-        "against an older ABI silently loads the new one",
-        _has_soversion,
-        lambda r: bool(r.shared),
-    ),
-    Fix(
-        "install-name",
-        "gh-1594",
-        "macOS",
-        "the installed dylib is named @rpath/lib<pkg>.dylib, so a program "
-        "linked by pkg-config (or any build but CMake's) has no LC_RPATH and "
-        "dyld refuses to load it",
-        _has_install_name,
-        lambda r: bool(r.shared),
-    ),
-    Fix(
-        "version-compat",
-        "gh-1582",
+        "install-block",
+        "gh-1589",
         "all",
-        "the package version file is SameMajorVersion under 0.x, so "
-        "find_package(<pkg> 0.1) accepts 0.2, whose minor release may break",
-        _has_zero_compat,
-        lambda r: _major_zero(r) and _version_file(r) is not None,
-    ),
-    Fix(
-        "build-tree-export",
-        "gh-1582",
-        "all",
-        "the targets are not export()ed into the build tree, so "
-        "find_package() finds the project only after it is installed",
-        _has_build_tree_export,
-        _installs_export,
-    ),
-    Fix(
-        "pc-paths",
-        "gh-1582",
-        "all",
-        "the .pc's prefix is not written at install time ("
-        + ", ".join(_PC_VARS)
-        + " and the install(CODE) that fills them): today's "
-        "cmake/<pkg>.pc.in writes no usable prefix without them, and the "
-        "older one names the CONFIGURED prefix, so `cmake --install "
-        "--prefix` leaves a .pc pointing where nothing was installed",
-        _has_pc_paths,
-        _configures_pc,
-    ),
-    Fix(
-        "pc-fields",
-        "gh-1582",
-        "all",
-        "JM_PC_EXTRA_FIELDS is not assembled: today's cmake/<pkg>.pc.in "
-        "carries URL, Requires.private and Libs.private only through it, so "
-        "without it they are dropped, and the older .pc.in writes an empty "
-        "`URL:` and blank lines where they are absent",
-        _has_pc_fields,
-        _configures_pc,
+        "the install section is not jm's managed block (no \"# ── End "
+        'install" line), so no packaging fix reaches it: the soname, the '
+        "install-time .pc prefix, the macOS install name, the build-tree "
+        "export. `jm adopt --packaging --check` shows what taking it changes",
+        lambda r: r.managed_install,
     ),
 )
 

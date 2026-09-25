@@ -134,14 +134,14 @@ A file you *did* edit: merge jm's version into yours by hand instead.
 `cmake/stale.pc.in` and `cmake/stale-config.cmake.in` are what a C consumer
 reads through pkg-config and `find_package`, and today's jm owns them:
 `status` lists the two under PACKAGING, and once adopted `apply` keeps them
-current by itself. The four lines `--check` says adopting would drop are
-0.33.14's own spelling of the paths and the description, which today's
-render replaced — nothing
-was written into them here — so accept the render:
+current by itself. Every line in them is one a released jm rendered --
+0.33.14's -- so adopting drops nothing of yours, and `--check` says so. (A
+root `CMakeLists.txt` you did not replace whole in step 4 is adopted the same
+way: its install section becomes jm's managed block.)
 
 ```sh
-jm adopt --packaging --check                # each diff, and what would be dropped
-jm adopt --packaging --accept stale.pc.in
+jm adopt --packaging --check                # each diff, and anything of yours it would drop
+jm adopt --packaging
 ```
 
 **Your C benchmarks too, if you never touched them.** Once scaffolded,
