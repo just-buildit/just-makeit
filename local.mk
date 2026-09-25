@@ -13,7 +13,7 @@ LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install
                 complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
-                doppler-pin-check
+                doppler-pin-check consumer-smoke
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -185,3 +185,11 @@ gates-index-update: ## Record the declared gates as the ratchet's new floor
 
 gates-declared-check: ## Verify no gate has dropped its declared obligation
 	@python3 scripts/gates-index.py --check
+
+# gh-1590: the acceptance test for epic gh-1584 -- jm packages installed the
+# documented way and consumed by the official pkg-config and CMake
+# instructions. Here it installs to a temp prefix (or PREFIX) with the
+# documented hints; CI sets CONSUMER_SMOKE_DEFAULT_PREFIX=1 on a throwaway
+# runner to install to the default prefix and consume with no hints at all.
+consumer-smoke: ## Install jm packages, consume them by the official instructions
+	bash scripts/consumer-smoke.sh

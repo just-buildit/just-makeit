@@ -535,11 +535,61 @@ jobs:
 
       - run: make bench
 
+  # gh-1590, the acceptance test for epic gh-1584: jm packages installed to
+  # the DEFAULT prefix with the documented commands, then consumed by the
+  # official pkg-config and CMake instructions with no hints at all. Only a
+  # throwaway runner can install to /usr/local, so this lives here and not in
+  # the unit suite, which checks the same metadata under temp prefixes.
+  consumer-smoke:
+    name: Consumer smoke (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu-latest, os: ubuntu-latest }
+          - { name: ubuntu-24.04-arm, os: ubuntu-24.04-arm }
+          - { name: macos-latest, os: macos-latest }
+          # freedesktop pkg-config 0.29, where 24.04 has pkgconf.
+          - { name: "ubuntu-22.04, pkg-config 0.29", os: ubuntu-22.04 }
+          # The floor every generated project declares.
+          - { name: "CMake 3.16.3", os: ubuntu-22.04, cmake: "3.16.3" }
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install just-makeit
+        run: make tool-install
+
+      - name: Install system deps (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          make install-deps-dev
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: make install-deps-dev
+
+      - name: Install and consume by the official instructions
+        env:
+          CONSUMER_SMOKE_DEFAULT_PREFIX: "1"
+          CONSUMER_CMAKE_VERSION: ${{ matrix.cmake }}
+        run: make consumer-smoke
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, examples, examples-windows, install-deps-smoke, coverage, lint, bench]
+    needs: [changes, test, examples, examples-windows, install-deps-smoke,
+            consumer-smoke, coverage, lint, bench]
     if: always()
     # Inputs as env, so the script below reads only shell variables and
     # tests/test_ci_passed_aggregator.py can run it as-is with any results.

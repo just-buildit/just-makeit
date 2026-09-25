@@ -452,6 +452,10 @@ just-buildit/.github README under "Makefile standard".
 - `ci.yml` — matrix (ubuntu/macos/ubuntu-arm64 × py3.9–3.14); runs
     `jm-install-deps` then `jm-run-tests`. Windows: the examples, under
     clang-cl, in a job that feeds `CI passed` (see the Windows section).
+- `Consumer smoke` in `ci.yml` (gh-1590) — `make consumer-smoke` installs jm
+    packages and their dependencies to the DEFAULT prefix and consumes them
+    by the official pkg-config and CMake instructions, with no hints: the
+    acceptance test for epic gh-1584. Locally it uses a temp prefix.
 - `release.yml` — tag `v*` → test matrix → build wheel → PyPI publish →
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images
