@@ -184,6 +184,18 @@ set_target_properties(<<project_underscore>>_lib
                       PROPERTIES EXPORT_NAME <<project_underscore>>)
 set_target_properties(<<project_underscore>>_lib_static
                       PROPERTIES EXPORT_NAME <<project_underscore>>-static)
+# gh-1599: what the installed headers need of every consumer, from `[project]
+# public_link_libs` / `public_defines` (set in the external-deps block).
+# PUBLIC, so the exported targets carry it; both are flags, so one spelling
+# serves the build and the install interface alike.
+foreach(jm_lib <<project_underscore>>_lib <<project_underscore>>_lib_static)
+  if(JM_PUBLIC_LINK_LIBS)
+    target_link_libraries(${jm_lib} PUBLIC ${JM_PUBLIC_LINK_LIBS})
+  endif()
+  if(JM_PUBLIC_DEFINES)
+    target_compile_definitions(${jm_lib} PUBLIC ${JM_PUBLIC_DEFINES})
+  endif()
+endforeach()
 
 install(
   TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
@@ -266,6 +278,15 @@ if(JM_MATH_LIBRARY)
 else()
   set(JM_PC_LIBM "")
 endif()
+# gh-1599: the .pc face of `public_link_libs` / `public_defines` -- `Libs:` for
+# the same reason as -lm, and the definitions on the `.pc`'s own `Cflags:`
+# (pc(5) has no private Cflags).
+foreach(jm_flag IN LISTS JM_PUBLIC_LINK_LIBS)
+  string(APPEND JM_PC_LIBM " ${jm_flag}")
+endforeach()
+foreach(jm_def IN LISTS JM_PUBLIC_DEFINES)
+  string(APPEND JM_PC_CFLAGS " -D${jm_def}")
+endforeach()
 set(JM_PC_PREFIX "%JM_INSTALL_PREFIX%")
 set(JM_PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")

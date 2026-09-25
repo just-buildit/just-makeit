@@ -1548,10 +1548,32 @@ def _splice_cmake_external_deps(real_path: Path, cfg: dict) -> bool:
         if cflags:
             lines.append(f'set(JM_PC_CFLAGS " {" ".join(cflags)}")\n')
 
+    # gh-1599: what the installed headers need of every consumer -- and of
+    # this project's own build first. Placed here, above the components, so
+    # `add_compile_definitions` reaches every target in this directory tree
+    # (the combined libraries' compile included) and `link_libraries` every
+    # target created after it: each core's tests, benchmarks and Python
+    # extension. The combined libraries were created above this block, and
+    # their PUBLIC face -- what the export and the .pc read -- is set in the
+    # managed install block from the two variables.
+    pub_defs = C.public_defines(cfg)
+    pub_libs = C.public_link_libs(cfg)
+    if pub_defs:
+        joined = " ".join(pub_defs)
+        lines.append(f"add_compile_definitions({joined})\n")
+        lines.append(f"set(JM_PUBLIC_DEFINES {joined})\n")
+    if pub_libs:
+        joined = " ".join(pub_libs)
+        lines.append(f"link_libraries({joined})\n")
+        lines.append(f"set(JM_PUBLIC_LINK_LIBS {joined})\n")
+
     has_begin = _EXTDEPS_BEGIN in real
     has_end = _EXTDEPS_END in real
 
-    if not lines:
+    # Nothing to declare: leave a file without the block alone, but empty an
+    # existing one -- a dependency (or a public flag) removed from the
+    # manifest must leave the build too, not linger in a stale block.
+    if not lines and not (has_begin and has_end):
         return False
 
     content = "".join(lines)
@@ -3407,6 +3429,8 @@ def run(
     # the tree exactly as it was rather than half-applied.
     C.find_package_entries(cfg)
     C.pkg_module_entries(cfg)
+    C.public_link_libs(cfg)
+    C.public_defines(cfg)
     # gh-1128: an ADOPTER jm cannot generate into is reported, not refused.
     # Every other module still shares one state; this one keeps its own copy
     # until its author adds the adopt to the binding they already write, and

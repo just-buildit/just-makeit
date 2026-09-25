@@ -35,6 +35,7 @@ CALLS: frozenset = frozenset(
         ),
         ("else", ()),
         ("elseif", ("CMAKE_VERSION", "VERSION_LESS", "3.17")),
+        ("endforeach", ()),
         ("endif", ()),
         (
             "export",
@@ -47,9 +48,21 @@ CALLS: frozenset = frozenset(
                 "<<project_underscore>>::",
             ),
         ),
+        ("foreach", ("jm_def", "IN", "LISTS", "JM_PUBLIC_DEFINES")),
+        ("foreach", ("jm_flag", "IN", "LISTS", "JM_PUBLIC_LINK_LIBS")),
+        (
+            "foreach",
+            (
+                "jm_lib",
+                "<<project_underscore>>_lib",
+                "<<project_underscore>>_lib_static",
+            ),
+        ),
         ("if", ("IS_ABSOLUTE", "${CMAKE_INSTALL_INCLUDEDIR}")),
         ("if", ("IS_ABSOLUTE", "${CMAKE_INSTALL_LIBDIR}")),
         ("if", ("JM_MATH_LIBRARY",)),
+        ("if", ("JM_PUBLIC_DEFINES",)),
+        ("if", ("JM_PUBLIC_LINK_LIBS",)),
         ("if", ("NOT", "${JM_PC_LIBS_PRIVATE}", "STREQUAL", "")),
         ("if", ("NOT", "${JM_PC_REQUIRES_PRIVATE}", "STREQUAL", "")),
         ("if", ("NOT", "PROJECT_HOMEPAGE_URL", "STREQUAL", "")),
@@ -381,6 +394,7 @@ CALLS: frozenset = frozenset(
                 "<<project_underscore>>-static",
             ),
         ),
+        ("string", ("APPEND", "JM_PC_CFLAGS", " -D${jm_def}")),
         (
             "string",
             ("APPEND", "JM_PC_EXTRA_FIELDS", "${JM_PC_LIBS_PRIVATE}\\n"),
@@ -396,6 +410,15 @@ CALLS: frozenset = frozenset(
                 "JM_PC_EXTRA_FIELDS",
                 "URL: ${PROJECT_HOMEPAGE_URL}\\n",
             ),
+        ),
+        ("string", ("APPEND", "JM_PC_LIBM", " ${jm_flag}")),
+        (
+            "target_compile_definitions",
+            ("${jm_lib}", "PUBLIC", "${JM_PUBLIC_DEFINES}"),
+        ),
+        (
+            "target_link_libraries",
+            ("${jm_lib}", "PUBLIC", "${JM_PUBLIC_LINK_LIBS}"),
         ),
         (
             "write_basic_package_version_file",

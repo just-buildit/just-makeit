@@ -791,6 +791,19 @@ def run(root: Path) -> None:
     if version != "0.1.0":
         lines.append(f"just-makeit config version {version}\n\n")
 
+    # gh-1599: manifest-only keys, like `[module.X] platforms` below. Dropped
+    # in silence, the replayed project would install headers its consumers
+    # can no longer compile or link against.
+    for key in ("public_link_libs", "public_defines"):
+        declared = cfg.get("project", {}).get(key)
+        if declared:
+            listed = ", ".join(f'"{v}"' for v in declared)
+            lines.append(
+                f"# NOTE: [project] {key} = [{listed}] has no\n"
+                f"# CLI flag — re-add it to just-makeit.toml and run"
+                f" `just-makeit apply`.\n"
+            )
+
     # gh-1489: [[enum]] has no CLI verb, and every `enum:<name>` a later
     # command replays -- an `--init-param`, a function `--param` -- is
     # refused as an undefined enum unless the table is already declared. So
