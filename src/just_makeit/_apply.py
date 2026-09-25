@@ -432,6 +432,26 @@ def replay_project(cfg: dict, temp_root: Path, project_root: Path) -> None:
             _replay(cfg, temp_root, project_root)
     finally:
         _obj_mod._DOC_ROOT_OVERRIDE = None
+    # gh-1591: a prefixed project's derived symbols, read from the render
+    # just made -- asked here so `apply` refuses before it writes anything
+    # and `status` reports the same refusal. Two names deriving one symbol
+    # cannot both exist; and the author's C still spelling the unprefixed
+    # names would not link against the render (`jm upgrade` respells them;
+    # until it can, this refuses).
+    if CSYM.prefix(cfg) is not None:
+        errors = CSYM.duplicates(temp_root, cfg)
+        stale = CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
+        for rel, names in stale.items():
+            errors.append(
+                f"{rel} still spells the unprefixed "
+                + ", ".join(f"`{n}`" for n in names)
+                + f" -- [project] c_prefix = {CSYM.prefix(cfg)!r} renames"
+                " every C symbol jm derives, and the C you wrote has to"
+                " follow; `jm upgrade` will respell it (gh-1591), until then"
+                " rename these by hand or drop c_prefix"
+            )
+        if errors:
+            C._refuse(errors)
 
 
 def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
@@ -481,6 +501,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-1583: the schema decides the header layout; a replay in any
         # other layout would put every header somewhere the project has none.
         schema=C.schema_version(cfg),
+        # gh-1591: and the C symbol prefix, for the same reason: a replay that
+        # renders bare names makes the real project's prefixed ones "missing".
+        c_prefix=C.c_prefix(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.

@@ -463,4 +463,70 @@ expect disjoint-install "alpha, beta and gamma install disjoint files" \
 expect prefixed-include "\"alpha/acore/...\" and \"beta/bcore/...\" in one TU" \
     prefixed_include
 
+# ── one component name, two packages (gh-1591) ───────────────────────────────
+# pa and pb both have a component `fir`. Unprefixed, they collide on every
+# symbol jm derives -- and in one translation unit the shared FIR_CORE_H guard
+# silently drops the second header. `c_prefix` namespaces each: pa_fir_* and
+# pb_fir_*, PA_/PB_FIR_CORE_H. pb's create() keeps gain x 1000, so a program
+# that resolved one package's fir to the other's prints the wrong number rather
+# than merely failing to link.
+say "pa and pb: one component name, two packages ([project] c_prefix)"
+for p in pa pb; do
+    "$JM" new "$p" --c-prefix "$p" --object fir --state gain:double:1.0 \
+        >/dev/null
+done
+sed -i.bak 's/obj->gain = gain;/obj->gain = gain * 1000.0;/' \
+    pb/native/src/fir/fir_core.c
+grep -q 'gain \* 1000.0' pb/native/src/fir/fir_core.c \
+    || die "pb: the create() edit did not land"
+install_project pa
+install_project pb
+
+cat >"$WORK/twofir.c" <<'EOF'
+#include <stdio.h>
+#include "pa/fir/fir_core.h"
+#include "pb/fir/fir_core.h"
+int main (void)
+{
+  pa_fir_state_t *a = pa_fir_create (2.0);
+  pb_fir_state_t *b = pb_fir_create (2.0);
+  printf ("%g,%g\n", pa_fir_get_gain (a), pb_fir_get_gain (b));
+  pa_fir_destroy (a);
+  pb_fir_destroy (b);
+  return 0;
+}
+EOF
+twofir() { # label, extra link words...
+    local out exe="$WORK/twofir-$1"
+    shift
+    # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
+    $CC "$WORK/twofir.c" "$@" -o "$exe" 2>"$exe.err" \
+        || { sed 's/^/  /' "$exe.err" | head -5; return 1; }
+    out=$("$exe" 2>&1) || { echo "  exited: $out"; return 1; }
+    [[ $out == "2,2000" ]] || { echo "  printed '$out', not 2,2000"; return 1; }
+}
+whole_archive() { # the two static libraries, every member pulled in
+    local da db
+    da=$(pkg-config --variable=libdir pa)
+    db=$(pkg-config --variable=libdir pb)
+    if [[ $(uname -s) == Darwin ]]; then
+        echo "-Wl,-force_load,$da/libpa.a -Wl,-force_load,$db/libpb.a"
+    else
+        echo "-Wl,--whole-archive $da/libpa.a $db/libpb.a -Wl,--no-whole-archive"
+    fi
+}
+# shellcheck disable=SC2046
+expect twofir-shared "pa + pb, one TU, shared: each fir is its own" \
+    twofir shared $(pkg-config --cflags --libs pa pb)
+static_link=
+[[ $(uname -s) == Linux ]] && static_link=-static
+# shellcheck disable=SC2046,SC2086
+expect twofir-static "pa + pb, one TU, static $static_link: each fir is its own" \
+    twofir static $static_link $(pkg-config --static --cflags --libs pa pb)
+# shellcheck disable=SC2046,SC2086
+expect twofir-whole "pa + pb, one TU, whole archives: no duplicate symbol" \
+    twofir whole $(pkg-config --cflags pa pb) $(whole_archive) \
+    $(pkg-config --static --libs-only-l pa pb | tr ' ' '\n' \
+        | grep -vx -e -lpa -e -lpb -e '')
+
 say "every consumer built and ran"

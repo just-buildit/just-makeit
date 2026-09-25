@@ -152,6 +152,21 @@ In the project, `jm upgrade` renames `cmake/my-proj.pc.in` to
 `cmake/my_proj.pc.in` (its edits, and jm's ownership of it, come along);
 until then `apply` leaves both names alone and `status` names the old one.
 
+## A C symbol prefix on an existing project (gh-1591)
+
+`[project] c_prefix` renames every C symbol jm derives
+([c-library](c-library.md#two-packages-one-program)). A project created with
+`jm new --c-prefix` is prefixed from its first file. Adding the key to an
+existing project renames symbols your own C already calls, so `apply` refuses
+it -- naming each file (the sacred `_core.h` / `_core.c`, module function
+sources, tests, benchmarks) and the unprefixed names it still spells -- and
+writes nothing.
+
+`jm upgrade` will respell those files for you; that support is coming. Until
+then, respell the names `apply` lists by hand, or leave the key out. The
+names are matched case-sensitively and as whole identifiers, so your own
+macros (`FIR_STATE_MAGIC`) are never among them.
+
 ## Packaging (`adopt --packaging`)
 
 Three things carry what a C consumer reads through pkg-config and

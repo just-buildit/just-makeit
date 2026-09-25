@@ -31,6 +31,9 @@ Commands:
     --c-dep DIR                 Vendored C subdir under native/src/DIR (repeatable; no Python).
     --windows                   Retired (gh-1368): does nothing. Windows builds with clang-cl
                                 as generated; see docs/faq.md "Does it work on Windows?".
+    --c-prefix P                Prefix every C symbol jm derives with P_ (`[project] c_prefix`:
+                                fir_create -> P_fir_create), so two installed packages may
+                                share a component name; never an author-named one (gh-1591).
     --c-style STYLE             Reformat generated C to the project's style after every
                                 mutating command (`[project] c_style`). Only `clang-format`
                                 is supported; seeds a `.clang-format` and runs it on native/.

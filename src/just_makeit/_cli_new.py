@@ -40,6 +40,7 @@ def run(args: list[str]) -> None:
     c_deps: list[str] = []
     windows = False
     c_style = ""
+    c_prefix: str | None = None
 
     remaining = args[1:]
     i = 0
@@ -154,6 +155,17 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             c_style = val
             i += 1
+        elif tok == "--c-prefix":
+            # gh-1591: the namespace every derived C symbol carries.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --c-prefix requires a C identifier (e.g. dp)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            c_prefix = remaining[i]
+            i += 1
         elif tok == "--fragments":
             # Deprecated no-op: fragments is the default layout now.
             i += 1
@@ -258,4 +270,5 @@ def run(args: list[str]) -> None:
         platforms=None,
         fragments=fragments,
         c_style=c_style,
+        c_prefix=c_prefix,
     )

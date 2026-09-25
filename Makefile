@@ -229,6 +229,7 @@ PYTEST_PARALLEL = -n auto --dist load
 # equal.
 PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1601_install_components.py \
+                    tests/test_gh1591_c_prefix_nm.py \
                     tests/test_gh1599_public_flags.py \
                     tests/test_stub_conformance.py \
                     tests/test_gh746_py_format_command.py \

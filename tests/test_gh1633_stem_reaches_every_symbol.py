@@ -32,68 +32,16 @@ GATE: under a stem override, every derived C identifier jm generates carries
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 import _csym_fixtures as FX
-from just_makeit import _config as C
 from just_makeit import _csym
-from just_makeit._docsync import _code_mask
 
-MARK = "zz_"
-
-#: What jm derives from a component's stem (gh-1591's inventory).
-_LIFECYCLE = (
-    "create",
-    "destroy",
-    "reset",
-    "step",
-    "steps",
-    "step_batch",
-    "state_t",
-    "state_ptr",
-    "state_adopt",
-    "state_bytes",
-    "get_state",
-    "set_state",
-)
+MARK = FX.MARK
 
 
 def _override(owner, name):
     return MARK + name
-
-
-def _derived(cfg: dict) -> "list[re.Pattern]":
-    """The patterns an UNPREFIXED derived symbol of *cfg*'s names matches."""
-    comps = set(C.components(cfg))
-    for mod in C.modules(cfg):
-        comps |= set(C.module_objects(cfg, mod))
-    pats = []
-    for comp in sorted(comps):
-        tails = list(_LIFECYCLE)
-        tails += [m["name"] for m in C.methods(cfg, comp) if not m.get("fn")]
-        for p in C.properties(cfg, comp):
-            tails += [f"get_{p['name']}", f"set_{p['name']}"]
-        pats.append(
-            re.compile(
-                rf"(?<![A-Za-z0-9_]){re.escape(comp)}_"
-                rf"(?:{'|'.join(map(re.escape, tails))})(?![A-Za-z0-9_])"
-            )
-        )
-        pats.append(
-            re.compile(rf"(?<![A-Za-z0-9_]){re.escape(comp.upper())}_CORE_H\b")
-        )
-    for mod in C.modules(cfg):
-        for fn in C.module_functions(cfg, mod):
-            pats.append(
-                re.compile(rf"(?<![A-Za-z0-9_]){re.escape(fn['name'])}\s*\(")
-            )
-    return pats
-
-
-def _stripped(data: bytes) -> bytes:
-    return data.replace(b"zz_", b"").replace(b"ZZ_", b"")
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +70,7 @@ def test_the_stem_is_the_only_difference(trees):
     for row in roots:
         a, b = FX.tree(roots[row]), FX.tree(over[row])
         for rel in sorted(a.keys() & b.keys()):
-            if _stripped(b[rel]) != a[rel]:
+            if FX.stripped(b[rel]) != a[rel]:
                 bad.append(f"{row}/{rel}")
     assert bad == [], (
         "under a stem override these files differ in more than the stem -- "
@@ -133,24 +81,13 @@ def test_the_stem_is_the_only_difference(trees):
 
 def test_no_derived_symbol_escapes_the_stem(trees):
     _roots, over = trees
-    bad = []
-    for row, root in over.items():
-        pats = _derived(C.load(root))
-        for path in sorted((root / "native").rglob("*")):
-            if path.suffix not in (".c", ".h"):
-                continue
-            text = path.read_text(encoding="utf-8")
-            code = _code_mask(text)
-            lines = text.splitlines()
-            for pat in pats:
-                for m in pat.finditer(code):
-                    n = code.count("\n", 0, m.start())
-                    bad.append(
-                        f"{row}/{path.relative_to(root).as_posix()}:"
-                        f"{n + 1}: {m.group(0)}  | {lines[n].strip()}"
-                    )
+    bad = [
+        f"{row}/{line}"
+        for row, root in over.items()
+        for line in FX.escapes(root)
+    ]
     assert bad == [], (
         "a C identifier jm derives from a name, spelled without `_csym` "
         f"(gh-1591): under stem() -> {MARK!r} + name these kept the raw "
-        "name:\n" + "\n".join(sorted(set(bad)))
+        "name:\n" + "\n".join(bad)
     )
