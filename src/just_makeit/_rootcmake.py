@@ -269,16 +269,24 @@ def _has_libm(r: Root) -> bool:
 
 def _has_static_name(r: Root) -> bool:
     # A property call naming the static library and NOT the shared one, that
-    # gives it an OUTPUT_NAME other than the project's own: the shared
-    # library's import library is then no longer the same file.
-    pkg = r.shared[: -len("_lib")] if r.shared else None
+    # gives it an OUTPUT_NAME other than its stem's: the shared library's
+    # import library is then no longer the same file. gh-1600: jm's managed
+    # install block sets it once for every library a project installs, as
+    # `${_jm_lib}_lib_static` -- a loop variable, read the way `libm` reads
+    # `${lib_target}`, whose stem is `${_jm_lib}`.
     for c in r.calls:
         if c.name not in ("set_target_properties", "set_property"):
             continue
-        if r.static not in c.args or r.shared in c.args:
+        static = [
+            a
+            for a in c.args
+            if a == r.static
+            or (a.startswith("${") and a.endswith("_lib_static"))
+        ]
+        if not static or r.shared in c.args:
             continue
         name = _after(c.args, "OUTPUT_NAME")
-        if name and name != pkg:
+        if name and name != static[0][: -len("_lib_static")]:
             return True
     return False
 

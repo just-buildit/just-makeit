@@ -51,7 +51,7 @@ def _unown(root: Path, rel: Path, *, edit=lambda s: s) -> None:
 def _older_cflags(text: str) -> str:
     """The Cflags line as jm rendered it before gh-1579 added a slot."""
     old = text.replace(
-        "Cflags: -I${includedir}@JM_PC_CFLAGS@", "Cflags: -I${includedir}"
+        "Cflags: -I${includedir}@JM_PC_ROW_CFLAGS@", "Cflags: -I${includedir}"
     )
     assert old != text
     return old
@@ -117,7 +117,7 @@ def test_check_writes_nothing_and_shows_the_diff(tmp_path):
     assert "would adopt         cmake/p.pc.in" in r.stdout, r.stdout
     # An older jm's line the render only extends is not "lost".
     assert "would drop: Cflags" not in r.stdout, r.stdout
-    assert "+Cflags: -I${includedir}@JM_PC_CFLAGS@" in r.stdout, r.stdout
+    assert "+Cflags: -I${includedir}@JM_PC_ROW_CFLAGS@" in r.stdout, r.stdout
     assert "REFUSES             cmake/p-config.cmake.in" in r.stdout
     assert "would drop: set(MY_HAND 1)" in r.stdout
     assert {rel: (root / rel).read_bytes() for rel in (PC, CONFIG)} == before
@@ -132,7 +132,7 @@ def test_adopt_takes_what_loses_nothing_and_refuses_the_rest(tmp_path):
     assert r.returncode == 1, r.stdout
     pc = (root / PC).read_text()
     assert pc.startswith("# jm:generated p.pc.in\n"), pc
-    assert "@JM_PC_CFLAGS@" in pc
+    assert "@JM_PC_ROW_CFLAGS@" in pc
     assert (root / CONFIG).read_bytes() == hand
     # Owned now: apply renders it, and status has nothing to report for it.
     assert "cmake/p.pc.in" not in run_cli("status", cwd=root).stdout

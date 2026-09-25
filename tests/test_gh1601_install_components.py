@@ -17,11 +17,13 @@ Lives on PROJECT_ENV_TESTS: it builds and installs.
 
 GATE: `cmake --install --component runtime` installs exactly the shared
       library a program loads, `--component dev` everything else, and the
-      two together are a plain install.
+      two together are a plain install; and an install after a root-owned
+      one (`sudo cmake --install`, then any install as the user) succeeds.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -59,6 +61,7 @@ def installs(tmp_path_factory):
         extra = ["--component", comp] if comp else []
         _run(["cmake", "--install", b, "--prefix", pfx, *extra], proj)
         out[comp or "all"] = _files(pfx)
+    out["build"] = b
     return out
 
 
@@ -98,3 +101,33 @@ def test_dev_is_everything_a_build_needs(installs):
 def test_the_two_are_a_plain_install_and_disjoint(installs):
     assert installs["runtime"].isdisjoint(installs["dev"])
     assert installs["runtime"] | installs["dev"] == installs["all"]
+
+
+def test_an_install_after_a_root_one_rewrites_the_pc(installs, tmp_path):
+    """The ``.pc`` is written into the BUILD tree at install time, then
+    copied. ``sudo cmake --install`` leaves that file owned by root, and
+    the next install as the user -- a DESTDIR stage, a second prefix, the
+    ``--component`` split -- could not open it for writing, so it failed
+    (CI's consumer smoke, which installs with sudo first).
+
+    Stood in for without root by a build-tree ``.pc`` the user can neither
+    write nor chmod but may unlink: a symlink into a read-only directory.
+    A read-only FILE does not reproduce it -- CMake's ``file(WRITE)`` makes
+    its owner's file writable first -- and a root-owned one needs sudo."""
+    assert os.geteuid() != 0, "as root, a read-only directory refuses nothing"
+    b = installs["build"]
+    pc = b / "my_proj.pc"
+    assert pc.is_file(), sorted(p.name for p in b.iterdir())
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    pc.unlink()
+    pc.symlink_to(locked / "my_proj.pc")
+    locked.chmod(0o555)
+    try:
+        pfx = tmp_path / "second"
+        _run(["cmake", "--install", b, "--prefix", pfx], b)
+    finally:
+        locked.chmod(0o755)
+    (installed,) = pfx.rglob("pkgconfig/my_proj.pc")
+    text = installed.read_text(encoding="utf-8")
+    assert f"prefix={pfx}" in text, text

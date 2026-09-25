@@ -84,8 +84,6 @@ foreach(lib_target <<project_underscore>>_lib
   target_include_directories(
     ${lib_target} PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/<<inc_dir>>>
                          $<INSTALL_INTERFACE:include>)
-  set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME
-                                                 <<project_underscore>>)
   # gh-1452: libm is part of this library's LINK INTERFACE, not a private
   # detail. jm's headers DEFINE -- `step()` is `static inline` by default,
   # `JM_FORCEINLINE` under --perf -- so a consumer that calls it compiles the
@@ -107,23 +105,6 @@ foreach(lib_target <<project_underscore>>_lib
                            $<INSTALL_INTERFACE:-lm>)
   endif()
 endforeach()
-# gh-1368: one OUTPUT_NAME for both is unambiguous on Linux and macOS
-# (lib<name>.so vs lib<name>.a) and a collision on Windows, where the SHARED
-# library's import library and the STATIC library are both <name>.lib --
-# `ninja: error: multiple rules generate <name>.lib`, before any C compiles.
-# Renamed only where it has to be, as doppler's own CMake does.
-if(WIN32)
-  set_target_properties(<<project_underscore>>_lib_static
-                        PROPERTIES OUTPUT_NAME <<project_underscore>>_static)
-endif()
-# gh-1368: a Windows DLL exports only what is marked __declspec(dllexport), and
-# jm marks nothing -- so the shared library's import library was empty and a C
-# consumer linking it failed on every symbol (`undefined symbol:
-# <comp>_create`), found by the Windows artifact smoke. Exporting all is the
-# DLL equivalent of an ELF shared library's default visibility. No effect
-# elsewhere.
-set_target_properties(<<project_underscore>>_lib
-                      PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 enable_testing()
 
@@ -155,9 +136,6 @@ else()
   set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR})
   set(JM_VERSION_COMPATIBILITY SameMajorVersion)
 endif()
-set_target_properties(
-  <<project_underscore>>_lib PROPERTIES VERSION ${PROJECT_VERSION}
-                                        SOVERSION ${JM_ABI_VERSION})
 
 # gh-1594: on macOS the installed library names itself by its absolute path, as
 # Homebrew's and MacPorts' do. CMake's default install name is
@@ -174,16 +152,17 @@ elseif(CMAKE_VERSION VERSION_LESS 3.17)
 else()
   set(JM_INSTALL_NAME_DIR "$<INSTALL_PREFIX>/${CMAKE_INSTALL_LIBDIR}")
 endif()
-set_target_properties(<<project_underscore>>_lib
-                      PROPERTIES INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}")
-# gh-1581: the names a consumer writes, as cmake-packages(7) shows them:
-# `find_package(<pkg>)` then `target_link_libraries(app <pkg>::<pkg>)`. The
-# static library is `<pkg>::<pkg>-static`. Only the EXPORTED names change;
-# inside this build the targets stay <pkg>_lib and <pkg>_lib_static.
-set_target_properties(<<project_underscore>>_lib
-                      PROPERTIES EXPORT_NAME <<project_underscore>>)
-set_target_properties(<<project_underscore>>_lib_static
-                      PROPERTIES EXPORT_NAME <<project_underscore>>-static)
+
+# gh-1600: every library this project installs, one row each as `<target
+# stem>:<exported name>` -- lib<<project_underscore>> first, then each
+# [project.libraries.<name>] -- and every per-library packaging rule below runs
+# over this one list, so an additional library gets the soname, install name,
+# export, components and .pc lib<<project_underscore>> gets, from the same
+# lines.
+set(JM_LIBRARIES "<<project_underscore>>:<<project_underscore>>")
+# ── Libraries: [project.libraries] (gh-1600) ─────────────────────────────────
+# ── End libraries ────────────────────────────────────────────────────────────
+
 # gh-1599: what the installed headers need of every consumer, from `[project]
 # public_link_libs` / `public_defines` (set in the external-deps block).
 # PUBLIC, so the exported targets carry it; both are flags, so one spelling
@@ -197,22 +176,51 @@ foreach(jm_lib <<project_underscore>>_lib <<project_underscore>>_lib_static)
   endif()
 endforeach()
 
-install(
-  TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
-  EXPORT <<project_underscore>>-targets
-  # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
-  # never installed, and a consumer linked against an import library whose
-  # DLL was not there to load.
-  # gh-1601: install components, the runtime/-dev split a distribution
-  # package is built from (`cmake --install --component runtime|dev`). The
-  # shared library a program loads is `runtime`; everything a BUILD needs --
-  # headers, the static library, the unversioned lib<name>.so link, the CMake
-  # package and the .pc -- is `dev`. A plain `cmake --install` installs both.
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          COMPONENT runtime
-          NAMELINK_COMPONENT dev
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev)
+foreach(jm_row IN LISTS JM_LIBRARIES)
+  string(REPLACE ":" ";" _jm_fields "${jm_row}")
+  list(GET _jm_fields 0 _jm_lib)
+  list(GET _jm_fields 1 _jm_export)
+  # gh-1581: the names a consumer writes, as cmake-packages(7) shows them:
+  # `find_package(<pkg>)` then `target_link_libraries(app <pkg>::<pkg>)`, the
+  # static library `<pkg>::<pkg>-static`; an additional library is
+  # `<pkg>::<name>` / `<pkg>::<name>-static`. Only the EXPORTED names differ;
+  # inside this build the targets are <stem>_lib and <stem>_lib_static.
+  # gh-1368: a DLL exports only what is marked, and jm marks nothing, so every
+  # symbol is exported (an ELF shared library's default); and a static library
+  # sharing the shared one's OUTPUT_NAME collides on Windows as <name>.lib.
+  set_target_properties(
+    ${_jm_lib}_lib
+    PROPERTIES OUTPUT_NAME ${_jm_lib}
+               VERSION ${PROJECT_VERSION}
+               SOVERSION ${JM_ABI_VERSION}
+               INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}"
+               EXPORT_NAME ${_jm_export}
+               WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  set_target_properties(
+    ${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME ${_jm_lib}
+                                     EXPORT_NAME ${_jm_export}-static)
+  if(WIN32)
+    set_target_properties(${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME
+                                                           ${_jm_lib}_static)
+  endif()
+  install(
+    TARGETS ${_jm_lib}_lib ${_jm_lib}_lib_static
+    EXPORT <<project_underscore>>-targets
+    # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
+    # never installed, and a consumer linked against an import library whose
+    # DLL was not there to load.
+    # gh-1601: install components, the runtime/-dev split a distribution
+    # package is built from (`cmake --install --component runtime|dev`). The
+    # shared library a program loads is `runtime`; everything a BUILD needs --
+    # headers, the static library, the unversioned lib<name>.so link, the
+    # CMake package and the .pc -- is `dev`. A plain `cmake --install`
+    # installs both.
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            COMPONENT runtime
+            NAMELINK_COMPONENT dev
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev)
+endforeach()
 
 install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/<<inc_dir>>/
@@ -313,26 +321,51 @@ endif()
 if(NOT "${JM_PC_LIBS_PRIVATE}" STREQUAL "")
   string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_LIBS_PRIVATE}\n")
 endif()
-configure_file(cmake/<<project_underscore>>.pc.in
-               <<project_underscore>>.pc.configured @ONLY)
-# Runs at install time, before the install(FILES) below copies its result:
-# install rules run in the order they are declared, in one script, so the path
-# set by the first rule is seen by the second. The bracket argument is not
-# expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step has.
-# The configured path does not depend on the configuration, so a multi-config
-# generator installs the same.
-install(
-  CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc\")"
-  COMPONENT dev)
-install(
-  CODE [[
+# gh-1600: one .pc per library, from the one template.
+# lib<<project_underscore>>'s carries the dependencies and flags computed
+# above; an additional library's says `Requires: <<project_underscore>>`, which
+# hands a consumer all of those, and adds only itself -- pc(5)'s pattern for a
+# library built on another.
+foreach(jm_row IN LISTS JM_LIBRARIES)
+  string(REPLACE ":" ";" _jm_fields "${jm_row}")
+  list(GET _jm_fields 0 _jm_lib)
+  set(JM_PC_NAME ${_jm_lib})
+  if(_jm_lib STREQUAL "<<project_underscore>>")
+    set(JM_PC_DESCRIPTION "${PROJECT_DESCRIPTION}")
+    set(JM_PC_ROW_FIELDS "${JM_PC_EXTRA_FIELDS}")
+    set(JM_PC_ROW_LIBS "${JM_PC_LIBM}")
+    set(JM_PC_ROW_CFLAGS "${JM_PC_CFLAGS}")
+  else()
+    string(TOUPPER "${_jm_lib}" _jm_upper)
+    set(JM_PC_DESCRIPTION "${JM_LIBRARY_${_jm_upper}_DESCRIPTION}")
+    set(JM_PC_ROW_FIELDS "Requires: <<project_underscore>>\n")
+    set(JM_PC_ROW_LIBS "")
+    set(JM_PC_ROW_CFLAGS "")
+  endif()
+  configure_file(cmake/<<project_underscore>>.pc.in ${_jm_lib}.pc.configured
+                 @ONLY)
+  # Runs at install time, before the install(FILES) below copies its result:
+  # install rules run in the order they are declared, in one script, so the
+  # path set by the first rule is seen by the second. The bracket argument is
+  # not expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step
+  # has. The configured path does not depend on the configuration, so a
+  # multi-config generator installs the same. The written file is removed
+  # first: a `sudo cmake --install` leaves it owned by root, and the next
+  # install as the user (a stage, a DESTDIR, a second prefix) could not rewrite
+  # it -- but may unlink it, as the build directory is the user's.
+  install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc\")"
+          COMPONENT dev)
+  install(
+    CODE [[
 file(READ "${JM_PC_FILE}.configured" _jm_pc)
 string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
+file(REMOVE "${JM_PC_FILE}")
 file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]]
-  COMPONENT dev)
-install(
-  FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc"
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
-  COMPONENT dev)
+    COMPONENT dev)
+  install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    COMPONENT dev)
+endforeach()
 # ── End install ──────────────────────────────────────────────────────────────

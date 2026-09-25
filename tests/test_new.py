@@ -361,8 +361,11 @@ class TestNewContent:
         pc = (project / "cmake" / "my_filter.pc.in").read_text(
             encoding="utf-8"
         )
-        assert "Name: my_filter" in pc
-        assert "-lmy_filter" in pc
+        # gh-1600: the name reaches the .pc from the library's row.
+        assert "Name: @JM_PC_NAME@" in pc
+        assert "-l@JM_PC_NAME@" in pc
+        root = (project / "CMakeLists.txt").read_text(encoding="utf-8")
+        assert 'set(JM_LIBRARIES "my_filter:my_filter")' in root
         assert "CMAKE_INSTALL_FULL_" not in pc, (
             "pc.in must use relative ${prefix}/... paths, not absolute @CMAKE_INSTALL_FULL_*@ vars"
         )
