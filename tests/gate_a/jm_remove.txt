@@ -1,4 +1,0 @@
-my_synth	re-apply warns	warning !: native/benchmarks/bench_synth_core.c
-my_synth	re-apply warns	warning !: native/tests/test_synth_core.c
-my_synth	re-apply writes	update native/inc/my_synth.h
-my_synth	status --check	UNBUILT

@@ -58,6 +58,7 @@ from pathlib import Path
 
 import pytest
 
+from _statusfaces import assert_status_faces_agree
 from _jmrun import JmRun, run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -186,6 +187,7 @@ class TestWhatIsStillAuthorOwned:
         out = _cli("status", cwd=project).stdout
         assert "UNRECONCILED (1)" in out, out
         assert "APPLY FIXES THESE (1)" in out, out
+        assert_status_faces_agree(project, "apply_fixes")
 
 
 class TestTheGateIsUnchanged:
