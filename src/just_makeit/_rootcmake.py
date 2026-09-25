@@ -317,14 +317,12 @@ def _configures_pc(r: Root) -> bool:
     )
 
 
-def _has_pc_tidy(r: Root) -> bool:
-    # The .pc.in is configured to an intermediate rather than to the .pc
-    # itself: that is the step that drops empty optional fields.
+def _has_pc_fields(r: Root) -> bool:
+    # The variable today's .pc.in ends in: the optional fields, each present
+    # only when set. Unset, the slot renders empty and every optional field
+    # -- URL, Requires.private, Libs.private -- is silently dropped.
     return any(
-        c.name == "configure_file"
-        and len(c.args) > 1
-        and c.args[0].endswith(".pc.in")
-        and not c.args[1].endswith(".pc")
+        c.name == "set" and c.args[:1] == ("JM_PC_EXTRA_FIELDS",)
         for c in r.calls
     )
 
@@ -462,13 +460,14 @@ FIXES: "tuple[Fix, ...]" = (
         _configures_pc,
     ),
     Fix(
-        "pc-tidy",
+        "pc-fields",
         "gh-1582",
         "all",
-        "the .pc is configured directly from cmake/<pkg>.pc.in, so an "
-        "empty optional field is written as `URL:` and the template's "
-        "empty slots leave blank lines at the end of the file",
-        _has_pc_tidy,
+        "JM_PC_EXTRA_FIELDS is not assembled: today's cmake/<pkg>.pc.in "
+        "carries URL, Requires.private and Libs.private only through it, so "
+        "without it they are dropped, and the older .pc.in writes an empty "
+        "`URL:` and blank lines where they are absent",
+        _has_pc_fields,
         _configures_pc,
     ),
 )

@@ -234,32 +234,34 @@ set(JM_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
   set(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
 endif()
-# gh-1582: an optional field with nothing to say is left out, not written as an
-# empty `URL:` -- and the slots the template leaves empty leave no blank lines
-# behind. Name, Description and Version stay: pkg-config 0.29 refuses a .pc
-# without them. The template copy is COPYONLY, so it is rewritten only when its
-# content changes.
-configure_file(cmake/<<project>>.pc.in <<project>>.pc.raw @ONLY)
-file(READ "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.raw" JM_PC_TEXT)
-set(JM_PC_EMPTY_FIELD
-    "\n(URL|Requires|Requires\\.private|Conflicts|Libs\\.private):[ \t]*\n")
-while(JM_PC_TEXT MATCHES "${JM_PC_EMPTY_FIELD}")
-  string(REGEX REPLACE "${JM_PC_EMPTY_FIELD}" "\n" JM_PC_TEXT "${JM_PC_TEXT}")
-endwhile()
-string(REGEX REPLACE "\n+$" "\n" JM_PC_TEXT "${JM_PC_TEXT}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy" "${JM_PC_TEXT}")
-configure_file("${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc.tidy"
-               <<project>>.pc.tmpl COPYONLY)
+# gh-1582: the optional fields, each rendered only when it has something to
+# say, so no `.pc` carries an empty `URL:` or a blank line for an absent one.
+# The template puts this slot at the START of its `Version:` line and each
+# field ends its own line, so an empty slot leaves nothing behind. (A slot on a
+# line of its own cannot: configure_file ends every output line with a newline,
+# so an empty one is a blank line.) Requires.private / Libs.private are the
+# complete lines the external-deps block above sets.
+set(JM_PC_EXTRA_FIELDS "")
+if(NOT PROJECT_HOMEPAGE_URL STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "URL: ${PROJECT_HOMEPAGE_URL}\n")
+endif()
+if(NOT "${JM_PC_REQUIRES_PRIVATE}" STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_REQUIRES_PRIVATE}\n")
+endif()
+if(NOT "${JM_PC_LIBS_PRIVATE}" STREQUAL "")
+  string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_LIBS_PRIVATE}\n")
+endif()
+configure_file(cmake/<<project>>.pc.in <<project>>.pc.configured @ONLY)
 # Runs at install time, before the install(FILES) below copies its result:
 # install rules run in the order they are declared, in one script, so the path
 # set by the first rule is seen by the second. The bracket argument is not
 # expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step has.
-# The template path does not depend on the configuration, so a multi-config
+# The configured path does not depend on the configuration, so a multi-config
 # generator installs the same.
 install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc\")")
 install(
   CODE [[
-file(READ "${JM_PC_FILE}.tmpl" _jm_pc)
+file(READ "${JM_PC_FILE}.configured" _jm_pc)
 string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
 file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]])

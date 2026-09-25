@@ -75,7 +75,7 @@ SABOTAGE = {
     "build-tree-export": r"export\(\s*EXPORT[^)]*\)",
     "pc-paths": r'set\(\s*JM_PC_PREFIX\s+"%JM_INSTALL_PREFIX%"\s*\)',
     # Configure straight to the .pc, which is the pre-tidy shape.
-    "pc-tidy": r"(?<=p\.pc)\.raw(?=\s+@ONLY)",
+    "pc-fields": r'set\(\s*JM_PC_EXTRA_FIELDS\s+""\s*\)',
 }
 
 

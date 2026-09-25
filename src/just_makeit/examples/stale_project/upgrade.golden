@@ -61,7 +61,7 @@ ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc's prefix is not written at install time (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR and the install(CODE) that fills them): today's cmake/<pkg>.pc.in writes no usable prefix without them, and the older one names the CONFIGURED prefix, so `cmake --install --prefix` leaves a .pc pointing where nothing was installed
-  ↑ pc-tidy (gh-1582): the .pc is configured directly from cmake/<pkg>.pc.in, so an empty optional field is written as `URL:` and the template's empty slots leave blank lines at the end of the file
+  ↑ pc-fields (gh-1582): JM_PC_EXTRA_FIELDS is not assembled: today's cmake/<pkg>.pc.in carries URL, Requires.private and Libs.private only through it, so without it they are dropped, and the older .pc.in writes an empty `URL:` and blank lines where they are absent
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
   from. A fix you do not want: name it in [project] status_allow as
@@ -158,7 +158,7 @@ ROOT CMAKE (13) — fixes jm's root CMakeLists.txt template carries that yours l
   ↑ version-compat (gh-1582): the package version file is SameMajorVersion under 0.x, so find_package(<pkg> 0.1) accepts 0.2, whose minor release may break
   ↑ build-tree-export (gh-1582): the targets are not export()ed into the build tree, so find_package() finds the project only after it is installed
   ↑ pc-paths (gh-1582): the .pc's prefix is not written at install time (JM_PC_PREFIX, JM_PC_LIBDIR, JM_PC_INCLUDEDIR and the install(CODE) that fills them): today's cmake/<pkg>.pc.in writes no usable prefix without them, and the older one names the CONFIGURED prefix, so `cmake --install --prefix` leaves a .pc pointing where nothing was installed
-  ↑ pc-tidy (gh-1582): the .pc is configured directly from cmake/<pkg>.pc.in, so an empty optional field is written as `URL:` and the template's empty slots leave blank lines at the end of the file
+  ↑ pc-fields (gh-1582): JM_PC_EXTRA_FIELDS is not assembled: today's cmake/<pkg>.pc.in carries URL, Requires.private and Libs.private only through it, so without it they are dropped, and the older .pc.in writes an empty `URL:` and blank lines where they are absent
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
   from. A fix you do not want: name it in [project] status_allow as

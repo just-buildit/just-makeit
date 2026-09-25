@@ -107,6 +107,13 @@ consumer gets `-I/usr/include`, which breaks `#include_next`, and
 `-L/usr/lib` ahead of its own `-L`. Moving a tree is what
 `pkg-config --define-prefix` is for.
 
+**Writing an optional field that may be empty.** `URL: @PROJECT_HOMEPAGE_URL@`
+comes out as a bare `URL:` when `project()` has no `HOMEPAGE_URL`, and a slot
+on a line of its own leaves a blank line, because `configure_file` ends every
+output line with a newline. jm assembles the optional fields in CMake, each
+ending its own line and only when set (`JM_PC_EXTRA_FIELDS`), and puts that
+one slot at the start of the `Version:` line (gh-1582).
+
 **Over-populating `Requires`.**
 If your shared library links `libfftw3` with `PRIVATE` visibility, the
 symbol is already resolved inside your `.so`. Consumer executables do not
@@ -267,8 +274,8 @@ install(FILES
 set(PC_PREFIX "%INSTALL_PREFIX%")
 set(PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 set(PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
-configure_file(cmake/mylib.pc.in mylib.pc.tmpl @ONLY)
-install(CODE "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc.tmpl\" pc)
+configure_file(cmake/mylib.pc.in mylib.pc.configured @ONLY)
+install(CODE "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc.configured\" pc)
 string(REPLACE %INSTALL_PREFIX% \"\${CMAKE_INSTALL_PREFIX}\" pc \"\${pc}\")
 file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/mylib.pc\" \"\${pc}\")")
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc

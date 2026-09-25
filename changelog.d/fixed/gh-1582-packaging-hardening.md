@@ -18,7 +18,7 @@
     installed. The `.pc`'s `Description:` and `URL:` come from
     `project(DESCRIPTION / HOMEPAGE_URL)`. An existing project gets new
     `ROOT CMAKE` findings from `status` (`soversion`, `version-compat`,
-    `build-tree-export`, `pc-paths`, `pc-tidy`), and its
+    `build-tree-export`, `pc-paths`, `pc-fields`), and its
     `cmake/<pkg>.pc.in` is reported OUTDATED; the new `.pc.in` reads
     variables only the new root sets, so take both together. A new
     consumer-matrix test (`tests/test_gh1584_consumer_matrix.py`) builds and
