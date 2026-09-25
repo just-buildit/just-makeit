@@ -29,8 +29,11 @@ symbol is never a finding:
    (a variable named ``comp``, ``component``, ``obj``, ``cname``, ``module``
    ...) directly before a derived-symbol suffix (``_create``, ``_state_t``,
    ``_steps``, ``_CORE_H`` ...) or before ``_{...}`` (a method's
-   ``<comp>_<name>``) is a hand-spelled symbol. About 300 remain after
-   phase 1 (phase 1b moves them); the count per file is pinned in
+   ``<comp>_<name>``) is a hand-spelled symbol. 180 remain after phase 1
+   (363 before it); phase 1b, gh-1633, moves them, and phase 2 cannot land
+   until it has. The vocabulary is a heuristic, so a suffix outside it is
+   not counted -- phase 2's `nm` gate is the oracle that catches those. The
+   count per file is pinned in
    :data:`BASELINE` and may only shrink. A file over its pin fails with the
    new site's line; a file UNDER its pin fails too, until the pin is
    lowered, so the ratchet never holds slack a new site could hide in.
