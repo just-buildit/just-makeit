@@ -3145,7 +3145,8 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
     ]
     for st in rows:
         n, ctype = st["name"], st.get("type", "int")
-        out.append(f"    {ctype} _st_{n} = 0;\n    int _st_{n}_set = 0;\n")
+        val, flag = _setting_locals(n)
+        out.append(f"    {ctype} {val} = 0;\n    int {flag} = 0;\n")
         if st.get("enum"):
             conv = _enumc.validate_c(
                 n,
@@ -3161,21 +3162,21 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
                 f"            const char *_s = PyUnicode_AsUTF8(_o);\n"
                 f"            if (!_s) {{ Py_DECREF(kw); return -1; }}\n"
                 f"{conv}"
-                f"            _st_{n} = ({ctype})_arg_{n};\n"
+                f"            {val} = ({ctype})_arg_{n};\n"
             )
         else:
             body = (
                 f"            long _v = PyLong_AsLong(_o);\n"
                 f"            if (_v == -1 && PyErr_Occurred())"
                 f" {{ Py_DECREF(kw); return -1; }}\n"
-                f"            _st_{n} = ({ctype})_v;\n"
+                f"            {val} = ({ctype})_v;\n"
             )
         out.append(
             f"    {{\n"
             f'        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
             f"        if (_o) {{\n"
             f"{body}"
-            f"            _st_{n}_set = 1;\n"
+            f"            {flag} = 1;\n"
             f'            if (PyDict_DelItemString(kw, "{n}") < 0)'
             f" {{ Py_DECREF(kw); return -1; }}\n"
             f"        }}\n"
@@ -3184,16 +3185,35 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
     return "".join(out)
 
 
+def _setting_locals(name: str) -> "tuple[str, str]":
+    """The two C locals a setting's ``tp_init`` code declares: its value and
+    whether it was passed.
+
+    gh-1560: the flag was ``_st_<n>_set``, which is also the VALUE local of a
+    sibling setting named ``<n>_set`` -- two settings ``gain`` and
+    ``gain_set`` declared ``int _st_gain_set`` twice and the tree did not
+    compile. ``_stset_<n>`` cannot be anyone's value local: those all begin
+    ``_st_``, and the fourth character here is ``s``. Spelled once, here, so
+    the declaration, the store and the test cannot disagree.
+
+    >>> _setting_locals("gain"), _setting_locals("gain_set")
+    (('_st_gain', '_stset_gain'), ('_st_gain_set', '_stset_gain_set'))
+    """
+    return f"_st_{name}", f"_stset_{name}"
+
+
 def _settings_apply_c(cfg: dict, module: str) -> str:
     """Call each setting's ``setter_fn`` once ``create_fn`` has returned."""
     rows = C.composer_settings(cfg, module)
     if not rows:
         return ""
-    return "".join(
-        f"    if (_st_{st['name']}_set)\n"
-        f"        {st['setter_fn']}(self->state, _st_{st['name']});\n"
-        for st in rows
-    )
+    out = []
+    for st in rows:
+        val, flag = _setting_locals(st["name"])
+        out.append(
+            f"    if ({flag})\n        {st['setter_fn']}(self->state, {val});\n"
+        )
+    return "".join(out)
 
 
 def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
