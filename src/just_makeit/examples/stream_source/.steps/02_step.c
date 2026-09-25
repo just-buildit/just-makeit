@@ -6,7 +6,7 @@
  * left off — exactly what stream() drives, block by block.
  */
 static inline float
-ramp_step (ramp_state_t *state)
+stream_source_demo_ramp_step (stream_source_demo_ramp_state_t *state)
 {
   const float out = state->value;
   state->value += state->step_inc;

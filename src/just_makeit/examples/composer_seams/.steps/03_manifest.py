@@ -31,7 +31,7 @@ default = "1.0"
 
 # ── seam 1: build the generator from a source config ──────────────────────
 # jm emits the binding for Clip.step()/steps(); `clip_from_source` is the
-# straight-C function that turns a clip_t into a running clip_state_t.
+# straight-C function that turns a clip_t into a running studio_clip_state_t.
 [module.playlist.source.generates]
 generator = "clip"
 bridge_fn = "clip_from_source"

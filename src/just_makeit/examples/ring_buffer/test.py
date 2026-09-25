@@ -68,7 +68,7 @@ typedef enum {
 #: yet" and a caller told the wrong one debugs the wrong end.
 _CF32_STATUS_FN = f"""\
 static inline cf32_ring_status_t
-cf32_ring_wait_status (const cf32_ring_state_t *state, size_t n)
+cf32_ring_wait_status (const ringdemo_cf32_ring_state_t *state, size_t n)
 {{
     size_t have = state->head - state->tail;
     if (n > {CAP_CF32})
@@ -353,14 +353,14 @@ def run(root: Path) -> None:
 
     # ── 4. The author writes the kernels -- IN THE HEADER ────────────────
     # There is no `_core.c` to write them into. jm's own guidance says so:
-    # "Done!  Implement cf32_ring_wait() in cf32_ring_core.h".
+    # "Done!  Implement ringdemo_cf32_ring_wait() in cf32_ring_core.h".
     h = proj / "native/inc/ringdemo/cf32_ring/cf32_ring_core.h"
     # The precedence function goes in first, above the kernels that use it
     # and below the struct it reads.
-    _insert_after(h, "} cf32_ring_state_t;", "\n" + _CF32_STATUS_FN)
+    _insert_after(h, "} ringdemo_cf32_ring_state_t;", "\n" + _CF32_STATUS_FN)
     _patch_body(
         h,
-        "cf32_ring_write(cf32_ring_state_t *state",
+        "ringdemo_cf32_ring_write(ringdemo_cf32_ring_state_t *state",
         f"""\
     size_t free_ = {CAP_CF32} - (state->head - state->tail);
     size_t k = x_len < free_ ? x_len : free_;
@@ -373,7 +373,7 @@ def run(root: Path) -> None:
     # binding raises on and the answer the kernel acts on cannot disagree.
     _patch_body(
         h,
-        "cf32_ring_wait(cf32_ring_state_t *state",
+        "ringdemo_cf32_ring_wait(ringdemo_cf32_ring_state_t *state",
         """\
     if (cf32_ring_wait_status(state, n) != CF32_OK)
         return NULL;
@@ -382,7 +382,7 @@ def run(root: Path) -> None:
     )
     _patch_body(
         h,
-        "cf32_ring_peek(cf32_ring_state_t *state",
+        "ringdemo_cf32_ring_peek(ringdemo_cf32_ring_state_t *state",
         """\
     if (cf32_ring_wait_status(state, n) != CF32_OK)
         return NULL;
@@ -391,14 +391,14 @@ def run(root: Path) -> None:
     )
     _patch_body(
         h,
-        "cf32_ring_consume(cf32_ring_state_t *state",
+        "ringdemo_cf32_ring_consume(ringdemo_cf32_ring_state_t *state",
         """\
     size_t have = state->head - state->tail;
     state->tail += n < have ? n : have;""",
     )
     _patch_body(
         h,
-        "cf32_ring_close(cf32_ring_state_t *state",
+        "ringdemo_cf32_ring_close(ringdemo_cf32_ring_state_t *state",
         """\
     state->closed = 1;""",
     )
@@ -406,7 +406,7 @@ def run(root: Path) -> None:
     h = proj / "native/inc/ringdemo/iq16_ring/iq16_ring_core.h"
     _patch_body(
         h,
-        "iq16_ring_write(iq16_ring_state_t *state",
+        "ringdemo_iq16_ring_write(ringdemo_iq16_ring_state_t *state",
         f"""\
     /* gh-1405: x is ROWS of the declared element, not interleaved int16 --
        the same struct the reader hands back, so the two faces cannot
@@ -423,7 +423,7 @@ def run(root: Path) -> None:
     )
     _patch_body(
         h,
-        "iq16_ring_wait(iq16_ring_state_t *state",
+        "ringdemo_iq16_ring_wait(ringdemo_iq16_ring_state_t *state",
         f"""\
     /* `data` is int16 storage; one RECORD is two of them, so the count is in
        SAMPLES and the offset is in storage slots. */
@@ -435,7 +435,7 @@ def run(root: Path) -> None:
     )
     _patch_body(
         h,
-        "iq16_ring_consume(iq16_ring_state_t *state",
+        "ringdemo_iq16_ring_consume(ringdemo_iq16_ring_state_t *state",
         """\
     /* n is in SAMPLES; the storage is int16, so two slots per sample. */
     size_t have = state->head - state->tail;

@@ -149,12 +149,12 @@ just-makeit method iq16_ring wait --borrow --param n:size_t \
 There is no `_core.c`. jm says so when it generates the stub:
 
 ```
-Done!  Implement cf32_ring_wait() in cf32_ring_core.h
+Done!  Implement ringdemo_cf32_ring_wait() in cf32_ring_core.h
 ```
 
 ```c
 static inline float _Complex *
-cf32_ring_wait(cf32_ring_state_t *state, size_t n)
+ringdemo_cf32_ring_wait(ringdemo_cf32_ring_state_t *state, size_t n)
 {
     size_t have = state->head - state->tail;
     size_t off  = state->tail & 63;

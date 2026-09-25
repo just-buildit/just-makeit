@@ -9,7 +9,7 @@ input or output types** than the primary `step()`.
 The command appends a scalar C stub to `native/src/ema/ema_core.c`:
 
 ```c
-uint32_t ema_quantize(ema_state_t *state, float x);
+uint32_t my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x);
 ```
 
 For **1:1-rate batch work** (output count equals input count), write the
@@ -18,7 +18,7 @@ For **1:1-rate batch work** (output count equals input count), write the
 ```{02_method_scalar_batch.c}
 ```
 
-Then wire it into `native/src/ema/ema_ext.c` following the `ema_steps`
+Then wire it into `native/src/ema/ema_ext.c` following the `my_arrays_ema_steps`
 pattern already there.
 
 ### Array ownership for hand-written `_steps()`
@@ -32,7 +32,7 @@ call f.quantize_steps(block)
 ├─ ext calls PyArray_SimpleNew(n, uint32)   ← one malloc, every call
 │
 ├─ calls ema_quantize_steps(state, block.data, out.data, n)
-│    └─ loop: out[i] = ema_quantize(state, block[i])
+│    └─ loop: out[i] = my_arrays_ema_quantize(state, block[i])
 │
 └─ returns ndarray to caller
    ownership: caller

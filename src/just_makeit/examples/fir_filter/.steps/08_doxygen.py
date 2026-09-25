@@ -1,7 +1,7 @@
 """Enrich the sacred ``fir_filter_core.h`` header with a real class summary.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``fir_filter_create`` and turns its ``@brief`` into
+``/** ... */`` comment on ``my_fir_fir_filter_create`` and turns its ``@brief`` into
 the summary line of the generated ``.pyi`` class docstring. Out of the box the
 scaffold brief ("Create a fir_filter instance.") is generic, so jm falls back
 to a bland "FirFilter component." summary. Replacing it with a real sentence

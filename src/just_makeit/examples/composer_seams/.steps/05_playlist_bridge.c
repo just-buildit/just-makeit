@@ -10,13 +10,13 @@
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses
  * a configuration it cannot honour. */
-clip_state_t *
+studio_clip_state_t *
 clip_from_source (const clip_t *src, double fs)
 {
   (void)fs;
   if (src->gain < 0.0)
     return NULL;
-  return clip_create (src->gain);
+  return studio_clip_create (src->gain);
 }
 
 /* ...and why. Called only after clip_from_source returned NULL, with the

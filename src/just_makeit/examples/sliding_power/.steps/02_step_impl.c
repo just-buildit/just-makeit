@@ -1,5 +1,5 @@
 JM_FORCEINLINE JM_HOT float
-power_est_step (power_est_state_t *state, float _Complex x)
+my_power_power_est_step (my_power_power_est_state_t *state, float _Complex x)
 {
   float re = crealf (x), im = cimagf (x);
   float mag_sq = re * re + im * im;

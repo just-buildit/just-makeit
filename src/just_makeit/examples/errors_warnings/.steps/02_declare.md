@@ -23,5 +23,5 @@ What each one is really doing:
 
 Both method flags need `--return-type int`. That is not cosmetic:
 `--status-return` with `--return-type size_t` is accepted and generates
-`int _rc = allocator_take(...)` against a `size_t` prototype, which compiles
+`int _rc = budget_allocator_take(...)` against a `size_t` prototype, which compiles
 and silently truncates.

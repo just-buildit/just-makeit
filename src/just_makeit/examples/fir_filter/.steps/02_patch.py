@@ -1,4 +1,4 @@
-"""Patch fir_filter_step stub with the implementation.
+"""Patch my_fir_fir_filter_step stub with the implementation.
 
 Run from the project root: python3 .steps/02_patch.py
 """
@@ -12,7 +12,7 @@ impl = pathlib.Path(__file__).with_name("02_step_after.c")
 
 stub_re = re.compile(
     r"(static inline|JM_FORCEINLINE JM_HOT) float _Complex\s*\n"
-    r"fir_filter_step\((?:const )?fir_filter_state_t \*state.*?\n\}",
+    r"my_fir_fir_filter_step\((?:const )?my_fir_fir_filter_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 

@@ -1,10 +1,10 @@
-"""Implement ``ema_quantize`` and enrich the sacred ``ema_core.h`` header with
+"""Implement ``my_arrays_ema_quantize`` and enrich the sacred ``ema_core.h`` header with
 Doxygen so the generated ``.pyi`` carries a rich docstring and a runnable
 doctest.
 
 The header is the single source of truth for documentation: ``jm`` parses the
 ``/** ... */`` comments and turns them into numpy-style Python docstrings. A
-``@brief`` on ``ema_create()`` becomes the class summary, and a ``@code`` block
+``@brief`` on ``my_arrays_ema_create()`` becomes the class summary, and a ``@code`` block
 on a *named method* becomes a runnable doctest that CI executes against the
 built extension (``pytest --doctest-glob='*.pyi'``). Run this after the
 ``quantize`` method is declared; a follow-up ``jm apply`` regenerates the
@@ -23,7 +23,7 @@ import sys
 # non-negative integer code (values <= 0 map to 0).
 QUANTIZE_STUB = (
     "uint32_t\n"
-    "ema_quantize(ema_state_t *state, float x)\n"
+    "my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x)\n"
     "{\n"
     "    (void)state; (void)x;\n"
     "    return (uint32_t)0U;\n"
@@ -31,7 +31,7 @@ QUANTIZE_STUB = (
 )
 QUANTIZE_IMPL = (
     "uint32_t\n"
-    "ema_quantize(ema_state_t *state, float x)\n"
+    "my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x)\n"
     "{\n"
     "    (void)state;\n"
     "    if (x <= 0.0f)\n"
@@ -40,14 +40,14 @@ QUANTIZE_IMPL = (
     "}"
 )
 
-# jm's trivial scaffold @brief on ema_create(), replaced with a real summary
+# jm's trivial scaffold @brief on my_arrays_ema_create(), replaced with a real summary
 # that flows straight into the generated class docstring.
 CREATE_SCAFFOLD_BRIEF = "@brief Create a ema instance."
 CREATE_BRIEF = "@brief Exponential moving average filter over a float stream."
 
 # The bare quantize declaration in the header, and the Doxygen block prepended
 # above it. The @code block becomes a runnable Examples doctest.
-QUANTIZE_DECL = "uint32_t ema_quantize("
+QUANTIZE_DECL = "uint32_t my_arrays_ema_quantize("
 QUANTIZE_DOXYGEN = (
     "/**\n"
     " * @brief Quantize one sample to an unsigned integer code.\n"
@@ -69,7 +69,7 @@ def main() -> None:
     core = pathlib.Path("native/src/ema/ema_core.c")
     text = core.read_text(encoding="utf-8")
     if QUANTIZE_STUB not in text:
-        print("ERROR: ema_quantize stub not found", file=sys.stderr)
+        print("ERROR: my_arrays_ema_quantize stub not found", file=sys.stderr)
         sys.exit(1)
     core.write_text(text.replace(QUANTIZE_STUB, QUANTIZE_IMPL, 1), "utf-8")
     print(f"implemented {core}")

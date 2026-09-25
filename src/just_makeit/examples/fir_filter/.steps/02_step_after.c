@@ -1,6 +1,6 @@
 // after
-static inline float _Complex fir_filter_step (fir_filter_state_t *state,
-                                              float _Complex x)
+static inline float _Complex my_fir_fir_filter_step (
+    my_fir_fir_filter_state_t *state, float _Complex x)
 {
   /* Shift delay line — oldest sample falls off the end */
   memmove (&state->delay[1], &state->delay[0],

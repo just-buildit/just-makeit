@@ -494,7 +494,7 @@ def _enrich_class_summary(core_h: Path) -> None:
     """Replace jm's scaffold create() @brief with a real class summary.
 
     Mirrors the accumulator example's ``.steps/04b_doxygen.py`` create-brief
-    step: the whole ``/** ... */`` block above ``tone_state_t *tone_create``
+    step: the whole ``/** ... */`` block above ``nco_tone_demo_tone_state_t *nco_tone_demo_tone_create``
     collapses to a single ``@brief`` sentence. Idempotent — a second call is a
     no-op once the summary is present."""
     text = core_h.read_text(encoding="utf-8")
@@ -502,14 +502,14 @@ def _enrich_class_summary(core_h: Path) -> None:
         return  # already enriched
     scaffold_re = re.compile(
         r"/\*\*\n \* @brief Create a tone instance\..*?"
-        r"(?=tone_state_t \*tone_create)",
+        r"(?=nco_tone_demo_tone_state_t \*nco_tone_demo_tone_create)",
         re.DOTALL,
     )
     new_create = f"/**\n * @brief {_CLASS_SUMMARY}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
     if n != 1:
         raise AssertionError(
-            f"tone_create scaffold @brief not found in {core_h}"
+            f"nco_tone_demo_tone_create scaffold @brief not found in {core_h}"
         )
     core_h.write_text(text, encoding="utf-8")
 

@@ -9,9 +9,9 @@ Before reaching for named methods, notice what jm scaffolds automatically:
 
 | jm pattern      | accumulator meaning            | generated C               |
 | --------------- | ------------------------------ | ------------------------- |
-| `step(x)`       | push one sample                | `acc_f32_step(state, x)`  |
-| `steps(x[])`    | batch-add an array of samples  | `acc_f32_steps(state, x, n)` |
-| `reset()`       | zero the accumulator           | `acc_f32_reset(state)`    |
+| `step(x)`       | push one sample                | `my_acc_acc_f32_step(state, x)`  |
+| `steps(x[])`    | batch-add an array of samples  | `my_acc_acc_f32_steps(state, x, n)` |
+| `reset()`       | zero the accumulator           | `my_acc_acc_f32_reset(state)`    |
 
 `step(x) -> void` with `--mutable` and `--return-type void` is exactly a push
 operation.  `steps()` is the auto-generated batch loop that calls `step()` in a

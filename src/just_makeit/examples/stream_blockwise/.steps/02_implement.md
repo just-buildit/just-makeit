@@ -1,8 +1,8 @@
 ## 2. Implement the producer
 
 A `--variable-output` method generates two stubs in
-`native/src/drainer/drainer_core.c`: `drainer_run_max_out()` (the upper bound
-on output size) and `drainer_run()` (the producer itself). Fill them in.
+`native/src/drainer/drainer_core.c`: `stream_blockwise_demo_drainer_run_max_out()` (the upper bound
+on output size) and `stream_blockwise_demo_drainer_run()` (the producer itself). Fill them in.
 
 The bound — one call can at most return the whole remaining source:
 

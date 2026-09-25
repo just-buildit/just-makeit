@@ -40,6 +40,6 @@ has already used (or copied) the block, so the buffer is free to be refilled on
 the next pull. A *source* producer (`steps`) has no such rule — see the
 `stream_source` example.
 
-The hand-written Doxygen `@brief` on `drainer_create()` in the sacred
+The hand-written Doxygen `@brief` on `stream_blockwise_demo_drainer_create()` in the sacred
 `native/inc/stream_blockwise_demo/drainer/drainer_core.h` header drives the generated `drainer.pyi`
 class docstring — `jm apply` re-derives the stub from that comment.

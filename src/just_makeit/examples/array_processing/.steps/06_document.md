@@ -3,7 +3,7 @@
 The sacred header is also the single source of truth for **documentation**. A
 Doxygen `/** ... */` comment on `create()` or a named method flows straight into
 the generated `.pyi` docstring, and a `@code` block on a method becomes a
-**runnable doctest**. Give `ema_quantize` a real body and a comment:
+**runnable doctest**. Give `my_arrays_ema_quantize` a real body and a comment:
 
 ```c
 /**
@@ -19,7 +19,7 @@ the generated `.pyi` docstring, and a `@code` block on a method becomes a
  * 4
  * @endcode
  */
-uint32_t ema_quantize(ema_state_t *state, float x);
+uint32_t my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x);
 ```
 
 `jm apply` re-derives the stub, and `src/my_arrays/ema.pyi` now carries the full

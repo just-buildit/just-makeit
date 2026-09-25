@@ -1,8 +1,8 @@
 """Patch acc_f32 step stub and named method stubs.
 
 Replaces:
-  - acc_f32_step in acc_f32_core.h  (uses TODO: implement marker)
-  - acc_f32_get, dump, madd, add2d, madd2d in acc_f32_core.c
+  - my_acc_acc_f32_step in acc_f32_core.h  (uses TODO: implement marker)
+  - my_acc_acc_f32_get, dump, madd, add2d, madd2d in acc_f32_core.c
     (use <<IMPLEMENT: name >> marker)
 """
 
@@ -15,20 +15,20 @@ def patch_step(text):
     """Replace the step stub body in the header."""
     stub_re = re.compile(
         r"static inline void\s*\n"
-        r"acc_f32_step\(acc_f32_state_t \*state, float x\)\s*\{"
+        r"my_acc_acc_f32_step\(my_acc_acc_f32_state_t \*state, float x\)\s*\{"
         r"[^}]*\}",
         re.DOTALL,
     )
     m = stub_re.search(text)
     if not m:
         print(
-            "ERROR: acc_f32_step stub not found — already patched?",
+            "ERROR: my_acc_acc_f32_step stub not found — already patched?",
             file=sys.stderr,
         )
         sys.exit(1)
     impl = (
         "static inline void\n"
-        "acc_f32_step(acc_f32_state_t *state, float x)\n"
+        "my_acc_acc_f32_step(my_acc_acc_f32_state_t *state, float x)\n"
         "{\n"
         "    state->acc += x;\n"
         "}"

@@ -174,34 +174,34 @@ _C_TEST_BODY = """\
 int main(void)
 {
     const uint32_t N = 8;
-    delay_line_state_t *obj = delay_line_create(N, 0);
+    delay_line_demo_delay_line_state_t *obj = delay_line_demo_delay_line_create(N, 0);
     REQUIRE(obj != NULL);
 
-    CHECK(delay_line_get_length(obj) == N);
-    CHECK(delay_line_get_idx(obj) == 0);
+    CHECK(delay_line_demo_delay_line_get_length(obj) == N);
+    CHECK(delay_line_demo_delay_line_get_idx(obj) == 0);
 
     /* First N outputs should be the initial zeros in the ring buffer. */
     for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_step(obj, (float)(i + 1));
+        float y = delay_line_demo_delay_line_step(obj, (float)(i + 1));
         CHECK(y == 0.0f);
     }
     /* Now the (i+N+1)th input drops out — output should equal the (i+1)th
      * input we sent above. */
     for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_step(obj, 0.0f);
+        float y = delay_line_demo_delay_line_step(obj, 0.0f);
         CHECK(y == (float)(i + 1));
     }
 
     /* reset() must zero the buffer + idx but preserve length. */
-    delay_line_reset(obj);
-    CHECK(delay_line_get_length(obj) == N);   /* preserved! */
-    CHECK(delay_line_get_idx(obj) == 0);
+    delay_line_demo_delay_line_reset(obj);
+    CHECK(delay_line_demo_delay_line_get_length(obj) == N);   /* preserved! */
+    CHECK(delay_line_demo_delay_line_get_idx(obj) == 0);
     for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_step(obj, (float)(i + 1));
+        float y = delay_line_demo_delay_line_step(obj, (float)(i + 1));
         CHECK(y == 0.0f);
     }
 
-    delay_line_destroy(obj);
+    delay_line_demo_delay_line_destroy(obj);
     JM_TEST_EPILOGUE();
 }
 """
@@ -286,13 +286,15 @@ def run(root: Path) -> None:
     assert "float * taps;" in h
 
     # Scalars get auto-getters/setters; opaque field does NOT.
-    assert "delay_line_get_length" in h
-    assert "delay_line_get_idx" in h
+    assert "delay_line_demo_delay_line_get_length" in h
+    assert "delay_line_demo_delay_line_get_idx" in h
     assert "delay_line_get_taps" not in h
     assert "delay_line_set_taps" not in h
 
     # Constructor exposes length and idx as args, but not taps.
-    assert "delay_line_create(uint32_t length, uint32_t idx)" in c
+    assert (
+        "delay_line_demo_delay_line_create(uint32_t length, uint32_t idx)" in c
+    )
 
     # Lifecycle bodies wired through (TOML's spacing is preserved verbatim).
     assert "obj->taps" in c and "calloc(length" in c

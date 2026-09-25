@@ -74,7 +74,7 @@ def _install_smoke(proj: Path) -> None:
     consumer.mkdir()
     (consumer / "smoke.c").write_text(
         '#include "my_fir/my_fir.h"\n'
-        "int main(void) { fir_filter_destroy(NULL); return 0; }\n",
+        "int main(void) { my_fir_fir_filter_destroy(NULL); return 0; }\n",
         encoding="utf-8",
     )
     (consumer / "CMakeLists.txt").write_text(
@@ -219,7 +219,7 @@ def run(root: Path) -> None:
 
     # 5b. Enrich the header with a real class summary, then regenerate the
     #     stub. The sacred header is the single source of truth for docs: the
-    #     hand-written @brief on fir_filter_create() becomes the .pyi class
+    #     hand-written @brief on my_fir_fir_filter_create() becomes the .pyi class
     #     docstring summary. `jm apply` re-derives the glue (.pyi included)
     #     from the edited header without touching the hand-patched kernel.
     _cmd([sys.executable, str(STEPS / "08_doxygen.py")], cwd=proj)

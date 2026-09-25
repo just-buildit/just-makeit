@@ -2,7 +2,7 @@
 ``@brief`` so the generated ``.pyi`` class docstring reads as a sentence.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``running_stats_create()`` and turns its ``@brief``
+``/** ... */`` comment on ``my_stats_running_stats_create()`` and turns its ``@brief``
 into the summary line of the Python class docstring. Straight off the scaffold
 that summary is the generic ``"RunningStats component."``; replacing the
 boilerplate ``@brief`` with a one-line description of what the object *does*

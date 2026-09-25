@@ -9,7 +9,7 @@
 
 | File                                 | Purpose                                            |
 | ------------------------------------ | -------------------------------------------------- |
-| `native/inc/my_filters/fir/fir_core.h`          | Header: struct, inline `fir_step`, getters/setters |
+| `native/inc/my_filters/fir/fir_core.h`          | Header: struct, inline `my_filters_fir_step`, getters/setters |
 | `native/src/fir/fir_core.c`          | Source: create/destroy/reset/steps                 |
 | `native/src/fir/CMakeLists.txt`      | OBJECT library + C test + bench (no `.so`)         |
 | `native/tests/test_fir_core.c`       | C test with `CHECK` macro counter                  |

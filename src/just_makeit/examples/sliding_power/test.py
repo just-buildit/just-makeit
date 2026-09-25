@@ -51,13 +51,13 @@ def run(root: Path) -> None:
     text = header.read_text(encoding="utf-8")
     stub_re = _re.compile(
         r"JM_FORCEINLINE JM_HOT float\s*\n"
-        r"power_est_step\(const power_est_state_t \*state.*?\n\}",
+        r"my_power_power_est_step\(const my_power_power_est_state_t \*state.*?\n\}",
         _re.DOTALL,
     )
     assert stub_re.search(text), "step stub not found in header"
     impl = (
         "JM_FORCEINLINE JM_HOT float\n"
-        "power_est_step(power_est_state_t *state, float _Complex x)\n"
+        "my_power_power_est_step(my_power_power_est_state_t *state, float _Complex x)\n"
         "{\n"
         "    float re = crealf(x), im = cimagf(x);\n"
         "    float mag_sq = re * re + im * im;\n"
@@ -70,7 +70,7 @@ def run(root: Path) -> None:
     header.write_text(stub_re.sub(impl, text), encoding="utf-8")
 
     # Enrich the sacred header: replace jm's trivial scaffold @brief on
-    # power_est_create() with a real one-sentence summary. The header is the
+    # my_power_power_est_create() with a real one-sentence summary. The header is the
     # single source of truth for docs — `jm apply` re-derives the .pyi from it,
     # turning create()'s @brief into the class-level docstring summary (instead
     # of the generic "PowerEst component." fallback). Run after the step patch
@@ -80,7 +80,7 @@ def run(root: Path) -> None:
     text = header.read_text(encoding="utf-8")
     scaffold_re = _re.compile(
         r"/\*\*\n \* @brief Create a power_est instance\..*?"
-        r"(?=power_est_state_t \*power_est_create)",
+        r"(?=my_power_power_est_state_t \*my_power_power_est_create)",
         _re.DOTALL,
     )
     create_brief = (
@@ -89,7 +89,7 @@ def run(root: Path) -> None:
     )
     new_create = f"/**\n * @brief {create_brief}\n */\n"
     text, n = scaffold_re.subn(new_create, text, count=1)
-    assert n == 1, "power_est_create scaffold brief not found"
+    assert n == 1, "my_power_power_est_create scaffold brief not found"
     header.write_text(text, encoding="utf-8")
     apply_run(dest)
 

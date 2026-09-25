@@ -29,7 +29,7 @@ except AttributeError:
 
 # ── seam 1: standalone generation through the bridge ─────────────────────
 # Clip.steps() has no kernel of its own; it calls clip_from_source() to build
-# a clip_state_t and then drives the generator jm never had to know about.
+# a studio_clip_state_t and then drives the generator jm never had to know about.
 block = Clip(gain=7.0, fs=1.0).steps(3)
 print(f"Clip(gain=7.0).steps(3)  -> {block}   (via clip_from_source)")
 assert isinstance(block, np.ndarray)

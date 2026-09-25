@@ -56,13 +56,13 @@ Three state variables:
 
 ## 2. Implement
 
-Open `native/inc/my_fir/fir_filter/fir_filter_core.h` and replace the `fir_filter_step` stub.
+Open `native/inc/my_fir/fir_filter/fir_filter_core.h` and replace the `my_fir_fir_filter_step` stub.
 The filter must update the delay line, so the signature changes from `const` to mutable:
 
 ```c
 // before
-static inline float _Complex fir_filter_step (const fir_filter_state_t *state,
-                                              float _Complex x)
+static inline float _Complex my_fir_fir_filter_step (
+    const my_fir_fir_filter_state_t *state, float _Complex x)
 {
   (void)state; /* TODO: implement DSP using state variables */
   return x;
@@ -71,8 +71,8 @@ static inline float _Complex fir_filter_step (const fir_filter_state_t *state,
 
 ```c
 // after
-static inline float _Complex fir_filter_step (fir_filter_state_t *state,
-                                              float _Complex x)
+static inline float _Complex my_fir_fir_filter_step (
+    my_fir_fir_filter_state_t *state, float _Complex x)
 {
   /* Shift delay line — oldest sample falls off the end */
   memmove (&state->delay[1], &state->delay[0],
@@ -88,7 +88,7 @@ static inline float _Complex fir_filter_step (fir_filter_state_t *state,
 }
 ```
 
-`fir_filter_steps()` in `fir_filter_core.c` loops over this automatically —
+`my_fir_fir_filter_steps()` in `fir_filter_core.c` loops over this automatically —
 no changes needed there.
 
 ---
@@ -159,34 +159,36 @@ After `make`, the combined shared library is at `build/libmy_fir.so`.
 int
 main (void)
 {
-  fir_filter_state_t *f = fir_filter_create (1.0f);
+  my_fir_fir_filter_state_t *f = my_fir_fir_filter_create (1.0f);
 
   float h[16] = { 0 };
   h[0]        = 0.25f;
   h[1]        = 0.5f;
   h[2]        = 0.25f;
-  fir_filter_set_coeffs (f, h);
+  my_fir_fir_filter_set_coeffs (f, h);
 
-  /* Read taps without copying — pointer valid until fir_filter_destroy(f) */
-  const float *view = fir_filter_get_coeffs_view (f);
+  /* Read taps without copying — pointer valid until
+   * my_fir_fir_filter_destroy(f) */
+  const float *view = my_fir_fir_filter_get_coeffs_view (f);
   printf ("h[1] = %.2f\n", view[1]); /* 0.50 */
 
   /* Feed a unit impulse */
   float _Complex in[16]  = { 0 };
   float _Complex out[16] = { 0 };
   in[0]                  = 1.0f + 0.0f * I;
-  fir_filter_steps (f, in, out, 16);
+  my_fir_fir_filter_steps (f, in, out, 16);
 
   printf ("out[0]=%.2f  out[1]=%.2f  out[2]=%.2f\n", crealf (out[0]),
           crealf (out[1]), crealf (out[2])); /* 0.25  0.50  0.25 */
 
   /* Snapshot the delay line — independent copy */
   float _Complex dl[16];
-  fir_filter_get_delay (f, dl);
+  my_fir_fir_filter_get_delay (f, dl);
   printf ("delay[0] = %.3f + %.3fj\n", crealf (dl[0]), cimagf (dl[0]));
 
-  fir_filter_reset (f); /* clears delay and coeffs, restores gain = 1.0f */
-  fir_filter_destroy (f);
+  my_fir_fir_filter_reset (
+      f); /* clears delay and coeffs, restores gain = 1.0f */
+  my_fir_fir_filter_destroy (f);
   return 0;
 }
 ```
@@ -207,8 +209,8 @@ make test
 ```
 
 State is structural, so `add` rebuilds the object from the manifest: the
-`fir_filter_state_t` struct and lifecycle are regenerated and your
-`fir_filter_step()` body is reset to a fresh stub. Re-run the implement step
+`my_fir_fir_filter_state_t` struct and lifecycle are regenerated and your
+`my_fir_fir_filter_step()` body is reset to a fresh stub. Re-run the implement step
 (section 2) to restore the kernel on top of the new state. The same applies
 when you swap in a longer delay line:
 
@@ -286,7 +288,7 @@ Three concerns, three places.  `jm_perf.h` ships a `JM_DEFINE_STEPS` macro
 that stamps out the outer dispatch loop so you never write it by hand.
 
 **1.** Add the constants and `fir_filter_step_batch()` to
-`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `fir_filter_step()`:
+`native/inc/my_fir/fir_filter/fir_filter_core.h` just after `my_fir_fir_filter_step()`:
 
 ```c
 #define FIR_TAPS 16 /* algorithm:   number of coefficients       */
@@ -298,8 +300,8 @@ that stamps out the outer dispatch loop so you never write it by hand.
 
 #if JM_SIMD_WIDTH_F32 > 1
 JM_FORCEINLINE JM_HOT void
-fir_filter_step_batch (fir_filter_state_t *state, const float _Complex *window,
-                       float _Complex *out)
+fir_filter_step_batch (my_fir_fir_filter_state_t *state,
+                       const float _Complex *window, float _Complex *out)
 {
   JM_VEC_F32 acc = JM_ZERO_F32 ();
   for (int k = 0; k < FIR_TAPS; k++)
@@ -326,16 +328,16 @@ no-op, and `step_batch()` is never called.
 `step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
 but you never write `steps()`.
 
-**2.** Replace `fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
+**2.** Replace `my_fir_fir_filter_steps` in `native/src/fir_filter/fir_filter_core.c`:
 
 ```c
 #define FIR_CHUNK 256 /* tuning: samples per scratch-buffer fill */
 
-JM_DEFINE_STEPS (fir_filter, fir_filter_state_t, float _Complex, FIR_LENGTH,
-                 FIR_BATCH, FIR_CHUNK)
+JM_DEFINE_STEPS (fir_filter, my_fir_fir_filter_state_t, float _Complex,
+                 FIR_LENGTH, FIR_BATCH, FIR_CHUNK)
 ```
 
-`JM_DEFINE_STEPS` generates `fir_filter_steps()` from the macro in `jm_perf.h`:
+`JM_DEFINE_STEPS` generates `my_fir_fir_filter_steps()` from the macro in `jm_perf.h`:
 it owns the scratch buffer, the chunked fill, and the scalar tail.  You write
 `step()`.  You write `step_batch()`.  The rest is infrastructure.
 
@@ -355,7 +357,7 @@ time, no source changes needed.
 
 ## 8. Document once, in the header
 
-The `@brief` on `fir_filter_create()` in the sacred header is the single source
+The `@brief` on `my_fir_fir_filter_create()` in the sacred header is the single source
 of truth for the class docstring — edit it and `jm apply` re-derives the `.pyi`
 summary from it, so the stub reads like real documentation instead of the
 generic "FirFilter component." fallback:
@@ -364,7 +366,7 @@ generic "FirFilter component." fallback:
 """Enrich the sacred ``fir_filter_core.h`` header with a real class summary.
 
 The header is the single source of truth for documentation: ``jm`` parses the
-``/** ... */`` comment on ``fir_filter_create`` and turns its ``@brief`` into
+``/** ... */`` comment on ``my_fir_fir_filter_create`` and turns its ``@brief`` into
 the summary line of the generated ``.pyi`` class docstring. Out of the box the
 scaffold brief ("Create a fir_filter instance.") is generic, so jm falls back
 to a bland "FirFilter component." summary. Replacing it with a real sentence

@@ -76,8 +76,8 @@ and marks the spot to fill in:
  *
  * Compiled into the Python extension DSO, not the pure-C core.
  * To access the C state inside this function:
- *   typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
- *   filter_state_t *state = ((Obj *)self)->handle;
+ *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
+ *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -88,7 +88,7 @@ and marks the spot to fill in:
  * Return NULL on error (exception must be set).
  */
 PyObject *
-filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
+va_filter_filter_configure(PyObject *self, PyObject *args, PyObject *kwargs)
 {
     (void)self; (void)args; (void)kwargs;
     Py_RETURN_NONE;
@@ -122,14 +122,14 @@ just-makeit method filter current_gain --return-type double
 
 Three stubs need bodies:
 
-- `filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
-- `filter_configure` in `native/src/filter/filter_configure_core.c` — parse
+- `va_filter_filter_step` in `native/inc/va_filter/filter/filter_core.h` — multiply input by gain.
+- `va_filter_filter_configure` in `native/src/filter/filter_configure_core.c` — parse
   the `gain=` keyword argument and write it to state.
-- `filter_current_gain` in `native/src/filter/filter_core.c` — return
+- `va_filter_filter_current_gain` in `native/src/filter/filter_core.c` — return
   `state->gain`.
 
 ```python
-"""Patch filter_step and filter_configure stubs with implementations.
+"""Patch va_filter_filter_step and va_filter_filter_configure stubs with implementations.
 
 Run from the project root (my_filter/):
     python3 .steps/03_patch.py
@@ -140,12 +140,12 @@ import re
 
 STEPS = pathlib.Path(__file__).parent
 
-# -- 1. Patch the inline filter_step in filter_core.h -------------------
+# -- 1. Patch the inline va_filter_filter_step in filter_core.h -------------------
 header = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
 step_impl = (STEPS / "03_step.c").read_text(encoding="utf-8")
 step_re = re.compile(
     r"static inline float\s*\nfilter_step"
-    r"\(const filter_state_t \*state, float x\)\n\{.*?\}",
+    r"\(const va_filter_filter_state_t \*state, float x\)\n\{.*?\}",
     re.DOTALL,
 )
 text = header.read_text(encoding="utf-8")
@@ -153,7 +153,7 @@ if step_re.search(text):
     header.write_text(step_re.sub(step_impl.strip(), text), encoding="utf-8")
     print(f"patched {header}")
 else:
-    print("filter_step: already patched or stub changed — skipping")
+    print("va_filter_filter_step: already patched or stub changed — skipping")
 
 # -- 2. Replace filter_configure_core.c with the full implementation ----
 configure_c = pathlib.Path("native/src/filter/filter_configure_core.c")
@@ -162,17 +162,17 @@ configure_c.write_text(
 )
 print(f"patched {configure_c}")
 
-# -- 3. Implement the typed filter_current_gain reader in filter_core.c --
+# -- 3. Implement the typed va_filter_filter_current_gain reader in filter_core.c --
 core = pathlib.Path("native/src/filter/filter_core.c")
 core_text = core.read_text(encoding="utf-8")
 current_gain_re = re.compile(
     r"/\* <<IMPLEMENT: current_gain >> \*/\n"
-    r"double\s*\nfilter_current_gain\(filter_state_t \*state\)\n\{.*?\}",
+    r"double\s*\nfilter_current_gain\(va_filter_filter_state_t \*state\)\n\{.*?\}",
     re.DOTALL,
 )
 current_gain_impl = (
     "double\n"
-    "filter_current_gain(filter_state_t *state)\n"
+    "va_filter_filter_current_gain(va_filter_filter_state_t *state)\n"
     "{\n"
     "    return state->gain;\n"
     "}"
@@ -183,20 +183,22 @@ if current_gain_re.search(core_text):
     )
     print(f"patched {core}")
 else:
-    print("filter_current_gain: already patched or stub changed — skipping")
+    print(
+        "va_filter_filter_current_gain: already patched or stub changed — skipping"
+    )
 ```
 
-`filter_step` — one multiply:
+`va_filter_filter_step` — one multiply:
 
 ```c
 static inline float
-filter_step (const filter_state_t *state, float x)
+va_filter_filter_step (const va_filter_filter_state_t *state, float x)
 {
   return (float)(state->gain * x);
 }
 ```
 
-`filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`:
+`va_filter_filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`:
 
 ```c
 /*
@@ -204,22 +206,22 @@ filter_step (const filter_state_t *state, float x)
  *
  * Compiled into the Python extension DSO, not the pure-C core.
  * To access the C state inside this function:
- *   typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
- *   filter_state_t *state = ((Obj *)self)->handle;
+ *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
+ *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
 #include "va_filter/filter/filter_core.h"
 #include <Python.h>
 
 PyObject *
-filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
+va_filter_filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
 {
   typedef struct
   {
     PyObject_HEAD;
-    filter_state_t *handle;
+    va_filter_filter_state_t *handle;
   } Obj;
-  filter_state_t *state = ((Obj *)self)->handle;
+  va_filter_filter_state_t *state = ((Obj *)self)->handle;
   if (!state)
     {
       PyErr_SetString (PyExc_RuntimeError, "destroyed");
@@ -271,7 +273,7 @@ exercised from one example:
  * 6.0
  * @endcode
  */
-double filter_current_gain(filter_state_t *state);
+double va_filter_filter_current_gain(va_filter_filter_state_t *state);
 ```
 
 `just-makeit apply` re-derives the stub, and `src/my_filter/filter.pyi` now

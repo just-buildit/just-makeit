@@ -49,11 +49,11 @@ Stage 1 to stage 2 adds `-ffast-math` and `-march=native`.  `-ffast-math` allows
 the compiler to reassociate the reduction — a prerequisite for vectorisation.
 So why does stage 2 show no gain?
 
-The generated `acc_f32_steps()` signature is:
+The generated `my_acc_acc_f32_steps()` signature is:
 
 ```c
-void acc_f32_steps(
-    acc_f32_state_t *state,
+void my_acc_acc_f32_steps(
+    my_acc_acc_f32_state_t *state,
     const float     *input,
     size_t           n)
 ```
@@ -83,7 +83,7 @@ The replacement in `native/src/acc_f32/acc_f32_core.c`:
 ```c
 #if JM_SIMD_WIDTH_F32 > 1
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     JM_VEC_F32 vacc = JM_ZERO_F32();
@@ -96,7 +96,7 @@ acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
 }
 #else
 JM_HOT void
-acc_f32_steps(acc_f32_state_t *JM_RESTRICT state,
+my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
               const float *JM_RESTRICT input, size_t n)
 {
     for (size_t i = 0; i < n; i++)
@@ -127,7 +127,7 @@ machine with no SIMD support.
 ### 7.7 `AccCf64` and complex SIMD
 
 The `AccCf64` benchmarks show no improvement because the same aliasing problem
-applies to `acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
+applies to `my_acc_acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
 `JM_RESTRICT` there follows the same pattern.  Explicit SIMD for `double
 _Complex` is more involved: the storage is two consecutive doubles (real then
 imaginary), so you need `JM_VEC_F64` with stride-2 access or interleaved

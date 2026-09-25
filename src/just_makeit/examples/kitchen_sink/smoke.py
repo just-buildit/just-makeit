@@ -49,7 +49,7 @@ def main() -> None:
     assert c.get_number("rate") == 4.0
 
     # module-level function
-    assert dsp.lerp(0.0, 10.0, 0.5) == 5.0
+    assert dsp.kitchen_sink_lerp(0.0, 10.0, 0.5) == 5.0
 
     # symbol reexported from the no_generate dsp_fn sibling
     assert dsp.db10(100.0) == 20.0

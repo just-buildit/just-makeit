@@ -110,21 +110,21 @@ The two components demonstrate the two styles you can mix:
 ```c
 /* native/src/gain/gain_core.c */
 static inline float
-gain_step(const gain_state_t *state, float x)
+my_dsp_gain_step(const my_dsp_gain_state_t *state, float x)
 {
     return x * state->gain;
 }
 
 /* native/src/gain/gain_core.c — the named method */
 float
-gain_scale(gain_state_t *state, float x)
+my_dsp_gain_scale(my_dsp_gain_state_t *state, float x)
 {
     return x * state->gain;
 }
 
 /* native/src/ema/ema_core.c */
 static inline float
-ema_step(ema_state_t *state, float x)
+my_dsp_ema_step(my_dsp_ema_state_t *state, float x)
 {
     float y = state->alpha * x + (1.0f - state->alpha) * state->prev;
     state->prev = y;
@@ -182,7 +182,7 @@ Write the block on the named method scaffolded in step 1:
  * 3.0
  * @endcode
  */
-float gain_scale(gain_state_t *state, float x);
+float my_dsp_gain_scale(my_dsp_gain_state_t *state, float x);
 ```
 
 Then regenerate the glue — `apply` re-derives the stubs from the edited
@@ -238,7 +238,7 @@ pytest --doctest-glob='*.pyi' src/my_dsp/gain.pyi
 ```
 
 This is the part that makes `@code` a test rather than a rendered snippet. If
-`gain_scale()` were changed to return `x * state->gain + 1.0f` while the header
+`my_dsp_gain_scale()` were changed to return `x * state->gain + 1.0f` while the header
 kept advertising `3.0`, the run fails and names both sides:
 
 ```
@@ -399,7 +399,7 @@ is a real one-sentence class summary (`gain`, `ema`), which `jm apply` also
 flows through into the generated Python docstrings — so the same comment feeds
 both the Doxygen C site and the Zensical Python pages.
 
-The same is true of the `gain_scale()` block from section 4 above: one comment
+The same is true of the `my_dsp_gain_scale()` block from section 4 above: one comment
 renders on the Doxygen C site, becomes the Python docstring the Zensical pages
 show, and is *executed* as a doctest. Three artifacts, one place to edit.
 

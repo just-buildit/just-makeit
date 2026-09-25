@@ -73,14 +73,14 @@ just-makeit object clip \
 
 Nothing composer-specific yet — this is a plain `jm object`. It matters
 because the composer's defaults are named after it: declaring
-`generator = "clip"` makes jm expect `clip_state_t`, `clip_step`,
-`clip_steps`, `clip_reset`, `clip_destroy` and `clip/clip_core.h`, all of
+`generator = "clip"` makes jm expect `studio_clip_state_t`, `studio_clip_step`,
+`studio_clip_steps`, `studio_clip_reset`, `studio_clip_destroy` and `clip/clip_core.h`, all of
 which `jm object` has just produced. Every one is overridable in the manifest;
 none of them needs to be here.
 
 `--arg-type void --return-type "float _Complex"` is what makes it a *source*:
-`clip_step(state)` takes no input and returns a sample, and
-`clip_steps(state, out, n)` fills a block.
+`studio_clip_step(state)` takes no input and returns a sample, and
+`studio_clip_steps(state, out, n)` fills a block.
 
 ---
 
@@ -294,7 +294,7 @@ default = "1.0"
 
 # ── seam 1: build the generator from a source config ──────────────────────
 # jm emits the binding for Clip.step()/steps(); `clip_from_source` is the
-# straight-C function that turns a clip_t into a running clip_state_t.
+# straight-C function that turns a clip_t into a running studio_clip_state_t.
 [module.playlist.source.generates]
 generator = "clip"
 bridge_fn = "clip_from_source"
@@ -374,7 +374,7 @@ module emits:
 
 ```c
 /* Build the composed generator from a source config (source -> generator). */
-clip_state_t *clip_from_source(const clip_t *, double);
+studio_clip_state_t *clip_from_source(const clip_t *, double);
 
 /* Computed read-only property `duration`. */
 double clip_duration(const clip_t *);
@@ -404,13 +404,13 @@ with neither gets no header at all, because there would be nothing to say.
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses
  * a configuration it cannot honour. */
-clip_state_t *
+studio_clip_state_t *
 clip_from_source (const clip_t *src, double fs)
 {
   (void)fs;
   if (src->gain < 0.0)
     return NULL;
-  return clip_create (src->gain);
+  return studio_clip_create (src->gain);
 }
 
 /* ...and why. Called only after clip_from_source returned NULL, with the
@@ -557,7 +557,7 @@ except AttributeError:
 
 # ── seam 1: standalone generation through the bridge ─────────────────────
 # Clip.steps() has no kernel of its own; it calls clip_from_source() to build
-# a clip_state_t and then drives the generator jm never had to know about.
+# a studio_clip_state_t and then drives the generator jm never had to know about.
 block = Clip(gain=7.0, fs=1.0).steps(3)
 print(f"Clip(gain=7.0).steps(3)  -> {block}   (via clip_from_source)")
 assert isinstance(block, np.ndarray)
@@ -647,9 +647,9 @@ produce samples at all.
 int
 main (void)
 {
-  clip_t        src = { 0 };
-  clip_state_t *gen;
-  double        d;
+  clip_t               src = { 0 };
+  studio_clip_state_t *gen;
+  double               d;
 
   src.gain = 3.0;
 
@@ -669,13 +669,13 @@ main (void)
       fprintf (stderr, "clip_from_source returned NULL\n");
       return 1;
     }
-  if (crealf (clip_step (gen)) != 3.0f)
+  if (crealf (studio_clip_step (gen)) != 3.0f)
     {
-      fprintf (stderr, "clip_step disagrees with the source config\n");
-      clip_destroy (gen);
+      fprintf (stderr, "studio_clip_step disagrees with the source config\n");
+      studio_clip_destroy (gen);
       return 1;
     }
-  clip_destroy (gen);
+  studio_clip_destroy (gen);
 
   printf ("bridge consumer: PASSED\n");
   return 0;

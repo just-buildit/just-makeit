@@ -24,7 +24,7 @@ walks through everything the generator gives you: `stream(block)`, the
 
 The generated `Ramp` class also carries a real one-sentence summary rather
 than the generic `Ramp component.` fallback — jm lifts it straight from the
-`@brief` you write above `ramp_create` in the sacred `ramp_core.h` header.
+`@brief` you write above `stream_source_demo_ramp_create` in the sacred `ramp_core.h` header.
 
 ## TL;DR — see it work first
 
@@ -107,7 +107,7 @@ recurrence — emit the current value, then advance it:
  * left off — exactly what stream() drives, block by block.
  */
 static inline float
-ramp_step (ramp_state_t *state)
+stream_source_demo_ramp_step (stream_source_demo_ramp_state_t *state)
 {
   const float out = state->value;
   state->value += state->step_inc;

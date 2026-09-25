@@ -65,8 +65,8 @@ CLASS_SUMMARIES = {
 METHOD_DOCS = {
     "gain": [
         (
-            "float gain_scale(",
-            r"/\*\*\n \* @brief scale\..*?(?=float gain_scale\()",
+            "float my_dsp_gain_scale(",
+            r"/\*\*\n \* @brief scale\..*?(?=float my_dsp_gain_scale\()",
             "/**\n"
             " * @brief Scale one sample by the gain and return it.\n"
             " * @param x  Input sample.\n"
@@ -375,7 +375,7 @@ def run(root: Path) -> None:
     assert "import pytest" in ema_test
     assert "import unittest" not in ema_test
 
-    # 4. Implement gain_step and ema_step
+    # 4. Implement my_dsp_gain_step and my_dsp_ema_step
     _cmd(
         [
             sys.executable,
@@ -386,7 +386,7 @@ import pathlib
 p = pathlib.Path('native/src/gain/gain_core.c')
 src = p.read_text()
 src = src.replace('return (float)0;', 'return x * state->gain;')
-# gain_scale's stub -- the doctest in the header asserts this kernel, so a
+# my_dsp_gain_scale's stub -- the doctest in the header asserts this kernel, so a
 # wrong body here fails `pytest --doctest-glob='*.pyi'` in step 9b.
 src = src.replace(
     '    (void)state; (void)x;\n    return (float)0.0f;',

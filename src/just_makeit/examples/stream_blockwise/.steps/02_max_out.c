@@ -5,7 +5,8 @@
  * allocates for each call.
  */
 size_t
-drainer_run_max_out (drainer_state_t *state, size_t n)
+stream_blockwise_demo_drainer_run_max_out (
+    stream_blockwise_demo_drainer_state_t *state, size_t n)
 {
   (void)n;
   return (size_t)state->total;

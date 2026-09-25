@@ -82,7 +82,7 @@ def run(root: Path) -> None:
     app_c = (bw / "native" / "src" / "app" / "scaletool.c").read_text(
         encoding="utf-8"
     )
-    assert "scale_steps(state, inbuf, k, outbuf)" in app_c
+    assert "bw_scale_steps(state, inbuf, k, outbuf)" in app_c
     _build(bw)
     r = subprocess.run(
         [str(_exe(bw, "scaletool")), "--g", "3"],
@@ -111,7 +111,8 @@ def run(root: Path) -> None:
         encoding="utf-8"
     )
     assert (
-        "ramp_steps(state, outbuf, k)" in app_c and "produced < count" in app_c
+        "gen_ramp_steps(state, outbuf, k)" in app_c
+        and "produced < count" in app_c
     )
     _build(gen)
     r = subprocess.run(
@@ -127,17 +128,17 @@ def run(root: Path) -> None:
     jm_new("fn", fn, modules=["mathx"])
     jm_function(
         fn,
-        "addn",
+        "fn_addn",
         module="mathx",
         params=[("a", "float"), ("b", "float")],
         return_type="float",
         impl_body="return a + b;",
     )
-    jm_app(fn, target="c", name="addtool", function_="addn")
+    jm_app(fn, target="c", name="addtool", function_="fn_addn")
     app_c = (fn / "native" / "src" / "app" / "addtool.c").read_text(
         encoding="utf-8"
     )
-    assert "float result = addn(a, b);" in app_c
+    assert "float result = fn_addn(a, b);" in app_c
     _build(fn)
     r = subprocess.run(
         [str(_exe(fn, "addtool")), "--a", "2", "--b", "3"],

@@ -2,7 +2,7 @@
 
 This example demonstrates [`jm view`](../commands/extend.md#just-makeit-view):
 a **second Python class over the same generated C core**. The two classes share
-one `acc_state_t`, one `acc_core.c`, and one `step()`; they differ only in the C
+one `acc_bank_acc_state_t`, one `acc_core.c`, and one `step()`; they differ only in the C
 constructor they call, the constructor arguments they take, and the Python
 surface they expose.
 
@@ -47,12 +47,12 @@ jm view acc SeededAcc --module bank \
 That does four things:
 
 - records a `[[acc.views]]` entry in the manifest;
-- injects `acc_state_t *acc_create_seeded(double seed);` into `acc_core.h`;
+- injects `acc_bank_acc_state_t *acc_create_seeded(double seed);` into `acc_core.h`;
 - appends an `<<IMPLEMENT>>` stub for it to the sacred `acc_core.c`, so the
     module still compiles before you have written a line;
 - regenerates the module glue with a second class registered on it.
 
-`--create-fn` is required and must differ from the parent's `acc_create` — a
+`--create-fn` is required and must differ from the parent's `acc_bank_acc_create` — a
 view exists precisely to build from a different constructor.
 
 ______________________________________________________________________
@@ -65,7 +65,7 @@ one it has — pass `--view <ClassName>` to `jm property`, `jm method`, or
 `jm warning`:
 
 ```sh
-# adds `runs` to SeededAcc only (a field on the shared acc_state_t)
+# adds `runs` to SeededAcc only (a field on the shared acc_bank_acc_state_t)
 jm property acc runs --module bank --type size_t --field \
     --doc "reseed count" --view SeededAcc
 
@@ -114,10 +114,10 @@ return state->sum;
 and the view's alternate constructor, which reuses the parent's:
 
 ```c
-acc_state_t *
+acc_bank_acc_state_t *
 acc_create_seeded (double seed)
 {
-  acc_state_t *s = acc_create (seed);
+  acc_bank_acc_state_t *s = acc_bank_acc_create (seed);
   return s;
 }
 ```
@@ -133,9 +133,9 @@ ______________________________________________________________________
 ## Document once, in C
 
 The sacred header is also the single source of truth for **documentation**. A
-Doxygen `/** ... */` comment on `acc_create()` or a named method flows straight
+Doxygen `/** ... */` comment on `acc_bank_acc_create()` or a named method flows straight
 into the generated `bank.pyi`, and a `@code` block on a method becomes a
-**runnable doctest**. Document `acc_total`:
+**runnable doctest**. Document `acc_bank_acc_total`:
 
 ```c
 /**
@@ -152,7 +152,7 @@ into the generated `bank.pyi`, and a `@code` block on a method becomes a
  * 3.5
  * @endcode
  */
-double acc_total(acc_state_t *state);
+double acc_bank_acc_total(acc_bank_acc_state_t *state);
 ```
 
 `jm apply` re-derives the stub, and `Acc.total` in `bank.pyi` now carries the
@@ -209,7 +209,7 @@ $ python -m doctest -v src/acc_bank/bank/bank.pyi
 
 In CI the whole suite is driven at once with `pytest --doctest-glob='*.pyi'`.
 
-**A view is documented differently.** `acc_create()`'s `@brief` becomes the
+**A view is documented differently.** `acc_bank_acc_create()`'s `@brief` becomes the
 parent `Acc` summary, but the view's summary keys off its own `<obj>_create`
 name — and `SeededAcc` shares `acc`, so there is no header to enrich; its
 summary is the generic default. Field-backed property docs (`depth`, `runs`)
@@ -249,7 +249,7 @@ assert "seed depth" in SeededAcc.depth.__doc__
 ```
 
 Excluding a method drops only its Python wrapper and its `PyMethodDef` entry —
-`acc_total()` is still in the C core, so there is no dangling symbol and the
+`acc_bank_acc_total()` is still in the C core, so there is no dangling symbol and the
 parent keeps working. The generated `bank.pyi` carries both classes, with
 `SeededAcc.__init__` typed to its own `seed: float` parameter.
 

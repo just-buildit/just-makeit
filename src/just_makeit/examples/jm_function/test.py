@@ -2,12 +2,12 @@
 
 Exercises:
   - jm new / jm module / jm object  (project + module + gain object scaffold)
-  - jm function linear_to_db        (regular C function in its own .c file)
-  - jm function clamp --inline      (static inline in _core.h, no .c file)
+  - jm function my_utils_linear_to_db        (regular C function in its own .c file)
+  - jm function my_utils_clamp --inline      (static inline in _core.h, no .c file)
   - struct assertions on generated files before building
   - .steps/02_patch.py implements all three stubs
   - cmake configure + build + CTest
-  - Python smoke test: Gain.step(), linear_to_db(), clamp()
+  - Python smoke test: Gain.step(), my_utils_linear_to_db(), my_utils_clamp()
   - TOML config records both functions under [module.utils]
 
 Called by tests/test_examples.py via run(root).
@@ -67,23 +67,23 @@ def run(root: Path) -> None:
     )
 
     # ── 2. Add module-level functions. ───────────────────────────────────
-    # linear_to_db: regular C function — stub written to its own sacred
-    # native/src/utils/linear_to_db.c, declaration injected into _core.h,
+    # my_utils_linear_to_db: regular C function — stub written to its own sacred
+    # native/src/utils/my_utils_linear_to_db.c, declaration injected into _core.h,
     # Python wrapper generated in utils_ext.c.
     jm_function(
         dest,
-        "linear_to_db",
+        "my_utils_linear_to_db",
         "utils",
         params=[("x", "float")],
         return_type="float",
         doc="Convert linear amplitude to dB (20*log10(x)).",
     )
 
-    # clamp: static inline — full body stub injected into _core.h only.
+    # my_utils_clamp: static inline — full body stub injected into _core.h only.
     # No _core.c entry; the compiler sees the body at every call site.
     jm_function(
         dest,
-        "clamp",
+        "my_utils_clamp",
         "utils",
         params=[("x", "float"), ("lo", "float"), ("hi", "float")],
         return_type="float",
@@ -100,34 +100,38 @@ def run(root: Path) -> None:
     header = (dest / "native/inc/my_utils/utils/utils_core.h").read_text(
         encoding="utf-8"
     )
-    assert "linear_to_db" in header, (
-        "utils_core.h missing linear_to_db declaration"
+    assert "my_utils_linear_to_db" in header, (
+        "utils_core.h missing my_utils_linear_to_db declaration"
     )
-    assert "clamp" in header, "utils_core.h missing clamp inline body"
+    assert "my_utils_clamp" in header, (
+        "utils_core.h missing my_utils_clamp inline body"
+    )
 
-    # linear_to_db is a regular function: stub lives in its own .c file,
+    # my_utils_linear_to_db is a regular function: stub lives in its own .c file,
     # which includes the module header and carries the single definition.
-    fn_c = dest / "native/src/utils/linear_to_db.c"
-    assert fn_c.exists(), "native/src/utils/linear_to_db.c was not created"
+    fn_c = dest / "native/src/utils/my_utils_linear_to_db.c"
+    assert fn_c.exists(), (
+        "native/src/utils/my_utils_linear_to_db.c was not created"
+    )
     fn_c_text = fn_c.read_text(encoding="utf-8")
-    assert "linear_to_db(float x)" in fn_c_text, (
-        "linear_to_db.c missing the function stub"
+    assert "my_utils_linear_to_db(float x)" in fn_c_text, (
+        "my_utils_linear_to_db.c missing the function stub"
     )
     assert '#include "my_utils/utils/utils_core.h"' in fn_c_text, (
-        "linear_to_db.c must include the module header"
+        "my_utils_linear_to_db.c must include the module header"
     )
 
     # The shared _core.c stays the bare scaffold — functions never land there.
     core_c = (dest / "native/src/utils/utils_core.c").read_text(
         encoding="utf-8"
     )
-    assert "linear_to_db" not in core_c, (
-        "utils_core.c must not contain the linear_to_db stub"
+    assert "my_utils_linear_to_db" not in core_c, (
+        "utils_core.c must not contain the my_utils_linear_to_db stub"
     )
 
-    # clamp is inline: no .c file at all (only the static inline in _core.h).
-    assert not (dest / "native/src/utils/clamp.c").exists(), (
-        "inline clamp must not get its own .c file"
+    # my_utils_clamp is inline: no .c file at all (only the static inline in _core.h).
+    assert not (dest / "native/src/utils/my_utils_clamp.c").exists(), (
+        "inline my_utils_clamp must not get its own .c file"
     )
 
     with (dest / "just-makeit.toml").open("rb") as f:
@@ -135,11 +139,11 @@ def run(root: Path) -> None:
     fn_names = [
         fn["name"] for fn in cfg["module"]["utils"].get("functions", [])
     ]
-    assert "linear_to_db" in fn_names, (
-        "TOML missing linear_to_db in [module.utils].functions"
+    assert "my_utils_linear_to_db" in fn_names, (
+        "TOML missing my_utils_linear_to_db in [module.utils].functions"
     )
-    assert "clamp" in fn_names, (
-        "TOML missing clamp in [module.utils].functions"
+    assert "my_utils_clamp" in fn_names, (
+        "TOML missing my_utils_clamp in [module.utils].functions"
     )
 
     # ── 4. Patch stubs with real implementations. ────────────────────────
@@ -151,13 +155,13 @@ def run(root: Path) -> None:
     # become rich numpy-style .pyi docstrings, and a @code block becomes a
     # runnable doctest. `jm apply` re-derives the glue (.pyi included) from
     # the edited header. This also exercises `jm apply` correctly preserving
-    # the inline flag — clamp must NOT be re-materialized as a `.c` file.
+    # the inline flag — my_utils_clamp must NOT be re-materialized as a `.c` file.
     _cmd([sys.executable, str(STEPS / "03_doxygen.py")], cwd=dest)
     apply_run(dest)
 
-    # apply must leave the inline function inline — no clamp.c on replay.
-    assert not (dest / "native/src/utils/clamp.c").exists(), (
-        "jm apply wrongly materialized clamp.c for an inline function"
+    # apply must leave the inline function inline — no my_utils_clamp.c on replay.
+    assert not (dest / "native/src/utils/my_utils_clamp.c").exists(), (
+        "jm apply wrongly materialized my_utils_clamp.c for an inline function"
     )
 
     # ── 5. CMake configure + build + CTest. ──────────────────────────────
@@ -186,27 +190,27 @@ def run(root: Path) -> None:
             """
 import sys, math
 sys.path.insert(0, 'src')
-from my_utils.utils import Gain, linear_to_db, clamp
+from my_utils.utils import Gain, my_utils_linear_to_db, my_utils_clamp
 
 # Gain: state->gain * x  (gain=2.0, x=1.0 => 2.0)
 g = Gain(gain=2.0)
 assert abs(g.step(1.0) - 2.0) < 1e-6, f"Gain: {g.step(1.0)}"
 
-# linear_to_db: 1.0 => 0 dB, 10.0 => 20 dB
-assert abs(linear_to_db(1.0)) < 0.01, (
-    f"linear_to_db(1.0)={linear_to_db(1.0)}"
+# my_utils_linear_to_db: 1.0 => 0 dB, 10.0 => 20 dB
+assert abs(my_utils_linear_to_db(1.0)) < 0.01, (
+    f"my_utils_linear_to_db(1.0)={my_utils_linear_to_db(1.0)}"
 )
-assert abs(linear_to_db(10.0) - 20.0) < 0.01, (
-    f"linear_to_db(10.0)={linear_to_db(10.0)}"
+assert abs(my_utils_linear_to_db(10.0) - 20.0) < 0.01, (
+    f"my_utils_linear_to_db(10.0)={my_utils_linear_to_db(10.0)}"
 )
 
-# clamp: above hi, below lo, in range
-assert clamp(5.0, 0.0, 3.0) == 3.0, f"clamp(5,0,3)={clamp(5.0,0.0,3.0)}"
-assert clamp(-1.0, 0.0, 3.0) == 0.0, (
-    f"clamp(-1,0,3)={clamp(-1.0,0.0,3.0)}"
+# my_utils_clamp: above hi, below lo, in range
+assert my_utils_clamp(5.0, 0.0, 3.0) == 3.0, f"my_utils_clamp(5,0,3)={my_utils_clamp(5.0,0.0,3.0)}"
+assert my_utils_clamp(-1.0, 0.0, 3.0) == 0.0, (
+    f"my_utils_clamp(-1,0,3)={my_utils_clamp(-1.0,0.0,3.0)}"
 )
-assert clamp(1.5, 0.0, 3.0) == 1.5, (
-    f"clamp(1.5,0,3)={clamp(1.5,0.0,3.0)}"
+assert my_utils_clamp(1.5, 0.0, 3.0) == 1.5, (
+    f"my_utils_clamp(1.5,0,3)={my_utils_clamp(1.5,0.0,3.0)}"
 )
 
 print("jm_function: all Python checks passed")
@@ -228,23 +232,25 @@ print("jm_function: all Python checks passed")
         encoding="utf-8"
     )
     assert "class Gain:" in pyi, "utils.pyi missing Gain class"
-    assert "linear_to_db" in pyi, "utils.pyi missing linear_to_db"
-    assert "clamp" in pyi, "utils.pyi missing clamp"
+    assert "my_utils_linear_to_db" in pyi, (
+        "utils.pyi missing my_utils_linear_to_db"
+    )
+    assert "my_utils_clamp" in pyi, "utils.pyi missing my_utils_clamp"
 
     # The Doxygen enrichment (step 4b) reached the stub: @param/@return prose
     # and a @code block on each function rendered as a runnable Examples
     # doctest.
     assert "The amplitude expressed in decibels." in pyi, (
-        "linear_to_db @return prose missing from stub"
+        "my_utils_linear_to_db @return prose missing from stub"
     )
-    assert ">>> linear_to_db(10.0)" in pyi and "20.0" in pyi, (
-        "linear_to_db @code doctest missing from stub"
+    assert ">>> my_utils_linear_to_db(10.0)" in pyi and "20.0" in pyi, (
+        "my_utils_linear_to_db @code doctest missing from stub"
     )
     assert "Clamp x to the closed interval [lo, hi]." in pyi, (
-        "clamp @brief missing from stub"
+        "my_utils_clamp @brief missing from stub"
     )
-    assert ">>> clamp(5.0, 0.0, 3.0)" in pyi, (
-        "clamp @code doctest missing from stub"
+    assert ">>> my_utils_clamp(5.0, 0.0, 3.0)" in pyi, (
+        "my_utils_clamp @code doctest missing from stub"
     )
 
     # ── 8. The header-authored doctests actually run against the built .so ─

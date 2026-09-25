@@ -24,7 +24,7 @@ ENRICHMENTS = {
         "create_brief": "Create a 32-bit float accumulator (running sum), zeroed.",
         "blocks": [
             (
-                "float acc_f32_get(",
+                "float my_acc_acc_f32_get(",
                 "/**\n"
                 " * @brief Return the current accumulated sum.\n"
                 " * @return The running sum of every sample added so far.\n"
@@ -38,14 +38,14 @@ ENRICHMENTS = {
                 " */\n",
             ),
             (
-                "float acc_f32_dump(",
+                "float my_acc_acc_f32_dump(",
                 "/**\n"
                 " * @brief Return the accumulated sum and reset it to zero.\n"
                 " * @return The sum accumulated since the last reset or dump.\n"
                 " */\n",
             ),
             (
-                "void acc_f32_madd(",
+                "void my_acc_acc_f32_madd(",
                 "/**\n"
                 " * @brief Multiply-accumulate: add the weighted sum"
                 " sum(x[i]*h[i]).\n"
@@ -68,7 +68,7 @@ ENRICHMENTS = {
         "create_brief": "Create a complex128 accumulator (running sum), zeroed.",
         "blocks": [
             (
-                "double _Complex acc_cf64_get(",
+                "double _Complex my_acc_acc_cf64_get(",
                 "/**\n"
                 " * @brief Return the current accumulated complex sum.\n"
                 " * @return The running sum of every sample added so far.\n"
@@ -82,7 +82,7 @@ ENRICHMENTS = {
                 " */\n",
             ),
             (
-                "double _Complex acc_cf64_dump(",
+                "double _Complex my_acc_acc_cf64_dump(",
                 "/**\n"
                 " * @brief Return the accumulated sum and reset it to zero.\n"
                 " * @return The sum accumulated since the last reset or dump.\n"

@@ -72,7 +72,7 @@ def run(root: Path) -> None:
 
     # Implement quantize + enrich the sacred header with Doxygen, then let
     # `jm apply` re-derive the glue (.pyi included). The hand-written
-    # @brief/@param/@return/@code comments on ema_create() and ema_quantize()
+    # @brief/@param/@return/@code comments on my_arrays_ema_create() and my_arrays_ema_quantize()
     # become a rich numpy-style class docstring and a runnable doctest that CI
     # executes against the built extension.
     _cmd([sys.executable, str(STEPS / "06_doxygen.py")], cwd=proj_ema)

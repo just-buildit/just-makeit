@@ -50,13 +50,13 @@ just-makeit object gain --module utils \
     --state "gain:float:1.0"
 
 # Regular function: own .c file, linker can see it
-just-makeit function linear_to_db --module utils \
+just-makeit function my_utils_linear_to_db --module utils \
     --param "x:float" \
     --return-type float \
     --doc "Convert linear amplitude to dB (20*log10(x))."
 
 # Inline function: static inline in utils_core.h, no .c file
-just-makeit function clamp --module utils \
+just-makeit function my_utils_clamp --module utils \
     --param "x:float" \
     --param "lo:float" \
     --param "hi:float" \
@@ -69,32 +69,32 @@ ______________________________________________________________________
 
 ## 2. What was created
 
-**`linear_to_db`** (regular function):
+**`my_utils_linear_to_db`** (regular function):
 
 ```
-native/src/utils/linear_to_db.c    ← sacred; implement here
+native/src/utils/my_utils_linear_to_db.c    ← sacred; implement here
 native/inc/my_utils/utils/utils_core.h      ← declaration injected automatically
 ```
 
 ```c
-/* native/src/utils/linear_to_db.c */
+/* native/src/utils/my_utils_linear_to_db.c */
 #include "my_utils/utils/utils_core.h"
 
-/* <<IMPLEMENT: linear_to_db>> */
+/* <<IMPLEMENT: my_utils_linear_to_db>> */
 float
-linear_to_db(float x)
+my_utils_linear_to_db(float x)
 {
     (void)x;
     return (float)0.0f; /* placeholder */
 }
 ```
 
-**`clamp`** (inline):
+**`my_utils_clamp`** (inline):
 
 ```c
 /* native/inc/my_utils/utils/utils_core.h — injected inline */
 static inline float
-clamp(float x, float lo, float hi)
+my_utils_clamp(float x, float lo, float hi)
 {
     (void)x; (void)lo; (void)hi;
     return (float)0.0f; /* placeholder */
@@ -105,21 +105,21 @@ ______________________________________________________________________
 
 ## 3. Implement
 
-**`linear_to_db`** (add `#include <math.h>` for `log10f`):
+**`my_utils_linear_to_db`** (add `#include <math.h>` for `log10f`):
 
 ```c
 float
-linear_to_db(float x)
+my_utils_linear_to_db(float x)
 {
     return 20.0f * log10f(x > 0.0f ? x : 1e-10f);
 }
 ```
 
-**`clamp`:**
+**`my_utils_clamp`:**
 
 ```c
 static inline float
-clamp(float x, float lo, float hi)
+my_utils_clamp(float x, float lo, float hi)
 {
     if (x < lo) return lo;
     if (x > hi) return hi;
@@ -137,15 +137,15 @@ pip install -e .
 ```
 
 ```python
-from my_utils.utils import linear_to_db, clamp
+from my_utils.utils import my_utils_linear_to_db, my_utils_clamp
 
-# linear_to_db: scalar in, scalar out
-print(linear_to_db(10.0))   # 20.0
-print(linear_to_db(1.0))    # 0.0
+# my_utils_linear_to_db: scalar in, scalar out
+print(my_utils_linear_to_db(10.0))   # 20.0
+print(my_utils_linear_to_db(1.0))    # 0.0
 
-# clamp: scalar in, scalar out
-print(clamp(1.5, 0.0, 1.0))    # 1.0
-print(clamp(-0.5, 0.0, 1.0))   # 0.0
+# my_utils_clamp: scalar in, scalar out
+print(my_utils_clamp(1.5, 0.0, 1.0))    # 1.0
+print(my_utils_clamp(-0.5, 0.0, 1.0))   # 0.0
 ```
 
 ______________________________________________________________________
@@ -157,7 +157,7 @@ Doxygen `/** ... */` comment on a function's declaration flows straight into
 the generated `.pyi` docstring, and a `@code` block becomes a **runnable
 doctest**. Free functions are an ideal home for doctests — they take plain
 scalars and return plain scalars, so the `>>>` lines read like ordinary
-Python. Add a comment above the `linear_to_db` declaration in
+Python. Add a comment above the `my_utils_linear_to_db` declaration in
 `native/inc/my_utils/utils/utils_core.h`:
 
 ```c
@@ -166,14 +166,14 @@ Python. Add a comment above the `linear_to_db` declaration in
  * @param x  Linear amplitude (must be > 0).
  * @return The amplitude expressed in decibels.
  * @code
- * >>> from my_utils.utils import linear_to_db
- * >>> linear_to_db(1.0)
+ * >>> from my_utils.utils import my_utils_linear_to_db
+ * >>> my_utils_linear_to_db(1.0)
  * 0.0
- * >>> linear_to_db(10.0)
+ * >>> my_utils_linear_to_db(10.0)
  * 20.0
  * @endcode
  */
-float linear_to_db(float x);
+float my_utils_linear_to_db(float x);
 ```
 
 `jm apply` re-derives the stub, and `src/my_utils/utils/utils.pyi` now carries
@@ -181,7 +181,7 @@ the full numpy-style docstring — including the `@code` block as an `Examples`
 doctest:
 
 ```python
-def linear_to_db(x: float) -> float:
+def my_utils_linear_to_db(x: float) -> float:
     """Convert linear amplitude to dB (20*log10(x)).
 
     Parameters
@@ -196,10 +196,10 @@ def linear_to_db(x: float) -> float:
 
     Examples
     --------
-    >>> from my_utils.utils import linear_to_db
-    >>> linear_to_db(1.0)
+    >>> from my_utils.utils import my_utils_linear_to_db
+    >>> my_utils_linear_to_db(1.0)
     0.0
-    >>> linear_to_db(10.0)
+    >>> my_utils_linear_to_db(10.0)
     20.0
 
     """
@@ -212,17 +212,17 @@ to watch every `>>>` line execute:
 ```termynal
 $ python -m doctest -v src/my_utils/utils/utils.pyi
 {d}Trying:{/d}
-    linear_to_db(1.0)
+    my_utils_linear_to_db(1.0)
 {d}Expecting:{/d}
     0.0
 {g}ok{/g}
 {d}Trying:{/d}
-    linear_to_db(10.0)
+    my_utils_linear_to_db(10.0)
 {d}Expecting:{/d}
     20.0
 {g}ok{/g}
 {d}Trying:{/d}
-    clamp(5.0, 0.0, 3.0)
+    my_utils_clamp(5.0, 0.0, 3.0)
 {d}Expecting:{/d}
     3.0
 {g}ok{/g}
@@ -231,7 +231,7 @@ $ python -m doctest -v src/my_utils/utils/utils.pyi
 {g}Test passed.{/g}
 ```
 
-The same treatment applies to the inline `clamp` — the Doxygen sits above its
+The same treatment applies to the inline `my_utils_clamp` — the Doxygen sits above its
 `static inline` definition. In CI the whole suite is driven at once with
 `pytest --doctest-glob='*.pyi'`.
 
@@ -252,7 +252,7 @@ render as numpy-style prose and a `@code` block becomes a runnable doctest.
 against the built extension via `pytest --doctest-glob='*.pyi'`.
 
 **Functions are module-level, not class methods.** They appear as bare callables
-(`utils.clamp(...)`, not `obj.clamp(...)`). For per-instance behaviour, use
+(`utils.my_utils_clamp(...)`, not `obj.my_utils_clamp(...)`). For per-instance behaviour, use
 `jm method` instead.
 
 ## See also

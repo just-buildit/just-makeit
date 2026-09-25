@@ -13,9 +13,9 @@
 int
 main (void)
 {
-  clip_t        src = { 0 };
-  clip_state_t *gen;
-  double        d;
+  clip_t               src = { 0 };
+  studio_clip_state_t *gen;
+  double               d;
 
   src.gain = 3.0;
 
@@ -35,13 +35,13 @@ main (void)
       fprintf (stderr, "clip_from_source returned NULL\n");
       return 1;
     }
-  if (crealf (clip_step (gen)) != 3.0f)
+  if (crealf (studio_clip_step (gen)) != 3.0f)
     {
-      fprintf (stderr, "clip_step disagrees with the source config\n");
-      clip_destroy (gen);
+      fprintf (stderr, "studio_clip_step disagrees with the source config\n");
+      studio_clip_destroy (gen);
       return 1;
     }
-  clip_destroy (gen);
+  studio_clip_destroy (gen);
 
   printf ("bridge consumer: PASSED\n");
   return 0;

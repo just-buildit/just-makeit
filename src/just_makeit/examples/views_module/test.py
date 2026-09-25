@@ -6,14 +6,14 @@ Exercises `just-makeit view` — two Python classes over ONE generated C core:
 
   - `just-makeit object acc` scaffolds an accumulator (state `sum`, step adds).
   - `just-makeit view SeededAcc --create-fn acc_create_seeded
-    --exclude-method total` adds a SECOND class over the same `acc_state_t`,
+    --exclude-method total` adds a SECOND class over the same `acc_bank_acc_state_t`,
     differing in its constructor and trimming a method (`total()`).
   - Both classes compile into one `.so`, import from one subpackage, share the
     same step behaviour, and construct differently (`Acc(sum=0.0)` starts empty;
     `SeededAcc(seed=10.0)` starts pre-loaded); `Acc` exposes `total()`,
     `SeededAcc` does not.
   - The view's surface DIVERGES, not just trims: `SeededAcc` ADDS a `runs`
-    property the parent lacks (a field on the shared `acc_state_t`) and
+    property the parent lacks (a field on the shared `acc_bank_acc_state_t`) and
     OVERRIDES `depth`'s docstring — `jm property acc <name> --view SeededAcc`.
 
 The point: there is exactly one `acc_core.c` (one struct, one step()), and the
@@ -93,7 +93,7 @@ def run(root: Path) -> None:
     )
 
     # ── 2. Add a SECOND class over the same core: a pre-seeded accumulator ────
-    # It shares acc_state_t and step(), builds from a different constructor, and
+    # It shares acc_bank_acc_state_t and step(), builds from a different constructor, and
     # trims the surface — SeededAcc deliberately omits total().
     view_run(
         dest,
@@ -105,7 +105,7 @@ def run(root: Path) -> None:
         exclude_methods=["total"],
     )
     # Diverging surface: the view ADDS a property the parent lacks (`runs`, a
-    # field on the shared acc_state_t) and OVERRIDES a parent property's doc.
+    # field on the shared acc_bank_acc_state_t) and OVERRIDES a parent property's doc.
     property_run(
         dest,
         "acc",
@@ -169,12 +169,12 @@ def run(root: Path) -> None:
         "    state->sum += x;\n    return state->sum;",
     )
     core_c = dest / "native" / "src" / "acc" / "acc_core.c"
-    # acc_create_seeded starts the accumulator pre-loaded, reusing acc_create.
+    # acc_create_seeded starts the accumulator pre-loaded, reusing acc_bank_acc_create.
     _patch(
         core_c,
         "    /* <<IMPLEMENT>>: build the state for the SeededAcc view. */\n"
         "    return NULL;",
-        "    acc_state_t *s = acc_create(seed);\n    return s;",
+        "    acc_bank_acc_state_t *s = acc_bank_acc_create(seed);\n    return s;",
     )
     # total() returns the running sum without mutating.
     _patch(
@@ -185,7 +185,7 @@ def run(root: Path) -> None:
 
     # ── 3b. Enrich the header with Doxygen, regenerate the stubs ─────────────
     # The sacred header is the single source of truth for docs: a hand-written
-    # @brief on acc_create() becomes the Acc class summary, and acc_total()'s
+    # @brief on acc_bank_acc_create() becomes the Acc class summary, and acc_bank_acc_total()'s
     # @brief/@return/@code block becomes a rich docstring with a RUNNABLE
     # doctest. `jm apply` re-derives the glue (.pyi included) from the header.
     # (View gotcha, see 04b_doxygen.py: the view's summary and its field-backed
@@ -258,7 +258,7 @@ print("views_module: all checks passed")
     )
 
     # The Doxygen enrichment (step 3b) reached the stub. The parent's create()
-    # @brief is the Acc class summary, and acc_total()'s @brief/@return/@code
+    # @brief is the Acc class summary, and acc_bank_acc_total()'s @brief/@return/@code
     # rendered as a runnable Examples doctest.
     assert "Create an empty accumulator" in pyi, "class @brief missing"
     assert "Return the running sum without mutating" in pyi, (

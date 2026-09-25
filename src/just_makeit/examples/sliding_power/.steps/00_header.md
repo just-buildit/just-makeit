@@ -14,7 +14,7 @@ Two update strategies are shown:
   clean demonstration of the `jm_simd.h` macro set.
 
 The generated `.pyi` also carries a hand-authored class summary lifted from
-the `@brief` on `power_est_create()` in the sacred header.
+the `@brief` on `my_power_power_est_create()` in the sacred header.
 
 ## TL;DR — see it work first
 

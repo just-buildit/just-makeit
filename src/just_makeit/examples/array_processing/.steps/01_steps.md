@@ -7,8 +7,8 @@ Every `just-makeit object` generates both `step()` and `steps()`:
 
 | C function  | Signature                                                               |
 | ----------- | ----------------------------------------------------------------------- |
-| `ema_step`  | `float ema_step(ema_state_t *s, float x)`                               |
-| `ema_steps` | `void ema_steps(ema_state_t *s, const float *in, float *out, size_t n)` |
+| `my_arrays_ema_step`  | `float my_arrays_ema_step(my_arrays_ema_state_t *s, float x)`                               |
+| `my_arrays_ema_steps` | `void my_arrays_ema_steps(my_arrays_ema_state_t *s, const float *in, float *out, size_t n)` |
 
 `steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`
 once per sample. You implement `step()`; `steps()` comes for free.
@@ -36,7 +36,7 @@ nothing:
 
 ```c
 /* Output buffer must be pre-allocated by caller. */
-void ema_steps(ema_state_t       *state,
+void my_arrays_ema_steps(my_arrays_ema_state_t       *state,
                const float       *input,
                float             *output,
                size_t             n);
@@ -48,7 +48,7 @@ loop body (adding SIMD dispatch), not the signature or the allocation model.
 ### The Python ext — one malloc per call
 
 The ext is the only place an allocation happens. It calls `PyArray_SimpleNew`
-to create the output array, passes the raw pointer to `ema_steps`, then
+to create the output array, passes the raw pointer to `my_arrays_ema_steps`, then
 returns the numpy array to the caller:
 
 ```
@@ -56,7 +56,7 @@ call f.steps(block)
 │
 ├─ ext calls PyArray_SimpleNew(n)   ← one malloc, every call
 │
-├─ calls ema_steps(state, block.data, out.data, 1024)
+├─ calls my_arrays_ema_steps(state, block.data, out.data, 1024)
 │    └─ no allocation inside; fills out[] in place
 │
 └─ returns ndarray to caller
@@ -89,7 +89,7 @@ call f.steps(block, buf)
 │
 ├─ ext validates buf: dtype, C-contiguous, len == n
 │
-├─ calls ema_steps(state, block.data, buf.data, 1024)
+├─ calls my_arrays_ema_steps(state, block.data, buf.data, 1024)
 │    └─ no allocation; fills buf in place
 │
 └─ returns buf (same object, new reference)
@@ -110,10 +110,10 @@ typedef struct {
     float  coeffs[16];   /* inline — no extra malloc */
     float  delay[16];    /* inline */
     float  gain;
-} ema_state_t;
+} my_arrays_ema_state_t;
 ```
 
-`ema_create()` does exactly one `malloc` for the whole struct. There is no
+`my_arrays_ema_create()` does exactly one `malloc` for the whole struct. There is no
 `malloc` per field, no pointer to chase, and no fragmentation.
 
 Contrast this with a hypothetical `float *coeffs` pointer: that would require

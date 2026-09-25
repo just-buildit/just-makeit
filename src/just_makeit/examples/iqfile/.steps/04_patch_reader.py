@@ -1,4 +1,4 @@
-"""Implement q15_to_cf32_step(), samples_read counter, and eof getter."""
+"""Implement iqfile_q15_to_cf32_step(), samples_read counter, and eof getter."""
 
 from pathlib import Path
 import sys
@@ -42,11 +42,11 @@ assert OLD in text, "step stub not found — was it already patched?"
 text = text.replace(OLD, NEW, 1)
 
 # Add eof getter declaration before the closing header guard #endif
-guard = "#endif /* Q15_TO_CF32_CORE_H */"
+guard = "#endif /* IQFILE_Q15_TO_CF32_CORE_H */"
 assert guard in text, "header guard not found"
 text = text.replace(
     guard,
-    "int32_t q15_to_cf32_get_eof(const q15_to_cf32_state_t *state);\n\n"
+    "int32_t iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state);\n\n"
     + guard,
     1,
 )
@@ -68,12 +68,12 @@ if "<unistd.h>" not in text:
 # Counter in steps()
 OLD_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = q15_to_cf32_step(state);
+        output[i] = iqfile_q15_to_cf32_step(state);
 }"""
 
 NEW_LOOP = """\
     for (size_t i = 0; i < n; i++)
-        output[i] = q15_to_cf32_step(state);
+        output[i] = iqfile_q15_to_cf32_step(state);
     state->samples_read += (uint32_t)n;
 }"""
 
@@ -83,9 +83,9 @@ text = text.replace(OLD_LOOP, NEW_LOOP, 1)
 # eof getter: `jm property` scaffolded a marked placeholder for it (step 3);
 # fill that in rather than writing a second definition beside it.
 OLD_EOF = """\
-/* <<IMPLEMENT: q15_to_cf32_get_eof>> */
+/* <<IMPLEMENT: iqfile_q15_to_cf32_get_eof>> */
 int32_t
-q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
+iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state)
 {
     (void)state;
     return 0; /* placeholder */
@@ -93,7 +93,7 @@ q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
 
 NEW_EOF = """\
 int32_t
-q15_to_cf32_get_eof(const q15_to_cf32_state_t *state)
+iqfile_q15_to_cf32_get_eof(const iqfile_q15_to_cf32_state_t *state)
 {
     if (state->fd < 0)
         return 1;

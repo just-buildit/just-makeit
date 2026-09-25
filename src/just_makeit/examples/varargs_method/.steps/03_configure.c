@@ -3,22 +3,22 @@
  *
  * Compiled into the Python extension DSO, not the pure-C core.
  * To access the C state inside this function:
- *   typedef struct { PyObject_HEAD; filter_state_t *handle; } Obj;
- *   filter_state_t *state = ((Obj *)self)->handle;
+ *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
+ *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
  */
 #define PY_SSIZE_T_CLEAN
 #include "va_filter/filter/filter_core.h"
 #include <Python.h>
 
 PyObject *
-filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
+va_filter_filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
 {
   typedef struct
   {
     PyObject_HEAD;
-    filter_state_t *handle;
+    va_filter_filter_state_t *handle;
   } Obj;
-  filter_state_t *state = ((Obj *)self)->handle;
+  va_filter_filter_state_t *state = ((Obj *)self)->handle;
   if (!state)
     {
       PyErr_SetString (PyExc_RuntimeError, "destroyed");

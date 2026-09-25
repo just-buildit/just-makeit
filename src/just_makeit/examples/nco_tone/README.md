@@ -168,7 +168,7 @@ accumulator to a unit-magnitude complex exponential:
 
 ```c
 static inline float _Complex
-tone_step(tone_state_t *state)
+nco_tone_demo_tone_step(nco_tone_demo_tone_state_t *state)
 {
     uint32_t phase;
     /* n samples, then the capacity of `out` (doppler >= 0.39) */

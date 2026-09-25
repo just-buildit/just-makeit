@@ -18,7 +18,7 @@ finding):
     a ``--field`` getter is auto-implemented inline, so there is no header
     declaration to annotate. Those docs are set in ``test.py`` / step 3.
   - A **computed** property's getter has a real declaration, so it CAN carry a
-    header ``@brief``. ``eof`` is computed (``q15_to_cf32_get_eof``), so its
+    header ``@brief``. ``eof`` is computed (``iqfile_q15_to_cf32_get_eof``), so its
     docstring is enriched here.
 
 iqfile exposes no named ``jm method`` (only ``step``/``steps`` plus
@@ -52,7 +52,7 @@ CREATE_BRIEFS = {
 GETTER_BLOCKS = {
     "q15_to_cf32": [
         (
-            "int32_t q15_to_cf32_get_eof(",
+            "int32_t iqfile_q15_to_cf32_get_eof(",
             "/**\n"
             " * @brief True (1) once the backing file descriptor is"
             " exhausted.\n"

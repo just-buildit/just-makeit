@@ -1,11 +1,11 @@
-"""Patch running_stats_step stub with an implementation.
+"""Patch my_stats_running_stats_step stub with an implementation.
 
 Run from the project root:
     python3 .steps/02_patch.py                  # base body (mean/var only)
     python3 .steps/02_patch.py 02_step_after.c  # full body (+ min/max state)
 
 The implementation file is resolved next to this script. It is applied by
-replacing the generated `running_stats_step()` stub in the public header. The
+replacing the generated `my_stats_running_stats_step()` stub in the public header. The
 same script is re-run after `jm add` regenerates the object back to a fresh
 stub — that is the canonical "add state, then re-implement" loop. After adding
 min_val/max_val, pass 02_step_after.c to restore the algorithm on top of the
@@ -22,7 +22,7 @@ impl = pathlib.Path(__file__).with_name(impl_name)
 
 stub_re = re.compile(
     r"static inline float _Complex\s*\n"
-    r"running_stats_step\((?:const )?running_stats_state_t \*state.*?\n\}",
+    r"my_stats_running_stats_step\((?:const )?my_stats_running_stats_state_t \*state.*?\n\}",
     re.DOTALL,
 )
 
