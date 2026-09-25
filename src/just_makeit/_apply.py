@@ -464,7 +464,15 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
         )
     if CSYM.prefix(cfg) is not None and not errors:
         errors += CSYM.duplicates(temp_root, cfg)
-        stale = CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
+        # A collision first, and alone: `jm upgrade` is what the unrenamed
+        # message points to, and on a colliding tree it must not run.
+        clash = CSYM.collisions(project_root, temp_root, cfg)
+        errors += clash
+        stale = (
+            {}
+            if clash
+            else CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
+        )
         for rel, names in stale.items():
             errors.append(
                 f"{rel} still spells the unprefixed "

@@ -771,12 +771,37 @@ def _report_repairs(root: Path) -> None:
     )
 
 
+def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
+    """Refuse, before ANY step writes, a ``c_prefix`` whose derived names the
+    author's C already declares (gh-1657, :func:`_csym.collisions`).
+
+    First, not inside :func:`_respell_c_prefix`: a schema migration runs
+    before the repairs, so a refusal there would leave a project half
+    upgraded. The replay is of the manifest as it stands, so its owning
+    files are at the tree's current paths.
+    """
+    import tempfile
+
+    from . import _apply
+
+    if CSYM.prefix(cfg) is None:
+        return
+    if CSYM.stray_prefixes(root, cfg):
+        _apply.prefix_errors(cfg, root, root)
+    with tempfile.TemporaryDirectory() as tmp:
+        _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
+        clash = CSYM.collisions(root, Path(tmp), cfg)
+    if clash:
+        C._refuse(clash)
+
+
 def run(root: Path) -> None:
     """Advance the project at *root* to CURRENT_SCHEMA."""
     cfg = C.load(root)
     if not cfg:
         print("error: no just-makeit.toml found.", file=sys.stderr)
         sys.exit(1)
+    _refuse_prefix_collisions(root, cfg)
 
     current = C.schema_version(cfg)
     target = C.CURRENT_SCHEMA
