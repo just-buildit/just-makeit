@@ -1443,7 +1443,40 @@ CMAKE_SPLICE_ANCHORS = {
 }
 
 
-def _splice_root_install(real_path: Path, temp_path: Path) -> bool:
+#: gh-1600: the `[project.libraries]` section inside the managed install block.
+_LIBS_BEGIN = re.compile(r"^# ── Libraries: \[project\.libraries\].*\n", re.M)
+_LIBS_END = re.compile(r"^# ── End libraries ──.*$", re.M)
+
+
+def install_block_render(block: str, cfg: dict) -> str:
+    """*block*, the template's install block, with the project's
+    ``[project.libraries]`` section in it (gh-1600).
+
+    The replay renders the root template before the temp manifest holds the
+    project's `[project]` extras, so the section is filled in HERE, from the
+    real manifest -- the one place `apply` and `status` (which diffs the
+    real tree against an `apply` of a scratch copy) both pass through.
+    """
+    b, e = _LIBS_BEGIN.search(block), _LIBS_END.search(block)
+    if not b or not e or e.start() < b.end():
+        # A declared library with nowhere to go would be dropped in silence
+        # -- the block would render, install, and ship without it. The
+        # markers come from jm's own template, so this is a jm defect (a
+        # formatter reflowed them once while this was being written).
+        if C.project_libraries(cfg):
+            raise RuntimeError(
+                "jm's install-block template lost its [project.libraries]"
+                " markers; the declared libraries cannot be rendered"
+            )
+        return block
+    return (
+        block[: b.end()] + _libwiring.libraries_cmake(cfg) + block[e.start() :]
+    )
+
+
+def _splice_root_install(
+    real_path: Path, temp_path: Path, cfg: "dict | None" = None
+) -> bool:
     """Render the root CMakeLists's managed install block (gh-1589).
 
     The block is everything between ``# ── Install`` and ``# ── End install``
@@ -1471,6 +1504,8 @@ def _splice_root_install(real_path: Path, temp_path: Path) -> bool:
     if rs is None or ts is None:
         return False
     old, new = real[rs[0] : rs[1]], temp[ts[0] : ts[1]]
+    if cfg is not None:
+        new = install_block_render(new, cfg)
     if _rootcmake.calls(old) == _rootcmake.calls(new):
         return False
     _textio.write_text(real_path, real[: rs[0]] + new + real[rs[1] :])
@@ -1608,11 +1643,7 @@ _WIRED_CORE = re.compile(
     r"^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:(\w+)>\)[ \t]*\n"
 )
 
-_SUBDIR_BLOCK = re.compile(
-    r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
-    r"(?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)[ \t]*\n)*",
-    re.MULTILINE,
-)
+_SUBDIR_BLOCK = _libwiring.SUBDIR_BLOCK
 
 
 def _splice_cmake_components(
@@ -2347,7 +2378,7 @@ def _sync_aggregates(
                 updated.append(real_cmake)
     # gh-1589: and the managed install block, likewise.
     if real_cmake.exists() and temp_cmake.exists():
-        if _splice_root_install(real_cmake, temp_cmake):
+        if _splice_root_install(real_cmake, temp_cmake, cfg):
             if real_cmake not in updated:
                 updated.append(real_cmake)
 
@@ -3439,6 +3470,12 @@ def run(
     C.pkg_module_entries(cfg)
     C.public_link_libs(cfg)
     C.public_defines(cfg)
+    # gh-1600: an additional library the tree cannot build is refused before
+    # anything is written -- a missing core is a CMake configure error, and a
+    # core also in lib<pkg> puts its objects in a consumer's link twice.
+    _lib_errors = _libwiring.library_tree_errors(root, cfg)
+    if _lib_errors:
+        C._refuse(_lib_errors)
     # gh-1128: an ADOPTER jm cannot generate into is reported, not refused.
     # Every other module still shares one state; this one keeps its own copy
     # until its author adds the adopt to the binding they already write, and

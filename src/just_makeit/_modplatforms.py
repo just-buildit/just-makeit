@@ -70,32 +70,63 @@ def errors(cfg: dict) -> "list[str]":
     >>> errors({"module": {"s": {"platforms": ["linux"]}}})
     []
     """
-    known = ", ".join(PLATFORMS)
     out: "list[str]" = []
     for mod, data in sorted((cfg.get("module") or {}).items()):
         if not isinstance(data, dict) or "platforms" not in data:
             continue
-        raw = data["platforms"]
-        if not isinstance(raw, list) or not all(
-            isinstance(p, str) for p in raw
-        ):
-            out.append(
-                f"[module.{mod}] platforms must be a list of strings, "
-                f'e.g. ["linux", "macos"]'
-            )
-            continue
-        if not raw:
-            out.append(
-                f"[module.{mod}] platforms is empty; list at least one of "
-                f"{known}, or remove the key"
-            )
-        for p in raw:
-            if p not in PLATFORMS:
-                out.append(
-                    f'[module.{mod}] platforms: unknown platform "{p}" '
-                    f"(known: {known})"
-                )
+        out += list_errors(f"[module.{mod}]", data["platforms"])
     return out
+
+
+def list_errors(where: str, raw: object) -> "list[str]":
+    """Why a ``platforms`` list declared at *where* is not one jm can build.
+
+    One check for every table that scopes itself to platforms -- a module's
+    extension (gh-1463) and an additional library (gh-1600).
+
+    >>> list_errors("[project.libraries.x]", ["linux"])
+    []
+    """
+    known = ", ".join(PLATFORMS)
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        return [
+            f"{where} platforms must be a list of strings, "
+            f'e.g. ["linux", "macos"]'
+        ]
+    out: "list[str]" = []
+    if not raw:
+        out.append(
+            f"{where} platforms is empty; list at least one of "
+            f"{known}, or remove the key"
+        )
+    for p in raw:
+        if p not in PLATFORMS:
+            out.append(
+                f'{where} platforms: unknown platform "{p}" (known: {known})'
+            )
+    return out
+
+
+def canonical(raw: object) -> "tuple[str, ...] | None":
+    """A declared ``platforms`` list, canonically ordered; ``None`` when it
+    is absent or names every platform (so the full set is not churn).
+
+    >>> canonical(["macos", "linux"]), canonical(None)
+    (('linux', 'macos'), None)
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    chosen = tuple(p for p in PLATFORMS if p in raw)
+    return None if len(chosen) == len(PLATFORMS) else chosen
+
+
+def platform_test(chosen: "tuple[str, ...]") -> str:
+    """The CMake condition true on exactly the *chosen* platforms.
+
+    >>> platform_test(("linux", "macos"))
+    'CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE'
+    """
+    return " OR ".join(PLATFORMS[p][0] for p in chosen)
 
 
 def module_platforms(cfg: dict, module: str) -> "tuple[str, ...] | None":
@@ -114,11 +145,7 @@ def module_platforms(cfg: dict, module: str) -> "tuple[str, ...] | None":
     ... ) is None
     True
     """
-    raw = _declared(cfg, module)
-    if not isinstance(raw, list) or not raw:
-        return None
-    chosen = tuple(p for p in PLATFORMS if p in raw)
-    return None if len(chosen) == len(PLATFORMS) else chosen
+    return canonical(_declared(cfg, module))
 
 
 def cmake_guard(cfg: dict, module: str) -> str:
@@ -132,11 +159,7 @@ def cmake_guard(cfg: dict, module: str) -> str:
     chosen = module_platforms(cfg, module)
     if chosen is None:
         return "BUILD_PYTHON"
-    return (
-        "BUILD_PYTHON AND ("
-        + " OR ".join(PLATFORMS[p][0] for p in chosen)
-        + ")"
-    )
+    return f"BUILD_PYTHON AND ({platform_test(chosen)})"
 
 
 def init_platforms(

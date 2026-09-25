@@ -3603,6 +3603,116 @@ def _project_list(cfg: dict, key: str) -> list:
 _DEFINE_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(=\S*)?$")
 
 
+class Library(NamedTuple):
+    """One ``[project.libraries.<name>]`` table: an ADDITIONAL installed
+    library beside ``lib<pkg>`` (gh-1600).
+
+    ``target`` is the internal CMake stem -- ``<pkg>_<name>``, so the targets
+    are ``<pkg>_<name>_lib`` / ``_lib_static``, the file is
+    ``lib<pkg>_<name>`` and the ``.pc`` is ``<pkg>_<name>.pc``; ``name`` is
+    the exported one, ``<pkg>::<name>`` (gh-1581's convention).
+    """
+
+    name: str
+    target: str
+    cores: "tuple[str, ...]"
+    description: str
+    platforms: "tuple[str, ...] | None"
+
+
+_LIBRARY_KEYS = ("cores", "description", "platforms")
+
+
+def project_libraries(cfg: dict) -> "list[Library]":
+    """``[project.libraries.<name>]``, validated (gh-1600).
+
+    Refused, all at once, when a table could not be built as declared: a name
+    that is not a C identifier, ``static`` (the exported names would collide
+    with ``<pkg>::<pkg>-static``'s pattern) or the package's own name; an
+    unknown key; ``cores`` empty, not a list of names, or naming one core
+    twice; a core claimed by two libraries -- a consumer linking both
+    statically would get its symbols twice; bad ``platforms``. That each core
+    is declared, and not also folded into ``lib<pkg>``, needs the tree, so
+    `apply` checks it (:func:`_libwiring.library_tree_errors`).
+
+    >>> [l.target for l in project_libraries({"project": {"name": "p",
+    ...     "libraries": {"stream": {"cores": ["s_obj"]}}}})]
+    ['p_stream']
+    """
+    from . import _modplatforms
+
+    pkg = project_name(cfg)
+    raw = (cfg.get("project") or {}).get("libraries") or {}
+    out: "list[Library]" = []
+    errors: "list[str]" = []
+    owner: "dict[str, str]" = {}
+    if not isinstance(raw, dict):
+        _refuse(
+            ["[project] libraries must be tables: [project.libraries.<name>]"]
+        )
+    for name, table in raw.items():
+        where = f"[project.libraries.{name}]"
+        if not isinstance(table, dict):
+            errors.append(f"{where} must be a table")
+            continue
+        if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            errors.append(f"{where}: the name must be a C identifier")
+        if name in ("static", pkg):
+            errors.append(
+                f"{where}: `{name}` would collide with lib{pkg}'s own"
+                f" exported names ({pkg}::{pkg}, {pkg}::{pkg}-static)"
+            )
+        for key in table:
+            if key not in _LIBRARY_KEYS:
+                errors.append(
+                    f"{where}: unknown key `{key}` (known: "
+                    + ", ".join(_LIBRARY_KEYS)
+                    + ")"
+                )
+        cores = table.get("cores")
+        if (
+            not isinstance(cores, list)
+            or not cores
+            or not all(
+                isinstance(c, str) and _re.fullmatch(r"\w+", c) for c in cores
+            )
+        ):
+            errors.append(
+                f"{where}: cores must list the OBJECT libraries it folds in,"
+                ' by target name, e.g. cores = ["stream_core_obj"]'
+            )
+            cores = []
+        for c in {c for c in cores if cores.count(c) > 1}:
+            errors.append(f"{where}: core `{c}` is listed twice")
+        for c in dict.fromkeys(cores):
+            if c in owner:
+                errors.append(
+                    f"{where}: core `{c}` is already in"
+                    f" [project.libraries.{owner[c]}]; a core belongs to one"
+                    " library, or a consumer linking both gets it twice"
+                )
+            owner.setdefault(c, name)
+        if "\n" in str(table.get("description") or ""):
+            errors.append(
+                f"{where}: description must be one line (it is the .pc's"
+                " Description: field)"
+            )
+        if "platforms" in table:
+            errors += _modplatforms.list_errors(where, table["platforms"])
+        out.append(
+            Library(
+                name,
+                f"{pkg}_{name}",
+                tuple(dict.fromkeys(cores)),
+                str(table.get("description") or f"{pkg} {name}"),
+                _modplatforms.canonical(table.get("platforms")),
+            )
+        )
+    if errors:
+        _refuse(errors)
+    return out
+
+
 def public_link_libs(cfg: dict) -> list[str]:
     """``[project] public_link_libs``: link flags a CONSUMER needs (gh-1599).
 

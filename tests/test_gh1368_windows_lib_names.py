@@ -31,11 +31,17 @@ from just_makeit._new import run as new_run  # noqa: E402
 
 def _names(root: Path, win32: bool) -> "tuple[str, str]":
     """OUTPUT_NAME of the shared and static library, as CMake evaluates the
-    project's own library block with WIN32 set or not."""
+    project's own library block with WIN32 set or not -- the targets'
+    declaration, then the install block's per-library loop that names them
+    (gh-1600: one loop for every library the project installs)."""
     top = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     start = top.index("add_library(p_lib SHARED")
-    end = top.index("enable_testing()")
-    block = top[start:end]
+    block = top[start : top.index("enable_testing()")]
+    rows = top.index("set(JM_LIBRARIES ")
+    block += top[rows : top.index("\n", rows) + 1]
+    loop = top.index("foreach(jm_row IN LISTS JM_LIBRARIES)")
+    block += top[loop : top.index("endforeach()", loop) + len("endforeach()")]
+    block += "\n"
     script = root / "probe.cmake"
     # Real targets need a project; a script can't define them. So stand in
     # for the two calls CMake would make and record what the block asks for.
@@ -43,6 +49,7 @@ def _names(root: Path, win32: bool) -> "tuple[str, str]":
         f"set(WIN32 {'1' if win32 else '0'})\n"
         "macro(add_library name)\n  set(_out_${name} ${name})\nendmacro()\n"
         "macro(target_include_directories)\nendmacro()\n"
+        "macro(install)\nendmacro()\n"
         "function(set_target_properties t)\n"
         '  cmake_parse_arguments(P "" "OUTPUT_NAME" "" ${ARGN})\n'
         # Only a call that SETS OUTPUT_NAME records one: the block also sets
