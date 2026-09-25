@@ -781,7 +781,7 @@ def _build_no_state_init_ctx(
         """
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
-            raw_init = dflt_raw or dflt or meta["parse_zero"]
+            raw_init = T.parse_seed(ct, dflt, dflt_raw)
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
@@ -2950,12 +2950,11 @@ def make_state_ctx(
     for name, ct, dflt in ctor_scalars:
         meta = _CTYPE_META[ct]
         if meta.get("parse_type"):
-            # gh-377: seed the _raw local from dflt when valid as an
-            # initializer for parse_type; struct parse_types (Py_complex,
-            # parse_zero starts with "{") cannot accept a C99 expression like
-            # "0.0 + 0.0 * I" — fall back to parse_zero for those.
-            pz = meta["parse_zero"]
-            raw_init = dflt if (dflt and not pz.startswith("{")) else pz
+            # gh-377: seed the _raw local from dflt. gh-1561: through the one
+            # seed, which spells a Py_complex default as `{re, im}` -- this
+            # copy used to fall back to the struct's zero for EVERY complex
+            # default, so an omitted keyword read 0 whatever was declared.
+            raw_init = T.parse_seed(ct, dflt)
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )

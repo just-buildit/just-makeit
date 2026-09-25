@@ -10,6 +10,7 @@ from .._types import (
     _CTYPE_META,
     STATE_ARRAY_NPY,
     bool_default_py,
+    complex_default_py,
     is_c_only_default,
     string_default_literal,
     strip_c_literal_suffix,
@@ -87,7 +88,9 @@ def _py_default(ctype: str, default: str) -> str:
             s += ".0"
         return s
     if kind == "complex":
-        return "0j"
+        # gh-1561: the declared value, not always zero. No default is still
+        # the zero-seed `0j`, as the C side seeds it.
+        return complex_default_py(default) or "0j"
     if kind == "str":
         # gh-1271: `NULL` is `None`, through the shared answer. It used to be
         # `""` here, and the comment said exactly why: *"None would fit the

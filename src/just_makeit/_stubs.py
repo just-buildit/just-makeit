@@ -66,23 +66,12 @@ from ._docstring import (
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
+# gh-1561: derived from `_types.scalar_py_annotation`, the one answer to "what
+# Python type is this scalar". A hand-kept copy of it had drifted: it lacked
+# `ptrdiff_t` and `long double _Complex`, so every stub default of either
+# type read `...` whatever was declared.
 _CTYPE_TO_PY: dict[str, str] = {
-    "float": "float",
-    "double": "float",
-    "float _Complex": "complex",
-    "double _Complex": "complex",
-    "bool": "bool",
-    "int": "int",
-    "int8_t": "int",
-    "int16_t": "int",
-    "int32_t": "int",
-    "int64_t": "int",
-    "uint8_t": "int",
-    "uint16_t": "int",
-    "uint32_t": "int",
-    "uint64_t": "int",
-    "size_t": "int",
-    "const char *": "str",
+    ct: T.scalar_py_annotation(ct) for ct in T._CTYPE_META
 }
 
 _CTYPE_TO_NP: dict[str, str] = {
@@ -930,20 +919,17 @@ def _py_default_stub(ctype: str, default: str) -> str:
     # One answer, shared, so the two cannot drift again.
     if T._CTYPE_META.get(ctype, {}).get("kind") == "str":
         return T.string_default_literal(default)
-    kind_map = {
-        "float": "float",
-        "double": "float",
-        "float _Complex": "complex",
-        "double _Complex": "complex",
-    }
-    kind = kind_map.get(ctype, "int")
+    # gh-1561: the type's own kind. A hand list of the complex types sent
+    # `long double _Complex` to the integer bucket.
+    kind = T._CTYPE_META[ctype]["kind"]
     if kind == "float":
         s = default.rstrip("fF")
         if "." not in s and "e" not in s.lower():
             s += ".0"
         return s
     if kind == "complex":
-        return "0j"
+        # gh-1561: the peer's answer, from the same parser.
+        return T.complex_default_py(default) or "0j"
     # gh-1043: the integer bucket, the peer of the branch in
     # `_context/_types._py_default`. Both emitted the C literal unchanged, so
     # a `uint64_t` state field put `0U` into the .pyi AND the runtime
@@ -958,13 +944,9 @@ def _doctest_out(ctype: str, default: str) -> str | None:
         return None  # array fields: no scalar getter
     if ctype not in _CTYPE_TO_PY:
         return None
-    kind_map = {
-        "float": "float",
-        "double": "float",
-        "float _Complex": "complex",
-        "double _Complex": "complex",
-    }
-    kind = kind_map.get(ctype, "int")
+    # gh-1561: the type's own kind. A hand list of the complex types sent
+    # `long double _Complex` to the integer bucket.
+    kind = T._CTYPE_META[ctype]["kind"]
     if kind == "int":
         val = _py_default_stub(ctype, default)
         try:
@@ -982,7 +964,9 @@ def _doctest_out(ctype: str, default: str) -> str | None:
             pass
         return None
     if kind == "complex":
-        return "0j"
+        # gh-1561: the declared value's repr, which is what the getter
+        # prints; None for a C constant, as for any value Python cannot say.
+        return T.complex_default_py(default) if default.strip() else "0j"
     return None
 
 

@@ -90,14 +90,21 @@ _C_PARSE = {
 }
 
 
-def _py_default(c_default: str) -> str:
+def _py_default(c_default: str, ctype: str) -> "str | None":
     """Strip C suffixes from a default literal to get a Python literal.
 
     gh-1043: delegates to the one implementation in `_types`. This copy was
     the CORRECT one of three and the other two shipped `0U` into generated
     Python for months, so it is the copy that moved rather than the answer
     that changed.
+
+    gh-1561: a complex default goes through the complex parser the other
+    faces share -- ``0.0 + 0.0 * I`` stripped of suffixes is still C, and
+    ``I`` is a NameError in the generated app. ``None`` (no default) when it
+    is a C constant Python cannot say.
     """
+    if T._CTYPE_META.get(ctype, {}).get("kind") == "complex":
+        return T.complex_default_py(c_default)
     return T.strip_c_literal_suffix(c_default)
 
 
@@ -214,7 +221,7 @@ def _argparse_block(flags: list[dict]) -> str:
             )
             continue
         pytype = _PYTYPE.get(f["type"], "str")
-        pydef = _py_default(f["default"]) if f["default"] else None
+        pydef = _py_default(f["default"], f["type"]) if f["default"] else None
         helptext = _flag_help(f["name"], f["help"], pydef)
         if f.get("required"):
             spec = "required=True"
@@ -1194,7 +1201,9 @@ def _py_subparsers(commands: list[dict]) -> str:
         )
         for f in _cmd_flag_dicts(c.get("flags", [])):
             pytype = _PYTYPE.get(f["type"], "str")
-            pydef = _py_default(f["default"]) if f["default"] else None
+            pydef = (
+                _py_default(f["default"], f["type"]) if f["default"] else None
+            )
             if pydef is None:
                 dr = "None"
             elif pytype in ("float", "int", "complex"):
