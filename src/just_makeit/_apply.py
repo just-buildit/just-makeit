@@ -370,6 +370,68 @@ def _object_ctx(cfg: dict, comp: str, module: str | None) -> dict:
     }
 
 
+def replay_project(cfg: dict, temp_root: Path, project_root: Path) -> None:
+    """Replay *cfg* into *temp_root* the one way `apply` does -- for anyone.
+
+    The replay is not :func:`_replay` alone: it runs inside the scopes that
+    make it correct and affordable, and a caller that skips one gets a
+    different tree, or none. #1596's `adopt --packaging` called `_replay`
+    bare and could not replay doppler at all: without
+    `deferred_module_regen` a module regenerates mid-replay, before a
+    component it references has had its capsule property replayed, and
+    `resolve_object_ref` refuses ("publishes no capsule"). So every caller
+    replays through here, and a test refuses a direct `_replay` call
+    anywhere else.
+
+    The scopes, each with its reason at its definition:
+
+    - ``_DOC_ROOT_OVERRIDE``: docstrings derive from the REAL project's
+      sacred ``_core.h`` (its hand-written Doxygen), not the template
+      headers scaffolded into the temp tree.
+    - ``scratch_writes`` / ``deferred_save`` (gh-698, gh-764): the plain
+      dumper and one deferred save for a manifest nobody reads back.
+    - the progress output, which names temp paths, is swallowed.
+    - ``deferred_module_regen``: one regeneration per module, after every
+      member of it -- and everything it references -- is replayed.
+    - ``replay_dependency_graph`` (gh-1549): link closures follow the
+      complete ``depends_on`` graph, not the part replayed so far.
+    """
+    from . import _object as _obj_mod
+
+    _obj_mod._DOC_ROOT_OVERRIDE = project_root
+    try:
+        # gh-698: the replay runs one mutating command per method, and each
+        # rewrites the whole manifest through tomlkit's comment-preserving
+        # path — O(methods x manifest size), which is why doppler's 67 KB
+        # manifest never finished. The temp tree has no authored comments
+        # to preserve (the replay just dumped it) and its manifest is never
+        # copied back (`_SKIP_FILES`), so the plain dumper is correct here.
+        # ...and the second quadratic term: every mutating command
+        # regenerates its whole module, so replaying N methods regenerated
+        # all M objects N times. Coalesced to one flush per module.
+        # Order matters: `deferred_module_regen` flushes on exit, and a
+        # `with` unwinds in reverse — so it must be entered *after* the
+        # redirect, or the flush's progress output (naming temp paths)
+        # escapes to the user's terminal, which is exactly what the
+        # redirect above exists to prevent.
+        # gh-764: `deferred_save` sits *outside* `deferred_module_regen`
+        # so it exits later — the module-regen flush itself saves, and
+        # those writes must fold into the one deferred flush rather than
+        # escaping it. It stays inside `scratch_writes` and the redirect
+        # for the same reason `deferred_module_regen` does: its flush
+        # writes a manifest and must use the cheap dumper and stay quiet.
+        with (
+            C.scratch_writes(),
+            contextlib.redirect_stdout(io.StringIO()),
+            C.deferred_save(),
+            _obj_mod.deferred_module_regen(),
+            C.replay_dependency_graph(cfg),
+        ):
+            _replay(cfg, temp_root, project_root)
+    finally:
+        _obj_mod._DOC_ROOT_OVERRIDE = None
+
+
 def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     """Re-run the full scaffold for *cfg* into the pristine *temp_root*.
 
@@ -3398,48 +3460,14 @@ def run(
 
     with tempfile.TemporaryDirectory(prefix="jm-apply-") as tmp:
         temp_root = Path(tmp) / C.project_name(cfg)
-        # Docstring derivation must read the REAL project's sacred `_core.h`
-        # (with its hand-written Doxygen), not the template headers scaffolded
-        # into the throwaway temp tree by _replay.
-        _obj_mod._DOC_ROOT_OVERRIDE = root
         # The generators print progress for the throwaway temp tree; that
         # output names temp paths and would only confuse the user.
         try:
-            # gh-698: the replay runs one mutating command per method, and each
-            # rewrites the whole manifest through tomlkit's comment-preserving
-            # path — O(methods x manifest size), which is why doppler's 67 KB
-            # manifest never finished. The temp tree has no authored comments
-            # to preserve (the replay just dumped it) and its manifest is never
-            # copied back (`_SKIP_FILES`), so the plain dumper is correct here.
-            # ...and the second quadratic term: every mutating command
-            # regenerates its whole module, so replaying N methods regenerated
-            # all M objects N times. Coalesced to one flush per module.
-            # Order matters: `deferred_module_regen` flushes on exit, and a
-            # `with` unwinds in reverse — so it must be entered *after* the
-            # redirect, or the flush's progress output (naming temp paths)
-            # escapes to the user's terminal, which is exactly what the
-            # redirect above exists to prevent.
-            # gh-764: `deferred_save` sits *outside* `deferred_module_regen`
-            # so it exits later — the module-regen flush itself saves, and
-            # those writes must fold into the one deferred flush rather than
-            # escaping it. It stays inside `scratch_writes` and the redirect
-            # for the same reason `deferred_module_regen` does: its flush
-            # writes a manifest and must use the cheap dumper and stay quiet.
-            with (
-                C.scratch_writes(),
-                contextlib.redirect_stdout(io.StringIO()),
-                C.deferred_save(),
-                _obj_mod.deferred_module_regen(),
-                # gh-1549: link closures follow the complete depends_on
-                # graph, not the part of it replayed so far.
-                C.replay_dependency_graph(cfg),
-            ):
-                _replay(cfg, temp_root, root)
+            # The replay's scopes and why each is there: `replay_project`.
+            replay_project(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
-        finally:
-            _obj_mod._DOC_ROOT_OVERRIDE = None
         # gh-493: reformat the throwaway scaffold to the project's house style
         # *before* it is compared against the real tree, so a c_style project's
         # on-disk (formatted) *_ext.c glue matches the freshly rendered glue

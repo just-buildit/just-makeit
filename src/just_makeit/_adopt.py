@@ -597,12 +597,12 @@ def adopt_packaging(
     from . import _apply, _textio
 
     with tempfile.TemporaryDirectory(prefix="jm-adopt-") as tmp:
-        replay_root = Path(tmp)
-        with (
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            _apply._replay(cfg, replay_root, root)
+        # The temp tree `apply` builds, the way `apply` builds it: a bare
+        # `_replay` could not replay a project whose modules reference a
+        # capsule declared later (doppler).
+        replay_root = Path(tmp) / C.project_name(cfg)
+        with contextlib.redirect_stderr(io.StringIO()):
+            _apply.replay_project(cfg, replay_root, root)
         verdicts = packaging_survey(root, replay_root)
 
     refused = 0
