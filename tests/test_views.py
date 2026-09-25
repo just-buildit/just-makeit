@@ -90,19 +90,28 @@ class TestCreateFnThreading:
     _sv = [("rate", "double", "1.0")]
 
     def test_default_unchanged(self):
-        ctx = Ctx.make_state_ctx("acq", "Acq", self._sv)
+        ctx = Ctx.make_state_ctx("acq", "Acq", self._sv, csym="acq")
         assert "acq_create(" in ctx["create_line"]
 
     def test_override_reaches_create_line(self):
         ctx = Ctx.make_state_ctx(
-            "acq", "BurstAcquisition", self._sv, create_fn="acq_create_burst"
+            "acq",
+            "BurstAcquisition",
+            self._sv,
+            create_fn="acq_create_burst",
+            csym="acq",
         )
         assert "acq_create_burst(" in ctx["create_line"]
         assert "acq_create(" not in ctx["create_line"]
 
     def test_override_no_state_path(self):
         ctx = Ctx.make_state_ctx(
-            "acq", "Burst", [], no_state=True, create_fn="acq_create_burst"
+            "acq",
+            "Burst",
+            [],
+            no_state=True,
+            create_fn="acq_create_burst",
+            csym="acq",
         )
         assert "acq_create_burst(" in ctx["create_line"]
 

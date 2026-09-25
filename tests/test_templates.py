@@ -42,23 +42,25 @@ class TestRender:
 
 class TestMakeComponentCtx:
     def test_snake_component(self):
-        ctx = _make_component_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter", {"project": {"name": "p"}})
         assert ctx["component"] == "my_filter"
 
     def test_title_class(self):
-        ctx = _make_component_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter", {"project": {"name": "p"}})
         assert ctx["Component"] == "MyFilter"
 
     def test_upper_macro(self):
-        ctx = _make_component_ctx("my_filter")
+        ctx = _make_component_ctx("my_filter", {"project": {"name": "p"}})
         assert ctx["COMPONENT"] == "MY_FILTER"
 
     def test_single_word(self):
-        ctx = _make_component_ctx("gain")
+        ctx = _make_component_ctx("gain", {"project": {"name": "p"}})
         assert ctx["Component"] == "Gain"
 
     def test_three_words(self):
-        ctx = _make_component_ctx("half_band_filter")
+        ctx = _make_component_ctx(
+            "half_band_filter", {"project": {"name": "p"}}
+        )
         assert ctx["Component"] == "HalfBandFilter"
 
 
@@ -93,7 +95,9 @@ class TestSupportedTypes:
 
 class TestMakeStateCtx:
     def _ctx(self, state_vars):
-        return make_state_ctx("my_filter", "MyFilter", state_vars)
+        return make_state_ctx(
+            "my_filter", "MyFilter", state_vars, csym="my_filter"
+        )
 
     def test_single_double_struct_field(self):
         ctx = self._ctx([("gain", "double", "0.0")])
@@ -219,7 +223,9 @@ class TestMakeStateCtx:
         import pytest
 
         with pytest.raises(ValueError, match="unsupported type"):
-            make_state_ctx("comp", "Comp", [("x", "complex128", "0")])
+            make_state_ctx(
+                "comp", "Comp", [("x", "complex128", "0")], csym="comp"
+            )
 
     def test_c_create_args_with_init_params_uses_ip_default(self):
         # gh-122: init_params with own default → use it in test stubs
@@ -228,6 +234,7 @@ class TestMakeStateCtx:
             "Comp",
             [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
             init_params=[("nsamp", "size_t", "8"), ("avg", "bool", "false")],
+            csym="comp",
         )
         assert ctx["c_create_args"] == "8, false"
 
@@ -238,6 +245,7 @@ class TestMakeStateCtx:
             "Comp",
             [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
             init_params=[("nsamp", "size_t", ""), ("avg", "bool", "")],
+            csym="comp",
         )
         assert ctx["c_create_args"] == "4, true"
 
@@ -248,6 +256,7 @@ class TestMakeStateCtx:
             "Comp",
             [("nsamp", "size_t", "4"), ("avg", "bool", "true")],
             init_params=[("nsamp", "size_t", ""), ("avg", "bool", "")],
+            csym="comp",
         )
         # gh-610: keyword construction, and a bool default renders as
         # Python's True/False rather than the C/TOML spelling.
@@ -310,7 +319,7 @@ class TestIsValidType:
 
 class TestMakeStateCtxArrays:
     def _ctx(self, state_vars):
-        return make_state_ctx("fir", "Fir", state_vars)
+        return make_state_ctx("fir", "Fir", state_vars, csym="fir")
 
     def test_array_struct_field(self):
         ctx = self._ctx([("coeffs", "float[16]", None)])
@@ -482,7 +491,9 @@ class TestNoStateWrapperNames:
     def test_no_state_reset_uses_obj_prefix(self):
         # gh#9: the Python wrapper function declaration must use the Obj prefix
         # so it cannot match the C API name (e.g. Resampler_reset in core.h).
-        ctx = make_state_ctx("Resampler", "Resampler", [], no_state=True)
+        ctx = make_state_ctx(
+            "Resampler", "Resampler", [], no_state=True, csym="Resampler"
+        )
         c = ctx["builtin_reset_c"]
         # The wrapper function name appears in the definition line.
         assert "ResamplerObj_reset(ResamplerObject *self" in c
@@ -492,7 +503,9 @@ class TestNoStateWrapperNames:
         assert "ResamplerObj_reset(ResamplerObject" in c
 
     def test_normal_state_reset_uses_component_prefix(self):
-        ctx = make_state_ctx("fir", "Fir", [("gain", "double", "1.0")])
+        ctx = make_state_ctx(
+            "fir", "Fir", [("gain", "double", "1.0")], csym="fir"
+        )
         assert "Fir_reset" in ctx["builtin_reset_c"]
         assert "Fir_reset" in ctx["builtin_reset_pmd"]
         assert "FirObj_reset" not in ctx["builtin_reset_c"]
@@ -613,6 +626,7 @@ class TestInitParamsWithState:
             "Reader",
             state_vars,
             init_params=init_params,
+            csym="reader",
         )
 
     def test_ctor_uses_init_params_not_state(self):
@@ -847,11 +861,13 @@ class TestBuiltinResetPyiInStateCtx:
     component.pyi template renders the default reset() stub."""
 
     def test_builtin_reset_pyi_present_in_stateful_ctx(self):
-        ctx = make_state_ctx("fir", "Fir", [("gain", "double", "1.0")])
+        ctx = make_state_ctx(
+            "fir", "Fir", [("gain", "double", "1.0")], csym="fir"
+        )
         assert "builtin_reset_pyi" in ctx
         assert "def reset" in ctx["builtin_reset_pyi"]
 
     def test_builtin_reset_pyi_present_in_no_state_ctx(self):
-        ctx = make_state_ctx("osc", "Osc", [], no_state=True)
+        ctx = make_state_ctx("osc", "Osc", [], no_state=True, csym="osc")
         assert "builtin_reset_pyi" in ctx
         assert "def reset" in ctx["builtin_reset_pyi"]

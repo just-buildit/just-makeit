@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import re
 
+from .. import _csym as CSYM
+
 # Message prose is authored by a human and lands inside a C string literal.
 _C_ESCAPES = str.maketrans(
     {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r"}
@@ -754,7 +756,7 @@ def make_errors_ctx(
         # object overrides its constructor name (create_fn), the message names
         # the function that actually returned NULL — default None preserves the
         # historical ``<component>_create`` text byte-for-byte.
-        _cfn = create_fn or f"{component}_create"
+        _cfn = CSYM.create_name(component, create_fn)
         body = undeclared_body or (
             "        PyErr_SetString(PyExc_MemoryError,\n"
             f'                        "{_cfn} returned NULL");\n'

@@ -15,7 +15,7 @@ main(void)
 /*<<bench_out_decl>>*/
 /*<<bench_in_loop>>*/
 
-    /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
+    /*<<csym>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
 
 /*<<bench_volatile_sink>>*/
 
@@ -32,7 +32,7 @@ main(void)
 /*<<bench_steps_timing_block>>*/
 /*<<bench_methods_timing_block>>*/
     jm_bench_write_json(&_bench, "/*<<component>>*/");
-    /*<<component>>*/_destroy(obj);
+    /*<<csym>>*/_destroy(obj);
 /*<<bench_free_in>>*/
 /*<<bench_free_out>>*/
     return 0;

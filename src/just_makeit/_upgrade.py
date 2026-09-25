@@ -40,6 +40,7 @@ from . import _context as Ctx
 from . import _keys
 from . import _render as R
 from . import _incpath as INC
+from . import _csym as CSYM
 
 
 @dataclass
@@ -366,6 +367,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     "project_underscore": pkg,
                     "version": version,
                     **INC.ctx_slots(cfg),
+                    **CSYM.slots(cfg, comp),
                 }
             )
             arg_type = C.arg_type(cfg, comp)
@@ -379,6 +381,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     array_args=C.array_args(cfg, comp),
                     no_state=C.is_no_state(cfg, comp),
                     init_params=C.init_params(cfg, comp),
+                    csym=comp_ctx["csym"],
                 )
             )
             comp_ctx.update(Ctx.make_perf_ctx(perf))

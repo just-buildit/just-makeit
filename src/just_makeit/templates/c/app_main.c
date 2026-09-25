@@ -44,7 +44,7 @@ main(int argc, char *argv[])
 /*<<io_loop>>*/
 
     /* --- cleanup --------------------------------------------------------- */
-    /*<<component>>*/_destroy(state);
+    /*<<csym>>*/_destroy(state);
 /*<<cleanup_tail>>*/
     return 0;
 }

@@ -24,6 +24,7 @@ from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
 from . import _incpath as INC
+from . import _csym as CSYM
 from ._init import (
     MODULES_SENTINEL,
     _to_title,
@@ -121,6 +122,8 @@ def run(
         "MODULE": cname.upper(),
         # gh-1583: the header layout of the project the module goes in.
         **INC.ctx_slots(cfg),
+        # gh-1591: the stem the module's C symbols and guard derive from.
+        **CSYM.slots(cfg, cname),
     }
     # Render slots that split the module's roles (module=cname, module_leaf,
     # module_pypath, module_output_name, module_tp).

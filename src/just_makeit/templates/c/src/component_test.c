@@ -20,7 +20,7 @@
 
 int main(void)
 {
-    /*<<component>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
+    /*<<csym>>*/_state_t *obj = /*<<create_name>>*/(/*<<c_create_args>>*/);
 /*<<obj_null_check>>*/
 
 /*<<getter_setter_test_c>>*/
@@ -29,6 +29,6 @@ int main(void)
 
 /*<<reset_test_c>>*/
 
-    /*<<component>>*/_destroy(obj);
+    /*<<csym>>*/_destroy(obj);
     JM_TEST_EPILOGUE();
 }

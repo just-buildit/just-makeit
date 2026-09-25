@@ -70,12 +70,16 @@ class TestGeneration:
     _sv = [("gain", "double", "1.0")]
 
     def test_default_create_line(self):
-        ctx = Ctx.make_state_ctx("widget", "Widget", self._sv)
+        ctx = Ctx.make_state_ctx("widget", "Widget", self._sv, csym="widget")
         assert "widget_create(" in ctx["create_line"]
 
     def test_override_create_line(self):
         ctx = Ctx.make_state_ctx(
-            "widget", "Widget", self._sv, create_fn="widget_forge"
+            "widget",
+            "Widget",
+            self._sv,
+            create_fn="widget_forge",
+            csym="widget",
         )
         assert "widget_forge(" in ctx["create_line"]
         assert "widget_create(" not in ctx["create_line"]

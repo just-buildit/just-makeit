@@ -411,7 +411,7 @@ def _make_object_ctx(
     doc_blocks: dict | None = None,
     block_sizes: "list[int] | None" = None,
     create_fn: str | None = None,
-    layout: "dict | None" = None,
+    owner: "INC.Owner" = None,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
 
@@ -420,7 +420,9 @@ def _make_object_ctx(
     shares the parent's ``<component>_state_t``/core but registers a distinct
     type built from a different constructor.
     """
-    ctx = _make_component_ctx(component)
+    # *owner* is the project the object renders into: its header layout
+    # (gh-1583) and its C symbol stem (gh-1591) are both facts about it.
+    ctx = _make_component_ctx(component, owner)
     if class_name is not None:
         ctx["Component"] = class_name
     ctx.update(
@@ -433,7 +435,7 @@ def _make_object_ctx(
             "project_underscore": pkg,
             "version": version,
             # gh-1583: render() refuses a header template without it.
-            **(layout or {}),
+            **INC.ctx_slots(owner),
         }
     )
     ctx.update(Ctx.make_sample_ctx(arg_type, return_type, block_sizes))
@@ -456,6 +458,7 @@ def _make_object_ctx(
             # consulted the header on this path either -- step/steps derived,
             # reset kept the canned literal, from the same parsed blocks.
             doc_blocks=doc_blocks,
+            csym=ctx["csym"],
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1198,7 +1201,7 @@ def _make_view_ctx(
         controllable=C.controllable_state_vars(cfg, obj),
         doc_blocks=doc_blocks,
         block_sizes=C.project_bench_block_sizes(cfg),
-        layout=INC.ctx_slots(cfg),
+        owner=cfg,
     )
     # gh-504: a view's surface is the parent's, minus excludes, with its OWN
     # members merged over by name — an own entry OVERRIDES a parent one of the
@@ -1355,7 +1358,7 @@ def _make_view_ctx(
     doc_blocks = inherit_ctor_params(
         doc_blocks,
         view["create_fn"],
-        C.object_create_fn(cfg, obj) or f"{obj}_create",
+        C.object_create_name(cfg, obj),
     )
     _vtp = authored_class_brief(
         doc_blocks, view["create_fn"], view.get("doc", "")
@@ -1475,7 +1478,7 @@ def build_component_ctxs(
             doc_blocks=_doc_blocks,
             block_sizes=C.project_bench_block_sizes(cfg),
             create_fn=C.object_create_fn(cfg, obj),
-            layout=INC.ctx_slots(cfg),
+            owner=cfg,
         )
         _override_slots = overridden_builtin_slots(
             ctx["component"], C.methods(cfg, obj), ctx
@@ -1576,7 +1579,7 @@ def build_component_ctxs(
         # actually calls, so the transplant must key off it too.
         _cdoc = authored_class_brief(
             _doc_blocks,
-            C.object_create_fn(cfg, obj) or f"{obj}_create",
+            C.object_create_name(cfg, obj),
             cfg.get(obj, {}).get("doc", ""),
         )
         # gh-642: when the header documents create(), tp_doc carries the whole
@@ -2625,7 +2628,7 @@ def run(
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
-        layout=INC.ctx_slots(cfg),
+        owner=cfg,
     )
     ctx.update(
         Ctx.make_methods_ctx(

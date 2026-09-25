@@ -82,7 +82,7 @@ def component_ctx(
     arg_type_ = C.arg_type(cfg, object_name)
     return_type_ = C.return_type(cfg, object_name)
 
-    ctx = _make_component_ctx(object_name)
+    ctx = _make_component_ctx(object_name, cfg)
     ctx.update(
         {
             "package": pkg,
@@ -132,6 +132,7 @@ def component_ctx(
             # hand-written @brief on <obj>_reset/_step/_steps reached the
             # module .pyi and nothing else.
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
+            csym=ctx["csym"],
         )
     )
     ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
@@ -327,7 +328,7 @@ def component_ctx(
     # the module path: manifest doc= > header @brief > a generic fallback.
     _tp = authored_class_brief(
         cfg.get(object_name, {}).get("_doc_blocks", {}),
-        C.object_create_fn(cfg, object_name) or f"{object_name}_create",
+        C.object_create_name(cfg, object_name),
         cfg.get(object_name, {}).get("doc", ""),
     )
     # Only override when there is something authored to override WITH. An
