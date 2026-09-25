@@ -10,6 +10,8 @@ directly into the generated files), so they are not reproduced here.
 
 from __future__ import annotations
 
+import json
+
 import sys
 from pathlib import Path
 
@@ -52,6 +54,14 @@ def _flag(name: str, val: str) -> str:
     '    --arg-type "float _Complex" \\\\\\n'
     """
     return f"    {name} {_q(val)} \\\n"
+
+
+#: `[project]` dependency keys and the `jm new` flag that spells one entry.
+_DEP_FLAGS = (
+    ("find_packages", "--find-package"),
+    ("pkg_modules", "--pkg-module"),
+    ("c_deps", "--c-dep"),
+)
 
 
 def _bool_flag(name: str) -> str:
@@ -785,8 +795,27 @@ def run(root: Path) -> None:
         new_flags.append(_bool_flag("--pytest"))
     if C.is_pytest_benchmark(cfg):
         new_flags.append(_bool_flag("--pytest-benchmark"))
+    # gh-1587: the `[project]` dependencies `jm new` spells as flags. The
+    # replay enumerated only the four above, so every dependency was dropped
+    # and the replayed project's external-deps block, installed config and
+    # `.pc` lost it -- gh-808's class, a key a hand-written enumeration never
+    # named. A table entry (`{ name = "Hdr", cflags = ... }`, gh-1576/gh-1579)
+    # has no CLI spelling and is named in a NOTE below instead.
+    dep_tables: "list[tuple[str, dict]]" = []
+    for key, flag in _DEP_FLAGS:
+        for entry in cfg.get("project", {}).get(key) or []:
+            if isinstance(entry, str):
+                new_flags.append(_flag(flag, entry))
+            else:
+                dep_tables.append((key, dict(entry)))
     lines.append(_render_cmd(["just-makeit", "new", project], new_flags))
     lines.append(f"cd {project}\n\n")
+    for key, entry in dep_tables:
+        fields = ", ".join(f"{k} = {json.dumps(v)}" for k, v in entry.items())
+        lines.append(
+            f"# NOTE: [project] {key} entry {{ {fields} }} has no CLI flag —\n"
+            f"# re-add it to just-makeit.toml and run `just-makeit apply`.\n"
+        )
 
     if version != "0.1.0":
         lines.append(f"just-makeit config version {version}\n\n")
