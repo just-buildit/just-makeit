@@ -71,20 +71,21 @@ $PREFIX/
 │   └── component_b/
 │       └── component_b_core.h
 ├── lib/
-│   ├── libmy_project.so         # shared library
+│   ├── libmy_project.so.0.1.0   # shared library (the real file)
+│   ├── libmy_project.so.0.1     # -> .so.0.1.0, its soname
+│   ├── libmy_project.so         # -> .so.0.1, what `-lmy_project` finds
+│   ├── libmy_project.a          # static library
 │   ├── pkgconfig/
 │   │   └── my-project.pc        # pkg-config descriptor
 │   └── cmake/my_project/
 │       ├── my_project-config.cmake
-│       └── my_project-config-version.cmake
+│       ├── my_project-config-version.cmake
+│       └── my_project-targets*.cmake
 ```
 
 ______________________________________________________________________
 
 ## Build and install
-
-Set the install prefix **before** building — cmake bakes the prefix into the
-generated `my-project.pc` at configure time.
 
 ```sh
 cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
@@ -92,16 +93,37 @@ cmake --build build
 cmake --install build
 ```
 
-For a non-root local install substitute any writable path:
+For a non-root local install substitute any writable path, at configure time
+or at install time; both work:
 
 ```sh
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --install build
+cmake --install build --prefix "$HOME/.local"
 ```
 
-> **Note:** `make && make test` calls `cmake -B build` internally with the
-> default prefix. If you ran `make` first, re-run the `cmake -S .` line above
-> before installing to regenerate the `.pc` file with the correct prefix.
+The installed tree **locates itself**. The `.pc` computes its `prefix` from its
+own location (`${pcfiledir}`), and the CMake config does the same, so a prefix
+you copy, stage with `DESTDIR` or move afterwards keeps working. A
+`CMAKE_INSTALL_LIBDIR` given as an absolute path, as Nix and Guix do, is
+written as that path. A distribution package that wants the `.pc` to name its
+prefix absolutely configures with `-DJM_PC_RELOCATABLE=OFF`. Otherwise
+pkg-config spells a system prefix as a path through `pkgconfig/../..`, which
+works but doesn't match `/usr/include` textually.
+
+### Versions and ABI
+
+The shared library carries a versioned soname, so a release that changes the
+ABI installs beside the old one instead of over it. `find_package` applies
+the same rule when a consumer asks for a version:
+
+| project version | soname                 | `find_package(my_project X.Y)` accepts |
+| --------------- | ---------------------- | -------------------------------------- |
+| `0.y.z`         | `libmy_project.so.0.y` | `0.y.*` at or above the request        |
+| `x.y.z`, x ≥ 1  | `libmy_project.so.x`   | `x.*` at or above the request          |
+
+Under `0.x` a minor release may break compatibility (semver), which is why
+`0.1` does not accept `0.2`. The version is `project(... VERSION)` in the root
+`CMakeLists.txt`. The `.pc`'s `Description:` and `URL:` come from that same
+`project()` call's `DESCRIPTION` and `HOMEPAGE_URL`.
 
 ______________________________________________________________________
 
@@ -168,6 +190,13 @@ Configure with the prefix if it's not on the default search path:
 ```sh
 cmake -B build -DCMAKE_PREFIX_PATH="$HOME/.local"
 cmake --build build
+```
+
+A consumer can also build against the library's **build directory** with
+nothing installed, because the build tree exports the same targets:
+
+```sh
+cmake -B build -Dmy_project_DIR=/path/to/my_project/build
 ```
 
 ______________________________________________________________________

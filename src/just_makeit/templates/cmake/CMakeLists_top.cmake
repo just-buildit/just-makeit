@@ -15,6 +15,7 @@ endif()
 project(
   <<project_underscore>>
   VERSION <<version>>
+  DESCRIPTION "<<project>> C library"
   LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
@@ -130,6 +131,23 @@ endif()
 # elsewhere.
 set_target_properties(<<project_underscore>>_lib
                       PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# gh-1582: the ABI version. The shared library installs as lib<name>.so.X.Y.Z
+# with the soname lib<name>.so.<ABI> and a lib<name>.so link, so a release that
+# breaks the ABI installs BESIDE the old library instead of over it, and a
+# program linked against the old one keeps loading it. Under 0.x every minor
+# release may break (semver), so the ABI is major.minor there and major from
+# 1.0 on -- the rule find_package's version file below applies too. macOS takes
+# SOVERSION as the dylib's compatibility_version; a Windows DLL ignores it.
+if(PROJECT_VERSION_MAJOR EQUAL 0)
+  set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+  set(JM_VERSION_COMPATIBILITY SameMinorVersion)
+else()
+  set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR})
+  set(JM_VERSION_COMPATIBILITY SameMajorVersion)
+endif()
+set_target_properties(
+  <<project_underscore>>_lib PROPERTIES VERSION ${PROJECT_VERSION}
+                                        SOVERSION ${JM_ABI_VERSION})
 
 enable_testing()
 
@@ -172,10 +190,12 @@ configure_package_config_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
+# gh-1582: SameMinorVersion under 0.x, where a minor release may break; see
+# JM_ABI_VERSION above.
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+  COMPATIBILITY ${JM_VERSION_COMPATIBILITY})
 
 install(
   FILES
@@ -183,6 +203,55 @@ install(
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
+# gh-1582: the build tree is a package too. The config and version files above
+# are written into it already; exporting the targets beside them lets a sibling
+# build use this one without installing it: `cmake
+# -D<<project_underscore>>_DIR=<this build dir>`.
+export(
+  EXPORT <<project_underscore>>-targets
+  FILE "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-targets.cmake"
+  NAMESPACE <<project_underscore>>::)
+
+# gh-1582: the .pc's paths. `prefix` is relative to ${pcfiledir}, so a prefix
+# that is copied, staged or moved (DESTDIR, conda, a relocated tarball) keeps
+# working, as the CMake config (PACKAGE_INIT) already does. A libdir or
+# includedir outside the prefix -- GNUInstallDirs given an absolute path, as
+# Nix and Guix do -- is written as that absolute path, never as
+# `${exec_prefix}//abs`. The cost of relocatable is that pkg-config no longer
+# recognises a system prefix (-I/usr/include is emitted as a path through
+# pkgconfig/../..); a distribution package that wants the absolute form sets
+# JM_PC_RELOCATABLE=OFF.
+option(JM_PC_RELOCATABLE "Write the .pc prefix relative to its own location"
+       ON)
+function(jm_pc_path out full base spelled)
+  file(RELATIVE_PATH rel "${base}" "${full}")
+  if(IS_ABSOLUTE "${rel}" OR rel MATCHES "^\\.\\.(/|$)")
+    set(${out}
+        "${full}"
+        PARENT_SCOPE)
+  elseif(rel STREQUAL "")
+    set(${out}
+        "${spelled}"
+        PARENT_SCOPE)
+  else()
+    set(${out}
+        "${spelled}/${rel}"
+        PARENT_SCOPE)
+  endif()
+endfunction()
+set(JM_PC_PREFIX "${CMAKE_INSTALL_PREFIX}")
+if(JM_PC_RELOCATABLE)
+  file(RELATIVE_PATH JM_PC_UP "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
+       "${CMAKE_INSTALL_PREFIX}")
+  string(REGEX REPLACE "/$" "" JM_PC_UP "${JM_PC_UP}")
+  if(JM_PC_UP MATCHES "^(\\.\\./)*\\.\\.$")
+    set(JM_PC_PREFIX "\${pcfiledir}/${JM_PC_UP}")
+  endif()
+endif()
+jm_pc_path(JM_PC_LIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}"
+           "${CMAKE_INSTALL_PREFIX}" "\${exec_prefix}")
+jm_pc_path(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}"
+           "${CMAKE_INSTALL_PREFIX}" "\${prefix}")
 configure_file(cmake/<<project>>.pc.in <<project>>.pc @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

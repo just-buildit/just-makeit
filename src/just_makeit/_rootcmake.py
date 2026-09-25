@@ -249,6 +249,71 @@ def _has_win_defines(r: Root) -> bool:
     return all(d in defined for d in _WIN_DEFINES)
 
 
+def _has_soversion(r: Root) -> bool:
+    return any(
+        c.name in ("set_target_properties", "set_property")
+        and r.shared in c.args
+        and "SOVERSION" in c.args
+        for c in r.calls
+    )
+
+
+def _version_file(r: Root) -> Optional[Call]:
+    for c in r.calls:
+        if c.name == "write_basic_package_version_file":
+            return c
+    return None
+
+
+def _major_zero(r: Root) -> bool:
+    for c in r.calls:
+        if c.name == "project":
+            return (_after(c.args, "VERSION") or "").startswith("0.")
+    return False
+
+
+def _has_zero_compat(r: Root) -> bool:
+    # Under 0.x a minor release may break, so SameMajorVersion (and the
+    # looser AnyNewerVersion) accept an incompatible install. A variable is
+    # the template's own spelling, which chooses by the major version.
+    c = _version_file(r)
+    got = _after(c.args, "COMPATIBILITY") if c else None
+    return bool(got) and got not in ("SameMajorVersion", "AnyNewerVersion")
+
+
+def _has_build_tree_export(r: Root) -> bool:
+    return any(c.name == "export" and "EXPORT" in c.args for c in r.calls)
+
+
+def _installs_export(r: Root) -> bool:
+    return any(
+        c.name == "install" and c.args[:1] == ("EXPORT",) for c in r.calls
+    )
+
+
+_PC_VARS = ("JM_PC_PREFIX", "JM_PC_LIBDIR", "JM_PC_INCLUDEDIR")
+
+
+def _has_pc_paths(r: Root) -> bool:
+    # `set(JM_PC_PREFIX ...)` or the template's `jm_pc_path(JM_PC_LIBDIR ...)`:
+    # either way the first argument is the variable the .pc.in reads.
+    defined = {
+        c.args[0]
+        for c in r.calls
+        if c.args and c.name in ("set", "jm_pc_path")
+    }
+    return all(v in defined for v in _PC_VARS)
+
+
+def _configures_pc(r: Root) -> bool:
+    return any(
+        c.name == "configure_file"
+        and c.args[:1]
+        and c.args[0].endswith(".pc.in")
+        for c in r.calls
+    )
+
+
 class Fix(NamedTuple):
     """One fix the root template carries outside jm's managed blocks.
 
@@ -339,6 +404,46 @@ FIXES: "tuple[Fix, ...]" = (
         + "): "
         "M_PI is undefined and every portable C99 call warns",
         _has_win_defines,
+    ),
+    Fix(
+        "soversion",
+        "gh-1582",
+        "Linux, macOS",
+        "the shared library has no VERSION/SOVERSION, so every release "
+        "installs over the last under one soname, and a program linked "
+        "against an older ABI silently loads the new one",
+        _has_soversion,
+        lambda r: bool(r.shared),
+    ),
+    Fix(
+        "version-compat",
+        "gh-1582",
+        "all",
+        "the package version file is SameMajorVersion under 0.x, so "
+        "find_package(<pkg> 0.1) accepts 0.2, whose minor release may break",
+        _has_zero_compat,
+        lambda r: _major_zero(r) and _version_file(r) is not None,
+    ),
+    Fix(
+        "build-tree-export",
+        "gh-1582",
+        "all",
+        "the targets are not export()ed into the build tree, so "
+        "find_package() finds the project only after it is installed",
+        _has_build_tree_export,
+        _installs_export,
+    ),
+    Fix(
+        "pc-paths",
+        "gh-1582",
+        "all",
+        "the .pc paths are not computed ("
+        + ", ".join(_PC_VARS)
+        + "): today's cmake/<pkg>.pc.in writes an empty prefix without "
+        "them, and the older one hard-codes the install prefix, so a moved "
+        "or staged prefix points consumers at the old path",
+        _has_pc_paths,
+        _configures_pc,
     ),
 )
 
