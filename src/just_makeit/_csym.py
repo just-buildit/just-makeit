@@ -42,6 +42,9 @@ Python sites that still spell one by hand.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from . import _incpath as INC
 
 #: The template slots whose value depends on the project's symbol stem.
@@ -117,6 +120,231 @@ def ctx_create_name(ctx: dict) -> str:
     """
     declared = ctx.get("create_name")
     return str(declared) if declared else create_name(str(ctx["csym"]))
+
+
+def sources(cfg: dict) -> "dict[str, str]":
+    """Every name jm derives C symbols from in *cfg*, mapped to its stem:
+    each component, each module's C name, each module function.
+
+    >>> sources({"project": {"name": "p", "c_prefix": "dp"},
+    ...          "fir": {}, "dp_tlm": {}})
+    {'fir': 'dp_fir', 'dp_tlm': 'dp_tlm'}
+    """
+    from . import _config as C
+
+    names = list(C.components(cfg))
+    for mod in C.modules(cfg):
+        names.append(C.module_paths(mod).cname)
+        names += [f["name"] for f in C.module_functions(cfg, mod)]
+    return {n: stem(cfg, n) for n in dict.fromkeys(names)}
+
+
+def _file_scope(mask: str) -> str:
+    """*mask* (comments and strings already blanked) with every brace body
+    and preprocessor line blanked too: what is left is file scope, where a
+    header declares its functions and types. An ``extern "C" { ... }``
+    block IS file scope -- every jm header wraps its declarations in one --
+    so its braces are transparent.
+
+    >>> _file_scope('extern " " {\\nint f(void);\\nint g(void) { h(); }\\n}')
+    'extern " "  \\nint f(void);\\nint g(void)         \\n '
+    """
+    out = []
+    # One entry per open brace: True for a body (its content is blanked),
+    # False for an `extern "C"` linkage block (its content is file scope).
+    stack: "list[bool]" = []
+    seen = ""
+    for line in mask.splitlines(keepends=True):
+        if not any(stack) and line.lstrip().startswith("#"):
+            out.append("\n")
+            continue
+        buf = []
+        for ch in line:
+            inside = any(stack)
+            if ch == "{":
+                linkage = not inside and re.search(
+                    r'\bextern\s*"[^"\n]*"\s*$', seen + "".join(buf)
+                )
+                stack.append(not linkage)
+                buf.append(" ")
+            elif ch == "}":
+                if stack:
+                    stack.pop()
+                buf.append(" ")
+            else:
+                buf.append(ch if not inside or ch == "\n" else " ")
+        text = "".join(buf)
+        out.append(text)
+        seen = (seen + text)[-80:]
+    return "".join(out)
+
+
+_CALLED = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_TYPEDEF = re.compile(r"\btypedef\b[^;]*?\b([A-Za-z_]\w*)\s*;")
+_GUARD = re.compile(r"^\s*#\s*(?:ifndef|define)\s+([A-Za-z_]\w*)", re.M)
+
+
+def declared(text: str) -> "set[str]":
+    """The identifiers a C header declares at file scope: functions (a name
+    followed by ``(``), ``typedef`` names, and macros it ``#define``s or
+    guards with ``#ifndef``. Comments and strings never count.
+
+    >>> sorted(declared('''#ifndef P_FIR_CORE_H
+    ... #define P_FIR_CORE_H
+    ... /* fir_create() in a comment */
+    ... typedef struct { int n; } p_fir_state_t;
+    ... p_fir_state_t *p_fir_create(void);
+    ... static inline int p_fir_step(p_fir_state_t *s) { return g(s->n); }
+    ... #endif'''))
+    ['P_FIR_CORE_H', 'p_fir_create', 'p_fir_state_t', 'p_fir_step']
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(text)
+    scope = _file_scope(mask)
+    return (
+        set(_CALLED.findall(scope))
+        | set(_TYPEDEF.findall(scope))
+        | set(_GUARD.findall(mask))
+    )
+
+
+def _source_of(name: str, stems: "dict[str, str]") -> "tuple[str, str] | None":
+    """The ``(source, stem)`` *name* derives from -- the longest stem it
+    starts with at an identifier boundary, in either case -- or None."""
+    best = None
+    for src, st in stems.items():
+        for s, cased in ((st, src), (st.upper(), src.upper())):
+            if (name == s or name.startswith(s + "_")) and (
+                best is None or len(s) > len(best[1])
+            ):
+                best = (cased, s)
+    return best
+
+
+def _derived_by_dir(tree: Path, cfg: dict) -> "dict[str, set[str]]":
+    """Every derived identifier the headers under *tree* declare, mapped to
+    the header directories (component / module) that declare it."""
+    stems = sources(cfg)
+    out: "dict[str, set[str]]" = {}
+    root = INC.header_root(tree, cfg)
+    for h in sorted(root.rglob("*.h")):
+        where = h.parent.relative_to(root).as_posix() or "."
+        for name in declared(h.read_text(encoding="utf-8", errors="replace")):
+            if _source_of(name, stems) is not None:
+                out.setdefault(name, set()).add(where)
+    return out
+
+
+def duplicates(tree: Path, cfg: dict) -> "list[str]":
+    """Why *cfg*'s derived symbols cannot all exist in one library: each
+    derived identifier that the headers of two different components or
+    modules under *tree* (jm's render of the project) both declare.
+
+    Read from the render, not re-derived from the manifest, so every shape
+    that names a symbol -- lifecycle, methods, accessors, module functions,
+    process_global, guards -- is covered by the one set of rules that
+    produces it. Asked only of a prefixed project: the ``<p>_`` rule is what
+    can turn two different names into one (``x`` and ``dp_x``).
+    """
+    if prefix(cfg) is None:
+        return []
+    out = []
+    for name, dirs in sorted(_derived_by_dir(tree, cfg).items()):
+        if len(dirs) > 1:
+            out.append(
+                f"the C symbol `{name}` is derived twice, in "
+                + " and ".join(f"`{d}`" for d in sorted(dirs))
+                + " -- rename one of them"
+            )
+    return out
+
+
+def renames(tree: Path, cfg: dict) -> "dict[str, str]":
+    """``{unprefixed: prefixed}`` for every derived identifier the headers
+    under *tree* (jm's render of the project) declare: what a project that
+    adds ``c_prefix`` has to respell in the C it wrote.
+
+    Case-sensitive and derived only: ``fir_state_t`` and ``FIR_CORE_H`` are
+    here; an author's own ``FIR_STATE_MAGIC`` is not, because jm never
+    declares it.
+    """
+    stems = sources(cfg)
+    out = {}
+    for name in _derived_by_dir(tree, cfg):
+        src = _source_of(name, stems)
+        if src is None:
+            continue
+        cased, st = src
+        old = cased + name[len(st) :]
+        if old != name:
+            out[old] = name
+    return out
+
+
+def _author_files(root: Path) -> "list[Path]":
+    """The C/C++ files under *root*'s ``native/`` whose content is the
+    author's: ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it
+    does not classify (a module function's ``.c``, a hand-written file).
+    What jm rewrites whole -- JM, RECONCILED, DERIVED -- is not asked."""
+    from . import _createonly
+
+    native = root / "native"
+    if not native.is_dir():
+        return []
+    out = []
+    for p in sorted(native.rglob("*")):
+        if (
+            p.suffix not in (".c", ".h", ".cc", ".cpp", ".hpp")
+            or not p.is_file()
+        ):
+            continue
+        rel = p.relative_to(root).as_posix()
+        if any(
+            part in ("build", "_deps") for part in p.relative_to(root).parts
+        ):
+            continue
+        rule = _createonly.classify(rel)
+        if rule is None or rule.kind in (
+            _createonly.AUTHOR,
+            _createonly.PARTIAL,
+        ):
+            out.append(p)
+    return out
+
+
+def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
+    """``{file: [old names]}`` for the author's C under *root* that still
+    spells a name in *names* (from :func:`renames`) -- in code, whole
+    identifiers only, case-sensitive. Phase 3's ``jm upgrade`` respells
+    exactly these; until then ``apply`` refuses on them.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> (d / "native/src/acc").mkdir(parents=True)
+    >>> _ = (d / "native/src/acc/acc_core.c").write_text(
+    ...     "#define ACC_STATE_MAGIC 7 /* acc_create */\\n"
+    ...     "acc_state_t *acc_create(void) { return 0; }\\n")
+    >>> unrenamed(d, {"acc_create": "dp_acc_create",
+    ...               "acc_state_t": "dp_acc_state_t"})
+    {'native/src/acc/acc_core.c': ['acc_create', 'acc_state_t']}
+    """
+    from ._docsync import _code_mask
+
+    if not names:
+        return {}
+    pat = re.compile(
+        r"(?<![A-Za-z0-9_])("
+        + "|".join(map(re.escape, sorted(names, key=len, reverse=True)))
+        + r")(?![A-Za-z0-9_])"
+    )
+    out = {}
+    for p in _author_files(root):
+        mask = _code_mask(p.read_text(encoding="utf-8", errors="replace"))
+        found = sorted(set(pat.findall(mask)))
+        if found:
+            out[p.relative_to(root).as_posix()] = found
+    return out
 
 
 def slots(owner: INC.Owner, name: str) -> "dict[str, str]":

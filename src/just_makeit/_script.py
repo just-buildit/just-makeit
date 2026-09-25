@@ -795,6 +795,10 @@ def run(root: Path) -> None:
         new_flags.append(_bool_flag("--pytest"))
     if C.is_pytest_benchmark(cfg):
         new_flags.append(_bool_flag("--pytest-benchmark"))
+    # gh-1591: first, because every component the script adds after derives
+    # its C symbols from it -- a prefix applied later would leave them bare.
+    if C.c_prefix(cfg):
+        new_flags.append(_flag("--c-prefix", C.c_prefix(cfg)))
     # gh-1587: the `[project]` dependencies `jm new` spells as flags. The
     # replay enumerated only the four above, so every dependency was dropped
     # and the replayed project's external-deps block, installed config and
