@@ -49,9 +49,9 @@ def test_every_face_carries_the_librarys_name(proj):
     assert "-l@JM_PC_NAME@" in pc_in, pc_in
     root = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
     assert 'set(JM_LIBRARIES "my_proj:my_proj")' in root
-    assert "EXPORT_NAME ${jm_export}" in root
-    assert "${jm_export}-static)" in root
-    assert "set(JM_PC_NAME ${jm_lib})" in root
+    assert "EXPORT_NAME ${_jm_export}" in root
+    assert "${_jm_export}-static)" in root
+    assert "set(JM_PC_NAME ${_jm_lib})" in root
     assert "my-proj" not in root, "a hyphenated name is left in the root file"
 
 

@@ -587,7 +587,7 @@ def libraries_cmake(cfg: dict) -> str:
             f"target_link_libraries({lib.target}_lib PUBLIC {pkg}_lib)\n"
             f"target_link_libraries({lib.target}_lib_static PUBLIC"
             f" {pkg}_lib_static)\n"
-            f"set(JM_LIBRARY_{lib.target}_DESCRIPTION"
+            f"set(JM_LIBRARY_{lib.target.upper()}_DESCRIPTION"
             f" {_cmake_quote(lib.description)})\n"
             f'list(APPEND JM_LIBRARIES "{lib.target}:{lib.name}")\n'
         )

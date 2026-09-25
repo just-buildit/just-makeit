@@ -20,7 +20,7 @@ CALLS: frozenset = frozenset(
             "configure_file",
             (
                 "cmake/<<project_underscore>>.pc.in",
-                "${jm_lib}.pc.configured",
+                "${_jm_lib}.pc.configured",
                 "@ONLY",
             ),
         ),
@@ -77,7 +77,7 @@ CALLS: frozenset = frozenset(
         ("if", ("NOT", "PROJECT_HOMEPAGE_URL", "STREQUAL", "")),
         ("if", ("PROJECT_VERSION_MAJOR", "EQUAL", "0")),
         ("if", ("WIN32",)),
-        ("if", ("jm_lib", "STREQUAL", "<<project_underscore>>")),
+        ("if", ("_jm_lib", "STREQUAL", "<<project_underscore>>")),
         ("include", ("CMakePackageConfigHelpers",)),
         ("include", ("GNUInstallDirs",)),
         (
@@ -100,7 +100,7 @@ CALLS: frozenset = frozenset(
             "install",
             (
                 "CODE",
-                'set(JM_PC_FILE \\"${CMAKE_CURRENT_BINARY_DIR}/${jm_lib}.pc\\")',
+                'set(JM_PC_FILE \\"${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc\\")',
                 "COMPONENT",
                 "dev",
             ),
@@ -207,7 +207,7 @@ CALLS: frozenset = frozenset(
             "install",
             (
                 "FILES",
-                "${CMAKE_CURRENT_BINARY_DIR}/${jm_lib}.pc",
+                "${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc",
                 "DESTINATION",
                 "${CMAKE_INSTALL_LIBDIR}/pkgconfig",
                 "COMPONENT",
@@ -269,8 +269,8 @@ CALLS: frozenset = frozenset(
             "install",
             (
                 "TARGETS",
-                "${jm_lib}_lib",
-                "${jm_lib}_lib_static",
+                "${_jm_lib}_lib",
+                "${_jm_lib}_lib_static",
                 "EXPORT",
                 "<<project_underscore>>-targets",
                 "RUNTIME",
@@ -354,8 +354,8 @@ CALLS: frozenset = frozenset(
                 "${CMAKE_INSTALL_LIBDIR}",
             ),
         ),
-        ("list", ("GET", "jm_row", "0", "jm_lib")),
-        ("list", ("GET", "jm_row", "1", "jm_export")),
+        ("list", ("GET", "_jm_fields", "0", "_jm_lib")),
+        ("list", ("GET", "_jm_fields", "1", "_jm_export")),
         ("set", ("JM_ABI_VERSION", "${PROJECT_VERSION_MAJOR}")),
         (
             "set",
@@ -377,7 +377,10 @@ CALLS: frozenset = frozenset(
             "set",
             ("JM_LIBRARIES", "<<project_underscore>>:<<project_underscore>>"),
         ),
-        ("set", ("JM_PC_DESCRIPTION", "${JM_LIBRARY_${jm_lib}_DESCRIPTION}")),
+        (
+            "set",
+            ("JM_PC_DESCRIPTION", "${JM_LIBRARY_${_jm_upper}_DESCRIPTION}"),
+        ),
         ("set", ("JM_PC_DESCRIPTION", "${PROJECT_DESCRIPTION}")),
         ("set", ("JM_PC_EXTRA_FIELDS", "")),
         ("set", ("JM_PC_INCLUDEDIR", "${CMAKE_INSTALL_INCLUDEDIR}")),
@@ -389,7 +392,7 @@ CALLS: frozenset = frozenset(
         ("set", ("JM_PC_LIBDIR", "\\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")),
         ("set", ("JM_PC_LIBM", "")),
         ("set", ("JM_PC_LIBM", " -lm")),
-        ("set", ("JM_PC_NAME", "${jm_lib}")),
+        ("set", ("JM_PC_NAME", "${_jm_lib}")),
         ("set", ("JM_PC_PREFIX", "%JM_INSTALL_PREFIX%")),
         ("set", ("JM_PC_ROW_CFLAGS", "")),
         ("set", ("JM_PC_ROW_CFLAGS", "${JM_PC_CFLAGS}")),
@@ -402,10 +405,10 @@ CALLS: frozenset = frozenset(
         (
             "set_target_properties",
             (
-                "${jm_lib}_lib",
+                "${_jm_lib}_lib",
                 "PROPERTIES",
                 "OUTPUT_NAME",
-                "${jm_lib}",
+                "${_jm_lib}",
                 "VERSION",
                 "${PROJECT_VERSION}",
                 "SOVERSION",
@@ -413,7 +416,7 @@ CALLS: frozenset = frozenset(
                 "INSTALL_NAME_DIR",
                 "${JM_INSTALL_NAME_DIR}",
                 "EXPORT_NAME",
-                "${jm_export}",
+                "${_jm_export}",
                 "WINDOWS_EXPORT_ALL_SYMBOLS",
                 "ON",
             ),
@@ -421,21 +424,21 @@ CALLS: frozenset = frozenset(
         (
             "set_target_properties",
             (
-                "${jm_lib}_lib_static",
+                "${_jm_lib}_lib_static",
                 "PROPERTIES",
                 "OUTPUT_NAME",
-                "${jm_lib}",
+                "${_jm_lib}",
                 "EXPORT_NAME",
-                "${jm_export}-static",
+                "${_jm_export}-static",
             ),
         ),
         (
             "set_target_properties",
             (
-                "${jm_lib}_lib_static",
+                "${_jm_lib}_lib_static",
                 "PROPERTIES",
                 "OUTPUT_NAME",
-                "${jm_lib}_static",
+                "${_jm_lib}_static",
             ),
         ),
         (
@@ -494,7 +497,8 @@ CALLS: frozenset = frozenset(
             ),
         ),
         ("string", ("APPEND", "JM_PC_LIBM", " ${jm_flag}")),
-        ("string", ("REPLACE", ":", ";", "jm_row", "${jm_row}")),
+        ("string", ("REPLACE", ":", ";", "_jm_fields", "${jm_row}")),
+        ("string", ("TOUPPER", "${_jm_lib}", "_jm_upper")),
         (
             "target_compile_definitions",
             ("${jm_lib}", "PUBLIC", "${JM_PUBLIC_DEFINES}"),

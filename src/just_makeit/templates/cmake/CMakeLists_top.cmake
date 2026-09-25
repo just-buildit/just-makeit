@@ -196,9 +196,9 @@ foreach(jm_lib <<project_underscore>>_lib <<project_underscore>>_lib_static)
 endforeach()
 
 foreach(jm_row IN LISTS JM_LIBRARIES)
-  string(REPLACE ":" ";" jm_row "${jm_row}")
-  list(GET jm_row 0 jm_lib)
-  list(GET jm_row 1 jm_export)
+  string(REPLACE ":" ";" _jm_fields "${jm_row}")
+  list(GET _jm_fields 0 _jm_lib)
+  list(GET _jm_fields 1 _jm_export)
   # gh-1581: the names a consumer writes, as cmake-packages(7) shows them:
   # `find_package(<pkg>)` then `target_link_libraries(app <pkg>::<pkg>)`, the
   # static library `<pkg>::<pkg>-static`; an additional library is
@@ -208,22 +208,22 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   # symbol is exported (an ELF shared library's default); and a static library
   # sharing the shared one's OUTPUT_NAME collides on Windows as <name>.lib.
   set_target_properties(
-    ${jm_lib}_lib
-    PROPERTIES OUTPUT_NAME ${jm_lib}
+    ${_jm_lib}_lib
+    PROPERTIES OUTPUT_NAME ${_jm_lib}
                VERSION ${PROJECT_VERSION}
                SOVERSION ${JM_ABI_VERSION}
                INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}"
-               EXPORT_NAME ${jm_export}
+               EXPORT_NAME ${_jm_export}
                WINDOWS_EXPORT_ALL_SYMBOLS ON)
   set_target_properties(
-    ${jm_lib}_lib_static PROPERTIES OUTPUT_NAME ${jm_lib} EXPORT_NAME
-                                                          ${jm_export}-static)
+    ${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME ${_jm_lib}
+                                     EXPORT_NAME ${_jm_export}-static)
   if(WIN32)
-    set_target_properties(${jm_lib}_lib_static PROPERTIES OUTPUT_NAME
-                                                          ${jm_lib}_static)
+    set_target_properties(${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME
+                                                           ${_jm_lib}_static)
   endif()
   install(
-    TARGETS ${jm_lib}_lib ${jm_lib}_lib_static
+    TARGETS ${_jm_lib}_lib ${_jm_lib}_lib_static
     EXPORT <<project_underscore>>-targets
     # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
     # never installed, and a consumer linked against an import library whose
@@ -346,21 +346,22 @@ endif()
 # hands a consumer all of those, and adds only itself -- pc(5)'s pattern for a
 # library built on another.
 foreach(jm_row IN LISTS JM_LIBRARIES)
-  string(REPLACE ":" ";" jm_row "${jm_row}")
-  list(GET jm_row 0 jm_lib)
-  set(JM_PC_NAME ${jm_lib})
-  if(jm_lib STREQUAL "<<project_underscore>>")
+  string(REPLACE ":" ";" _jm_fields "${jm_row}")
+  list(GET _jm_fields 0 _jm_lib)
+  set(JM_PC_NAME ${_jm_lib})
+  if(_jm_lib STREQUAL "<<project_underscore>>")
     set(JM_PC_DESCRIPTION "${PROJECT_DESCRIPTION}")
     set(JM_PC_ROW_FIELDS "${JM_PC_EXTRA_FIELDS}")
     set(JM_PC_ROW_LIBS "${JM_PC_LIBM}")
     set(JM_PC_ROW_CFLAGS "${JM_PC_CFLAGS}")
   else()
-    set(JM_PC_DESCRIPTION "${JM_LIBRARY_${jm_lib}_DESCRIPTION}")
+    string(TOUPPER "${_jm_lib}" _jm_upper)
+    set(JM_PC_DESCRIPTION "${JM_LIBRARY_${_jm_upper}_DESCRIPTION}")
     set(JM_PC_ROW_FIELDS "Requires: <<project_underscore>>\n")
     set(JM_PC_ROW_LIBS "")
     set(JM_PC_ROW_CFLAGS "")
   endif()
-  configure_file(cmake/<<project_underscore>>.pc.in ${jm_lib}.pc.configured
+  configure_file(cmake/<<project_underscore>>.pc.in ${_jm_lib}.pc.configured
                  @ONLY)
   # Runs at install time, before the install(FILES) below copies its result:
   # install rules run in the order they are declared, in one script, so the
@@ -368,7 +369,7 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   # not expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step
   # has. The configured path does not depend on the configuration, so a
   # multi-config generator installs the same.
-  install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/${jm_lib}.pc\")"
+  install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc\")"
           COMPONENT dev)
   install(
     CODE [[
@@ -378,7 +379,7 @@ file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]]
     COMPONENT dev)
   install(
-    FILES "${CMAKE_CURRENT_BINARY_DIR}/${jm_lib}.pc"
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     COMPONENT dev)
 endforeach()
