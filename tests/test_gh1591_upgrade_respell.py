@@ -96,29 +96,38 @@ def _author(root: Path) -> None:
 def upgraded(tmp_path_factory):
     roots = FX.build(tmp_path_factory.mktemp("p3"))
     _author(roots["std"])
-    first, second = {}, {}
+    # Recorded, not asserted: a wrong respell that makes a command fail must
+    # fail a named test below, not error the fixture.
+    first, second, runs = {}, {}, {}
     for row, root in roots.items():
         _set_prefix(root)
-        r = run_cli("upgrade", cwd=root)
-        assert r.returncode == 0, (row, r.stdout + r.stderr)
-        first[row] = r.stdout
-        r = run_cli("upgrade", cwd=root)
-        assert r.returncode == 0, (row, r.stdout + r.stderr)
-        second[row] = r.stdout
-        r = run_cli("apply", cwd=root)
-        assert r.returncode == 0, (row, r.stdout + r.stderr)
-    return roots, first, second
+        steps = []
+        for key, cmd in (
+            ("first", "upgrade"),
+            ("second", "upgrade"),
+            ("apply", "apply"),
+        ):
+            r = run_cli(cmd, cwd=root)
+            steps.append((key, r.returncode, r.stdout + r.stderr))
+            if key == "first":
+                first[row] = r.stdout
+            elif key == "second":
+                second[row] = r.stdout
+        runs[row] = steps
+    return roots, first, second, runs
 
 
 def test_the_upgraded_tree_is_clean(upgraded):
-    roots, _first, _second = upgraded
+    roots, _first, _second, runs = upgraded
     for row, root in roots.items():
+        for key, rc, out in runs[row]:
+            assert rc == 0, (row, key, out)
         r = run_cli("status", "--check", cwd=root)
         assert r.returncode == 0, (row, r.stdout + r.stderr)
 
 
 def test_no_derived_symbol_escapes_the_prefix(upgraded):
-    roots, _first, _second = upgraded
+    roots, _first, _second, _runs = upgraded
     bad = [
         f"{row}/{ln}"
         for row, root in roots.items()
@@ -130,7 +139,7 @@ def test_no_derived_symbol_escapes_the_prefix(upgraded):
 
 
 def test_the_authors_own_c_is_left_as_written(upgraded):
-    roots, _first, _second = upgraded
+    roots, _first, _second, _runs = upgraded
     root = roots["std"]
     h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
     assert _AUTHOR_H in h, h
@@ -148,20 +157,20 @@ def test_the_authors_own_c_is_left_as_written(upgraded):
 
 
 def test_native_examples_are_respelled(upgraded):
-    roots, _first, _second = upgraded
+    roots, _first, _second, _runs = upgraded
     demo = (roots["std"] / "native" / "examples" / "demo.c").read_text()
     assert f"{PREFIX}_fir_state_t *s = {PREFIX}_fir_create(" in demo, demo
     assert f"{PREFIX}_fir_destroy(s)" in demo, demo
 
 
 def test_a_nested_project_is_not_touched(upgraded):
-    roots, _first, _second = upgraded
+    roots, _first, _second, _runs = upgraded
     use = roots["std"] / "native" / "examples" / "downstream" / "use.c"
     assert use.read_text() == "void f(void) { fir_create(1.0, 4); }\n"
 
 
 def test_the_upgrade_says_what_it_changed(upgraded):
-    roots, first, _second = upgraded
+    roots, first, _second, _runs = upgraded
     out = first["std"]
     assert "native/examples/demo.c" in out, out
     assert "native/src/fir/fir_core.c" in out, out
@@ -176,7 +185,7 @@ def test_the_upgrade_says_what_it_changed(upgraded):
 
 
 def test_a_second_upgrade_changes_nothing(upgraded):
-    _roots, _first, second = upgraded
+    _roots, _first, second, _runs = upgraded
     for row, out in second.items():
         assert "respelled" not in out, (row, out)
         assert "\t" not in out, (row, out)
