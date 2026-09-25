@@ -97,6 +97,23 @@ def test_a_core_also_folded_into_lib_pkg_is_refused(tmp_path):
     assert "`util_obj` is also folded into p_lib" in r.stderr, r.stderr
 
 
+def test_a_core_folded_in_by_lib_pkgs_own_add_library_is_refused(tmp_path):
+    """The other spelling of a fold (gh-991): the object as an argument of
+    ``add_library(p_lib SHARED ...)`` itself, not a ``target_sources`` line."""
+    root = _project(tmp_path, _UTIL)
+    cm = root / "CMakeLists.txt"
+    text = cm.read_text(encoding="utf-8")
+    head = text.index("add_library(p_lib SHARED")
+    src = text.index("native/src/p_lib.c)", head)
+    cm.write_text(
+        text[:src] + "$<TARGET_OBJECTS:util_obj> " + text[src:],
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "`util_obj` is also folded into p_lib;" in r.stderr, r.stderr
+
+
 def test_status_check_names_a_core_hand_folded_into_lib_pkg(tmp_path):
     """The line added after a clean apply: `status` replays the project the
     way apply does, and the replay refuses -- so `--check` fails, by name."""
