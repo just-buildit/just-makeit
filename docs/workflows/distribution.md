@@ -32,7 +32,7 @@ gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
 
 ```cmake
 find_package(my_dsp REQUIRED)
-target_link_libraries(my_app PRIVATE my_dsp::my_dsp_lib m)
+target_link_libraries(my_app PRIVATE my_dsp::my_dsp m)
 ```
 
 See [Installing your C library for end users](../c-library.md) for the full

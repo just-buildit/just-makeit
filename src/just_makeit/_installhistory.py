@@ -17,6 +17,14 @@ CALLS: frozenset = frozenset(
             ("cmake/<<project>>.pc.in", "<<project>>.pc.configured", "@ONLY"),
         ),
         (
+            "configure_file",
+            (
+                "cmake/<<project_underscore>>.pc.in",
+                "<<project_underscore>>.pc.configured",
+                "@ONLY",
+            ),
+        ),
+        (
             "configure_package_config_file",
             (
                 "cmake/<<project_underscore>>-config.cmake.in",
@@ -80,6 +88,13 @@ CALLS: frozenset = frozenset(
         (
             "install",
             (
+                "CODE",
+                'set(JM_PC_FILE \\"${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc\\")',
+            ),
+        ),
+        (
+            "install",
+            (
                 "DIRECTORY",
                 "${CMAKE_SOURCE_DIR}/native/inc/",
                 "DESTINATION",
@@ -122,6 +137,15 @@ CALLS: frozenset = frozenset(
                 "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake",
                 "DESTINATION",
                 "${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>",
+            ),
+        ),
+        (
+            "install",
+            (
+                "FILES",
+                "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc",
+                "DESTINATION",
+                "${CMAKE_INSTALL_LIBDIR}/pkgconfig",
             ),
         ),
         (
@@ -194,6 +218,15 @@ CALLS: frozenset = frozenset(
             (
                 "<<project_underscore>>_lib",
                 "PROPERTIES",
+                "EXPORT_NAME",
+                "<<project_underscore>>",
+            ),
+        ),
+        (
+            "set_target_properties",
+            (
+                "<<project_underscore>>_lib",
+                "PROPERTIES",
                 "INSTALL_NAME_DIR",
                 "${JM_INSTALL_NAME_DIR}",
             ),
@@ -207,6 +240,15 @@ CALLS: frozenset = frozenset(
                 "${PROJECT_VERSION}",
                 "SOVERSION",
                 "${JM_ABI_VERSION}",
+            ),
+        ),
+        (
+            "set_target_properties",
+            (
+                "<<project_underscore>>_lib_static",
+                "PROPERTIES",
+                "EXPORT_NAME",
+                "<<project_underscore>>-static",
             ),
         ),
         (
@@ -262,6 +304,7 @@ LINES: frozenset = frozenset(
         "Libs: -L${libdir} -l<<project_underscore>>",
         "Libs: -L${libdir} -l<<project_underscore>>@JM_PC_LIBM@",
         "Name: <<project>>",
+        "Name: <<project_underscore>>",
         "Version: @PROJECT_VERSION@",
         "check_required_components(<<project_underscore>>)",
         "exec_prefix=${prefix}",

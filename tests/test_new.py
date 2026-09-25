@@ -58,7 +58,7 @@ class TestNewProjectFiles:
         assert (project / "native" / "inc" / "my_filter.h").exists()
 
     def test_pc_in_exists(self, project):
-        assert (project / "cmake" / "my-filter.pc.in").exists()
+        assert (project / "cmake" / "my_filter.pc.in").exists()
 
     def test_config_cmake_in_exists(self, project):
         assert (project / "cmake" / "my_filter-config.cmake.in").exists()
@@ -362,10 +362,10 @@ class TestNewContent:
         assert '#include "gain/gain_core.h"' in umbrella
 
     def test_pc_in_content(self, project):
-        pc = (project / "cmake" / "my-filter.pc.in").read_text(
+        pc = (project / "cmake" / "my_filter.pc.in").read_text(
             encoding="utf-8"
         )
-        assert "Name: my-filter" in pc
+        assert "Name: my_filter" in pc
         assert "-lmy_filter" in pc
         assert "CMAKE_INSTALL_FULL_" not in pc, (
             "pc.in must use relative ${prefix}/... paths, not absolute @CMAKE_INSTALL_FULL_*@ vars"

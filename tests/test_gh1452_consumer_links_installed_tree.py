@@ -170,9 +170,9 @@ class TestFindPackageConsumer:
             "project(cons C)\n"
             "find_package(demo REQUIRED)\n"
             "add_executable(c ../c.c)\n"
-            "target_link_libraries(c PRIVATE demo::demo_lib)\n"
+            "target_link_libraries(c PRIVATE demo::demo)\n"
             "add_executable(cs ../c.c)\n"
-            "target_link_libraries(cs PRIVATE demo::demo_lib_static)\n"
+            "target_link_libraries(cs PRIVATE demo::demo-static)\n"
         )
         for cmd in (
             [

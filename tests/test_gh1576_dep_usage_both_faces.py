@@ -308,7 +308,7 @@ def _consume_pc(root, name, pfx, static, env) -> str:
 @pytest.mark.parametrize("linkage", ["shared", "static"])
 def test_find_package_consumer(installed, name, linkage):
     root, ext_pfx, pfxs, env = installed
-    target = f"{name}_lib" if linkage == "shared" else f"{name}_lib_static"
+    target = name if linkage == "shared" else f"{name}-static"
     out = _consume_cmake(root, ext_pfx, name, pfxs[name], target, env)
     assert out == "1,2", out
 

@@ -73,11 +73,11 @@ file between them:
 
 ```sh
 # WRONG — library before source
-gcc $(pkg-config --cflags --libs my-project) consumer.c -o consumer
+gcc $(pkg-config --cflags --libs my_project) consumer.c -o consumer
 
 # CORRECT
-gcc $(pkg-config --cflags my-project) consumer.c \
-    $(pkg-config --libs my-project) -lm -o consumer
+gcc $(pkg-config --cflags my_project) consumer.c \
+    $(pkg-config --libs my_project) -lm -o consumer
 ```
 
 For `make && make test` on the generated project itself, the generated
@@ -88,8 +88,8 @@ ______________________________________________________________________
 
 ## `PKG_CONFIG_PATH` not set for custom prefix
 
-**Symptom:** `pkg-config --cflags my-project` prints nothing or exits with
-`Package my-project was not found in the pkg-config search path`.
+**Symptom:** `pkg-config --cflags my_project` prints nothing or exits with
+`Package my_project was not found in the pkg-config search path`.
 
 **Cause:** You installed to a non-standard prefix (e.g. `$HOME/.local`) and
 pkg-config doesn't search it by default.
@@ -98,7 +98,7 @@ pkg-config doesn't search it by default.
 
 ```sh
 export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
-pkg-config --modversion my-project   # should print the version
+pkg-config --modversion my_project   # should print the version
 ```
 
 Add the `export` line to your shell profile to persist it.

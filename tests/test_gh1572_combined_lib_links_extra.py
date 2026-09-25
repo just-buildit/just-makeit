@@ -159,7 +159,7 @@ def test_every_emit_site_links_the_combined_libraries(installed):
             ), (core, cm, text)
 
 
-@pytest.mark.parametrize("target", ["jmx_lib", "jmx_lib_static"])
+@pytest.mark.parametrize("target", ["jmx", "jmx-static"])
 def test_an_installed_consumer_links(installed, target):
     root, _, pfx, ext_pfx = installed
     cons = root / f"cons_{target}"

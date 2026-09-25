@@ -69,7 +69,7 @@ below) do.
     │   └── api.md
     ├── cmake/
     │   ├── my_project-config.cmake.in
-    │   └── my-project.pc.in
+    │   └── my_project.pc.in
     ├── native/
     │   ├── inc/
     │   │   ├── my_project.h

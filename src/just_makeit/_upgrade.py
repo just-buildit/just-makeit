@@ -429,7 +429,18 @@ def _rename_superseded(root: Path) -> None:
             print(f"\n{_apply.superseded_advice(root, old, new)}")
             continue
         (root / old).rename(root / new)
-        print(f"\nrenamed {old} -> {new} (gh-935); your edits came along.")
+        # An owned file's token names it (gh-1589): carry the ownership
+        # across the rename, or the moved file silently becomes the author's.
+        from . import _render as R
+
+        moved = root / new
+        text = moved.read_text(encoding="utf-8")
+        was = R.owned_token(Path(old).name)
+        if R.is_owned_render(text, Path(old).name) and text.count(was) == 1:
+            _textio.write_text(
+                moved, text.replace(was, R.owned_token(Path(new).name))
+            )
+        print(f"\nrenamed {old} -> {new}; your edits came along.")
 
 
 def _report_repairs(root: Path) -> None:

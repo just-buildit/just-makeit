@@ -63,14 +63,16 @@ import pytest
 
 from _jmrun import run_cli
 
-NAME = "demo"
+#: Underscored on purpose (gh-1581): the one spelling that tells the
+#: library's name from the old hyphenated .pc name.
+NAME = "demo_pkg"
 VERSION = "0.1.3"
 #: the pkg-config module a consumer names (#1581 renames it).
 PC_NAME = NAME
 #: linkage -> the exported CMake target (#1581 renames these).
 TARGETS = {
-    "shared": f"{NAME}::{NAME}_lib",
-    "static": f"{NAME}::{NAME}_lib_static",
+    "shared": f"{NAME}::{NAME}",
+    "static": f"{NAME}::{NAME}-static",
 }
 
 _CONSUMER = (

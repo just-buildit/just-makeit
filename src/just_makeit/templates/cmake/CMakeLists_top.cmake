@@ -15,7 +15,7 @@ endif()
 project(
   <<project_underscore>>
   VERSION <<version>>
-  DESCRIPTION "<<project>> C library"
+  DESCRIPTION "<<project_underscore>> C library"
   LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
@@ -176,6 +176,14 @@ else()
 endif()
 set_target_properties(<<project_underscore>>_lib
                       PROPERTIES INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}")
+# gh-1581: the names a consumer writes, as cmake-packages(7) shows them:
+# `find_package(<pkg>)` then `target_link_libraries(app <pkg>::<pkg>)`. The
+# static library is `<pkg>::<pkg>-static`. Only the EXPORTED names change;
+# inside this build the targets stay <pkg>_lib and <pkg>_lib_static.
+set_target_properties(<<project_underscore>>_lib
+                      PROPERTIES EXPORT_NAME <<project_underscore>>)
+set_target_properties(<<project_underscore>>_lib_static
+                      PROPERTIES EXPORT_NAME <<project_underscore>>-static)
 
 install(
   TARGETS <<project_underscore>>_lib <<project_underscore>>_lib_static
@@ -274,20 +282,23 @@ endif()
 if(NOT "${JM_PC_LIBS_PRIVATE}" STREQUAL "")
   string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_LIBS_PRIVATE}\n")
 endif()
-configure_file(cmake/<<project>>.pc.in <<project>>.pc.configured @ONLY)
+configure_file(cmake/<<project_underscore>>.pc.in
+               <<project_underscore>>.pc.configured @ONLY)
 # Runs at install time, before the install(FILES) below copies its result:
 # install rules run in the order they are declared, in one script, so the path
 # set by the first rule is seen by the second. The bracket argument is not
 # expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step has.
 # The configured path does not depend on the configuration, so a multi-config
 # generator installs the same.
-install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc\")")
+install(
+  CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc\")"
+)
 install(
   CODE [[
 file(READ "${JM_PC_FILE}.configured" _jm_pc)
 string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
 file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
 ]])
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project>>.pc"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 # ── End install ──────────────────────────────────────────────────────────────
