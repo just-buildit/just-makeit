@@ -191,13 +191,21 @@ install(
   # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
   # never installed, and a consumer linked against an import library whose
   # DLL was not there to load.
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  # gh-1601: install components, the runtime/-dev split a distribution
+  # package is built from (`cmake --install --component runtime|dev`). The
+  # shared library a program loads is `runtime`; everything a BUILD needs --
+  # headers, the static library, the unversioned lib<name>.so link, the CMake
+  # package and the .pc -- is `dev`. A plain `cmake --install` installs both.
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+          COMPONENT runtime
+          NAMELINK_COMPONENT dev
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev)
 
 install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/<<inc_dir>>/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  COMPONENT dev
   FILES_MATCHING
   PATTERN "*.h"
   PATTERN "pyex_common.h" EXCLUDE)
@@ -206,7 +214,8 @@ install(
   EXPORT <<project_underscore>>-targets
   FILE <<project_underscore>>-targets.cmake
   NAMESPACE <<project_underscore>>::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>
+  COMPONENT dev)
 
 configure_package_config_file(
   cmake/<<project_underscore>>-config.cmake.in
@@ -224,7 +233,8 @@ install(
   FILES
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>
+  COMPONENT dev)
 
 # gh-1582: the build tree is a package too. The config and version files above
 # are written into it already; exporting the targets beside them lets a sibling
@@ -292,13 +302,16 @@ configure_file(cmake/<<project_underscore>>.pc.in
 # generator installs the same.
 install(
   CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc\")"
-)
+  COMPONENT dev)
 install(
   CODE [[
 file(READ "${JM_PC_FILE}.configured" _jm_pc)
 string(REPLACE "%JM_INSTALL_PREFIX%" "${CMAKE_INSTALL_PREFIX}" _jm_pc "${_jm_pc}")
 file(WRITE "${JM_PC_FILE}" "${_jm_pc}")
-]])
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+]]
+  COMPONENT dev)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>.pc"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+  COMPONENT dev)
 # ── End install ──────────────────────────────────────────────────────────────

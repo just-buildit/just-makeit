@@ -83,6 +83,22 @@ $PREFIX/
 │       └── my_project-targets*.cmake
 ```
 
+Every file belongs to one of two install components, the split a
+distribution packages from (`lib<name>` and `lib<name>-dev`):
+
+| component | installs                                                                                                               |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `runtime` | the shared library a program loads: `libmy_project.so.0.1.0` and its soname link (a `.dll` on Windows)                 |
+| `dev`     | everything a build needs: the headers, `libmy_project.a`, the `libmy_project.so` link, the CMake package and the `.pc` |
+
+```sh
+cmake --install build --component runtime --prefix stage/runtime
+cmake --install build --component dev --prefix stage/dev
+```
+
+A plain `cmake --install` installs both. Tag your own install rules below
+`# ── End install` the same way if you package them.
+
 ______________________________________________________________________
 
 ## Build and install
