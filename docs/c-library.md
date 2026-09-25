@@ -65,11 +65,13 @@ ______________________________________________________________________
 ```
 $PREFIX/
 ├── include/
-│   ├── my_project.h             # umbrella header — include this
-│   ├── component_a/
-│   │   └── component_a_core.h
-│   └── component_b/
-│       └── component_b_core.h
+│   └── my_project/              # every header, under the package name
+│       ├── my_project.h         # umbrella: #include <my_project/my_project.h>
+│       ├── clib_common.h
+│       ├── component_a/
+│       │   └── component_a_core.h
+│       └── component_b/
+│           └── component_b_core.h
 ├── lib/
 │   ├── libmy_project.so.0.1.0   # shared library (the real file)
 │   ├── libmy_project.so.0.1     # -> .so.0.1.0, its soname
@@ -421,7 +423,7 @@ ______________________________________________________________________
 
 ```sh
 # headers present
-ls $PREFIX/include/my_project.h
+ls $PREFIX/include/my_project/my_project.h
 
 # library present and has expected symbols
 nm -D $PREFIX/lib/libmy_project.so | grep component_a_create

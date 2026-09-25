@@ -46,15 +46,15 @@ ______________________________________________________________________
 From your project root:
 
 ```sh
-# 1. adopt jm's new clib_common.h -- take the render as-is; do not hand-edit
-#    it. `jm status --check` names it as OUTDATED.
-# 2. re-spell your own C.
-jm upgrade
+jm upgrade    # applies every pending migration, printing each file it changed
+jm apply      # regenerates the glue against the migrated tree
 ```
 
-`jm upgrade` names every file it changed. It is **idempotent** — a second run
-is a silent no-op, and so is every run on a project scaffolded by jm 0.74.0 or
-later.
+Then review what `jm upgrade` printed, rebuild and run your tests.
+
+`jm upgrade` is **idempotent** — a second run is a silent no-op. What a
+migration does is described in its own section below; the one most projects
+meet first is [Headers under your package](#headers-under-your-package-gh-1583).
 
 It also renames any file jm now writes under a new name — today that is
 `jb.toml`, which became `bootstrap.toml` — as a **rename**, so what you added
@@ -63,7 +63,17 @@ beside the old one, and `jm status` lists the old one as SUPERSEDED. If both
 already exist (an older jm created the new one beside yours), nothing is
 renamed: merge your additions into `bootstrap.toml` and delete `jb.toml`.
 
-**Do both steps or neither.** Adopting the new `clib_common.h` without
+______________________________________________________________________
+
+## The `_Complex` spelling (gh-1148)
+
+A project scaffolded before jm 0.74.0 spells complex types with the
+`<complex.h>` macro `complex`, which does not parse from C++. `jm upgrade`
+re-spells your own C to `_Complex`; it runs on every `jm upgrade`, whatever the schema. Adopt
+jm's new `clib_common.h` alongside it — take the render as-is, do not
+hand-edit it; `jm status --check` names it as OUTDATED.
+
+**Do both or neither.** Adopting the new `clib_common.h` without
 re-spelling leaves component headers that no longer parse from C++ at all,
 which is the failure gh-1148 fixed — strictly worse than where you started.
 
@@ -72,13 +82,9 @@ exactly as written (gh-1382). They are prose, and a comment that *quotes* the
 old spelling while explaining why it was a problem would otherwise be
 rewritten into a false statement.
 
-Then rebuild and run your tests. `complex` typed by **you** is still accepted
-everywhere jm reads a type — in `just-makeit.toml`, on the CLI, and in a header
-`jm bind` parses; it is resolved to `_Complex` before anything is rendered.
-
-No TOML changes, no `jm upgrade` required.
-
-______________________________________________________________________
+`complex` typed by **you** is still accepted everywhere jm reads a type — in
+`just-makeit.toml`, on the CLI, and in a header `jm bind` parses; it is
+resolved to `_Complex` before anything is rendered.
 
 ______________________________________________________________________
 
@@ -114,6 +120,18 @@ it changed. Review them, then run `jm apply` and rebuild.
 
 A header **you** add from now on goes under `native/inc/<pkg>/` too, and a
 manifest `header =` naming it is spelled `"<pkg>/..."`.
+
+**Your consumers change too.** Code outside the project that includes an
+installed jm project's headers — a C program, a second library — spells them
+the new way once the project is released with schema 8:
+
+```c
+#include <my_dsp/fir/fir_core.h>    /* was: <fir/fir_core.h> */
+```
+
+Nothing else in the consumer moves: `pkg-config --cflags` and
+`find_package` still add `include/`, not `include/<pkg>/`, which is what makes
+the prefix part of every spelling. See [Installing your C library](c-library.md).
 
 ______________________________________________________________________
 
