@@ -44,6 +44,22 @@ just-makeit example fir_filter
 just-makeit build
 ```
 
+## Proving a gate
+
+A gate is proven by sabotaging the fix it guards and watching it go red --
+through `scripts/sabotage.py`, never an ad-hoc `sed`:
+
+```sh
+python3 scripts/sabotage.py FILE ANCHOR REPLACEMENT -- COMMAND...
+```
+
+It refuses a sabotage that proves nothing: an anchor that is absent (a
+formatter rewrapped it) or ambiguous, an edit that did not land, a command
+already red before it, one that stays green, one red only from a collection
+error or with no FAILED test named. It restores the file byte-identical and
+clears every `__pycache__`, before and after. Why each refusal exists:
+gh-1430, and the helper's docstring.
+
 ## Architecture
 
 just-makeit is a **code-generation and build-orchestration tool**. It reads a
