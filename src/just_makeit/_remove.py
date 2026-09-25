@@ -25,6 +25,7 @@ from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _render as R
 from . import _stubs as S
+from . import _incpath as INC
 from ._init import (
     _to_title,
     standalone_extra_include,
@@ -163,7 +164,7 @@ def _object_paths(
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*."""
     paths = [
-        root / "native" / "inc" / obj,
+        INC.path(root, obj),
         root / "native" / "src" / obj,
         root / "native" / "tests" / f"test_{obj}_core.c",
         root / "native" / "tests" / f"test_{obj}_symbols.c",  # gh-1361
@@ -222,10 +223,10 @@ def _strip_cmake_module(root: Path, module: str) -> None:
 
 def _strip_umbrella(root: Path, pkg: str, obj: str) -> None:
     """Drop the object's #include line from the umbrella header."""
-    umbrella = root / "native" / "inc" / f"{pkg}.h"
+    umbrella = INC.path(root, f"{pkg}.h")
     if not umbrella.exists():
         return
-    include = f'#include "{obj}/{obj}_core.h"\n'
+    include = f'#include "{INC.core_include(obj, root)}"\n'
     text = umbrella.read_text(encoding="utf-8")
     if include in text:
         _textio.write_text(umbrella, text.replace(include, "", 1))
@@ -304,7 +305,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         sys.exit(1)
     module = C.component_module(cfg, obj)
 
-    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    core_h = INC.core_h(root, obj)
     if C.is_no_step(cfg, obj):
         core_c = root / "native" / "src" / obj / f"{obj}_core.c"
         implemented = _core_c_warn_if_implemented(
@@ -408,9 +409,7 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
                 C.is_no_state(cfg, obj),
                 bool(C.methods(cfg, obj)),
             )
-        return _warn_if_implemented(
-            root / "native" / "inc" / obj / f"{obj}_core.h"
-        )
+        return _warn_if_implemented(INC.core_h(root, obj))
 
     any_implemented = any(_obj_implemented(obj) for obj in objects)
     prompt_note = (
@@ -434,7 +433,7 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     # The module's own files (cname for the flat native dir, pypath for the
     # nested Python subpackage).
     mp = C.module_paths(module)
-    _rm(root / "native" / "inc" / mp.cname)
+    _rm(INC.path(root, mp.cname))
     _rm(root / "native" / "src" / mp.cname)
     # gh-523: a module that landed inside a *shared* package owns only its own
     # .pyi there — the package belongs to whoever else lives in it (doppler's
@@ -497,7 +496,7 @@ def _remove_state(
         )
         sys.exit(1)
 
-    core_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+    core_h = INC.core_h(root, obj)
     core_c = root / "native" / "src" / obj / f"{obj}_core.c"
     _warn_if_state_ref(core_h, core_c, name)
 
@@ -763,7 +762,7 @@ def _remove_function(
     # `_strip_decl_from_header` on a missing file is a no-op. The creating side
     # crashed outright, which is the only reason this half was never reached.
     cname = C.module_paths(module).cname
-    core_h = root / "native" / "inc" / cname / f"{cname}_core.h"
+    core_h = INC.core_h(root, cname)
     if not inline:
         fn_c = root / "native" / "src" / cname / f"{name}.c"
         if fn_c.exists():

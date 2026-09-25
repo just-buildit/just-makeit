@@ -96,6 +96,21 @@ CALLS: frozenset = frozenset(
             "install",
             (
                 "DIRECTORY",
+                "${CMAKE_SOURCE_DIR}/<<inc_dir>>/",
+                "DESTINATION",
+                "${CMAKE_INSTALL_INCLUDEDIR}",
+                "FILES_MATCHING",
+                "PATTERN",
+                "*.h",
+                "PATTERN",
+                "pyex_common.h",
+                "EXCLUDE",
+            ),
+        ),
+        (
+            "install",
+            (
+                "DIRECTORY",
                 "${CMAKE_SOURCE_DIR}/native/inc/",
                 "DESTINATION",
                 "${CMAKE_INSTALL_INCLUDEDIR}",

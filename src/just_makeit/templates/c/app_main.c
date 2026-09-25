@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "/*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 /*<<helpers>>*/
 /* gh-944: `x != std*` is the standard idiom for "close it only if we opened
  * it", and it is correct. clang-analyzer-unix.Stream still reports a leak,

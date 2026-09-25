@@ -6,9 +6,9 @@
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
-#include "clib_common.h"
+#include "/*<<inc_prefix>>*/clib_common.h"
 
-#include "/*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 
 /* ======================================================== */
 /* /*<<Component>>*/Object — wraps /*<<component>>*/_state_t *       */

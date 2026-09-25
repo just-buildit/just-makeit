@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ def split_params(params: str) -> list[str]:
 
 def _header_text(root: Path, component: str) -> str | None:
     """``<comp>_core.h`` as text, or ``None`` when it cannot be read."""
-    path = root / "native" / "inc" / component / f"{component}_core.h"
+    path = INC.core_h(root, component)
     try:
         return path.read_text(encoding="utf-8")
     except OSError:
@@ -209,7 +210,7 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
         out.append(
             CtorDrift(
                 component=comp,
-                rel=f"native/inc/{comp}/{comp}_core.h",
+                rel=INC.core_rel(comp, root),
                 declared=declared,
                 rendered=_norm(rendered),
             )
@@ -301,7 +302,7 @@ def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
         out.append(
             ExampleDrift(
                 component=comp,
-                rel=f"native/inc/{comp}/{comp}_core.h",
+                rel=INC.core_rel(comp, root),
                 line=text.count("\n", 0, offset) + 1,
                 call=call.group(1),
                 passed=passed,

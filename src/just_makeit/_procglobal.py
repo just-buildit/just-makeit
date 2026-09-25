@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _config as C
+from . import _incpath as INC
 
 
 class SharedCore(NamedTuple):
@@ -474,7 +475,7 @@ def orphan_headers(root: Path, cfg: dict) -> "list[str]":
         rel
         for comp in C.components(cfg)
         if not is_process_global(cfg, comp)
-        and (root / (rel := f"native/inc/{header_name(comp)}")).is_file()
+        and (root / (rel := INC.rel(header_name(comp), root))).is_file()
     ]
 
 

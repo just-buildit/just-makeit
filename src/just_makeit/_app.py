@@ -576,7 +576,7 @@ _APP_BLOCK = 4096
 _SAMPLE_TYPES = ["cf32", "cf64", "ci32", "ci16", "ci8"]
 
 _SAMPLE_TYPE_C = """\
-#include "clib_common.h"
+#include "<<inc_prefix>>clib_common.h"
 
 /* Clamp v to [-1, 1] and scale to a signed integer of full-scale fs_val. */
 static long

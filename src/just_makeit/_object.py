@@ -37,6 +37,7 @@ from . import _report
 from . import _targets
 from . import _stubs as S
 from . import _types as T
+from . import _incpath as INC
 from ._builtins import (
     builtin_owned_members,
     overridden_builtin_slots,
@@ -172,8 +173,9 @@ def _load_doc_blocks(root: Path, obj: str) -> dict:
     Python docs from these blocks and fall back to name-based stubs otherwise.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
-    inc_root = doc_root / "native" / "inc"
-    header = inc_root / obj / f"{obj}_core.h"
+    # Includes inside the header resolve from the -I directory.
+    inc_root = INC.inc_dir(doc_root)
+    header = INC.core_h(doc_root, obj)
     if not header.exists():
         return {}
     text = header.read_text(encoding="utf-8")
@@ -339,7 +341,7 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     # Doxygen sits in the header unread. Nothing fails; the docs are just
     # worse, forever.
     cname = C.module_paths(module).cname
-    header = doc_root / "native" / "inc" / cname / f"{cname}_core.h"
+    header = INC.core_h(doc_root, cname)
     if not header.exists():
         return {}
     raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
@@ -1774,7 +1776,8 @@ def _write_module_test_and_bench(
         harness = root / "native" / sub / shared
         if not harness.exists():
             harness.parent.mkdir(parents=True, exist_ok=True)
-            _write(harness, shared_tmpl)
+            # Rendered: jm_test.h spells its includes by the layout.
+            _write(harness, R.render(shared_tmpl, ctx))
         dest = root / "native" / sub / stem
         if dest.exists():
             continue
@@ -2050,7 +2053,7 @@ def _regenerate_module_now(
         module_core_lib_block = (
             f"add_library({cname}_core OBJECT {core_srcs})\n"
             f"target_include_directories({cname}_core PUBLIC"
-            f" ${{CMAKE_SOURCE_DIR}}/native/inc{inc_dirs_extra})\n\n"
+            f" {INC.CMAKE_INC}{inc_dirs_extra})\n\n"
         )
         libs_parts = [f"{cname}_core"] + [
             f"{obj}_core" for obj in object_names
@@ -2748,7 +2751,6 @@ def run(
     # foreign type) are included the same way when the header exists.
     from ._init import _dep_header_includes
 
-    _inc_root = root / "native" / "inc"
     ctx["depends_includes"] = "".join(
         "\n" + inc
         # gh-537: a test_only dep's header stays out of the object's PUBLIC
@@ -2756,13 +2758,13 @@ def run(
         # would make the shipped header advertise a dependency the shipped
         # artifact does not have — the same untruth test_only exists to fix.
         for inc in _dep_header_includes(
-            _inc_root,
+            root,
             C.dep_names([d for d in depends_on if not C._dep_test_only(d)]),
         )
         + [
             f'#include "{h}"'
             for h in C.param_headers(cfg, object_name)
-            if (_inc_root / h).exists()
+            if (INC.inc_dir(root) / h).exists()
         ]
     )
 
@@ -2784,17 +2786,17 @@ def run(
     if perf:
         if not C.is_perf(cfg):
             cfg.setdefault("project", {})["perf"] = "true"
-        perf_h = root / "native" / "inc" / "jm_perf.h"
+        perf_h = INC.path(root, "jm_perf.h")
         if not perf_h.exists():
             _write(perf_h, r(R.JM_PERF_H), "create")
-        simd_h = root / "native" / "inc" / "jm_simd.h"
+        simd_h = INC.path(root, "jm_simd.h")
         if not simd_h.exists():
             _write(simd_h, R.JM_SIMD_H, "create")
 
     # C library files (OBJECT lib only — no standalone Python module).
     # Object creation is create-only (the verb errors on a duplicate name),
     # so the sacred files are written fresh — never spliced.
-    core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+    core_h_path = INC.core_h(root, comp)
     _write(
         core_h_path,
         r(R.COMPONENT_CORE_H),
@@ -2837,7 +2839,8 @@ def run(
     # it, so a project may extend it.
     jm_test_h = root / "native" / "tests" / "jm_test.h"
     if not jm_test_h.exists():
-        _write(jm_test_h, R.JM_TEST_H)
+        # Rendered: its #include of clib_common.h is spelled by the layout.
+        _write(jm_test_h, r(R.JM_TEST_H))
 
     _write(
         root / "native" / "benchmarks" / f"bench_{comp}_core.c",
@@ -2949,7 +2952,7 @@ def run(
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
         _write(
-            root / "native" / "inc" / _procglobal.header_name(comp),
+            INC.path(root, _procglobal.header_name(comp)),
             _pg_h,
         )
     # gh-541/gh-544: persist the destructor contract BEFORE the aggregate
@@ -2978,7 +2981,7 @@ def run(
     )
 
     # Umbrella header
-    umbrella = root / "native" / "inc" / f"{pkg}.h"
+    umbrella = INC.path(root, f"{pkg}.h")
     from ._init import insert_umbrella_include
 
     if insert_umbrella_include(umbrella, comp):

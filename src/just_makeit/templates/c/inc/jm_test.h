@@ -29,7 +29,7 @@
 #ifndef JM_TEST_H
 #define JM_TEST_H
 
-#include "clib_common.h"
+#include "/*<<inc_prefix>>*/clib_common.h"
 #include <math.h>
 #include <stdio.h>
 

@@ -35,6 +35,7 @@ from . import _config as C
 from . import _context as Ctx
 from . import _keys
 from . import _render as R
+from . import _incpath as INC
 
 
 @dataclass
@@ -143,7 +144,7 @@ def _rewrite_makefile_bench(text: str) -> str:
 # header) and neither can `regenerate`. Before this, the answer in
 # `docs/upgrading.md` was a `perl -pi -e` block the author ran by hand.
 _COMPLEX_DIRS = (
-    "native/inc",
+    INC.INC_DIR,
     "native/src",
     "native/tests",
     "native/benchmarks",

@@ -27,6 +27,7 @@ from . import _coerce
 from . import _config as C
 from . import _types as T
 from . import _record
+from . import _incpath as INC
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -186,7 +187,7 @@ def _module_test_target(cname: str, libs: str) -> str:
         f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
         f"target_link_libraries(test_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(test_{cname}_core\n"
-        f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc)\n"
+        f"    PRIVATE {INC.CMAKE_INC})\n"
         f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
     )
 
@@ -198,7 +199,7 @@ def _module_bench_target(cname: str, libs: str) -> str:
         f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
         f"target_link_libraries(bench_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(bench_{cname}_core\n"
-        f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
+        f"    PRIVATE {INC.CMAKE_INC}\n"
         f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
     )
 
@@ -291,7 +292,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
       ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
                           ${CMAKE_SOURCE_DIR}/native/inc/ring)
     """
-    inc = "${CMAKE_SOURCE_DIR}/native/inc"
+    inc = INC.CMAKE_INC
     if header_only:
         head = f"  {component}_core INTERFACE "
         return (
@@ -407,7 +408,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
         ${CMAKE_SOURCE_DIR}/native/inc
         ${CMAKE_SOURCE_DIR}/native/inc/fir)
     """
-    inc = "${CMAKE_SOURCE_DIR}/native/inc"
+    inc = INC.CMAKE_INC
     if header_only:
         return (
             "# INTERFACE library — the core is header-only, so there"
@@ -600,6 +601,11 @@ def render(template: str, ctx: dict) -> str:
     unnoticed through both branches of one function. Sweeping to a fixed point
     removes the question instead of answering it once.
     """
+    # gh-1583: the header layout's slots (`<<inc_dir>>`, `<<inc_prefix>>`) are
+    # filled here for every render, from the one owner of the layout -- so no
+    # context builder has to carry them, and none can spell them differently.
+    # A context that sets one explicitly wins.
+    ctx = {**INC.layout_slots(ctx), **ctx}
     result = template
     for _ in range(_RENDER_SWEEPS):
         before = result
@@ -728,7 +734,7 @@ COMPONENT_TYPE_SECTION = """\
 /* <<Component>>Object — wraps <<component>>_state_t *       */
 /* ======================================================== */
 
-#include "<<component>>/<<component>>_core.h"
+#include "<<inc_prefix>><<component>>/<<component>>_core.h"
 
 typedef struct {
     PyObject_HEAD
@@ -817,7 +823,7 @@ MODULE_EXT_C_HEADER = """\
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
-#include "clib_common.h"
+#include "<<inc_prefix>>clib_common.h"
 <<module_extra_includes>>
 <<module_core_include>>"""
 
@@ -2039,7 +2045,9 @@ def render_module_ext_c(
     # level C functions (declared in module_core.h) are wired into the ext.c.
     has_module_fns = bool(functions)
     module_core_include = (
-        f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
+        f'#include "<<inc_prefix>>{module}/{module}_core.h"\n'
+        if has_module_fns
+        else ""
     )
     header_ctx = {
         "module": module,
@@ -2339,7 +2347,9 @@ def render_module_ext_aggregator(
     )
     has_module_fns = bool(functions)
     module_core_include = (
-        f'#include "{module}/{module}_core.h"\n' if has_module_fns else ""
+        f'#include "<<inc_prefix>>{module}/{module}_core.h"\n'
+        if has_module_fns
+        else ""
     )
     header_ctx = {
         "module": module,

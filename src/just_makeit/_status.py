@@ -84,6 +84,7 @@ from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
 from . import _stubs
+from . import _incpath as INC
 from ._apply import _SKIP_DIRS
 
 # Directories/files never copied into the scratch tree (build artefacts,
@@ -1935,7 +1936,7 @@ def run(
         for obj, name, m_dflt, h_dflt in drift_entries:
             print(
                 f"  ! {obj}.{name}: manifest={m_dflt!r} header={h_dflt!r} "
-                f"(native/inc/{obj}/{obj}_core.h)"
+                f"({INC.core_rel(obj, root)})"
             )
         print(
             "  One of these is stale — jm can't tell which; update the "

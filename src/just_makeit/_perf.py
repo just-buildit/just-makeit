@@ -21,17 +21,18 @@ from pathlib import Path
 
 from . import _config as C
 from . import _render as T
+from . import _incpath as INC
 
 
 def _patch_core_h(header: Path, comp: str) -> bool:
     """Upgrade _core.h: add jm_perf.h include and replace step() qualifier."""
     text = header.read_text(encoding="utf-8")
     original = text
-    if '"jm_perf.h"' not in text:
-        text = text.replace(
-            '#include "clib_common.h"',
-            '#include "clib_common.h"\n#include "jm_perf.h"',
-        )
+    common = f'#include "{INC.include("clib_common.h", header)}"'
+    perf = f'#include "{INC.include("jm_perf.h", header)}"'
+    # Any mention of the header counts as present, however it is spaced.
+    if f'"{INC.include("jm_perf.h", header)}"' not in text:
+        text = text.replace(common, f"{common}\n{perf}")
     qualifier_re = re.compile(
         r"\bstatic inline\b(\s+\S.*?\n" + re.escape(comp) + r"_step\b)"
     )
@@ -66,7 +67,7 @@ def run(root: Path) -> None:
     print("just-makeit: enabling perf annotations")
     print()
 
-    inc = root / "native" / "inc"
+    inc = INC.header_root(root, pkg)
     perf_h = inc / "jm_perf.h"
     if not perf_h.exists():
         perf_h.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +80,7 @@ def run(root: Path) -> None:
         print(f"  create  {simd_h}")
 
     for comp in comps:
-        core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
+        core_h = INC.core_h(root, comp)
         if core_h.exists():
             if _patch_core_h(core_h, comp):
                 print(f"  update  {core_h}")

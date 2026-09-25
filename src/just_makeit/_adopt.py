@@ -569,9 +569,13 @@ def packaging_survey(
 
 
 def _fill(project: str):
+    from . import _incpath as INC
+
     names = {
         "<<project_underscore>>": project,
         "<<project>>": project.replace("_", "-"),
+        # gh-1583: the root template spells the -I directory as a slot.
+        "<<inc_dir>>": INC.INC_DIR,
     }
 
     def fill(text: str) -> str:

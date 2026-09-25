@@ -57,6 +57,8 @@ import fnmatch
 from pathlib import Path
 from typing import NamedTuple
 
+from . import _incpath as INC
+
 
 # The four states a manifest-owned file can be in. Four rather than a bool
 # because the measurement distinguishes four, and collapsing any pair hides a
@@ -166,10 +168,10 @@ RULES: tuple[Rule, ...] = (
         "the find_package config template, jm's while it carries"
         " `# jm:generated` (gh-1589).",
     ),
-    Rule("native/inc/jm_perf.h", JM, "the JM_DEFINE_STEPS macro is jm's."),
-    Rule("native/inc/jm_simd.h", JM, "jm's SIMD helpers."),
-    Rule("native/inc/clib_common.h", JM, "jm's shared C preamble."),
-    Rule("native/inc/pyex_common.h", JM, "jm's CPython glue preamble."),
+    Rule(INC.rel_glob("jm_perf.h"), JM, "the JM_DEFINE_STEPS macro is jm's."),
+    Rule(INC.rel_glob("jm_simd.h"), JM, "jm's SIMD helpers."),
+    Rule(INC.rel_glob("clib_common.h"), JM, "jm's shared C preamble."),
+    Rule(INC.rel_glob("pyex_common.h"), JM, "jm's CPython glue preamble."),
     Rule(
         "native/tests/jm_test.h",
         JM,
@@ -195,7 +197,7 @@ RULES: tuple[Rule, ...] = (
     Rule("README.md", AUTHOR, "the author's prose."),
     Rule("docs/*", AUTHOR, "the author's prose."),
     Rule(
-        "native/inc/*/*_core.h",
+        INC.rel_glob("*/*_core.h"),
         AUTHOR,
         "sacred: the author's struct and inline step() body.",
     ),
@@ -277,7 +279,7 @@ RULES: tuple[Rule, ...] = (
     # nothing; this one fails the moment `apply` stops rewriting one of them,
     # which is exactly how a file becomes invisible without anyone noticing.
     Rule(
-        "native/inc/*.h",
+        INC.rel_glob("*.h"),
         RECONCILED,
         "the umbrella header — `apply` refreshes its include list. Below the"
         " jm_*.h / common-header rules above, which are more specific.",

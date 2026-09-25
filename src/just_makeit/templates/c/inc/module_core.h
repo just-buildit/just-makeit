@@ -5,7 +5,7 @@
 #ifndef /*<<MODULE>>*/_CORE_H
 #define /*<<MODULE>>*/_CORE_H
 
-#include "clib_common.h"
+#include "/*<<inc_prefix>>*/clib_common.h"
 
 #ifdef __cplusplus
 extern "C" {

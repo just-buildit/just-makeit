@@ -44,6 +44,7 @@ from . import _createonly
 from . import _libwiring
 from . import _report
 from . import _stubs as S
+from . import _incpath as INC
 from ._init import _to_title
 
 
@@ -1095,7 +1096,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         impl_body = _resolve_impl(sec, octx, root, f"object {comp}")
         if impl_body is None:
             continue
-        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        h_path = INC.core_h(root, comp)
         if not h_path.exists():
             continue
         original = h_path.read_text(encoding="utf-8")
@@ -1176,7 +1177,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
             continue
         void_decl = re.compile(rf"\bvoid(\s+){comp}_destroy\b")
 
-        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        h_path = INC.core_h(root, comp)
         if h_path.exists():
             text = h_path.read_text(encoding="utf-8")
             new = void_decl.sub(rf"int\g<1>{comp}_destroy", text)
@@ -2195,7 +2196,7 @@ def missing_family_headers(root: Path, cfg: dict) -> "list[tuple[str, str]]":
     out = []
     for comp in C.components(cfg):
         fam = C.core_family(cfg, comp)
-        if fam and not (root / "native" / "inc" / fam.header).is_file():
+        if fam and not (INC.inc_dir(root) / fam.header).is_file():
             out.append((comp, fam.header))
     return out
 
@@ -2251,7 +2252,7 @@ def _add_umbrella_include(real_path: Path, temp_path: Path, comp: str) -> bool:
     The line is inserted immediately before the final `#endif` so the
     header remains valid C.
     """
-    include_line = f'#include "{comp}/{comp}_core.h"'
+    include_line = f'#include "{INC.core_include(comp, real_path)}"'
     real = real_path.read_text(encoding="utf-8")
     if include_line in real:
         return False
@@ -2322,8 +2323,8 @@ def _sync_aggregates(
             if real_cmake not in updated:
                 updated.append(real_cmake)
 
-    umbrella = root / "native" / "inc" / f"{pkg}.h"
-    temp_umbrella = temp_root / "native" / "inc" / f"{pkg}.h"
+    umbrella = INC.path(root, f"{pkg}.h")
+    temp_umbrella = INC.path(temp_root, f"{pkg}.h")
     if only_comp is not None:
         if umbrella.exists() and temp_umbrella.exists():
             if _add_umbrella_include(umbrella, temp_umbrella, only_comp):
@@ -2377,7 +2378,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
                 cfg, mod
             ):
-                glue.append(f"native/inc/{mp.cname}/{mp.cname}_bridge.h")
+                glue.append(INC.rel(f"{mp.cname}/{mp.cname}_bridge.h", root))
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,
@@ -2437,7 +2438,7 @@ def _sync_aggregates(
         # also create-only. The module header accumulates function
         # declarations: inject any the manifest implies that are missing,
         # splice-free.
-        rel = f"native/inc/{mp.cname}/{mp.cname}_core.h"
+        rel = INC.core_rel(mp.cname, root)
         if _refresh_core_h_decls(root / rel, temp_root / rel, mp.cname):
             if root / rel not in updated:
                 updated.append(root / rel)
@@ -2447,12 +2448,13 @@ def _sync_aggregates(
         from ._init import _inject_includes_into_core_h
 
         for obj in C.module_objects(cfg, mod):
-            obj_h = root / "native" / "inc" / obj / f"{obj}_core.h"
+            obj_h = INC.core_h(root, obj)
             if _inject_includes_into_core_h(
                 obj_h,
                 obj,
                 C.depends_on(cfg, obj),
                 extra=C.param_headers(cfg, obj),
+                root=root,
             ):
                 updated.append(obj_h)
             # gh-271: a non-collocated module object's OBJECT-core CMakeLists is
@@ -2604,7 +2606,7 @@ def _sync_aggregates(
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
         if _refresh_component_core_h(root, temp_root, cfg, comp):
-            updated.append(root / f"native/inc/{comp}/{comp}_core.h")
+            updated.append(root / INC.core_rel(comp, root))
 
     # gh-627: a module object's header needs the accessor prototype for a
     # manifest-declared property, or the freshly spliced binding calls an
@@ -2625,7 +2627,7 @@ def _sync_aggregates(
             continue
         if comp not in cfg:
             continue
-        core_h = root / "native" / "inc" / comp / f"{comp}_core.h"
+        core_h = INC.core_h(root, comp)
         if not core_h.exists():
             continue
         # gh-1310: a macro-family member takes the FULL reconcile a standalone
@@ -2731,7 +2733,7 @@ def _reconcile_procglobal_headers(
         elif only_mod is not None:
             if comp not in C.module_objects(cfg, only_mod):
                 continue
-        rel = f"native/inc/{_procglobal.header_name(comp)}"
+        rel = INC.rel(_procglobal.header_name(comp), root)
         if not (temp_root / rel).is_file():
             continue
         if _overwrite_if_changed(
@@ -2764,7 +2766,7 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
     in the temp header is not swept along. `variable_output` methods declare a
     sibling `_max_out`, and it is as undeclared as its method.
     """
-    temp_h = temp_root / "native" / "inc" / comp / f"{comp}_core.h"
+    temp_h = INC.core_h(temp_root, comp)
     if not temp_h.exists():
         return []
     from ._init import _core_h_decl_lines
@@ -2842,7 +2844,7 @@ def _refresh_component_core_h(
     property fix. Extending it to module objects is a migration in its own
     right. Returns True when the file changed.
     """
-    rel = f"native/inc/{comp}/{comp}_core.h"
+    rel = INC.core_rel(comp, root)
     changed = _refresh_core_h_decls(
         root / rel, temp_root / rel, comp, C.core_family(cfg, comp)
     )
@@ -2855,6 +2857,7 @@ def _refresh_component_core_h(
         comp,
         C.depends_on(cfg, comp),
         extra=C.param_headers(cfg, comp),
+        root=root,
     ):
         changed = True
     return changed
@@ -2948,7 +2951,7 @@ def component_core_sources(root: Path, comp: str) -> "list[str]":
         for p in sorted(d.glob("*.c"))
         if p.name != f"{comp}_core.c"
     ]
-    hdr = root / "native" / "inc" / comp / f"{comp}_core.h"
+    hdr = INC.core_h(root, comp)
     if hdr.is_file():
         out.append(hdr.read_text(encoding="utf-8"))
     return out
@@ -3112,7 +3115,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
             f"target_link_libraries(bench_{comp}_core"
             f" PRIVATE {comp}_core " + R.LIBM_REF + ")\n"
             f"target_include_directories(bench_{comp}_core\n"
-            f"    PRIVATE ${{CMAKE_SOURCE_DIR}}/native/inc\n"
+            f"    PRIVATE {INC.CMAKE_INC}\n"
             f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
         )
         _textio.write_text(cmake_path, text.rstrip() + bench_block)
@@ -3382,7 +3385,7 @@ def run(
             _fam = C.core_family(cfg, _comp)
             print(
                 f"error: `{_comp}` takes its definitions from"
-                f" {_fam.macro}(...), and native/inc/{_hdr} does not exist."
+                f" {_fam.macro}(...), and {INC.INC_DIR}/{_hdr} does not exist."
                 f" Write it, defining {_fam.macro} with"
                 f" {len(_fam.args)} argument(s) -- jm writes each member's"
                 " declarations and the invocation, never the family header.",
@@ -3414,7 +3417,7 @@ def run(
             f" writes no PyInit_ there: it keeps its OWN copy of {_comp}'s"
             f" process-global state while every other module shares one."
             f" Add the adopt to its hand-written binding —"
-            f" native/inc/{_comp}/{_comp}_procglobal.h shows it, with the"
+            f" {INC.rel(_procglobal.header_name(_comp), root)} shows it, with the"
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
@@ -3721,7 +3724,7 @@ def run(
             _report.warn(
                 f"{obj}.{name} default mismatch: "
                 f"manifest={m_dflt!r} header={h_dflt!r} "
-                f"(native/inc/{obj}/{obj}_core.h) — one of these is stale",
+                f"({INC.core_rel(obj, root)}) — one of these is stale",
                 gates=True,
                 stream=sys.stdout,
                 indent="  ",

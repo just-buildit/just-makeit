@@ -1,4 +1,4 @@
-#include "/*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
 
 /* gh-806: how many assertions just-makeit generated into this file.  Stamped
  * at scaffold time and compared against the runtime count by

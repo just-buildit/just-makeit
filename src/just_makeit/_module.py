@@ -23,6 +23,7 @@ from . import _procglobal
 from . import _context as Ctx
 from . import _stubs as S
 from . import _render as T
+from . import _incpath as INC
 from ._init import (
     MODULES_SENTINEL,
     _to_title,
@@ -128,7 +129,7 @@ def run(
 
     # C header and implementation for module-level functions
     _write(
-        root / "native" / "inc" / cname / f"{cname}_core.h",
+        INC.core_h(root, cname),
         T.render(T.MODULE_CORE_H, mod_ctx),
     )
     _write(
@@ -155,7 +156,7 @@ def run(
         "module_core_lib_block": (
             f"add_library({cname}_core OBJECT {cname}_core.c)\n"
             f"target_include_directories({cname}_core PRIVATE"
-            f" ${{CMAKE_SOURCE_DIR}}/native/inc)\n\n"
+            f" {INC.CMAKE_INC})\n\n"
         ),
         "extra_link_libs_block": "",
         "extra_include_dirs_block": "",

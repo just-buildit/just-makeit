@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from ._docstring import max_out_prototypes, restore_max_out_prototypes
 from ._object import _extract_c_function_bodies, _restore_c_function_bodies
 from ._remove import _confirm, _object_paths, _rm
@@ -128,7 +129,7 @@ def run(
         if _frag.exists():
             paths.append(_frag)
 
-    core_h = root / "native" / "inc" / component / f"{component}_core.h"
+    core_h = INC.core_h(root, component)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     preserved_h: dict[str, str] = {}
     preserved_c: dict[str, str] = {}

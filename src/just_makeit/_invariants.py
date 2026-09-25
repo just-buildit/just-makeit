@@ -68,6 +68,7 @@ from ._docstring import class_import_line as _class_import_line
 from ._context._state import _unseedable_required
 from . import _textio
 from . import _types as T
+from . import _incpath as INC
 
 
 class Pair:
@@ -500,7 +501,7 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     # Where the body lives follows `header_only`, exactly as the core
     # library's kind does.
     core = (
-        root / "native" / "inc" / comp / f"{comp}_core.h"
+        INC.core_h(root, comp)
         if C.is_header_only(cfg, comp)
         else root / "native" / "src" / comp / f"{comp}_core.c"
     )

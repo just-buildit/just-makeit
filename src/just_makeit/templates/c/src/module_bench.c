@@ -1,7 +1,7 @@
 /* bench_/*<<module>>*/_core.c — benchmarks for the /*<<module>>*/ module's
  * free functions (gh-1034).
  */
-#include "/*<<module>>*///*<<module>>*/_core.h"
+#include "/*<<inc_prefix>>*//*<<module>>*///*<<module>>*/_core.h"
 #include "jm_bench.h"
 #include <stdio.h>
 #include <stdlib.h>

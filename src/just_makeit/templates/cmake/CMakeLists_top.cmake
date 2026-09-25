@@ -82,7 +82,7 @@ add_library(<<project_underscore>>_lib_static STATIC
 foreach(lib_target <<project_underscore>>_lib
                    <<project_underscore>>_lib_static)
   target_include_directories(
-    ${lib_target} PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/native/inc>
+    ${lib_target} PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/<<inc_dir>>>
                          $<INSTALL_INTERFACE:include>)
   set_target_properties(${lib_target} PROPERTIES OUTPUT_NAME
                                                  <<project_underscore>>)
@@ -196,7 +196,7 @@ install(
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
 install(
-  DIRECTORY ${CMAKE_SOURCE_DIR}/native/inc/
+  DIRECTORY ${CMAKE_SOURCE_DIR}/<<inc_dir>>/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   FILES_MATCHING
   PATTERN "*.h"

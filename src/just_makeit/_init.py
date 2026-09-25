@@ -21,6 +21,7 @@ from . import _types as T
 from ._docstring import class_import_line
 from ._builtins import overridden_builtin_slots, require_param_names
 from . import _docstring
+from . import _incpath as INC
 from ._docstring import scaffold_doc_block
 
 # gh-981/gh-984: the combined-C-library wiring — emitter and detector — lives
@@ -73,7 +74,7 @@ def append_component_body(
     reached from `apply`'s replay of a template's methods and properties,
     which runs these verbs on each instance in the temp tree.
     """
-    header = root / "native" / "inc" / component / f"{component}_core.h"
+    header = INC.core_h(root, component)
     if C.core_family(C.load(root), component) is not None:
         return header
     if not header_only:
@@ -86,7 +87,7 @@ def append_component_body(
 
     from ._context._state import staticize
 
-    path = root / "native" / "inc" / component / f"{component}_core.h"
+    path = INC.core_h(root, component)
     text = path.read_text(encoding="utf-8")
     body = staticize(stub if stub.endswith("\n") else stub + "\n")
     marker = "#ifdef __cplusplus"
@@ -689,24 +690,29 @@ def _inject_decls_into_core_h(
     return True
 
 
-def _dep_header_includes(inc_root: Path, deps: "list[str]") -> "list[str]":
+def _dep_header_includes(root: Path, deps: "list[str]") -> "list[str]":
     """``#include "<dep>/<dep>_core.h"`` for each dep whose header exists.
 
     A ``depends_on`` entry may name a component (``lfsr`` → ``lfsr/lfsr_core.h``,
     which exists) or a bare OBJECT-library link target (``lfsr_core`` →
     ``lfsr_core/lfsr_core_core.h``, which does **not** exist). Only emit an
     include that actually resolves, so a link-only dependency never injects a
-    broken ``#include`` (gh-170 follow-up). *inc_root* is ``native/inc``.
+    broken ``#include`` (gh-170 follow-up). *root* is the project root.
     """
     out: list[str] = []
     for d in deps:
-        if (inc_root / d / f"{d}_core.h").exists():
-            out.append(f'#include "{d}/{d}_core.h"')
+        if INC.core_h(root, d).exists():
+            out.append(f'#include "{INC.core_include(d, root)}"')
     return out
 
 
 def _inject_includes_into_core_h(
-    path: Path, comp: str, deps: "list[str]", extra: "tuple | list" = ()
+    path: Path,
+    comp: str,
+    deps: "list[str]",
+    extra: "tuple | list" = (),
+    *,
+    root: Path,
 ) -> bool:
     """Add a ``#include "<dep>/<dep>_core.h"`` per *deps* entry, idempotently.
 
@@ -725,9 +731,9 @@ def _inject_includes_into_core_h(
     if not path.exists() or not (deps or extra):
         return False
     text = original = path.read_text(encoding="utf-8")
-    inc_root = path.parent.parent
-    wanted = _dep_header_includes(inc_root, deps) + [
-        f'#include "{h}"' for h in extra if (inc_root / h).exists()
+    # *extra* is spelled as the author wrote it: relative to the -I directory.
+    wanted = _dep_header_includes(root, deps) + [
+        f'#include "{h}"' for h in extra if (INC.inc_dir(root) / h).exists()
     ]
     missing = [inc for inc in wanted if inc not in text]
     if not missing:
@@ -898,7 +904,7 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     if not umbrella.exists():
         return False
     text = umbrella.read_text(encoding="utf-8")
-    include_line = f'#include "{comp}/{comp}_core.h"\n'
+    include_line = f'#include "{INC.core_include(comp, umbrella)}"\n'
     if include_line in text:
         return False
     last_endif = text.rfind("#endif")
@@ -1435,16 +1441,15 @@ def run(
     # so it sits cleanly after the (possibly empty) perf include.
     # gh-432: method params' `header` keys (a capsule param's foreign type)
     # are included the same way when the header exists.
-    _inc_root = root / "native" / "inc"
     ctx["depends_includes"] = "".join(
         "\n" + inc
-        for inc in _dep_header_includes(_inc_root, C.dep_names(depends_on))
+        for inc in _dep_header_includes(root, C.dep_names(depends_on))
         + [
             f'#include "{h}"'
             for h in _param_headers_at_create(
                 cfg, ctx["component"], init_params
             )
-            if (_inc_root / h).exists()
+            if (INC.inc_dir(root) / h).exists()
         ]
     )
 
@@ -1510,10 +1515,10 @@ def run(
         cfg.setdefault("project", {})["perf"] = "true"
 
     if perf:
-        perf_h = root / "native" / "inc" / "jm_perf.h"
+        perf_h = INC.path(root, "jm_perf.h")
         if not perf_h.exists():
             _write(perf_h, r(R.JM_PERF_H))
-        simd_h = root / "native" / "inc" / "jm_simd.h"
+        simd_h = INC.path(root, "jm_simd.h")
         if not simd_h.exists():
             _write(simd_h, R.JM_SIMD_H)
 
@@ -1539,7 +1544,7 @@ def run(
 
     # C headers. Object creation is create-only (the verb errors on a
     # duplicate name), so the sacred files are written fresh — never spliced.
-    core_h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+    core_h_path = INC.core_h(root, comp)
     _write(
         core_h_path,
         r(core_h_tmpl),
@@ -1548,7 +1553,7 @@ def run(
     if impl_body is not None and not no_step:
         from . import _impl as I
 
-        h_path = root / "native" / "inc" / comp / f"{comp}_core.h"
+        h_path = INC.core_h(root, comp)
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(h_text, f"{comp}_step", impl_body)
         _textio.write_text(h_path, h_text)
@@ -1583,7 +1588,7 @@ def run(
     # stale. `_apply._reconcile_procglobal_headers` is what makes it true.
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
-        _write(root / "native" / "inc" / _procglobal.header_name(comp), _pg_h)
+        _write(INC.path(root, _procglobal.header_name(comp)), _pg_h)
 
     build = C.build_system(cfg)
 
@@ -1610,7 +1615,8 @@ def run(
     # it, so a project may extend it.
     jm_test_h = root / "native" / "tests" / "jm_test.h"
     if not jm_test_h.exists():
-        _write(jm_test_h, R.JM_TEST_H)
+        # Rendered: its #include of clib_common.h is spelled by the layout.
+        _write(jm_test_h, r(R.JM_TEST_H))
 
     # C benchmark
     _write(
@@ -1667,7 +1673,7 @@ def run(
             )
 
         # Write or update the umbrella header
-        umbrella = root / "native" / "inc" / f"{pkg}.h"
+        umbrella = INC.path(root, f"{pkg}.h")
         if not umbrella.exists():
             _write(umbrella, R.render(R.UMBRELLA_H, ctx))
         if insert_umbrella_include(umbrella, comp):
