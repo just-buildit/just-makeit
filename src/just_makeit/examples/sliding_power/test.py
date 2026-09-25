@@ -44,7 +44,7 @@ def run(root: Path) -> None:
     assert (INC.header_root(dest) / "jm_perf.h").exists(), "jm_perf.h missing"
 
     # Patch step(): replace stub (const + placeholder body) with real implementation.
-    # The stub is: JM_FORCEINLINE JM_HOT float\npower_est_step(const ...) { ... }
+    # The stub is: JM_FORCEINLINE JM_HOT float\nmy_power_power_est_step(const ...) { ... }
     import re as _re
 
     header = INC.header_root(dest) / "power_est" / "power_est_core.h"

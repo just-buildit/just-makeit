@@ -144,7 +144,7 @@ STEPS = pathlib.Path(__file__).parent
 header = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
 step_impl = (STEPS / "03_step.c").read_text(encoding="utf-8")
 step_re = re.compile(
-    r"static inline float\s*\nfilter_step"
+    r"static inline float\s*\nva_filter_filter_step"
     r"\(const va_filter_filter_state_t \*state, float x\)\n\{.*?\}",
     re.DOTALL,
 )
@@ -167,7 +167,7 @@ core = pathlib.Path("native/src/filter/filter_core.c")
 core_text = core.read_text(encoding="utf-8")
 current_gain_re = re.compile(
     r"/\* <<IMPLEMENT: current_gain >> \*/\n"
-    r"double\s*\nfilter_current_gain\(va_filter_filter_state_t \*state\)\n\{.*?\}",
+    r"double\s*\nva_filter_filter_current_gain\(va_filter_filter_state_t \*state\)\n\{.*?\}",
     re.DOTALL,
 )
 current_gain_impl = (

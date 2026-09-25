@@ -2938,7 +2938,12 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             parts.append("")
 
     for fn in functions:
-        parts.append(_fn_stub(fn, fn_doc_blocks.get(fn["name"])))
+        # gh-1591: the header documents the C SYMBOL -- `<p>_<fn>` under a
+        # c_prefix -- so the block is found by the stem; keyed by the bare
+        # name, every module function's Doxygen fell off the stub in silence.
+        parts.append(
+            _fn_stub(fn, fn_doc_blocks.get(CSYM.stem(cfg, fn["name"])))
+        )
         parts.append("")
 
     # strip trailing blank line

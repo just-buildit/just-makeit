@@ -638,10 +638,15 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
         )
         sys.exit(1)
 
-    if parsed["component"] != component:
+    # The header spells its symbols with the SYMBOL stem (gh-1591): under a
+    # c_prefix, `running_stats`'s are `my_stats_running_stats_*`. Comparing
+    # against the bare name refused every prefixed project's own header.
+    want = CSYM.stem(root, component)
+    if parsed["component"] != want:
         print(
             f"error: header declares component '{parsed['component']}',"
-            f" but you asked for '{component}'.",
+            f" but you asked for '{component}'"
+            + (f" (symbols `{want}_*`)." if want != component else "."),
             file=sys.stderr,
         )
         sys.exit(1)
