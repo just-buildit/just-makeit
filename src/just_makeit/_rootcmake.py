@@ -55,34 +55,94 @@ class Call(NamedTuple):
     args: "tuple[str, ...]"
 
 
-_BRACKET_COMMENT = re.compile(r"#\[(=*)\[.*?\]\1\]", re.S)
+_OPEN_BRACKET = re.compile(r"\[(=*)\[")
 _COMMAND = re.compile(r"(?<![\w$<{:])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
-_WORD = re.compile(r'"(?:[^"\\]|\\.)*"|[^\s()"]+')
+_WORD = re.compile(r'\[(=*)\[.*?\]\1\]|"(?:[^"\\]|\\.)*"|[^\s()"]+', re.S)
+
+
+def _literal_end(s: str, i: int) -> Optional[int]:
+    """The index just past a quoted or bracket argument starting at *i*.
+
+    ``None`` when neither starts there. gh-1604: this is the ONE answer to
+    "where does this literal end", asked by :func:`_strip_comments` and by
+    :func:`calls`' parenthesis matching alike. Both kinds may span lines, so
+    the question is asked of the whole text, never a line at a time -- the
+    per-line reset is what took a ``#`` inside either for a comment and
+    dropped the rest of that line, so a template change there compared
+    equal and ``apply`` never delivered it. An unterminated literal runs to
+    the end of the text, as CMake would reject it anyway.
+
+    >>> _literal_end('"a # b" x', 0)
+    7
+    >>> _literal_end('[==[ ]] ]==] x', 0)
+    12
+    >>> _literal_end('[x]', 0) is None
+    True
+    """
+    if s.startswith('"', i):
+        j = i + 1
+        while j < len(s) and s[j] != '"':
+            j += 2 if s[j] == "\\" else 1
+        return min(j + 1, len(s))
+    m = _OPEN_BRACKET.match(s, i)
+    if not m:
+        return None
+    close = "]" + m.group(1) + "]"
+    end = s.find(close, m.end())
+    return len(s) if end < 0 else end + len(close)
 
 
 def _strip_comments(text: str) -> str:
-    """Drop ``#`` comments, keeping a ``#`` that sits inside a quoted string."""
-    text = _BRACKET_COMMENT.sub(" ", text)
+    """Drop line and bracket ``#`` comments, keeping any ``#`` inside a
+    quoted or bracket argument (gh-1604).
+
+    >>> _strip_comments('a("x # y") # z')
+    'a("x # y") '
+    >>> _strip_comments('a([[\\n# kept\\n]]) #[[ gone\\n]] b')
+    'a([[\\n# kept\\n]])   b'
+    """
     out = []
-    for line in text.splitlines():
-        inq = False
-        for i, c in enumerate(line):
-            if c == '"' and (i == 0 or line[i - 1] != "\\"):
-                inq = not inq
-            elif c == "#" and not inq:
-                line = line[:i]
-                break
-        out.append(line)
-    return "\n".join(out)
+    i = 0
+    while i < len(text):
+        end = _literal_end(text, i)
+        if end is not None:
+            out.append(text[i:end])
+            i = end
+            continue
+        if text[i] == "#":
+            end = _literal_end(text, i + 1)
+            if end is not None and text.startswith("[", i + 1):
+                out.append(" ")
+                i = end
+                continue
+            nl = text.find("\n", i)
+            i = len(text) if nl < 0 else nl
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _unwrap(word: str) -> str:
+    """A word's value: a quoted or bracket argument without its delimiters."""
+    if word.startswith('"'):
+        return word[1:-1]
+    m = _OPEN_BRACKET.match(word)
+    if m:
+        return word[m.end() : -m.end()]
+    return word
 
 
 def calls(text: str) -> "list[Call]":
     """Every command invocation in *text*, in file order.
 
     Comments are removed first, then each ``name(`` is matched to its closing
-    parenthesis by depth (quoted strings skipped), so an invocation spread
-    over any number of lines is one :class:`Call` -- which is what makes the
-    rows below indifferent to how a formatter wraps it.
+    parenthesis by depth, skipping quoted and bracket arguments (a
+    parenthesis inside either is text, not grouping), so an invocation
+    spread over any number of lines is one :class:`Call` -- which is what
+    makes the rows below indifferent to how a formatter wraps it. A bracket
+    argument is one word, so a change anywhere inside ``install(CODE [[ ...
+    ]])`` is a change to that call (gh-1604).
     """
     s = _strip_comments(text)
     found: list[Call] = []
@@ -91,17 +151,16 @@ def calls(text: str) -> "list[Call]":
         m = _COMMAND.search(s, pos)
         if not m:
             return found
-        j, depth, inq = m.end(), 1, False
+        j, depth = m.end(), 1
         while j < len(s) and depth:
-            c = s[j]
-            if c == '"' and s[j - 1] != "\\":
-                inq = not inq
-            elif not inq:
-                depth += {"(": 1, ")": -1}.get(c, 0)
+            end = _literal_end(s, j)
+            if end is not None:
+                j = end
+                continue
+            depth += {"(": 1, ")": -1}.get(s[j], 0)
             j += 1
         words = tuple(
-            w[1:-1] if w.startswith('"') else w
-            for w in _WORD.findall(s[m.end() : j - 1])
+            _unwrap(w.group(0)) for w in _WORD.finditer(s[m.end() : j - 1])
         )
         found.append(Call(m.group(1).lower(), words))
         pos = j
