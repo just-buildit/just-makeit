@@ -77,7 +77,10 @@ fi
 
 # The documented build and install of a CMake project.
 install_project() {
-    cmake -S "$1" -B "$1/build" -DBUILD_PYTHON=OFF "${CONFIGURE_PREFIX[@]}"
+    # ${a[@]+"${a[@]}"}: macOS's bash 3.2 calls an EMPTY array unbound under
+    # `set -u`, which is exactly the default-prefix case.
+    cmake -S "$1" -B "$1/build" -DBUILD_PYTHON=OFF \
+        ${CONFIGURE_PREFIX[@]+"${CONFIGURE_PREFIX[@]}"}
     cmake --build "$1/build"
     $SUDO cmake --install "$1/build"
     # A new shared library under /usr/local/lib is found once the loader's
