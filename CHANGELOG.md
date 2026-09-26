@@ -1,5 +1,113 @@
 ## [Unreleased]
 
+## [0.92.0] — 2026-09-25
+
+### Breaking
+
+- **`jm new` prefixes a new project's C symbols with its package name**
+    (gh-1591). `jm new dsp` now writes `[project] c_prefix = "dsp"`, so
+    `fir_create` is `dsp_fir_create`, `fir_state_t` is `dsp_fir_state_t` and
+    the guard is `DSP_FIR_CORE_H` from the first file: two installed jm
+    packages that share a component name link and include together.
+    `--c-prefix P` picks a shorter one; `--no-c-prefix` keeps the bare
+    names. **Existing projects are untouched** -- no key, same names, until
+    you set one and run `jm upgrade`. Breaking for a workflow that scripts
+    `jm new` and then writes C against the derived names (the bundled
+    examples did): that C now calls `dsp_<comp>_*`. The Python names, file
+    names and anything you named yourself (`fn =`, `create_fn`, your
+    macros) do not change. `jm script` of a project without a key now
+    replays it with `--no-c-prefix`.
+
+### Added
+
+- **`[project] c_prefix`: two installed packages may share a component
+    name** (gh-1591, phase 2). Set with `jm new --c-prefix dp`, it prefixes
+    every C symbol jm derives -- `fir_create` becomes `dp_fir_create`, the
+    `fir_state_t` type `dp_fir_state_t`, the `FIR_CORE_H` guard
+    `DP_FIR_CORE_H`, a module function `mix` becomes `dp_mix` in C -- and
+    nothing you named: a manifest `fn =` / `create_fn` / `type_name`, your
+    own macros in the sacred header, the Python names, the file names. A
+    name that already starts with the prefix keeps it once (`dp_tlm` stays
+    `dp_tlm_create`). `apply` refuses two names that derive one symbol, and
+    refuses the key on an existing project whose C still spells the
+    unprefixed names, naming each file, until `jm upgrade` respells it.
+    Without the key nothing changes.
+
+- **`jm upgrade` moves an existing project onto its `c_prefix`** (gh-1591,
+    phase 3). Set `[project] c_prefix`, run `jm upgrade`, then `jm apply`:
+    every C symbol jm derives is respelled in your own C -- the sacred
+    `_core.h` / `_core.c`, module function sources, tests, benchmarks,
+    `native/examples/` -- in code only and as whole, case-sensitive
+    identifiers, so comments, strings, your own macros and nested projects
+    are left as written. It prints each file it changed and the rename table
+    as `old<TAB>new` lines, for code jm does not own to follow, and a second
+    run changes nothing. A prefix changed or removed after it was applied is
+    refused, not migrated (gh-1650).
+
+### Changed
+
+- **Internal: every derived C symbol takes its stem from `_csym`** (gh-1591,
+    phase 1b, gh-1633). The method and property families, the state
+    helpers, the destructor, create-error and serializable glue, module
+    functions, views, benches, docs lookups and status messages now all name
+    a component's C identifiers through one stem, threaded as a required
+    keyword so a missed caller fails loudly. Generated projects are
+    byte-identical. The hand-spelled-symbol ratchet is strict at zero, and a
+    new test renders a broad fixture under a stem override and reads the C:
+    phase 2's `[project] c_prefix` is now a change to `_csym.stem` alone.
+
+### Fixed
+
+- **`jm upgrade`'s `_Complex` respell reaches the bodies in your manifest**
+    (gh-1647). An object's `impl` / `create_impl` / `reset_impl` /
+    `destroy_impl` body is C that jm renders into the header, and the
+    upgrade respelled only the header: the next `jm apply` put
+    the old spelling back ("the manifest is the source of truth --
+    overwriting the header"), and every later upgrade re-reported the same
+    file. The bodies are now respelled in place, code only, through the same
+    walker the `c_prefix` respell uses, so upgrade and apply converge.
+
+- **A `--class-name` object keeps its name through `jm apply`** (gh-1651).
+    On a standalone object whose header is documented, `apply` re-rendered
+    the binding under the default name -- its `tp_name`, its
+    `PyModule_AddObject` and its `.pyi` class -- while `__init__.py` still
+    imported the declared one, so the package did not import; `status --check`
+    agreed with the replay that produced it. A fresh `--class-name` scaffold
+    was also STALE against itself. The class name now comes from one place
+    (`_config.resolved_class_name`, seeded in every render context), and jm's
+    own `Reset <Class> ...` boilerplate is recognised under a declared class
+    name. For a module object with a `class_name`, `reset`'s docstring is
+    now jm's generic one rather than the header's unedited template line.
+
+- **`jm upgrade` respells the C your manifest holds, and a `JM_DEFINE_STEPS`
+    stem** (gh-1653). Moving onto a `c_prefix` left three kinds of author C
+    spelling the old names, and each broke the build the next time jm
+    rendered from the manifest: an `*_impl` body or a `type` naming a
+    sibling's derived type (`lo_state_t *`), an `*_impl_file`'s `::fn` in a
+    file the upgrade had just renamed it in (`apply` could no longer find the
+    body), and `JM_DEFINE_STEPS (fir, ...)`, whose bare stem is not itself a
+    derived name, together with the `fir_step_batch` it pastes. Each is now
+    respelled in place with the same map and code-only matcher as the C
+    files. The file stem, author-named keys (`fn`, `create_fn`), comments
+    and macros are untouched, and `apply`'s existing-tree refusal names the
+    same strings. `replace = {}` tables are not yet covered (gh-1656).
+
+- **A `c_prefix` whose derived name your C already declares is refused**
+    (gh-1657). With `c_prefix = "dp"`, a component `syncword`'s method `find`
+    derives `dp_syncword_find`; a project that already wrote its own
+    `dp_syncword_find` got two different functions under one name, and
+    `jm upgrade` then respelled a wrapper's call to `syncword_find` into a
+    call to ITSELF -- as a plain `.c` function that compiles, silently, into
+    unbounded recursion. `apply` and `upgrade` now refuse it before writing
+    anything, naming the file and line, the name, and the component and
+    method (or module function) it derives from. The name as spelled TODAY
+    counts too (gh-1661): a file's own `static crc16` beside a module
+    function `crc16` would be renamed to `dp_crc16` with it, and the next
+    `apply` would refuse the tree the upgrade left. A declaration in the
+    files jm itself declares the name in does not count, so a tree an older
+    jm partly moved onto the prefix still upgrades, and a project with no
+    `c_prefix` is unaffected.
+
 ## [0.91.0] — 2026-09-25
 
 ### Added
