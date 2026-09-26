@@ -468,6 +468,9 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
     clash = [] if errors else CSYM.collisions(project_root, temp_root, cfg)
     if CSYM.prefix(cfg) is not None and not errors:
         errors += CSYM.duplicates(temp_root, cfg)
+        # gh-1671: an author-named key naming a symbol the prefix renames --
+        # `jm upgrade` will not respell it, so the author must.
+        errors += CSYM.author_named(project_root, cfg, temp_root)
         # A collision alone, without the unrenamed list: `jm upgrade` is what
         # that message points to, and on a colliding tree it must not run.
         # Otherwise gh-1653's list: the same strings `jm upgrade` respells --

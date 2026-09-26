@@ -199,9 +199,14 @@ getter you declare to document it (gh-1670). It is rewritten:
     sibling's `lo_state_t *` becomes `dp_lo_state_t *` -- and every C
     expression jm splices into the binding (gh-1666): a module function's
     `out_size` calling a sibling (`kaiser_num_taps(...) | 1`), a property's
-    `expr`, a method's `count_default`, an object's `init_post_parse`. The
-    full set is `_csym.MANIFEST_C_KEYS`, and `apply`'s refusal reads the
-    same one. So is a `replace = { "<old>" = "<new>" }` table (gh-1656),
+    `expr`, a method's `count_default`, an object's `init_post_parse`, an
+    init-param's `default_raw`. The full set is `_csym.MANIFEST_C_KEYS`,
+    and `apply`'s refusal reads the same one. A `default` is C too
+    (gh-1671) -- a state field's `default = "sizeof(lo_state_t)"`, a
+    scalar parameter's -- and moves, except on an entry that names an enum
+    (an `enum` key, or a `type` of `enum:<name>` / `string_enum:...`),
+    whose default is a choice string and, like the enum `type` itself, is
+    never touched. A `replace = { "<old>" = "<new>" }` table moves too (gh-1656),
     inline or as `[<comp>.replace]`: each value is C spliced into the
     `impl` body, and each key is matched against that body, so it moves
     with it -- unless the body is lifted from an `impl_file` the upgrade
@@ -210,7 +215,11 @@ getter you declare to document it (gh-1670). It is rewritten:
     comments are kept.
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
-    `create_fn`, ...) are never touched;
+    `create_fn`, ... -- `_csym.AUTHOR_NAMED_KEYS`) are never touched; when
+    one names a symbol the prefix renames -- a handle's
+    `create_fn = "lo_create"` over component `lo` -- `apply` and `upgrade`
+    refuse before writing anything (gh-1671), naming the file, the key and
+    the new spelling to write there yourself;
 - only where the name **refers** to jm's symbol (gh-1668): a call, `&fir_bits`,
     a function pointer, a type use, the function's own declaration. A struct
     member, a member access (`.fir_bits`, `->fir_bits`), a designated
