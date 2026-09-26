@@ -201,8 +201,13 @@ getter you declare to document it (gh-1670). It is rewritten:
     `out_size` calling a sibling (`kaiser_num_taps(...) | 1`), a property's
     `expr`, a method's `count_default`, an object's `init_post_parse`. The
     full set is `_csym.MANIFEST_C_KEYS`, and `apply`'s refusal reads the
-    same one. Each value is replaced where it stands, so the file's layout
-    and comments are kept.
+    same one. So is a `replace = { "<old>" = "<new>" }` table (gh-1656),
+    inline or as `[<comp>.replace]`: each value is C spliced into the
+    `impl` body, and each key is matched against that body, so it moves
+    with it -- unless the body is lifted from an `impl_file` the upgrade
+    does not respell, where the key keeps the spelling that file still
+    has. Each value is replaced where it stands, so the file's layout and
+    comments are kept.
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
     `create_fn`, ...) are never touched;
@@ -229,9 +234,8 @@ jm upgrade | awk -F'\t' 'NF == 2'     # the rename table, as a TSV
 ```
 
 It will NOT touch: the body of your own macros, another language's FFI declarations (a
-Rust `extern "C"` block), C in documentation code fences, a nested project,
-or a manifest `replace = { ... }` table (gh-1656). Respell those from the
-table.
+Rust `extern "C"` block), C in documentation code fences, or a nested
+project. Respell those from the table.
 
 Changing a prefix that is already applied (`a` to `b`), or removing the key
 from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it
