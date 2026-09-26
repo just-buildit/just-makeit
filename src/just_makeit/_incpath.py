@@ -196,6 +196,42 @@ def rel_glob(pattern: str) -> str:
     return f"{INC_DIR}/{star}{pattern}"
 
 
+def layout_free(rel_posix: str, owner: Owner) -> str:
+    """*rel_posix* (project-relative) with the header layout taken out: a
+    header's path below the ``-I`` root with any leading ``<pkg>/`` dropped,
+    anything else unchanged. It names one file the same way in both
+    layouts, so a replay rendered at one schema can be compared with a tree
+    already moved to the other -- a tree whose headers sit under
+    ``<pkg>/`` while its manifest still says an older schema (gh-1657).
+
+    >>> o = {"project": {"name": "p"}}
+    >>> layout_free("native/inc/p/fir/fir_core.h", o)
+    'inc:fir/fir_core.h'
+    >>> layout_free("native/inc/fir/fir_core.h", o)
+    'inc:fir/fir_core.h'
+    >>> layout_free("native/src/fir/fir_core.c", o)
+    'native/src/fir/fir_core.c'
+
+    An INSTALLED copy is the same header too: the ``-I`` root installs as
+    ``<prefix>/include/<pkg>/``, and a prefix inside the project (``cmake
+    --install build --prefix install``) holds jm's own headers again.
+
+    >>> layout_free("install/include/p/fir/fir_core.h", o)
+    'inc:fir/fir_core.h'
+    """
+    head = INC_DIR + "/"
+    pkg = _pkg(owner) + "/"
+    if rel_posix.startswith(head):
+        rest = rel_posix[len(head) :]
+        return "inc:" + (rest[len(pkg) :] if rest.startswith(pkg) else rest)
+    installed = "include/" + pkg
+    at = rel_posix.find("/" + installed)
+    if rel_posix.startswith(installed) or at >= 0:
+        cut = len(installed) if at < 0 else at + 1 + len(installed)
+        return "inc:" + rel_posix[cut:]
+    return rel_posix
+
+
 def inc_dir(root: Path) -> Path:
     """The ``-I`` directory of the project at *root*."""
     return Path(root) / INC_DIR

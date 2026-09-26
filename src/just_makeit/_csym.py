@@ -366,7 +366,24 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
             continue
         text = f.read_text(encoding="utf-8", errors="replace")
         for n in declared(text) & new:
-            owning.setdefault(n, set()).add(f.relative_to(tree).as_posix())
+            # Keyed without the header layout: upgrade asks before it moves
+            # the headers, so the replay and the tree may disagree on it.
+            owning.setdefault(n, set()).add(
+                INC.layout_free(f.relative_to(tree).as_posix(), cfg)
+            )
+    # A module function's home is a manifest choice (`inline`,
+    # `functions_in_core`), so the replay shows only where it is NOW; the
+    # tree may still hold jm's own copy where it was. All its homes own it.
+    from . import _config as C
+    from . import _function
+
+    for mod in C.modules(cfg):
+        cname = C.module_paths(mod).cname
+        for f in C.module_functions(cfg, mod):
+            homes = _function.homes(cfg, cname, f["name"])
+            owning.setdefault(stem(cfg, f["name"]), set()).update(
+                INC.layout_free(h, cfg) for h in homes
+            )
     out = []
     # Every C file of the project, not `_author_files`: ownership is the
     # replay's answer, and `_createonly`'s glob for the umbrella
@@ -379,7 +396,7 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
         rel = p.relative_to(root).as_posix()
         text = p.read_text(encoding="utf-8", errors="replace")
         for n in sorted(declared(text) & new):
-            if rel in owning.get(n, set()):
+            if INC.layout_free(rel, cfg) in owning.get(n, set()):
                 continue
             out.append(
                 f"{rel}:{_line_of(text, n)} already declares `{n}`, the name"

@@ -168,6 +168,23 @@ def _inject_inline_into_core_h(
     print(f"  update  {path}")
 
 
+def homes(cfg: dict, cname: str, fn_name: str) -> "tuple[str, str, str]":
+    """Every file a module function's C can live in, project-relative: its
+    own ``<fn>.c``, the module's ``_core.c`` (``functions_in_core``, gh-247)
+    and the module header (``inline``). Which one holds it is a manifest
+    choice that can change, so all three are the function's (gh-1657).
+
+    >>> homes({"project": {"name": "p", "schema": "8"}}, "m", "calc")
+    ('native/src/m/calc.c', 'native/src/m/m_core.c', 'native/inc/p/m/m_core.h')
+    """
+    src = f"native/src/{cname}"
+    return (
+        f"{src}/{fn_name}.c",
+        f"{src}/{cname}_core.c",
+        INC.core_rel(cname, cfg),
+    )
+
+
 def run(
     root: Path,
     fn_name: str,
@@ -307,10 +324,11 @@ def run(
     c_name = CSYM.stem(cfg, fn_name)
     csym = CSYM.stem(cfg, cname)
 
-    fn_c = root / "native" / "src" / cname / f"{fn_name}.c"
+    fn_rel, core_rel, _ = homes(cfg, cname, fn_name)
+    fn_c = root / fn_rel
     core_h = INC.core_h(root, cname)
 
-    core_c = root / "native" / "src" / cname / f"{cname}_core.c"
+    core_c = root / core_rel
     # gh-247: a module may opt to keep all its free functions in one TU
     # (<module>_core.c) rather than one .c per function.
     in_core = C.functions_in_core(cfg, module)
