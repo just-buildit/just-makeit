@@ -107,6 +107,7 @@ the table would leave a borrow that declares none swallowing Ctrl-C.
 from __future__ import annotations
 
 from . import _config as C
+from . import _csym as CSYM
 from ._context._diagnostics import format_raise_c, placeholders
 
 
@@ -500,7 +501,7 @@ def _property_read(prop: dict, csym: str) -> str:
         return f"({prop['expr']})"
     if prop.get("field"):
         return f"self->handle->{prop['field']}"
-    return f"{csym}_get_{prop.get('name', '')}(self->handle)"
+    return f"{CSYM.property_getter(csym, prop.get('name', ''))}(self->handle)"
 
 
 def message_slots(

@@ -608,7 +608,7 @@ def _remove_property(
         f"\n  note: the '{name}' field remains in {csym}_state_t "
         f"({obj}_core.h) — delete it by hand."
         if is_field
-        else f"\n  note: {csym}_get_{name}()/{csym}_set_{name}() remain in "
+        else f"\n  note: {CSYM.property_getter(csym, name)}()/{csym}_set_{name}() remain in "
         f"{obj}_core.c — delete them by hand."
     )
     print(f"Done!  Property '{name}' removed.{note}")

@@ -2745,7 +2745,7 @@ def make_state_ctx(
             f" * @brief Get current {name}.\n"
             f" * @param state  Must be non-NULL.\n"
             f" */\n"
-            f"{ct} {csym}_get_{name}"
+            f"{ct} {CSYM.property_getter(csym, name)}"
             f"(const {csym}_state_t *state);\n"
             f"\n"
             f"/**\n"
@@ -2763,7 +2763,7 @@ def make_state_ctx(
             f" * @param state  Must be non-NULL.\n"
             f" * @param dest   Output buffer of length {size}.\n"
             f" */\n"
-            f"void {csym}_get_{name}"
+            f"void {CSYM.property_getter(csym, name)}"
             f"(const {csym}_state_t *state, {elem_ct} *dest);\n"
             f"\n"
             f"/**\n"
@@ -2771,7 +2771,7 @@ def make_state_ctx(
             f" * @param state  Must be non-NULL.\n"
             f" * @return Pointer valid until {csym}_destroy() is called.\n"
             f" */\n"
-            f"const {elem_ct} *{csym}_get_{name}_view"
+            f"const {elem_ct} *{CSYM.property_getter(csym, name)}_view"
             f"(const {csym}_state_t *state);\n"
             f"\n"
             f"/**\n"
@@ -2821,7 +2821,7 @@ def make_state_ctx(
     for name, ct, _ in scalar_vars:
         impl_parts.append(
             f"{ct}\n"
-            f"{csym}_get_{name}"
+            f"{CSYM.property_getter(csym, name)}"
             f"(const {csym}_state_t *state)\n"
             f"{{\n"
             f"    return state->{name};\n"
@@ -2837,7 +2837,7 @@ def make_state_ctx(
     for name, elem_ct, size in array_info:
         impl_parts.append(
             f"void\n"
-            f"{csym}_get_{name}"
+            f"{CSYM.property_getter(csym, name)}"
             f"(const {csym}_state_t *state, {elem_ct} *dest)\n"
             f"{{\n"
             f"    memcpy(dest, state->{name},"
@@ -2845,7 +2845,7 @@ def make_state_ctx(
             f"}}\n"
             f"\n"
             f"const {elem_ct} *\n"
-            f"{csym}_get_{name}_view"
+            f"{CSYM.property_getter(csym, name)}_view"
             f"(const {csym}_state_t *state)\n"
             f"{{\n"
             f"    return state->{name};\n"
@@ -2980,7 +2980,9 @@ def make_state_ctx(
     method_parts = []
     for name, ct, _ in scalar_vars:
         meta = _CTYPE_META[ct]
-        to_py = meta["to_py"](f"{csym}_get_{name}(self->handle)")
+        to_py = meta["to_py"](
+            f"{CSYM.property_getter(csym, name)}(self->handle)"
+        )
         getter = (
             f"static PyObject *\n"
             f"{Component}_get_{name}(\n"
@@ -3035,7 +3037,7 @@ def make_state_ctx(
             f"    npy_intp dims[] = {{{size}}};\n"
             f"    PyObject *arr = PyArray_SimpleNew(1, dims, {npy_enum});\n"
             f"    if (!arr) return NULL;\n"
-            f"    {csym}_get_{name}(self->handle,\n"
+            f"    {CSYM.property_getter(csym, name)}(self->handle,\n"
             f"        {ptr_cast}PyArray_DATA((PyArrayObject *)arr));\n"
             f"    return arr;\n"
             f"}}"
@@ -3059,7 +3061,7 @@ def make_state_ctx(
             f"{{\n"
             f"{guard}"
             + _borrow_view_c(
-                f"{csym}_get_{name}_view(self->handle)",
+                f"{CSYM.property_getter(csym, name)}_view(self->handle)",
                 size,
                 npy_enum,
                 writeable=False,
@@ -3310,10 +3312,12 @@ def make_state_ctx(
         # one is the peer-drift this repo keeps paying for.
         cgs_lines.append(f"    /* {name}: getter / setter */")
         if _assert_initial:
-            cgs_lines.append(f"    CHECK({csym}_get_{name}(obj) == {dflt});")
+            cgs_lines.append(
+                f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {dflt});"
+            )
         cgs_lines += [
             f"    {csym}_set_{name}(obj, {sv});",
-            f"    CHECK({csym}_get_{name}(obj) == {sv});",
+            f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {sv});",
             "",
         ]
     for name, elem_ct, size in array_info:
@@ -3324,7 +3328,7 @@ def make_state_ctx(
             f"        {elem_ct} src[{size}], dst[{size}];",
             f"        src[0] = {sv};",
             f"        {csym}_set_{name}(obj, src);",
-            f"        {csym}_get_{name}(obj, dst);",
+            f"        {CSYM.property_getter(csym, name)}(obj, dst);",
             f"        CHECK(dst[0] == {sv});",
             "    }",
             "",
@@ -3347,13 +3351,15 @@ def make_state_ctx(
         ]
     rst_lines.append(f"    {csym}_reset(obj);")
     for name, _, dflt in scalar_vars:
-        rst_lines.append(f"    CHECK({csym}_get_{name}(obj) == {dflt});")
+        rst_lines.append(
+            f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {dflt});"
+        )
     for name, elem_ct, size in array_info:
         zero = _CTYPE_META[elem_ct]["zero"]
         rst_lines += [
             "    {",
             f"        {elem_ct} buf[{size}];",
-            f"        {csym}_get_{name}(obj, buf);",
+            f"        {CSYM.property_getter(csym, name)}(obj, buf);",
             f"        CHECK(buf[0] == {zero});",
             "    }",
         ]

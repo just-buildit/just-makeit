@@ -748,8 +748,11 @@ def property_doc(
     >>> property_doc("psd", {"name": "n"}, blocks, csym="psd")
     ('Frame len.', False)
     """
+    from ._csym import property_getter
+
     name = str(prop.get("name") or "")
-    block = (doc_blocks or {}).get(f"{csym}_get_{name}")
+    # The one spelling `_csym.renames` moves with a c_prefix (gh-1670).
+    block = (doc_blocks or {}).get(property_getter(csym, name))
     text = (
         # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
         # returned raw, so the runtime getset kept an indented TOML table's
