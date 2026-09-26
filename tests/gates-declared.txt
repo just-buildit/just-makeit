@@ -87,6 +87,7 @@ test_gh1666_manifest_c_expressions
 test_gh1667_prefixed_doc_lookups
 test_gh1668_reference_classifier
 test_gh1670_property_getter_derived
+test_gh1671_default_and_author_named
 test_gh949_outdated
 test_lint_ssot
 test_one_replay_path

@@ -1104,10 +1104,12 @@ IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
 #: property's `expr` (`_context/_methods`, `_handle`, `_borrow`); a method's
 #: `count_default` (`_context/_methods._count_default_parts`); an object's
 #: `init_post_parse` (`_context/_state`); a handle `create_post`'s `arg`
-#: and its `when` guard (`_handle`). Any of them can call a derived function -- doppler's
+#: and its `when` guard (`_handle`); an init-param's `default_raw`, the key
+#: that says "this default is C, not a literal" (`_context/_state`, gh-1671).
+#: Any of them can call a derived function -- doppler's
 #: ``out_size = "kaiser_num_taps(...) | 1"`` -- or name a derived type.
-#: `default` is not here: an enum param's default is a choice STRING, a bare
-#: word the respell would read as an identifier.
+#: `default` is not here: it is C only on an entry that names no enum
+#: (:func:`c_default_spans`).
 C_EXPR_KEYS = (
     "out_size",
     "expr",
@@ -1115,6 +1117,7 @@ C_EXPR_KEYS = (
     "init_post_parse",
     "arg",
     "when",
+    "default_raw",
 )
 
 #: The manifest keys whose value is a free-form C TYPE -- never checked
@@ -1141,9 +1144,48 @@ C_TYPE_KEYS = (
 #: (:data:`C_EXPR_KEYS`, gh-1666) and the types (:data:`C_TYPE_KEYS`). THE
 #: one set both `jm upgrade`'s respell (:func:`respell_manifest`) and
 #: `apply`'s refusal (:func:`unrenamed_all`) read, so they cannot disagree.
-#: Author-NAMED keys (`fn`, `create_fn`, `out_len_fn`, ...) are not here: jm
-#: never prefixes what the author named.
+#: Author-NAMED keys (:data:`AUTHOR_NAMED_KEYS`) are not here: jm never
+#: prefixes what the author named.
 MANIFEST_C_KEYS = IMPL_KEYS + C_EXPR_KEYS + C_TYPE_KEYS
+
+#: The manifest keys whose value NAMES a C function the author wrote, whole
+#: (``create_fn = "lo_open"``) or after ``path::``. jm never respells these
+#: (gh-1653: the name is the author's, and may be deliberately bare). But a
+#: value that is an OLD name in the rename table -- ``create_fn =
+#: "lo_create"`` naming a sibling's derived constructor, ``out_len_fn =
+#: "ntaps"`` a module function -- names a symbol the prefix removes, so
+#: `apply` and `jm upgrade` REFUSE it, before writing, with the new spelling
+#: to use (:func:`author_named`, gh-1671). Every ``fn`` / ``*_fn`` key of
+#: `_keys`, and a kind property's ``getter`` / ``setter``;
+#: ``tests/test_gh1671_default_and_author_named.py`` holds this to `_keys`.
+AUTHOR_NAMED_KEYS = (
+    "fn",
+    "create_fn",
+    "destroy_fn",
+    "reset_fn",
+    "init_fn",
+    "close_fn",
+    "step_fn",
+    "steps_fn",
+    "real_create_fn",
+    "status_fn",
+    "out_len_fn",
+    "count_fn",
+    "key_fn",
+    "value_fn",
+    "entry_fn",
+    "sink_fn",
+    "getter_fn",
+    "setter_fn",
+    "writable_fn",
+    "bridge_fn",
+    "bridge_error_fn",
+    "from_file_fn",
+    "from_json_fn",
+    "to_json_fn",
+    "getter",
+    "setter",
+)
 
 
 def _toml_string(q: int) -> str:
@@ -1268,17 +1310,98 @@ def unfollowed_bodies(
     }
 
 
+_DEFAULT_VALUE = _manifest_c_value(("default",))
+
+#: What makes an entry's ``default`` a choice STRING rather than C: an
+#: ``enum`` key, or a ``type`` spelled ``enum:<name>`` / ``string_enum:...``
+#: -- the two branches every render site takes (`_render`, `_context/_parse`,
+#: `_handle`, `_composer`, `_context/_state`) before it quotes the default
+#: into a ``const char *`` instead of splicing it in as an initializer.
+_ENUM_ENTRY = re.compile(
+    r"(?<![\w-])(?:enum\s*=|type\s*=\s*[\"'](?:enum|string_enum):)"
+)
+
+
+#: A ``type`` that is an enum SPEC (``enum:<name>``, ``string_enum:a,b``),
+#: not C: its words are choice strings, never respelled (gh-1671).
+_ENUM_SPEC = re.compile(r"\s*(?:enum|string_enum):")
+
+
+def _inline_tables(text: str) -> "list[tuple[int, int]]":
+    """``(open, close)`` of every ``{ ... }`` inline table in *text*, outer
+    ones included, with braces inside strings ignored."""
+
+    def blank(m: "re.Match") -> str:
+        return m.group(1) + re.sub(r"[^\n]", " ", m.group(2)) + m.group(1)
+
+    mask = TOML_STRING.sub(blank, text)
+    opened, out = [], []
+    for i, ch in enumerate(mask):
+        if ch == "{":
+            opened.append(i)
+        elif ch == "}" and opened:
+            out.append((opened.pop(), i))
+    return out
+
+
+def c_default_spans(text: str) -> "list[tuple[int, int]]":
+    """``(start, end)`` of each ``default`` value in *text* (a manifest or
+    fragment) that is C (gh-1671).
+
+    Read from the render sites, not listed per table: a state field's, a
+    scalar init-param's, method param's, module function param's, handle
+    create-arg's or composer field's ``default`` is spliced into the C as an
+    initializer (``state->n = <default>;``, ``int n = <default>;``) -- so
+    it can name a derived symbol. The one exception is an entry that names
+    an enum (:data:`_ENUM_ENTRY`): its default is the choice STRING, a bare
+    word the respell would otherwise read as an identifier.
+
+    The entry is the inline table the ``default`` sits in, else its table
+    section without the inline tables nested in it.
+
+    >>> t = ('[[lo.state]]\\nname = "n"\\ndefault = "ntaps(3)"\\n'
+    ...      '[[lo.methods]]\\nparams = [{ name = "w", enum = "win",'
+    ...      ' default = "hann" }, { name = "k", default = "ntaps(2)" }]\\n')
+    >>> [t[a:b] for a, b in c_default_spans(t)]
+    ['ntaps(3)', 'ntaps(2)']
+    """
+    tables = _inline_tables(text)
+    out = []
+    for m in _DEFAULT_VALUE.finditer(text):
+        at = m.start()
+        around = [(a, b) for a, b in tables if a < at < b]
+        if around:
+            lo, hi = max(around)
+        else:
+            heads = [h.start() for h in _HEADER.finditer(text, 0, at)]
+            nxt = _HEADER.search(text, at)
+            lo, hi = (
+                (heads[-1] if heads else 0),
+                (nxt.start() if nxt else len(text)),
+            )
+        # The entry's own text, with each inline table nested in it blanked:
+        # a param list's `enum` is not the enclosing table's.
+        entry = list(text[lo:hi])
+        for a, b in tables:
+            if lo < a and b < hi and not (a < at < b):
+                entry[a - lo : b - lo + 1] = " " * (b - a + 1)
+        if not _ENUM_ENTRY.search("".join(entry)):
+            out.append(m.span(4))
+    return out
+
+
 def manifest_c_spans(
     text: str,
     keys: "tuple[str, ...]" = MANIFEST_C_KEYS,
     frozen: "set[str] | frozenset[str]" = frozenset(),
 ) -> "list[tuple[int, int]]":
     """``(start, end)`` of every C-bearing string in *text* (a manifest or
-    fragment), ascending: each *keys* value (:func:`_manifest_c_value`), and
-    every ``replace`` value and key (:func:`replace_pairs`) -- except the
-    keys of a table in *frozen* (:func:`unfollowed_bodies`), whose body did
-    not move. THE reading both the respell (:func:`respell_manifest_c`) and
-    the refusal (:func:`unrenamed_all`) take, so what one rewrites the other
+    fragment), ascending: each *keys* value (:func:`_manifest_c_value`)
+    but an enum spec ``type`` (:data:`_ENUM_SPEC`), each ``default`` that is C (:func:`c_default_spans`, gh-1671), and every
+    ``replace`` value and key (:func:`replace_pairs`) -- except the keys of
+    a table in *frozen* (:func:`unfollowed_bodies`), whose body did not
+    move. THE reading both the respell (:func:`respell_manifest_c`) and the
+    refusal (:func:`unrenamed_all`) take, so what one rewrites the other
     reports.
 
     >>> t = '[lo]\\nimpl = "a;"\\nreplace = { "b" = "c" }\\n'
@@ -1287,7 +1410,12 @@ def manifest_c_spans(
     >>> [t[a:b] for a, b in manifest_c_spans(t, frozen={"lo"})]
     ['a;', 'c']
     """
-    found = {m.span(4) for m in _manifest_c_value(keys).finditer(text)}
+    found = {
+        m.span(4)
+        for m in _manifest_c_value(keys).finditer(text)
+        if not _ENUM_SPEC.match(m.group(4))
+    }
+    found |= set(c_default_spans(text))
     for table, key, value in replace_pairs(text):
         found.add(value)
         if table not in frozen:
@@ -1537,6 +1665,45 @@ def unrenamed_all(root: Path, cfg: dict, tree: Path) -> "dict[str, list[str]]":
     return _unrenamed(
         root, with_macro_names(renames(tree, cfg)), macro_stems(cfg), cfg
     )
+
+
+#: :func:`_manifest_c_value` over every author-named key.
+AUTHOR_NAMED_VALUE = _manifest_c_value(AUTHOR_NAMED_KEYS)
+
+
+def author_named(root: Path, cfg: dict, tree: Path) -> "list[str]":
+    """Why *cfg*'s ``c_prefix`` cannot be applied as the manifest stands:
+    each :data:`AUTHOR_NAMED_KEYS` value (whole, or the name after
+    ``path::``) that is an OLD name in the rename table (gh-1671).
+
+    jm never respells what the author named, so such a key would keep
+    naming a symbol the prefix renames -- a handle's ``create_fn =
+    "lo_create"`` calling a constructor that is now ``zz_lo_create``, which
+    compiles to an implicit declaration or fails to link. Refused rather
+    than respelled: the author says which function they mean. Read over the
+    same map as :func:`unrenamed_all`, by `apply` and first thing in
+    `jm upgrade`, so neither writes.
+    """
+    if prefix(cfg) is None:
+        return []
+    names = with_macro_names(renames(tree, cfg))
+    out = []
+    for p in _manifest_files(root):
+        rel = p.relative_to(root).as_posix()
+        text = p.read_text(encoding="utf-8")
+        for m in AUTHOR_NAMED_VALUE.finditer(text):
+            key, value = m.group(1), m.group(4)
+            name = value.rpartition("::")[2]
+            if name not in names:
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            out.append(
+                f'{rel}:{line}: `{key} = "{value}"` names `{name}`, which'
+                f" [project] c_prefix = {prefix(cfg)!r} renames to"
+                f" `{names[name]}` -- jm never respells a name you wrote,"
+                f" so spell it `{names[name]}` yourself"
+            )
+    return out
 
 
 def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":

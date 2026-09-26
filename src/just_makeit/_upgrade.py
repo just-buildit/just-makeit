@@ -803,8 +803,10 @@ def _report_repairs(root: Path) -> None:
 
 def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
     """Refuse, before ANY step writes, a ``c_prefix`` whose derived names the
-    author's C already declares (gh-1657, :func:`_csym.collisions`), and a
-    prefix changed or removed after the tree was prefixed (gh-1650).
+    author's C already declares (gh-1657, :func:`_csym.collisions`), whose
+    renamed symbols an author-named manifest key still names (gh-1671,
+    :func:`_csym.author_named`), and a prefix changed or removed after the
+    tree was prefixed (gh-1650).
 
     First, not inside :func:`_respell_c_prefix`: a schema migration runs
     before the repairs, so a refusal there would leave a project half
@@ -825,6 +827,9 @@ def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
         clash = CSYM.collisions(root, Path(tmp), cfg)
+        # gh-1671: and an author-named key naming a symbol the prefix
+        # renames, which this upgrade never respells.
+        clash += CSYM.author_named(root, cfg, Path(tmp))
     if clash:
         C._refuse(clash)
 
