@@ -221,7 +221,13 @@ writable = true
 
 Key points:
 
-- `backing` is the symbol prefix and the `<backing>_state_t` it wraps.
+- `backing` is the symbol prefix and the `<backing>_state_t` it wraps. When
+    it names a jm component, the symbols follow that component's C stem, so
+    under `[project] c_prefix = "dp"` a `backing = "lo"` calls `dp_lo_create`
+    and wraps `dp_lo_state_t`; a hand-written core (`ddcr`) is spelled
+    exactly as written. The header path, capsule name and Python function
+    names always use `backing` as written (gh-1685). The same holds for a
+    composer's `backing`.
 - `package` lets the `.so`/`.pyi` build into a *sibling* package directory
     (doppler's `ddc_fn` builds into the `ddc` package so `doppler.ddc` can
     `from .ddc_fn import ddcr_*`). When unset, the module's own path is used.

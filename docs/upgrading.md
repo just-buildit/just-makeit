@@ -219,7 +219,13 @@ getter you declare to document it (gh-1670). It is rewritten:
     one names a symbol the prefix renames -- a handle's
     `create_fn = "lo_create"` over component `lo` -- `apply` and `upgrade`
     refuse before writing anything (gh-1671), naming the file, the key and
-    the new spelling to write there yourself;
+    the new spelling to write there yourself. A capsule or composer
+    module's `backing` is not one of those keys: when it names a jm
+    component, the glue calls that component's API through its prefixed
+    stem (`backing = "lo"` calls `dp_lo_create`), and a `backing` naming a
+    hand-written core is used as written (gh-1685). Its header path,
+    capsule name and Python function names keep the unprefixed name, and
+    `jm status` shows which reading each `backing` took;
 - only where the name **refers** to jm's symbol (gh-1668): a call, `&fir_bits`,
     a function pointer, a type use, the function's own declaration. A struct
     member, a member access (`.fir_bits`, `->fir_bits`), a designated

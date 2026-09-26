@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import _coerce
 from . import _config as C
+from . import _csym as CSYM
 from ._builtins import require_scope_names
 from . import _modplatforms
 from . import _render as R
@@ -92,7 +93,7 @@ def arg_scopes(
     ]
 
 
-def _emit_create(backing: str, init_params: list[tuple]) -> str:
+def _emit_create(backing: str, sym: str, init_params: list[tuple]) -> str:
     names = [p[0] for p in init_params]
     fmt = "".join(_scalar_fmt(p[1]) for p in init_params)
     decls = "".join(f"    {p[1]} {p[0]};\n" for p in init_params)
@@ -112,18 +113,18 @@ _fn_{backing}_create(PyObject *mod, PyObject *args)
     _wrap_t *w = (_wrap_t *)malloc(sizeof(_wrap_t));
     if (!w) return PyErr_NoMemory();
 
-    w->state = {backing}_create({call_args});
+    w->state = {sym}_create({call_args});
     if (!w->state) {{ free(w); return PyErr_NoMemory(); }}
     w->destroyed = 0;
 
     PyObject *cap = PyCapsule_New(w, _CAPS, _wrap_destructor);
-    if (!cap) {{ {backing}_destroy(w->state); free(w); return NULL; }}
+    if (!cap) {{ {sym}_destroy(w->state); free(w); return NULL; }}
     return cap;
 }}
 """
 
 
-def _emit_execute(backing: str, method: dict) -> str:
+def _emit_execute(backing: str, sym: str, method: dict) -> str:
     """Emit a ``variable_output`` execute: numpy-in -> caller-owned numpy view.
 
     Signature mirrors jm's variable-output-with-capacity form::
@@ -165,7 +166,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     const {in_elem} *in_data  = (const {in_elem} *)PyArray_DATA(x_arr);
     {out_elem} *out_data = ({out_elem} *)PyArray_DATA(out_arr);
     size_t n_out;
-{gil_open}    n_out = {backing}_{name}(w->state, in_data, n_in, out_data, max_out);
+{gil_open}    n_out = {sym}_{name}(w->state, in_data, n_in, out_data, max_out);
 {gil_close}    Py_DECREF(x_arr);
 
     /* Return out_arr[:n_out] — zero-copy view into the caller's buffer. */
@@ -181,7 +182,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 """
 
 
-def _emit_void_method(backing: str, name: str) -> str:
+def _emit_void_method(backing: str, sym: str, name: str) -> str:
     """A bare ``(state) -> None`` method (e.g. reset)."""
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
@@ -191,13 +192,13 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {backing}_{name}(w->state);
+    {sym}_{name}(w->state);
     Py_RETURN_NONE;
 }}
 """
 
 
-def _emit_destroy(backing: str) -> str:
+def _emit_destroy(backing: str, sym: str) -> str:
     return f"""static PyObject *
 _fn_{backing}_destroy(PyObject *mod, PyObject *args)
 {{
@@ -206,7 +207,7 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {backing}_destroy(w->state);
+    {sym}_destroy(w->state);
     w->state     = NULL;
     w->destroyed = 1;
     Py_RETURN_NONE;
@@ -214,7 +215,7 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
 """
 
 
-def _emit_getset(backing: str, prop: dict) -> str:
+def _emit_getset(backing: str, sym: str, prop: dict) -> str:
     name, ptype = prop["name"], prop["type"]
     out = f"""static PyObject *
 _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
@@ -224,7 +225,7 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    return {_to_py(ptype, f"{backing}_get_{name}(w->state)")};
+    return {_to_py(ptype, f"{CSYM.property_getter(sym, name)}(w->state)")};
 }}
 """
     if prop.get("writable"):
@@ -239,7 +240,7 @@ _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O{fmt}", &cap, &{name})) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {backing}_set_{name}(w->state, {name});
+    {sym}_set_{name}(w->state, {name});
     Py_RETURN_NONE;
 }}
 """
@@ -265,6 +266,10 @@ def _fn_list(cfg: dict, module: str) -> list[str]:
 def render_ext(cfg: dict, module: str) -> str:
     """Render the full ``<module>_ext.c`` for a capsule module."""
     backing = C.capsule_backing(cfg, module)
+    # gh-1685: the C symbols the binding calls, from the backing's C stem;
+    # everything else below (header, capsule name, Python names) keeps the
+    # FILE stem `backing`.
+    sym = CSYM.backing_stem(cfg, backing)
     caps = C.capsule_name(cfg, module) or (
         f"{C.project_name(cfg)}.{module}.{backing}_state"
     )
@@ -295,7 +300,7 @@ def render_ext(cfg: dict, module: str) -> str:
 static const char _CAPS[] = "{caps}";
 
 typedef struct {{
-    {backing}_state_t *state;
+    {sym}_state_t *state;
     int                destroyed;
 }} _wrap_t;
 
@@ -305,7 +310,7 @@ _wrap_destructor(PyObject *cap)
     _wrap_t *w = (_wrap_t *)PyCapsule_GetPointer(cap, _CAPS);
     if (!w) return;
     if (!w->destroyed)
-        {backing}_destroy(w->state);
+        {sym}_destroy(w->state);
     free(w);
 }}
 
@@ -323,15 +328,15 @@ _get_wrap(PyObject *cap)
 }}
 """)
 
-    parts.append(_emit_create(backing, init_params))
+    parts.append(_emit_create(backing, sym, init_params))
     for m in C.module_methods(cfg, module):
         if m.get("caller_out") or m.get("arg_type"):
-            parts.append(_emit_execute(backing, m))
+            parts.append(_emit_execute(backing, sym, m))
         else:
-            parts.append(_emit_void_method(backing, m["name"]))
-    parts.append(_emit_destroy(backing))
+            parts.append(_emit_void_method(backing, sym, m["name"]))
+    parts.append(_emit_destroy(backing, sym))
     for p in C.module_properties(cfg, module):
-        parts.append(_emit_getset(backing, p))
+        parts.append(_emit_getset(backing, sym, p))
 
     # ── method table ──
     fn_names = _fn_list(cfg, module)

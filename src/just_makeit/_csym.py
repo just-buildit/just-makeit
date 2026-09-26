@@ -88,6 +88,69 @@ def stem(owner: INC.Owner, name: str) -> str:
     return f"{p}_{name}"
 
 
+def backing_stem(owner: INC.Owner, backing: str) -> str:
+    """The C stem a capsule / composer module's ``backing`` spells the
+    backing API from: ``<stem>_create``, ``<stem>_state_t``, ... (gh-1685).
+
+    ``backing`` is a reference, and what it refers to decides the answer. A
+    ``backing`` naming a jm COMPONENT refers to that component's API, whose
+    symbols jm derives through :func:`stem` -- so the binding spells them the
+    same way, and a ``c_prefix`` (or a later ``jm upgrade`` onto one) moves
+    both together, as ``depends_on`` and ``composes`` already do. Anything
+    else is a hand-written core (doppler's ``ddcr``): its name is the
+    author's, used as written, exactly as gh-1671 treats every author-named
+    key. Only the C symbols read this; the header path, the capsule name and
+    the Python function names stay on the unprefixed FILE stem, which is the
+    split a component itself has.
+
+    >>> cfg = {"project": {"c_prefix": "zz"}, "lo": {}}
+    >>> backing_stem(cfg, "lo"), backing_stem(cfg, "ddcr")
+    ('zz_lo', 'ddcr')
+    """
+    return stem(owner, backing) if _is_component(owner, backing) else backing
+
+
+def backing_rule(owner: INC.Owner, backing: str) -> str:
+    """Which reading :func:`backing_stem` took, in words ``jm status``
+    prints, so the fork is visible rather than inferred (gh-1685).
+
+    >>> cfg = {"project": {"c_prefix": "zz"}, "lo": {}}
+    >>> backing_rule(cfg, "lo")
+    'component `lo` -> symbols via its stem `zz_lo_*`'
+    >>> backing_rule(cfg, "ddcr")
+    'author-named -> symbols spelled `ddcr_*` as written'
+    """
+    if not _is_component(owner, backing):
+        return f"author-named -> symbols spelled `{backing}_*` as written"
+    s = backing_stem(owner, backing)
+    return f"component `{backing}` -> symbols via its stem `{s}_*`"
+
+
+def backings(cfg: dict) -> "list[tuple[str, str, str]]":
+    """``(module, backing, rule)`` for every capsule / composer module that
+    names a ``backing`` -- what ``jm status`` reports, so which reading
+    :func:`backing_stem` took is visible, not inferred (gh-1685).
+
+    >>> backings({"project": {"c_prefix": "zz"}, "lo": {},
+    ...           "module": {"f": {"kind": "capsule", "backing": "lo"}}})
+    [('f', 'lo', 'component `lo` -> symbols via its stem `zz_lo_*`')]
+    """
+    from . import _config as C
+
+    return [
+        (m, b, backing_rule(cfg, b))
+        for m in C.modules(cfg)
+        if C.is_capsule_module(cfg, m) or C.is_composer_module(cfg, m)
+        if (b := C.capsule_backing(cfg, m))
+    ]
+
+
+def _is_component(owner: INC.Owner, name: str) -> bool:
+    from . import _config as C
+
+    return name in C.components(INC.manifest(owner))
+
+
 def upper(owner: INC.Owner, name: str) -> str:
     """:func:`stem` in upper case: an include guard's or ``#define``'s.
 
