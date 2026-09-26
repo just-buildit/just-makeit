@@ -261,6 +261,15 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
             if new != text:
                 _textio.write_text(path, new)
                 changed.append(path)
+    # gh-1647: and the bodies jm renders a header FROM. Respelling only the
+    # header left `apply` to put `float complex` back from the manifest, and
+    # every later upgrade re-reported the same file.
+    for path in CSYM._manifest_files(root):
+        text = path.read_text(encoding="utf-8")
+        new = CSYM.respell_manifest_c(text, _respell_code_only, CSYM.IMPL_KEYS)
+        if new != text:
+            _textio.write_text(path, new)
+            changed.append(path)
     return changed
 
 
