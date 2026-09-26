@@ -3453,6 +3453,53 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     return dangling
 
 
+class _ComposeUndo:
+    """What composing a fragment wrote, undone if the apply refuses (gh-1660).
+
+    A refused apply writes nothing. The refusals are asked before the first
+    write, so for them that holds by ordering alone -- the `jm_version`
+    stamp included, which is why it is written after the last of them. The
+    exception is a composed fragment (``jm apply <fragment.toml>``): it
+    copies the file into ``objects/`` and edits the manifest, and it has to
+    come first, because every refusal after it reads the manifest WITH the
+    fragment. So those writes are recorded here, before they happen, and
+    undone byte for byte when a refusal (or a crash) follows them.
+
+    :meth:`disarm` is called just before the reconcile's first write into the
+    tree; from there on the tree is no longer the one the fragment was
+    composed into, and restoring the manifest alone would describe neither.
+
+    Without a fragment it records nothing and :meth:`rollback` is a no-op.
+    """
+
+    def __init__(self, root: Path, fragment: "Path | None") -> None:
+        self._files: "dict[Path, bytes | None]" = {}
+        self._dirs: "list[Path]" = []
+        if fragment is None:
+            return
+        objects = root / "objects"
+        if not objects.exists():
+            self._dirs.append(objects)
+        # The only files `_compose_fragment` writes: the manifest (the
+        # include line, the module wiring) and the copy of the fragment.
+        for p in (root / C.FILENAME, objects / Path(fragment).name):
+            self._files[p] = p.read_bytes() if p.is_file() else None
+
+    def disarm(self) -> None:
+        self._files, self._dirs = {}, []
+
+    def rollback(self) -> None:
+        for p, data in self._files.items():
+            if data is None:
+                if p.is_file():
+                    p.unlink()
+            elif p.read_bytes() != data:
+                p.write_bytes(data)
+        for d in self._dirs:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+
+
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -3484,15 +3531,45 @@ def run(
         )
         sys.exit(1)
 
-    if fragment is not None:
-        print(f"just-makeit: composing fragment {fragment}")
-        try:
-            _compose_fragment(root, fragment)
-        except (FileNotFoundError, FileExistsError, ValueError) as e:
-            print(f"error: {e}", file=sys.stderr)
-            sys.exit(1)
-        print()
+    # gh-1660: a refused apply writes nothing, and a fragment is composed
+    # before any refusal can be asked -- so what it writes is undone.
+    undo = _ComposeUndo(root, fragment)
+    try:
+        if fragment is not None:
+            print(f"just-makeit: composing fragment {fragment}")
+            try:
+                _compose_fragment(root, fragment)
+            except (FileNotFoundError, FileExistsError, ValueError) as e:
+                print(f"error: {e}", file=sys.stderr)
+                sys.exit(1)
+            print()
+        _apply_manifest(
+            root,
+            only,
+            undo,
+            honor_status_allow=honor_status_allow,
+            replay_out=replay_out,
+        )
+    except BaseException:
+        undo.rollback()
+        raise
 
+
+def _apply_manifest(
+    root: Path,
+    only: "str | None",
+    undo: _ComposeUndo,
+    *,
+    honor_status_allow: bool,
+    replay_out: "Path | None",
+) -> None:
+    """The body of :func:`run`, once any fragment is composed.
+
+    Every refusal is asked before the first write into the tree, where
+    *undo* is disarmed -- except the reconcile phase's own stub guards,
+    which follow its first writes (gh-1676). The `jm_version` stamp follows
+    even those (gh-1660).
+    """
     cfg = C.load(root)
     # gh-1310: a family member whose family header is missing, before anything
     # is written -- jm cannot write that file, and every member would render
@@ -3521,7 +3598,7 @@ def run(
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
     # gh-1578: the external-deps readers refuse a malformed entry. Read them
-    # here, before the stamp below or any other write, so a refusal leaves
+    # here, before any write, so a refusal leaves
     # the tree exactly as it was rather than half-applied.
     C.find_package_entries(cfg)
     C.pkg_module_entries(cfg)
@@ -3547,10 +3624,6 @@ def run(
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
-    # gh-183: record the generating jm version (monotonic; surgical write).
-    _stamped = C.stamp_jm_version(root, cfg)
-    if _stamped:
-        print(f"  stamp   {C.FILENAME}  [project] jm_version = {_stamped}\n")
     if not C.components(cfg) and not C.modules(cfg):
         print(
             "error: manifest declares no objects or modules — nothing to materialize.",
@@ -3703,6 +3776,8 @@ def run(
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
             _scaffolds = _owned_scaffolds(temp_root, root)
+            # The first write into the tree: nothing above it has written.
+            undo.disarm()
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
@@ -3723,6 +3798,16 @@ def run(
             # decorating a stack trace with it.
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
+
+        # gh-183: record the generating jm version (monotonic; surgical
+        # write). gh-1660: after the LAST refusal above, never before it --
+        # stamped first, a refused apply still rewrote the manifest to say
+        # this jm had generated a project it had just refused to touch.
+        _stamped = C.stamp_jm_version(root, cfg)
+        if _stamped:
+            print(
+                f"  stamp   {C.FILENAME}  [project] jm_version = {_stamped}\n"
+            )
 
         # gh-1294: a declared method with no body in `_core.c`. INSIDE the
         # `with`, because the stub text is the temp tree's and that tree is a
