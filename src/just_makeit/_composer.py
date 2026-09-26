@@ -2095,6 +2095,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
     ``repeat`` / ``continuous`` reflect the resolved spec back as OO objects.
     JSON faces (``from_json`` / ``to_json``) land in the next slice."""
     backing = C.capsule_backing(cfg, module)
+    sym = CSYM.backing_stem(cfg, backing)  # gh-1685: C symbols
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -2138,10 +2139,10 @@ def render_composer_type(cfg: dict, module: str) -> str:
     obj = f"{cname}Object"
     type_obj = f"{cname}Type"
 
-    create_fn = f"{backing}_create"
-    execute_fn = f"{backing}_execute"
-    segments_fn = f"{backing}_segments"
-    destroy_fn = f"{backing}_destroy"
+    create_fn = f"{sym}_create"
+    execute_fn = f"{sym}_execute"
+    segments_fn = f"{sym}_segments"
+    destroy_fn = f"{sym}_destroy"
 
     # segment scalar field copy lines (both directions). Ranged segment fields
     # also carry their `ranged` bitmask + <name>_hi companion across, so a
@@ -2195,9 +2196,9 @@ def render_composer_type(cfg: dict, module: str) -> str:
     # (reusable by any composer). `to_json_fn` is an opt-in escape hatch that
     # delegates to a hand-written serializer instead (e.g. wfm byte-compat).
     if C.composer_json(cfg, module) and jtbl.get("to_json_fn"):
-        from_json_fn = jtbl.get("from_json_fn", f"{backing}_from_json")
-        from_file_fn = jtbl.get("from_file_fn", f"{backing}_from_file")
-        to_json_fn = jtbl.get("to_json_fn", f"{backing}_to_json")
+        from_json_fn = jtbl.get("from_json_fn", f"{sym}_from_json")
+        from_file_fn = jtbl.get("from_file_fn", f"{sym}_from_file")
+        to_json_fn = jtbl.get("to_json_fn", f"{sym}_to_json")
         trailing = jtbl.get("to_json_trailing", [])
         trail = "" if not trailing else ", " + ", ".join(trailing)
         json_fns = f"""
@@ -2208,7 +2209,7 @@ static PyObject *
     const char *json;
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
-    {backing}_state_t *st = {from_json_fn}(json);
+    {sym}_state_t *st = {from_json_fn}(json);
     if (!st) {{
         PyErr_SetString(PyExc_ValueError, "{from_json_fn} failed");
         return NULL;
@@ -2230,7 +2231,7 @@ static PyObject *
     PyObject *pathobj;
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
-    {backing}_state_t *st = {from_file_fn}(PyBytes_AS_STRING(pathobj));
+    {sym}_state_t *st = {from_file_fn}(PyBytes_AS_STRING(pathobj));
     Py_DECREF(pathobj);
     if (!st) {{
         PyErr_SetString(PyExc_OSError, "{from_file_fn} failed");
@@ -2571,7 +2572,7 @@ fail:
 
 typedef struct {{
     PyObject_HEAD
-    {backing}_state_t *state;
+    {sym}_state_t *state;
     int                destroyed;
 }} {obj};
 
@@ -4037,6 +4038,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     robust parsing/formatting (the project links its json lib via
     ``extra_link_libs`` and exposes ``cJSON.h``)."""
     backing = C.capsule_backing(cfg, module)
+    sym = CSYM.backing_stem(cfg, backing)  # gh-1685: C symbols
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -4048,9 +4050,9 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
     obj = f"{cname}Object"
-    create_fn = f"{backing}_create"
-    segments_fn = f"{backing}_segments"
-    destroy_fn = f"{backing}_destroy"
+    create_fn = f"{sym}_create"
+    segments_fn = f"{sym}_segments"
+    destroy_fn = f"{sym}_destroy"
 
     # gh-1184/gh-560: freeing `[k].bits` freed ONE hardcoded member — the
     # wrong one for a source whose bytes field is named anything else, and no
@@ -4276,7 +4278,7 @@ static PyObject *
 }}
 
 /* Build a composer state from a parsed JSON root (NULL on error). */
-static {backing}_state_t *
+static {sym}_state_t *
 _{backing}_from_root(cJSON *root)
 {{
     const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "segments");
@@ -4311,7 +4313,7 @@ _{backing}_from_root(cJSON *root)
         i++;
     }}
     {{
-        {backing}_state_t *st = {create_fn}(segs, n, repeat, continuous);
+        {sym}_state_t *st = {create_fn}(segs, n, repeat, continuous);
         for (size_t j = 0; j < n; j++) {{
             {_free_src_bytes("            ")}free(segs[j].{sources_member});
         }}
@@ -4327,7 +4329,7 @@ fail:
 }}
 
 static PyObject *
-_{cname}_wrap_state(PyTypeObject *type, {backing}_state_t *st)
+_{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st)
 {{
     if (!st) {{
         PyErr_SetString(PyExc_ValueError, "invalid composer spec");
@@ -4354,7 +4356,7 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "could not parse JSON");
         return NULL;
     }}
-    {backing}_state_t *st = _{backing}_from_root(root);
+    {sym}_state_t *st = _{backing}_from_root(root);
     cJSON_Delete(root);
     return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
 }}
@@ -4386,7 +4388,7 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "could not parse JSON file");
         return NULL;
     }}
-    {backing}_state_t *st = _{backing}_from_root(root);
+    {sym}_state_t *st = _{backing}_from_root(root);
     cJSON_Delete(root);
     return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
 }}
@@ -4414,6 +4416,7 @@ def render_cli(cfg: dict, module: str) -> str:
     from . import _app
 
     backing = C.capsule_backing(cfg, module)
+    sym = CSYM.backing_stem(cfg, backing)  # gh-1685: C symbols
     header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
@@ -4422,14 +4425,14 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_fields = list(seg.get("fields", []))
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
-    create_fn = f"{backing}_create"
-    execute_fn = f"{backing}_execute"
-    destroy_fn = f"{backing}_destroy"
+    create_fn = f"{sym}_create"
+    execute_fn = f"{sym}_execute"
+    destroy_fn = f"{sym}_destroy"
     from_file_fn = (
         cfg.get("module", {})
         .get(module, {})
         .get("json", {})
-        .get("from_file_fn", f"{backing}_from_file")
+        .get("from_file_fn", f"{sym}_from_file")
     )
     sample_types = " ".join(_app._SAMPLE_TYPES)
 
@@ -4569,7 +4572,7 @@ main(int argc, char **argv)
         else {{ fprintf(stderr, "unknown arg %s\\n", a); usage(argv[0]); return 2; }}
     }}
 
-    {backing}_state_t *c;
+    {sym}_state_t *c;
     if (from_file) {{
         c = {from_file_fn}(from_file);
     }} else {{

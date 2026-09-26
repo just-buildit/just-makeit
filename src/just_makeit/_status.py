@@ -973,6 +973,10 @@ def run(
     # gh-1313: an opt-out that does not say why, or a reason that outlived it.
     _opt_outs = C.no_generate_findings(cfg)
     _shared = _procglobal.shared_cores(cfg)
+    # gh-1685: which reading each capsule / composer `backing` took.
+    from . import _csym
+
+    _backings = _csym.backings(cfg)
     # Suppressed by the file, like the UNANCHORED entry beside it, and ALSO
     # per component via `CMakeLists.txt:<core>`.
     #
@@ -1268,6 +1272,12 @@ def run(
                     "shared_cores": [
                         {"core": sc.core, "modules": list(sc.modules)}
                         for sc in _shared
+                    ],
+                    # gh-1685: a note, like the one below; always
+                    # emitted, the rule is true with or without a prefix.
+                    "backings": [
+                        {"module": m, "backing": b, "rule": r}
+                        for m, b, r in _backings
                     ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
@@ -1771,6 +1781,24 @@ def run(
             "  migrated yet. The two want opposite treatment and read the same"
             " without it.\n"
             "  A reason on a module that generates again is stale: delete it."
+        )
+        print()
+
+    # gh-1685: uncounted, and only under a prefix -- without one both
+    # readings spell the same symbols, so there is no fork to show. A note,
+    # not a finding: collapsed under --check like gh-921's, which is what
+    # a downstream CI reads (gh-1443's ratchet counts every heading there).
+    if _backings and _csym.prefix(cfg) is not None and not check:
+        print(
+            f"BACKINGS ({len(_backings)}) — how each capsule / composer"
+            " `backing` spells its C API under c_prefix:"
+        )
+        for m, b, r in _backings:
+            print(f"  · [module.{m}] backing = {b!r}: {r}")
+        print(
+            "  A backing that names a jm component follows that component's"
+            " symbols;\n"
+            "  any other is author-named and used exactly as written."
         )
         print()
 
