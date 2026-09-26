@@ -234,8 +234,8 @@ or a manifest `replace = { ... }` table (gh-1656). Respell those from the
 table.
 
 Changing a prefix that is already applied (`a` to `b`), or removing the key
-from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it,
-naming the component and the prefix its header already carries (gh-1650).
+from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it
+before writing anything (gh-1660), naming the component and the prefix its header already carries (gh-1650).
 
 A prefix can derive a name your C **already uses**: with `c_prefix = "dp"`,
 component `syncword`'s method `find` derives `dp_syncword_find` -- and if

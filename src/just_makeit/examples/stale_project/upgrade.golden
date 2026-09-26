@@ -90,9 +90,9 @@ $ jm apply   # exit 0
 warning: project schema is v7, current is v8. Run 'just-makeit upgrade' to get new features.
 warning: this project was last generated with just-makeit 0.33.14, but you are running <HEAD>. Generated glue may be incorrect.
          Install the matching version (uvx --from 'just-makeit==0.33.14' just-makeit …) or re-apply with the current CLI to move the project forward.
-  stamp   just-makeit.toml  [project] jm_version = <HEAD>
-
 just-makeit: applying just-makeit.toml
+
+  stamp   just-makeit.toml  [project] jm_version = <HEAD>
 
   update  native/src/dsp/dsp_ext_fir.c: docstring(s) rewritten from the header for decimate_max_out, destroy
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.

@@ -803,7 +803,8 @@ def _report_repairs(root: Path) -> None:
 
 def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
     """Refuse, before ANY step writes, a ``c_prefix`` whose derived names the
-    author's C already declares (gh-1657, :func:`_csym.collisions`).
+    author's C already declares (gh-1657, :func:`_csym.collisions`), and a
+    prefix changed or removed after the tree was prefixed (gh-1650).
 
     First, not inside :func:`_respell_c_prefix`: a schema migration runs
     before the repairs, so a refusal there would leave a project half
@@ -814,10 +815,13 @@ def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
 
     from . import _apply
 
-    if CSYM.prefix(cfg) is None:
-        return
+    # gh-1660: a prefix REMOVED is refused here too, before the no-prefix
+    # return below. Asked only in `_respell_c_prefix`, it came after the
+    # migrations and `_rename_superseded` had already written.
     if CSYM.stray_prefixes(root, cfg):
         _apply.prefix_errors(cfg, root, root)
+    if CSYM.prefix(cfg) is None:
+        return
     with tempfile.TemporaryDirectory() as tmp:
         _apply.replay_project(cfg, Path(tmp), root, prefix_checks=False)
         clash = CSYM.collisions(root, Path(tmp), cfg)
