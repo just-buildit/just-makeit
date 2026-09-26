@@ -91,6 +91,34 @@ SHAPES: dict[str, dict] = {
     # Every other shape is prefixed, so without this the header rules were
     # measured in one layout while claiming to hold in both.
     "flat-headers": {"schema": _incpath.PREFIXED_SCHEMA - 1},
+    # gh-1659: the two generated headers below a component directory that
+    # are not a `_core.h`. They were classified only because the umbrella's
+    # glob crossed `/`; with no shape producing them, nothing noticed.
+    "procglobal": {"procglobal": True},
+    "composer": {"composer": True},
+}
+
+#: A composer module with a bridge seam, which is what makes jm write its
+#: `<cname>_bridge.h` (gh-998). Generic on purpose, as gh-998's own fixture.
+COMPOSER = {
+    "kind": "composer",
+    "backing": "playlist",
+    "composes": ["clip"],
+    "package": "audio",
+    "source": {
+        "object": "clip",
+        "struct": "clip_t",
+        "type_name": "Clip",
+        "fields": [{"name": "gain", "type": "double", "default": "1.0"}],
+        "generates": {"generator": "clip", "bridge_fn": "clip_from_source"},
+    },
+    "segment": {
+        "type_name": "Track",
+        "struct": "track_t",
+        "sources": "multi",
+        "fields": [{"name": "dur", "type": "size_t"}],
+    },
+    "oo": {"composer_type_name": "Mix"},
 }
 
 DERIVABLE = sorted(SHAPES)
@@ -100,6 +128,8 @@ def _scaffold(root: Path, **shape) -> Path:
     module = shape.pop("module", None)
     app = shape.pop("app", False)
     element = shape.pop("element", False)
+    procglobal = shape.pop("procglobal", False)
+    composer = shape.pop("composer", False)
     perf = shape.get("perf", False)
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, **shape)
@@ -127,6 +157,23 @@ def _scaffold(root: Path, **shape) -> Path:
                 params=[("n", "size_t")],
                 borrow=True,
             )
+        if procglobal or composer:
+            if procglobal:
+                # A core linked from a second extension module, declared
+                # `process_global` -- the shape gh-1117's header exists for.
+                for mod, comp in (("own", "flag"), ("other", "user")):
+                    module_run(root, mod)
+                    object_run(root, comp, mod)
+            else:
+                object_run(root, "clip", None)
+            cfg = _config.load(root)
+            if procglobal:
+                cfg["flag"]["process_global"] = True
+                cfg["user"]["depends_on"] = [{"name": "flag", "link": True}]
+            else:
+                cfg.setdefault("module", {})["playlist"] = dict(COMPOSER)
+            _config.save(root, cfg)
+            _quiet_apply(root)
         # Formatting is a post-command hook on the CLI dispatcher
         # (`_cli._C_EMITTING_COMMANDS`), not part of emission: `_new.run`
         # formats its own tree because the hook cannot reach a subdirectory,

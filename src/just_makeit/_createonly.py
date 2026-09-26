@@ -295,6 +295,20 @@ RULES: tuple[Rule, ...] = (
         " its name: an `inc:*.h` glob claimed every author header beside it"
         " as jm's (gh-1659).",
     ),
+    # gh-1659: these two were classified only by that glob crossing `/`,
+    # which is why neither had a rule of its own.
+    Rule(
+        "inc:*/*_bridge.h",
+        RECONCILED,
+        "a composer module's seam prototypes (gh-998): jm's, reconciled from"
+        " the replay like the module's `_ext.c`.",
+    ),
+    Rule(
+        "inc:*/*_procglobal.h",
+        RECONCILED,
+        "the `process_global` contract header (gh-1117), reconciled from the"
+        " replay (gh-1140).",
+    ),
     Rule(
         "native/src/*/CMakeLists.txt",
         RECONCILED,
