@@ -136,3 +136,59 @@ def test_the_floor_is_read_from_pyproject():
     """Keyed to `requires-python`, so raising the floor retires this on its
     own rather than leaving a check nobody can remove."""
     assert _floor() <= tuple(sys.version_info[:2])
+
+
+#: Keyword arguments that exist only above jm's floor, as ``(method, kwarg)``.
+#: ``Path.write_text(newline=...)`` is 3.10+; on 3.9 it is a TypeError at the
+#: call, so a fixture using it ERRORS every test that needs it on the 3.9 leg
+#: only (#1658's first CI run: `ubuntu-24.04-arm, 3.9`). jm's own spelling is
+#: ``_textio.write_text``, which is LF on every platform and every Python.
+_ABOVE_FLOOR_KWARGS = {("write_text", "newline"): (3, 10)}
+
+#: Everything that runs under jm's supported Pythons: the suite, jm itself
+#: (bundled examples included -- `just-makeit example` runs them), and the
+#: repo's scripts.
+_SCANNED = (TESTS, SRC, SRC.parent / "scripts", SRC.parent / "docker")
+
+
+def _kwargs_above_floor(
+    tree: ast.AST, floor: tuple
+) -> "list[tuple[int, str]]":
+    """``(line, "method(kwarg=)")`` for each call passing a keyword the floor
+    lacks. By method NAME: a receiver's type is not in the text, and no
+    other `write_text` in this repo takes ``newline``."""
+    out = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ):
+            continue
+        for kw in node.keywords:
+            need = _ABOVE_FLOOR_KWARGS.get((node.func.attr, kw.arg))
+            if need and need > floor:
+                out.append((node.lineno, f"{node.func.attr}({kw.arg}=)"))
+    return out
+
+
+def test_no_call_passes_a_keyword_above_the_supported_floor():
+    floor = _floor()
+    offenders = []
+    for base in _SCANNED:
+        for f in sorted(base.rglob("*.py")):
+            # jm's templates are Python only once rendered (`<<Component>>`).
+            if "templates" in f.relative_to(base).parts:
+                continue
+            tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+            for line, what in _kwargs_above_floor(tree, floor):
+                rel = f.relative_to(SRC.parent).as_posix()
+                offenders.append(f"{rel}:{line}: {what}")
+    assert not offenders, (
+        "a TypeError on every leg below the keyword's Python; write LF "
+        "through `just_makeit._textio.write_text` instead:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_kwarg_scan_can_actually_see_one():
+    tree = ast.parse('p.write_text(s, encoding="utf-8",\n    newline="\\n")\n')
+    assert _kwargs_above_floor(tree, (3, 9)) == [(1, "write_text(newline=)")]

@@ -373,6 +373,185 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
     return out
 
 
+#: `JM_DEFINE_STEPS(fn, ...)` names the symbol stem as its FIRST argument and
+#: token-pastes ``fn##_step`` / ``_steps`` / ``_step_batch`` (jm_perf.h). The
+#: stem alone -- `fir_filter` -- also names files, directories and Python, so
+#: it is respelled only HERE, anchored on the macro call (gh-1653).
+_DEFINE_STEPS = re.compile(
+    r"(\bJM_DEFINE_STEPS\s*\(\s*)([A-Za-z_]\w*)(?=\s*,)"
+)
+
+#: The step and lifecycle body keys (`_keys`' `*impl`), each of which has a
+#: ``<key>_file = "path::fn"`` companion that lifts the body from a file.
+IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
+
+#: The manifest keys whose string value is C that jm copies into the project's
+#: C verbatim (gh-1653): the bodies (:data:`IMPL_KEYS`) and a state /
+#: init-param / method-param `type`, which can name a sibling component's
+#: derived type. Author-NAMED keys (`fn`, `create_fn`, ...) are not here: jm
+#: never prefixes what the author named.
+MANIFEST_C_KEYS = IMPL_KEYS + ("type",)
+
+
+def _toml_string(q: int) -> str:
+    """A TOML string of any of its four forms, as a pattern whose quote is
+    group *q* and content group *q* + 1 -- one spelling of "a string value"
+    for every place that rewrites one in place (gh-1583, gh-1653)."""
+    return rf"(\"\"\"|'''|\"|')((?:(?!\{q})[\s\S])*?)\{q}"
+
+
+#: Any TOML string value, captured whole so a rewrite replaces it in place and
+#: never re-serialises the file. `_upgrade._TOML_STRING` IS this (gh-1583's
+#: header respell), so the two readers of "a manifest string" cannot drift.
+TOML_STRING = re.compile(_toml_string(1))
+
+#: A manifest ``<key> = <string>`` for one of :data:`MANIFEST_C_KEYS`: group 3
+#: is the opening quote, 4 the content -- :data:`TOML_STRING` behind a key.
+MANIFEST_C_VALUE = re.compile(
+    r"(?<![\w-])("
+    + "|".join(MANIFEST_C_KEYS)
+    + r")(\s*=\s*)"
+    + _toml_string(3)
+)
+
+
+#: A ``<impl>_file = "path::fn"`` value: group 3 the path, 4 the function.
+#: The FILE is C the upgrade's walk respells, so when it is in that walk its
+#: ``fn`` moves with it -- a derived name renamed in the file and not here
+#: is a body `apply` can no longer find. A path outside the walk, or a
+#: ``path::N:M`` line range, names nothing the upgrade moved.
+IMPL_FILE_VALUE = re.compile(
+    r"(?<![\w-])((?:"
+    + "|".join(IMPL_KEYS)
+    + r")_file\s*=\s*)(\"|')([^\"'\n]*)::([A-Za-z_]\w*)\2"
+)
+
+
+def walked(root: Path) -> "set[Path]":
+    """Every C/C++ file `jm upgrade` respells under *root*, resolved -- what an
+    ``*_impl_file`` path must be for its function name to follow."""
+    from . import _upgrade
+
+    files = _upgrade._project_files(
+        root, lambda p: p.suffix in _upgrade._C_SUFFIXES
+    )
+    return {p.resolve() for p in files}
+
+
+def _impl_file_fns(text: str, root: Path, followed: "set[Path]"):
+    """``(match, fn)`` for each ``*_impl_file`` value in *text* whose file is
+    in *followed* -- one reading for the respell and for the refusal."""
+    for m in IMPL_FILE_VALUE.finditer(text):
+        if (root / m.group(3)).resolve() in followed:
+            yield m, m.group(4)
+
+
+def macro_stems(cfg: dict) -> "dict[str, str]":
+    """``{bare name: stem}`` for every source name the prefix changes -- what
+    a `JM_DEFINE_STEPS` first argument respells from and to.
+
+    >>> macro_stems({"project": {"name": "p", "c_prefix": "p"}, "fir": {}})
+    {'fir': 'p_fir'}
+    """
+    return {n: s for n, s in sources(cfg).items() if n != s}
+
+
+def with_macro_names(names: "dict[str, str]") -> "dict[str, str]":
+    """*names* plus ``<stem>_step_batch`` for each ``<stem>_step`` in it.
+
+    jm never declares ``step_batch`` -- the author writes it, and
+    `JM_DEFINE_STEPS` pastes the name -- so no render carries it, yet it
+    must move with ``<stem>_step`` (gh-1653).
+
+    >>> with_macro_names({"fir_step": "p_fir_step"})["fir_step_batch"]
+    'p_fir_step_batch'
+    """
+    out = dict(names)
+    for old, new in names.items():
+        if old.endswith("_step"):
+            out.setdefault(old + "_batch", new + "_batch")
+    return out
+
+
+def respell_c(
+    text: str, names: "dict[str, str]", stems: "dict[str, str]"
+) -> str:
+    """*text* (C) with every old name in *names* and every `JM_DEFINE_STEPS`
+    stem in *stems* respelled -- in CODE only (gh-1382), whole identifiers,
+    case-sensitive. The one respell `jm upgrade` applies to a C file and to
+    a manifest's C-bearing value alike.
+
+    >>> print(respell_c(
+    ...     "/* fir_create */ JM_DEFINE_STEPS (fir, fir_state_t, float)",
+    ...     {"fir_state_t": "p_fir_state_t"}, {"fir": "p_fir"}))
+    /* fir_create */ JM_DEFINE_STEPS (p_fir, p_fir_state_t, float)
+    """
+    from ._upgrade import _respell_code_only
+
+    pairs = []
+    if stems:
+        pairs.append((_DEFINE_STEPS, None))
+    if names:
+        pairs.append((old_names_pattern(names), None))
+    if not pairs:
+        return text
+
+    def repl(m: "re.Match") -> str:
+        if m.re is _DEFINE_STEPS:
+            s = stems.get(m.group(2))
+            return m.group(1) + s if s else m.group(0)
+        return names[m.group(0)]
+
+    return _respell_code_only(text, pairs, repl=repl)
+
+
+def respell_manifest(
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    root: "Path | None" = None,
+    followed: "set[Path]" = frozenset(),
+) -> str:
+    """*text* (a manifest or fragment) with each :data:`MANIFEST_C_KEYS`
+    value respelled by :func:`respell_c`, and each ``*_impl_file``'s ``fn``
+    whose file (resolved against *root*) is in *followed*, in place;
+    nothing else moves.
+
+    >>> t = 'create_fn = "fir_open"\\ntype = "fir_state_t *"\\n'
+    >>> print(respell_manifest(t, {"fir_state_t": "p_fir_state_t"}, {}), end="")
+    create_fn = "fir_open"
+    type = "p_fir_state_t *"
+    """
+
+    def value(m: "re.Match") -> str:
+        body = respell_c(m.group(4), names, stems)
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}{body}{m.group(3)}"
+
+    text = MANIFEST_C_VALUE.sub(value, text)
+    if root is None:
+        return text
+    hits = {m.start(): fn for m, fn in _impl_file_fns(text, root, followed)}
+
+    def lifted(m: "re.Match") -> str:
+        fn = hits.get(m.start())
+        if fn not in names:
+            return m.group(0)
+        head = m.group(1) + m.group(2) + m.group(3) + "::"
+        return head + names[fn] + m.group(2)
+
+    return IMPL_FILE_VALUE.sub(lifted, text)
+
+
+def _manifest_files(root: Path) -> "list[Path]":
+    """The manifest and the fragments it includes -- gh-1583's list."""
+    from . import _upgrade
+
+    main = root / "just-makeit.toml"
+    return ([main] if main.is_file() else []) + _upgrade._manifest_fragments(
+        root
+    )
+
+
 def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
     """``{file: [old names]}`` for the author's C under *root* that still
     spells a name in *names* (from :func:`renames`) -- in code, whole
@@ -389,17 +568,67 @@ def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
     ...               "acc_state_t": "dp_acc_state_t"})
     {'native/src/acc/acc_core.c': ['acc_create', 'acc_state_t']}
     """
+    return _unrenamed(root, names, {})
+
+
+def _old_in(
+    text: str, names: "dict[str, str]", stems: "dict[str, str]"
+) -> "list[str]":
+    """The old names *text* (C) still spells in code -- what :func:`respell_c`
+    would change. One question, asked the way the respell answers it."""
     from ._docsync import _code_mask
 
-    if not names:
+    mask = _code_mask(text)
+    found = set(old_names_pattern(names).findall(mask)) if names else set()
+    found |= {
+        f"JM_DEFINE_STEPS({m.group(2)}, ...)"
+        for m in _DEFINE_STEPS.finditer(mask)
+        if m.group(2) in stems
+    }
+    return sorted(found)
+
+
+def unrenamed_all(root: Path, cfg: dict, tree: Path) -> "dict[str, list[str]]":
+    """:func:`unrenamed` over everything `jm upgrade` respells (gh-1653): the
+    author's C -- including a `JM_DEFINE_STEPS` stem and ``<stem>_step_batch``
+    -- AND the manifest's C-bearing values (:data:`MANIFEST_C_KEYS`), so
+    `apply` refuses exactly what the upgrade it names would fix."""
+    return _unrenamed(
+        root, with_macro_names(renames(tree, cfg)), macro_stems(cfg), cfg
+    )
+
+
+def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
+    if not names and not stems:
         return {}
-    pat = old_names_pattern(names)
     out = {}
     for p in _author_files(root):
-        mask = _code_mask(p.read_text(encoding="utf-8", errors="replace"))
-        found = sorted(set(pat.findall(mask)))
+        found = _old_in(
+            p.read_text(encoding="utf-8", errors="replace"), names, stems
+        )
         if found:
             out[p.relative_to(root).as_posix()] = found
+    if cfg is not None:
+        followed = walked(root)
+        for p in _manifest_files(root):
+            found = sorted(
+                {
+                    n
+                    for m in MANIFEST_C_VALUE.finditer(
+                        p.read_text(encoding="utf-8")
+                    )
+                    for n in _old_in(m.group(4), names, stems)
+                }
+                | {
+                    fn
+                    for _m, fn in _impl_file_fns(
+                        p.read_text(encoding="utf-8"), root, followed
+                    )
+                    if fn in names
+                }
+            )
+            if found:
+                out[p.relative_to(root).as_posix()] = found
     return out
 
 

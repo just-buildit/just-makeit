@@ -464,7 +464,9 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
         )
     if CSYM.prefix(cfg) is not None and not errors:
         errors += CSYM.duplicates(temp_root, cfg)
-        stale = CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
+        # gh-1653: the same strings `jm upgrade` respells -- manifest
+        # `*_impl` / `type` values and `JM_DEFINE_STEPS` stems included.
+        stale = CSYM.unrenamed_all(project_root, cfg, temp_root)
         for rel, names in stale.items():
             errors.append(
                 f"{rel} still spells the unprefixed "
