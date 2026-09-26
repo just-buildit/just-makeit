@@ -28,6 +28,7 @@ import subprocess
 import sys
 from just_makeit import _incpath as INC
 from pathlib import Path
+from just_makeit import _textio
 
 HERE = Path(__file__).parent
 
@@ -567,12 +568,8 @@ def run(root: Path) -> None:
     # jm writes every file (gh-1368): these are written AFTER the last apply,
     # and a platform newline left a Windows tree `status --check` rightly
     # called STALE -- apply would rewrite them to LF.
-    (proj / "objects" / "mixer.toml").write_text(
-        _MIXER_TOML, encoding="utf-8", newline="\n"
-    )
-    (proj / "objects" / "config.toml").write_text(
-        _CONFIG_TOML, encoding="utf-8", newline="\n"
-    )
+    _textio.write_text(proj / "objects" / "mixer.toml", _MIXER_TOML)
+    _textio.write_text(proj / "objects" / "config.toml", _CONFIG_TOML)
     objs = '["gain", "lfo", "meter", "resamp", "mixer", "config"]'
     if doppler_prefix:
         (proj / "objects" / "tone.toml").write_text(

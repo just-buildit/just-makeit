@@ -284,6 +284,28 @@ def test_a_half_moved_tree_is_no_collision_and_builds(bare, tmp_path):
         assert p.returncode == 0, (cmd, (p.stdout + p.stderr)[-3000:])
 
 
+def test_a_step_batch_is_owned_beside_its_step_and_nowhere_else(tmp_path):
+    """gh-1653's names: `JM_DEFINE_STEPS (lo, ...)` pastes `lo_step_batch`,
+    which the author writes in `lo`'s sacred header and no render declares.
+    There it is jm's to respell (tests/test_gh1653_*.py upgrade that tree);
+    an unrelated `static lo_step_batch` elsewhere is a collision."""
+    import _gh1653_fixture as FX
+
+    root = FX.build(tmp_path)
+    rel = "native/src/mixer/batch_probe.c"
+    (root / rel).write_text(
+        "static void\nlo_step_batch (void)\n{\n}\n", newline="\n"
+    )
+    FX.set_prefix(root)
+    before = _snapshot(root)
+    r = run_cli("upgrade", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"{rel}:2 declares its own `lo_step_batch`" in r.stderr, r.stderr
+    # Only the probe: the sacred header's own `lo_step_batch` is owned.
+    assert r.stderr.count("declares its own") == 1, r.stderr
+    assert _unchanged(before, root) == []
+
+
 def test_the_declaring_line_is_counted_past_preprocessor_lines():
     text = "#ifndef G\n#define G\n#include <x.h>\nint zz_f (void);\n#endif\n"
     assert _csym._line_of(text, "zz_f") == 4

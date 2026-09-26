@@ -470,10 +470,10 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
         errors += CSYM.duplicates(temp_root, cfg)
         # A collision alone, without the unrenamed list: `jm upgrade` is what
         # that message points to, and on a colliding tree it must not run.
+        # Otherwise gh-1653's list: the same strings `jm upgrade` respells --
+        # manifest `*_impl` / `type` values and `JM_DEFINE_STEPS` stems too.
         stale = (
-            {}
-            if clash
-            else CSYM.unrenamed(project_root, CSYM.renames(temp_root, cfg))
+            {} if clash else CSYM.unrenamed_all(project_root, cfg, temp_root)
         )
         for rel, names in stale.items():
             errors.append(

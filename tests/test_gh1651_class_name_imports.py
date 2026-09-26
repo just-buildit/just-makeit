@@ -24,6 +24,7 @@ import pytest
 
 from _jminc import INC_ROOT
 from _jmrun import run_cli
+from just_makeit import _textio
 
 
 @pytest.mark.parametrize("module", [None, "grp"], ids=["standalone", "module"])
@@ -49,10 +50,9 @@ def test_a_class_name_object_imports_under_its_name_after_apply(
     text = header.read_text(encoding="utf-8")
     old = "@brief Create a named instance."
     assert text.count(old) == 1, text[:1500]
-    header.write_text(
+    _textio.write_text(
+        header,
         text.replace(old, "@brief Build a widget with a declared name."),
-        encoding="utf-8",
-        newline="\n",
     )
 
     r = run_cli("apply", cwd=root)
