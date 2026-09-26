@@ -357,8 +357,16 @@ jobs:
         # gh-1376: plus the CMakePresets.json build, which on this runner
         # drives the `windows-*` presets Visual Studio shows -- clang-cl,
         # Ninja and the project's .venv chosen by the preset alone.
+        #
+        # gh-1648: plus every file that reads a built library's exports
+        # through tests/_exports.py -- the DLL's export table and the static
+        # .lib -- so the c_prefix symbol gates run here and not only on the
+        # ELF/Mach-O legs. tests/test_gh1648_exports_run_on_windows.py
+        # fails if one is missing from this line.
         run: make test-examples PROJECT_ENV_TESTS="tests/test_examples.py
-          tests/test_gh1376_presets_build.py"
+          tests/test_gh1376_presets_build.py
+          tests/test_gh1591_c_prefix_nm.py
+          tests/test_gh1653_upgrade_builds.py"
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
