@@ -728,8 +728,9 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)
-    # gh-1653: the author's C that lives in the MANIFEST -- `*_impl` bodies
-    # and a sibling's `type` -- which jm copies into the C verbatim. Each
+    # gh-1653: the author's C that lives in the MANIFEST -- `*_impl` bodies,
+    # a sibling's `type`, and (gh-1666) an expression such as `out_size` --
+    # which jm copies into the C verbatim (`CSYM.MANIFEST_C_KEYS`). Each
     # value is replaced in place; the file is never re-serialised.
     # An `*_impl_file`'s function follows its file when the walk above
     # respelled that file (`CSYM.IMPL_FILE_VALUE`).

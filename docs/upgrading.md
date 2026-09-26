@@ -194,8 +194,13 @@ spelling to its new one. It is rewritten:
 - in the **C your manifest holds** (gh-1653), which jm renders into the C
     again whenever it re-renders from the manifest: every `*_impl` body, and
     every state, init-param and method-param `type` -- a `depends_on`
-    sibling's `lo_state_t *` becomes `dp_lo_state_t *`. Each value is
-    replaced where it stands, so the file's layout and comments are kept.
+    sibling's `lo_state_t *` becomes `dp_lo_state_t *` -- and every C
+    expression jm splices into the binding (gh-1666): a module function's
+    `out_size` calling a sibling (`kaiser_num_taps(...) | 1`), a property's
+    `expr`, a method's `count_default`, an object's `init_post_parse`. The
+    full set is `_csym.MANIFEST_C_KEYS`, and `apply`'s refusal reads the
+    same one. Each value is replaced where it stands, so the file's layout
+    and comments are kept.
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
     `create_fn`, ...) are never touched;

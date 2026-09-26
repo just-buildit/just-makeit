@@ -549,12 +549,52 @@ _DEFINE_STEPS = re.compile(
 #: ``<key>_file = "path::fn"`` companion that lifts the body from a file.
 IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
 
+#: The manifest keys whose string value is a C EXPRESSION or statement jm
+#: splices into generated code verbatim (gh-1666), each found at its render
+#: site: a module function's `out_size` (`_render`, the binding's `_dim`); a
+#: property's `expr` (`_context/_methods`, `_handle`, `_borrow`); a method's
+#: `count_default` (`_context/_methods._count_default_parts`); an object's
+#: `init_post_parse` (`_context/_state`); a handle `create_post`'s `arg`
+#: and its `when` guard (`_handle`). Any of them can call a derived function -- doppler's
+#: ``out_size = "kaiser_num_taps(...) | 1"`` -- or name a derived type.
+#: `default` is not here: an enum param's default is a choice STRING, a bare
+#: word the respell would read as an identifier.
+C_EXPR_KEYS = (
+    "out_size",
+    "expr",
+    "count_default",
+    "init_post_parse",
+    "arg",
+    "when",
+)
+
+#: The manifest keys whose value is a free-form C TYPE -- never checked
+#: against `_types`, so it can name a sibling's derived type (gh-1653's
+#: `type`, gh-1666's siblings): a capsule property's `capsule_type`, an
+#: init-param's `c_type`, a container property's `value_type`, a codec's
+#: `entry_type` (default ``<stem>_<param>_t``), a composer generator's
+#: `state_type` (default ``<stem>_state_t``) and source `struct`, a handle
+#: module's `handle_type`, and a method's `record_dtype`.
+C_TYPE_KEYS = (
+    "type",
+    "capsule_type",
+    "c_type",
+    "value_type",
+    "entry_type",
+    "state_type",
+    "struct",
+    "handle_type",
+    "record_dtype",
+)
+
 #: The manifest keys whose string value is C that jm copies into the project's
-#: C verbatim (gh-1653): the bodies (:data:`IMPL_KEYS`) and a state /
-#: init-param / method-param `type`, which can name a sibling component's
-#: derived type. Author-NAMED keys (`fn`, `create_fn`, ...) are not here: jm
+#: C verbatim: the bodies (:data:`IMPL_KEYS`, gh-1653), the expressions
+#: (:data:`C_EXPR_KEYS`, gh-1666) and the types (:data:`C_TYPE_KEYS`). THE
+#: one set both `jm upgrade`'s respell (:func:`respell_manifest`) and
+#: `apply`'s refusal (:func:`unrenamed_all`) read, so they cannot disagree.
+#: Author-NAMED keys (`fn`, `create_fn`, `out_len_fn`, ...) are not here: jm
 #: never prefixes what the author named.
-MANIFEST_C_KEYS = IMPL_KEYS + ("type",)
+MANIFEST_C_KEYS = IMPL_KEYS + C_EXPR_KEYS + C_TYPE_KEYS
 
 
 def _toml_string(q: int) -> str:
