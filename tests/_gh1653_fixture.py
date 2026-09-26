@@ -24,6 +24,7 @@ from pathlib import Path
 from _jmrun import run_cli
 from just_makeit import _config as C
 from just_makeit._new import run as new_run
+from just_makeit import _textio
 
 PREFIX = "zz"
 
@@ -96,26 +97,26 @@ def build(where: Path) -> Path:
         "--mutable",
         cwd=root,
     )
-    (root / "objects" / "mixer.toml").write_text(MIXER_TOML, newline="\n")
+    _textio.write_text(root / "objects" / "mixer.toml", MIXER_TOML)
     _ok("apply", cwd=root)
     h = next((root / "native" / "inc").rglob("lo_core.h"))
     text = h.read_text()
     at = text.rindex("#ifdef __cplusplus\n}")
-    h.write_text(text[:at] + BATCH_H + text[at:], newline="\n")
+    _textio.write_text(h, text[:at] + BATCH_H + text[at:])
     c = root / "native" / "src" / "lo" / "lo_core.c"
     text = c.read_text()
     new = re.sub(
         r"void\s+lo_steps\([^)]*\)\s*\{.*?\n\}", KERNEL, text, flags=re.S
     )
     assert new != text, "lo_steps() not found to replace"
-    c.write_text(new, newline="\n")
+    _textio.write_text(c, new)
     return root
 
 
 def set_prefix(root: Path) -> None:
     toml = root / C.FILENAME
     text = toml.read_text()
-    toml.write_text(
+    _textio.write_text(
+        toml,
         text.replace("[project]\n", f'[project]\nc_prefix = "{PREFIX}"\n', 1),
-        newline="\n",
     )

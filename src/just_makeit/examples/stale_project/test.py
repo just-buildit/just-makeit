@@ -43,6 +43,7 @@ import subprocess
 import sys
 from just_makeit import _incpath as INC
 from pathlib import Path
+from just_makeit import _textio
 
 HERE = Path(__file__).parent
 TREE = HERE / "tree"
@@ -344,7 +345,7 @@ def run(root: Path) -> None:
     # ── the regression half: what every step printed ─────────────────────
     report = log.report()
     if UPDATE:
-        GOLDEN.write_text(report, encoding="utf-8", newline="\n")
+        _textio.write_text(GOLDEN, report)
     assert GOLDEN.exists(), (
         "no upgrade.golden; create it deliberately with "
         "JM_UPDATE_STALE_GOLDEN=1 make test-examples EXAMPLES_K=stale_project"

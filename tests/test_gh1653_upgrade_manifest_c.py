@@ -30,6 +30,7 @@ import _gh1653_fixture as FX
 from _jmrun import run_cli
 from just_makeit import _csym
 from just_makeit import _keys
+from just_makeit import _textio
 
 P = FX.PREFIX
 
@@ -136,15 +137,15 @@ def _impl_file_project(where):
     new_run("q", root, c_prefix=None, fragments=True)
     (root / "legacy").mkdir()
     (root / "objects").mkdir(exist_ok=True)
-    (root / "legacy" / "old.c").write_text(
+    _textio.write_text(
+        root / "legacy" / "old.c",
         "void lo_reset(lo_state_t *state)\n{\n    state->gain = 2.0f;\n}\n",
-        newline="\n",
     )
-    (root / "objects" / "lo.toml").write_text(
+    _textio.write_text(
+        root / "objects" / "lo.toml",
         '[lo]\narg_type = "float"\nreturn_type = "float"\n'
         'reset_impl_file = "legacy/old.c::lo_reset"\n'
         '[[lo.state]]\nname = "gain"\ntype = "float"\ndefault = "1.0"\n',
-        newline="\n",
     )
     assert run_cli("apply", cwd=root).returncode == 0
     FX.set_prefix(root)
