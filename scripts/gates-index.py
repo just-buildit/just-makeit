@@ -168,11 +168,14 @@ def ratchet_path(root: Path) -> Path:
 
 
 def check(root: Path) -> int:
-    """Fail when a declared gate has lost its obligation, or vanished.
+    """Fail when the recorded set and the declared set differ at all.
 
-    Only shrinkage is refused. A NEW gate is free -- adding one is the
-    thing we want cheap -- and `--update` records it, so the floor rises by
-    an explicit, reviewable commit rather than by a run of the tool.
+    A declared gate that lost its obligation, or vanished, is refused: that
+    is the ratchet. A NEW gate that is not recorded is refused too. It was
+    free once -- "adding one must not need a second commit" -- and 37 gates
+    then sat unrecorded for weeks, the whole c_prefix series among them, so
+    the ratchet protected none of them. Recording costs no second commit:
+    `make gates-index-update` in the same one.
     """
     tests = root / "tests"
     now = set(declared_gates(tests))
@@ -204,11 +207,19 @@ def check(root: Path) -> int:
     gained = sorted(now - floor)
     if gained:
         print(
-            f"gates-check: {len(now)} declared"
-            f" ({len(gained)} new, run `make gates-index-update` to record)"
+            "error: these gates declare an obligation but are not recorded,"
+            "\nso nothing refuses it if one later drops its `GATE:` line:\n",
+            file=sys.stderr,
         )
-        return 0
-    print(f"gates-check: {len(now)} declared, none lost")
+        for name in gained:
+            print(f"  {name}", file=sys.stderr)
+        print(
+            "\nRun `make gates-index-update` and commit the result with the"
+            " gate.\n",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"gates-check: {len(now)} declared, all recorded, none lost")
     return 0
 
 
