@@ -136,14 +136,16 @@ manifests. They are listed nowhere below because they can no longer happen.
 | An example's `test.py` calls a tool absent from the release environment | Guard optional tools with an availability check and skip gracefully — `full_workflow` step 7 is the pattern |
 | GitHub still shows the old version                                      | The `github-release` job failed — read the Actions log and re-run, or `gh release create vX.Y.Z --latest`   |
 
-**Re-tagging is only safe before `release.yml` has published to PyPI.**
-Re-pushing a tag re-triggers the workflow, and the upload step fails on a
-duplicate version once `X.Y.Z` exists. If publish already succeeded, do not
-re-tag — cut the next patch instead.
+**A release tag is immutable: a failed release burns its number.** The
+repository's `release tags` ruleset refuses deleting or moving any `v*` tag,
+with no bypass, so a release that fails -- even before `publish`, with nothing
+on PyPI -- is not re-tagged. Fix the defect on `main`, then cut the next patch
+through the normal bump PR, opening its CHANGELOG section with a line saying
+the previous version was tagged but never published and pointing at its
+section (0.90.1 is the worked example: 0.90.0 failed its pre-publish smoke
+twice and was skipped). The unpublished section stays as written.
 
 ```sh
-git tag -d vX.Y.Z
-git push origin :refs/tags/vX.Y.Z
-# fix the issue, then re-run the same command as before:
-make ship VERSION=X.Y.Z
+# fix merged on main, then:
+make release-branch VERSION=X.Y.Z+1   # note the skipped version at the top
 ```

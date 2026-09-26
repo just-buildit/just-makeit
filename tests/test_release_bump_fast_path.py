@@ -100,11 +100,10 @@ def _release_tags() -> "list[str]":
 def _release_commit(tag: str) -> str:
     """The commit that made *tag*'s version -- its release commit.
 
-    NOT the tag's own commit. A release that fails before publish is re-cut
-    on the SAME number (``skills://release-process``: "a failed release
-    before publish does not burn the version"), so the tag moves to the
-    commit that fixed the defect, which is a source change by construction.
-    v0.90.0 is that case: its tag is on #1631, a workflow fix, and its
+    NOT the tag's own commit. Before release tags became immutable (the
+    `release tags` ruleset, 2026-09-25) a release that failed before publish
+    was re-cut on the SAME number, moving the tag onto the commit that fixed
+    the defect -- a source change by construction. v0.90.0 is that case: its tag is on #1631, a workflow fix, and its
     release commit is the bump before it. The property this file guards is
     that the BUMP takes the fast path, so the bump is what is read -- the
     newest commit reachable from the tag that wrote ``version = "<v>"``
