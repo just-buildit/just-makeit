@@ -32,6 +32,7 @@ import pytest
 from _jmrun import run_cli
 from just_makeit import _config as C
 from just_makeit import _csym
+from just_makeit import _textio
 from just_makeit._new import run as new_run
 
 P = "zz"
@@ -111,7 +112,7 @@ def _bare(where: Path) -> Path:
         "float",
         cwd=root,
     )
-    (root / "objects" / "mixer.toml").write_text(MIXER_TOML, newline="\n")
+    _textio.write_text(root / "objects" / "mixer.toml", MIXER_TOML)
     _ok("module", "m", cwd=root)
     _ok("function", "calc", "--module", "m", cwd=root)
     _ok("apply", cwd=root)
@@ -121,9 +122,8 @@ def _bare(where: Path) -> Path:
 def _set_prefix(root: Path) -> None:
     toml = root / C.FILENAME
     text = toml.read_text(encoding="utf-8")
-    toml.write_text(
-        text.replace("[project]\n", f'[project]\nc_prefix = "{P}"\n', 1),
-        newline="\n",
+    _textio.write_text(
+        toml, text.replace("[project]\n", f'[project]\nc_prefix = "{P}"\n', 1)
     )
 
 
@@ -155,7 +155,7 @@ def test_a_colliding_prefix_is_refused_and_nothing_is_written(
 ):
     root = _copy(bare, tmp_path)
     rel, text, line = WRAPPERS[variant]
-    (root / rel).write_text(text, newline="\n")
+    _textio.write_text(root / rel, text)
     _set_prefix(root)
     before = _snapshot(root)
     r = run_cli(verb, cwd=root)
@@ -209,7 +209,7 @@ def test_an_author_function_under_jms_old_name_is_refused(
 ):
     root = _copy(bare, tmp_path)
     rel, text, line = OWN
-    (root / rel).write_text(text, newline="\n")
+    _textio.write_text(root / rel, text)
     _set_prefix(root)
     before = _snapshot(root)
     r = run_cli(verb, cwd=root)
@@ -230,7 +230,7 @@ def test_without_a_prefix_the_same_tree_is_clean(bare, tmp_path):
     base = run_cli("status", "--check", cwd=root)
     assert base.returncode == 0, base.stdout + base.stderr
     rel, text, _ = OWN
-    (root / rel).write_text(text, newline="\n")
+    _textio.write_text(root / rel, text)
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
     s = run_cli("status", "--check", cwd=root)
@@ -248,9 +248,9 @@ def _half_moved(bare: Path, where: Path) -> Path:
     _ok("upgrade", cwd=root)
     frag = root / "objects" / "mixer.toml"
     text = frag.read_text(encoding="utf-8")
-    frag.write_text(
+    _textio.write_text(
+        frag,
         text.replace(f'type = "{P}_lo_state_t *"', 'type = "lo_state_t *"'),
-        newline="\n",
     )
     assert 'type = "lo_state_t *"' in frag.read_text()
     return root
@@ -293,9 +293,7 @@ def test_a_step_batch_is_owned_beside_its_step_and_nowhere_else(tmp_path):
 
     root = FX.build(tmp_path)
     rel = "native/src/mixer/batch_probe.c"
-    (root / rel).write_text(
-        "static void\nlo_step_batch (void)\n{\n}\n", newline="\n"
-    )
+    _textio.write_text(root / rel, "static void\nlo_step_batch (void)\n{\n}\n")
     FX.set_prefix(root)
     before = _snapshot(root)
     r = run_cli("upgrade", cwd=root)
