@@ -12,17 +12,17 @@ pasted from its unmoved `lo` argument.
 GATE: set `c_prefix` -> `jm upgrade` -> the mixer's sacred files rendered
       again from its manifest by `jm apply` -> CMake build, ctest,
       `jm test` (build + import + pytest), and every defined global in
-      lib<pkg> starts with the prefix.
+      lib<pkg>, shared and static, starts with the prefix (read by
+      tests/_exports.py, on Windows too -- gh-1648).
 """
 
 from __future__ import annotations
 
-import shutil
 import subprocess
-import sys
 
 import pytest
 
+import _exports as EX
 import _gh1653_fixture as FX
 from _jmrun import run_cli
 
@@ -90,27 +90,10 @@ def test_the_upgraded_tree_builds_and_its_c_tests_pass(built):
     _ok(built[2])
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="COFF import libraries carry __imp_ stubs, not the export table "
-    "this reads; tests/test_gh1591_c_prefix_nm.py documents the same split",
-)
 def test_every_export_carries_the_prefix(built):
-    root, b, steps = built
+    _, b, steps = built
     _ok(steps)
-    assert shutil.which("nm"), "nm is required on this host"
-    static = list(b.rglob("libq.a"))
-    assert static, sorted(b.rglob("libq*"))
-    rc, out = _run(["nm", "-g", static[0]], root)
-    assert rc == 0, out
-    syms = set()
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[1] not in ("U", "w", "v"):
-            name = parts[2]
-            if sys.platform == "darwin" and name.startswith("_"):
-                name = name[1:]
-            syms.add(name)
+    syms = EX.exports(b, "q")
     assert f"{P}_lo_steps" in syms, sorted(syms)
     assert f"{P}_mixer_create" in syms, sorted(syms)
     bad = sorted(
