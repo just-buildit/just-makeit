@@ -216,9 +216,17 @@ name [project] c_prefix = 'dp' derives from component `syncword`'s method
 another c_prefix
 ```
 
-Rename your symbol out of the way, or pick another prefix. A name counts only
-where it is declared outside the files jm itself declares it in, so a tree
-already partly moved onto the prefix is not refused.
+The same holds for the name as it is spelled today (gh-1661). A file with its
+own `static crc16`, beside a module function `crc16`, would have it renamed
+to `dp_crc16` too: the respell goes by name, and cannot tell your calls from
+jm's. That is refused the same way: the message says the file declares its
+own `crc16`.
+
+Rename your symbol out of the way (or make it `static` under another name),
+or pick another prefix. A name counts only where it is declared outside the
+files jm itself declares it in, so a tree already partly moved onto the
+prefix is not refused, and a project with no `c_prefix` is never asked: with
+nothing renamed, the two never meet.
 
 ## Packaging (`adopt --packaging`)
 

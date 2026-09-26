@@ -6,6 +6,10 @@
     call to ITSELF -- as a plain `.c` function that compiles, silently, into
     unbounded recursion. `apply` and `upgrade` now refuse it before writing
     anything, naming the file and line, the name, and the component and
-    method (or module function) it derives from. A declaration in the files
-    jm itself declares the name in does not count, so a tree an older jm
-    partly moved onto the prefix still upgrades.
+    method (or module function) it derives from. The name as spelled TODAY
+    counts too (gh-1661): a file's own `static crc16` beside a module
+    function `crc16` would be renamed to `dp_crc16` with it, and the next
+    `apply` would refuse the tree the upgrade left. A declaration in the
+    files jm itself declares the name in does not count, so a tree an older
+    jm partly moved onto the prefix still upgrades, and a project with no
+    `c_prefix` is unaffected.
