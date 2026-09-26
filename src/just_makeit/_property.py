@@ -55,7 +55,9 @@ def plain_accessor_decls(
     two copies of a signature rule is how they drift.
     """
     disp = ctype
-    decls = [f"{disp} {csym}_get_{prop_name}(const {csym}_state_t *state);"]
+    decls = [
+        f"{disp} {CSYM.property_getter(csym, prop_name)}(const {csym}_state_t *state);"
+    ]
     if writable:
         decls.append(
             f"void {csym}_set_{prop_name}({csym}_state_t *state, {disp} val);"
@@ -547,7 +549,7 @@ def run(
         )
     else:
         print(
-            f"Done!  Implement {csym}_get_{prop_name}() in"
+            f"Done!  Implement {CSYM.property_getter(csym, prop_name)}() in"
             f" {_body_file}"
             f"  [{rw}]"
         )

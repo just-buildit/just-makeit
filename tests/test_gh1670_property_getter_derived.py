@@ -26,6 +26,9 @@ GATE: after ``c_prefix`` + `jm upgrade` + `jm apply`, a field property's
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 import _gh1653_fixture as FX
@@ -145,3 +148,35 @@ def test_every_property_kind_derives_its_getter(prop):
         "fir": {"properties": [prop]},
     }
     assert _csym.property_getters(cfg) == {f"{P}_fir_get_n": f"{P}_fir"}
+
+
+#: A getter spelled by hand in an f-string: ``{<stem var>}_get_{<name var>}``.
+#: The C code of the renderers is Python source here, so a regex over the
+#: source is the reading; `_csym.property_getter` is the one allowed site.
+#: Not the derived C getter, and skipped: a static CPython getset function,
+#: told by its own signature (``void *closure``, a ``(getter)`` cast), and a
+#: capsule module's ``{backing}``, an author-named stem
+#: (`C.capsule_backing`).
+_HAND_GETTER = re.compile(r"\{(?!backing\})[a-z_]+\}_get_\{[a-z_]+")
+_GETSET = re.compile(r"void \*closure|\(getter\)")
+
+
+def test_the_getter_is_spelled_in_one_place():
+    """The doc lookup, the rename table, the binding's call and the header
+    prototype all name one getter; a second spelling of it is the one that
+    drifts (gh-1667 was a doc key spelled apart from the render)."""
+    pkg = Path(_csym.__file__).parent
+    hits = [
+        f"{p.relative_to(pkg)}:{n}: {line.strip()}"
+        for p in sorted(pkg.rglob("*.py"))
+        if p.name != "_csym.py"
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if _HAND_GETTER.search(line)
+        and not _GETSET.search(line)
+        and not line.lstrip().startswith("#")
+    ]
+    assert hits == [], (
+        "spell a property getter with `_csym.property_getter`, the one "
+        "spelling `renames` and the doc lookup read (gh-1670):\n"
+        + "\n".join(hits)
+    )

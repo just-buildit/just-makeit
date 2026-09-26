@@ -10,6 +10,7 @@ import re
 from .. import _codec as _codec
 from .. import _config as C
 from .. import _coerce
+from .. import _csym as CSYM
 from .. import _enumc
 from .. import _borrow
 from .. import _outbuf
@@ -4692,7 +4693,7 @@ def make_properties_ctx(
                 f"}}"
             )
         else:
-            _call = f"{csym}_get_{pname}(self->handle)"
+            _call = f"{CSYM.property_getter(csym, pname)}(self->handle)"
             implement_cmt = (
                 "    /* <<IMPLEMENT: return the computed or stored value>> */\n"
                 if pname not in state_var_names
@@ -4718,7 +4719,7 @@ def make_properties_ctx(
                     f" * @param state  Must be non-NULL.\n"
                     f" * @return Current {pname} value ({disp}).\n"
                     f" */\n"
-                    f"{disp} {csym}_get_{pname}"
+                    f"{disp} {CSYM.property_getter(csym, pname)}"
                     f"(const {csym}_state_t *state);"
                 )
 
