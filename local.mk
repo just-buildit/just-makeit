@@ -183,7 +183,7 @@ gates-index: ## The obligations this repo's gates enforce
 gates-index-update: ## Record the declared gates as the ratchet's new floor
 	@python3 scripts/gates-index.py --update
 
-gates-declared-check: ## Verify no gate has dropped its declared obligation
+gates-declared-check: ## Verify every declared gate is recorded and none dropped
 	@python3 scripts/gates-index.py --check
 
 # gh-1590: the acceptance test for epic gh-1584 -- jm packages installed the

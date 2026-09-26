@@ -124,15 +124,18 @@ class TestTheRatchet:
 
         assert GI.check(fake) == 1
 
-    def test_a_new_gate_is_free(self, tmp_path):
-        """Adding one must not need a second commit to the floor."""
+    def test_an_unrecorded_gate_is_refused(self, tmp_path):
+        """A new gate is recorded in the commit that adds it. Free once, and
+        37 sat unrecorded -- unprotected by the ratchet -- for weeks."""
         fake = tmp_path / "repo"
         (fake / "tests").mkdir(parents=True)
         (fake / "tests" / "test_new.py").write_text(
             '"""t.\n\nGATE: do it.\n"""\n'
         )
         (fake / "tests" / "gates-declared.txt").write_text("")
-        assert GI.check(fake) == 0
+        assert GI.check(fake) == 1
+        assert GI.update(fake) == 0
+        assert GI.check(fake) == 0, "recording it is the whole remedy"
 
 
 @pytest.mark.parametrize("flag", ["", "--check"])
