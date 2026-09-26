@@ -181,7 +181,9 @@ jm apply      # regenerates the glue onto the prefix
 The rename set is not a pattern: it is exactly the identifiers jm's render
 of your manifest declares prefixed -- `fir_create`, `fir_state_t`,
 `FIR_CORE_H`, a method's `fir_<name>`, a module function `mix` -- each old
-spelling to its new one. It is rewritten:
+spelling to its new one, plus every property's `fir_get_<name>` whether jm
+declares it or not: a `field = true` property's docstring is read from the
+getter you declare to document it (gh-1670). It is rewritten:
 
 - in **code only**: a comment or string literal that quotes `fir_create`
     keeps it (gh-1382);

@@ -122,6 +122,46 @@ def ctx_create_name(ctx: dict) -> str:
     return str(declared) if declared else create_name(str(ctx["csym"]))
 
 
+def property_getter(stem_: str, prop: str) -> str:
+    """The derived getter of property *prop* on the component whose stem is
+    *stem_*: ``<stem>_get_<prop>`` -- what a plain property's binding calls,
+    and the name EVERY property's docstring is read from (gh-1670).
+
+    >>> property_getter("dp_fir", "num_taps")
+    'dp_fir_get_num_taps'
+    """
+    return f"{stem_}_get_{prop}"
+
+
+def property_getters(cfg: dict) -> "dict[str, str]":
+    """``{getter: component stem}`` for each property of each component in
+    *cfg*, under the stem *cfg* derives (:func:`property_getter`).
+
+    A derived name whether or not jm declares it (gh-1670). A plain
+    property's getter is in the render; a ``field = true`` (or ``expr``,
+    ``buf_field``, capsule) property's is not -- the binding reads the
+    field -- yet its docstring is still looked up at this name, so an author
+    documents it by declaring the getter in the sacred header. A replay's
+    declarations alone would leave that one out of :func:`renames`, and
+    `jm upgrade` would leave it unprefixed while the doc lookup asked for
+    the prefixed spelling.
+
+    >>> property_getters({"project": {"name": "p", "c_prefix": "dp"},
+    ...                   "fir": {"properties": [{"name": "num_taps",
+    ...                                           "field": True}]}})
+    {'dp_fir_get_num_taps': 'dp_fir'}
+    """
+    from . import _config as C
+
+    out = {}
+    for comp in C.components(cfg):
+        st = stem(cfg, comp)
+        for prop in (cfg.get(comp) or {}).get("properties", []) or []:
+            if isinstance(prop, dict) and prop.get("name"):
+                out[property_getter(st, str(prop["name"]))] = st
+    return out
+
+
 def sources(cfg: dict) -> "dict[str, str]":
     """Every name jm derives C symbols from in *cfg*, mapped to its stem:
     each component, each module's C name, each module function.
@@ -267,7 +307,8 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
 
     Case-sensitive and derived only: ``fir_state_t`` and ``FIR_CORE_H`` are
     here; an author's own ``FIR_STATE_MAGIC`` is not, because jm never
-    declares it.
+    declares it. Every property's getter is here too, declared or not
+    (:func:`property_getters`, gh-1670).
     """
     stems = sources(cfg)
     out = {}
@@ -275,7 +316,7 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     # its own create-only `_core.c`, called from the binding) is derived
     # and declared in no header. Duplicates stay header-only -- there a
     # declaration and its definition would count twice.
-    found = set(_derived_by_dir(tree, cfg))
+    found = set(_derived_by_dir(tree, cfg)) | set(property_getters(cfg))
     for c in sorted((tree / "native").rglob("*.c")):
         found |= {
             n
@@ -332,6 +373,11 @@ def _line_of(text: str, name: str) -> int:
         if m:
             return where.count("\n", 0, m.start()) + 1
     return 1
+
+
+#: The derived names whose files are a component's own: its state type and
+#: lifecycle. What an author-written derived name beside them is owned by.
+_LIFECYCLE = ("state_t", "create", "destroy", "reset")
 
 
 def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
@@ -392,6 +438,14 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
             sibling = owning.get(base, set()) | owning.get(base + "s", set())
             if sibling:
                 owning[n] = sibling
+    # gh-1670: a property getter no render declares (a `field = true`
+    # property's) is the author's, written to document the property -- in
+    # the component's own files, where its `<stem>_state_t` and lifecycle are.
+    for n, st in property_getters(cfg).items():
+        if n in new and n not in owning:
+            owning[n] = set().union(
+                *(owning.get(f"{st}_{s}", set()) for s in _LIFECYCLE)
+            )
     # An `*_impl_file = "path::fn"` names the file jm lifts a body FROM: its
     # `fn` is jm's, by the manifest's own word, and gh-1653 respells the
     # `::fn` with it -- so that file owns the name.
