@@ -405,14 +405,48 @@ def _toml_string(q: int) -> str:
 #: header respell), so the two readers of "a manifest string" cannot drift.
 TOML_STRING = re.compile(_toml_string(1))
 
-#: A manifest ``<key> = <string>`` for one of :data:`MANIFEST_C_KEYS`: group 3
-#: is the opening quote, 4 the content -- :data:`TOML_STRING` behind a key.
-MANIFEST_C_VALUE = re.compile(
-    r"(?<![\w-])("
-    + "|".join(MANIFEST_C_KEYS)
-    + r")(\s*=\s*)"
-    + _toml_string(3)
-)
+
+def _manifest_c_value(keys: "tuple[str, ...]") -> "re.Pattern":
+    """A manifest ``<key> = <string>`` for one of *keys*: group 3 is the
+    opening quote, 4 the content -- :data:`TOML_STRING` behind a key."""
+    return re.compile(
+        r"(?<![\w-])(" + "|".join(keys) + r")(\s*=\s*)" + _toml_string(3)
+    )
+
+
+#: :func:`_manifest_c_value` over every C-bearing key.
+MANIFEST_C_VALUE = _manifest_c_value(MANIFEST_C_KEYS)
+
+
+def respell_manifest_c(
+    text: str, respell, keys: "tuple[str, ...]" = MANIFEST_C_KEYS
+) -> str:
+    """*text* (a manifest or fragment) with *respell* (C text to C text)
+    applied to each *keys* value, in place -- the file is never re-serialised,
+    and nothing outside those values moves.
+
+    THE one visit of the manifest's C-bearing values, for every respell `jm
+    upgrade` makes to C (gh-1647): jm renders a header body FROM these
+    strings, so a respell that rewrote the header and not its source is
+    undone by the next `apply` -- the two never converge. The `c_prefix`
+    respell passes :func:`respell_c` over every C-bearing key; the complex
+    respell (gh-1248) passes its own over the bodies (:data:`IMPL_KEYS`),
+    the only values that reach C verbatim -- a ``type`` is validated to the
+    ``_Complex`` spelling before anything renders, and `apply` refuses the
+    old one. ``tests/test_gh1647_one_manifest_walker.py`` requires every C
+    respell in `_upgrade` to come through here.
+
+    >>> print(respell_manifest_c('impl = "x;"\\ncreate_fn = "x"\\n',
+    ...                          lambda c: c.replace("x", "y")), end="")
+    impl = "y;"
+    create_fn = "x"
+    """
+
+    def value(m: "re.Match") -> str:
+        body = respell(m.group(4))
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}{body}{m.group(3)}"
+
+    return _manifest_c_value(keys).sub(value, text)
 
 
 #: A ``<impl>_file = "path::fn"`` value: group 3 the path, 4 the function.
@@ -523,11 +557,7 @@ def respell_manifest(
     type = "p_fir_state_t *"
     """
 
-    def value(m: "re.Match") -> str:
-        body = respell_c(m.group(4), names, stems)
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}{body}{m.group(3)}"
-
-    text = MANIFEST_C_VALUE.sub(value, text)
+    text = respell_manifest_c(text, lambda c: respell_c(c, names, stems))
     if root is None:
         return text
     hits = {m.start(): fn for m, fn in _impl_file_fns(text, root, followed)}
