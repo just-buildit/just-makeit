@@ -1309,7 +1309,7 @@ def run(
             # Unclassified falls to the glue wording: a false "jm will
             # rewrite this" sends the reader to look, while a false
             # "yours, apply only adds" tells them not to.
-            rule = _createonly.classify(str(entry[0]))
+            rule = _createonly.classify(Path(entry[0]).as_posix(), root)
             return rule is not None and rule.kind == _createonly.AUTHOR
 
         _sacred = [e for e in stale if _is_yours(e)]

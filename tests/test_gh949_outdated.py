@@ -57,6 +57,7 @@ from just_makeit import (  # noqa: E402
     _cfmt,
     _config,
     _createonly,
+    _incpath,
     _status,
 )
 from just_makeit._app import run as app_run  # noqa: E402
@@ -86,6 +87,38 @@ SHAPES: dict[str, dict] = {
     # that file matched nothing and `test_no_rule_is_dead` said so -- the
     # registry reading as broader coverage than the fixture could reach.
     "element": {"element": True},
+    # gh-1659: the flat header layout, before `_incpath.PREFIXED_SCHEMA`.
+    # Every other shape is prefixed, so without this the header rules were
+    # measured in one layout while claiming to hold in both.
+    "flat-headers": {"schema": _incpath.PREFIXED_SCHEMA - 1},
+    # gh-1659: the two generated headers below a component directory that
+    # are not a `_core.h`. They were classified only because the umbrella's
+    # glob crossed `/`; with no shape producing them, nothing noticed.
+    "procglobal": {"procglobal": True},
+    "composer": {"composer": True},
+}
+
+#: A composer module with a bridge seam, which is what makes jm write its
+#: `<cname>_bridge.h` (gh-998). Generic on purpose, as gh-998's own fixture.
+COMPOSER = {
+    "kind": "composer",
+    "backing": "playlist",
+    "composes": ["clip"],
+    "package": "audio",
+    "source": {
+        "object": "clip",
+        "struct": "clip_t",
+        "type_name": "Clip",
+        "fields": [{"name": "gain", "type": "double", "default": "1.0"}],
+        "generates": {"generator": "clip", "bridge_fn": "clip_from_source"},
+    },
+    "segment": {
+        "type_name": "Track",
+        "struct": "track_t",
+        "sources": "multi",
+        "fields": [{"name": "dur", "type": "size_t"}],
+    },
+    "oo": {"composer_type_name": "Mix"},
 }
 
 DERIVABLE = sorted(SHAPES)
@@ -95,6 +128,8 @@ def _scaffold(root: Path, **shape) -> Path:
     module = shape.pop("module", None)
     app = shape.pop("app", False)
     element = shape.pop("element", False)
+    procglobal = shape.pop("procglobal", False)
+    composer = shape.pop("composer", False)
     perf = shape.get("perf", False)
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("p", root, **shape)
@@ -122,6 +157,23 @@ def _scaffold(root: Path, **shape) -> Path:
                 params=[("n", "size_t")],
                 borrow=True,
             )
+        if procglobal or composer:
+            if procglobal:
+                # A core linked from a second extension module, declared
+                # `process_global` -- the shape gh-1117's header exists for.
+                for mod, comp in (("own", "flag"), ("other", "user")):
+                    module_run(root, mod)
+                    object_run(root, comp, mod)
+            else:
+                object_run(root, "clip", None)
+            cfg = _config.load(root)
+            if procglobal:
+                cfg["flag"]["process_global"] = True
+                cfg["user"]["depends_on"] = [{"name": "flag", "link": True}]
+            else:
+                cfg.setdefault("module", {})["playlist"] = dict(COMPOSER)
+            _config.save(root, cfg)
+            _quiet_apply(root)
         # Formatting is a post-command hook on the CLI dispatcher
         # (`_cli._C_EMITTING_COMMANDS`), not part of emission: `_new.run`
         # formats its own tree because the hook cannot reach a subdirectory,
@@ -229,7 +281,7 @@ def test_the_create_only_set_is_exactly_what_is_classified(tmp_path, name):
     root = tmp_path / f"{name}-pristine"
     declared = set()
     for rel in _managed(root):
-        rule = _createonly.classify(rel.as_posix())
+        rule = _createonly.classify(rel.as_posix(), root)
         assert rule is not None, (
             f"{rel.as_posix()} has no rule in _createonly.RULES — classify it "
             "JM (jm's content, so it can be behind), AUTHOR (the author's, so "
@@ -274,14 +326,16 @@ def test_no_rule_is_dead(tmp_path):
     coverage than it has, and the unmatched entry is exactly where a stale
     judgement hides.
     """
-    seen: set[str] = set()
+    # Each path with its own project: a header's rule is matched against
+    # the project it sits in (gh-1659), so the pair is what is classified.
+    seen: set[tuple[str, Path]] = set()
     for name, shape in SHAPES.items():
         root = _scaffold(tmp_path / f"live-{name}", **dict(shape))
-        seen.update(p.as_posix() for p in _managed(root))
+        seen.update((p.as_posix(), root) for p in _managed(root))
     dead = [
         rule.pattern
         for rule in _createonly.RULES
-        if not any(_createonly.classify(p) is rule for p in seen)
+        if not any(_createonly.classify(p, r) is rule for p, r in seen)
     ]
     assert not dead, f"rules matching no scaffolded file: {dead}"
 

@@ -177,25 +177,6 @@ def core_rel(comp: str, owner: Owner) -> str:
     return rel(f"{comp}/{comp}_core.h", owner)
 
 
-def rel_glob(pattern: str) -> str:
-    """A project-relative glob for headers *pattern* matches, in ANY project.
-
-    For a path table that cannot know the package or the layout
-    (`_createonly`'s rules): it matches the header at the ``-I`` root and
-    under a package directory alike. fnmatch's ``*`` crosses ``/``, so a
-    pattern that already starts with one needs nothing; a bare name gets a
-    leading ``*`` that is empty for the old layout and ``<pkg>/`` for the
-    new one.
-
-    >>> rel_glob("*/*_core.h")
-    'native/inc/*/*_core.h'
-    >>> rel_glob("clib_common.h")
-    'native/inc/*clib_common.h'
-    """
-    star = "" if pattern.startswith("*") else "*"
-    return f"{INC_DIR}/{star}{pattern}"
-
-
 def layout_free(rel_posix: str, owner: Owner) -> str:
     """*rel_posix* (project-relative) with the header layout taken out: a
     header's path below the ``-I`` root with any leading ``<pkg>/`` dropped,

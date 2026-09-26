@@ -53,7 +53,8 @@ The classification is a declared judgement — it is about intent, so it must be
 
 from __future__ import annotations
 
-import fnmatch
+import functools
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -101,10 +102,19 @@ REWRITTEN = (RECONCILED, DERIVED)
 class Rule(NamedTuple):
     """One classification, matched against a project-relative POSIX path.
 
-    ``pattern`` is an :mod:`fnmatch` glob whose ``*`` crosses ``/`` — so
-    ``src/*/tests/*.py`` covers a dotted module's nested
-    ``src/pkg/dsp/filters/tests/`` as well as the flat case, which a
-    ``PurePath.match``-style glob would miss.
+    ``pattern`` is a glob in which ``*`` stays inside one path segment and
+    ``**`` crosses ``/`` (:func:`_compile`). The crossing is spelled where it
+    is meant: ``src/**/tests/*.py`` covers a dotted module's nested
+    ``src/pkg/dsp/filters/tests/`` as well as the flat case. It used to be
+    :mod:`fnmatch`, whose every ``*`` crosses ``/``, and the umbrella's
+    ``native/inc/*.h`` then claimed every header under ``native/inc/`` --
+    the author's too (gh-1659).
+
+    A header's pattern starts ``inc:`` and is matched against
+    :func:`_incpath.layout_free`'s name for the path, which is the same in
+    both header layouts (gh-1583) -- so no rule spells the layout, and
+    ``{pkg}`` is the project's name. That is why :func:`classify` takes the
+    project.
 
     ``why`` is printed nowhere; it is the record of the judgement, which is the
     part that goes stale silently when it lives only in a reviewer's head.
@@ -168,10 +178,10 @@ RULES: tuple[Rule, ...] = (
         "the find_package config template, jm's while it carries"
         " `# jm:generated` (gh-1589).",
     ),
-    Rule(INC.rel_glob("jm_perf.h"), JM, "the JM_DEFINE_STEPS macro is jm's."),
-    Rule(INC.rel_glob("jm_simd.h"), JM, "jm's SIMD helpers."),
-    Rule(INC.rel_glob("clib_common.h"), JM, "jm's shared C preamble."),
-    Rule(INC.rel_glob("pyex_common.h"), JM, "jm's CPython glue preamble."),
+    Rule("inc:jm_perf.h", JM, "the JM_DEFINE_STEPS macro is jm's."),
+    Rule("inc:jm_simd.h", JM, "jm's SIMD helpers."),
+    Rule("inc:clib_common.h", JM, "jm's shared C preamble."),
+    Rule("inc:pyex_common.h", JM, "jm's CPython glue preamble."),
     Rule(
         "native/tests/jm_test.h",
         JM,
@@ -195,9 +205,9 @@ RULES: tuple[Rule, ...] = (
         "the author's dependencies, metadata and tool configuration.",
     ),
     Rule("README.md", AUTHOR, "the author's prose."),
-    Rule("docs/*", AUTHOR, "the author's prose."),
+    Rule("docs/**", AUTHOR, "the author's prose."),
     Rule(
-        INC.rel_glob("*/*_core.h"),
+        "inc:*/*_core.h",
         AUTHOR,
         "sacred: the author's struct and inline step() body.",
     ),
@@ -210,12 +220,12 @@ RULES: tuple[Rule, ...] = (
         " checks precisely because it is expected to grow).",
     ),
     Rule("native/benchmarks/bench_*_core.c", AUTHOR, "the author's C bench."),
-    # gh-1404: ABOVE the author's-tests rule below, because fnmatch's `*`
-    # crosses `/` and first-match-wins -- the generated invariants would
+    # gh-1404: ABOVE the author's-tests rule below, because that rule's
+    # `*.py` matches this file too and first-match-wins -- the invariants would
     # otherwise be classified as the author's and never refreshed, which is
     # the exact wall that put them in a file of their own.
     Rule(
-        "src/*/tests/test_*_invariants.py",
+        "src/**/tests/test_*_invariants.py",
         DERIVED,
         "the element contract jm derives from `[[<obj>.records]]` and the"
         " members referencing it (gh-1404). jm's, not the author's.",
@@ -227,35 +237,35 @@ RULES: tuple[Rule, ...] = (
     # never writes it; classified here all the same, which only means it is
     # never reported OUTDATED -- the safe direction for a file that is theirs.
     Rule(
-        "src/*/tests/test_*.py",
+        "src/**/tests/test_*.py",
         RECONCILED,
         "the scaffolded test, jm's while it carries `# jm:generated` and the"
         " author's once they delete it (gh-1489).",
     ),
     Rule(
-        "src/*/tests/*.py",
+        "src/**/tests/*.py",
         AUTHOR,
         "the author's Python tests, plus the empty package __init__.",
     ),
     # gh-1528: the scaffolded benchmark, owned exactly as the test above is,
     # and ABOVE the author's-benchmarks rule for the same first-match reason.
     Rule(
-        "src/*/benchmarks/bench_*.py",
+        "src/**/benchmarks/bench_*.py",
         RECONCILED,
         "the scaffolded benchmark, jm's while it carries `# jm:generated`"
         " and the author's once they delete it (gh-1528).",
     ),
-    Rule("src/*/benchmarks/*.py", AUTHOR, "the author's Python benchmarks."),
+    Rule("src/**/benchmarks/*.py", AUTHOR, "the author's Python benchmarks."),
     Rule(
-        "benchmarks/history/*",
+        "benchmarks/history/**",
         AUTHOR,
         "a placeholder and the project's own dated snapshots.",
     ),
-    # BELOW the two rules above, deliberately: fnmatch's `*` crosses `/`, so
-    # this also matches `src/pkg/tests/__init__.py`, and first-match-wins is
+    # BELOW the two rules above, deliberately: `**` crosses `/`, so this
+    # also matches `src/pkg/tests/__init__.py`, and first-match-wins is
     # what keeps those empty package markers with the author's files.
     Rule(
-        "src/*/__init__.py",
+        "src/**/__init__.py",
         PARTIAL,
         "`apply` splices each component's import line in and leaves the rest,"
         " including whatever the package re-exports, alone. gh-959.",
@@ -279,10 +289,25 @@ RULES: tuple[Rule, ...] = (
     # nothing; this one fails the moment `apply` stops rewriting one of them,
     # which is exactly how a file becomes invisible without anyone noticing.
     Rule(
-        INC.rel_glob("*.h"),
+        "inc:{pkg}.h",
         RECONCILED,
-        "the umbrella header — `apply` refreshes its include list. Below the"
-        " jm_*.h / common-header rules above, which are more specific.",
+        "the umbrella header — `apply` refreshes its include list. Matched by"
+        " its name: an `inc:*.h` glob claimed every author header beside it"
+        " as jm's (gh-1659).",
+    ),
+    # gh-1659: these two were classified only by that glob crossing `/`,
+    # which is why neither had a rule of its own.
+    Rule(
+        "inc:*/*_bridge.h",
+        RECONCILED,
+        "a composer module's seam prototypes (gh-998): jm's, reconciled from"
+        " the replay like the module's `_ext.c`.",
+    ),
+    Rule(
+        "inc:*/*_procglobal.h",
+        RECONCILED,
+        "the `process_global` contract header (gh-1117), reconciled from the"
+        " replay (gh-1140).",
     ),
     Rule(
         "native/src/*/CMakeLists.txt",
@@ -304,7 +329,7 @@ RULES: tuple[Rule, ...] = (
         " verb and `apply` rewrites the file wholesale. Its banner invites"
         " the author to edit it anyway and nothing preserves that — gh-962.",
     ),
-    Rule("src/*/*.pyi", RECONCILED, "generated type stubs."),
+    Rule("src/**/*.pyi", RECONCILED, "generated type stubs."),
 )
 
 
@@ -365,23 +390,77 @@ def superseded(root: Path) -> "list[tuple[str, str]]":
     ]
 
 
-def classify(rel_posix: str) -> Rule | None:
+@functools.lru_cache(maxsize=None)
+def _compile(pattern: str, pkg: str) -> "re.Pattern[str]":
+    """*pattern* as an anchored regex, with ``{pkg}`` filled in.
+
+    ``**`` matches anything, ``/`` included; ``*`` anything but ``/``; every
+    other character itself. Nothing else is special -- no rule needs ``?`` or
+    a character class, and a grammar with fewer meanings has fewer ways to
+    match what it was not written for.
+
+    >>> bool(_compile("inc:*.h", "p").match("inc:p/helper.h"))
+    False
+    >>> bool(_compile("src/**/tests/*.py", "p").match("src/p/a/b/tests/t.py"))
+    True
+    >>> bool(_compile("inc:{pkg}.h", "p").match("inc:p.h"))
+    True
+    """
+    parts = re.split(r"(\*\*|\*)", pattern.replace("{pkg}", pkg))
+    body = "".join(
+        ".*" if p == "**" else "[^/]*" if p == "*" else re.escape(p)
+        for p in parts
+    )
+    return re.compile(body + r"\Z")
+
+
+def _name(rel_posix: str, owner: "INC.Owner") -> str:
+    """The name *rel_posix* is matched by: a header below the ``-I`` root by
+    its layout-free ``inc:`` name, so ``native/inc/p.h`` and
+    ``native/inc/p/p.h`` are both ``inc:p.h``; anything else by its path.
+
+    Only below the ``-I`` root: :func:`_incpath.layout_free` also names an
+    INSTALLED copy ``inc:``, and a copy under ``install/include/`` is not a
+    file `apply` writes."""
+    if rel_posix.startswith(INC.INC_DIR + "/"):
+        return INC.layout_free(rel_posix, owner)
+    return rel_posix
+
+
+def classify(rel_posix: str, owner: "INC.Owner") -> Rule | None:
     """Return the first rule matching *rel_posix*, or None if unclassified.
+
+    *owner* is the project (its root, or its manifest), because the
+    umbrella header is named for it: ``native/inc/<pkg>.h``, or
+    ``native/inc/<pkg>/<pkg>.h`` in the prefixed layout. Any other header
+    beside it is the author's, and is None here (gh-1659).
 
     An unclassified path is never reported outdated — the safe direction at
     runtime, since the cost of a false OUTDATED is a user chasing a difference
     that is their own work. It is a hard failure in the test suite instead,
     where the cost of missing one is a line nobody reads.
+
+    >>> o = {"project": {"name": "p", "schema": "8"}}
+    >>> classify("native/inc/p/p.h", o).kind
+    'reconciled'
+    >>> classify("native/inc/p.h", o).kind
+    'reconciled'
+    >>> classify("native/inc/p/helper.h", o) is None
+    True
     """
+    from . import _config as C
+
+    name = _name(rel_posix, owner)
+    pkg = C.project_name(INC.manifest(owner))
     for rule in RULES:
-        if fnmatch.fnmatchcase(rel_posix, rule.pattern):
+        if _compile(rule.pattern, pkg).match(name):
             return rule
     return None
 
 
-def is_versioned(rel_posix: str) -> bool:
+def is_versioned(rel_posix: str, owner: "INC.Owner") -> bool:
     """True when a difference from jm's current render means *outdated*."""
-    rule = classify(rel_posix)
+    rule = classify(rel_posix, owner)
     return rule is not None and rule.versioned
 
 
@@ -417,7 +496,7 @@ def outdated(root: Path, replay_root: Path) -> list[str]:
         if _apply.is_skipped(rel):
             continue
         rel_posix = rel.as_posix()
-        if not is_versioned(rel_posix):
+        if not is_versioned(rel_posix, root):
             continue
         dst = root / rel
         # A file absent from the real tree is MISSING, which `apply` fixes and
@@ -467,7 +546,7 @@ def missing_anchors(root: Path, replay_root: Path) -> list[tuple[str, str]]:
         if _apply.is_skipped(rel):
             continue
         rel_posix = rel.as_posix()
-        rule = classify(rel_posix)
+        rule = classify(rel_posix, root)
         if rule is None or rule.kind != PARTIAL:
             continue
         dst = root / rel

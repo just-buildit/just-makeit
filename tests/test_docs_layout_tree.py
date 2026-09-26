@@ -72,7 +72,7 @@ def scaffold(tmp_path_factory) -> "dict[str, str]":
     for p in proj.rglob("*"):
         rel = p.relative_to(proj)
         if p.is_file() and not _apply.is_skipped(rel):
-            rule = _createonly.classify(rel.as_posix())
+            rule = _createonly.classify(rel.as_posix(), proj)
             out[rel.as_posix()] = rule.kind if rule else "?"
     # the manifest is skipped by the walk and is still the author's file
     out["just-makeit.toml"] = _createonly.AUTHOR
