@@ -48,6 +48,8 @@ allowed_reason() {
         echo "the gh-1248 migration -- it must name the spelling it replaces" ;;
     tests/test_gh1248_upgrade_complex_spelling.py)
         echo "builds a pre-gh-1246 tree in order to migrate it" ;;
+    tests/test_gh1647_complex_respell_manifest.py)
+        echo "builds a pre-gh-1246 manifest body in order to migrate it" ;;
     src/just_makeit/examples/stale_project/tree/*)
         echo "a project frozen at jm 0.33.14 (gh-1443); jm upgrade respells it in the example" ;;
     *) return 1 ;;
