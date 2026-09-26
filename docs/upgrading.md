@@ -187,15 +187,12 @@ getter you declare to document it (gh-1670). It is rewritten:
 
 - in **code only**: a comment or string literal that quotes `fir_create`
     keeps it (gh-1382);
-
 - as **whole identifiers, case-sensitively**: `fir_state_t` moves; your own
     `FIR_STATE_MAGIC`, or a `fir_create_default` you wrote, does not;
-
 - in every C and C++ file of the project -- the sacred `_core.h` /
     `_core.c`, module function sources, tests, benchmarks, `native/examples/`
     -- but not in a **nested project** (a directory with its own
     `just-makeit.toml`), which its own `jm upgrade` moves;
-
 - in the **C your manifest holds** (gh-1653), which jm renders into the C
     again whenever it re-renders from the manifest: every `*_impl` body, and
     every state, init-param and method-param `type` -- a `depends_on`
@@ -209,7 +206,7 @@ getter you declare to document it (gh-1670). It is rewritten:
     scalar parameter's -- and moves, except on an entry that names an enum
     (an `enum` key, or a `type` of `enum:<name>` / `string_enum:...`),
     whose default is a choice string and, like the enum `type` itself, is
-    never touched. So is a `replace = { "<old>" = "<new>" }` table (gh-1656),
+    never touched. A `replace = { "<old>" = "<new>" }` table moves too (gh-1656),
     inline or as `[<comp>.replace]`: each value is C spliced into the
     `impl` body, and each key is matched against that body, so it moves
     with it -- unless the body is lifted from an `impl_file` the upgrade
@@ -219,23 +216,16 @@ getter you declare to document it (gh-1670). It is rewritten:
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
     `create_fn`, ... -- `_csym.AUTHOR_NAMED_KEYS`) are never touched; when
-    one names a symbol the prefix renames -- a handle's `create_fn =   "lo_create"` over component `lo` -- `apply` and `upgrade` refuse
-    before writing anything (gh-1671), naming the file, the key and the
-    spelling to use:
-
-    ```
-    error: modules/h.toml:7: `create_fn = "lo_create"` names `lo_create`,
-    which [project] c_prefix = 'dp' renames to `dp_lo_create` -- jm never
-    respells a name you wrote, so spell it `dp_lo_create` yourself
-    ```
-
+    one names a symbol the prefix renames -- a handle's
+    `create_fn = "lo_create"` over component `lo` -- `apply` and `upgrade`
+    refuse before writing anything (gh-1671), naming the file, the key and
+    the new spelling to write there yourself;
 - only where the name **refers** to jm's symbol (gh-1668): a call, `&fir_bits`,
     a function pointer, a type use, the function's own declaration. A struct
     member, a member access (`.fir_bits`, `->fir_bits`), a designated
     initializer, a parameter or a local spelled like a derived name is yours,
     and keeps its spelling -- as does every use of that parameter or local
     in its scope;
-
 - in a call to a macro that **token-pastes** a stem into derived names
     (gh-1669): jm's `JM_DEFINE_STEPS (fir, ...)`, which pastes `fir_step` /
     `fir_steps` / `fir_step_batch`, or your own `#define T(pfx, s)   pfx##_reset (s)` in any project C file. That argument moves, and so does
