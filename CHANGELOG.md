@@ -1,5 +1,154 @@
 ## [Unreleased]
 
+## [0.92.1] — 2026-09-26
+
+### Fixed
+
+- **The `c_prefix` symbol gates run on Windows** (gh-1648). "Every symbol
+    `lib<pkg>` exports carries the prefix" was checked by `nm` on the Linux
+    and macOS legs only: a DLL has no symbol table, so `nm` over it prints
+    `no symbols` and exits 0, and the tests were skipped on `win32` and
+    absent from the Windows job besides. One reader, `tests/_exports.py`,
+    now serves every platform -- on a clang-cl build it reads the DLL's
+    export table (`llvm-readobj --coff-exports`) and the static `.lib`'s
+    defined externals, ignoring MSVC's literal-pool names -- and both
+    symbol gates run in `Examples (windows-latest, clang-cl)`. A new gate
+    fails if a test that reads exports is left off that job.
+
+- **`jm upgrade` respells a manifest's `replace` table** (gh-1656). Its
+    values are C spliced into the `impl` body and its keys are matched
+    against it, but neither sat behind a key the `c_prefix` respell knew, so
+    a value naming a derived symbol kept the old spelling (the next render
+    from the manifest did not compile) and a key over a respelled
+    `impl_file` body silently stopped matching. Both sides, inline or as a
+    `[<comp>.replace]` table, are now respelled in place and named by
+    `apply`'s existing-tree refusal, through one reading,
+    `_csym.manifest_c_spans`. A key whose body comes from a file the upgrade
+    does not respell keeps its spelling.
+
+- **A header you wrote beside the umbrella is yours, not jm's** (gh-1659).
+    jm recognised its umbrella header by `native/inc/*.h`, and that glob's
+    `*` crossed `/`, so every header under `native/inc/` -- in either
+    layout -- read as the umbrella `apply` rewrites. Under a new
+    `c_prefix`, `apply`'s refusal then never named such a header that still
+    called an unprefixed name, while the same code in a `.c` file was
+    named. The umbrella is now matched by its name (`native/inc/<pkg>.h`,
+    or `native/inc/<pkg>/<pkg>.h`), and no ownership rule's `*` crosses a
+    directory any more, so a nested author file such as
+    `native/src/<comp>/vendor/x_ext.c` is not taken for jm's binding either.
+
+- **A refused `jm apply` no longer rewrites your manifest** (gh-1660).
+    `apply` recorded `[project] jm_version` before asking any of its
+    refusals, so on a project an older jm had generated, every refusal --
+    a `c_prefix` collision, an unsupported type, an unknown `--only`, a
+    fragment that would lose code -- still left the running version in
+    the manifest, a record that this jm had generated a project it had
+    refused to touch. The stamp now follows the last refusal. A fragment
+    composed by `jm apply <fragment.toml>` is undone too when a refusal
+    follows it: the copy in `objects/` and the manifest's `include` line
+    are put back. And `jm upgrade` refuses a removed `c_prefix` before it
+    writes anything, where it used to rename `jb.toml` first.
+
+- **`jm upgrade` respells the C expressions your manifest holds** (gh-1666).
+    Moving onto a `c_prefix` respelled `*_impl` bodies and `type` keys but
+    not the other manifest strings jm splices into generated C verbatim, so
+    a module function's `out_size = "kaiser_num_taps(...) | 1"` survived
+    the upgrade and the regenerated `_ext.c` called a function that no
+    longer existed. `out_size`, a property's `expr`, a method's
+    `count_default`, an object's `init_post_parse`, a handle
+    `create_post`'s `arg` / `when`, and the free-form C type keys
+    (`capsule_type`, `c_type`, `value_type`, `entry_type`, `state_type`,
+    `struct`, `handle_type`, `record_dtype`) are now respelled in place, and
+    `apply`'s existing-tree refusal names a stale one -- both read one
+    declared set, `_csym.MANIFEST_C_KEYS`. Author-named keys (`fn`,
+    `create_fn`, `out_len_fn`, ...) are still untouched.
+
+- **`jm upgrade` respells a property getter jm does not declare** (gh-1670).
+    A `field = true` property's docstring is read from `<stem>_get_<prop>`,
+    which an author declares in the sacred header to document it -- but the
+    `c_prefix` respell moved only the names jm's render declares, so
+    `fir_get_num_taps` kept its bare spelling while the doc lookup asked for
+    `dp_fir_get_num_taps`, and the stub fell back to "Num taps.". Every
+    property's getter is now a derived name, declared or not: `jm upgrade`
+    respells it and lists it in the rename table, and `apply` refuses a tree
+    that still spells it bare.
+
+- **`jm upgrade` respells a C `default`, and refuses an author-named key it
+    cannot** (gh-1671). A state field's or scalar parameter's `default` is
+    C spliced into the create/reset body or a C local, so
+    `default = "sizeof(lo_state_t)"` went stale under a new `c_prefix`; it
+    is now respelled and named by `apply`'s refusal, while an enum entry's
+    `default` (and an enum spec `type`) -- a choice string -- is left
+    alone. An init-param's `default_raw` is respelled too. A key that names
+    a function you wrote (`create_fn`, `close_fn`, `fn`, ...) is still
+    never respelled, but when it names a symbol the prefix renames --
+    a handle's `create_fn = "lo_create"` over component `lo` -- `apply`
+    and `jm upgrade` now refuse before writing, naming the file, the key
+    and the new spelling.
+
+- **An inline `step()` body can call a property getter or a method**
+    (gh-1679). The sacred `_core.h` declared accessors and methods below
+    the `static inline` step, so an `impl = "return lo_get_gain(state) * x;"`
+    failed to compile ("implicit declaration", then "conflicting types"),
+    whether the manifest declared the property or `jm property` added it
+    later. Every declaration now goes above the step. A header-only
+    component declares each of its `static inline` definitions above the
+    step as a `static inline` prototype. Existing headers are sacred and
+    keep their layout; a declaration jm adds to one from now on goes above
+    the step.
+
+- **`jm upgrade` and `apply` read every spelling of the C a manifest
+    holds** (gh-1684). A basic string with an escaped quote
+    (`impl = "puts(\"x\"); lo_create(1);"`) was read only up to the first
+    `\"`, so a derived name after it was neither respelled onto a new
+    `c_prefix` nor named by `apply`'s refusal. It is now read whole, as
+    TOML decodes it, and rewritten with your escapes kept. A `replace`
+    table written with dotted keys (`replace."G(s)" = ...`,
+    `lo.replace.N = ...`) or as an inline table spread over several lines
+    (TOML 1.1, which jm reads on Python 3.9 and 3.10) is read too. The
+    `_Complex` respell now leaves a `replace` key alone when its body comes
+    from an `impl_file` that the respell does not rewrite, as the
+    `c_prefix` respell already did.
+
+- **A capsule or composer `backing` that names a jm component follows its
+    prefix** (gh-1685). The glue spelled the backing API by hand
+    (`<backing>_create`, `_destroy`, `_reset`, `_state_t`, ...), so after
+    `c_prefix` + `jm upgrade` a capsule over component `lo` still called
+    `lo_create` while the header declared `dp_lo_create`, and the build
+    failed. A `backing` naming a component now spells those C symbols
+    through the component's stem; one naming a hand-written core is used
+    exactly as written. The header path, capsule name and Python function
+    names are unchanged. `jm status` (and `--json`, as `backings`) says
+    which reading each `backing` took.
+
+- **A view keeps its parent's docstrings under a `c_prefix`** (gh-1667).
+    A view's `.pyi` members read the parent's header blocks re-keyed from
+    the parent's name to the view's, and both ends were spelled from the raw
+    name (`ddc_`) while the header declares the prefixed one
+    (`dp_ddc_execute`) -- so every inherited method, property, struct-field
+    comment and state-only `_max_out` fell back to its name stub ("Norm
+    freq."), and `jm status --docs` reported them as gaps. Both ends now come
+    from the C stem. A new gate renders the gh-1633 fixture, plus a view over
+    every doc-bearing member shape, with authored prose in every sacred
+    header, with and without a prefix, and requires the two to differ only by
+    the prefix. A field property documented through a hand-written
+    `<comp>_get_<prop>` that `jm upgrade` does not respell is gh-1670.
+
+- **`jm upgrade` respells what refers to a derived name, and nothing else**
+    (gh-1668, gh-1669). Moving onto a `c_prefix` renamed every identifier
+    spelled like a derived name: component `frame`'s method `bits` derives
+    `frame_bits`, so a public struct field, a parameter and a local of that
+    spelling were renamed too -- an API break that still compiled -- and
+    reverting them tripped `apply`'s refusal. The other way, a call to your
+    own macro that token-pastes a stem (`pfx##_state_bytes`) kept the old
+    stem and the tree stopped building. One classifier in `_csym` now
+    answers "is this a reference?" for both the respell and `apply`'s
+    refusal: members, member accesses, designated initializers, parameters
+    and locals keep their spelling; a stem passed to any pasting macro in
+    the project moves like `JM_DEFINE_STEPS`'s; and a macro that pastes one
+    argument into a derived name AND one of yours is refused, naming the
+    call.
+
 ## [0.92.0] — 2026-09-25
 
 ### Breaking
