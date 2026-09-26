@@ -85,7 +85,7 @@ rewritten into a false statement.
 It covers the C in your manifest too: an `impl`, `create_impl`,
 `reset_impl` or `destroy_impl` body is respelled in place, the same way
 (gh-1647). jm renders a header body *from* that string, so respelling only
-the header would have had the next `jm apply` put `float complex` back --
+the header would have had the next `jm apply` put the old spelling back --
 and every `jm upgrade` after it report the same file again.
 
 `complex` typed by **you** is still accepted everywhere jm reads a type — in
