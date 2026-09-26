@@ -1505,13 +1505,30 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
     for a view is a synthetic id, so without this every inherited member missed
     and fell back to its name-based stub.
 
-    Only the ``<obj>_`` prefix is rewritten; anything else (a module-level
-    name, a view's own ``create_fn``) is left alone for the caller to merge.
+    Only the parent's ``<stem>_`` prefix is rewritten; anything else (a
+    module-level name, a view's own ``create_fn``) is left alone for the
+    caller to merge.
+
+    gh-1667: both ends of the re-key are C STEMS, from `_csym` -- the
+    parent's blocks are keyed by the names its header declares
+    (``dp_ddc_execute`` under ``c_prefix = "dp"``), and `_obj_stub` looks
+    the view up under ``CSYM.stem(cfg, synth)``. Spelling either end from
+    the raw name matched nothing under a prefix, and every inherited member
+    fell back to its name stub.
+
+    >>> from just_makeit._docstring import struct_members_key as smk
+    >>> cfg = {"project": {"c_prefix": "dp"},
+    ...        "ddc": {"_doc_blocks": {"dp_ddc_execute": "B",
+    ...                                smk(): {"dp_ddc_state_t": {}}}}}
+    >>> out = _view_doc_blocks(cfg, "ddc", "ddc__view_m")
+    >>> sorted(k for k in out if k != smk()), sorted(out[smk()])
+    (['dp_ddc__view_m_execute'], ['dp_ddc__view_m_state_t'])
     """
     blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
-    pre = f"{obj}_"
+    pre = f"{CSYM.stem(cfg, obj)}_"
+    to = f"{CSYM.stem(cfg, synth)}_"
     out = {
-        f"{synth}_{k[len(pre) :]}": v
+        f"{to}{k[len(pre) :]}": v
         for k, v in blocks.items()
         if k.startswith(pre)
     }
@@ -1524,7 +1541,7 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
     state_only = blocks.get(max_out_arity_key())
     if state_only:
         out[max_out_arity_key()] = frozenset(
-            f"{synth}_{n[len(pre) :]}" if n.startswith(pre) else n
+            f"{to}{n[len(pre) :]}" if n.startswith(pre) else n
             for n in state_only
         )
     # gh-1400: the per-struct field map rides a reserved key too, and ITS
@@ -1538,7 +1555,7 @@ def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
     structs = blocks.get(struct_members_key())
     if structs:
         out[struct_members_key()] = {
-            (f"{synth}_{s[len(pre) :]}" if s.startswith(pre) else s): fields
+            (f"{to}{s[len(pre) :]}" if s.startswith(pre) else s): fields
             for s, fields in structs.items()
         }
     return out
