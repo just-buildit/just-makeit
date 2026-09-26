@@ -29,31 +29,28 @@
 # Usage: complex-spelling-check.sh [file...]   (no arguments: every tracked file)
 set -eu
 
-# Files where the old spelling is deliberate. Each needs its reason here; an
-# entry whose file no longer contains it is reported, so this cannot rot into
-# a list of names nobody can justify.
+# Files where the old spelling is deliberate, ONE row each: a path (a case
+# pattern; a trailing `/*` covers a tree) and the reason it is needed. The
+# allow check, the stale check and the count below all read this table --
+# a second hand-kept list of the same paths had already drifted from it
+# (gh-1684), and so had a hard-coded count.
+ALLOWED='src/just_makeit/_types.py|the author-facing INPUT alias table -- it must name the spelling it resolves
+src/just_makeit/_bind.py|maps the spelling back when parsing a hand-written header
+src/just_makeit/templates/c/inc/clib_common.h|the comment quotes the old spelling while explaining why it was a problem
+CHANGELOG.md|historical entries describe what past releases emitted
+tests/test_gh595_unknown_return_type.py|asserts the type registry rejects it as a STORED key
+src/just_makeit/_upgrade.py|the gh-1248 migration -- it must name the spelling it replaces
+tests/test_gh1248_upgrade_complex_spelling.py|builds a pre-gh-1246 tree in order to migrate it
+tests/test_gh1647_complex_respell_manifest.py|builds a pre-gh-1246 manifest body in order to migrate it
+tests/test_gh1684_manifest_c_reader.py|builds a pre-gh-1246 replace table in order to migrate it
+src/just_makeit/examples/stale_project/tree/*|a project frozen at jm 0.33.14 (gh-1443); jm upgrade respells it in the example'
+
 allowed_reason() {
-    case "$1" in
-    src/just_makeit/_types.py)
-        echo "the author-facing INPUT alias table -- it must name the spelling it resolves" ;;
-    src/just_makeit/_bind.py)
-        echo "maps the spelling back when parsing a hand-written header" ;;
-    src/just_makeit/templates/c/inc/clib_common.h)
-        echo "the comment quotes the old spelling while explaining why it was a problem" ;;
-    CHANGELOG.md)
-        echo "historical entries describe what past releases emitted" ;;
-    tests/test_gh595_unknown_return_type.py)
-        echo "asserts the type registry rejects it as a STORED key" ;;
-    src/just_makeit/_upgrade.py)
-        echo "the gh-1248 migration -- it must name the spelling it replaces" ;;
-    tests/test_gh1248_upgrade_complex_spelling.py)
-        echo "builds a pre-gh-1246 tree in order to migrate it" ;;
-    tests/test_gh1647_complex_respell_manifest.py)
-        echo "builds a pre-gh-1246 manifest body in order to migrate it" ;;
-    src/just_makeit/examples/stale_project/tree/*)
-        echo "a project frozen at jm 0.33.14 (gh-1443); jm upgrade respells it in the example" ;;
-    *) return 1 ;;
-    esac
+    why=$(printf '%s\n' "$ALLOWED" | while IFS='|' read -r pat reason; do
+        # shellcheck disable=SC2254 -- $pat IS a pattern.
+        case "$1" in $pat) echo "$reason"; break ;; esac
+    done)
+    [ -n "$why" ] && echo "$why"
 }
 
 pattern='\b(float|double|long double) complex\b'
@@ -85,16 +82,11 @@ fi
 
 # A stale allow-list entry is its own failure: it reads as a justified
 # exception when the justification no longer applies.
-stale=""
-for f in src/just_makeit/_types.py src/just_makeit/_bind.py \
-         src/just_makeit/templates/c/inc/clib_common.h CHANGELOG.md \
-         tests/test_gh595_unknown_return_type.py \
-         src/just_makeit/_upgrade.py \
-         tests/test_gh1248_upgrade_complex_spelling.py \
-         src/just_makeit/examples/stale_project/tree; do
+stale=$(printf '%s\n' "$ALLOWED" | while IFS='|' read -r pat _reason; do
+    f=${pat%/\*}
     [ -e "$f" ] || continue
-    grep -rqIE "$pattern" "$f" || stale="$stale $f"
-done
+    grep -rqIE "$pattern" "$f" || printf ' %s' "$f"
+done)
 if [ -n "$stale" ]; then
     echo "ERROR: allow-list entr(ies) no longer contain the spelling:$stale"
     echo "  Remove them from allowed_reason() -- an exception nobody needs"
@@ -102,4 +94,5 @@ if [ -n "$stale" ]; then
     exit 1
 fi
 
-echo "complex-spelling-check: jm's \`_Complex\` spelling holds outside 7 named files"
+n=$(printf '%s\n' "$ALLOWED" | wc -l | tr -d ' ')
+echo "complex-spelling-check: jm's \`_Complex\` spelling holds outside $n named files"

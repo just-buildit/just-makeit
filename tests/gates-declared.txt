@@ -88,6 +88,7 @@ test_gh1667_prefixed_doc_lookups
 test_gh1668_reference_classifier
 test_gh1670_property_getter_derived
 test_gh1671_default_and_author_named
+test_gh1684_manifest_c_reader
 test_gh1685_backing_stem
 test_gh949_outdated
 test_lint_ssot
