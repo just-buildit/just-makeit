@@ -690,11 +690,13 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     The rename set is not a pattern: it is :func:`_csym.renames` of a replay
     -- exactly the identifiers jm's render of THIS manifest declares, old
     spelling to new -- the same map `apply`'s refusal asks about. The
-    matcher is the refusal's too (:func:`_csym.old_names_pattern`): whole
+    matcher is the refusal's too (:func:`_csym.references`): whole
     identifier and case-sensitive, so ``acc_state_t`` moves and an author's
-    ``ACC_STATE_MAGIC`` does not; and it rewrites code only
-    (:func:`_respell_code_only`), so a comment or string that quotes a name
-    keeps it. The file set is gh-1583's walk (:func:`_project_files`):
+    ``ACC_STATE_MAGIC`` does not; code only, so a comment or string that
+    quotes a name keeps it; and references only, so a struct member, a
+    parameter or a local spelled like a derived name keeps it (gh-1668).
+    A stem passed to a macro that pastes it into derived names moves with
+    them (:func:`_csym.pasted_stems`, gh-1669). The file set is gh-1583's walk (:func:`_project_files`):
     every C/C++ file of the project, ``native/examples/`` included, nested
     projects not.
 
@@ -721,10 +723,12 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     stems = CSYM.macro_stems(cfg)
     if not names and not stems:
         return [], {}
+    # gh-1669: the macros that paste a stem, read before any file moves.
+    macros = CSYM.project_macros(root)
     changed = []
     for path in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
         text = path.read_text(encoding="utf-8")
-        new = CSYM.respell_c(text, names, stems)
+        new = CSYM.respell_c(text, names, stems, macros)
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)
@@ -737,7 +741,7 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     followed = CSYM.walked(root)
     for path in CSYM._manifest_files(root):
         text = path.read_text(encoding="utf-8")
-        new = CSYM.respell_manifest(text, names, stems, root, followed)
+        new = CSYM.respell_manifest(text, names, stems, root, followed, macros)
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)
@@ -763,8 +767,10 @@ def _report_c_prefix(root: Path) -> None:
     for old in sorted(names):
         print(f"{old}\t{names[old]}")
     print(
-        "\n  Comments, strings and your own macros are unchanged. Review the"
-        " files above,\n  then `jm apply` and rebuild. Consumers of the"
+        "\n  Comments, strings, and members, parameters and locals spelled"
+        " like a derived\n  name are unchanged; a stem your macro pastes"
+        " into derived names moved with them.\n  Review the files above,"
+        " then `jm apply` and rebuild. Consumers of the"
         " installed library see a new ABI."
     )
 

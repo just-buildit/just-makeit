@@ -427,9 +427,17 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
     files = _upgrade._project_files(
         root, lambda p: p.suffix in _upgrade._C_SUFFIXES
     )
+    # gh-1669: a stem passed to a macro that pastes it into a derived name
+    # AND one that is not -- no spelling of the argument is right, so the
+    # upgrade must not guess and `apply` must not pass it.
+    macros = project_macros(root)
+    stems = macro_stems(cfg)
     for p in files:
         rel = p.relative_to(root).as_posix()
         text = p.read_text(encoding="utf-8", errors="replace")
+        for at, end, why, _label in pasted_stems(text, names, stems, macros):
+            if end is None:
+                out.append(f"{rel}:{text.count(chr(10), 0, at) + 1}: {why}")
         where = INC.layout_free(rel, cfg)
         found = declared(text)
         for n in sorted(found & new):
@@ -501,6 +509,500 @@ def old_names_pattern(names: "dict[str, str]") -> "re.Pattern":
     )
 
 
+# -- Is this identifier a REFERENCE to a derived name? (gh-1668, gh-1669) --
+#
+# The one question the respell (`respell_c`) and the refusal (`_old_in`)
+# both ask of an identifier spelled like a derived name. The rename map is
+# keyed by spelling, but C scopes a name: a struct member, a parameter or a
+# local spelled `frame_bits` is not the function `frame_bits`, and renaming
+# one is an API break nobody asked for (gh-1668). The other way, a derived
+# name need not be spelled at all: an author macro pasting `pfx##_state_bytes`
+# makes its ARGUMENT the stem (gh-1669).
+#
+# Read from tokens of the code mask with the least context C needs to say
+# which is which -- the tokens either side, the enclosing bracket, the kind
+# of brace. Not a C parser: what it cannot place it calls a reference, which
+# is what every identifier was before.
+
+#: A token of the code mask: an identifier, a number, the operators the rules
+#: read (`->`, `##`, `...`), a line splice (dropped), a newline (kept only
+#: where it ends a directive), or any other single character.
+_TOKEN = re.compile(r"[A-Za-z_]\w*|\d[\w.]*|->|##|\.\.\.|\\[ \t]*\n|\n|\S")
+_IDENT = re.compile(r"[A-Za-z_]\w*\Z")
+
+#: Declaration specifiers that name no type: `const fir_cfg_t` in a
+#: prototype is a TYPE use of `fir_cfg_t`, not a parameter named it.
+_QUALS = frozenset(
+    "const volatile restrict __restrict __restrict__ static extern inline"
+    " __inline __inline__ register auto _Thread_local thread_local".split()
+)
+#: Words after which a name is an EXPRESSION or a type being declared,
+#: never a variable: `return frame_bits;`, `typedef ... fir_state_t;`.
+_NOT_SPECIFIER = frozenset(
+    "return sizeof case goto else do if while switch for _Alignof alignof"
+    " typeof __typeof__ typedef define undef ifdef ifndef elif"
+    " defined".split()
+)
+_TAG_KW = frozenset(("struct", "union", "enum"))
+#: What may follow a declarator's name, and what may precede its specifiers
+#: (``\n``: the end of a preprocessor directive).
+_DECL_END = frozenset((";", ",", "[", "=", ")", ":"))
+_DECL_START = frozenset(("(", ",", ";", "{", "}", "\n"))
+
+
+class _Tokens:
+    """*text*'s code tokens, and for each the bracket it sits in.
+
+    ``toks`` is ``[(token, start, end)]`` read from the code mask, so the
+    offsets are *text*'s; ``inner[i]`` is the index of the innermost open
+    ``(`` / ``{`` / ``[`` at token *i* (-1: file scope) and ``close[k]`` the
+    index of the bracket closing the one at *k*. A newline survives only
+    where it ends a preprocessor directive -- and one inside a block comment
+    does not, since the comment is a single space to the preprocessor:
+    doppler's multi-line macros carry exactly such comments (gh-1669).
+    """
+
+    def __init__(self, text: str) -> None:
+        from ._docsync import _MASK_RE, _code_mask
+
+        self.mask = mask = _code_mask(text)
+        comments = [
+            m.span() for m in _MASK_RE.finditer(text) if m.group("block")
+        ]
+        toks: "list[tuple[str, int, int]]" = []
+        opened: "list[int]" = []  # where each directive began, in toks
+        directive, line_start = False, True
+        for m in _TOKEN.finditer(mask):
+            t = m.group(0)
+            if t.startswith("\\"):
+                continue
+            if t == "\n":
+                if any(a <= m.start() < b for a, b in comments):
+                    continue
+                if directive:
+                    toks.append(("\n", m.start(), m.end()))
+                directive, line_start = False, True
+                continue
+            if t == "#" and line_start:
+                directive = True
+                opened.append(len(toks))
+            line_start = False
+            toks.append((t, m.start(), m.end()))
+        self.toks = toks
+        self.inner = [-1] * len(toks)
+        self.close: "dict[int, int]" = {}
+        stack: "list[int]" = []
+        begun = -1
+        starts = set(opened)
+        for i, (t, _a, _b) in enumerate(toks):
+            self.inner[i] = stack[-1] if stack else -1
+            if i in starts:
+                begun = i
+            if t in "({[":
+                stack.append(i)
+            elif t in ")}]" and stack:
+                self.close[stack.pop()] = i
+            elif t == "\n":
+                # A directive's brackets end with it: an unbalanced
+                # `#define BEGIN {` must not swallow the rest of the file.
+                while stack and stack[-1] > begun:
+                    stack.pop()
+
+    def text(self, i: int) -> str:
+        """Token *i*, or ``;`` past either end: a snippet (a manifest
+        ``type``) is a whole statement."""
+        return self.toks[i][0] if 0 <= i < len(self.toks) else ";"
+
+    def is_ident(self, i: int) -> bool:
+        return bool(_IDENT.match(self.text(i)))
+
+    def brace_kind(self, o: int) -> str:
+        """``record`` (a struct/union body, whose declarators are MEMBERS),
+        ``linkage`` (``extern "C" {``, which is file scope) or ``block``."""
+        if self.text(o - 1) in _TAG_KW or (
+            self.is_ident(o - 1) and self.text(o - 2) in _TAG_KW
+        ):
+            return "record"
+        if re.search(
+            r'\bextern\s*"[^"\n]*"\s*$', self.mask[: self.toks[o][1]]
+        ):
+            return "linkage"
+        return "block"
+
+    def _in_body(self, o: int) -> bool:
+        """Whether bracket *o* is inside a function body (a block brace)."""
+        while o != -1:
+            if self.text(o) == "{" and self.brace_kind(o) == "block":
+                return True
+            o = self.inner[o]
+        return False
+
+    def declarator(
+        self, i: int
+    ) -> "tuple[str, tuple[int, int] | None] | None":
+        """``(kind, scope)`` when token *i* is the NAME a declaration declares
+        -- a ``member``, a ``param``, or a ``variable`` (a local, or at file
+        scope) -- else None. *scope* is the token range over which the name
+        then means that variable: a variable's to the end of its block (or
+        file), a parameter's its function's body, a member's or a
+        prototype parameter's nowhere.
+
+        A declarator is ``<specifiers> [*...] NAME`` followed by one of
+        ``; , [ = ) :``, its specifiers starting a statement or a parameter;
+        ``void (*NAME)(...)`` too. A ``typedef`` declares a TYPE (derived:
+        a reference), a name after ``struct`` is a tag (a reference), and a
+        parenthesised list inside a function body is a CALL's arguments
+        (``f (n * FIR_BATCH)``), never a parameter list.
+        """
+        if self.text(i + 1) not in _DECL_END:
+            return None
+        j, ptr, start = i - 1, False, i
+        while self.text(j) in ("*", "const", "volatile", "restrict"):
+            ptr = ptr or self.text(j) == "*"
+            j -= 1
+        if self.text(j) == "(" and self.text(i + 1) == ")":
+            # `void (*name)(int)`: a function-pointer declarator.
+            after = self.close.get(j)
+            if not ptr or after is None or self.text(after + 1) not in "([":
+                return None
+            start, j = j, j - 1
+        run = []
+        while j >= 0 and self.is_ident(j):
+            run.append(self.text(j))
+            j -= 1
+        if not run or run[0] in _TAG_KW:
+            return None
+        if any(t in _NOT_SPECIFIER for t in run):
+            return None
+        if not ptr and all(t in _QUALS for t in run):
+            return None
+        if j >= 0 and self.text(j) not in _DECL_START:
+            return None
+        end = len(self.toks)
+        o = self.inner[start]
+        if o == -1:
+            return "variable", (i + 1, end)
+        if self.text(o) == "{":
+            if self.brace_kind(o) == "record":
+                return "member", None
+            return "variable", (i + 1, self.close.get(o, end))
+        if self.text(o) != "(":
+            return None
+        if self.text(o - 1) == "for":
+            return "variable", (i + 1, self.close.get(self.inner[o], end))
+        if self.text(o - 1) != ")" and not (
+            self.is_ident(o - 1) and self.text(o - 1) not in _NOT_SPECIFIER
+        ):
+            return None
+        if self._in_body(o):
+            return None
+        c = self.close.get(o)
+        if c is not None and self.text(c + 1) == "{":
+            return "param", (c + 1, self.close.get(c + 1, end))
+        return "param", None
+
+
+def references(text: str, names) -> "list[tuple[int, int, str]]":
+    """``(start, end, name)`` for each occurrence in *text* (C) of a name in
+    *names* that REFERS to it -- the one classifier `jm upgrade`'s respell
+    and `apply`'s refusal share (gh-1668), so what one rewrites the other
+    reports, and nothing else.
+
+    Code only (gh-1382), whole identifier, case-sensitive. NOT a reference:
+
+    - a member access or designated initializer (``.x``, ``->x``, ``.x =``);
+    - a declarator (:meth:`_Tokens.declarator`) -- a struct/union member, a
+      parameter, a local or other variable -- and every use of that
+      variable within its scope.
+
+    Everything else is: a call, ``&x``, a function-pointer use, a function's
+    own declaration or definition, a type use, a ``typedef``, a
+    preprocessor name.
+
+    >>> t = '''struct lay { size_t frame_bits; };
+    ... size_t frame_bits (const struct lay *l);
+    ... int describe (const uint8_t *frame_bits, size_t n);
+    ... size_t
+    ... use (struct lay *l, size_t (*fp) (const struct lay *))
+    ... {
+    ...   fp = frame_bits;
+    ...   struct lay k = { .frame_bits = 1 };
+    ...   return l->frame_bits + frame_bits (&k) + k.frame_bits;
+    ... }
+    ... void g (void) { size_t frame_bits = 3; frame_bits++; }'''
+    >>> [t.count("\\n", 0, a) + 1 for a, _b, _n in references(t, {"frame_bits"})]
+    [2, 7, 9]
+    """
+    from ._docsync import _code_mask
+
+    if not names or not old_names_pattern(names).search(_code_mask(text)):
+        return []
+    tk = _Tokens(text)
+    shadow: "dict[str, list[tuple[int, int]]]" = {}
+    refs = []
+    for i, (name, _a, _b) in enumerate(tk.toks):
+        if name not in names or tk.text(i - 1) in (".", "->"):
+            continue
+        decl = tk.declarator(i)
+        if decl is None:
+            refs.append(i)
+        elif decl[1] is not None:
+            shadow.setdefault(name, []).append(decl[1])
+    return [
+        (tk.toks[i][1], tk.toks[i][2], tk.text(i))
+        for i in refs
+        if not any(lo <= i <= hi for lo, hi in shadow.get(tk.text(i), ()))
+    ]
+
+
+# -- A stem passed to a macro that pastes it (gh-1669) ----------------------
+
+#: ``{macro: {parameter position: pastes}}`` (:func:`paste_macros`).
+Macros = "dict[str, dict[int, frozenset]]"
+
+
+def _macro_defs(text: str):
+    """``(name, params, body)`` for each function-like ``#define`` in *text*
+    (C), the body as tokens (:class:`_Tokens`: comments, strings and line
+    splices already gone)."""
+    tk = _Tokens(text)
+    t = tk.toks
+    for i in range(len(t) - 3):
+        if t[i][0] != "#" or t[i + 1][0] != "define" or not tk.is_ident(i + 2):
+            continue
+        # Function-like only when `(` touches the name.
+        if t[i + 3][0] != "(" or t[i + 3][1] != t[i + 2][2]:
+            continue
+        c = tk.close.get(i + 3)
+        if c is None:
+            continue
+        params = [p[0] for p in t[i + 4 : c] if p[0] not in (",", "...")]
+        k = c + 1
+        while k < len(t) and t[k][0] != "\n":
+            k += 1
+        yield t[i + 2][0], params, [p[0] for p in t[c + 1 : k]]
+
+
+def _call_arg(body: "list[str]", k: int) -> "tuple[str, int] | None":
+    """``(callee, position)`` when ``body[k]`` is a WHOLE argument of a call
+    ``callee(...)`` in a macro body, else None."""
+    if k == 0 or body[k - 1] not in ("(", ","):
+        return None
+    if body[k + 1 : k + 2] not in ([")"], [","]):
+        return None
+    depth, pos = 0, 0
+    for j in range(k - 1, -1, -1):
+        t = body[j]
+        if t in ")]}":
+            depth += 1
+        elif t in "([{":
+            if depth:
+                depth -= 1
+                continue
+            if t == "(" and j and _IDENT.match(body[j - 1]):
+                return body[j - 1], pos
+            return None
+        elif t == "," and not depth:
+            pos += 1
+    return None
+
+
+def _body_uses(params: "list[str]", body: "list[str]"):
+    """Per parameter position: its pastes -- ``(pre, post)`` around it in a
+    ``##`` chain, None when another parameter shares the chain, ``("",
+    "")`` for a plain use -- and the ``(callee, position)`` calls it is
+    passed to whole, to be followed. ``#param`` (a string) is neither."""
+    index = {p: k for k, p in enumerate(params)}
+    direct: "dict[int, set]" = {k: set() for k in range(len(params))}
+    passed: "dict[int, set]" = {k: set() for k in range(len(params))}
+    k = 0
+    while k < len(body):
+        if body[k + 1 : k + 2] == ["##"]:
+            chain, m = [body[k]], k + 1
+            while body[m : m + 1] == ["##"] and m + 1 < len(body):
+                chain.append(body[m + 1])
+                m += 2
+            for at, part in enumerate(chain):
+                if part not in index:
+                    continue
+                rest = chain[:at] + chain[at + 1 :]
+                if any(r in index or not re.match(r"\w+\Z", r) for r in rest):
+                    direct[index[part]].add(None)
+                else:
+                    direct[index[part]].add(
+                        ("".join(chain[:at]), "".join(chain[at + 1 :]))
+                    )
+            k = m
+            continue
+        if body[k] in index and not (k and body[k - 1] == "#"):
+            call = _call_arg(body, k)
+            if call is None:
+                direct[index[body[k]]].add(("", ""))
+            else:
+                passed[index[body[k]]].add(call)
+        k += 1
+    return direct, passed
+
+
+def paste_macros(texts) -> Macros:
+    """``{macro: {parameter position: pastes}}`` for every function-like
+    macro in *texts* (C) that token-pastes a parameter, followed through the
+    macros it passes the parameter on to: `JM_DEFINE_STEPS` hands ``fn`` to
+    `JM_DEFINE_STEPS_EX`, which pastes ``fn##_steps``.
+
+    A paste is ``(pre, post)``: the argument ``x`` there yields the
+    identifier ``pre + x + post``; ``("", "")`` is a plain use of the
+    argument, and None a paste this cannot spell (another parameter in it).
+
+    >>> paste_macros(['#define T(pfx, a) pfx##_state_bytes (a)'])
+    {'T': {0: frozenset({('', '_state_bytes')})}}
+    """
+    direct: "dict[str, dict[int, set]]" = {}
+    passed: "dict[str, dict[int, set]]" = {}
+    for text in texts:
+        for name, params, body in _macro_defs(text):
+            d, p = _body_uses(params, body)
+            for k in d:
+                direct.setdefault(name, {}).setdefault(k, set()).update(d[k])
+                passed.setdefault(name, {}).setdefault(k, set()).update(p[k])
+
+    def follow(name: str, k: int, seen: frozenset) -> set:
+        if (name, k) in seen:
+            return set()
+        if k not in direct.get(name, {}):
+            # A function, or a macro no file here defines: a plain use.
+            return {("", "")}
+        out = set(direct[name][k])
+        for callee, pos in passed[name][k]:
+            out |= follow(callee, pos, seen | {(name, k)})
+        return out
+
+    table: "dict[str, dict[int, frozenset]]" = {}
+    for name in direct:
+        for k in direct[name]:
+            forms = follow(name, k, frozenset())
+            if forms - {("", "")}:
+                table.setdefault(name, {})[k] = frozenset(forms)
+    return table
+
+
+_JM_MACROS: "dict[str, dict[int, frozenset]]" = {}
+
+
+def jm_macros() -> Macros:
+    """:func:`paste_macros` of jm's own ``jm_perf.h`` -- `JM_DEFINE_STEPS`
+    and the macros it calls -- whether or not the tree at hand carries a
+    copy: a manifest body calls the macro with no header beside it."""
+    if not _JM_MACROS:
+        from . import _render
+
+        _JM_MACROS.update(paste_macros([_render.JM_PERF_H]))
+    return _JM_MACROS
+
+
+def project_macros(root: Path) -> Macros:
+    """:func:`paste_macros` over every C/C++ file `jm upgrade` respells under
+    *root* (the walk that finds doppler's ``native/tests/dp_state_test.h``),
+    and jm's own (:func:`jm_macros`)."""
+    from . import _upgrade
+
+    files = _upgrade._project_files(
+        root, lambda p: p.suffix in _upgrade._C_SUFFIXES
+    )
+    found = paste_macros(
+        p.read_text(encoding="utf-8", errors="replace") for p in files
+    )
+    for name, positions in jm_macros().items():
+        for k, forms in positions.items():
+            mine = found.setdefault(name, {})
+            mine[k] = mine.get(k, frozenset()) | forms
+    return found
+
+
+def pasted_stems(
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    macros: Macros,
+):
+    """Each stem *text* (C) passes to a macro in *macros* that pastes it into
+    an old name in *names* (gh-1669), as ``(start, end, new, label)``.
+
+    The argument is respelled -- ``viterbi`` to ``dp_viterbi`` -- only when
+    EVERY identifier the macro makes of it is an old name whose new spelling
+    is the same paste of the new stem. When it also makes one that is not
+    (a plain use of the stem, an author name beside the derived ones), no
+    spelling of the argument is right, and it is yielded with ``end`` None
+    and a reason in place of ``new``: :func:`collisions` refuses it, naming
+    the call. A call none of whose pastes is derived is the author's own,
+    and is not yielded at all.
+
+    >>> m = paste_macros(['#define T(p, a) p##_bytes (a) + p##_mine (a)'])
+    >>> [(a, b, n) for a, b, n, _l in pasted_stems(
+    ...     "T (fir, s);", {"fir_bytes": "p_fir_bytes"}, {"fir": "p_fir"}, m)]
+    ... # doctest: +ELLIPSIS
+    [(3, None, '`T(fir, ...)` passes the stem `fir` to a macro that pastes ...')]
+    """
+    if not macros or not stems:
+        return
+    from ._docsync import _code_mask
+
+    call = re.compile(
+        r"(?<![\w])(?:" + "|".join(map(re.escape, macros)) + r")\s*\("
+    )
+    if not call.search(_code_mask(text)):
+        return
+    tk = _Tokens(text)
+    for i, (t, _a, _b) in enumerate(tk.toks):
+        if t not in macros or tk.text(i + 1) != "(":
+            continue
+        if tk.text(i - 1) == "define":
+            continue
+        c = tk.close.get(i + 1)
+        if c is None:
+            continue
+        args: "list[list[int]]" = [[]]
+        for k in range(i + 2, c):
+            if tk.text(k) == "," and tk.inner[k] == i + 1:
+                args.append([])
+            else:
+                args[-1].append(k)
+        for pos, forms in sorted(macros[t].items()):
+            if pos >= len(args) or len(args[pos]) != 1:
+                continue
+            k = args[pos][0]
+            arg = tk.text(k)
+            if arg not in stems:
+                continue
+            made = {f: None if f is None else f[0] + arg + f[1] for f in forms}
+            if not any(s in names for s in made.values()):
+                continue
+            label = f"{t}({'..., ' if pos else ''}{arg}, ...)"
+            new = stems[arg]
+            wrong = sorted(
+                "a paste it cannot spell" if f is None else f"`{s}`"
+                for f, s in made.items()
+                if f is None or names.get(s) != f[0] + new + f[1]
+            )
+            a, b = tk.toks[k][1], tk.toks[k][2]
+            if not wrong:
+                yield a, b, new, label
+                continue
+            derived = sorted(f"`{s}`" for s in made.values() if s in names)
+            yield (
+                a,
+                None,
+                (
+                    f"`{label}` passes the stem `{arg}` to a macro that pastes"
+                    f" it into {', '.join(derived)} -- derived, which c_prefix"
+                    f" renames -- and into {', '.join(wrong)}, which it does"
+                    " not; no one spelling of the argument names both. Split"
+                    " the macro, or spell those names out"
+                ),
+                label,
+            )
+
+
 _GUARD_LINE = re.compile(r"^\s*#\s*ifndef\s+([A-Za-z_]\w*)_CORE_H\b", re.M)
 
 
@@ -536,14 +1038,6 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
                 out[comp] = had
     return out
 
-
-#: `JM_DEFINE_STEPS(fn, ...)` names the symbol stem as its FIRST argument and
-#: token-pastes ``fn##_step`` / ``_steps`` / ``_step_batch`` (jm_perf.h). The
-#: stem alone -- `fir_filter` -- also names files, directories and Python, so
-#: it is respelled only HERE, anchored on the macro call (gh-1653).
-_DEFINE_STEPS = re.compile(
-    r"(\bJM_DEFINE_STEPS\s*\(\s*)([A-Za-z_]\w*)(?=\s*,)"
-)
 
 #: The step and lifecycle body keys (`_keys`' `*impl`), each of which has a
 #: ``<key>_file = "path::fn"`` companion that lifts the body from a file.
@@ -711,36 +1205,53 @@ def with_macro_names(names: "dict[str, str]") -> "dict[str, str]":
     return out
 
 
+def _hits(
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    macros: "Macros | None",
+) -> "dict[int, tuple[int, str, str]]":
+    """``{start: (end, new spelling, label)}`` for each identifier in *text*
+    (C) that refers to an old name: :func:`references` of *names*, and
+    :func:`pasted_stems` of *stems* through *macros* (None: jm's own). The
+    one answer :func:`respell_c` rewrites and :func:`_old_in` reports."""
+    out: "dict[int, tuple[int, str, str]]" = {}
+    table = jm_macros() if macros is None else macros
+    for a, b, new, label in pasted_stems(text, names, stems, table):
+        if b is not None:
+            out[a] = (b, new, label)
+    for a, b, name in references(text, names):
+        out.setdefault(a, (b, names[name], name))
+    return out
+
+
 def respell_c(
-    text: str, names: "dict[str, str]", stems: "dict[str, str]"
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    macros: "Macros | None" = None,
 ) -> str:
-    """*text* (C) with every old name in *names* and every `JM_DEFINE_STEPS`
-    stem in *stems* respelled -- in CODE only (gh-1382), whole identifiers,
-    case-sensitive. The one respell `jm upgrade` applies to a C file and to
-    a manifest's C-bearing value alike.
+    """*text* (C) with every REFERENCE (:func:`references`) to an old name in
+    *names*, and every stem in *stems* passed to a macro in *macros* that
+    pastes it (:func:`pasted_stems`; None: jm's own `JM_DEFINE_STEPS`),
+    respelled -- in CODE only (gh-1382), whole identifiers, case-sensitive.
+    The one respell `jm upgrade` applies to a C file and to a manifest's
+    C-bearing value alike.
 
     >>> print(respell_c(
     ...     "/* fir_create */ JM_DEFINE_STEPS (fir, fir_state_t, float)",
-    ...     {"fir_state_t": "p_fir_state_t"}, {"fir": "p_fir"}))
+    ...     {"fir_state_t": "p_fir_state_t", "fir_step": "p_fir_step",
+    ...      "fir_steps": "p_fir_steps",
+    ...      "fir_step_batch": "p_fir_step_batch"}, {"fir": "p_fir"}))
     /* fir_create */ JM_DEFINE_STEPS (p_fir, p_fir_state_t, float)
     """
-    from ._upgrade import _respell_code_only
-
-    pairs = []
-    if stems:
-        pairs.append((_DEFINE_STEPS, None))
-    if names:
-        pairs.append((old_names_pattern(names), None))
-    if not pairs:
+    if not names and not stems:
         return text
-
-    def repl(m: "re.Match") -> str:
-        if m.re is _DEFINE_STEPS:
-            s = stems.get(m.group(2))
-            return m.group(1) + s if s else m.group(0)
-        return names[m.group(0)]
-
-    return _respell_code_only(text, pairs, repl=repl)
+    for a, (b, new, _label) in sorted(
+        _hits(text, names, stems, macros).items(), reverse=True
+    ):
+        text = text[:a] + new + text[b:]
+    return text
 
 
 def respell_manifest(
@@ -749,6 +1260,7 @@ def respell_manifest(
     stems: "dict[str, str]",
     root: "Path | None" = None,
     followed: "set[Path]" = frozenset(),
+    macros: "Macros | None" = None,
 ) -> str:
     """*text* (a manifest or fragment) with each :data:`MANIFEST_C_KEYS`
     value respelled by :func:`respell_c`, and each ``*_impl_file``'s ``fn``
@@ -761,7 +1273,9 @@ def respell_manifest(
     type = "p_fir_state_t *"
     """
 
-    text = respell_manifest_c(text, lambda c: respell_c(c, names, stems))
+    text = respell_manifest_c(
+        text, lambda c: respell_c(c, names, stems, macros)
+    )
     if root is None:
         return text
     hits = {m.start(): fn for m, fn in _impl_file_fns(text, root, followed)}
@@ -806,27 +1320,26 @@ def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
 
 
 def _old_in(
-    text: str, names: "dict[str, str]", stems: "dict[str, str]"
+    text: str,
+    names: "dict[str, str]",
+    stems: "dict[str, str]",
+    macros: "Macros | None" = None,
 ) -> "list[str]":
     """The old names *text* (C) still spells in code -- what :func:`respell_c`
-    would change. One question, asked the way the respell answers it."""
-    from ._docsync import _code_mask
-
-    mask = _code_mask(text)
-    found = set(old_names_pattern(names).findall(mask)) if names else set()
-    found |= {
-        f"JM_DEFINE_STEPS({m.group(2)}, ...)"
-        for m in _DEFINE_STEPS.finditer(mask)
-        if m.group(2) in stems
-    }
-    return sorted(found)
+    would change, read from the same :func:`_hits`. One question, asked the
+    way the respell answers it."""
+    return sorted(
+        {label for _b, _n, label in _hits(text, names, stems, macros).values()}
+    )
 
 
 def unrenamed_all(root: Path, cfg: dict, tree: Path) -> "dict[str, list[str]]":
     """:func:`unrenamed` over everything `jm upgrade` respells (gh-1653): the
-    author's C -- including a `JM_DEFINE_STEPS` stem and ``<stem>_step_batch``
-    -- AND the manifest's C-bearing values (:data:`MANIFEST_C_KEYS`), so
-    `apply` refuses exactly what the upgrade it names would fix."""
+    author's C -- including a stem passed to a pasting macro, jm's
+    `JM_DEFINE_STEPS` or the project's own (gh-1669), and
+    ``<stem>_step_batch`` -- AND the manifest's C-bearing values
+    (:data:`MANIFEST_C_KEYS`), so `apply` refuses exactly what the upgrade
+    it names would fix."""
     return _unrenamed(
         root, with_macro_names(renames(tree, cfg)), macro_stems(cfg), cfg
     )
@@ -835,10 +1348,14 @@ def unrenamed_all(root: Path, cfg: dict, tree: Path) -> "dict[str, list[str]]":
 def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
     if not names and not stems:
         return {}
+    macros = project_macros(root) if stems else {}
     out = {}
     for p in _author_files(root):
         found = _old_in(
-            p.read_text(encoding="utf-8", errors="replace"), names, stems
+            p.read_text(encoding="utf-8", errors="replace"),
+            names,
+            stems,
+            macros,
         )
         if found:
             out[p.relative_to(root).as_posix()] = found
@@ -851,7 +1368,7 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
                     for m in MANIFEST_C_VALUE.finditer(
                         p.read_text(encoding="utf-8")
                     )
-                    for n in _old_in(m.group(4), names, stems)
+                    for n in _old_in(m.group(4), names, stems, macros)
                 }
                 | {
                     fn

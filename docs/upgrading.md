@@ -204,11 +204,20 @@ spelling to its new one. It is rewritten:
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
     `create_fn`, ...) are never touched;
-- in a **`JM_DEFINE_STEPS (fir, ...)`** call, whose first argument is the
-    stem the macro pastes `fir_step` / `fir_steps` / `fir_step_batch` from:
-    that argument moves, and so does your `fir_step_batch`. The bare stem
-    moves nowhere else -- `fir` is also a file, a directory and a Python
-    name.
+- only where the name **refers** to jm's symbol (gh-1668): a call, `&fir_bits`,
+    a function pointer, a type use, the function's own declaration. A struct
+    member, a member access (`.fir_bits`, `->fir_bits`), a designated
+    initializer, a parameter or a local spelled like a derived name is yours,
+    and keeps its spelling -- as does every use of that parameter or local
+    in its scope;
+- in a call to a macro that **token-pastes** a stem into derived names
+    (gh-1669): jm's `JM_DEFINE_STEPS (fir, ...)`, which pastes `fir_step` /
+    `fir_steps` / `fir_step_batch`, or your own `#define T(pfx, s)   pfx##_reset (s)` in any project C file. That argument moves, and so does
+    your `fir_step_batch`. When your macro pastes the same argument into a
+    derived name AND one of yours (`pfx##_reset`, `pfx##_mine`), no one
+    spelling is right: `upgrade` and `apply` refuse, naming the call. The
+    bare stem moves nowhere else -- `fir` is also a file, a directory and a
+    Python name.
 
 A second `jm upgrade` changes nothing. It prints the table as `old<TAB>new`
 lines, so the code jm does not own can follow from it:
@@ -217,7 +226,7 @@ lines, so the code jm does not own can follow from it:
 jm upgrade | awk -F'\t' 'NF == 2'     # the rename table, as a TSV
 ```
 
-It will NOT touch: your own macros, another language's FFI declarations (a
+It will NOT touch: the body of your own macros, another language's FFI declarations (a
 Rust `extern "C"` block), C in documentation code fences, a nested project,
 or a manifest `replace = { ... }` table (gh-1656). Respell those from the
 table.
