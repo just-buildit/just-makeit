@@ -1252,10 +1252,134 @@ AUTHOR_NAMED_KEYS = (
 
 
 def _toml_string(q: int) -> str:
-    """A TOML string of any of its four forms, as a pattern whose quote is
+    r"""A TOML string of any of its four forms, as a pattern whose quote is
     group *q* and content group *q* + 1 -- one spelling of "a string value"
-    for every place that rewrites one in place (gh-1583, gh-1653)."""
-    return rf"(\"\"\"|'''|\"|')((?:(?!\{q})[\s\S])*?)\{q}"
+    for every place that rewrites one in place (gh-1583, gh-1653).
+
+    A BASIC string (double-quoted, one or three) takes backslash escapes, so an
+    escaped quote does not end it (gh-1684); a LITERAL one (``'...'``)
+    takes none, and its first closing quote ends it. Which one it is is
+    read from the opening quote by a one-character lookbehind at the start
+    of the content, so the group numbering every caller relies on is
+    unchanged.
+
+    >>> pat = re.compile(_toml_string(1))
+    >>> print(pat.match(r'"puts(\"x\"); f(1);" tail').group(2))
+    puts(\"x\"); f(1);
+    >>> print(pat.match(r"'C:\' tail").group(2))
+    C:\
+    """
+    return (
+        rf"(\"\"\"|'''|\"|')("
+        rf"(?<=\")(?:\\[\s\S]|(?!\{q})[^\\])*?"
+        rf"|(?<=')(?:(?!\{q})[\s\S])*?"
+        rf")\{q}"
+    )
+
+
+#: One escape of a TOML basic string: a line-ending backslash (which, in a
+#: multi-line string, eats the newline and the whitespace after it), a
+#: ``\uXXXX`` / ``\UXXXXXXXX`` / ``\xHH`` code point, or a one-letter escape.
+_TOML_ESCAPE = re.compile(
+    r"\\(?:[ \t]*\r?\n\s*|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]{2}"
+    r"|[\s\S])"
+)
+_TOML_SIMPLE = {
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    '"': '"',
+    "\\": "\\",
+}
+
+
+def _decoded(raw: str) -> "tuple[str, list[tuple[int, int]]]":
+    """*raw* (a basic string's content) unescaped, and for each character
+    of the result the ``(start, end)`` of the raw text it came from."""
+    out: "list[str]" = []
+    src: "list[tuple[int, int]]" = []
+    at = 0
+    for m in _TOML_ESCAPE.finditer(raw):
+        out.extend(raw[at : m.start()])
+        src.extend((k, k + 1) for k in range(at, m.start()))
+        esc = m.group(0)[1:]
+        if esc[0] in "uUx":
+            out.append(chr(int(esc[1:], 16)))
+            src.append(m.span())
+        elif esc[0] not in " \t\r\n":
+            out.append(_TOML_SIMPLE.get(esc[0], esc))
+            src.append(m.span())
+        at = m.end()
+    out.extend(raw[at:])
+    src.extend((k, k + 1) for k in range(at, len(raw)))
+    return "".join(out), src
+
+
+def _encoded(c: str, multiline: bool) -> str:
+    """*c* spelled as basic-string content: the inverse of :func:`_decoded`
+    for the text a respell inserts."""
+    c = c.replace("\\", "\\\\").replace('"', '\\"')
+    return c if multiline else c.replace("\n", "\\n")
+
+
+def _escaped(text: str, a: int, b: int) -> bool:
+    """Whether the string whose content is ``text[a:b]`` is BASIC and holds
+    an escape -- the only case whose C differs from its text."""
+    return text[a - 1 : a] == '"' and "\\" in text[a:b]
+
+
+def value_c(text: str, a: int, b: int) -> str:
+    """The C a manifest string holds, from its content span ``(a, b)`` in
+    *text*: TOML-unescaped for a basic string (gh-1684).
+
+    That is what `apply` renders from -- `tomllib` hands it the decoded
+    text -- so it is what the refusal and the respell must read. Read raw,
+    an escaped quote looks like the start of a C string literal that
+    swallows the code after it.
+
+    >>> t = r'impl = "puts(\"x\"); lo_create(1);"'
+    >>> print(value_c(t, 8, len(t) - 1))
+    puts("x"); lo_create(1);
+    """
+    raw = text[a:b]
+    return _decoded(raw)[0] if _escaped(text, a, b) else raw
+
+
+def respell_value(text: str, a: int, b: int, respell) -> str:
+    """The new CONTENT of the manifest string at ``(a, b)`` after *respell*
+    (C to C): applied to its C (:func:`value_c`) and written back into the
+    raw text only where the C changed, so every escape the author wrote
+    elsewhere is kept (gh-1684).
+
+    >>> t = r'impl = "puts(\"x\"); lo_create(1);"'
+    >>> print(respell_value(t, 8, len(t) - 1,
+    ...                     lambda c: c.replace("lo_", "zz_lo_")))
+    puts(\"x\"); zz_lo_create(1);
+    """
+    import difflib
+
+    raw = text[a:b]
+    if not _escaped(text, a, b):
+        return respell(raw)
+    c, src = _decoded(raw)
+    new = respell(c)
+    if new == c:
+        return raw
+    multiline = text[a - 3 : a] == '"""'
+    edits = []
+    ops = difflib.SequenceMatcher(None, c, new, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in ops:
+        if tag == "equal":
+            continue
+        lo = src[i1][0] if i1 < len(src) else len(raw)
+        hi = src[i2 - 1][1] if i2 > i1 else lo
+        edits.append((lo, hi, _encoded(new[j1:j2], multiline)))
+    for lo, hi, ins in reversed(edits):
+        raw = raw[:lo] + ins + raw[hi:]
+    return raw
 
 
 #: Any TOML string value, captured whole so a rewrite replaces it in place and
@@ -1285,8 +1409,26 @@ _REPLACE_PAIR = (
     + r"|([A-Za-z0-9_-]+))[ \t]*=[ \t]*"
     + _toml_string(4)
 )
-_REPLACE_INLINE = re.compile(r"(?<![\w.-])replace[ \t]*=[ \t]*\{")
-_REPLACE_NEXT = re.compile(r"\s*,")
+#: The dotted keys before ``replace`` -- ``lo.`` in a top-level
+#: ``lo.replace = {...}`` -- which name the table it belongs to.
+_DOTTED = r"((?:[A-Za-z0-9_-]+[ \t]*\.[ \t]*)*)"
+_REPLACE_INLINE = re.compile(
+    r"(?<![\w.-])" + _DOTTED + r"replace[ \t]*=[ \t]*\{"
+)
+#: A dotted-key pair, ``replace."G(s)" = "lo_get(s)"`` (gh-1684): group 1
+#: the dotted prefix, then :data:`_REPLACE_PAIR`'s five groups.
+_REPLACE_DOTTED = re.compile(
+    r"(?<![\w.-])"
+    + _DOTTED
+    + r"replace[ \t]*\.[ \t]*(?:"
+    + _toml_string(2)
+    + r"|([A-Za-z0-9_-]+))[ \t]*=[ \t]*"
+    + _toml_string(5)
+)
+#: What may sit between an inline table's pairs: whitespace, newlines and
+#: comments -- a TOML 1.1 table spans lines, and `tomli` (jm's reader on
+#: Python < 3.11) accepts one (gh-1684).
+_GAP = re.compile(r"(?:\s|#[^\n]*)*")
 _REPLACE_HEADER = re.compile(
     r"^[ \t]*\[[ \t]*([^\[\]\n]*?)\.replace[ \t]*\][^\n]*$", re.M
 )
@@ -1301,6 +1443,13 @@ def _section_at(text: str, at: int) -> str:
     for m in _HEADER.finditer(text, 0, at):
         name = "" if m.group(1) else m.group(2)
     return name
+
+
+def _table_of(text: str, m: "re.Match") -> str:
+    """The table a key matched by *m* belongs to: its section, joined with
+    the dotted prefix in *m*'s group 1 (``lo.`` in ``lo.replace``)."""
+    parts = [p.strip() for p in m.group(1).split(".") if p.strip()]
+    return ".".join(filter(None, [_section_at(text, m.start()), *parts]))
 
 
 def replace_pairs(
@@ -1322,22 +1471,33 @@ def replace_pairs(
     >>> t = '[lo.replace]\\n"G(s)" = "lo_get(s)"\\n[lo.x]\\ny = "z"\\n'
     >>> [(s, t[slice(*k)], t[slice(*v)]) for s, k, v in replace_pairs(t)]
     [('lo', 'G(s)', 'lo_get(s)')]
+
+    A dotted key, and an inline table across lines with comments and a
+    trailing comma, are read too (gh-1684):
+
+    >>> t = ('[lo]\\nreplace."G(s)" = "lo_get(s)"\\n'
+    ...      'hi.replace = {\\n  N = "n", # c\\n}\\n')
+    >>> [(s, t[slice(*k)], t[slice(*v)]) for s, k, v in replace_pairs(t)]
+    [('lo.hi', 'N', 'n'), ('lo', 'G(s)', 'lo_get(s)')]
     """
     pair = re.compile(_REPLACE_PAIR)
     out = []
 
-    def one(table: str, m: "re.Match") -> None:
-        out.append((table, m.span(2 if m.group(1) else 3), m.span(5)))
+    def one(table: str, m: "re.Match", g: int = 1) -> None:
+        key = g + 1 if m.group(g) else g + 2
+        out.append((table, m.span(key), m.span(g + 4)))
 
     for head in _REPLACE_INLINE.finditer(text):
-        table = _section_at(text, head.start())
-        at = head.end()
+        table = _table_of(text, head)
+        at = _GAP.match(text, head.end()).end()
         while (m := pair.match(text, at)) is not None:
             one(table, m)
-            sep = _REPLACE_NEXT.match(text, m.end())
-            if sep is None:
+            at = _GAP.match(text, m.end()).end()
+            if text[at : at + 1] != ",":
                 break
-            at = sep.end()
+            at = _GAP.match(text, at + 1).end()
+    for m in _REPLACE_DOTTED.finditer(text):
+        one(_table_of(text, m), m, 2)
     line = re.compile(r"^" + _REPLACE_PAIR, re.M)
     for head in _REPLACE_HEADER.finditer(text):
         end = _HEADER.search(text, head.end())
@@ -1349,7 +1509,9 @@ def replace_pairs(
 
 #: An ``impl_file = "path::..."`` value, group 2 the path: the body a
 #: component's ``replace`` keys are matched against, when it is a file.
-_IMPL_FILE_PATH = re.compile(r"(?<![\w-])impl_file\s*=\s*([\"'])([^\"'\n]*)::")
+_IMPL_FILE_PATH = re.compile(
+    r"(?<![\w.-])" + _DOTTED + r"impl_file\s*=\s*([\"'])([^\"'\n]*)::"
+)
 
 
 def unfollowed_bodies(
@@ -1367,9 +1529,9 @@ def unfollowed_bodies(
     {'lo'}
     """
     return {
-        _section_at(text, m.start())
+        _table_of(text, m)
         for m in _IMPL_FILE_PATH.finditer(text)
-        if (root / m.group(2)).resolve() not in followed
+        if (root / m.group(3)).resolve() not in followed
     }
 
 
@@ -1519,7 +1681,7 @@ def respell_manifest_c(
     create_fn = "x"
     """
     for a, b in reversed(manifest_c_spans(text, keys, frozen)):
-        text = text[:a] + respell(text[a:b]) + text[b:]
+        text = text[:a] + respell_value(text, a, b, respell) + text[b:]
     return text
 
 
@@ -1792,7 +1954,7 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
                 {
                     n
                     for a, b in manifest_c_spans(text, frozen=frozen)
-                    for n in _old_in(text[a:b], names, stems, macros)
+                    for n in _old_in(value_c(text, a, b), names, stems, macros)
                 }
                 | {
                     fn

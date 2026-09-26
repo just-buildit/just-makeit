@@ -244,6 +244,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     comment is now never touched, in that file or any other.
     """
     changed: list[Path] = []
+    walked: "set[Path]" = set()
     for rel in _COMPLEX_DIRS:
         base = root / rel
         if not base.is_dir():
@@ -253,6 +254,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
                 continue
             if path.suffix not in (".c", ".h"):
                 continue
+            walked.add(path.resolve())
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -266,7 +268,13 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     # every later upgrade re-reported the same file.
     for path in CSYM._manifest_files(root):
         text = path.read_text(encoding="utf-8")
-        new = CSYM.respell_manifest_c(text, _respell_code_only, CSYM.IMPL_KEYS)
+        # gh-1684: a `replace` key is matched against its body, so it moves
+        # only when the body did -- not when that body is an `impl_file`
+        # this walk leaves alone, exactly as the `c_prefix` respell reads it.
+        frozen = CSYM.unfollowed_bodies(text, root, walked)
+        new = CSYM.respell_manifest_c(
+            text, _respell_code_only, CSYM.IMPL_KEYS, frozen
+        )
         if new != text:
             _textio.write_text(path, new)
             changed.append(path)

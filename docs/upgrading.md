@@ -207,12 +207,15 @@ getter you declare to document it (gh-1670). It is rewritten:
     (an `enum` key, or a `type` of `enum:<name>` / `string_enum:...`),
     whose default is a choice string and, like the enum `type` itself, is
     never touched. A `replace = { "<old>" = "<new>" }` table moves too (gh-1656),
-    inline or as `[<comp>.replace]`: each value is C spliced into the
+    in any spelling -- inline (across lines too), as `[<comp>.replace]`, or
+    as dotted keys (`replace."<old>" = ...`, gh-1684): each value is C spliced into the
     `impl` body, and each key is matched against that body, so it moves
     with it -- unless the body is lifted from an `impl_file` the upgrade
     does not respell, where the key keeps the spelling that file still
     has. Each value is replaced where it stands, so the file's layout and
-    comments are kept.
+    comments are kept. A string's escapes are read as TOML reads them
+    (gh-1684): in `impl = "puts(\"x\"); lo_create(1);"`, the call after
+    the escaped quotes moves, and the escapes stay as you wrote them.
     An `*_impl_file = "path::fn"` whose file is one of the above has its
     `fn` follow the file. Keys naming a function you wrote (`fn`,
     `create_fn`, ... -- `_csym.AUTHOR_NAMED_KEYS`) are never touched; when
