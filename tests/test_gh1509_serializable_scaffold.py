@@ -175,11 +175,19 @@ class TestScaffold:
         assert "return -1;" in body.split("}")[0]
         assert "IMPLEMENT" in text
 
-    def test_header_only_defines_inline_and_declares_nothing_else(
+    def test_header_only_defines_inline_and_declares_nothing_extern(
         self, project
     ):
         h = _h(project, "ho")
-        assert _prototypes(h, "ho") == []
+        # gh-1679: each is declared `static inline` above the inline step,
+        # which may call it; an EXTERN prototype is the compile error.
+        protos = _prototypes(h, "ho")
+        assert sorted(protos) == sorted(f"ho_{n}" for n in _TRIPLET), h
+        assert all(
+            ln.startswith("static inline ")
+            for ln in h.splitlines()
+            if ln.endswith(");") and any(f"ho_{n}(" in ln for n in _TRIPLET)
+        ), h
         assert sorted(_definitions(h, "ho")) == sorted(
             f"ho_{n}" for n in _TRIPLET
         )
