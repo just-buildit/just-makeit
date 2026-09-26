@@ -231,6 +231,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1601_install_components.py \
                     tests/test_gh1591_c_prefix_nm.py \
                     tests/test_gh1653_upgrade_builds.py \
+                    tests/test_gh1657_prefix_collision.py \
                     tests/test_gh1651_class_name_imports.py \
                     tests/test_gh1599_public_flags.py \
                     tests/test_stub_conformance.py \

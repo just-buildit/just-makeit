@@ -293,6 +293,170 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     return out
 
 
+def _derivation(name: str, cfg: dict) -> str:
+    """What *name* is derived from, in the manifest's words: a component and
+    its method, a module function, or the component or module alone."""
+    from . import _config as C
+
+    src = _source_of(name, sources(cfg))
+    if src is None:
+        return "the manifest"
+    cased, st = src
+    source = cased.lower()
+    rest = name[len(st) :].lstrip("_")
+    for mod in C.modules(cfg):
+        if source in {f["name"] for f in C.module_functions(cfg, mod)}:
+            return f"module `{mod}`'s function `{source}`"
+        if source == C.module_paths(mod).cname:
+            return f"module `{mod}`"
+    methods = {
+        m.get("name") for m in (cfg.get(source) or {}).get("methods", [])
+    }
+    if rest in methods:
+        return f"component `{source}`'s method `{rest}`"
+    return f"component `{source}`"
+
+
+def _line_of(text: str, name: str) -> int:
+    """The line where *text* (C) declares *name* at file scope: the first
+    code occurrence :func:`declared` would have read it from."""
+    from ._docsync import _code_mask
+
+    mask = _code_mask(text)
+    word = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
+    # Count lines in the string that matched: `_file_scope` keeps every line
+    # but shortens a preprocessor one to "\n", so its offsets are not the
+    # mask's.
+    for where in (_file_scope(mask), mask):
+        m = word.search(where)
+        if m:
+            return where.count("\n", 0, m.start()) + 1
+    return 1
+
+
+def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
+    """Why *cfg*'s ``c_prefix`` cannot be applied to the tree at *root*: each
+    prefixed name jm would derive (a :func:`renames` value) that an author
+    C file under *root* already DECLARES (:func:`declared`) while not being
+    one of that name's OWNING files (gh-1657).
+
+    A name's owning files are the ones jm's own render (*tree*, the replay)
+    declares or defines it in -- a component's ``_core.h`` / ``_core.c``, a
+    module's header, a module function's ``.c`` -- read from the render,
+    never listed. So a tree an older jm half-moved (its C respelled, its
+    manifest not) declares the new names only where jm does, and is not a
+    collision; an author header that already has ``dp_syncword_find`` is.
+
+    Refused rather than respelled, because the respell cannot tell the two
+    functions apart: it turns every call to ``ber_theory_ser`` into
+    ``dp_ber_theory_ser``, including the one inside the author's own
+    ``dp_ber_theory_ser`` wrapper, which then calls itself. The one detector
+    `apply` and `jm upgrade` both ask, before either writes.
+
+    The OLD spelling too (gh-1661): a file with its own ``static crc16``
+    beside module ``wfm``'s jm function ``crc16`` would have it renamed to
+    ``dp_crc16`` -- the respell is keyed by name, not by function -- and the
+    tree the upgrade left would then collide. Only when a prefix renames:
+    with none, the two ``crc16`` never meet, exactly as before.
+    """
+    from . import _config as C
+    from . import _function
+    from . import _upgrade
+
+    if prefix(cfg) is None:
+        return []
+    # gh-1653's map: plus `<stem>_step_batch`, which `JM_DEFINE_STEPS`
+    # pastes and the upgrade respells. The bare stem is not here: it is
+    # respelled only as the macro's argument, so no identifier `lo` moves.
+    names = with_macro_names(renames(tree, cfg))
+    new = set(names.values())
+    if not new:
+        return []
+    owning: "dict[str, set[str]]" = {}
+    for f in sorted(tree.rglob("*")):
+        if f.suffix not in _upgrade._C_SUFFIXES or not f.is_file():
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        for n in declared(text) & new:
+            # Keyed without the header layout: upgrade asks before it moves
+            # the headers, so the replay and the tree may disagree on it.
+            owning.setdefault(n, set()).add(
+                INC.layout_free(f.relative_to(tree).as_posix(), cfg)
+            )
+    # `<stem>_step_batch` is the author's, beside the `<stem>_step` (sacred
+    # header) and `<stem>_steps` (`_core.c`) jm renders -- no render
+    # declares it, so it is owned where those siblings are.
+    for n in new:
+        if n.endswith("_step_batch") and n not in owning:
+            base = n[: -len("_batch")]
+            sibling = owning.get(base, set()) | owning.get(base + "s", set())
+            if sibling:
+                owning[n] = sibling
+    # An `*_impl_file = "path::fn"` names the file jm lifts a body FROM: its
+    # `fn` is jm's, by the manifest's own word, and gh-1653 respells the
+    # `::fn` with it -- so that file owns the name.
+    for comp in C.components(cfg):
+        section = cfg.get(comp) or {}
+        for key in IMPL_KEYS:
+            ref = section.get(f"{key}_file")
+            if not isinstance(ref, str) or "::" not in ref:
+                continue
+            path, _, fn = ref.partition("::")
+            # Either spelling: before the upgrade `::lo_reset`, after it
+            # `::zz_lo_reset` -- the same function.
+            owned = names.get(fn, fn if fn in new else None)
+            if owned:
+                owning.setdefault(owned, set()).add(
+                    INC.layout_free(Path(path).as_posix(), cfg)
+                )
+    # A module function's home is a manifest choice (`inline`,
+    # `functions_in_core`), so the replay shows only where it is NOW; the
+    # tree may still hold jm's own copy where it was. All its homes own it.
+    for mod in C.modules(cfg):
+        cname = C.module_paths(mod).cname
+        for f in C.module_functions(cfg, mod):
+            homes = _function.homes(cfg, cname, f["name"])
+            owning.setdefault(stem(cfg, f["name"]), set()).update(
+                INC.layout_free(h, cfg) for h in homes
+            )
+    out = []
+    # Every C file of the project, not `_author_files`: ownership is the
+    # replay's answer, and `_createonly`'s glob for the umbrella
+    # (`native/inc/*.h`) also claims an author header beside it -- doppler's
+    # `dp_syncword.h`, the collision this was filed for (gh-1657).
+    files = _upgrade._project_files(
+        root, lambda p: p.suffix in _upgrade._C_SUFFIXES
+    )
+    for p in files:
+        rel = p.relative_to(root).as_posix()
+        text = p.read_text(encoding="utf-8", errors="replace")
+        where = INC.layout_free(rel, cfg)
+        found = declared(text)
+        for n in sorted(found & new):
+            if where in owning.get(n, set()):
+                continue
+            out.append(
+                f"{rel}:{_line_of(text, n)} already declares `{n}`, the name"
+                f" [project] c_prefix = {prefix(cfg)!r} derives from "
+                f"{_derivation(n, cfg)} -- two different C symbols would"
+                " become one. Rename yours, or choose another c_prefix"
+            )
+        # An old name is owned where its new spelling is: a sacred file
+        # still spelling it bare is jm's, awaiting the respell.
+        for old in sorted(found & names.keys()):
+            if where in owning.get(names[old], set()):
+                continue
+            out.append(
+                f"{rel}:{_line_of(text, old)} declares its own `{old}`, which"
+                f" shares its name with {_derivation(names[old], cfg)} --"
+                f" [project] c_prefix = {prefix(cfg)!r} renames that to"
+                f" `{names[old]}`, and `jm upgrade` cannot tell your calls"
+                " from jm's. Rename yours, or make it `static` under another"
+                " name"
+            )
+    return out
+
+
 def _author_files(root: Path) -> "list[Path]":
     """The project's C/C++ files whose content is the author's:
     ``_createonly``'s AUTHOR and PARTIAL kinds, and anything it does not

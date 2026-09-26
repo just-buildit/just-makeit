@@ -221,6 +221,33 @@ Changing a prefix that is already applied (`a` to `b`), or removing the key
 from a prefixed tree, is not migrated: `apply` and `upgrade` refuse it,
 naming the component and the prefix its header already carries (gh-1650).
 
+A prefix can derive a name your C **already uses**: with `c_prefix = "dp"`,
+component `syncword`'s method `find` derives `dp_syncword_find` -- and if
+you already wrote a `dp_syncword_find`, two different functions would
+become one. Worse, the respell would turn your wrapper's call to
+`syncword_find` into a call to itself. `apply` and `upgrade` refuse this
+before writing anything (gh-1657), naming each file and line, the name, and
+the component and method (or module function) it derives from:
+
+```
+error: native/inc/dp_syncword.h:99 already declares `dp_syncword_find`, the
+name [project] c_prefix = 'dp' derives from component `syncword`'s method
+`find` -- two different C symbols would become one. Rename yours, or choose
+another c_prefix
+```
+
+The same holds for the name as it is spelled today (gh-1661). A file with its
+own `static crc16`, beside a module function `crc16`, would have it renamed
+to `dp_crc16` too: the respell goes by name, and cannot tell your calls from
+jm's. That is refused the same way: the message says the file declares its
+own `crc16`.
+
+Rename your symbol out of the way (or make it `static` under another name),
+or pick another prefix. A name counts only where it is declared outside the
+files jm itself declares it in, so a tree already partly moved onto the
+prefix is not refused, and a project with no `c_prefix` is never asked: with
+nothing renamed, the two never meet.
+
 ## Packaging (`adopt --packaging`)
 
 Three things carry what a C consumer reads through pkg-config and

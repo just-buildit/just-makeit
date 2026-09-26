@@ -462,11 +462,19 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
             + " -- changing or removing a prefix is not migrated (gh-1650);"
             f" restore c_prefix = {had!r}"
         )
+    # Asked of every project: whether a name collides is the detector's
+    # answer alone -- with no prefix nothing is renamed, so nothing can
+    # (gh-1661), and a gate can prove it rather than this caller assume it.
+    clash = [] if errors else CSYM.collisions(project_root, temp_root, cfg)
     if CSYM.prefix(cfg) is not None and not errors:
         errors += CSYM.duplicates(temp_root, cfg)
-        # gh-1653: the same strings `jm upgrade` respells -- manifest
-        # `*_impl` / `type` values and `JM_DEFINE_STEPS` stems included.
-        stale = CSYM.unrenamed_all(project_root, cfg, temp_root)
+        # A collision alone, without the unrenamed list: `jm upgrade` is what
+        # that message points to, and on a colliding tree it must not run.
+        # Otherwise gh-1653's list: the same strings `jm upgrade` respells --
+        # manifest `*_impl` / `type` values and `JM_DEFINE_STEPS` stems too.
+        stale = (
+            {} if clash else CSYM.unrenamed_all(project_root, cfg, temp_root)
+        )
         for rel, names in stale.items():
             errors.append(
                 f"{rel} still spells the unprefixed "
@@ -475,6 +483,7 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 " every C symbol jm derives, and the C you wrote has to"
                 " follow: run `jm upgrade`, which respells it"
             )
+    errors += clash
     if errors:
         C._refuse(errors)
 
