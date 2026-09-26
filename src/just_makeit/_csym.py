@@ -352,12 +352,19 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
     ``dp_ber_theory_ser``, including the one inside the author's own
     ``dp_ber_theory_ser`` wrapper, which then calls itself. The one detector
     `apply` and `jm upgrade` both ask, before either writes.
+
+    The OLD spelling too (gh-1661): a file with its own ``static crc16``
+    beside module ``wfm``'s jm function ``crc16`` would have it renamed to
+    ``dp_crc16`` -- the respell is keyed by name, not by function -- and the
+    tree the upgrade left would then collide. Only when a prefix renames:
+    with none, the two ``crc16`` never meet, exactly as before.
     """
     from . import _upgrade
 
     if prefix(cfg) is None:
         return []
-    new = set(renames(tree, cfg).values())
+    names = renames(tree, cfg)
+    new = set(names.values())
     if not new:
         return []
     owning: "dict[str, set[str]]" = {}
@@ -395,14 +402,29 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
     for p in files:
         rel = p.relative_to(root).as_posix()
         text = p.read_text(encoding="utf-8", errors="replace")
-        for n in sorted(declared(text) & new):
-            if INC.layout_free(rel, cfg) in owning.get(n, set()):
+        where = INC.layout_free(rel, cfg)
+        found = declared(text)
+        for n in sorted(found & new):
+            if where in owning.get(n, set()):
                 continue
             out.append(
                 f"{rel}:{_line_of(text, n)} already declares `{n}`, the name"
                 f" [project] c_prefix = {prefix(cfg)!r} derives from "
                 f"{_derivation(n, cfg)} -- two different C symbols would"
                 " become one. Rename yours, or choose another c_prefix"
+            )
+        # An old name is owned where its new spelling is: a sacred file
+        # still spelling it bare is jm's, awaiting the respell.
+        for old in sorted(found & names.keys()):
+            if where in owning.get(names[old], set()):
+                continue
+            out.append(
+                f"{rel}:{_line_of(text, old)} declares its own `{old}`, which"
+                f" shares its name with {_derivation(names[old], cfg)} --"
+                f" [project] c_prefix = {prefix(cfg)!r} renames that to"
+                f" `{names[old]}`, and `jm upgrade` cannot tell your calls"
+                " from jm's. Rename yours, or make it `static` under another"
+                " name"
             )
     return out
 

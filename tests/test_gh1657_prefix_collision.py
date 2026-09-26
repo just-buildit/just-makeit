@@ -176,6 +176,68 @@ def test_a_colliding_prefix_is_refused_and_nothing_is_written(
     assert "return lo_scale (state, x);" in (root / rel).read_text()
 
 
+#: The mirror (gh-1661): the author's OWN function under jm's OLD name, in a
+#: file that never includes `lo`'s header. The respell is keyed by name, so it
+#: would rename this `lo_scale` to `zz_lo_scale` too -- and the tree the
+#: upgrade left would then be a gh-1657 collision `apply` refuses.
+OWN = (
+    "native/src/lo/helper.c",
+    "/* The author's own scaler, unrelated to lo's method. */\n"
+    "static float\n"
+    "lo_scale (float x)\n"
+    "{\n"
+    "  return 2.0f * x;\n"
+    "}\n"
+    "\n"
+    "float helper_apply (float x) { return lo_scale (x); }\n",
+    3,
+)
+
+
+def _unchanged(before, root):
+    after = _snapshot(root)
+    return sorted(
+        k
+        for k in before.keys() | after.keys()
+        if before.get(k) != after.get(k)
+    )
+
+
+@pytest.mark.parametrize("verb", ["upgrade", "apply"])
+def test_an_author_function_under_jms_old_name_is_refused(
+    bare, tmp_path, verb
+):
+    root = _copy(bare, tmp_path)
+    rel, text, line = OWN
+    (root / rel).write_text(text, newline="\n")
+    _set_prefix(root)
+    before = _snapshot(root)
+    r = run_cli(verb, cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"{rel}:{line} declares its own `lo_scale`" in r.stderr, r.stderr
+    assert "component `lo`'s method `scale`" in r.stderr, r.stderr
+    assert f"renames that to `{P}_lo_scale`" in r.stderr, r.stderr
+    assert "make it `static` under another name" in r.stderr, r.stderr
+    assert _unchanged(before, root) == []
+    assert "lo_scale (float x)" in (root / rel).read_text()
+
+
+def test_without_a_prefix_the_same_tree_is_clean(bare, tmp_path):
+    """No `c_prefix`, nothing renamed: the author's `static lo_scale` and
+    jm's `lo_scale` never meet, and `apply` / `status` stay exactly as on a
+    tree without it."""
+    root = _copy(bare, tmp_path)
+    base = run_cli("status", "--check", cwd=root)
+    assert base.returncode == 0, base.stdout + base.stderr
+    rel, text, _ = OWN
+    (root / rel).write_text(text, newline="\n")
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    s = run_cli("status", "--check", cwd=root)
+    assert s.returncode == base.returncode, s.stdout + s.stderr
+    assert "lo_scale" not in s.stdout + s.stderr, s.stdout + s.stderr
+
+
 def _half_moved(bare: Path, where: Path) -> Path:
     """The tree an older jm leaves: its C respelled onto the prefix, its
     manifest not. `jm upgrade` moves the C; the mixer's manifest `type` is
