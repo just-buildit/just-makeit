@@ -215,10 +215,13 @@ def _merge(dst: dict, src: dict) -> None:
             dst[k] = v
 
 
-def build(where: Path, *extra_new_args: str) -> "dict[str, Path]":
-    """Scaffold every project in :data:`PROJECTS` under *where*, then
-    ``apply`` each, and return ``{row: project root}``. *extra_new_args* go
-    on every ``jm new`` (gh-1591 phase 2 passes ``--c-prefix zz``).
+def build(
+    where: Path, *extra_new_args: str, projects: "dict | None" = None
+) -> "dict[str, Path]":
+    """Scaffold every project in *projects* (default :data:`PROJECTS`)
+    under *where*, then ``apply`` each, and return ``{row: project root}``.
+    *extra_new_args* go on every ``jm new`` (gh-1591 phase 2 passes
+    ``--c-prefix zz``).
 
     Every step must succeed: a fixture that half-built would make a clean
     oracle mean nothing.
@@ -228,7 +231,7 @@ def build(where: Path, *extra_new_args: str) -> "dict[str, Path]":
     # oracles' reference -- says so explicitly.
     if "--c-prefix" not in extra_new_args:
         extra_new_args = ("--no-c-prefix", *extra_new_args)
-    for row, (new_args, steps) in PROJECTS.items():
+    for row, (new_args, steps) in (projects or PROJECTS).items():
         r = run_cli("new", *new_args, *extra_new_args, cwd=where)
         assert r.returncode == 0, f"{row}: new: {r.stdout}{r.stderr}"
         root = where / new_args[0]
