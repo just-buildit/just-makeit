@@ -1170,13 +1170,141 @@ def _manifest_c_value(keys: "tuple[str, ...]") -> "re.Pattern":
 #: :func:`_manifest_c_value` over every C-bearing key.
 MANIFEST_C_VALUE = _manifest_c_value(MANIFEST_C_KEYS)
 
+#: One ``<key> = <string>`` pair of a ``replace`` table (gh-1656): the key a
+#: TOML string (groups 1-2) or a bare key (group 3), the value a TOML string
+#: (groups 4-5). BOTH sides are author C: `apply` substitutes each key's text
+#: in the ``impl`` body with its value (`_impl.apply_replacements`).
+_REPLACE_PAIR = (
+    r"[ \t]*(?:"
+    + _toml_string(1)
+    + r"|([A-Za-z0-9_-]+))[ \t]*=[ \t]*"
+    + _toml_string(4)
+)
+_REPLACE_INLINE = re.compile(r"(?<![\w.-])replace[ \t]*=[ \t]*\{")
+_REPLACE_NEXT = re.compile(r"\s*,")
+_REPLACE_HEADER = re.compile(
+    r"^[ \t]*\[[ \t]*([^\[\]\n]*?)\.replace[ \t]*\][^\n]*$", re.M
+)
+#: A table header, ``[name]`` (group 2) or ``[[name]]`` (group 1 is ``[``).
+_HEADER = re.compile(r"^[ \t]*\[(\[?)[ \t]*([^\[\]\n]*?)[ \t]*\]", re.M)
+
+
+def _section_at(text: str, at: int) -> str:
+    """The table *at* sits in: the last ``[name]`` header before it, or
+    ``""`` at the top level or under an array-of-tables header."""
+    name = ""
+    for m in _HEADER.finditer(text, 0, at):
+        name = "" if m.group(1) else m.group(2)
+    return name
+
+
+def replace_pairs(
+    text: str,
+) -> "list[tuple[str, tuple[int, int], tuple[int, int]]]":
+    """``(table, key span, value span)`` for each pair of each ``replace``
+    table in *text* (a manifest or fragment), each span the CONTENT of its
+    string -- the inline ``replace = { "<old>" = "<new>" }`` form and a
+    ``[<table>.replace]`` table alike (gh-1656). *table* is the one the
+    ``replace`` belongs to (``lo`` for both forms).
+
+    A value is C spliced into the ``impl`` body, so it names derived symbols
+    as the body does; a key is text matched AGAINST that body. Neither sits
+    behind a key :data:`MANIFEST_C_VALUE` knows.
+
+    >>> t = '[lo]\\nreplace = { "G(s)" = "lo_get(s)", N = "n" }\\n'
+    >>> [(s, t[slice(*k)], t[slice(*v)]) for s, k, v in replace_pairs(t)]
+    [('lo', 'G(s)', 'lo_get(s)'), ('lo', 'N', 'n')]
+    >>> t = '[lo.replace]\\n"G(s)" = "lo_get(s)"\\n[lo.x]\\ny = "z"\\n'
+    >>> [(s, t[slice(*k)], t[slice(*v)]) for s, k, v in replace_pairs(t)]
+    [('lo', 'G(s)', 'lo_get(s)')]
+    """
+    pair = re.compile(_REPLACE_PAIR)
+    out = []
+
+    def one(table: str, m: "re.Match") -> None:
+        out.append((table, m.span(2 if m.group(1) else 3), m.span(5)))
+
+    for head in _REPLACE_INLINE.finditer(text):
+        table = _section_at(text, head.start())
+        at = head.end()
+        while (m := pair.match(text, at)) is not None:
+            one(table, m)
+            sep = _REPLACE_NEXT.match(text, m.end())
+            if sep is None:
+                break
+            at = sep.end()
+    line = re.compile(r"^" + _REPLACE_PAIR, re.M)
+    for head in _REPLACE_HEADER.finditer(text):
+        end = _HEADER.search(text, head.end())
+        stop = end.start() if end else len(text)
+        for m in line.finditer(text, head.end(), stop):
+            one(head.group(1), m)
+    return out
+
+
+#: An ``impl_file = "path::..."`` value, group 2 the path: the body a
+#: component's ``replace`` keys are matched against, when it is a file.
+_IMPL_FILE_PATH = re.compile(r"(?<![\w-])impl_file\s*=\s*([\"'])([^\"'\n]*)::")
+
+
+def unfollowed_bodies(
+    text: str, root: Path, followed: "set[Path]"
+) -> "set[str]":
+    """The tables in *text* whose ``impl`` body is lifted from a file the
+    upgrade does NOT respell (not in *followed*, :func:`walked`): their
+    ``replace`` keys are matched against the old spelling still, so they
+    keep it.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> t = '[lo]\\nimpl_file = "../v/old.c::lo_k"\\n[hi]\\nimpl = "x;"\\n'
+    >>> unfollowed_bodies(t, d, set())
+    {'lo'}
+    """
+    return {
+        _section_at(text, m.start())
+        for m in _IMPL_FILE_PATH.finditer(text)
+        if (root / m.group(2)).resolve() not in followed
+    }
+
+
+def manifest_c_spans(
+    text: str,
+    keys: "tuple[str, ...]" = MANIFEST_C_KEYS,
+    frozen: "set[str] | frozenset[str]" = frozenset(),
+) -> "list[tuple[int, int]]":
+    """``(start, end)`` of every C-bearing string in *text* (a manifest or
+    fragment), ascending: each *keys* value (:func:`_manifest_c_value`), and
+    every ``replace`` value and key (:func:`replace_pairs`) -- except the
+    keys of a table in *frozen* (:func:`unfollowed_bodies`), whose body did
+    not move. THE reading both the respell (:func:`respell_manifest_c`) and
+    the refusal (:func:`unrenamed_all`) take, so what one rewrites the other
+    reports.
+
+    >>> t = '[lo]\\nimpl = "a;"\\nreplace = { "b" = "c" }\\n'
+    >>> [t[a:b] for a, b in manifest_c_spans(t)]
+    ['a;', 'b', 'c']
+    >>> [t[a:b] for a, b in manifest_c_spans(t, frozen={"lo"})]
+    ['a;', 'c']
+    """
+    found = {m.span(4) for m in _manifest_c_value(keys).finditer(text)}
+    for table, key, value in replace_pairs(text):
+        found.add(value)
+        if table not in frozen:
+            found.add(key)
+    return sorted(found)
+
 
 def respell_manifest_c(
-    text: str, respell, keys: "tuple[str, ...]" = MANIFEST_C_KEYS
+    text: str,
+    respell,
+    keys: "tuple[str, ...]" = MANIFEST_C_KEYS,
+    frozen: "set[str] | frozenset[str]" = frozenset(),
 ) -> str:
     """*text* (a manifest or fragment) with *respell* (C text to C text)
-    applied to each *keys* value, in place -- the file is never re-serialised,
-    and nothing outside those values moves.
+    applied to each *keys* value, and to each ``replace`` key and value
+    (gh-1656) -- :func:`manifest_c_spans` -- in place: the file is never
+    re-serialised, and nothing outside those strings moves.
 
     THE one visit of the manifest's C-bearing values, for every respell `jm
     upgrade` makes to C (gh-1647): jm renders a header body FROM these
@@ -1189,17 +1317,19 @@ def respell_manifest_c(
     old one. ``tests/test_gh1647_one_manifest_walker.py`` requires every C
     respell in `_upgrade` to come through here.
 
+    A ``replace`` table is visited by every respell, whatever *keys*: its
+    values are spliced into the ``impl`` body and its keys matched against
+    it, so they move when the body does -- a key not at all when the body
+    is lifted from a file this upgrade leaves alone (*frozen*).
+
     >>> print(respell_manifest_c('impl = "x;"\\ncreate_fn = "x"\\n',
     ...                          lambda c: c.replace("x", "y")), end="")
     impl = "y;"
     create_fn = "x"
     """
-
-    def value(m: "re.Match") -> str:
-        body = respell(m.group(4))
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}{body}{m.group(3)}"
-
-    return _manifest_c_value(keys).sub(value, text)
+    for a, b in reversed(manifest_c_spans(text, keys, frozen)):
+        text = text[:a] + respell(text[a:b]) + text[b:]
+    return text
 
 
 #: A ``<impl>_file = "path::fn"`` value: group 3 the path, 4 the function.
@@ -1318,7 +1448,9 @@ def respell_manifest(
     macros: "Macros | None" = None,
 ) -> str:
     """*text* (a manifest or fragment) with each :data:`MANIFEST_C_KEYS`
-    value respelled by :func:`respell_c`, and each ``*_impl_file``'s ``fn``
+    value and each ``replace`` value and key (:func:`manifest_c_spans`, a
+    key only where its body moved: :func:`unfollowed_bodies`) respelled by
+    :func:`respell_c`, and each ``*_impl_file``'s ``fn``
     whose file (resolved against *root*) is in *followed*, in place;
     nothing else moves.
 
@@ -1328,8 +1460,15 @@ def respell_manifest(
     type = "p_fir_state_t *"
     """
 
+    frozen = (
+        frozenset()
+        if root is None
+        else unfollowed_bodies(text, root, followed)
+    )
     text = respell_manifest_c(
-        text, lambda c: respell_c(c, names, stems, macros)
+        text,
+        lambda c: respell_c(c, names, stems, macros),
+        frozen=frozen,
     )
     if root is None:
         return text
@@ -1417,19 +1556,17 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
     if cfg is not None:
         followed = walked(root)
         for p in _manifest_files(root):
+            text = p.read_text(encoding="utf-8")
+            frozen = unfollowed_bodies(text, root, followed)
             found = sorted(
                 {
                     n
-                    for m in MANIFEST_C_VALUE.finditer(
-                        p.read_text(encoding="utf-8")
-                    )
-                    for n in _old_in(m.group(4), names, stems, macros)
+                    for a, b in manifest_c_spans(text, frozen=frozen)
+                    for n in _old_in(text[a:b], names, stems, macros)
                 }
                 | {
                     fn
-                    for _m, fn in _impl_file_fns(
-                        p.read_text(encoding="utf-8"), root, followed
-                    )
+                    for _m, fn in _impl_file_fns(text, root, followed)
                     if fn in names
                 }
             )
