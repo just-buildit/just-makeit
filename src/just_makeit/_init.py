@@ -87,6 +87,7 @@ def append_component_body(
         print(f"  update  {path}")
         return path
 
+    from ._context._state import family_declarations
     from ._context._state import staticize
 
     path = INC.core_h(root, component)
@@ -97,7 +98,15 @@ def append_component_body(
     cut = text.rfind(marker)
     if cut == -1:  # no C++ guard: fall back to the include guard's #endif
         cut = text.rfind("#endif")
-    _textio.write_text(path, text[:cut] + body + "\n" + text[cut:])
+    text = text[:cut] + body + "\n" + text[cut:]
+    # gh-1679: the body lands below the inline step, which may call it, so
+    # a `static inline` prototype goes above the step too (see above for
+    # why it must be static).
+    step_at = step_def_start(text, CSYM.stem(path, component))
+    if step_at is not None:
+        proto = family_declarations(body)
+        text = text[:step_at] + proto + "\n" + text[step_at:]
+    _textio.write_text(path, text)
     print(f"  update  {path}")
     return path
 
@@ -361,6 +370,49 @@ def _func_span_before_brace(
         i -= 1
     name = source[i + 1 : end]
     return (name, i + 1) if name else None
+
+
+def step_def_start(source: str, stem: str) -> "int | None":
+    r"""Where the inline ``<stem>_step()`` definition begins in a ``_core.h``
+    -- its doc comment if one sits right above it -- or None when the header
+    defines no inline step.
+
+    gh-1679: the step is ``static inline`` in the header, so every function
+    its body may call has to be declared ABOVE it. This is the point every
+    declaration is inserted before. Found by the same scan
+    :func:`_extract_core_c_funcs` uses (a ``{`` whose preceding parameter
+    list names the function), so a formatter's layout of the signature does
+    not matter.
+
+    >>> h = "void a(void);\n\n/** doc */\nstatic inline float\nq_step(float x)\n{ return x; }\n"
+    >>> h[step_def_start(h, "q"):].splitlines()[0]
+    '/** doc */'
+    >>> w = 'extern "C" {\n' + h + "}\n"
+    >>> w[step_def_start(w, "q"):].splitlines()[0]
+    '/** doc */'
+    >>> step_def_start("void a(void);\n", "q") is None
+    True
+    """
+    i = 0
+    while (brace := source.find("{", i)) != -1:
+        end = _matching_brace(source, brace)
+        span = _func_span_before_brace(source, brace)
+        if span and span[0] == f"{stem}_step":
+            # Back to the start of the declaration: just past the previous
+            # statement, block or comment end.
+            head = source[: span[1]]
+            doc_end = head.rfind("*/") + 2 if "*/" in head else 0
+            at = max(head.rfind(";") + 1, head.rfind("}") + 1, doc_end)
+            if doc_end and at == doc_end:
+                # Nothing but the step's own return type follows that
+                # comment, so it is the step's doc: keep them together.
+                at = head.rfind("/*", 0, at)
+            return at + len(source[at:]) - len(source[at:].lstrip())
+        # A function body is skipped whole; any other block -- the
+        # `extern "C" {` wrapping the whole header, a struct -- is stepped
+        # INTO, or the step inside it is never seen.
+        i = end if span else brace + 1
+    return None
 
 
 def _extract_core_c_funcs(source: str) -> dict[str, str]:
@@ -668,7 +720,11 @@ def _inject_decls_into_core_h(
             ]
         block = "\n".join(to_insert) + "\n"
         cpp_end = "#ifdef __cplusplus\n}\n#endif"
-        if cpp_end in text:
+        # gh-1679: above the inline step, which may call any of them.
+        step_at = step_def_start(text, CSYM.stem(path, comp))
+        if step_at is not None:
+            text = text[:step_at] + block + "\n" + text[step_at:]
+        elif cpp_end in text:
             text = text.replace(cpp_end, f"{block}{cpp_end}", 1)
         else:
             guard = f"#endif /* {CSYM.upper(path, comp)}_CORE_H */"

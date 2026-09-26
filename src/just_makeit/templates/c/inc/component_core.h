@@ -37,14 +37,14 @@ extern "C" {
 
 /*<<builtin_reset_decl>>*/
 
-/*<<step_impl_def>>*/
-
-/*<<steps_c_decl>>*/
-
 /*<<getter_setter_decls>>*//*<<serializable_decls>>*/
 
 /*<<property_decls>>*/
-/*<<method_decls>>*//*<<inline_core>>*/
+/*<<method_decls>>*/
+/*<<step_impl_def>>*/
+
+/*<<steps_c_decl>>*/
+/*<<inline_core>>*/
 #ifdef __cplusplus
 }
 #endif

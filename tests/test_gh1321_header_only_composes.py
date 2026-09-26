@@ -33,6 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import re
+
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -166,7 +168,15 @@ class TestTheBodyGoesIntoTheHeader:
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
         h = (root / INC_ROOT / "ring/ring_core.h").read_text()
-        assert h.count("ring_wait") == 1, h
+        # gh-1679: the one declaration allowed is a `static inline`
+        # prototype above the inline step, which the definition keeps.
+        extern = re.findall(
+            r"^(?!static inline)[A-Za-z_][^;{}\n]*\bring_wait\([^;{}]*\);$",
+            h,
+            re.MULTILINE,
+        )
+        assert extern == [], h
+        assert h.count("ring_wait(") == 2, h  # the prototype, the body
         assert (
             "float _Complex *ring_wait(ring_state_t *state, size_t n);"
             not in h

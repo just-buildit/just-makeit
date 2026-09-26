@@ -2037,8 +2037,8 @@ def apply_header_only(
     templates are rendered.
 
     A ``header_only`` component has no ``_core.c`` -- its whole
-    implementation is inline in the sacred header -- so a *declaration* there
-    would be a promise nothing keeps. jm's own scaffold has to link before
+    implementation is inline in the sacred header -- so an EXTERNAL
+    declaration there would be a promise nothing keeps. jm's own scaffold has to link before
     the author has written a line of it ("no foot-guns, all green from day
     one"), which means the generated header carries stub **definitions**, not
     prototypes, and the author replaces them with the real thing.
@@ -2052,16 +2052,23 @@ def apply_header_only(
     ``_core.c`` renders, so the two faces cannot describe different
     functions -- only where they land differs.
 
+    gh-1679: the definitions land BELOW the inline ``step()``, whose body
+    may call any of them, so each keeps a declaration above it -- a
+    ``static inline`` prototype (:func:`family_declarations`), which the
+    definition further down keeps. A non-static one would be the compile
+    error above; a static one is plain C99.
+
     Examples
     --------
-    >>> apply_header_only({"csym": "q", "steps_c_decl": "x"}, False)[
+    >>> d = "void q_steps(q_state_t *s);"
+    >>> apply_header_only({"csym": "q", "steps_c_decl": d}, False)[
     ...     "steps_c_decl"
     ... ]
-    'x'
-    >>> apply_header_only({"csym": "q", "steps_c_decl": "x"}, True)[
+    'void q_steps(q_state_t *s);'
+    >>> print(apply_header_only({"csym": "q", "steps_c_decl": d}, True)[
     ...     "steps_c_decl"
-    ... ]
-    ''
+    ... ], end="")
+    static inline void q_steps(q_state_t *s);
     """
     L = chr(10)
     # gh-1591: every name built here is a C symbol, so from the stem.
@@ -2101,8 +2108,12 @@ def apply_header_only(
     ctx["inline_core"] = lifecycle + staticize(_header_only_defs(ctx))
     ctx["create_decl"] = ""
     ctx["destroy_decl"] = ""
+    # gh-1679: each definition lands in `inline_core`, BELOW the inline
+    # step, and the step's body may call any of them -- so each is declared
+    # above it as a `static inline` prototype (a non-static one ahead of a
+    # `static inline` definition is a compile error; a static one is C99).
     for key in _HEADER_ONLY_DECL_SLOTS:
-        ctx[key] = ""
+        ctx[key] = family_declarations(ctx.get(key, ""))
     for key in _HEADER_ONLY_DEF_SLOTS:
         ctx[key] = ""
     return ctx
