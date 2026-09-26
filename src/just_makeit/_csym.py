@@ -421,9 +421,10 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
             )
     out = []
     # Every C file of the project, not `_author_files`: ownership is the
-    # replay's answer, and `_createonly`'s glob for the umbrella
-    # (`native/inc/*.h`) also claims an author header beside it -- doppler's
-    # `dp_syncword.h`, the collision this was filed for (gh-1657).
+    # replay's answer, per name, not `_createonly`'s per file. (Until gh-1659
+    # that classification also claimed every author header beside the
+    # umbrella -- doppler's `dp_syncword.h`, the collision this was filed
+    # for, gh-1657.)
     files = _upgrade._project_files(
         root, lambda p: p.suffix in _upgrade._C_SUFFIXES
     )
@@ -472,7 +473,7 @@ def _author_files(root: Path) -> "list[Path]":
     def mine(p: Path) -> bool:
         if p.suffix not in _upgrade._C_SUFFIXES:
             return False
-        rule = _createonly.classify(p.relative_to(root).as_posix())
+        rule = _createonly.classify(p.relative_to(root).as_posix(), root)
         return rule is None or rule.kind in (
             _createonly.AUTHOR,
             _createonly.PARTIAL,

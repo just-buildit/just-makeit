@@ -57,6 +57,7 @@ from just_makeit import (  # noqa: E402
     _cfmt,
     _config,
     _createonly,
+    _incpath,
     _status,
 )
 from just_makeit._app import run as app_run  # noqa: E402
@@ -86,6 +87,10 @@ SHAPES: dict[str, dict] = {
     # that file matched nothing and `test_no_rule_is_dead` said so -- the
     # registry reading as broader coverage than the fixture could reach.
     "element": {"element": True},
+    # gh-1659: the flat header layout, before `_incpath.PREFIXED_SCHEMA`.
+    # Every other shape is prefixed, so without this the header rules were
+    # measured in one layout while claiming to hold in both.
+    "flat-headers": {"schema": _incpath.PREFIXED_SCHEMA - 1},
 }
 
 DERIVABLE = sorted(SHAPES)
@@ -229,7 +234,7 @@ def test_the_create_only_set_is_exactly_what_is_classified(tmp_path, name):
     root = tmp_path / f"{name}-pristine"
     declared = set()
     for rel in _managed(root):
-        rule = _createonly.classify(rel.as_posix())
+        rule = _createonly.classify(rel.as_posix(), root)
         assert rule is not None, (
             f"{rel.as_posix()} has no rule in _createonly.RULES — classify it "
             "JM (jm's content, so it can be behind), AUTHOR (the author's, so "
@@ -274,14 +279,16 @@ def test_no_rule_is_dead(tmp_path):
     coverage than it has, and the unmatched entry is exactly where a stale
     judgement hides.
     """
-    seen: set[str] = set()
+    # Each path with its own project: a header's rule is matched against
+    # the project it sits in (gh-1659), so the pair is what is classified.
+    seen: set[tuple[str, Path]] = set()
     for name, shape in SHAPES.items():
         root = _scaffold(tmp_path / f"live-{name}", **dict(shape))
-        seen.update(p.as_posix() for p in _managed(root))
+        seen.update((p.as_posix(), root) for p in _managed(root))
     dead = [
         rule.pattern
         for rule in _createonly.RULES
-        if not any(_createonly.classify(p) is rule for p in seen)
+        if not any(_createonly.classify(p, r) is rule for p, r in seen)
     ]
     assert not dead, f"rules matching no scaffolded file: {dead}"
 

@@ -228,7 +228,7 @@ def assert_a_rebuild_agrees(root: Path, kinds: tuple[str, ...]) -> None:
         for rel in sorted(set(before) | set(after)):
             if before.get(rel) == after.get(rel):
                 continue
-            rule = CO.classify(rel)
+            rule = CO.classify(rel, root)
             if rule is None or rule.kind not in kinds:
                 continue
             pytest.fail(
