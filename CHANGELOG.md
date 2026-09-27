@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+## [0.92.2] — 2026-09-27
+
+### Fixed
+
+- **A composer seam you name with the prefix is yours, not a collision**
+    (gh-1694). `bridge_fn`, `bridge_error_fn` and a computed `fn` name C
+    functions the project writes; jm derives none of them, but declares each
+    in the module's `<cname>_bridge.h`. The `c_prefix` rename table read
+    every header declaration that starts with a component's stem, so
+    renaming `bridge_fn = "wfm_source_to_synth"` to `"dp_wfm_source_to_synth"`
+    made it a rename of the bare name, and `apply` and `jm upgrade` refused
+    the author's own definition as "already declares ... the name c_prefix
+    derives from `wfm`". A name the seam header declares only because a key
+    spells it is no longer read as derived there (`_csym._echoed`, from
+    `_composer.seam_fns`, the one list the header renders). The same name
+    declared where jm does derive it keeps its rename.
+
+- **A container property's accessors take the `c_prefix` stem**
+    (gh-1695). A `dict` / `list` / `tuple` property's count accessor was
+    derived from the raw component name while its key and value accessors
+    took the stem, so a prefixed project rendered `rc_num_stages` beside
+    `dp_rc_stages_value`, and `jm upgrade` onto a prefix had no row for it:
+    the name stayed bare and `apply` and `status --check` were clean. Once
+    the author renamed the implementation, `apply` scaffolded a
+    `return 0` placeholder beside it -- a count that reads as a valid empty
+    list. Every accessor name now comes from one derivation,
+    `_csym.container_accessors`, read by the header, the stub, the binding,
+    the codec decode and the rename table, which also carries the accessors
+    no render declares (a codec's `entry_fn` / `entry_type`, a view's
+    container property). A tree an earlier jm left with the bare spelling
+    is refused by `apply`, naming the file, until `jm upgrade` respells it;
+    nothing is scaffolded beside it.
+
 ## [0.92.1] — 2026-09-26
 
 ### Fixed
