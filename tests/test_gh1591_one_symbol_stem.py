@@ -125,7 +125,26 @@ _SUFFIX = re.compile(
     r"state_adopt|state_bytes|get_state|set_state|CORE_H|BRIDGE_H|"
     r"PROCGLOBAL_H)(?![A-Za-z0-9_])"
 )
-_JOIN = re.compile(r"_(get_|set_)?$")
+#: A raw name joined to another formatted value by words: ``{comp}_{name}``,
+#: ``{comp}_get_{name}``, and any other ``{comp}_<word>_{name}`` -- a
+#: property's derived accessor spells one. Listing the words (``get_`` /
+#: ``set_``) was the vocabulary gh-1695's ``{component}_num_{pname}`` was
+#: missing from.
+_JOIN = re.compile(r"_(?:[A-Za-z0-9]+_)*$")
+#: The tail of an f-string that spells a FILE (``{cname}_ext_{comp}.c``,
+#: an ``#include "..."``): a file stem is the name's, never the stem's.
+_FILE_TAIL = re.compile(r"\.[A-Za-z]+\"?$")
+
+
+def _is_file_name(vals) -> bool:
+    """The f-string whose parts are *vals* ends in a file extension."""
+    last = vals[-1]
+    return (
+        isinstance(last, ast.Constant)
+        and isinstance(last.value, str)
+        and bool(_FILE_TAIL.search(last.value))
+    )
+
 
 #: The owner, and modules that are not jm's (the examples' own scripts).
 _EXEMPT = {"_csym.py"}
@@ -196,6 +215,10 @@ def derivations(source: str) -> "list[int]":
     []
     >>> derivations('x = f"{comp}_{name}"\\n')
     [1]
+    >>> derivations('x = f"{component}_num_{pname}"\\n')  # gh-1695
+    [1]
+    >>> derivations('x = f"{cname}_ext_{comp}.c"\\n')  # a file, not a symbol
+    []
 
     Three more spellings reach the same place (gh-1591 2b found one of each
     live): a concatenation, a regex, and ``str.format``.
@@ -259,6 +282,7 @@ def derivations(source: str) -> "list[int]":
                 _JOIN.match(nxt.value)
                 and i + 2 < len(vals)
                 and isinstance(vals[i + 2], ast.FormattedValue)
+                and not _is_file_name(vals)
             ):
                 out.append(node.lineno)
     return out

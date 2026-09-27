@@ -280,9 +280,9 @@ Commands:
     --value-type TYPE           Element type of a dict/list/tuple property. A C
                                 type means jm converts it; "object" means
                                 --value-fn returns a PyObject * itself.
-    --count-fn name             Entry count accessor  (default <obj>_num_<name>).
-    --key-fn name               Key accessor, dict only (default <obj>_<name>_key).
-    --value-fn name             Value accessor      (default <obj>_<name>_value).
+    --count-fn name             Entry count accessor  (default <stem>_num_<name>).
+    --key-fn name               Key accessor, dict only (default <stem>_<name>_key).
+    --value-fn name             Value accessor      (default <stem>_<name>_value).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a

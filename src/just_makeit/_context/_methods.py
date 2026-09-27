@@ -4214,22 +4214,6 @@ def _property_enum(
     return name
 
 
-def container_fn_names(
-    component: str, pname: str, p: dict, *, csym: str
-) -> dict[str, str]:
-    """Resolve a container property's three accessor names (gh-543).
-
-    Each defaults from the component and property name -- mirroring how
-    ``create_fn`` defaults to ``<backing>_open`` -- so the common declaration
-    names nothing at all. ``key_fn`` is meaningful only for a ``dict``.
-    """
-    return {
-        "count_fn": p.get("count_fn") or f"{component}_num_{pname}",
-        "key_fn": p.get("key_fn") or f"{csym}_{pname}_key",
-        "value_fn": p.get("value_fn") or f"{csym}_{pname}_value",
-    }
-
-
 def validate_container_property(component: str, p: dict) -> None:
     """Reject an incoherent container property (gh-543).
 
@@ -4248,8 +4232,8 @@ def validate_container_property(component: str, p: dict) -> None:
             f"'{T.OBJECT_VALUE_TYPE}' (value_fn returns a PyObject *) or one "
             f"of: {supported}"
         )
-    # A dict always has a key_fn -- `container_fn_names` defaults it -- so
-    # there is nothing to require here, only a misuse to reject.
+    # A dict always has a key_fn -- `CSYM.container_accessors` defaults it,
+    # so there is nothing to require here, only a misuse to reject.
     if kind != "dict" and p.get("key_fn"):
         raise ValueError(
             f"{where}: key_fn is meaningful only for a dict property; "
@@ -4293,7 +4277,7 @@ def _container_getter(
     """
     pname = p["name"]
     kind = p["type"]
-    fns = container_fn_names(component, pname, p, csym=csym)
+    fns = CSYM.container_accessors(csym, p)
     vtype = p.get("value_type") or T.OBJECT_VALUE_TYPE
     state_t = f"const {csym}_state_t *"
 

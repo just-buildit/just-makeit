@@ -490,8 +490,10 @@ def render_decode(
     so it is emitted ``static`` in the ext (via the getter's inline ``fwd``).
     """
     pname = p["name"]
-    entry_fn = p.get("entry_fn") or f"{csym}_{pname}_entry"
-    entry_t = p.get("entry_type") or f"{csym}_{pname}_t"
+    from . import _csym as CSYM
+
+    fns = CSYM.container_accessors(csym, p)
+    entry_fn, entry_t = fns["entry_fn"], fns["entry_type"]
     tf = _entry_field(p, "type", "type")
     cf = _entry_field(p, "count", "count")
     vf = _entry_field(p, "value", "value")

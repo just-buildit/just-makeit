@@ -13,7 +13,7 @@ author's ``fir_get_num_taps`` kept its bare spelling while the doc lookup
 "Num taps.", and `apply`'s unprefixed-name refusal never named it.
 
 The fix: every property's getter is in `_csym.renames`
-(`_csym.property_getters`), spelled by the one `_csym.property_getter` the
+(`_csym.property_accessors`), spelled by the one `_csym.property_getter` the
 doc lookup reads, so the respell, the refusal and the doc lookup agree; and
 `_csym.collisions` owns an undeclared getter where its component's own
 files are, so the sacred header that declares it is not refused.
@@ -147,7 +147,7 @@ def test_every_property_kind_derives_its_getter(prop):
         "project": {"name": "p", "c_prefix": P},
         "fir": {"properties": [prop]},
     }
-    assert _csym.property_getters(cfg) == {f"{P}_fir_get_n": f"{P}_fir"}
+    assert _csym.property_accessors(cfg) == {f"{P}_fir_get_n": f"{P}_fir"}
 
 
 #: A getter spelled by hand in an f-string: ``{<stem var>}_get_{<name var>}``.

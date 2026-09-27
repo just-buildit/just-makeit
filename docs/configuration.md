@@ -1549,8 +1549,8 @@ value_field = "value"
 | Property key                                 | Default                    | Notes                                           |
 | -------------------------------------------- | -------------------------- | ----------------------------------------------- |
 | `codec`                                      | —                          | The `[codec.<name>]` to decode with             |
-| `entry_fn`                                   | `<obj>_<prop>_entry`       | Returns `const <entry_type> *(state, i)`        |
-| `entry_type`                                 | `<obj>_<prop>_t`           | The entry struct type — **often needs setting** |
+| `entry_fn`                                   | `<stem>_<prop>_entry`      | Returns `const <entry_type> *(state, i)`        |
+| `entry_type`                                 | `<stem>_<prop>_t`          | The entry struct type — **often needs setting** |
 | `type_field` / `count_field` / `value_field` | `type` / `count` / `value` | The discriminant / length / payload members     |
 | `scalar_collapse`                            | codec's value              | Per-property override                           |
 | `header`                                     | —                          | `#include` the `.pyi`/ext needs for the struct  |

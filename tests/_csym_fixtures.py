@@ -55,6 +55,26 @@ PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
             ),
             ("property", "fir", "level", "--type", "double"),
             ("property", "fir", "bias", "--type", "double", "--writable"),
+            # gh-1695: container properties derive count / key / value
+            # accessors, and the count one escaped the stem.
+            (
+                "property",
+                "fir",
+                "taps",
+                "--type",
+                "list",
+                "--value-type",
+                "double",
+            ),
+            (
+                "property",
+                "fir",
+                "meta",
+                "--type",
+                "dict",
+                "--value-type",
+                "int",
+            ),
             ("object", "osc", "--arg-type", "void", "--return-type", "float"),
             ("object", "blob", "--no-state"),
             ("object", "sink", "--no-step"),
@@ -150,6 +170,19 @@ PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
             ),
             ("property", "o", "lvl", "--module", "m", "--type", "double"),
             ("view", "o", "Peek", "--module", "m", "--create-fn", "o_open"),
+            (
+                "property",
+                "o",
+                "tags",
+                "--module",
+                "m",
+                "--type",
+                "list",
+                "--value-type",
+                "int",
+                "--view",
+                "Peek",
+            ),
             ("function", "calc", "--module", "m"),
             ("module", "dsp.filters"),
             ("object", "bq", "--module", "dsp.filters"),
@@ -282,8 +315,14 @@ def derived(cfg: dict) -> "list[re.Pattern]":
     for comp in sorted(comps):
         tails = list(LIFECYCLE)
         tails += [m["name"] for m in C.methods(cfg, comp) if not m.get("fn")]
-        for p in C.properties(cfg, comp):
-            tails += [f"get_{p['name']}", f"set_{p['name']}"]
+        props = list(C.properties(cfg, comp))
+        for view in C.views(cfg, comp):
+            props += view.get("properties", [])
+        for p in props:
+            n = p["name"]
+            tails += [f"get_{n}", f"set_{n}"]
+            # gh-1695: a container property's derived accessors.
+            tails += [f"num_{n}", f"{n}_key", f"{n}_value", f"{n}_entry"]
         pats.append(
             re.compile(
                 rf"(?<![A-Za-z0-9_]){re.escape(comp)}_"
