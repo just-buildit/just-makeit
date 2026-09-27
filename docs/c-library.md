@@ -381,13 +381,13 @@ the first -- the shared `FIR_CORE_H` guard silently drops the second.
 c_prefix = "dp"      # written without the joining underscore
 ```
 
-| moves (derived by jm)                                                     | stays (named by you, or not C)                                           |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `fir_create`, `fir_destroy`, `fir_reset`, `fir_step(s)` -> `dp_fir_...`   | a manifest `fn =`, `create_fn`, `bridge_fn`, `type_name`, `record_dtype` |
-| a method's `fir_<name>`, a property's `fir_get_<name>` / `fir_set_<name>` | your own macros in the sacred `_core.h` (`ACC_F32_STATE_MAGIC`)          |
-| the `fir_state_t` type -> `dp_fir_state_t`                                | the Python names: `Fir`, `from pkg import fir`, a module function `mix`  |
-| jm's include guards (`DP_FIR_CORE_H`) and `process_global` defines        | file names: `native/inc/<pkg>/fir/fir_core.h` stays                      |
-| a module function `mix` -> `dp_mix` (in C only)                           | `<pkg>_version`                                                          |
+| moves (derived by jm)                                                                        | stays (named by you, or not C)                                           |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `fir_create`, `fir_destroy`, `fir_reset`, `fir_step(s)` -> `dp_fir_...`                      | a manifest `fn =`, `create_fn`, `bridge_fn`, `type_name`, `record_dtype` |
+| a method's `fir_<name>`, a property's `fir_get_<name>` / `fir_set_<name>` / `fir_num_<name>` | your own macros in the sacred `_core.h` (`ACC_F32_STATE_MAGIC`)          |
+| the `fir_state_t` type -> `dp_fir_state_t`                                                   | the Python names: `Fir`, `from pkg import fir`, a module function `mix`  |
+| jm's include guards (`DP_FIR_CORE_H`) and `process_global` defines                           | file names: `native/inc/<pkg>/fir/fir_core.h` stays                      |
+| a module function `mix` -> `dp_mix` (in C only)                                              | `<pkg>_version`                                                          |
 
 A name that already starts with `dp_` is not prefixed again: a component
 `dp_tlm` keeps `dp_tlm_create`. So `apply` refuses a project in which two
