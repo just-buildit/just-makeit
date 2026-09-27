@@ -3298,7 +3298,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # reach them only by writing a second copy. They are published in
     # `<cname>_bridge.h` now and included, which is what makes the count one.
     if render_bridge_h(cfg, module):
-        bridge = INC.include(f"{mp.cname}/{mp.cname}_bridge.h", cfg)
+        bridge = INC.include(bridge_h(module), cfg)
         gen_includes += f'#include "{bridge}"\n'
 
     # gh-1583: the include of a jm header is spelled by the layout.
@@ -3808,6 +3808,82 @@ def render_pyi(cfg: dict, module: str) -> str:
     return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
+def bridge_h(module: str) -> str:
+    """Where *module*'s gh-998 seam header lives, relative to the project's
+    header root. The one spelling :func:`materialize` writes, the binding
+    includes, `apply` syncs and :mod:`_csym` reads (gh-1694).
+
+    >>> bridge_h("dsp.mix")
+    'dsp_mix/dsp_mix_bridge.h'
+    """
+    cname = C.module_paths(module).cname
+    return f"{cname}/{cname}_bridge.h"
+
+
+def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
+    """``(name, prototype lines)`` for each straight-C seam
+    :func:`render_bridge_h` declares, in order: the ``bridge_fn``, its
+    ``bridge_error_fn`` and each computed ``fn``. Every name is an
+    author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
+    because the manifest spells it -- the header and :func:`seam_fns` read
+    this one list, so they cannot disagree on which names those are."""
+    gen = _source_generates(cfg, module)
+    computed = _source_computed(cfg, module)
+    if not gen and not computed:
+        return []
+    src_struct = C.composer_source(cfg, module)["struct"]
+    out: "list[tuple[str, list[str]]]" = []
+    if gen:
+        out.append(
+            (
+                gen["bridge_fn"],
+                [
+                    "/* Build the composed generator from a source config"
+                    " (source -> generator). */",
+                    f"{gen['state_type']} *{gen['bridge_fn']}("
+                    f"const {src_struct} *, double);",
+                    "",
+                ],
+            )
+        )
+        if gen["bridge_error_fn"]:
+            out.append(
+                (
+                    gen["bridge_error_fn"],
+                    [
+                        f"/* Why {gen['bridge_fn']}() refused: a reason"
+                        " raised as ValueError, or NULL",
+                        " * for none (RuntimeError). Same arguments; called"
+                        " only after it returned",
+                        " * NULL (gh-1307). */",
+                        f"const char *{gen['bridge_error_fn']}("
+                        f"const {src_struct} *, double);",
+                        "",
+                    ],
+                )
+            )
+    for c in computed:
+        out.append(
+            (
+                c["fn"],
+                [
+                    f"/* Computed read-only property `{c['name']}`. */",
+                    f"{c['type']} {c['fn']}(const {src_struct} *);",
+                    "",
+                ],
+            )
+        )
+    return out
+
+
+def seam_fns(cfg: dict, module: str) -> "list[str]":
+    """The C functions *module*'s :func:`bridge_h` declares: the project's
+    own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
+    ``fn`` key. jm derives none of them, whatever prefix their name has, so
+    :func:`_csym.renames` does not read them as derived (gh-1694)."""
+    return [name for name, _prototype in _seams(cfg, module)]
+
+
 def render_bridge_h(cfg: dict, module: str) -> str:
     """The public header for a composer's project-written straight-C seams.
 
@@ -3835,14 +3911,13 @@ def render_bridge_h(cfg: dict, module: str) -> str:
     Returns ``""`` when the source declares neither seam — the common case, and
     the reason :func:`materialize` writes no file for it.
     """
-    gen = _source_generates(cfg, module)
-    computed = _source_computed(cfg, module)
-    if not gen and not computed:
+    seams = _seams(cfg, module)
+    if not seams:
         return ""
+    gen = _source_generates(cfg, module)
 
     backing = C.capsule_backing(cfg, module)
     header = C.capsule_header(cfg, module) or INC.core_include(backing, cfg)
-    src_struct = C.composer_source(cfg, module)["struct"]
     mp = C.module_paths(module)
     guard = f"{CSYM.upper(cfg, mp.cname)}_BRIDGE_H"
 
@@ -3877,31 +3952,8 @@ def render_bridge_h(cfg: dict, module: str) -> str:
         "#endif",
         "",
     ]
-    if gen:
-        lines += [
-            "/* Build the composed generator from a source config"
-            " (source -> generator). */",
-            f"{gen['state_type']} *{gen['bridge_fn']}("
-            f"const {src_struct} *, double);",
-            "",
-        ]
-        if gen["bridge_error_fn"]:
-            lines += [
-                f"/* Why {gen['bridge_fn']}() refused: a reason raised as"
-                " ValueError, or NULL",
-                " * for none (RuntimeError). Same arguments; called only after"
-                " it returned",
-                " * NULL (gh-1307). */",
-                f"const char *{gen['bridge_error_fn']}("
-                f"const {src_struct} *, double);",
-                "",
-            ]
-    for c in computed:
-        lines += [
-            f"/* Computed read-only property `{c['name']}`. */",
-            f"{c['type']} {c['fn']}(const {src_struct} *);",
-            "",
-        ]
+    for _name, prototype in seams:
+        lines += prototype
     lines += [
         "#ifdef __cplusplus",
         "}",
@@ -3939,7 +3991,7 @@ def materialize(
     _bridge_h = render_bridge_h(cfg, module)
     if _bridge_h:
         _write(
-            INC.path(root, f"{mp.cname}/{mp.cname}_bridge.h"),
+            INC.path(root, bridge_h(module)),
             _bridge_h,
         )
     _write(

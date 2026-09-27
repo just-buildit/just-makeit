@@ -2497,7 +2497,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
                 cfg, mod
             ):
-                glue.append(INC.rel(f"{mp.cname}/{mp.cname}_bridge.h", root))
+                glue.append(INC.rel(_composer.bridge_h(mod), root))
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,
