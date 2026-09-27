@@ -93,6 +93,7 @@ test_gh1679_step_calls_an_accessor
 test_gh1684_manifest_c_reader
 test_gh1685_backing_stem
 test_gh1694_composer_seam_author_named
+test_gh1695_container_accessor_stem
 test_gh949_outdated
 test_lint_ssot
 test_one_replay_path
