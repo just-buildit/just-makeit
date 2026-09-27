@@ -500,9 +500,9 @@ directly into the state struct and auto-implements the getter as
 | `--doc "text"`      | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
 | `--enum NAME`       | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
 | `--value-type TYPE` | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
-| `--count-fn FN`     | Entry-count accessor for a container property. Default `<obj>_num_<prop>`.                                                                                                                                                                                                                                                                                                                           |
-| `--key-fn FN`       | Key accessor for a `dict` property. Default `<obj>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                      |
-| `--value-fn FN`     | Value accessor for a container property. Default `<obj>_<prop>_value`.                                                                                                                                                                                                                                                                                                                               |
+| `--count-fn FN`     | Entry-count accessor for a container property. Default `<stem>_num_<prop>`.                                                                                                                                                                                                                                                                                                                          |
+| `--key-fn FN`       | Key accessor for a `dict` property. Default `<stem>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                     |
+| `--value-fn FN`     | Value accessor for a container property. Default `<stem>_<prop>_value`.                                                                                                                                                                                                                                                                                                                              |
 | `--capsule NAME`    | With `--type capsule`: publish a **borrowed** pointer as a `PyCapsule` under that name, so a peer extension can consume it by name (gh-788). The capsule does not own the pointer and carries no liveness — the getter checks the object is alive before handing it out, and the capsule's destructor is `NULL` by contract. Persists as `capsule = "NAME"`.                                         |
 | `--view ClassName`  | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Views are a module-object feature, so the object must live in a module.                                                                                                                         |
 
@@ -616,9 +616,12 @@ value_fn   = "<pkg>_reader_keyword_value"   # <value_type> (const state *, size_
 value_type = "object"
 ```
 
-All three accessor names default from the object and property name
-(`<obj>_num_<prop>`, `<obj>_<prop>_key`, `<obj>_<prop>_value`), so the common
-declaration names none of them. `key_fn` applies to `dict` only — a `list` or
+All three accessor names default from the object's C symbol stem and the
+property name (`<stem>_num_<prop>`, `<stem>_<prop>_key`,
+`<stem>_<prop>_value`), so the common declaration names none of them. The stem
+is the object's name, `dp_`-prefixed under `[project] c_prefix = "dp"`
+([c-library](../c-library.md#two-packages-one-program)); a name you declare is
+used as written. `key_fn` applies to `dict` only — a `list` or
 `tuple` is keyed by position, and passing it there is an error rather than a
 silently ignored flag.
 

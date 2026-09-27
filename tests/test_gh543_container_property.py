@@ -50,10 +50,8 @@ from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
 from just_makeit._cli import main as cli_main
 from just_makeit._context import make_properties_ctx
-from just_makeit._context._methods import (
-    container_fn_names,
-    validate_container_property,
-)
+from just_makeit._context._methods import validate_container_property
+from just_makeit._csym import container_accessors
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
@@ -186,14 +184,16 @@ class TestAccessorDefaults:
     """Unspecified accessors derive from the component and property name."""
 
     def test_defaults(self):
-        assert container_fn_names("rdr", "keywords", {}, csym="rdr") == {
+        assert container_accessors("rdr", {"name": "keywords"}) == {
             "count_fn": "rdr_num_keywords",
             "key_fn": "rdr_keywords_key",
             "value_fn": "rdr_keywords_value",
+            "entry_fn": "rdr_keywords_entry",
+            "entry_type": "rdr_keywords_t",
         }
 
     def test_explicit_names_win(self):
-        got = container_fn_names("rdr", "keywords", DICT_OBJ, csym="rdr")
+        got = container_accessors("rdr", DICT_OBJ)
         assert got["key_fn"] == "rdr_keyword_tag"
 
 

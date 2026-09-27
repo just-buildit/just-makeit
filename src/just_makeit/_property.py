@@ -26,10 +26,7 @@ from . import _glue
 from . import _linkcheck
 from . import _types as T
 from . import _incpath as INC
-from ._context._methods import (
-    container_fn_names,
-    validate_container_property,
-)
+from ._context._methods import validate_container_property
 from ._init import (
     _inject_decls_into_core_h,
     _inject_struct_field,
@@ -451,7 +448,7 @@ def run(
     #                    the glue instead -- see _methods._container_getter.
     core_h = INC.core_h(root, object_name)
     if container:
-        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
+        fns = CSYM.container_accessors(csym, prop_entry)
         state_t = f"const {csym}_state_t *"
         decls = [f"size_t {fns['count_fn']}({state_t}state);"]
         if ctype == "dict":
@@ -506,8 +503,8 @@ def run(
     print()
     rw = "read/write" if writable else "read-only"
     if container and codec:
-        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
-        e_fn = entry_fn or f"{csym}_{prop_name}_entry"
+        fns = CSYM.container_accessors(csym, prop_entry)
+        e_fn = fns["entry_fn"]
         core_c = _body_file
         todo = [fns["count_fn"]]
         if ctype == "dict":
@@ -520,7 +517,7 @@ def run(
             f"  [{ctype}, {rw}]"
         )
     elif container:
-        fns = container_fn_names(object_name, prop_name, prop_entry, csym=csym)
+        fns = CSYM.container_accessors(csym, prop_entry)
         todo = [fns["count_fn"]]
         if ctype == "dict":
             todo.append(fns["key_fn"])

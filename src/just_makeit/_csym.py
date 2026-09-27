@@ -196,32 +196,92 @@ def property_getter(stem_: str, prop: str) -> str:
     return f"{stem_}_get_{prop}"
 
 
-def property_getters(cfg: dict) -> "dict[str, str]":
-    """``{getter: component stem}`` for each property of each component in
-    *cfg*, under the stem *cfg* derives (:func:`property_getter`).
+def container_accessors(stem_: str, p: dict) -> "dict[str, str]":
+    """The C names container property *p*'s binding calls (gh-543), on the
+    component whose stem is *stem_*: each key *p* declares, else the ONE
+    derivation of its default -- ``<stem>_num_<prop>``,
+    ``<stem>_<prop>_key`` / ``_value`` / ``_entry``, and a codec's entry
+    struct ``<stem>_<prop>_t``.
+
+    Every reader asks here: the declarations and stubs `jm property`
+    writes, the binding's getter, the codec decode (`_codec`), and the
+    rename table (:func:`property_accessors`). gh-1695: the count accessor
+    was derived from the raw component name while its siblings took the
+    stem, so a ``c_prefix`` project rendered ``rc_num_stages`` beside
+    ``dp_rc_stages_value`` and `jm upgrade` had no row for it.
+
+    >>> container_accessors("dp_rc", {"name": "stages"})["count_fn"]
+    'dp_rc_num_stages'
+    >>> container_accessors("dp_rc", {"name": "stages",
+    ...                               "count_fn": "rc_len"})["count_fn"]
+    'rc_len'
+    """
+    n = p["name"]
+    derived = {
+        "count_fn": f"{stem_}_num_{n}",
+        "key_fn": f"{stem_}_{n}_key",
+        "value_fn": f"{stem_}_{n}_value",
+        "entry_fn": f"{stem_}_{n}_entry",
+        "entry_type": f"{stem_}_{n}_t",
+    }
+    return {k: p.get(k) or v for k, v in derived.items()}
+
+
+def _container_roles(p: dict) -> "tuple[str, ...]":
+    """Which of :func:`container_accessors`' names container property *p*
+    uses: the count always, the key for a ``dict``, and either a codec's
+    entry cursor and struct (gh-554) or the value accessor."""
+    roles = ["count_fn"]
+    if p.get("type") == "dict":
+        roles.append("key_fn")
+    roles += ["entry_fn", "entry_type"] if p.get("codec") else ["value_fn"]
+    return tuple(roles)
+
+
+def property_accessors(cfg: dict) -> "dict[str, str]":
+    """``{accessor: component stem}`` for every C name *cfg*'s properties
+    derive, under the stem *cfg* derives: each property's getter
+    (:func:`property_getter`) and, for a container property, each accessor
+    it uses and does not name itself (:func:`container_accessors`) -- over
+    each component's properties and each of its views' (gh-504).
 
     A derived name whether or not jm declares it (gh-1670). A plain
     property's getter is in the render; a ``field = true`` (or ``expr``,
     ``buf_field``, capsule) property's is not -- the binding reads the
     field -- yet its docstring is still looked up at this name, so an author
-    documents it by declaring the getter in the sacred header. A replay's
-    declarations alone would leave that one out of :func:`renames`, and
-    `jm upgrade` would leave it unprefixed while the doc lookup asked for
-    the prefixed spelling.
+    documents it by declaring the getter in the sacred header. A codec
+    property's entry cursor and struct are the author's to declare, under
+    the names jm derives. A replay's declarations alone would leave those
+    out of :func:`renames`, and `jm upgrade` would leave them unprefixed
+    while the render asked for the prefixed spelling (gh-1695). An accessor
+    the manifest names (``count_fn = ...``) is the author's, never here.
 
-    >>> property_getters({"project": {"name": "p", "c_prefix": "dp"},
-    ...                   "fir": {"properties": [{"name": "num_taps",
-    ...                                           "field": True}]}})
+    >>> property_accessors({"project": {"name": "p", "c_prefix": "dp"},
+    ...                     "fir": {"properties": [{"name": "num_taps",
+    ...                                             "field": True}]}})
     {'dp_fir_get_num_taps': 'dp_fir'}
+    >>> sorted(property_accessors({"project": {"name": "p", "c_prefix": "dp"},
+    ...     "rc": {"properties": [{"name": "stages", "type": "list"}]}}))
+    ['dp_rc_get_stages', 'dp_rc_num_stages', 'dp_rc_stages_value']
     """
     from . import _config as C
+    from . import _types as T
 
     out = {}
     for comp in C.components(cfg):
         st = stem(cfg, comp)
-        for prop in (cfg.get(comp) or {}).get("properties", []) or []:
-            if isinstance(prop, dict) and prop.get("name"):
-                out[property_getter(st, str(prop["name"]))] = st
+        props = list(C.properties(cfg, comp))
+        for view in C.views(cfg, comp):
+            props += view.get("properties", []) or []
+        for prop in props:
+            if not (isinstance(prop, dict) and prop.get("name")):
+                continue
+            out[property_getter(st, str(prop["name"]))] = st
+            if T.is_container_type(str(prop.get("type", ""))):
+                names = container_accessors(st, prop)
+                for role in _container_roles(prop):
+                    if not prop.get(role):
+                        out[names[role]] = st
     return out
 
 
@@ -401,7 +461,7 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     Case-sensitive and derived only: ``fir_state_t`` and ``FIR_CORE_H`` are
     here; an author's own ``FIR_STATE_MAGIC`` is not, because jm never
     declares it. Every property's getter is here too, declared or not
-    (:func:`property_getters`, gh-1670).
+    (:func:`property_accessors`, gh-1670, gh-1695).
     """
     stems = sources(cfg)
     out = {}
@@ -409,7 +469,7 @@ def renames(tree: Path, cfg: dict) -> "dict[str, str]":
     # its own create-only `_core.c`, called from the binding) is derived
     # and declared in no header. Duplicates stay header-only -- there a
     # declaration and its definition would count twice.
-    found = set(_derived_by_dir(tree, cfg)) | set(property_getters(cfg))
+    found = set(_derived_by_dir(tree, cfg)) | set(property_accessors(cfg))
     for c in sorted((tree / "native").rglob("*.c")):
         found |= {
             n
@@ -534,7 +594,7 @@ def collisions(root: Path, tree: Path, cfg: dict) -> "list[str]":
     # gh-1670: a property getter no render declares (a `field = true`
     # property's) is the author's, written to document the property -- in
     # the component's own files, where its `<stem>_state_t` and lifecycle are.
-    for n, st in property_getters(cfg).items():
+    for n, st in property_accessors(cfg).items():
         if n in new and n not in owning:
             owning[n] = set().union(
                 *(owning.get(f"{st}_{s}", set()) for s in _LIFECYCLE)
