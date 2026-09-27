@@ -314,6 +314,12 @@ the file exists, and `_apply`'s glue list is gated on the same call — a list
 there that disagreed with what `materialize` wrote is how gh-942's enumerated
 source shapes went missing one at a time.
 
+Every name that header declares is author-named, so none is a derived C
+symbol whatever its prefix: `_composer.seam_fns` (the one list
+`render_bridge_h` renders, via `_seams`) is what `_csym._echoed` excludes
+from the `c_prefix` rename table, per header (gh-1694). The header's path is
+`_composer.bridge_h`, in every place that writes, includes or syncs it.
+
 ### The capsule triangle
 
 A foreign C pointer crosses the Python boundary as a named `PyCapsule`. Every

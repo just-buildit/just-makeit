@@ -325,15 +325,45 @@ def _source_of(name: str, stems: "dict[str, str]") -> "tuple[str, str] | None":
     return best
 
 
+def _echoed(cfg: dict) -> "dict[str, set[str]]":
+    """``{header: names}`` for the rendered headers that declare a function
+    only because an author-named key spells it: a composer's seam header
+    (``_composer.bridge_h``) and its ``bridge_fn`` / ``bridge_error_fn`` /
+    computed ``fn`` (``_composer.seam_fns``). Paths are relative to the
+    header root.
+
+    jm derives none of those names, so a prefixed one -- ``bridge_fn =
+    "dp_wfm_to_synth"`` beside a component ``wfm`` -- merely STARTS with a
+    stem; it is not derived from it (gh-1694). The render's declaration of
+    it is the author's word echoed, and must not make it a rename, as a bare
+    one never was. Excluded per header, not per name: the same name
+    declared by a header jm derives it in (a computed ``fn`` naming a
+    sibling's getter) stays derived.
+    """
+    from . import _composer
+    from . import _config as C
+
+    return {
+        _composer.bridge_h(mod): set(_composer.seam_fns(cfg, mod))
+        for mod in C.modules(cfg)
+        if C.is_composer_module(cfg, mod)
+    }
+
+
 def _derived_by_dir(tree: Path, cfg: dict) -> "dict[str, set[str]]":
     """Every derived identifier the headers under *tree* declare, mapped to
-    the header directories (component / module) that declare it."""
+    the header directories (component / module) that declare it. A name a
+    header only echoes from an author-named key (:func:`_echoed`) is not
+    derived there."""
     stems = sources(cfg)
+    echoed = _echoed(cfg)
     out: "dict[str, set[str]]" = {}
     root = INC.header_root(tree, cfg)
     for h in sorted(root.rglob("*.h")):
+        rel = h.relative_to(root).as_posix()
         where = h.parent.relative_to(root).as_posix() or "."
-        for name in declared(h.read_text(encoding="utf-8", errors="replace")):
+        text = h.read_text(encoding="utf-8", errors="replace")
+        for name in declared(text) - echoed.get(rel, set()):
             if _source_of(name, stems) is not None:
                 out.setdefault(name, set()).add(where)
     return out
