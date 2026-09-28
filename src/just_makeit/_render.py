@@ -1520,6 +1520,43 @@ def _build_params_parse(
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
+def _count_refusal(c_name: str, release: str) -> str:
+    """The raise ``check_return`` adds to a self-sizing output (gh-1704).
+
+    A function that sizes its own output returns the COUNT it wrote, so the
+    status ``check_return`` reads is that count: 0 is the one value it has for
+    "refused", because a real output is never empty. Without this the binding
+    trimmed the allocation to zero and returned it -- a refusal that reads as a
+    valid, empty result. Same exception and wording shape as the status form
+    (gh-363), so one key raises one way.
+    """
+    return (
+        "    if (_n == 0) {\n"
+        f"        {release}\n"
+        "        PyErr_SetString(PyExc_RuntimeError,\n"
+        f'            "{c_name} failed (returned 0)");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+
+
+def _check_return_unreadable(fn_name: str, return_type: str) -> str:
+    """Why ``check_return`` is refused on an output shape that drops the
+    return (gh-1704): the key was accepted there and read by nobody, which is
+    gh-1232's silent-key failure one level down."""
+    return (
+        f"function '{fn_name}' declares check_return = true, but its output "
+        f"shape never reads the C return ('{return_type}').\n"
+        "  check_return raises when a status is non-zero, or -- for a "
+        "variable_output\n"
+        "  function that returns the count it wrote -- when that count is 0. "
+        "A void\n"
+        "  variable_output, or a caller-sized out_type, has neither. Return "
+        "the count\n"
+        "  (size_t) with variable_output, or drop check_return."
+    )
+
+
 def _py_wrapper_for_function(
     fn_name: str,
     params: list[dict],
@@ -1653,11 +1690,12 @@ def _py_wrapper_for_function(
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
             f"{cleanup}"
-            f"    if (_n > _cap) _n = _cap;\n"
-            f"    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
-            f"(Py_ssize_t)_n);\n"
-            f"    free(_buf);\n"
-            f"    return _s;"
+            + (_count_refusal(c_name, "free(_buf);") if check_return else "")
+            + "    if (_n > _cap) _n = _cap;\n"
+            "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
+            "(Py_ssize_t)_n);\n"
+            "    free(_buf);\n"
+            "    return _s;"
         )
     elif variable_output and out_type:
         # #318: stateless self-sizing output — the function allocates its own
@@ -1689,11 +1727,18 @@ def _py_wrapper_for_function(
             f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
             f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
         )
+        if check_return and not _trim:
+            raise ValueError(_check_return_unreadable(fn_name, return_type))
         if _trim:
             ret_line = (
                 _alloc
                 + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
                 + cleanup
+                + (
+                    _count_refusal(c_name, "Py_DECREF(_out);")
+                    if check_return
+                    else ""
+                )
                 + "    PyArray_DIMS((PyArrayObject *)_out)[0] ="
                 " (npy_intp)_n;\n"
                 "    return _out;"
@@ -1706,6 +1751,8 @@ def _py_wrapper_for_function(
                 + "    return _out;"
             )
     elif out_type:
+        if check_return:
+            raise ValueError(_check_return_unreadable(fn_name, return_type))
         # Allocate output array, insert after array args, before scalars.
         # out_type may carry a [param_name] suffix naming the scalar that
         # holds the output length (e.g. "float64[M]").
