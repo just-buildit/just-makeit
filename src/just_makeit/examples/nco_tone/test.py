@@ -1,10 +1,10 @@
-"""End-to-end test: NCO tone generator backed by doppler's nco_state_t.
+"""End-to-end test: NCO tone generator backed by doppler's dp_nco_state_t.
 
 Demonstrates:
   - [project] find_packages = [{ name = "Doppler", pkg_config = "doppler" }]
     — the managed external-deps block, and the installed .pc
   - [tone] extra_link_libs = ["doppler::doppler-static"]  — standalone linking
-  - opaque state (nco_state_t*) with create_impl / destroy_impl
+  - opaque state (dp_nco_state_t*) with create_impl / destroy_impl
   - jm apply keeping the find_package() call alive across re-runs
 
 doppler is supplied two ways, tried in order:
@@ -64,13 +64,18 @@ from just_makeit._pyfmt import flatten_prose
 # because doppler published, not because of the change being linted, and
 # doppler ships roughly weekly. The floor is the part with teeth and is
 # asserted in tests/test_doppler_pin_check.py.
-_DOPPLER_VERSION = "0.55.0"
+_DOPPLER_VERSION = "0.58.0"
 #: The oldest doppler whose API this example actually compiles against —
 #: v0.39.0 added the trailing capacity argument to `nco_steps_u32`. It lived
 #: only in the prose above until it was encoded here, which is why a local
 #: install below it produced `too many arguments to nco_steps_u32` twice
 #: (2026-07-30 and 2026-08-30) instead of being rejected as unusable.
-_DOPPLER_FLOOR = "0.39.0"
+#:
+#: Raised to v0.58.0, which moved every header under `doppler/`
+#: (`#include "doppler/nco/nco_core.h"`) and prefixed every C symbol with
+#: `dp_` (`dp_nco_create`, `dp_nco_state_t`). No earlier release has either
+#: spelling, so below it the example cannot compile at all.
+_DOPPLER_FLOOR = "0.58.0"
 _DOPPLER_RELEASE_URL = (
     "https://github.com/doppler-dsp/doppler/releases/download/"
     "v{version}/doppler-{version}-{platform}{ext}"
@@ -437,11 +442,11 @@ return_type  = "float _Complex"
 mutable      = "true"
 extra_link_libs = ["doppler::doppler-static"]
 create_impl  = """
-obj->nco = nco_create(norm_freq, 0);
+obj->nco = dp_nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
 """
 destroy_impl = """
-nco_destroy(state->nco);
+dp_nco_destroy(state->nco);
 """
 
 [[tone.state]]
@@ -451,7 +456,7 @@ default = "0.0"
 
 [[tone.state]]
 name   = "nco"
-type   = "nco_state_t *"
+type   = "dp_nco_state_t *"
 opaque = true
 '''
 
@@ -464,7 +469,7 @@ _STEP_NEW = """\
     /* doppler 0.39 gave nco_steps_u32 a trailing capacity argument: the
        caller states how many samples `out` can hold, and the return is how
        many were written. One sample here, so n and capacity are both 1. */
-    nco_steps_u32(state->nco, 1, &phase, 1);
+    dp_nco_steps_u32(state->nco, 1, &phase, 1);
     /* phase ∈ [0, 2^32) → angle ∈ [0, 2π) */
     float angle = (float)phase * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
     return cosf(angle) + I * sinf(angle);"""
@@ -566,17 +571,17 @@ def run(root: Path, doppler_prefix: str | None = None) -> None:
     # 6. Verify the generated header has the opaque nco field.
     core_h = INC.header_root(proj) / "tone" / "tone_core.h"
     h = core_h.read_text(encoding="utf-8")
-    assert "nco_state_t * nco;" in h, h
+    assert "dp_nco_state_t * nco;" in h, h
 
     # 7. Add the doppler nco include to tone_core.h and patch step().
     # The nco include goes after clib_common.h (which is always first in
     # jm-generated headers).  The step body uses cosf/sinf so <math.h> is
     # needed too.
     h_text = core_h.read_text(encoding="utf-8")
-    if '#include "nco/nco_core.h"' not in h_text:
+    if '#include "doppler/nco/nco_core.h"' not in h_text:
         h_text = h_text.replace(
             '#include "nco_tone_demo/clib_common.h"',
-            '#include "nco_tone_demo/clib_common.h"\n#include "nco/nco_core.h"\n#include <math.h>',
+            '#include "nco_tone_demo/clib_common.h"\n#include "doppler/nco/nco_core.h"\n#include <math.h>',
             1,
         )
         core_h.write_text(h_text, encoding="utf-8")

@@ -2,7 +2,7 @@
 
 When doppler is available (a local install/build or the prebuilt release that
 `nco_tone`'s harness auto-downloads), the example adds a standalone `tone`
-object that wraps doppler's `nco_state_t *` as opaque state and links
+object that wraps doppler's `dp_nco_state_t *` as opaque state and links
 `doppler::doppler-static`:
 
 ```toml
@@ -11,7 +11,7 @@ arg_type        = "void"
 return_type     = "float _Complex"
 mutable         = "true"
 extra_link_libs = ["doppler::doppler-static"]
-# create_impl: obj->nco = nco_create(norm_freq, 0);
+# create_impl: obj->nco = dp_nco_create(norm_freq, 0);
 ```
 
 `[project] find_packages = [{ name = "Doppler", pkg_config = "doppler" }]` emits

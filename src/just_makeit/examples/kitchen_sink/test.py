@@ -15,7 +15,7 @@ Generated project (module `dsp`):
   - config — vendored cJSON: opaque cJSON*, component extra_link_libs +
              extra_include_dirs (the gh-174 path)
   - cjson  — a [project] c_deps OBJECT lib (vendored, no Python wrapper)
-  - tone   — (optional) links the real doppler: opaque nco_state_t*
+  - tone   — (optional) links the real doppler: opaque dp_nco_state_t*
 
 Called by tests/test_examples.py via run(root). Skips cleanly if cmake / a C
 compiler / numpy are unavailable (the shared harness checks those).
@@ -252,7 +252,7 @@ def db10(x: float) -> float:
 '''
 
 
-# ── linking the real doppler C library (opaque nco_state_t*), conditional ─────
+# ── linking the real doppler C library (opaque dp_nco_state_t*), conditional ──
 # Reuses nco_tone's provisioning + skip harness rather than duplicating it.
 _TONE_TOML = '''\
 [tone]
@@ -261,11 +261,11 @@ return_type  = "float _Complex"
 mutable      = "true"
 extra_link_libs = ["doppler::doppler-static"]
 create_impl  = """
-obj->nco = nco_create(norm_freq, 0);
+obj->nco = dp_nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
 """
 destroy_impl = """
-nco_destroy(state->nco);
+dp_nco_destroy(state->nco);
 """
 
 [[tone.state]]
@@ -275,7 +275,7 @@ default = "0.0"
 
 [[tone.state]]
 name   = "nco"
-type   = "nco_state_t *"
+type   = "dp_nco_state_t *"
 opaque = true
 '''
 
@@ -286,7 +286,7 @@ _TONE_STEP_NEW = """\
     uint32_t phase;
     /* n samples, then the capacity of `out` (doppler >= 0.39) — the same
        call nco_tone's step() makes; keep the two in step. */
-    nco_steps_u32(state->nco, 1, &phase, 1);
+    dp_nco_steps_u32(state->nco, 1, &phase, 1);
     float angle = (float)phase
                   * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
     return cosf(angle) + I * sinf(angle);"""
@@ -609,7 +609,7 @@ def run(root: Path) -> None:
         _patch(
             tone_h,
             '#include "kitchen_sink/clib_common.h"',
-            '#include "kitchen_sink/clib_common.h"\n#include "nco/nco_core.h"\n'
+            '#include "kitchen_sink/clib_common.h"\n#include "doppler/nco/nco_core.h"\n'
             "#include <math.h>",
         )
         _patch(tone_h, _TONE_STEP_OLD, _TONE_STEP_NEW)

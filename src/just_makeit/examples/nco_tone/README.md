@@ -81,7 +81,7 @@ ______________________________________________________________________
     `find_package(Doppler REQUIRED)` into the root `CMakeLists.txt`
 - **`extra_link_libs`** — link the component's OBJECT library against a
     `find_package`-resolved target (`doppler::doppler-static`)
-- **Opaque state holding a library handle** — `nco_state_t *` from Doppler is
+- **Opaque state holding a library handle** — `dp_nco_state_t *` from Doppler is
     declared opaque; `create_impl` initialises it, `destroy_impl` tears it down
 - **`-DDoppler_DIR` on the cmake configure line** — pointing CMake at an
     installed library that lives outside the project tree
@@ -98,11 +98,11 @@ return_type     = "float _Complex"
 mutable         = "true"
 extra_link_libs = ["doppler::doppler-static"]
 create_impl     = """
-obj->nco = nco_create(norm_freq, 0);
+obj->nco = dp_nco_create(norm_freq, 0);
 if (!obj->nco) { free(obj); return NULL; }
 """
 destroy_impl    = """
-nco_destroy(state->nco);
+dp_nco_destroy(state->nco);
 """
 
 [[tone.state]]
@@ -112,12 +112,12 @@ default = "0.0"
 
 [[tone.state]]
 name   = "nco"
-type   = "nco_state_t *"
+type   = "dp_nco_state_t *"
 opaque = true
 ```
 
 `norm_freq` is the normalized frequency (cycles/sample) passed to the
-constructor; `create_impl` forwards it to `nco_create`. The `nco_state_t *`
+constructor; `create_impl` forwards it to `dp_nco_create`. The `dp_nco_state_t *`
 field is invisible to Python — it is created in `create_impl`, updated in
 `step()`, and released in `destroy_impl`.
 
@@ -159,7 +159,7 @@ the always-present `clib_common.h` include:
 ```c
 /* native/inc/nco_tone_demo/tone/tone_core.h */
 #include "nco_tone_demo/clib_common.h"
-#include "nco/nco_core.h"
+#include "doppler/nco/nco_core.h"
 #include <math.h>
 ```
 
@@ -172,7 +172,7 @@ nco_tone_demo_tone_step(nco_tone_demo_tone_state_t *state)
 {
     uint32_t phase;
     /* n samples, then the capacity of `out` (doppler >= 0.39) */
-    nco_steps_u32(state->nco, 1, &phase, 1);
+    dp_nco_steps_u32(state->nco, 1, &phase, 1);
     /* phase in [0, 2^32) maps to angle in [0, 2*pi) */
     float angle = (float)phase
         * (float)(2.0 * 3.14159265358979323846 / 4294967296.0);
@@ -224,9 +224,9 @@ project-level `find_package(Doppler REQUIRED)` makes the `doppler::doppler-stati
 import target available. The component-level `extra_link_libs` consumes it.
 Other components in the same project that don't use Doppler are unaffected.
 
-**Opaque state delegates lifetime to the library.** The `nco_state_t *` is
-created and destroyed by Doppler's own API (`nco_create` /
-`nco_destroy`); just-makeit's `create_impl` / `destroy_impl` are the
+**Opaque state delegates lifetime to the library.** The `dp_nco_state_t *` is
+created and destroyed by Doppler's own API (`dp_nco_create` /
+`dp_nco_destroy`); just-makeit's `create_impl` / `destroy_impl` are the
 bridge. Python never sees the handle.
 
 ## See also
