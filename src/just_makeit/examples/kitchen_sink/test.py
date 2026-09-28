@@ -535,7 +535,7 @@ def run(root: Path) -> None:
     )
 
     # Optional: link the REAL doppler C library via a standalone `tone` object
-    # with an opaque doppler nco_state_t*. Conditional on doppler being
+    # with an opaque doppler dp_nco_state_t*. Conditional on doppler being
     # available (reuses nco_tone's provisioning); skipped cleanly otherwise so
     # the rest of the example always runs.
     doppler_prefix = _doppler_prefix()

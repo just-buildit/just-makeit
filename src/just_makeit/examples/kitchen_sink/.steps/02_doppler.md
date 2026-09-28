@@ -23,8 +23,10 @@ found, the `tone` object is skipped and the rest of the example still builds —
 so the example is green everywhere, and exercises the real cross-library link
 wherever doppler is present.
 
-**Gotcha it demonstrates:** the local generator is named `lfo`, **not** `nco`,
-on purpose. doppler ships its own `nco` whose header is `nco/nco_core.h`; a
-local object of the same name would make `#include "nco/nco_core.h"` ambiguous
-and silently resolve to the wrong one. Vendoring/linking an external library
-means watching for name collisions with your own objects.
+**Gotcha it demonstrates:** linking an external library means watching for
+name collisions with your own objects. The local generator is named `lfo`,
+**not** `nco`: before doppler 0.58, doppler's own `nco` header was
+`nco/nco_core.h`, and a local object of the same name made that `#include`
+ambiguous. Since 0.58 doppler's headers live under `doppler/`
+(`doppler/nco/nco_core.h`) and its C symbols carry `dp_`, so the two no
+longer collide -- which is exactly what that namespacing is for.

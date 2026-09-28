@@ -434,7 +434,7 @@ def _find_doppler_prefix() -> str | None:
 # We write it directly to just-makeit.toml after jm new.
 #
 # extra_link_libs names the imported target created by doppler's cmake config.
-# mutable = true because step() calls nco_steps_u32() which advances state.
+# mutable = true because step() calls dp_nco_steps_u32() which advances state.
 
 _FRAGMENT = '''\
 [tone]
