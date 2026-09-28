@@ -341,8 +341,9 @@ def why_prefix_unusable(prefix: Path) -> str | None:
         return (
             f"{prefix} has doppler {found}, below the {_DOPPLER_FLOOR} floor "
             f"this example needs.\n"
-            f"  v{_DOPPLER_FLOOR} added the trailing capacity argument to "
-            f"nco_steps_u32 that step() passes."
+            f"  v{_DOPPLER_FLOOR} moved every header under doppler/ "
+            f"(doppler/nco/nco_core.h) and prefixed every C symbol with dp_ "
+            f"(dp_nco_steps_u32), the spellings step() uses."
         )
     return None
 

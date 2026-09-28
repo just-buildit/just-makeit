@@ -1,12 +1,15 @@
 """A doppler below the example's floor is refused, not compiled.
 
-doppler v0.39.0 added the trailing capacity argument the example's `step()`
-passes; anything older configures fine and then fails to COMPILE as::
+The floor is doppler v0.58.0, which moved every header under `doppler/` and
+prefixed every C symbol with `dp_`. Anything older configures fine and then
+fails to COMPILE as::
 
-    error: too many arguments to function 'nco_steps_u32'
+    fatal error: doppler/nco/nco_core.h: No such file or directory
 
-which reads as a bug in the example rather than a fact about the install. That
-cost real time twice — 2026-07-30 and 2026-08-30.
+which reads as a bug in the example rather than a fact about the install. The
+floor before it (v0.39.0, the trailing capacity argument of `nco_steps_u32`)
+cost real time twice -- 2026-07-30 and 2026-08-30 -- which is why it is
+encoded rather than written down.
 
 **This is gh-434's rule one stage later**, and it moved to the same place.
 gh-434 refused a prefix carrying `doppler-config.cmake` with no
@@ -63,7 +66,7 @@ def _install(root: Path, version: str | None):
     return root
 
 
-@pytest.mark.parametrize("version", ["0.13.2", "0.33.3", "0.38.1"])
+@pytest.mark.parametrize("version", ["0.13.2", "0.39.0", "0.57.9"])
 def test_a_below_floor_prefix_is_refused(tmp_path, version):
     m = _load_module()
     why = m.why_prefix_unusable(_install(tmp_path / version, version))
@@ -74,11 +77,11 @@ def test_a_below_floor_prefix_is_refused(tmp_path, version):
 def test_the_refusal_explains_why_that_version_cannot_work(tmp_path):
     """Naming the floor without the reason invites someone to lower it."""
     m = _load_module()
-    why = m.why_prefix_unusable(_install(tmp_path / "old", "0.38.1"))
-    assert "nco_steps_u32" in why
+    why = m.why_prefix_unusable(_install(tmp_path / "old", "0.57.9"))
+    assert "doppler/nco/nco_core.h" in why and "dp_" in why
 
 
-@pytest.mark.parametrize("version", ["0.39.0", "0.45.0", "0.49.0", "1.0.0"])
+@pytest.mark.parametrize("version", ["0.58.0", "0.60.0", "1.0.0"])
 def test_an_at_or_above_floor_prefix_is_accepted(tmp_path, version):
     m = _load_module()
     assert m.why_prefix_unusable(_install(tmp_path / version, version)) is None
