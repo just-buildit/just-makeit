@@ -2472,9 +2472,11 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
         signature needs (defaults belong to the signature alone).
     """
     out_type = fn.get("out_type")
-    if fn.get("check_return"):
+    if fn.get("check_return") and not out_type:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
-        # surface is "succeeds or raises", i.e. returns None.
+        # surface is "succeeds or raises", i.e. returns None. With an output
+        # (gh-1704) the raise guards the count and the output is still what
+        # comes back.
         ret = "None"
     elif out_type == "str":
         # gh-1180: the one out_type that is not an array of a C scalar.
