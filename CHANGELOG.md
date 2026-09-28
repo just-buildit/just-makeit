@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+## [0.92.3] — 2026-09-28
+
+### Fixed
+
+- **`check_return` on a self-sizing function raises on a zero count**
+    (gh-1704). A `variable_output` function returns the count it wrote, and
+    `check_return` was tested after that branch, so the key was accepted and
+    read by nobody: a refusal came back as a valid, empty array (or `""`).
+    The count is now the status it reads. 0 raises `RuntimeError` naming the
+    function, after the output is released, and the stub keeps its output
+    type rather than `-> None`. The two shapes that never read the C return,
+    a void `variable_output` and a caller-sized `out_type`, now refuse the
+    key at generation with a message saying which shape to use, rather than
+    ignoring it.
+
+- **The doppler-linked examples build against doppler 0.58** (`nco_tone`,
+    and `kitchen_sink`'s `tone`). doppler 0.58.0 moved every header under
+    `doppler/` and prefixed every C symbol with `dp_`, so both examples
+    failed to compile against the release CI downloads (`nco/nco_core.h: No such file or directory`), on main and on every PR. They now include
+    `doppler/nco/nco_core.h` and call `dp_nco_*`, and the floor and offline
+    fallback both move to 0.58.0, the first release with those spellings.
+
 ## [0.92.2] — 2026-09-27
 
 ### Fixed
