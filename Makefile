@@ -260,7 +260,15 @@ EXAMPLES_IGNORE = $(addprefix --ignore=,$(PROJECT_ENV_TESTS))
 # `test` is the default suite and, in a Python-only repo, IS the Python suite —
 # named once here rather than defined twice.
 TEST_PYTHON_CMD   = $(PYTEST) $(PYTEST_PARALLEL) -v $(EXAMPLES_IGNORE)
-TEST_CMD          = $(TEST_PYTHON_CMD)
+# The examples whose GOLDEN records what jm's generated code and drift
+# reports look like to an upgrading project. `test-examples` alone ran
+# them, so an emitter change passed `make test` and went red only in CI:
+# gh-1700 and gh-1710 both did, on every platform, on 2026-09-29. One
+# example, ~10 s, so it rides in `test` rather than waiting for CI.
+GOLDEN_EXAMPLES   = stale_project
+TEST_GOLDENS_CMD  = $(PYTEST_EXAMPLES) tests/test_examples.py -v \
+                    -k "$(GOLDEN_EXAMPLES)"
+TEST_CMD          = $(TEST_PYTHON_CMD) && $(TEST_GOLDENS_CMD)
 TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
 # EXAMPLES_K narrows the run with pytest -k, e.g. to one example while
 # regenerating its golden (see stale_project). Empty = all.
