@@ -66,6 +66,12 @@ _REPRESENTATIVE: dict[str, object] = {
     "aliases": ["i"],
     "doc": 'The "IQ" run.',
     "fn": "wfm_iq",
+    # gh-1711: a source field's owned pointer
+    "capsule": "p.frame.desc",
+    "copy_fn": "frame_copy",
+    "free_fn": "frame_free",
+    "parse_fn": "frame_parse",
+    "format_fn": "frame_format",
     # source
     "object": "wfm_synth",
     "struct": "wfm_source_t",
@@ -193,17 +199,28 @@ def test_a_clean_manifest_stays_silent(tmp_path: pathlib.Path) -> None:
 
 
 class TestAMisplacedKeyIsNamed:
-    def test_object_on_a_source_field_is_reported_at_load(self) -> None:
-        """gh-1234's exact input. It reached `_composer._field_fmt` as
-        `KeyError: 'type'` before; now the registry names it, and names the
-        tables it IS valid on -- which is the whole point of a registry."""
+    def test_object_on_a_segment_field_is_reported_at_load(self) -> None:
+        """gh-1234's key, on the table it is still not valid for. gh-1711
+        made `object` a SOURCE field key -- an owned pointer -- and a segment
+        field has no such face, so the two tables have their own vocabularies
+        and this one still names the key and where it IS valid."""
         cfg = _cfg()
-        cfg["module"][MOD]["source"]["fields"].append(
+        cfg["module"][MOD]["segment"]["fields"].append(
             {"name": "frame", "object": "frame.FrameDesc"}
         )
         w = _warnings(cfg)
         assert "unknown composer field key `object`" in w
         assert "init_param" in w  # where it IS valid
+
+    def test_object_on_a_source_field_is_recognised(self) -> None:
+        """gh-1711: on a source field it is the owned pointer's key. Alone it
+        is refused at render instead, naming the functions it needs
+        (`test_gh1234_refuse_what_jm_cannot_type`)."""
+        cfg = _cfg()
+        cfg["module"][MOD]["source"]["fields"].append(
+            {"name": "frame", "object": "frame.FrameDesc"}
+        )
+        assert "`object`" not in _warnings(cfg)
 
     @pytest.mark.parametrize("tbl,_v", _DICT_TABLES)
     def test_a_typo_in_each_dict_subtable_is_reported(
@@ -290,7 +307,9 @@ def test_the_field_keys_gh1234_names_come_from_the_vocabulary() -> None:
         ln for ln in src.splitlines() if re.match(r"_FIELD_KEYS\s*=", ln)
     ]
     assert len(assign) == 1, f"expected one _FIELD_KEYS assignment: {assign}"
-    assert assign[0].strip() == "_FIELD_KEYS = _keys.COMPOSER_FIELD_KEYS", (
+    assert assign[0].strip() == (
+        "_FIELD_KEYS = _keys.COMPOSER_SOURCE_FIELD_KEYS"
+    ), (
         "`_composer._FIELD_KEYS` must BE the registry's set, not a copy of "
         f"it: {assign[0].strip()!r}"
     )

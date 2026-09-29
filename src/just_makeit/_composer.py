@@ -24,6 +24,7 @@ from __future__ import annotations
 from . import _textio
 
 from pathlib import Path
+from typing import NamedTuple
 
 from . import _config as C
 from . import _modplatforms
@@ -35,7 +36,7 @@ from . import _keys
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._context._modpath import module_docstring_lines, module_m_doc
-from ._context._parse import _build_ml_doc
+from ._context._parse import _build_ml_doc, capsule_unwrap_c
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
     ClassParam,
@@ -69,7 +70,7 @@ _FMT = {
 #: below are one declaration. Two copies would disagree the first time a key
 #: was added, and this message would then name a key as unread that the
 #: validator accepts.
-_FIELD_KEYS = _keys.COMPOSER_FIELD_KEYS
+_FIELD_KEYS = _keys.COMPOSER_SOURCE_FIELD_KEYS
 
 
 def _field_fmt(field: dict) -> str:
@@ -98,6 +99,8 @@ def _field_fmt(field: dict) -> str:
         return "s"
     if field.get("bytes") or field.get("complex"):
         return "O"  # opaque: a bytes buffer / a numpy complex64 array
+    if _field_is_owned_ptr(field):
+        return "O"  # gh-1711: None, its text, or a capsule -- post-parse
     if "type" not in field:
         name = field.get("name", "<unnamed>")
         extra = ", ".join(
@@ -109,25 +112,21 @@ def _field_fmt(field: dict) -> str:
             if extra
             else ""
         )
-        hint = (
-            "\n`object` is an init_param key (gh-1224). A composer field is a "
-            "member of the source struct, not a constructor argument, and the "
-            "capsule path does not reach one yet -- see gh-1235."
-            if "object" in field
-            else ""
-        )
         raise ValueError(
             f"composer source field '{name}': no `type`.{why} A field crosses "
             f"as a C scalar, so it needs `type` -- one of "
             f"{', '.join(sorted(_FMT))} -- or one of the shapes that stands in "
-            f"for one: `enum`, `bytes = true`, `complex = true`.{hint}"
+            f"for one: `enum`, `bytes = true`, `complex = true`, or an owned pointer "
+            f"(`{'`, `'.join(OWNED_PTR_FNS)}`, gh-1711)."
         )
     if field["type"] not in _FMT:
         raise ValueError(
             f"composer source field '{field.get('name', '<unnamed>')}': "
             f'`type = "{field["type"]}"` is not a type a field can cross '
             f"as; jm marshals {', '.join(sorted(_FMT))}, or use `enum`, "
-            f"`bytes = true` or `complex = true`."
+            f"`bytes = true` or `complex = true`. A pointer the source owns "
+            f"is an owned pointer: name {', '.join(OWNED_PTR_FNS)} beside "
+            f"it (gh-1711)."
         )
     return _FMT[field["type"]]
 
@@ -274,6 +273,252 @@ _coerce_{name}(uint8_t **dst, size_t *n_dst, PyObject *obj)
     free(*dst);
     *dst   = buf;
     *n_dst = nb;
+    return 1;
+}}
+"""
+
+
+#: gh-1711: the four host functions an owned-pointer field names; declaring
+#: any of them is what makes a field one. Read from the registry, so the
+#: vocabulary, the writer and this renderer are one list.
+OWNED_PTR_FNS = _keys.COMPOSER_OWNED_PTR_FNS
+
+#: Keys that describe some other field shape, so they cannot sit beside an
+#: owned pointer. `c_len` is here because the pointer carries no length.
+_OWNED_PTR_EXCLUSIVE = (
+    "bytes",
+    "complex",
+    "enum",
+    "c_len",
+    "coerce",
+    "aliases",
+    "default",
+)
+
+
+class OwnedPtr(NamedTuple):
+    """One owned-pointer field, resolved (gh-1711).
+
+    ``member`` is the source-struct member (``c_ptr``, default the field
+    name). ``ctype`` is the MUTABLE pointer type (``T *``): the member is
+    commonly ``const T *``, because the struct is written for a borrowing
+    consumer, while the source owns the value and must hand it to
+    ``free_fn`` -- the same asymmetry :func:`buffer_is_relocated` casts for.
+    ``capsule`` is empty for a text-only field; ``py_class`` / ``py_import``
+    are empty unless the field names an ``object``.
+    """
+
+    member: str
+    ctype: str
+    capsule: str
+    header: str
+    py_class: str
+    py_import: str
+    copy_fn: str
+    free_fn: str
+    parse_fn: str
+    format_fn: str
+
+
+def _field_is_owned_ptr(field: dict) -> bool:
+    """A field holding a pointer the source owns and frees (gh-1711).
+
+    ANY owned-pointer key makes it one, not only a function: an `object` or
+    `capsule` written alone is then refused by :func:`owned_ptr` naming the
+    four functions it lacks, instead of reaching the scalar path as a field
+    with no `type`.
+    """
+    return any(field.get(k) for k in _keys.COMPOSER_OWNED_PTR_KEYS)
+
+
+def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
+    """Resolve an owned-pointer source field, or refuse it naming the fix.
+
+    The input half extends the capsule triangle rather than inventing a
+    route: ``object = "<comp>[.<Class>]"`` resolves the pointer type, the
+    capsule name, the header and the ``.pyi`` class exactly as it does for
+    an init_param (gh-1224, :func:`_config.resolve_object_ref`), and the
+    gh-790 spelling -- ``type`` + ``capsule`` + ``header`` written out --
+    names a pointer no jm object publishes. Neither is required: a field
+    with only ``type`` is bound from its text form alone.
+
+    Raises
+    ------
+    ValueError
+        A function missing from :data:`OWNED_PTR_FNS`, a key that belongs to
+        another field shape, both ``object`` and ``capsule``, or a ``type``
+        that is not a pointer.
+    """
+    name = field.get("name", "<unnamed>")
+    where = f"composer source field '{name}'"
+    missing = [k for k in OWNED_PTR_FNS if not field.get(k)]
+    if missing:
+        # Name the keys the author wrote (gh-1227): they are what made this
+        # an owned pointer, and a message about functions alone would not
+        # say why a field with `object` on it needs any.
+        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if field.get(k)]
+        raise ValueError(
+            f"{where}: `{'`, `'.join(wrote)}` declares an owned pointer, "
+            f"which names all four host functions "
+            f"-- {', '.join(OWNED_PTR_FNS)} -- and this one lacks "
+            f"{', '.join(missing)}. Each face calls one of them: binding "
+            f"and rebuilding copy, the source frees, text and the record "
+            f"parse and format (gh-1711)."
+        )
+    clash = [k for k in _OWNED_PTR_EXCLUSIVE if k in field]
+    if clash:
+        raise ValueError(
+            f"{where}: {', '.join(clash)} cannot sit beside an owned "
+            f"pointer; those keys describe another field shape."
+        )
+    ref = field.get("object", "")
+    if ref and field.get("capsule"):
+        raise ValueError(
+            f"{where}: `object` and `capsule` cannot both be declared -- "
+            f"`object = '{ref}'` derives the capsule name from the "
+            f"referenced component. Drop the `capsule` key."
+        )
+    cls = imp = ""
+    if ref:
+        ctype, capsule, header, cls = C.resolve_object_ref(cfg, ref)
+        imp = C.object_ref_import(cfg, ref)
+        # The stub is not at the package root, so the resolver's relative
+        # import is spelled from the package instead.
+        if imp.startswith("from ."):
+            imp = f"from {C.project_name(cfg)}." + imp[len("from .") :]
+        ctype = field.get("type") or ctype
+        header = field.get("header") or header
+    else:
+        ctype = field.get("type", "")
+        capsule = field.get("capsule", "")
+        header = field.get("header", "")
+    ctype = " ".join(str(ctype).split())
+    if not ctype.endswith("*"):
+        raise ValueError(
+            f"{where}: an owned pointer needs a pointer `type` (`T *`), or "
+            f"an `object` it resolves from; got {ctype!r}."
+        )
+    if ctype.startswith("const "):
+        ctype = ctype[len("const ") :]
+    return OwnedPtr(
+        member=field.get("c_ptr") or field["name"],
+        ctype=ctype,
+        capsule=str(capsule),
+        header=str(header),
+        py_class=str(cls),
+        py_import=imp,
+        copy_fn=field["copy_fn"],
+        free_fn=field["free_fn"],
+        parse_fn=field["parse_fn"],
+        format_fn=field["format_fn"],
+    )
+
+
+def _owned_ptrs(cfg: dict, module: str) -> "list[tuple[str, OwnedPtr]]":
+    """``(field name, resolved)`` for each owned-pointer source field."""
+    return [
+        (f["name"], owned_ptr(cfg, f))
+        for f in C.composer_source(cfg, module).get("fields", [])
+        if _field_is_owned_ptr(f)
+    ]
+
+
+def _owned_ptr_prototypes(
+    cfg: dict, module: str
+) -> "list[tuple[str, list[str]]]":
+    """The four host functions of every owned-pointer field, as
+    :func:`_seams` entries: one prototype per function name, however many
+    fields share it.
+
+    The signatures are the design's contract (gh-1711), so jm writes them
+    down once, in the bridge header, and a host function declared any other
+    way is a compile error naming it rather than a call through the wrong
+    type. ``T`` is the pointee: the source may hold a ``const T *``, but the
+    functions take and return the owned, mutable ``T *``.
+    """
+    out: "dict[str, list[str]]" = {}
+    for name, p in _owned_ptrs(cfg, module):
+        t = p.ctype[:-1].rstrip()
+        for fn, proto, what in (
+            (p.copy_fn, f"{t} *{p.copy_fn}(const {t} *);", "copy"),
+            (p.free_fn, f"void {p.free_fn}({t} *);", "free"),
+            (p.parse_fn, f"{t} *{p.parse_fn}(const char *);", "parse"),
+            (p.format_fn, f"char *{p.format_fn}(const {t} *);", "format"),
+        ):
+            if fn in out:
+                continue
+            out[fn] = [
+                f"/* Owned pointer `{name}` (gh-1711): {what}. */",
+                proto,
+                "",
+            ]
+    return list(out.items())
+
+
+def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
+    """``_attach_<name>``: bind one owned-pointer field from a Python value.
+
+    ``None`` clears it; a ``str`` goes through ``parse_fn``; anything else is
+    unwrapped by the shared capsule emitter and copied through ``copy_fn``,
+    because a capsule LENDS its pointer. The old value is freed only once the
+    new one exists, so a refused assignment leaves the source as it was.
+    """
+    p = owned_ptr(cfg, f)
+    n = f["name"]
+    if p.capsule:
+        other = (
+            capsule_unwrap_c(
+                n,
+                p.ctype,
+                p.capsule,
+                "_jm_obj",
+                "return 0;",
+                indent="        ",
+                explain_type_error=True,
+            )
+            + f"""
+        _jm_new = {p.copy_fn}({n});
+        if (!_jm_new) {{
+            PyErr_SetString(PyExc_RuntimeError,
+                            "{p.copy_fn} returned NULL");
+            return 0;
+        }}"""
+        )
+    else:
+        other = f"""        PyErr_Format(PyExc_TypeError,
+                     "{n} must be str or None, not %s",
+                     Py_TYPE(_jm_obj)->tp_name);
+        return 0;"""
+    return f"""/* gh-1711: bind `{n}` -- None clears it, a str goes through
+ * {p.parse_fn}, anything else is copied. The source owns the result. */
+static int
+_attach_{n}({struct} *_jm_src, PyObject *_jm_obj)
+{{
+    {p.ctype}_jm_new = NULL;
+    if (!_jm_obj || _jm_obj == Py_None) {{
+        /* cleared */
+    }} else if (PyUnicode_Check(_jm_obj)) {{
+        Py_ssize_t _jm_len;
+        const char *_jm_s = PyUnicode_AsUTF8AndSize(_jm_obj, &_jm_len);
+        if (!_jm_s)
+            return 0;
+        /* The whole str or nothing: a NUL would hand the parser a prefix
+         * (the same refusal as a coerce_str_fn field, gh-1709). */
+        if (strlen(_jm_s) != (size_t)_jm_len) {{
+            PyErr_SetString(PyExc_ValueError, "embedded null character");
+            return 0;
+        }}
+        _jm_new = {p.parse_fn}(_jm_s);
+        if (!_jm_new) {{
+            PyErr_SetString(PyExc_ValueError,
+                            "{n}: {p.parse_fn} refused the text");
+            return 0;
+        }}
+    }} else {{
+{other}
+    }}
+    {p.free_fn}(({p.ctype})_jm_src->{p.member});
+    _jm_src->{p.member} = _jm_new;
     return 1;
 }}
 """
@@ -472,7 +717,27 @@ def arg_scopes(
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:
     tbl = C.composer_source(cfg, module)
-    return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
+    fields = _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
+    return [_annotate_owned_ptr(cfg, f) for f in fields]
+
+
+def _annotate_owned_ptr(cfg: dict, f: dict) -> dict:
+    """Tag an owned-pointer field with what its ``.pyi`` accepts (gh-1711).
+
+    ``_py_accepts`` is the constructor / setter annotation: the referenced
+    class for an ``object``, ``object`` for a bare capsule (a capsule has no
+    nameable type before 3.13), then ``str | None`` always. ``_py_import`` is
+    the import the class needs, empty otherwise.
+    """
+    if not _field_is_owned_ptr(f):
+        return f
+    op = owned_ptr(cfg, f)
+    head = op.py_class or ("object" if op.capsule else "")
+    return {
+        **f,
+        "_py_accepts": f"{head} | str | None" if head else "str | None",
+        "_py_import": op.py_import,
+    }
 
 
 def _source_generates(cfg: dict, module: str) -> dict | None:
@@ -831,6 +1096,13 @@ def render_source_type(cfg: dict, module: str) -> str:
         )
         for f in fields
         if _field_is_buffer(f)
+    ) + "".join(
+        # gh-1711: the source owns an owned pointer's value outright.
+        "    {0.free_fn}(({0.ctype})self->src.{0.member});\n".format(
+            owned_ptr(cfg, f)
+        )
+        for f in fields
+        if _field_is_owned_ptr(f)
     )
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
@@ -850,7 +1122,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             default = f.get("default", "")
             decls.append(f'    const char *{n} = "{default}";')
             addrs.append(f"&{n}")
-        elif _field_is_buffer(f) or f.get("_ranged"):
+        elif _field_is_buffer(f) or f.get("_ranged") or _field_is_owned_ptr(f):
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
@@ -886,7 +1158,7 @@ def render_source_type(cfg: dict, module: str) -> str:
                 f"    if (!{_attacher(f)}({_cast}&self->src.{_p}, "
                 f"&self->src.{_l}, {n}))\n        return -1;"
             )
-        elif f.get("complex"):
+        elif f.get("complex") or _field_is_owned_ptr(f):
             assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
         return -1;""")
         elif f.get("_ranged"):
@@ -1091,6 +1363,12 @@ _attach_{cn}({struct} *src, PyObject *obj)
 }}
 """)
 
+    # gh-1711: one `_attach_<name>` per owned-pointer field, shared by the
+    # constructor and the setter so the two cannot bind differently.
+    for f in fields:
+        if _field_is_owned_ptr(f):
+            parts.append(_owned_ptr_attach_c(cfg, struct, f))
+
     # Two things this banner has to avoid, both invisible here and loud in
     # every downstream build. `*dst/*n_dst` puts a `/*` inside the block
     # comment, which every compiler warns on (-Wcomment) because that is what
@@ -1185,6 +1463,37 @@ static int
     return {_attacher(f)}({_cast}&self->src.{_p}, &self->src.{_l}, value)
                ? 0
                : -1;
+}}""")
+            getset_rows.append(
+                f'    {{"{n}", (getter){tname}_get_{n}, '
+                f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
+            )
+        elif _field_is_owned_ptr(f):
+            # gh-1711: read as the text form, which is the one generic value
+            # that round-trips through the setter and the record; a host
+            # class cannot be built from a pointer across a separately
+            # compiled `.so`. Assigned as None, text or a capsule.
+            op = owned_ptr(cfg, f)
+            getset_fns.append(f"""static PyObject *
+{tname}_get_{n}({obj} *self, void *closure)
+{{
+    (void)closure;
+    if (!self->src.{op.member})
+        Py_RETURN_NONE;
+    char *_t = {op.format_fn}(self->src.{op.member});
+    if (!_t) {{
+        PyErr_SetString(PyExc_RuntimeError, "{op.format_fn} returned NULL");
+        return NULL;
+    }}
+    PyObject *_r = PyUnicode_FromString(_t);
+    free(_t);
+    return _r;
+}}
+static int
+{tname}_set_{n}({obj} *self, PyObject *value, void *closure)
+{{
+    (void)closure;
+    return _attach_{n}(&self->src, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -1481,6 +1790,20 @@ def _from_py_scalar(ctype: str, obj: str) -> str:
 
 def _segment_fields(cfg: dict, module: str) -> list[dict]:
     tbl = C.composer_segment(cfg, module)
+    for f in tbl.get("fields", []):
+        # gh-1711: an owned pointer is a SOURCE field. A segment is built
+        # from Python-side data and copied into the backing array with no
+        # ownership of its own, so none of the four faces exists here; left
+        # unrefused, the keys would be read by nobody and the member bound
+        # to nothing.
+        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if f.get(k)]
+        if wrote:
+            raise ValueError(
+                f"composer segment field '{f.get('name', '<unnamed>')}': "
+                f"`{'`, `'.join(wrote)}` declares an owned pointer, which "
+                f"only a source field can be (gh-1711). Move the field to "
+                f"[[module.{module}.source.fields]]."
+            )
     return _annotate_ranged(list(tbl.get("fields", [])), _ranged_map(tbl))
 
 
@@ -2435,6 +2758,37 @@ def render_composer_type(cfg: dict, module: str) -> str:
             buffer_members(f) for f in src.get("fields", []) if f.get("bytes")
         )
     )
+    # gh-1711: an owned pointer is copied through its host function, so the
+    # rebuilt source owns its own value and the state keeps its. Every alias
+    # is cleared BEFORE the first copy, so a copy that fails leaves nothing
+    # the rebuilt source's dealloc could free on the state's behalf.
+    _ptrs = [
+        owned_ptr(cfg, f)
+        for f in src.get("fields", [])
+        if _field_is_owned_ptr(f)
+    ]
+    if _ptrs:
+        src_bytes_copy += "            {\n"
+        src_bytes_copy += "".join(
+            f"                {op.ctype}_a{i} = ({op.ctype})"
+            f"syn->src.{op.member};\n"
+            f"                syn->src.{op.member} = NULL;\n"
+            for i, op in enumerate(_ptrs)
+        )
+        src_bytes_copy += "".join(
+            f"""                if (_a{i}
+                    && !(syn->src.{op.member} = {op.copy_fn}(_a{i}))) {{
+                    Py_DECREF(syn);
+                    Py_DECREF(srclist);
+                    Py_DECREF(list);
+                    PyErr_SetString(PyExc_RuntimeError,
+                                    "{op.copy_fn} returned NULL");
+                    return NULL;
+                }}
+"""
+            for i, op in enumerate(_ptrs)
+        )
+        src_bytes_copy += "            }\n"
     pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
     obj = f"{cname}Object"
@@ -3768,6 +4122,8 @@ def _field_is_numeric(f: dict) -> bool:
 
 def _pyi_field_type(f: dict) -> str:
     """The ``.pyi`` annotation type for a source/segment field."""
+    if _field_is_owned_ptr(f):
+        return f.get("_py_accepts", "str | None")
     if f.get("enum"):
         return "str"
     if f.get("bytes"):
@@ -3778,6 +4134,30 @@ def _pyi_field_type(f: dict) -> str:
     if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
         return f"{scalar} | tuple[{scalar}, {scalar}]"
     return scalar
+
+
+def _pyi_field_read_type(f: dict) -> str:
+    """What reading a field returns: an owned pointer reads as its text form
+    (gh-1711); every other field reads as it is assigned."""
+    return "str | None" if _field_is_owned_ptr(f) else _pyi_field_type(f)
+
+
+def _pyi_field_attr(f: dict) -> list[str]:
+    """The class-body lines declaring one read/write field.
+
+    A plain annotation when reading and assigning share a type; a property
+    and its setter for an owned pointer, which is assigned a host object or
+    its text and reads back as the text (gh-1711).
+    """
+    n = f["name"]
+    if not _field_is_owned_ptr(f):
+        return [f"    {n}: {_pyi_field_type(f)}"]
+    return [
+        "    @property",
+        f"    def {n}(self) -> {_pyi_field_read_type(f)}: ...",
+        f"    @{n}.setter",
+        f"    def {n}(self, value: {_pyi_field_type(f)}) -> None: ...",
+    ]
 
 
 def _pyi_field_sig(fields: list[dict]) -> str:
@@ -3809,7 +4189,7 @@ def _pyi_doc_lines(
                 type_line += f", default {dv}"
             else:
                 type_line += f', default ``"{dv}"``'
-        elif f.get("bytes") or f.get("complex"):
+        elif f.get("bytes") or f.get("complex") or _field_is_owned_ptr(f):
             type_line += ", default None"
         # Optional per-field description (manifest ``doc =``), then — for an
         # enum field — its choice list. Both are wrapped by the shared builder
@@ -3876,6 +4256,8 @@ def render_pyi(cfg: dict, module: str) -> str:
         "from typing_extensions import disjoint_base",
         "import numpy as np",
         "from numpy.typing import NDArray",
+        # gh-1711: the class an owned-pointer field is bound from.
+        *sorted({f["_py_import"] for f in src_fields if f.get("_py_import")}),
         "",
         "@disjoint_base",
         f"class {src_t}:",
@@ -3892,7 +4274,7 @@ def render_pyi(cfg: dict, module: str) -> str:
     # That hatch told a type checker every attribute exists, which is exactly
     # what hid the omission: `synth.freq` checked fine for the wrong reason,
     # and so did `synth.frq`.
-    lines += [f"    {f['name']}: {_pyi_field_type(f)}" for f in src_fields]
+    lines += [ln for f in src_fields for ln in _pyi_field_attr(f)]
     lines.append("    fs: float")
     _gen = _source_generates(cfg, module)
     if _gen:
@@ -3933,7 +4315,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         # Feature 4 — flat single-source accessors (read-only; AttributeError on
         # a multi-source segment).
         *[
-            f"    {f['name']}: {_pyi_field_type(f)}"
+            f"    {f['name']}: {_pyi_field_read_type(f)}"
             for f in _segment_flat_fields(cfg, module)
         ],
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
@@ -4139,15 +4521,17 @@ def bridge_h(module: str) -> str:
 def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     """``(name, prototype lines)`` for each straight-C seam
     :func:`render_bridge_h` declares, in order: the ``bridge_fn``, its
-    ``bridge_error_fn``, each computed ``fn`` and each field's
-    ``coerce_str_fn`` (gh-1709). Every name is an
+    ``bridge_error_fn``, each computed ``fn``, each field's
+    ``coerce_str_fn`` (gh-1709) and each owned-pointer field's four host
+    functions (gh-1711). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
     this one list, so they cannot disagree on which names those are."""
     gen = _source_generates(cfg, module)
     computed = _source_computed(cfg, module)
     str_fns = _coerce_str_fns(cfg, module)
-    if not gen and not computed and not str_fns:
+    ptr_fns = _owned_ptr_prototypes(cfg, module)
+    if not gen and not computed and not str_fns and not ptr_fns:
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
     out: "list[tuple[str, list[str]]]" = []
@@ -4206,7 +4590,7 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
                 ],
             )
         )
-    return out
+    return out + ptr_fns
 
 
 def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
@@ -4235,7 +4619,8 @@ def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
 def seam_fns(cfg: dict, module: str) -> "list[str]":
     """The C functions *module*'s :func:`bridge_h` declares: the project's
     own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
-    ``fn`` / field ``coerce_str_fn`` key. jm derives none of them, whatever
+    ``fn`` / field ``coerce_str_fn`` key, or an owned-pointer field's
+    ``copy_fn`` / ``free_fn`` / ``parse_fn`` / ``format_fn``. jm derives none of them, whatever
     prefix their name has, so :func:`_csym.renames` does not read them as
     derived (gh-1694)."""
     return [name for name, _prototype in _seams(cfg, module)]
@@ -4284,6 +4669,11 @@ def render_bridge_h(cfg: dict, module: str) -> str:
     includes = [f'#include "{header}"']
     if gen and gen["header"] != header:
         includes.append(f'#include "{gen["header"]}"')
+    # gh-1711: the header declaring an owned pointer's type.
+    for _name, p in _owned_ptrs(cfg, module):
+        inc = f'#include "{p.header}"'
+        if p.header and inc not in includes:
+            includes.append(inc)
 
     lines = [
         "/*",
@@ -4479,6 +4869,13 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         )
         for f in src_fields
         if f.get("bytes")
+    ] + [
+        # gh-1711: a parsed owned pointer has no other owner either.
+        "{0.free_fn}(({0.ctype})segs[j].{1}[k].{0.member});".format(
+            owned_ptr(cfg, f), sources_member
+        )
+        for f in src_fields
+        if _field_is_owned_ptr(f)
     ]
 
     def _free_src_bytes(indent: str) -> str:
@@ -4532,6 +4929,23 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             cJSON *ba = cJSON_AddArrayToObject(so, "{n}");
             for (size_t bi = 0; bi < src->{_l}; bi++)
                 cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->{_p}[bi]));
+        }}""")
+        elif _field_is_owned_ptr(f):
+            # gh-1711: the host's text form, nested as JSON when it is JSON
+            # (so a record reads as one document), else kept as a string.
+            # `format_fn` returns NULL only when out of memory, which every
+            # other cJSON allocation here already treats the same way.
+            op = owned_ptr(cfg, f)
+            src_ser.append(f"""        if (src->{op.member}) {{
+            char *_t = {op.format_fn}(src->{op.member});
+            if (_t) {{
+                cJSON *_j = cJSON_Parse(_t);
+                if (_j)
+                    cJSON_AddItemToObject(so, "{n}", _j);
+                else
+                    cJSON_AddStringToObject(so, "{n}", _t);
+                free(_t);
+            }}
         }}""")
         elif f.get("_ranged"):
             src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
@@ -4589,6 +5003,23 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                     _buf[_k++] = (uint8_t)cJSON_GetNumberValue(_e);
                 src->{_bp} = _buf;
                 src->{_bl} = _nb;
+            }}
+        }}""")
+        elif _field_is_owned_ptr(f):
+            # gh-1711: either spelling the serializer writes. A present value
+            # the host refuses fails the whole record, as a malformed one
+            # would, rather than building a different source in silence.
+            op = owned_ptr(cfg, f)
+            src_parse.append(f"""        {{
+            const cJSON *_o = cJSON_GetObjectItemCaseSensitive(so, "{n}");
+            if (_o && !cJSON_IsNull(_o)) {{
+                char *_t = cJSON_IsString(_o) ? NULL
+                                              : cJSON_PrintUnformatted(_o);
+                const char *_s = _t ? _t : cJSON_GetStringValue(_o);
+                src->{op.member} = _s ? {op.parse_fn}(_s) : NULL;
+                free(_t);
+                if (!src->{op.member})
+                    return -1;
             }}
         }}""")
         elif f.get("_ranged"):
@@ -4875,6 +5306,21 @@ def render_cli(cfg: dict, module: str) -> str:
         if (_v < 0) {{ fprintf(stderr, "bad --{n} %s\\n", {n}); return 2; }}
         src.{n} = _v;
     }}""")
+        elif _field_is_owned_ptr(f):
+            # gh-1711: the text form, through the host's parser; freed after
+            # create, which deep-copies it like a bytes buffer.
+            op = owned_ptr(cfg, f)
+            decls.append(f"    const char *{n} = NULL;")
+            parse.append(
+                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
+            )
+            assign.append(f"""    if ({n}) {{
+        src.{op.member} = {op.parse_fn}({n});
+        if (!src.{op.member}) {{
+            fprintf(stderr, "bad --{n} %s\\n", {n});
+            return 2;
+        }}
+    }}""")
         elif f.get("bytes"):
             # gh-1184: and the c-face CLI, the third copy of the same pair.
             _cp, _cl = buffer_members(f)
@@ -4949,15 +5395,22 @@ def render_cli(cfg: dict, module: str) -> str:
         f"        free(src.{f['name']});\n"
         for f in src_fields
         if f.get("bytes")
+    ) + "".join(
+        "        {0.free_fn}(({0.ctype})src.{0.member});\n".format(
+            owned_ptr(cfg, f)
+        )
+        for f in src_fields
+        if _field_is_owned_ptr(f)
     )
 
     # gh-1583: the include of a jm header is spelled by the layout.
     _common_h = INC.include("clib_common.h", cfg)
     # gh-1709: a field's coerce_str_fn is declared by the bridge header, the
-    # one place a seam's prototype is written.
+    # one place a seam's prototype is written -- and so are an owned
+    # pointer's parse_fn and free_fn, which --<name> calls (gh-1711).
     bridge_inc = (
         f'#include "{INC.include(bridge_h(module), cfg)}"\n'
-        if _coerce_str_fns(cfg, module)
+        if _coerce_str_fns(cfg, module) or _owned_ptrs(cfg, module)
         else ""
     )
     # The sample-type block is `jm app`'s, and carries the layout's include

@@ -708,6 +708,26 @@ COMPOSER_FIELD_KEYS = frozenset(
         "doc",
     }
 )
+#: gh-1711: the four host functions an owned-pointer source field names.
+#: All four are required together, because each face calls one of them:
+#: binding a capsule and rebuilding a source copy, the source frees, and the
+#: text form and the JSON record parse and format.
+COMPOSER_OWNED_PTR_FNS = ("copy_fn", "free_fn", "parse_fn", "format_fn")
+#: gh-1711: every key an owned-pointer source field adds to a composer field.
+#: `object` / `capsule` / `header` are the capsule triangle's own keys,
+#: meaning here what they mean on an init_param. The ONE list: the vocabulary
+#: below, the manifest writer (`_config._inline_field`) and the renderer
+#: (`_composer.owned_ptr`) all read it, so a key cannot be accepted and then
+#: dropped on the next save.
+COMPOSER_OWNED_PTR_KEYS = ("object", "capsule", "header") + (
+    COMPOSER_OWNED_PTR_FNS
+)
+#: A SOURCE field's own vocabulary rather than the shared one, because a
+#: segment field has no owned-pointer face and a key accepted there would be
+#: recognised and inert.
+COMPOSER_SOURCE_FIELD_KEYS = COMPOSER_FIELD_KEYS | frozenset(
+    COMPOSER_OWNED_PTR_KEYS
+)
 COMPOSER_COMPUTED_KEYS = frozenset({"name", "type", "fn", "doc"})
 COMPOSER_SOURCE_KEYS = frozenset(
     {
@@ -818,6 +838,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "[module.X.json]": COMPOSER_JSON_KEYS,
     "[module.X.cli]": COMPOSER_CLI_KEYS,
     "composer field": COMPOSER_FIELD_KEYS,
+    "composer source field": COMPOSER_SOURCE_FIELD_KEYS,
     "composer computed": COMPOSER_COMPUTED_KEYS,
 }
 
@@ -841,7 +862,7 @@ KIND_DICT_TABLE_VOCAB = {
 #: ``source.computed`` are arrays of inline tables.
 KIND_NESTED_VOCAB = {
     ("composer", "source", "generates"): "[module.X.source.generates]",
-    ("composer", "source", "fields"): "composer field",
+    ("composer", "source", "fields"): "composer source field",
     ("composer", "source", "computed"): "composer computed",
     ("composer", "segment", "fields"): "composer field",
 }

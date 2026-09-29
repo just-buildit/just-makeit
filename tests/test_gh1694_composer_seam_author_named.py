@@ -2,8 +2,10 @@
 
 A composer source hands its straight-C seams back to the project by name:
 ``[module.X.source.generates] bridge_fn`` (and its optional
-``bridge_error_fn``), each ``[[module.X.source.computed]] fn`` and each
-bit_pattern field's ``coerce_str_fn`` (gh-1709). jm derives
+``bridge_error_fn``), each ``[[module.X.source.computed]] fn``, each
+bit_pattern field's ``coerce_str_fn`` (gh-1709) and an owned-pointer
+field's ``copy_fn`` / ``free_fn`` / ``parse_fn`` / ``format_fn``
+(gh-1711). jm derives
 none of those names -- the keys are required and author-named
 (``_csym.AUTHOR_NAMED_KEYS``) -- but it DECLARES each of them, in the
 module's generated ``<cname>_bridge.h`` (gh-998).
@@ -54,6 +56,11 @@ SEAMS = {
     "fn": f"{P}_wfm_source_length",
     # gh-1709: a bit_pattern field's str reader is declared there too.
     "coerce_str_fn": f"{P}_wfm_bits_parse",
+    # gh-1711: and so are an owned pointer's four host functions.
+    "copy_fn": f"{P}_wfm_frame_copy",
+    "free_fn": f"{P}_wfm_frame_free",
+    "parse_fn": f"{P}_wfm_frame_parse",
+    "format_fn": f"{P}_wfm_frame_format",
 }
 
 COMPOSER_TOML = """
@@ -79,6 +86,14 @@ type = "uint8_t*"
 bytes = true
 coerce = "bit_pattern"
 coerce_str_fn = "{coerce_str_fn}"
+
+[[module.wfm_compose.source.fields]]
+name = "frame"
+type = "dp_wfm_state_t *"
+copy_fn = "{copy_fn}"
+free_fn = "{free_fn}"
+parse_fn = "{parse_fn}"
+format_fn = "{format_fn}"
 
 [module.wfm_compose.source.generates]
 generator = "wfm"
@@ -128,6 +143,29 @@ size_t {coerce_str_fn}(const char *text, uint8_t *out, size_t max_out,
     (void)out;
     (void)max_out;
     (void)why;
+    return 0;
+}}
+
+{P}_wfm_state_t *{copy_fn}(const {P}_wfm_state_t *d)
+{{
+    (void)d;
+    return 0;
+}}
+
+void {free_fn}({P}_wfm_state_t *d)
+{{
+    (void)d;
+}}
+
+{P}_wfm_state_t *{parse_fn}(const char *text)
+{{
+    (void)text;
+    return 0;
+}}
+
+char *{format_fn}(const {P}_wfm_state_t *d)
+{{
+    (void)d;
     return 0;
 }}
 """
