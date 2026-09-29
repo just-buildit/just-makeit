@@ -282,7 +282,7 @@ class TestMethods:
     def test_array_in_scalar_return(self):
         s = _wsrc()
         assert "Writer_write(WriterObject *self, PyObject *args)" in s
-        assert "PyArray_FROM_OTF(\n        x_obj, NPY_COMPLEX64" in s
+        assert "jm_array_arg(x_obj, NPY_COMPLEX64," in s
         assert "r = wfm_writer_write(self->h, in_data, n_in);" in s
         # size_t return -> py int (via _CTYPE_META, reused).
         assert "PyLong_FromUnsignedLongLong((unsigned long long)r)" in s

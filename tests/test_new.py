@@ -815,7 +815,7 @@ class TestArrayArgType:
         ext = (arr_obj / "native/src/filt/filt_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
+        assert "jm_array_arg(x_obj," in ext
         assert "PyArray_DATA" in ext
         assert "x_len" in ext
 

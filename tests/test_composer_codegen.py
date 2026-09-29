@@ -822,7 +822,8 @@ class TestComplexField:
     def test_attach_helper_emitted(self):
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
         assert "_attach_symbols(wfm_source_t *src, PyObject *obj)" in s
-        assert "PyArray_FROM_OTF(" in s and "NPY_COMPLEX64" in s
+        # gh-1700: through the one converter, so a str is refused
+        assert "jm_array_arg(obj, NPY_COMPLEX64," in s
         assert "NPY_ARRAY_FORCECAST" in s  # accept complex128 too
         assert "src->symbols   = _buf;" in s
         assert "src->n_symbols = (size_t)_n;" in s

@@ -1798,7 +1798,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 or is_required_array
                 or (required and not t.endswith("[]"))
             ):
-                req_parts.append(f"{n}: {_py(t)}")
+                # gh-1700: through the one param widening, so a required
+                # byte array admits the buffers its binding reads.
+                req_parts.append(
+                    f"{n}: {T.py_param_annotation(_py(t), t, '')}"
+                )
             elif optional:
                 parts_init.append(f"{n}: {_py(t)} | None = None")
             elif t.startswith("string_enum:"):
@@ -2064,6 +2068,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 if (m_var and not m_arg.endswith("[]"))
                 else _py(m_arg)
             )
+            # gh-1700: an array `x` of one-byte integers takes a byte buffer.
+            if _x_ann.startswith("NDArray["):
+                _x_ann = T.py_param_annotation(
+                    _x_ann, m_arg.removesuffix("[]") + "[]", ""
+                )
             param_parts.append(f"x: {_x_ann}")
         for p in m_params:
             # gh-432: a capsule param takes the named PyCapsule, a wrapper
@@ -2235,7 +2244,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             elif p.get("capsule"):
                 _ann = "object | None"
             else:
-                _ann = _py(p["type"])
+                _ann = T.py_param_annotation(
+                    _py(p["type"]), p["type"], p.get("default") or ""
+                )
             _py_params.append((p["name"], _ann))
         # gh-1042: the binding's own arguments, in the order the signature
         # above appends them. The peer in `_context/_methods` does the same,
@@ -2643,11 +2654,20 @@ def numpy_imports(body: str) -> "list[str]":
     ['import numpy as np', 'from numpy.typing import NDArray']
     >>> numpy_imports("    def f(self) -> NDArray[Any]: ...")
     ['from numpy.typing import NDArray']
+
+    An array init-param is annotated ``npt.ArrayLike`` (``_context/_state``),
+    so ``npt`` is asked for too; a stub naming it without the import failed
+    ``mypy`` on every object with an array constructor argument (gh-1700):
+
+    >>> numpy_imports("    def __init__(self, h: npt.ArrayLike) -> None: ...")
+    ['import numpy.typing as npt']
     """
     code = _DOCSTRING_RE.sub("", body)
     out = []
     if _re.search(r"\bnp\.", code):
         out.append("import numpy as np")
+    if _re.search(r"\bnpt\.", code):
+        out.append("import numpy.typing as npt")
     if _re.search(r"\bNDArray\b", code):
         out.append("from numpy.typing import NDArray")
     return out
@@ -2698,6 +2718,7 @@ def prune_stub_imports(lines: "list[str]") -> "list[str]":
 
 _NUMPY_IMPORT_LINES = (
     "import numpy as np",
+    "import numpy.typing as npt",
     "from numpy.typing import NDArray",
 )
 

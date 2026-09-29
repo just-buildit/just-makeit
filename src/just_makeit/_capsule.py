@@ -152,12 +152,12 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
 
-    PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        x_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *x_arr =
+        {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", "x")};
     if (!x_arr) return NULL;
 
-{_out_guard}    PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        out_obj, {out_npy}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+{_out_guard}    PyArrayObject *out_arr =
+        {_coerce.array_arg("out_obj", out_npy, "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE", "out")};
     if (!out_arr) {{ Py_DECREF(x_arr); return NULL; }}
 
     size_t n_in    = (size_t)PyArray_SIZE(x_arr);
@@ -297,6 +297,7 @@ def render_ext(cfg: dict, module: str) -> str:
 
 #include "{header}"
 
+{_coerce.ARRAY_ARG_C}
 static const char _CAPS[] = "{caps}";
 
 typedef struct {{

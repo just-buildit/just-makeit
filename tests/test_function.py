@@ -788,8 +788,7 @@ class TestFunctionWithArrayParam:
         text = (arr_fn / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in text
-        assert "NPY_COMPLEX64" in text
+        assert "jm_array_arg(data_obj, NPY_COMPLEX64," in text
 
     def test_ext_c_format_has_O(self, arr_fn):
         text = (arr_fn / "native/src/fft/fft_ext.c").read_text(

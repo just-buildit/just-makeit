@@ -148,8 +148,10 @@ def _stub_params(
     # (name, annotation, signature-only default suffix)
     fields: list[tuple[str, str, str]] = []
     if arg_type != "void":
+        # gh-1700: an array goes through the one param widening, so a
+        # one-byte integer array admits the byte buffers its binding reads.
         ann = (
-            _pyi_ndarray(arg_type[:-2])
+            T.py_param_annotation(_pyi_ndarray(arg_type[:-2]), arg_type, "")
             if arg_type.endswith("[]")
             else _pyi_scalar(arg_type)
         )
@@ -157,7 +159,13 @@ def _stub_params(
     for p in params:
         pt = p["type"]
         if pt.endswith("[]"):
-            fields.append((p["name"], _pyi_ndarray(pt[:-2]), ""))
+            fields.append(
+                (
+                    p["name"],
+                    T.py_param_annotation(_pyi_ndarray(pt[:-2]), pt, ""),
+                    "",
+                )
+            )
         elif p.get("enum"):
             # gh-1021: an enum param is `int` in C and the choice STRING in
             # Python, so both faces must say `str` — the runtime docstring
@@ -1913,6 +1921,7 @@ def make_methods_ctx(
                 # struct is not in `_CTYPE_META`, and `expect` names a
                 # scalar dtype the record path never prints.
                 expect=str((arg_meta or {}).get("py_type", "")),
+                label="x",
             )
             # The builder is named for the PARAM it serves, because that is
             # what `_build_params_parse` emits the call under -- the primary
@@ -2057,10 +2066,7 @@ def make_methods_ctx(
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_out_guard_in}"
                     f"        PyArrayObject *out_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"            out_obj, {ret_np},\n"
-                    f"            NPY_ARRAY_C_CONTIGUOUS"
-                    f" | NPY_ARRAY_WRITEABLE);\n"
+                    f"\n            {_coerce.array_arg('out_obj', ret_np, 'NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE', 'out')};\n"
                     f"        if (!out_arr)"
                     f" {{ Py_DECREF(in_arr); return NULL; }}\n"
                     f"        if (PyArray_SIZE(out_arr) != n) {{\n"
@@ -2116,10 +2122,7 @@ def make_methods_ctx(
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_out_guard}"
                     f"        PyArrayObject *out_arr ="
-                    f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                    f"            out_obj, {ret_np},\n"
-                    f"            NPY_ARRAY_C_CONTIGUOUS"
-                    f" | NPY_ARRAY_WRITEABLE);\n"
+                    f"\n            {_coerce.array_arg('out_obj', ret_np, 'NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE', 'out')};\n"
                     f"        if (!out_arr) return NULL;\n"
                     f"        if (PyArray_SIZE(out_arr) != n) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
@@ -2509,8 +2512,8 @@ def make_methods_ctx(
                             )
                             _flags += " | NPY_ARRAY_WRITEABLE"
                         _conv_lines += [
-                            f"    {_pn}_arr = (PyArrayObject *)PyArray_FROM_OTF(",
-                            f"        {_pn}_obj, {_pe_np}, {_flags});",
+                            f"    {_pn}_arr =",
+                            f"        {_coerce.array_arg(f'{_pn}_obj', _pe_np, _flags, _pn)};",
                             f"    if (!{_pn}_arr) {{ {_release} return NULL; }}"
                             if _release
                             else f"    if (!{_pn}_arr) return NULL;",
@@ -2712,10 +2715,7 @@ def make_methods_ctx(
                     if record_dtype
                     else (
                         f"        PyArrayObject *out_arr ="
-                        f" (PyArrayObject *)PyArray_FROM_OTF(\n"
-                        f"            out_obj, {_vo_out_np},\n"
-                        f"            NPY_ARRAY_C_CONTIGUOUS"
-                        f" | NPY_ARRAY_WRITEABLE);\n"
+                        f"\n            {_coerce.array_arg('out_obj', _vo_out_np, 'NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE', 'out')};\n"
                         f"        if (!out_arr) {{"
                         f" {_decref_early_vo}return NULL; }}\n"
                     )

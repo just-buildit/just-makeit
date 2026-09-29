@@ -50,8 +50,7 @@ class TestArrayArgExtC:
         ext = (standalone / "native/src/fir/fir_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
-        assert "NPY_FLOAT" in ext
+        assert "jm_array_arg(h_obj, NPY_FLOAT," in ext
 
     def test_array_len_extracted(self, standalone):
         ext = (standalone / "native/src/fir/fir_ext.c").read_text(
@@ -97,7 +96,7 @@ class TestArrayArgExtC:
         ext = (in_module / "native/src/filter/filter_ext_hbdecim.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
+        assert "jm_array_arg(h_obj, NPY_FLOAT," in ext
         assert "(const float *)PyArray_DATA(h_arr), h_len" in ext
 
 

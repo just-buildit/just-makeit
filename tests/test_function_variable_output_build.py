@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit._coerce import ARRAY_ARG_C
 from just_makeit._render import make_functions_ctx
 
 _CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
@@ -90,6 +91,7 @@ def _build(tmp: Path):
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
+{ARRAY_ARG_C}
 {_BACKING}
 {w["function_wrappers"]}
 {w["module_methods_def"]}

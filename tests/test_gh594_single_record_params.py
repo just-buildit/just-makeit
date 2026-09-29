@@ -358,7 +358,7 @@ class TestGeneratedBinding:
         assert 'PyArg_ParseTupleAndKeywords(args, kwds, "O|K"' in ext
 
     def test_array_param_is_converted_and_sized(self, ext):
-        assert "PyArray_FROM_OTF(" in ext
+        assert "jm_array_arg(rx_obj, NPY_COMPLEX64," in ext
         assert (
             "const float _Complex *rx = (const float _Complex *)PyArray_DATA(rx_arr);"
             in ext

@@ -403,6 +403,95 @@ def array_rank_guard(
     )
 
 
+# The **array-argument converter** (gh-1700): how every generated binding turns
+# the Python object a caller passed for a ``T[]`` parameter into an ndarray.
+#
+# ``PyArray_FROM_OTF`` alone gets two inputs wrong, and both come from numpy
+# treating a ``str`` or a ``bytes`` as ONE scalar of a text dtype and then
+# casting that scalar to the requested number type:
+#
+#   * a ``str`` is parsed as a number. ``Fld("0101")`` reached ``create()`` as
+#     a one-element array holding 101, with no error; ``"1.5"`` into a
+#     ``float[]`` became ``[1.5]``. A string is never an array of its digits'
+#     value, so it is refused, for every numeric element type.
+#   * a ``bytes`` is parsed the same way, so ``b"\x01\x00"`` was refused with
+#     ``invalid literal for int()`` -- although ``bytes`` is the one Python
+#     type that already IS a byte buffer. For a one-byte element type
+#     (``uint8_t[]``, ``int8_t[]``) any buffer-protocol object whose items are
+#     one byte wide (``bytes``, ``bytearray``, ``memoryview``, ``array('B')``)
+#     is read as its bytes, one element per byte, which is ``np.frombuffer``.
+#     A buffer of wider items keeps numpy's element-wise conversion rather
+#     than being reinterpreted byte by byte. For every other element type a
+#     ``bytes`` is refused: it would otherwise be parsed as text too.
+#
+# It is ONE C function, emitted once per extension translation unit through
+# ``ARRAY_ARG_C`` and called through ``array_arg`` from every generator that
+# acquires an array argument -- init params, method params, module functions,
+# ``step``/``steps`` input, array property setters, handle and capsule
+# methods. A per-site guard is how a fix lands in four of those and not the
+# fifth; ``tests/test_gh1700_array_arg_str_bytes.py`` refuses a generator that
+# calls ``PyArray_FROM_OTF`` on an argument directly.
+
+ARRAY_ARG_FN = "jm_array_arg"
+
+ARRAY_ARG_C = """\
+#ifndef JM_ARRAY_ARG_DEFINED
+#define JM_ARRAY_ARG_DEFINED
+/* Convert a Python argument for an array parameter to an ndarray of
+ * `typenum` meeting `requirements` -- PyArray_FROM_OTF, less the two inputs
+ * it reads as text (gh-1700): a str is refused, never parsed as a number,
+ * and for a one-byte element type a byte buffer (bytes, bytearray,
+ * memoryview) is its bytes, one element per byte. `name` is the parameter,
+ * for the message. Returns a new reference, or NULL with an exception. */
+static inline PyArrayObject *
+jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
+{
+    int one_byte = typenum == NPY_UINT8 || typenum == NPY_INT8;
+    if (PyUnicode_Check(obj) || (!one_byte && PyBytes_Check(obj))) {
+        PyErr_Format(PyExc_TypeError,
+                     "%s must be an array of numbers, not %.200s", name,
+                     Py_TYPE(obj)->tp_name);
+        return NULL;
+    }
+    if (one_byte && !PyArray_Check(obj) && PyObject_CheckBuffer(obj)) {
+        PyObject *view = PyMemoryView_FromObject(obj);
+        if (!view)
+            return NULL;
+        if (PyMemoryView_GET_BUFFER(view)->itemsize == 1) {
+            PyObject *raw = PyArray_FromBuffer(
+                view, PyArray_DescrFromType(typenum), -1, 0);
+            Py_DECREF(view);
+            if (!raw)
+                return NULL;
+            PyObject *arr = PyArray_FROM_OTF(raw, typenum, requirements);
+            Py_DECREF(raw);
+            return (PyArrayObject *)arr;
+        }
+        Py_DECREF(view);
+    }
+    return (PyArrayObject *)PyArray_FROM_OTF(obj, typenum, requirements);
+}
+#endif /* JM_ARRAY_ARG_DEFINED */
+"""
+
+
+def array_arg(obj_var: str, npy_enum: str, flags: str, name: str) -> str:
+    """The C expression converting *obj_var* for array parameter *name*.
+
+    Every generated acquisition of an array argument is this call to the
+    ``ARRAY_ARG_C`` helper, never a bare ``PyArray_FROM_OTF`` (see the note
+    above for the two inputs that differ). It evaluates to a new
+    ``PyArrayObject *`` reference, or ``NULL`` with an exception set, exactly
+    as the ``(PyArrayObject *)PyArray_FROM_OTF(...)`` it replaces.
+
+    Examples
+    --------
+    >>> array_arg("bits_obj", "NPY_UINT8", "NPY_ARRAY_C_CONTIGUOUS", "bits")
+    'jm_array_arg(bits_obj, NPY_UINT8, NPY_ARRAY_C_CONTIGUOUS, "bits")'
+    """
+    return f'{ARRAY_ARG_FN}({obj_var}, {npy_enum}, {flags}, "{name}")'
+
+
 def input_array_acq(
     npy_enum: str = "",
     dtype_fn: str = "",
@@ -413,6 +502,7 @@ def input_array_acq(
     fail: str = "return NULL;",
     strict: bool = False,
     expect: str = "",
+    label: str = "",
 ) -> str:
     """Acquire an input array as *arr_var*, C-contiguous.
 
@@ -441,12 +531,16 @@ def input_array_acq(
     fail : str
         What to run on failure -- a param path releases the arrays it has
         already acquired first.
+    label : str
+        The parameter name a refusal names; defaults to *arr_var* less its
+        ``_arr`` suffix. A method's primary input is the local ``in_arr``
+        while the caller spells it ``x``.
 
     Examples
     --------
-    >>> print(input_array_acq(npy_enum="NPY_FLOAT32"))
-        PyArrayObject *in_arr = (PyArrayObject *)PyArray_FROM_OTF(
-            in_obj, NPY_FLOAT32, NPY_ARRAY_C_CONTIGUOUS);
+    >>> print(input_array_acq(npy_enum="NPY_FLOAT32", label="x"))
+        PyArrayObject *in_arr =
+            jm_array_arg(in_obj, NPY_FLOAT32, NPY_ARRAY_C_CONTIGUOUS, "x");
         if (!in_arr) { return NULL; }
     <BLANKLINE>
     >>> acq = input_array_acq(dtype_fn="Ring_write_x")
@@ -520,10 +614,15 @@ def input_array_acq(
             fail=fail,
         )
     return (
-        f"    PyArrayObject *{arr_var} = (PyArrayObject *)PyArray_FROM_OTF(\n"
-        f"        {obj_var}, {npy_enum}, {flags});\n"
+        f"    PyArrayObject *{arr_var} =\n"
+        f"        {array_arg(obj_var, npy_enum, flags, label or label_of(arr_var))};\n"
         f"    if (!{arr_var}) {{ {fail} }}\n"
     )
+
+
+def label_of(arr_var: str) -> str:
+    """The parameter name a ``<name>_arr`` local holds, for a message."""
+    return arr_var.removesuffix("_arr")
 
 
 def _strict_rank_and_contiguity(

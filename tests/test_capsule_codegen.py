@@ -82,7 +82,7 @@ class TestFunctions:
     def test_execute_marshals_and_returns_view(self):
         s = _src()
         assert "_fn_ddcr_execute(PyObject *mod, PyObject *args)" in s
-        assert "PyArray_FROM_OTF(\n        x_obj, NPY_FLOAT" in s
+        assert "jm_array_arg(x_obj, NPY_FLOAT," in s
         assert "!= NPY_COMPLEX64" in s  # exact output dtype, no silent cast
         assert (
             "n_out = ddcr_execute(w->state, in_data, n_in, out_data, max_out);"

@@ -86,7 +86,9 @@ class TestExtC:
         return (root / f"native/src/{comp}/{comp}_ext.c").read_text()
 
     def test_array_from_otf_present(self, standalone_void):
-        assert "PyArray_FROM_OTF" in self._ext(standalone_void, "proc")
+        assert "jm_array_arg(x_obj, NPY_FLOAT," in self._ext(
+            standalone_void, "proc"
+        )
 
     def test_correct_npy_enum(self, standalone_void):
         assert "NPY_FLOAT" in self._ext(standalone_void, "proc")
@@ -105,7 +107,7 @@ class TestExtC:
 
     def test_scalar_return_converts(self, standalone_scalar_return):
         ext = self._ext(standalone_scalar_return, "peak")
-        assert "PyArray_FROM_OTF" in ext
+        assert "jm_array_arg(x_obj, NPY_FLOAT," in ext
         # step() returns a scalar — must call a Py*_From* conversion, not NONE
         assert "PyFloat_FromDouble" in ext or "PyLong_From" in ext
 

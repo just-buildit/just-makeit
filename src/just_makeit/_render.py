@@ -643,7 +643,15 @@ def render(template: str, ctx: dict) -> str:
                 f"render: the template uses <<{_slot}>> and the context does"
                 f" not carry {_how}"
             )
-    ctx = {**INC.layout_slots(ctx), **ctx}
+    # gh-1700: the array-argument converter every extension TU calls. Filled
+    # for every render, like `inc_dir`, so no binding template can be handed
+    # a context that forgot it -- a call to an undefined helper would not
+    # compile, and a per-generator slot is how one generator forgets.
+    ctx = {
+        **INC.layout_slots(ctx),
+        "jm_array_arg_c": _coerce.ARRAY_ARG_C,
+        **ctx,
+    }
     result = template
     for _ in range(_RENDER_SWEEPS):
         before = result
@@ -863,7 +871,8 @@ MODULE_EXT_C_HEADER = """\
 #include <numpy/arrayobject.h>
 #include "<<inc_prefix>>clib_common.h"
 <<module_extra_includes>>
-<<module_core_include>>"""
+<<module_core_include>>
+<<jm_array_arg_c>>"""
 
 MODULE_EXT_C_FOOTER = """\
 
@@ -1432,8 +1441,8 @@ def _build_params_parse(
                 )
             arr_acq.append(
                 f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
-                f"PyArray_FROM_OTF(\n"
-                f"        {obj_var}, {npy_enum}, {npy_flags});\n"
+                f"\n"
+                f"        {_coerce.array_arg(obj_var, npy_enum, npy_flags, pname)};\n"
                 f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
             )
             # gh-805 §C: the module-function copy of _context/_parse.py's
