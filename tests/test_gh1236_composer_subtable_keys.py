@@ -106,6 +106,9 @@ _REPRESENTATIVE: dict[str, object] = {
     "from_json_fn": "wfm_from_json",
     "from_file_fn": "wfm_from_file",
     "to_json_trailing": ["seed"],
+    # gh-1706: the delegated readers take a trailing `const char **why`.
+    "from_json_why": True,
+    "from_file_why": True,
 }
 
 #: `(table, vocabulary)` for every composer sub-table that is a TABLE.
