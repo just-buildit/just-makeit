@@ -54,11 +54,17 @@ _CHANGELOG = _ROOT / "CHANGELOG.md"
 _SECTION = re.compile(r"^## \[(\d+\.\d+\.\d+)\]", re.M)
 
 
-def _released_versions() -> "list[str]":
-    """Versions with a `v*` tag, newest first. Empty if git has no tags."""
+def _released_versions(root: Path = _ROOT) -> "list[str]":
+    """Versions with a `v*` tag reachable from HEAD. Empty if git has none.
+
+    ``--merged HEAD``, not every tag in the clone: a CI run of an older
+    commit can start after a NEWER commit was tagged, and that tree
+    rightly has no section for a release it predates. Listing every tag
+    turned main red on `12feaba` minutes after v0.93.0 was pushed.
+    """
     proc = subprocess.run(
-        ["git", "tag", "--list", "v[0-9]*"],
-        cwd=_ROOT,
+        ["git", "tag", "--list", "--merged", "HEAD", "v[0-9]*"],
+        cwd=root,
         capture_output=True,
         text=True,
     )
@@ -132,3 +138,23 @@ def test_sections_are_in_descending_version_order():
         f"CHANGELOG sections are not newest-first: {out_of_order[0][0]} "
         f"appears above {out_of_order[0][1]}"
     )
+
+
+def test_a_tag_on_a_later_commit_is_not_this_trees_release(tmp_path):
+    """A tag newer than HEAD is not a release this tree must describe."""
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "older")
+    git("tag", "v1.0.0")
+    git("commit", "-q", "--allow-empty", "-m", "release")
+    git("tag", "v1.1.0")
+    git("checkout", "-q", "HEAD~1")
+    assert _released_versions(tmp_path) == ["1.0.0"]
