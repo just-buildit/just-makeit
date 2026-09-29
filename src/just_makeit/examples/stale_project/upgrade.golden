@@ -369,7 +369,7 @@ adopt --check — would `fragment = "generated"` be safe?
         differs:   fn:Fir_decimate
         differs:   fn:Fir_init
         differs:   fn:Fir_shape
-        adds only: fn:Fir_steps
+        differs:   fn:Fir_steps
         adds only: table:PyMethodDef
 
   0 of 1 object(s) could flip
