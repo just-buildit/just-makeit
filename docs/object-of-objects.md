@@ -438,6 +438,58 @@ or an int sequence is taken as before. The key belongs to one field, so a
 sibling `bit_pattern` field without it keeps jm's grammar. On a field that
 does not coerce, the key would have no effect, so jm refuses it.
 
+An **owned-pointer field** (gh-1711) holds a pointer to a host-owned
+description object, such as a frame description a source is framed by. The
+source owns a **copy** of it, not a reference to a Python object:
+`Composer.segments` rebuilds sources from the kernel's structs and
+`from_json` builds one from text, and neither has a Python object to keep
+alive. The field names the pointed-to type and four host functions:
+
+```toml
+[[module.wfm_compose.source.fields]]
+name   = "frame"
+object = "frame.FrameDesc"   # resolves type, capsule, header and .pyi class
+# ...or, for a pointer no jm object publishes (the gh-790 spelling):
+# type = "wfm_frame_desc_t *"; capsule = "p.frame.desc"; header = "..."
+c_ptr     = "frame"                        # optional; default <name>
+copy_fn   = "dp_wfm_frame_desc_copy"
+free_fn   = "dp_wfm_frame_desc_free"
+parse_fn  = "dp_wfm_frame_desc_from_json"
+format_fn = "dp_wfm_frame_desc_to_json"
+```
+
+```c
+/* Declared by jm in <module>_bridge.h; written by the project. T is the
+ * pointee: the member may be `const T *`, but the source owns a `T *`. */
+T    *copy_fn(const T *);     /* borrowed -> owned; NULL on failure  */
+void  free_fn(T *);           /* NULL-safe                           */
+T    *parse_fn(const char *); /* text -> owned; NULL on refusal      */
+char *format_fn(const T *);   /* owned text, released with free()    */
+```
+
+All four are required together, because each face calls one of them.
+`object` and `capsule` are both optional, so a field bound only from its text
+form is valid; writing both is refused, as is a key of another field shape
+(`bytes`, `enum`, `default`, `c_len`, ...), a `type` that is not a pointer,
+and the field on a segment.
+
+| face                       | behaviour                                                                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| constructor kwarg / setter | `None` clears it. A capsule, or an object with `._capsule`, is passed to `copy_fn`; a `str` to `parse_fn`, and a refusal raises `ValueError`. The old value is freed only once the new one is built. |
+| getter                     | the text from `format_fn`, or `None`. It round-trips through the setter.                                                                                                                             |
+| dealloc                    | `free_fn`                                                                                                                                                                                            |
+| `Composer(...)`            | shallow, like a `bytes` field: the backing `create` deep-copies the value                                                                                                                            |
+| `Composer.segments`        | each rebuilt source owns a copy from `copy_fn`, so nothing is freed twice                                                                                                                            |
+| generic `to_json`          | `format_fn`'s text, nested as a JSON value when it parses as JSON and a string otherwise; a NULL pointer writes nothing                                                                              |
+| generic `from_json`        | either spelling, through `parse_fn`; a value the host refuses fails the whole record, and the record's teardown calls `free_fn`. A delegated `to_json_fn` / `from_json_fn` is unaffected             |
+| c-face CLI                 | `--<name> TEXT` through `parse_fn`, freed after `create`; text the host refuses exits 2                                                                                                              |
+| `.pyi`                     | the keyword and the property setter take `FrameDesc \| str \| None` (`object \| str \| None` for a bare `capsule`, `str \| None` for text only); the property reads `str \| None`                    |
+
+The getter returns text rather than a `FrameDesc` by constraint: jm cannot
+build a host class from a raw pointer in a separately compiled `.so`, the
+same ABI hazard `object` references avoid elsewhere. The text form is the one
+generic value that round-trips through the setter and the record.
+
 ### 4.3 The source type
 
 `render_source_type` emits a `PyTypeObject` wrapping the backing C struct
@@ -853,7 +905,9 @@ reads instead.
 
 A **field** entry (`source.fields`/`segment.fields`):
 `{ name, type, enum?, default?, bytes? }` — one declaration drives the
-marshalling, the type slots, the JSON shape, and the CLI flag.
+marshalling, the type slots, the JSON shape, and the CLI flag. A source field
+may instead be an owned pointer (§4.2, gh-1711):
+`{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn }`.
 
 **Handle only:**
 

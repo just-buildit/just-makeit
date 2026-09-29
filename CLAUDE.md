@@ -299,8 +299,11 @@ plain C, with no CPython in it: `[module.X.source.generates] bridge_fn` builds
 the composed generator from the source struct, and each
 `[[module.X.source.computed]] fn` derives a read-only property from it. A
 `bit_pattern` source field's `coerce_str_fn` (gh-1709) reads a `str` into its
-bits with the project's own grammar. jm generates the binding that calls them;
-the project writes the bodies.
+bits with the project's own grammar. An owned-pointer source field's
+`copy_fn` / `free_fn` / `parse_fn` / `format_fn` (gh-1711) copy, free, read and
+write the host object it holds; the source owns a copy, so every face
+(`segments`, `from_json`) can make its own. jm generates the binding that
+calls them; the project writes the bodies.
 
 Their **prototypes are jm's**, and they are published in a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h` — self-contained (it pulls in the source

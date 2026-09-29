@@ -32,6 +32,7 @@ import sys as _sys
 # `capsule` and `header` came to be accepted by the first and dropped by the
 # second. `_keys` imports only `_report`, so this is not a cycle.
 from ._keys import FUNCTION_KEYS as _FUNCTION_KEYS
+from ._keys import COMPOSER_OWNED_PTR_KEYS as _COMPOSER_OWNED_PTR_KEYS
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
@@ -6479,7 +6480,11 @@ _KNOWN_METHOD_KEYS = frozenset(
 def _inline_field(f: dict) -> str:
     """Serialize a composer field (``{name, type, enum?, default?, bytes?}``) as
     a TOML inline table — drives the source/segment field marshalling (gh-287)."""
-    parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
+    # gh-1711: an owned pointer bound by `object` resolves its type from the
+    # referenced component, so `type` is written only when the row has one.
+    parts = [f'name = "{f["name"]}"']
+    if f.get("type"):
+        parts.append(f'type = "{f["type"]}"')
     if f.get("enum"):
         parts.append(f'enum = "{f["enum"]}"')
     if f.get("default") not in (None, ""):
@@ -6507,6 +6512,11 @@ def _inline_field(f: dict) -> str:
         parts.append(f'coerce = "{f["coerce"]}"')
     if f.get("coerce_str_fn"):
         parts.append(f'coerce_str_fn = "{f["coerce_str_fn"]}"')
+    # gh-1711: an owned-pointer field. Dropped, the next save would turn it
+    # back into a scalar of a pointer type, which the renderer refuses.
+    for _k in _COMPOSER_OWNED_PTR_KEYS:
+        if f.get(_k):
+            parts.append(f'{_k} = "{f[_k]}"')
     if f.get("doc"):
         parts.append(f"doc = {_toml_scalar(str(f['doc']))}")
     return "{ " + ", ".join(parts) + " }"

@@ -77,8 +77,10 @@ class TestAComposerFieldSaysWhichKeyIsWrong:
         # the gh-1227 principle. A message that only said "no `type`" would
         # send them to add one to a field that should not exist.
         assert "object" in msg
-        assert "init_param key" in msg
-        assert "gh-1235" in msg
+        # gh-1711: `object` IS a source-field key now, as an owned pointer,
+        # so the refusal names what that shape also needs.
+        assert "owned pointer" in msg
+        assert "copy_fn, free_fn, parse_fn, format_fn" in msg
 
     def test_it_is_not_a_keyerror(self) -> None:
         """The literal regression. `KeyError: 'type'` is not a ValueError, so

@@ -389,7 +389,9 @@ def _echoed(cfg: dict) -> "dict[str, set[str]]":
     """``{header: names}`` for the rendered headers that declare a function
     only because an author-named key spells it: a composer's seam header
     (``_composer.bridge_h``) and its ``bridge_fn`` / ``bridge_error_fn`` /
-    computed ``fn`` / field ``coerce_str_fn`` (``_composer.seam_fns``).
+    computed ``fn`` / field ``coerce_str_fn`` / owned-pointer
+    ``copy_fn``, ``free_fn``, ``parse_fn``, ``format_fn``
+    (``_composer.seam_fns``).
     Paths are relative to the header root.
 
     jm derives none of those names, so a prefixed one -- ``bridge_fn =
@@ -1334,6 +1336,10 @@ AUTHOR_NAMED_KEYS = (
     "bridge_fn",
     "bridge_error_fn",
     "coerce_str_fn",
+    "copy_fn",
+    "free_fn",
+    "parse_fn",
+    "format_fn",
     "from_file_fn",
     "from_json_fn",
     "to_json_fn",
