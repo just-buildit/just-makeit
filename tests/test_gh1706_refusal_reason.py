@@ -243,7 +243,10 @@ def test_the_manifest_writer_keeps_the_keys():
     """``_dump`` is the writer ``jm split-objects`` and a new manifest go
     through; its function block was hand-enumerated and wrote neither
     ``check_return`` nor ``why``, so the refusal handling vanished."""
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib
 
     from just_makeit import _config as C
 
