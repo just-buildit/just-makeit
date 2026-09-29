@@ -23,6 +23,12 @@ mechanically trivial and the warning already states it — but `check_return` ->
 schema migration moves jm-owned structure; silently editing a *declaration*
 changes what the project says its own API does, and a migration that quietly
 alters runtime behaviour is worse than one that refuses.
+
+**Correction, gh-1702.** The refusal quoted above was never the key: it was
+`error` left with nothing to raise on, and `_config.load` refuses that in
+`upgrade` as well. A key alone -- `check_return` included -- is advisory, and
+`apply` exits 0. So `upgrade` reports it as unread and advisory, not as "Not
+up to date".
 """
 
 from __future__ import annotations
@@ -69,9 +75,11 @@ def test_a_stale_key_is_not_called_up_to_date(tmp_path):
     out = _upgrade_out(_project(tmp_path / "p", stale=True))
     assert "already up to date" not in out, (
         "upgrade still claims the manifest is ready while carrying a key "
-        f"`apply` will refuse:\n{out}"
+        f"`apply` does not act on:\n{out}"
     )
-    assert "Not up to date" in out, out
+    # gh-1702: but not "Not up to date" either -- `apply` accepts the key and
+    # exits 0, so that claim was false. The key is reported as advisory.
+    assert "Not up to date" not in out, out
 
 
 def test_it_names_the_key_and_the_replacement(tmp_path):
@@ -88,9 +96,14 @@ def test_it_points_at_apply(tmp_path):
 
     That connection is the whole gap: the warning and the refusal were printed
     by different commands, and nothing said they were the same problem.
+
+    gh-1702: what it says about `apply` must be what `apply` does, which for
+    a key it does not read is warn and exit 0 -- not "will refuse".
+    `tests/test_gh1702_upgrade_unknown_key_verdict.py` runs both commands.
     """
     out = _upgrade_out(_project(tmp_path / "p", stale=True))
-    assert "apply" in out and "refuse" in out, out
+    assert "apply" in out and "exits 0" in out, out
+    assert "will refuse" not in out, out
 
 
 def test_it_does_not_rewrite_the_manifest(tmp_path):
