@@ -1119,6 +1119,7 @@ capability is ~free unless keywords are actually used — see
 | `--param name:enum:<ename>[=d]` | String-choice parameter validated against the named `[[enum]]` SSOT; C receives the `int` index; optional default `d` is the string value (gh-353).                                                                                                                                                                                               |
 | `--return-type TYPE`            | C return type (default: `void`).                                                                                                                                                                                                                                                                                                                  |
 | `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                                                                                                                                                                                                     |
+| `--why`                         | Manifest `why = true`. The C function takes a trailing `const char **why`, and a refusal raises the sentence it writes there as `ValueError`; with none written the `--check-return` error is unchanged. Requires `--check-return` (gh-1706).                                                                                                     |
 | `--out-type TYPE`               | Allocate a 1-D output array of this element type per call and append `out` last to the C call.                                                                                                                                                                                                                                                    |
 | `--variable-output`             | With `--out-type`: the function allocates its own 1-D output rather than returning a scalar — no caller buffer and no cached instance buffer. `out` is appended **last** to the C call, and the binding returns the ndarray (gh-335). A `size_t`-returning function is trimmed to the count it reports; a `void` one returns the full allocation. |
 | `--out-size EXPR`               | Length of that output, as a **verbatim C expression** over the function's own arguments — including each array param's generated `<name>_len` (e.g. `x_len * factor`, or a call like `wfm_rrc_ntaps(sps, span)`). Omit it and the length falls back to the first array parameter's length.                                                        |
@@ -1251,6 +1252,36 @@ enum args.
 from my_pkg import img
 img.convert_image("input.png", dst_cs="lab")   # → None, or raises RuntimeError
 ```
+
+**`--why`** (manifest `why = true`) carries the C function's own reason into
+the exception (gh-1706). jm appends `const char **why` as the **last** C
+parameter, after `out` and everything else it adds, and the binding passes
+the address of a local initialised to `NULL`. On a refusal -- a non-zero
+status, or a zero count from a `--variable-output` function -- the exception
+is `ValueError(<what the function wrote>)`; a refusal that writes nothing
+keeps the `--check-return` text. The parameter is invisible from Python: it
+is in neither the signature nor the `.pyi`. The sentence should be a static
+string, since jm reads it after the call returns and never frees it.
+
+```c
+int
+parse_rate(const char *spec, const char **why)
+{
+    if (!*spec) {
+        if (why) *why = "RATE must not be empty";
+        return -1;
+    }
+    return 0;
+}
+```
+
+```python
+img.parse_rate("")   # ValueError: RATE must not be empty
+```
+
+A composer's delegated JSON reader has the same shape, declared per factory
+as `from_json_why` / `from_file_why` under `[module.X.json]`
+([object-of-objects](../object-of-objects.md#47-json-faces-generated-vs-delegated)).
 
 C stub (`native/src/img/convert_image.c` — yours to implement):
 

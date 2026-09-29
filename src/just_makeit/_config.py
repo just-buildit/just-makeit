@@ -31,6 +31,7 @@ import sys as _sys
 # keys are legal and one saying which get written — is precisely how
 # `capsule` and `header` came to be accepted by the first and dropped by the
 # second. `_keys` imports only `_report`, so this is not a cycle.
+from ._keys import FUNCTION_KEYS as _FUNCTION_KEYS
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
@@ -6596,6 +6597,10 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         for k in ("to_json_fn", "from_json_fn", "from_file_fn"):
             if js.get(k):
                 out.append(f'{k} = "{js[k]}"')
+        # gh-1706: the reason-naming factory signature, per factory.
+        for k in ("from_json_why", "from_file_why"):
+            if js.get(k):
+                out.append(f"{k} = true")
         if js.get("to_json_trailing"):
             out.append(
                 "to_json_trailing = ["
@@ -6992,6 +6997,7 @@ def _dump(cfg: dict) -> str:
         lines.append("")
         for fn in data.get("functions", []):
             lines.append(f"[[module.{_module_key(mod)}.functions]]")
+            fn_start = len(lines)
             # gh-1153: through the shared writers, not raw interpolation.
             # gh-844 collapsed four hand-rolled escapers into one and wired
             # the object, method and property `doc` paths through it; this
@@ -7047,6 +7053,24 @@ def _dump(cfg: dict) -> str:
                 lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
                 lines.append("inline = true")
+            # gh-1706: every accepted function key the branches above do not
+            # write, derived from `_keys.FUNCTION_KEYS` the way gh-1229 derives
+            # a module's. The hand-written list had silently lost
+            # `check_return` (gh-363), `impl*` and `replace`, and would have
+            # lost `why` too -- `jm split-objects` rewrites the manifest
+            # through here, so a function's refusal handling vanished.
+            written = {
+                m.group(1)
+                for m in (
+                    _re.match(r"(\w+) = ", ln) for ln in lines[fn_start:]
+                )
+                if m
+            }
+            lines += [
+                f"{k} = {_toml_value(fn[k])}"
+                for k in sorted(_FUNCTION_KEYS - written)
+                if fn.get(k)
+            ]
             lines.append("")
 
         # gh-286/gh-287: capsule + composer sub-tables — create params,

@@ -66,6 +66,7 @@ def _write_function_c(
     max_results_param: str = "",
     variable_output: bool = False,
     impl_body: str | None = None,
+    why: bool = False,
     *,
     c_name: str,
 ) -> None:
@@ -82,6 +83,7 @@ def _write_function_c(
         result_fields=result_fields,
         max_results_param=max_results_param,
         variable_output=variable_output,
+        why=why,
     )
     if impl_body is not None:
         from . import _impl as I
@@ -109,6 +111,7 @@ def _inject_into_core_h(
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
     variable_output: bool = False,
+    why: bool = False,
     *,
     c_name: str,
     csym: str,
@@ -121,6 +124,7 @@ def _inject_into_core_h(
         result_fields=result_fields,
         max_results_param=max_results_param,
         variable_output=variable_output,
+        why=why,
     )
     existing = path.read_text(encoding="utf-8")
     # Inject inside the extern "C" block so the declaration has C linkage in
@@ -144,6 +148,7 @@ def _inject_inline_into_core_h(
     params: list[FnParam],
     return_type: str,
     cname: str,
+    why: bool = False,
     *,
     c_name: str,
     csym: str,
@@ -154,7 +159,7 @@ def _inject_inline_into_core_h(
     every translation unit that includes it sees the body and the compiler can
     inline at call sites.  No entry is written to ``_core.c``.
     """
-    stub = T.fn_c_inline_stub(c_name, params, return_type)
+    stub = T.fn_c_inline_stub(c_name, params, return_type, why=why)
     existing = path.read_text(encoding="utf-8")
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
@@ -201,6 +206,7 @@ def run(
     out_size: str = "",
     inline: bool = False,
     check_return: bool = False,
+    why: bool = False,
 ) -> None:
     C.require_name(fn_name, "function")
     # gh-1064: the same two rules as `jm method`. This face accepts
@@ -243,6 +249,24 @@ def run(
         params,
         outbuf=bool(variable_output or out_type),
     )
+
+    # gh-1706: `why` appends a C parameter named `why`, so a declared param
+    # of that name would be a duplicate in the prototype; and the reason is
+    # raised only by a check_return refusal, so without one it is read by
+    # nobody. Both refused here, before any C is written.
+    if why:
+        _why_err = ""
+        if any(p[0] == "why" for p in params or []):
+            _why_err = (
+                f"function '{fn_name}' declares why = true and a parameter "
+                "named `why`; jm appends `const char **why` itself. Rename "
+                "the parameter."
+            )
+        elif not check_return or result_fields:
+            _why_err = T._why_unreadable(fn_name)
+        if _why_err:
+            print(f"error: {_why_err}", file=sys.stderr)
+            sys.exit(1)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -357,6 +381,7 @@ def run(
             params,
             return_type,
             cname,
+            why=why,
             c_name=c_name,
             csym=csym,
         )
@@ -373,6 +398,7 @@ def run(
             result_fields=result_fields,
             max_results_param=max_results_param,
             variable_output=variable_output,
+            why=why,
         )
         if impl_body is not None:
             from . import _impl as I
@@ -391,6 +417,7 @@ def run(
             result_fields=result_fields,
             max_results_param=max_results_param,
             variable_output=variable_output,
+            why=why,
             c_name=c_name,
             csym=csym,
         )
@@ -407,6 +434,7 @@ def run(
             max_results_param=max_results_param,
             variable_output=variable_output,
             impl_body=impl_body,
+            why=why,
             c_name=c_name,
         )
 
@@ -421,6 +449,7 @@ def run(
             result_fields=result_fields,
             max_results_param=max_results_param,
             variable_output=variable_output,
+            why=why,
             c_name=c_name,
             csym=csym,
         )
@@ -477,6 +506,8 @@ def run(
         fn_entry["inline"] = True
     if check_return:
         fn_entry["check_return"] = True
+    if why:
+        fn_entry["why"] = True
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

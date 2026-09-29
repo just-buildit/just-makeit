@@ -39,6 +39,7 @@ here stay pure glue: no sacred file is touched by either.
 from __future__ import annotations
 
 import re
+import textwrap
 
 from .. import _csym as CSYM
 
@@ -239,6 +240,68 @@ def empty_raise_c(
         f"PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, indent)});\n"
         f"        return NULL;\n"
+    )
+
+
+#: The local a refusal's reason lands in, when jm passes its address to a C
+#: function declared with a trailing ``const char **why`` (gh-1706).
+WHY_LOCAL = "_why"
+
+#: The declaration of `WHY_LOCAL`, ahead of the call that fills it. NULL is
+#: the C side's "no reason": a function that refuses without saying why, or
+#: one that succeeds, leaves it untouched.
+WHY_DECL = f"const char *{WHY_LOCAL} = NULL;"
+
+
+def reason_raise_c(fallback: str, why: str = "", indent: int = 8) -> str:
+    """The raise for a C refusal that may carry its reason (gh-1706).
+
+    The one emitter for "raise the C function's own sentence when it gave
+    one, and jm's generic text when it did not". Every generated call site
+    that turns a C refusal into an exception and can know why goes through
+    here: a module function declared ``why = true`` (its status and its
+    zero-count refusal), a composer's JSON factory under ``from_json_why`` /
+    ``from_file_why``, and the composer bridge's ``bridge_error_fn``
+    (gh-1307), which had the only copy before this and is the precedent for
+    the category: a reason names a refused INPUT, so it is raised as
+    ``ValueError`` -- the class gh-482 gave a refused ``create()``. With no
+    reason the site's own generic raise is unchanged, so a refusal with
+    nothing to say still reads the way it always did.
+
+    Two copies of this is the peer drift jm keeps finding: a fix to the
+    message or the category reaching one call site and not the other.
+
+    Parameters
+    ----------
+    fallback : str
+        The site's generic raise statement, unindented, newline-terminated.
+        Continuation lines keep their indentation relative to the first.
+    why : str, optional
+        The C expression holding the reason -- a ``const char *`` that is
+        NULL when the function gave none. Empty means the site has no reason
+        to carry, and *fallback* is returned alone, byte-identical to what
+        the site emitted before gh-1706.
+    indent : int, optional
+        Column of the ``if``, or of *fallback* when there is no *why*.
+
+    Examples
+    --------
+    >>> fb = 'PyErr_SetString(PyExc_OSError, "f failed");\\n'
+    >>> print(reason_raise_c(fb, indent=4), end="")
+        PyErr_SetString(PyExc_OSError, "f failed");
+    >>> print(reason_raise_c(fb, "_why", indent=4), end="")
+        if (_why)
+            PyErr_SetString(PyExc_ValueError, _why);
+        else
+            PyErr_SetString(PyExc_OSError, "f failed");
+    """
+    pad = " " * indent
+    if not why:
+        return textwrap.indent(fallback, pad)
+    return (
+        f"{pad}if ({why})\n"
+        f"{pad}    PyErr_SetString(PyExc_ValueError, {why});\n"
+        f"{pad}else\n" + textwrap.indent(fallback, pad + "    ")
     )
 
 

@@ -41,6 +41,7 @@ def run(args: list[str]) -> None:
     fn_out_type: str = ""
     fn_variable_output = False
     fn_check_return = False
+    fn_why = False
     fn_out_size: str = ""
     fn_result_fields: list[dict] = []
     impl_spec_f: str | None = None
@@ -206,6 +207,11 @@ def run(args: list[str]) -> None:
             # module-function analog of the handle generator's close_returns.
             fn_check_return = True
             i += 1
+        elif tok == "--why":
+            # gh-1706: the C fn takes a trailing `const char **why`; the
+            # binding passes `&_why` and a refusal raises what it wrote.
+            fn_why = True
+            i += 1
         elif tok == "--out-size":
             i += 1
             if i >= len(remaining):
@@ -341,4 +347,5 @@ def run(args: list[str]) -> None:
         variable_output=fn_variable_output,
         out_size=fn_out_size,
         check_return=fn_check_return,
+        why=fn_why,
     )

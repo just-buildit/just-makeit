@@ -29,6 +29,7 @@ from . import _types as T
 from . import _record
 from . import _incpath as INC
 from . import _csym as CSYM
+from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -247,8 +248,12 @@ def module_fn_smoke_calls(
                 f" buffer jm cannot synthesise; call it here. */"
             )
         elif all(z is not None for z in zeros):
+            # gh-1706: a `why = true` function's trailing `const char **why`
+            # is jm's, not a manifest param, so it gets NULL -- "no reason
+            # wanted", which the out-param convention allows.
+            args = zeros + (["NULL"] if fn.get("why") else [])
             lines.append(f"    /* {name}: verify it runs without crashing */")
-            lines.append(f"    (void){name}({', '.join(zeros)});")
+            lines.append(f"    (void){name}({', '.join(args)});")
         else:
             lines.append(
                 f"    /* TODO: {name}(...) takes a non-scalar argument jm"
@@ -952,8 +957,13 @@ def fn_c_decl(
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
     variable_output: bool = False,
+    why: bool = False,
 ) -> str:
     """One-line C declaration: 'return_type fn_name(c_params);'
+
+    why: when set (gh-1706), a trailing ``const char **why`` is appended LAST,
+    after every parameter jm adds itself -- the out-param a function uses to
+    name the reason it refused, which the binding raises.
 
     out_type: if set, inserts '{out_type} *out' after array params and
     forces the return type to void (output is returned via the pointer).
@@ -977,6 +987,7 @@ def fn_c_decl(
         c_parts = list(c_parts) + [f"{rt_disp} *result"]
         if not max_results_param:
             c_parts.append("size_t max_results")
+        c_parts += _why_c_params(why)
         return f"size_t {fn_name}({c_param_list(c_parts)});\n"
     if out_type:
         arr_p = [p for p in params if is_array_param_type(p[1])]
@@ -1004,11 +1015,38 @@ def fn_c_decl(
             c_parts.append(_scalar_c_param(p))
         if variable_output:
             c_parts.append(f"{out_disp} *out")
+        c_parts += _why_c_params(why)
         _decl_ret = _out_fn_return_disp(return_type, variable_output)
         return f"{_decl_ret} {fn_name}({c_param_list(c_parts)});\n"
     ret_disp = return_type
     c_parts, _ = _fn_c_params(params)
+    c_parts += _why_c_params(why)
     return f"{ret_disp} {fn_name}({c_param_list(c_parts)});\n"
+
+
+#: The trailing C parameter a ``why = true`` function takes (gh-1706). LAST,
+#: after `out` and every other parameter jm appends, because that is where a
+#: C API puts the optional out-param that names a refusal
+#: (``f(spec, out, max, &why)``), and one fixed place is what lets the
+#: prototype, the stub and the binding's call agree without a position key.
+WHY_C_PARAM = "const char **why"
+
+
+def _why_c_params(why: bool) -> "list[str]":
+    """``[WHY_C_PARAM]`` for a ``why = true`` function, else ``[]``."""
+    return [WHY_C_PARAM] if why else []
+
+
+def _with_why(
+    c_parts: "list[str]", suppress: str, why: bool
+) -> "tuple[list[str], str]":
+    """*c_parts* and the stub's ``(void)`` line, with the ``why`` param."""
+    if not why:
+        return c_parts, suppress
+    return (
+        list(c_parts) + [WHY_C_PARAM],
+        f"{suppress} (void)why;" if suppress else "    (void)why;",
+    )
 
 
 #: The C return type an `out_type` function is DECLARED with.
@@ -1037,6 +1075,7 @@ def fn_c_inline_stub(
     fn_name: str,
     params: list[tuple],
     return_type: str,
+    why: bool = False,
 ) -> str:
     """C body stub for embedding in ``_core.h`` as ``static inline``.
 
@@ -1074,6 +1113,7 @@ def fn_c_inline_stub(
     ret_disp = return_type
     ret_meta = _CTYPE_META.get(return_type)
     c_parts, suppress = _fn_c_params(params)
+    c_parts, suppress = _with_why(c_parts, suppress, why)
     c_ret_line = (
         f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
         if ret_meta
@@ -1158,11 +1198,13 @@ def fn_c_stub(
     result_fields: list[dict] | None = None,
     max_results_param: str = "",
     variable_output: bool = False,
+    why: bool = False,
 ) -> str:
     """C implementation stub for <module>_core.c (public, no _impl suffix).
 
-    out_type, variable_output, and result_fields extend the signature in the
-    same way as fn_c_decl; see that function's docstring for the semantics.
+    out_type, variable_output, result_fields and why extend the signature in
+    the same way as fn_c_decl; see that function's docstring for the
+    semantics.
     """
     result_fields = result_fields or []
     if result_fields:
@@ -1176,6 +1218,9 @@ def fn_c_stub(
         suppress_extra = " (void)result;"
         if not max_results_param:
             suppress_extra += " (void)max_results;"
+        if why:
+            c_parts.append(WHY_C_PARAM)
+            suppress_extra += " (void)why;"
         suppress_line = (
             (suppress + suppress_extra)
             if suppress
@@ -1220,6 +1265,9 @@ def fn_c_stub(
         if variable_output:
             c_parts.append(f"{out_disp} *out")
             suppress_parts.append("(void)out;")
+        if why:
+            c_parts.append(WHY_C_PARAM)
+            suppress_parts.append("(void)why;")
         suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
         _stub_ret = _out_fn_return_disp(return_type, variable_output)
         _stub_zero = _CTYPE_META.get(return_type, {}).get("zero")
@@ -1240,6 +1288,7 @@ def fn_c_stub(
     ret_disp = return_type
     ret_meta = _CTYPE_META.get(return_type)
     c_parts, suppress = _fn_c_params(params)
+    c_parts, suppress = _with_why(c_parts, suppress, why)
     c_ret_line = (
         f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
         if ret_meta
@@ -1520,7 +1569,7 @@ def _build_params_parse(
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 
-def _count_refusal(c_name: str, release: str) -> str:
+def _count_refusal(c_name: str, release: str, why: bool = False) -> str:
     """The raise ``check_return`` adds to a self-sizing output (gh-1704).
 
     A function that sizes its own output returns the COUNT it wrote, so the
@@ -1528,16 +1577,53 @@ def _count_refusal(c_name: str, release: str) -> str:
     "refused", because a real output is never empty. Without this the binding
     trimmed the allocation to zero and returned it -- a refusal that reads as a
     valid, empty result. Same exception and wording shape as the status form
-    (gh-363), so one key raises one way.
+    (gh-363), so one key raises one way -- and, under ``why = true``, the
+    same reason carriage (gh-1706).
     """
     return (
         "    if (_n == 0) {\n"
         f"        {release}\n"
-        "        PyErr_SetString(PyExc_RuntimeError,\n"
-        f'            "{c_name} failed (returned 0)");\n'
-        "        return NULL;\n"
+        + reason_raise_c(
+            "PyErr_SetString(PyExc_RuntimeError,\n"
+            f'    "{c_name} failed (returned 0)");\n',
+            WHY_LOCAL if why else "",
+        )
+        + "        return NULL;\n"
         "    }\n"
     )
+
+
+def _why_unreadable(fn_name: str) -> str:
+    """Why ``why = true`` is refused without a refusal to carry (gh-1706).
+
+    The reason is read only where the binding raises, and only
+    ``check_return`` makes it raise. Accepted anywhere else the key would be
+    passed to C and read by nobody -- gh-1232's silent key, again.
+    """
+    return (
+        f"function '{fn_name}' declares why = true, but nothing in its "
+        "binding raises.\n"
+        "  The reason a C function writes to `const char **why` is raised "
+        "when it\n"
+        "  refuses, and only check_return makes the binding raise: a "
+        "non-zero status,\n"
+        "  or a zero count from a variable_output function. Add "
+        "check_return = true,\n"
+        "  or drop why."
+    )
+
+
+def _why_decl(why: bool) -> str:
+    """The ``_why`` local's declaration line, ahead of the call (gh-1706)."""
+    return f"    {WHY_DECL}\n" if why else ""
+
+
+def _why_call_arg(why: bool) -> str:
+    """The trailing ``&_why`` argument, after every other one (gh-1706).
+
+    Appended LAST, matching `WHY_C_PARAM`'s place in the prototype.
+    """
+    return f", &{WHY_LOCAL}" if why else ""
 
 
 def _check_return_unreadable(fn_name: str, return_type: str) -> str:
@@ -1568,6 +1654,9 @@ def _py_wrapper_for_function(
     variable_output: bool = False,
     out_size: str = "",
     check_return: bool = False,
+    # gh-1706: the C function takes a trailing `const char **why`, and a
+    # refusal raises the sentence it wrote there.
+    why: bool = False,
     # gh-1026: the `[[enum]]` registry, so a bad choice can be refused by
     # NAMING the choices — the wording a method parameter for the same enum
     # has had since gh-1021, and this face had not.
@@ -1593,6 +1682,8 @@ def _py_wrapper_for_function(
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
+    if why and (not check_return or result_fields):
+        raise ValueError(_why_unreadable(fn_name))
 
     if params:
         parse_block, call_args, cleanup = _build_params_parse(params, enums)
@@ -1669,6 +1760,7 @@ def _py_wrapper_for_function(
             )
             len_expr = f"{first_arr}_len" if first_arr else "1"
         _call_with_out = f"{call_args}, _buf" if call_args else "_buf"
+        _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
         # A `void` function cannot say how much it wrote, and NUL-hunting a
         # buffer the callee may not have terminated is a read past the end
@@ -1688,9 +1780,14 @@ def _py_wrapper_for_function(
             f"    size_t _cap = (size_t)({len_expr});\n"
             f"    char *_buf = (char *)malloc(_cap + 1);\n"
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
-            f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
+            + _why_decl(why)
+            + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
             f"{cleanup}"
-            + (_count_refusal(c_name, "free(_buf);") if check_return else "")
+            + (
+                _count_refusal(c_name, "free(_buf);", why)
+                if check_return
+                else ""
+            )
             + "    if (_n > _cap) _n = _cap;\n"
             "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
             "(Py_ssize_t)_n);\n"
@@ -1719,6 +1816,7 @@ def _py_wrapper_for_function(
             len_expr = f"{first_arr}_len" if first_arr else "1"
         _out_ptr = f"({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
         _call_with_out = f"{call_args}, {_out_ptr}" if call_args else _out_ptr
+        _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
         _trim = bool(ret_meta) and ret_meta.get("kind") == "int"
         _alloc = (
@@ -1732,10 +1830,11 @@ def _py_wrapper_for_function(
         if _trim:
             ret_line = (
                 _alloc
+                + _why_decl(why)
                 + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
                 + cleanup
                 + (
-                    _count_refusal(c_name, "Py_DECREF(_out);")
+                    _count_refusal(c_name, "Py_DECREF(_out);", why)
                     if check_return
                     else ""
                 )
@@ -1800,15 +1899,24 @@ def _py_wrapper_for_function(
         # NULL/neg sentinel the C fn returns on an open/alloc failure. Capture
         # the rc first, run any array/path cleanup, then check + raise.
         _rt_disp = return_type
+        _args = f"{call_args}, " if call_args else ""
+        _call = (
+            f"{c_name}({_args}&{WHY_LOCAL})"
+            if why
+            else f"{c_name}({call_args})"
+        )
         ret_line = (
-            f"    {_rt_disp} _rc = {c_name}({call_args});\n"
+            _why_decl(why) + f"    {_rt_disp} _rc = {_call};\n"
             f"{cleanup}"
             f"    if (_rc != 0) {{\n"
-            f"        PyErr_Format(PyExc_RuntimeError,\n"
-            f'            "{c_name} failed (rc=%d)", (int)_rc);\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    Py_RETURN_NONE;"
+            + reason_raise_c(
+                "PyErr_Format(PyExc_RuntimeError,\n"
+                f'    "{c_name} failed (rc=%d)", (int)_rc);\n',
+                WHY_LOCAL if why else "",
+            )
+            + "        return NULL;\n"
+            "    }\n"
+            "    Py_RETURN_NONE;"
         )
     elif ret_meta:
         # Everything in `cleanup` releases something the C call is still
@@ -1992,6 +2100,7 @@ def make_functions_ctx(
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
+                why=bool(fn.get("why")),
                 enums=enums,
                 c_name=c_name,
             )

@@ -1023,6 +1023,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
+                # gh-1706: the trailing `const char **why`. Unforwarded, the
+                # replay rendered a prototype without it and a binding that
+                # dropped the reason again.
+                why=bool(fn.get("why")),
             )
 
 
