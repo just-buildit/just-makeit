@@ -758,12 +758,16 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         out_elem, out_npy = _array_elem_npy(returns)
         decls, parse, calls = _scalar_string_argparse(margs)
         call_args = "".join(f", {c}" for c in calls)
+        # gh-1710: `out_len_fn` returns a size_t; cast straight to npy_intp
+        # a value past NPY_MAX_INTP wrapped to a negative dimension.
+        _n_decl = _coerce.output_size_c(
+            "_n", f"{out_len_fn}(self->h)", f"{tname}.{name}"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
 {decls}{parse}{closed_guard}
-    npy_intp _n = (npy_intp){out_len_fn}(self->h);
-    PyObject *arr = PyArray_SimpleNew(1, &_n, {out_npy});
+{_n_decl}    PyObject *arr = PyArray_SimpleNew(1, &_n, {out_npy});
     if (!arr) return NULL;
     {out_elem} *_out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
     size_t _got;

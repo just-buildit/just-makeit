@@ -129,7 +129,7 @@ def test_apply_renders_the_prefixed_expressions(tree):
     root, _before, _refused, _upgraded, applied = tree
     assert applied.returncode == 0, applied.stdout + applied.stderr
     filt = (root / EXT[0]).read_text()
-    assert f"(npy_intp)({P}_ntaps(n) | 1)" in filt, filt
+    assert f"(size_t)({P}_ntaps(n) | 1)" in filt, filt
     lo = (root / EXT[1]).read_text()
     assert f"sizeof({P}_lo_state_t)" in lo, lo
     assert "respelled" not in run_cli("upgrade", cwd=root).stdout

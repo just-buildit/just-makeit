@@ -192,6 +192,7 @@ class TestTheTwoPinShapesShareOneEmitter:
             "8",
             "NPY_FLOAT",
             writeable=False,
+            who="O.get_taps_view",
         )
         assert expected in ext, ext[:400]
 
@@ -223,6 +224,7 @@ class TestTheTwoPinShapesShareOneEmitter:
             "self->handle->n",
             "NPY_COMPLEX64",
             writeable=True,
+            who="Ring.data",
         )
         assert expected in body, body
 
@@ -239,7 +241,7 @@ class TestTheWriteabilityAsymmetryIsDeliberate:
     def test_the_state_view_is_read_only(self, tmp_path):
         root = _every_borrow_shape(tmp_path / "p")
         ext = (root / "native/src/o/o_ext.c").read_text()
-        view = ext[ext.index("O_get_taps_view") :][:600]
+        view = ext[ext.index("O_get_taps_view") :][:1000]
         assert "NPY_ARRAY_WRITEABLE" in view, view
 
     def test_the_buf_field_property_is_writeable(self):
@@ -271,18 +273,18 @@ class TestTheWriteabilityAsymmetryIsDeliberate:
 class TestTheEmitterItself:
     def test_writeable_false_clears_the_flag(self):
         assert "NPY_ARRAY_WRITEABLE" in borrow_view_c(
-            "p", "n", "NPY_FLOAT", writeable=False
+            "p", "n", "NPY_FLOAT", writeable=False, who="w"
         )
 
     def test_writeable_true_does_not(self):
         assert "NPY_ARRAY_WRITEABLE" not in borrow_view_c(
-            "p", "n", "NPY_FLOAT", writeable=True
+            "p", "n", "NPY_FLOAT", writeable=True, who="w"
         )
 
     def test_the_incref_precedes_the_steal(self):
         """`SetBaseObject` steals on success, so the reference must exist
         before the call and be given back on the error path."""
-        body = borrow_view_c("p", "n", "NPY_FLOAT", writeable=True)
+        body = borrow_view_c("p", "n", "NPY_FLOAT", writeable=True, who="w")
         assert body.index("Py_INCREF(self)") < body.index(
             "PyArray_SetBaseObject"
         )
@@ -435,7 +437,12 @@ class TestTheBorrowShape:
         wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
         assert (
             borrow_view_c(
-                "_p", "(n)", "NPY_COMPLEX64", writeable=False, arr="_view"
+                "_p",
+                "(n)",
+                "NPY_COMPLEX64",
+                writeable=False,
+                who="Ring.wait",
+                arr="_view",
             )
             in wrapper
         ), wrapper

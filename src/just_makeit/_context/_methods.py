@@ -2871,7 +2871,11 @@ def make_methods_ctx(
                     _decref_early_vo,
                     pass_capacity=bool(pass_capacity),
                 )
-                + "    npy_intp _adim = (npy_intp)_cap;\n"
+                # gh-1710: `_cap` is `max_out()`'s size_t; past NPY_MAX_INTP
+                # it wrapped to a negative dimension.
+                + _coerce.output_size_c(
+                    "_adim", "_cap", f"{Component}.{name}", _decref_early_vo
+                )
                 + "".join(
                     (
                         # gh-788: the structured output. `_get_dtype()` hands
@@ -3631,6 +3635,7 @@ def make_methods_ctx(
                         _borrow_np_enum,
                         descr_fn=_borrow_descr_fn,
                         writeable=borrow_writeable,
+                        who=f"{Component}.{name}",
                         arr="_view",
                         indent="    ",
                     )
@@ -3744,11 +3749,17 @@ def make_methods_ctx(
                 else:
                     len_expr = raw_len
                 cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
+                # gh-1710: the fallback length is the caller's int, which an
+                # unsigned param parses without a range check.
                 ret_body = (
-                    f"    npy_intp _dims[] ="
-                    f" {{(npy_intp){len_expr}}};\n"
-                    f"    PyObject *_out ="
-                    f" PyArray_EMPTY(1, _dims, {out_npy}, 0);\n"
+                    _coerce.output_size_c(
+                        "_dim",
+                        len_expr,
+                        f"{Component}.{name}",
+                        cleanup_inline,
+                    )
+                    + f"    PyObject *_out ="
+                    f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
                     f"    if (!_out)"
                     f" {{{cleanup_inline} return NULL; }}\n"
                     f"    {c_fn}({call_args_c},"
@@ -4635,6 +4646,7 @@ def make_properties_ctx(
                     f"self->handle->{len_field}",
                     _np_enum,
                     writeable=True,
+                    who=f"{Component}.{pname}",
                 )
                 + "\n}"
             )

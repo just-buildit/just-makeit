@@ -71,7 +71,7 @@ samples; the kernel cannot know, so it must not decide.
 Every array-returning binding allocates its result from NumPy, per call:
 
 ```c
-npy_intp _adim = (npy_intp)_cap;
+npy_intp _adim = (npy_intp)_cap;  /* after an OverflowError check, gh-1710 */
 PyObject *arr0 = PyArray_SimpleNew(1, &_adim, NPY_COMPLEX64);
 R *_d0 = (R *)PyArray_DATA((PyArrayObject *)arr0);
 size_t n_out = <pkg>_comp_verb(self->handle, ..., _d0);

@@ -207,10 +207,10 @@ class TestTheFallbackFailsLoudly:
         from just_makeit._context._parse import borrow_view_c
 
         with pytest.raises(ValueError):
-            borrow_view_c("p", "n", writeable=False)  # neither
+            borrow_view_c("p", "n", writeable=False, who="w")  # neither
         with pytest.raises(ValueError):
             borrow_view_c(
-                "p", "n", "NPY_INT16", descr_fn="f", writeable=False
+                "p", "n", "NPY_INT16", descr_fn="f", writeable=False, who="w"
             )  # both
 
 

@@ -988,7 +988,7 @@ class TestOutTypeScalarParam:
         ext = (scalar_sized / "native/src/resample/resample_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "(npy_intp)M" in ext
+        assert "(size_t)(M)" in ext
 
     def test_binding_allocates_double_array(self, scalar_sized):
         ext = (scalar_sized / "native/src/resample/resample_ext.c").read_text(
@@ -1086,7 +1086,7 @@ class TestVariableOutputFunction:
             }
         )
         # length from the out_size expr; allocate; out appended LAST; full return.
-        assert "npy_intp _dim = (npy_intp)(rrc_ntaps(sps, span));" in w
+        assert "size_t _dim_need = (size_t)(rrc_ntaps(sps, span));" in w
         assert "PyArray_EMPTY(1, &_dim, NPY_FLOAT, 0)" in w
         assert (
             "rrc_taps(beta, sps, span, "
@@ -1111,7 +1111,7 @@ class TestVariableOutputFunction:
         )
         # input array marshaled; out_size uses its `_len`; cleanup before return.
         assert "size_t x_len = (size_t)PyArray_SIZE(x_arr);" in w
-        assert "npy_intp _dim = (npy_intp)(x_len * factor);" in w
+        assert "size_t _dim_need = (size_t)(x_len * factor);" in w
         assert (
             "upsample(x, x_len, factor, "
             "(float *)PyArray_DATA((PyArrayObject *)_out));" in w

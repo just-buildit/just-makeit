@@ -175,7 +175,9 @@ class TestAMessageCanNameTheNumbers:
         assert 'PyErr_SetString(PyExc_EOFError,\n        "end of stream")' in (
             body
         )
-        assert "PyErr_Format" not in body
+        # Scoped to the status raise: gh-1710's size guard in the same
+        # wrapper is a PyErr_Format(PyExc_OverflowError, ...) of its own.
+        assert "PyErr_Format(PyExc_EOFError" not in body
 
     def test_author_percent_is_escaped(self, tmp_path):
         """ "100% full" must print as itself, not eat a vararg."""

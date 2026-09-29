@@ -115,14 +115,14 @@ def test_decl_stub_binding_agree_out_last(tmp_path):
     )
     assert "rrc_taps(double beta, int sps, int span, float *out)" in stub
     ext = _ext_c(root)
-    assert "npy_intp _dim = (npy_intp)(2 * sps * span + 1);" in ext
+    assert "size_t _dim_need = (size_t)(2 * sps * span + 1);" in ext
     assert (
         "rrc_taps(beta, sps, span, (float *)PyArray_DATA"
         "((PyArrayObject *)_out));" in ext
     )
     # Two-array case: out_size used verbatim (not collapsed to syms_len), out
     # appended after both arrays AND the scalar.
-    assert "npy_intp _dim = (npy_intp)(syms_len * sf);" in ext
+    assert "size_t _dim_need = (size_t)(syms_len * sf);" in ext
     assert (
         "const float _Complex *syms, size_t syms_len, "
         "const int8_t *code, size_t code_len, int sf, float _Complex *out"
@@ -143,13 +143,13 @@ def test_apply_preserves_self_sizing_output(tmp_path):
     _silent(apply_run, root)
 
     ext = _ext_c(root)
-    assert "npy_intp _dim = (npy_intp)(2 * sps * span + 1);" in ext
+    assert "size_t _dim_need = (size_t)(2 * sps * span + 1);" in ext
     assert (
         "rrc_taps(beta, sps, span, (float *)PyArray_DATA"
         "((PyArrayObject *)_out));" in ext
     )
     # The buggy path would have emitted these — assert they are gone.
-    assert "npy_intp _dim = (npy_intp)1;" not in ext
+    assert "size_t _dim_need = (size_t)(1);" not in ext
     assert "rrc_taps((float *)PyArray_DATA" not in ext
     # Decl regenerated with out last.
     assert (

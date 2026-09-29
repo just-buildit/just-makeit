@@ -632,3 +632,89 @@ def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     return (
         f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var}){divisor};"
     )
+
+
+def output_size_c(
+    var: str,
+    size_expr: str,
+    who: str,
+    release: str = "",
+    *,
+    ctype: str = "npy_intp",
+    limit: str = "NPY_MAX_INTP",
+    indent: str = "    ",
+) -> str:
+    """Declare ``<ctype> <var>`` from an output SIZE, refusing one too large.
+
+    Every binding that sizes an output from a C expression -- a function's
+    ``out_size``, a method's ``max_out``, a handle's ``out_len_fn``, a
+    borrowed view's count (``_context._parse.borrow_view_c``), or a length
+    the caller passed as an unsigned int -- cast that value straight to
+    ``npy_intp``. A ``size_t`` past ``NPY_MAX_INTP`` wraps negative there, so
+    the caller saw numpy's ``ValueError: negative dimensions are not
+    allowed``, which names neither the call nor the size (gh-1710). CPython
+    raises ``OverflowError`` for the same condition (``bytearray(2**63)``),
+    so this does too. Two sites were worse than a confusing message: the
+    ``str`` output allocates ``malloc(_cap + 1)``, which wraps to
+    ``malloc(0)`` for ``SIZE_MAX``, and a function's list-of-records buffer
+    is ``malloc(_max * sizeof(T))``, whose product wraps to a SHORT buffer
+    for a capacity the callee then fills. Both hand the callee a buffer to
+    overrun, and both are bounded by *limit* before the arithmetic.
+
+    The value is evaluated ONCE into a ``size_t`` (``<var>_need``), compared
+    against *limit*, and only then converted. A negative signed expression
+    becomes a huge ``size_t`` and is refused the same way, which is the
+    right answer: there is no negative length to allocate.
+
+    One emitter for every such site, because this is the pair that drifts: a
+    guard written at one allocation and not its peers is exactly how the
+    ndarray output would be fixed while the ``str`` output kept wrapping.
+
+    Parameters
+    ----------
+    var : str
+        The C local to declare, e.g. ``_dim``.
+    size_expr : str
+        The verbatim C expression giving the element count. It is evaluated
+        exactly once.
+    who : str
+        The Python-facing name the ``OverflowError`` message leads with.
+    release : str
+        C statements that drop what the binding already owns (parsed input
+        arrays), run before the ``return NULL``. Empty when nothing is held.
+    ctype : str
+        The type of *var*: ``npy_intp`` for a numpy dimension, ``size_t`` for
+        a byte count that must still fit a ``Py_ssize_t``.
+    limit : str
+        The largest value *var* may hold, as a C expression. A byte count
+        that is multiplied before allocating passes the quotient, e.g.
+        ``(PY_SSIZE_T_MAX / sizeof(T))``, so the product cannot wrap.
+    indent : str
+        Leading whitespace for each emitted line.
+
+    Examples
+    --------
+    >>> print(output_size_c("_dim", "n * 2", "fb", "Py_DECREF(x_arr);"))
+        size_t _dim_need = (size_t)(n * 2);
+        if (_dim_need > (size_t)NPY_MAX_INTP) {
+            Py_DECREF(x_arr);
+            PyErr_Format(PyExc_OverflowError,
+                "fb: output of %zu elements is too large", _dim_need);
+            return NULL;
+        }
+        npy_intp _dim = (npy_intp)_dim_need;
+    <BLANKLINE>
+    """
+    i = indent
+    need = f"{var}_need"
+    rel = f"{i}    {release.strip()}\n" if release.strip() else ""
+    return (
+        f"{i}size_t {need} = (size_t)({size_expr});\n"
+        f"{i}if ({need} > (size_t){limit}) {{\n"
+        f"{rel}"
+        f"{i}    PyErr_Format(PyExc_OverflowError,\n"
+        f'{i}        "{who}: output of %zu elements is too large", {need});\n'
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+        f"{i}{ctype} {var} = ({ctype}){need};\n"
+    )

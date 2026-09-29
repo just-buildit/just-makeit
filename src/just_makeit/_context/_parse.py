@@ -103,6 +103,7 @@ def borrow_view_c(
     npy_enum: str = "",
     *,
     writeable: bool,
+    who: str,
     descr_fn: str = "",
     arr: str = "arr",
     indent: str = "    ",
@@ -134,8 +135,11 @@ def borrow_view_c(
         C expression for the borrowed pointer — a struct member
         (``self->handle->buf``) or a call that returns one.
     count_expr : str
-        C expression for the element count. Cast to ``npy_intp`` here, so a
-        ``size_t`` field may be passed as written.
+        C expression for the element count, evaluated once. It becomes the
+        ``npy_intp`` dimension through ``_coerce.output_size_c``, so a
+        ``size_t`` field may be passed as written: a count past
+        ``NPY_MAX_INTP`` raises ``OverflowError`` instead of wrapping to a
+        negative dimension (gh-1710).
     npy_enum : str
         The NumPy type enum (``NPY_CFLOAT``, ``NPY_INT16``, …).
     writeable : bool
@@ -144,6 +148,8 @@ def borrow_view_c(
         state's view is read-only, a ``buf_field`` property is not — and that
         difference is load-bearing for their consumers, so it is passed rather
         than assumed. See the asymmetry note in ``docs/memory-ownership.md``.
+    who : str
+        The Python-facing name the ``OverflowError`` message leads with.
     arr : str
         Name for the emitted local, for call sites that already use one.
     indent : str
@@ -160,8 +166,14 @@ def borrow_view_c(
     --------
     >>> print(borrow_view_c(
     ...     "self->handle->buf", "self->handle->n", "NPY_CFLOAT",
-    ...     writeable=False))
-        npy_intp _dim = (npy_intp)self->handle->n;
+    ...     writeable=False, who="Fir.buf"))
+        size_t _dim_need = (size_t)(self->handle->n);
+        if (_dim_need > (size_t)NPY_MAX_INTP) {
+            PyErr_Format(PyExc_OverflowError,
+                "Fir.buf: output of %zu elements is too large", _dim_need);
+            return NULL;
+        }
+        npy_intp _dim = (npy_intp)_dim_need;
         PyObject *arr = PyArray_SimpleNewFromData(
             1, &_dim, NPY_CFLOAT, (void *)(self->handle->buf));
         if (!arr) return NULL;
@@ -213,8 +225,9 @@ def borrow_view_c(
             f"{i}    1, &_dim, {npy_enum}, (void *)({ptr_expr}));\n"
         )
     return (
-        f"{i}npy_intp _dim = (npy_intp){count_expr};\n"
-        f"{make}"
+        # gh-1710: a size_t count past NPY_MAX_INTP wrapped to a negative
+        # dimension here; the shared emitter refuses it first.
+        _coerce.output_size_c("_dim", count_expr, who, indent=i) + f"{make}"
         f"{i}if (!{arr}) return NULL;\n"
         f"{ro}"
         f"{i}Py_INCREF(self);\n"

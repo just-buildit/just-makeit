@@ -3076,6 +3076,7 @@ def make_state_ctx(
                 size,
                 npy_enum,
                 writeable=False,
+                who=f"{Component}.get_{name}_view",
             )
             + "\n}"
         )

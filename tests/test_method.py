@@ -1698,13 +1698,13 @@ class TestOutTypeScalarLength:
         return dest
 
     def test_dims_uses_scalar_param(self, project):
-        """``npy_intp _dims[]`` must reference the scalar param, not ``0``."""
+        """The output size must reference the scalar param, not ``0``."""
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        # The buggy output is `{(npy_intp)0}` — the fix sizes from `n`.
-        assert "(npy_intp)n" in ext
-        assert "(npy_intp)0" not in ext
+        # The buggy output is a zero size, `(size_t)(0)` — the fix sizes from `n`.
+        assert "(size_t)(n)" in ext
+        assert "(size_t)(0)" not in ext
 
 
 class TestMaxOutFlag:
