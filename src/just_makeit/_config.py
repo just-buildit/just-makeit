@@ -598,19 +598,289 @@ def _tk_value(value, _tk):
     AoT explicitly so a newly added ``[[<comp>.warnings]]`` looks like every
     other table array in the file.
     """
-    if (
-        isinstance(value, list)
-        and value
-        and all(isinstance(v, dict) for v in value)
-    ):
+    if _is_rows(value):
         aot = _tk.aot()
         for entry in value:
-            tbl = _tk.table()
-            for k, v in entry.items():
-                tbl[k] = v
-            aot.append(tbl)
+            aot.append(_tk_table(entry, _tk))
         return aot
     return value
+
+
+def _is_rows(value) -> bool:
+    """True for a non-empty list of dicts: a table array, in either layout."""
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(v, dict) for v in value)
+    )
+
+
+def _tk_table(entry: dict, _tk):
+    """One fresh ``[[x]]`` row for *entry*, as `_tk_value` builds them."""
+    tbl = _tk.table()
+    for k, v in entry.items():
+        tbl[k] = v
+    return tbl
+
+
+# -- Comment ownership in a table array (gh-1701) ---------------------------
+#
+# tomlkit files a comment under the table ABOVE it. In
+#
+#     [[obj.methods]]
+#     name = "a"
+#
+#     # why b exists
+#     [[obj.methods]]
+#     name = "b"
+#
+# ``# why b exists`` is the last item of row ``a``'s body, and the comment
+# above the FIRST row is the last item of whatever precedes the array. That
+# is harmless until a row is added, removed or given a new key: delete ``b``
+# and its comment stays behind to describe ``c``; append ``z`` and the text
+# introducing the next section ends up above ``z``; add a key to ``a`` and it
+# lands under ``# why b exists``.
+#
+# So before a table array is edited, every row CLAIMS the comment run that
+# sits directly on its header: the run moves into the row's own
+# ``trivia.indent``, which tomlkit renders immediately before ``[[...]]``.
+# The text is byte-identical, and from then on a comment moves, and is
+# deleted, with the row it describes. The trailing text after the LAST row
+# introduces whatever follows the array, so it is handed on to whichever row
+# is last after the edit.
+
+
+def _container(c):
+    """The Container of a Table, or *c* itself when it is one already."""
+    from tomlkit.items import Table
+
+    return c.value if isinstance(c, Table) else c
+
+
+def _tail(item):
+    """The Container whose trailing items render right after *item*.
+
+    A table's trailing text lives in its own body -- unless the body ends in
+    a sub-table or table array, which then owns it. A table array's is its
+    last row's.
+    """
+    from tomlkit.items import AoT, Table
+
+    if isinstance(item, AoT):
+        return _tail(item.body[-1]) if item.body else None
+    if not isinstance(item, Table):
+        return None
+    body = item.value.body
+    if body and isinstance(body[-1][1], (Table, AoT)):
+        return _tail(body[-1][1])
+    return item.value
+
+
+def _cut_trailing(container, stop: int, comments_only: bool) -> str:
+    """Remove the keyless run ending just before *stop*; return its text.
+
+    With *comments_only*, the run is the comment lines touching *stop*
+    (a blank line ends it): a header's own comment. Otherwise it is every
+    keyless item back to the last key: all the text after a table's values.
+    Removed items become tomlkit ``Null`` in place, so the Container's key
+    index is untouched.
+    """
+    from tomlkit.items import Comment, Null, Whitespace
+
+    body = container.body
+    i = stop
+    while i > 0 and body[i - 1][0] is None:
+        item = body[i - 1][1]
+        if isinstance(item, Null):
+            i -= 1
+            continue
+        if comments_only and not isinstance(item, Comment):
+            break
+        if not isinstance(item, (Comment, Whitespace)):
+            break
+        i -= 1
+    text = "".join(item.as_string() for _, item in body[i:stop])
+    for j in range(i, stop):
+        body[j] = (None, Null())
+    return text
+
+
+def _claim_header_comments(parent, aot) -> None:
+    """Move each row's header comment into that row (see the note above)."""
+    from tomlkit.items import AoT, Table
+
+    for i, row in enumerate(aot.body):
+        if i:
+            owner = _tail(aot.body[i - 1])
+            stop = len(owner.body) if owner is not None else 0
+        else:
+            owner, stop = None, 0
+            body = _container(parent).body
+            at = next((j for j, (_, v) in enumerate(body) if v is aot), None)
+            if at:
+                prev_key, prev = body[at - 1]
+                if prev_key is None:
+                    owner, stop = _container(parent), at
+                elif isinstance(prev, (Table, AoT)):
+                    owner = _tail(prev)
+                    stop = len(owner.body) if owner is not None else 0
+        if owner is not None:
+            text = _cut_trailing(owner, stop, comments_only=True)
+            row.trivia.indent = text + row.trivia.indent
+
+
+def _hand_on_tail(src, dst, _tk) -> None:
+    """Move the text after row *src* (it introduces what follows the array)
+    to the end of row *dst*, and end *src* with the blank line that
+    separates two rows."""
+    owner = _tail(src)
+    text = _cut_trailing(owner, len(owner.body), comments_only=False)
+    dst_owner = _tail(dst)
+    _cut_trailing(dst_owner, len(dst_owner.body), comments_only=False)
+    if text:
+        dst_owner.append(None, _tk.ws(text))
+    owner.append(None, _tk.nl())
+
+
+def _set_key(tbl, key: str, value, _tk) -> None:
+    """Assign a NEW or changed *key* on *tbl*, below the table's own values.
+
+    tomlkit appends a new key at the END of a table's body, and the end of a
+    body is where trailing text lives -- the comment introducing the next
+    table, or the blank line before it -- so the key would render beneath
+    it. A new plain value goes directly after the table's last plain value
+    instead. A sub-table or table array keeps tomlkit's placement: its
+    header must follow every plain value, and a replaced key is already
+    where its author put it.
+    """
+    from tomlkit.items import AoT, Table
+
+    if (
+        key not in tbl
+        and isinstance(tbl, Table)
+        and not _is_rows(value)
+        and not isinstance(value, (dict, Table, AoT))
+    ):
+        body = tbl.value.body
+        plain = [
+            i
+            for i, (k, v) in enumerate(body)
+            if k is not None and not isinstance(v, (Table, AoT))
+        ]
+        if plain and plain[-1] < len(body) - 1:
+            last_key = body[plain[-1]][0]
+            if not last_key.is_dotted():
+                tbl.value._insert_after(last_key, key, _tk.item(value))
+                return
+    tbl[key] = _tk_value(value, _tk)
+
+
+def _row_id(row) -> "str | None":
+    """A row's identity for matching old rows to new: its ``name``."""
+    name = row.get("name")
+    return str(name) if isinstance(name, str) else None
+
+
+def _sync_rows(parent, cur, rows: list, _tk) -> bool:
+    """Update the table array *cur* to *rows* row by row (gh-1701).
+
+    *parent* is the table holding *cur*. Returns False, having changed
+    nothing, when the rows cannot be matched in place (jm reordered them);
+    the caller then re-emits the array whole.
+
+    Rows are matched by ``name`` when every old and new row has a distinct
+    one -- so deleting a method from the middle removes that row, not the
+    last one with its neighbour's text shifted up -- and by position
+    otherwise. A matched row is synced with `_sync`, so its own comments and
+    every unchanged key keep their authored form; an unmatched old row is
+    deleted with its comments, and a new one inserted where it falls.
+    """
+    from tomlkit.items import AoT, InlineTable, Table
+
+    inline = not isinstance(cur, AoT)
+    if inline and any(_is_rows(v) for r in rows for v in r.values()):
+        # An inline table cannot hold a `[[x]]` array: re-emit.
+        return False
+    if not all(isinstance(r, (Table, InlineTable)) for r in cur):
+        return False
+
+    old_ids = [_row_id(r) for r in cur]
+    new_ids = [_row_id(r) for r in rows]
+    keyed = (
+        None not in old_ids
+        and None not in new_ids
+        and len(set(old_ids)) == len(old_ids)
+        and len(set(new_ids)) == len(new_ids)
+    )
+    if keyed:
+        kept_old = [i for i in old_ids if i in set(new_ids)]
+        kept_new = [i for i in new_ids if i in set(old_ids)]
+        if kept_old != kept_new:
+            return False
+        plan = [i if i in set(old_ids) else None for i in new_ids]
+        dropped = [j for j, i in enumerate(old_ids) if i not in set(new_ids)]
+    else:
+        n = min(len(cur), len(rows))
+        plan = [True] * n + [None] * (len(rows) - n)
+        dropped = list(range(n, len(cur)))
+
+    if inline:
+        for j in reversed(dropped):
+            del cur[j]
+        for i, row in enumerate(rows):
+            if plan[i] is None:
+                it = _tk.inline_table()
+                it.update(row)
+                cur.insert(i, it)
+            elif cur[i] != row:
+                _sync(cur[i], row, _tk)
+        return True
+
+    _claim_header_comments(parent, cur)
+    last = cur[len(cur) - 1]
+    for j in reversed(dropped):
+        del cur[j]
+    for i, row in enumerate(rows):
+        if plan[i] is None:
+            fresh = _tk_table(row, _tk)
+            if i < len(cur):
+                fresh.add(_tk.nl())
+                cur.insert(i, fresh)
+            else:
+                cur.append(fresh)
+        elif cur[i] != row:
+            _sync(cur[i], row, _tk)
+    if len(cur) and cur[len(cur) - 1] is not last:
+        # The array ends on a different row now: the text that followed the
+        # old last row introduces the next section, so it follows the new
+        # last row. (A deleted last row's text is still in its body.)
+        _hand_on_tail(last, cur[len(cur) - 1], _tk)
+    return True
+
+
+def _sync_in_place(parent, cur, value, _tk) -> bool:
+    """Sync *value* into *parent*'s existing item *cur* without replacing it.
+
+    True when done. A sub-table recurses through `_sync`, and a table array
+    (``[[x]]`` or an inline ``x = [{...}]``) goes row by row through
+    `_sync_rows`, so only what changed is re-rendered (gh-1701). Anything
+    else -- a scalar, a plain array, a change of shape -- is False, and the
+    caller assigns it.
+    """
+    from tomlkit.items import AoT, Array, InlineTable, Table
+
+    if isinstance(value, dict) and isinstance(cur, (Table, InlineTable)):
+        if isinstance(cur, InlineTable) and any(
+            _is_rows(v) for v in value.values()
+        ):
+            return False
+        _sync(cur, value, _tk)
+        return True
+    if _is_rows(value) and (
+        isinstance(cur, AoT) or (isinstance(cur, Array) and len(cur))
+    ):
+        return _sync_rows(parent, cur, value, _tk)
+    return False
 
 
 def _sync(tbl, new_data: dict, _tk) -> None:
@@ -631,9 +901,15 @@ def _sync(tbl, new_data: dict, _tk) -> None:
     as ``[[acq.depends_on]]``. Same TOML semantics, different file. Comparing
     first means an untouched key keeps exactly the form its author chose.
 
-    (A key whose value genuinely *changes* is still re-emitted in jm's
-    canonical shape. That is the honest trade: jm owns the value, the author
-    owns the layout of values jm did not touch.)
+    A key whose value changes is updated as deeply as it can be (gh-1701):
+    a sub-table recurses, and a table array is synced row by row
+    (`_sync_in_place`). Replacing the whole value re-rendered it from the
+    dict, which deleted every comment inside it and re-laid out every row
+    the change did not touch -- appending one method to each of doppler's
+    objects deleted 422 comment lines across 60 ``objects/*.toml``. Only
+    a leaf that changes, or a value whose shape changes, is re-emitted in
+    jm's canonical form: jm owns the value, the author owns the layout of
+    everything jm did not touch.
 
     tomlkit items compare equal to the plain values they wrap, so this is a
     plain ``==``.
@@ -659,7 +935,9 @@ def _sync(tbl, new_data: dict, _tk) -> None:
         # authored. tomlkit items compare equal to the plain values they wrap.
         if k in tbl and tbl[k] == v:
             continue
-        tbl[k] = _tk_value(v, _tk)
+        if k in tbl and _sync_in_place(tbl, tbl[k], v, _tk):
+            continue
+        _set_key(tbl, k, v, _tk)
     for k in list(tbl.keys()):
         if k not in new_data:
             del tbl[k]
@@ -978,8 +1256,13 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     for comp, data in new_comps.items():
         if not isinstance(data, dict):
             # Not every top-level key is a table: `enum` is a top-level AoT
-            # ([[enum]] name/values), so it is assigned rather than synced.
-            if comp not in doc or doc[comp] != data:
+            # ([[enum]] name/values). It is synced row by row like any other
+            # table array, and assigned whole only when it cannot be.
+            if comp in doc and doc[comp] == data:
+                continue
+            if comp not in doc or not _sync_in_place(
+                doc, doc[comp], data, _tk
+            ):
                 doc[comp] = _tk_value(data, _tk)
             continue
         if comp not in doc:
