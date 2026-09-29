@@ -249,6 +249,12 @@ def load(root: Path) -> dict:
     platform_errors = _modplatforms.errors(cfg)
     if platform_errors:
         _refuse(platform_errors)
+    # gh-1722: a `why` key is a switch, and a function NAME is the natural
+    # wrong guess -- accepted as truthy, it rendered a two-argument call to
+    # a one-argument reader and failed at C compile, far from this line.
+    why_errors = _why_key_errors(cfg)
+    if why_errors:
+        _refuse(why_errors)
     _expand_init_groups(cfg)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
@@ -370,6 +376,51 @@ def expand_template(name: str, spec: dict) -> "tuple[dict, list[str]]":
         comp[TEMPLATE_ORIGIN_KEY] = name
         out[iid] = comp
     return out, errors
+
+
+def _why_key_errors(cfg: dict) -> "list[str]":
+    """Every ``why`` switch given something other than ``true``/``false``.
+
+    ``[module.X.json] from_json_why`` / ``from_file_why`` and a module
+    function's ``why`` each say that an EXISTING function takes a trailing
+    ``const char **why`` (gh-1706). None of them names a function, but a name
+    is what an author reaches for, and a string is truthy: jm accepted it and
+    rendered ``<fn>(json, &_why)`` against a one-argument reader, which failed
+    in the C compiler (gh-1722). Refused here, where the line can be named.
+
+    Examples
+    --------
+    >>> bad = {"module": {"m": {"json": {"from_json_why": "f"}}}}
+    >>> _why_key_errors(bad)[0].split(":")[0]
+    "[module.m.json] from_json_why = 'f' must be true or false"
+    >>> _why_key_errors({"module": {"m": {"functions": [{"name": "g", "why": True}]}}})
+    []
+    """
+    errors: list[str] = []
+    for mid, mod in (cfg.get("module") or {}).items():
+        if not isinstance(mod, dict):
+            continue
+        jtbl = mod.get("json")
+        for face in ("from_json", "from_file"):
+            key = f"{face}_why"
+            if isinstance(jtbl, dict) and key in jtbl:
+                v = jtbl[key]
+                if not isinstance(v, bool):
+                    errors.append(
+                        f"[module.{mid}.json] {key} = {v!r} must be true or "
+                        f"false: it marks {face}_fn as taking a trailing "
+                        f"`const char **why`. Name the function in {face}_fn."
+                    )
+        for fn in mod.get("functions") or []:
+            if isinstance(fn, dict) and "why" in fn:
+                v = fn["why"]
+                if not isinstance(v, bool):
+                    errors.append(
+                        f"[[module.{mid}.functions]] {fn.get('name', '?')}: "
+                        f"why = {v!r} must be true or false: it marks the "
+                        "function as taking a trailing `const char **why`."
+                    )
+    return errors
 
 
 def _refuse(errors: "list[str]") -> None:
