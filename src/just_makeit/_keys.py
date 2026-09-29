@@ -789,6 +789,9 @@ COMPOSER_JSON_KEYS = frozenset(
         # gh-1706: the delegated factories name their refusal.
         "from_json_why",
         "from_file_why",
+        # gh-1725: the generated path's cJSON header and its include dir.
+        "header",
+        "include_dir",
     }
 )
 COMPOSER_CLI_KEYS = frozenset({"enabled", "name"})
