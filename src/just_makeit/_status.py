@@ -490,9 +490,18 @@ def run(
     # gh-442 and gh-1141 above.
     from . import _docstring as _doc_mod
 
+    # gh-1703: and a composer field's `doc` that disagrees with the struct
+    # member the header documents -- the header's text is what renders, so
+    # the manifest's is a second copy nothing keeps equal. Static in the same
+    # way, so it joins the same section rather than opening a new one.
+    from . import _composer as _composer_mod
+
     manifest_doc_entries = [
         d
-        for d in _doc_mod.manifest_docs_with_sections(cfg)
+        for d in (
+            _doc_mod.manifest_docs_with_sections(cfg)
+            + _composer_mod.field_doc_drift(root, cfg)
+        )
         if not _is_allowed(d.where, allow_patterns)
     ]
 
@@ -2041,19 +2050,27 @@ def run(
     if manifest_doc_entries:
         print(
             f"DOC ({len(manifest_doc_entries)}) — manifest `doc` value(s) "
-            "the renderer mangles:"
+            "that do not render as written:"
         )
         for d in manifest_doc_entries:
             print(f"  ! {d.where}: {_doc_mod.manifest_doc_reason(d)}")
-        print(
-            "  jm GENERATES the numpy sections from the manifest, so an "
-            "author-written block\n  does not merge with them — it "
-            "duplicates them. Write the full docstring as\n  Doxygen above "
-            "the declaration in the component's `_core.h` — "
-            "@brief/@param/@return/@code\n  render a complete numpy "
-            "docstring, doctest included, and survive `apply`.\n  See "
-            "gh-1154, and gh-1164 for what each face actually does."
-        )
+        _doc_kinds = {d.kind for d in manifest_doc_entries}
+        if "duplicated" in _doc_kinds:
+            print(
+                "  jm GENERATES the numpy sections from the manifest, so an "
+                "author-written block\n  does not merge with them — it "
+                "duplicates them. Write the full docstring as\n  Doxygen "
+                "above the declaration in the component's `_core.h` — "
+                "@brief/@param/@return/@code\n  render a complete numpy "
+                "docstring, doctest included, and survive `apply`.\n  See "
+                "gh-1154, and gh-1164 for what each face actually does."
+            )
+        if "shadowed" in _doc_kinds:
+            # gh-1703: the remedy is the one `manifest_doc_advice` builds on.
+            print(
+                f"  {_doc_mod.manifest_doc_remedy('shadowed')}.\n"
+                "  See gh-1703."
+            )
         print()
 
     # gh-1142: same treatment. A `DO NOT EDIT` file describing a rendezvous
