@@ -1534,6 +1534,14 @@ def ctor_demo_label(init_params: "list | None" = None) -> str:
     return "Create with defaults:"
 
 
+#: What jm's trailing ``const char **why`` parameter means (gh-1706), for the
+#: ``@param why`` line jm adds to an authored docblock (gh-1722).
+WHY_PARAM_DOC = "Set to a static reason on refusal; may be NULL."
+
+#: The ``const char **why`` parameter as jm renders it, in any spacing.
+_WHY_DECL_RE = re.compile(r"\bconst\s+char\s*\*\s*\*\s*why\s*[,)]")
+
+
 def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
     """*block* with its ``@param`` set matched to *decl*'s parameters.
 
@@ -1602,6 +1610,17 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
      * @return state.
      */
 
+    jm's own trailing ``why`` arrives documented, since jm defines it:
+
+    >>> print(reconcile_param_docs(
+    ...     "/**\\n * @brief Parse.\\n */",
+    ...     "size_t f(const char *s, const char **why);"))
+    /**
+     * @brief Parse.
+     * @param s
+     * @param why  Set to a static reason on refusal; may be NULL.
+     */
+
     Already correct is left byte-identical, so this is idempotent and a
     freshly scaffolded project does not report drift against itself:
 
@@ -1668,9 +1687,17 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
             max(len(kept) - 1, 0),
         )
 
-    rebuilt = [
-        ln for n in names for ln in existing.get(n, [f"{indent} * @param {n}"])
-    ]
+    # gh-1722: the trailing `const char **why` is jm's parameter, not the
+    # author's (gh-1706), so jm knows what it means and says so; a bare line
+    # left the author to document a contract they did not write.
+    jm_why = bool(_WHY_DECL_RE.search(decl))
+
+    def _bare(n: str) -> str:
+        if n == "why" and jm_why:
+            return f"{indent} * @param why  {WHY_PARAM_DOC}"
+        return f"{indent} * @param {n}"
+
+    rebuilt = [ln for n in names for ln in existing.get(n, [_bare(n)])]
     return "\n".join(kept[:first_idx] + rebuilt + kept[first_idx:])
 
 
