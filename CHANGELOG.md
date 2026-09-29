@@ -1,5 +1,50 @@
 ## [Unreleased]
 
+## [0.93.0] — 2026-09-29
+
+### Added
+
+- **A C refusal's reason reaches the Python exception** (gh-1706). A module
+    function declared `why = true` (`jm function --why`) takes a trailing
+    `const char **why`; the binding passes it, and a `check_return` refusal
+    raises `ValueError(<the reason>)` instead of `RuntimeError: <fn> failed`.
+    A composer's delegated JSON reader does the same when its
+    `[module.X.json]` table sets `from_json_why` / `from_file_why`, so
+    `from_json` / `from_file` name what they refused (a retired key, a
+    malformed field) rather than `<fn> failed`, and the generated C CLI
+    prints it. A refusal that writes no reason keeps the old message. One
+    emitter, `_context._diagnostics.reason_raise_c`, now renders every such
+    raise, including the composer bridge's `bridge_error_fn` (gh-1307). The
+    manifest writer behind `jm split-objects` now derives a module
+    function's keys from the accepted set, so it no longer drops
+    `check_return`, `why`, `impl`, `impl_file` or `replace`.
+
+### Changed
+
+- **A composer field's docstring is its struct member's Doxygen** (gh-1703).
+    A `source.fields` / `segment.fields` row is a member of the struct the
+    composer wraps (`source.struct`, `segment.struct`), so the member's doc in
+    the header (a trailing `/**<` or a `/** */` block above it) is now the
+    field's docstring on both faces, the `.pyi` and the runtime getset doc.
+    The manifest `doc` is the fallback for a member with none. The lookup
+    reads the headers the binding includes, and only the field's own struct:
+    a same-named member of any other struct is never used (gh-1300).
+    Where both exist and disagree, `jm status` reports it in the `DOC`
+    section and `--check` fails, so a tree carrying restated field docs
+    will see one finding per drifted field on upgrade. Delete the manifest
+    `doc`, or move the better sentence onto the member.
+
+### Fixed
+
+- **`jm upgrade` no longer says `apply` will refuse an unknown key**
+    (gh-1702). At a current schema, a manifest key this jm does not read was
+    reported as "Not up to date: `just-makeit apply` will refuse until these
+    are resolved", while `apply` warns on it and exits 0. `upgrade` now lists
+    the key as unread and advisory. A declaration `apply` does refuse, such
+    as `error` left with no `status_return`, is refused by the same manifest
+    load in both commands, with the same message, and a test runs both
+    commands over each shape to hold their verdicts equal.
+
 ## [0.92.3] — 2026-09-28
 
 ### Fixed
