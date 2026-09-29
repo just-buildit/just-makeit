@@ -393,3 +393,65 @@ def test_handle_out_len_fn(big):
     with pytest.raises(OverflowError) as e:
         big.Big(SIZE_MAX).fill()
     assert str(e.value) == f"Big.fill: {TOO_LARGE}"
+
+
+def test_a_fragment_without_the_guard_is_told_what_it_lacks(tmp_path):
+    """An upgrading project's sacred fragment predates the guard.
+
+    The drift report must name the guard, not claim the manifest's result
+    shape now "needs raises": the guard is jm's, and no manifest changed.
+    """
+    from _jmrun import run_cli
+
+    root = tmp_path / "w"
+    root.mkdir()
+    assert run_cli("new", "q", cwd=root).returncode == 0
+    proj = root / "q"
+    assert run_cli("module", "m", cwd=proj).returncode == 0
+    r = run_cli(
+        "object",
+        "r",
+        "--module",
+        "m",
+        "--no-state",
+        "--no-step",
+        "--init-param",
+        "n:size_t:16",
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+    # stale_project's `Fir.shape`: an out_type method sized from its own
+    # argument, whose ONLY raise is the size guard -- so the guard is all
+    # that can put a raise on its result-shape axis.
+    r = run_cli(
+        "method",
+        "r",
+        "shape",
+        "--module",
+        "m",
+        "--arg-type",
+        "float",
+        "--return-type",
+        "float _Complex",
+        "--out-type",
+        "float",
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+    assert run_cli("apply", cwd=proj).returncode == 0
+
+    frag = proj / "native" / "src" / "m" / "m_ext_r.c"
+    src = frag.read_text()
+    # Rendered before gh-1710: every size guard block removed.
+    old, n = re.subn(
+        r"\n[ \t]*if \(_\w+_need > [^\n]*\{\n(?:[^\n]*\n)*?[ \t]*\}(?=\n)",
+        "",
+        src,
+    )
+    assert n, "fixture no longer renders the output-size guard"
+    frag.write_text(old)
+
+    out = (lambda r: r.stdout + r.stderr)(run_cli("apply", cwd=proj))
+    assert "no longer matches" in out, out
+    assert "output-size guard" in out, out
+    assert "needs raises" not in out, out

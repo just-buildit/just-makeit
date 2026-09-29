@@ -1049,6 +1049,16 @@ _OUT_CONTIG_RE = re.compile(
 )
 
 
+#: jm's own output-size guard (gh-1710, `_coerce.output_size_c`): the
+#: ``OverflowError`` it raises for a size past ``NPY_MAX_INTP``. Strings are
+#: masked, so the CALL is the marker. It is jm's guard, not a result shape
+#: the manifest asked for, so it is removed before the raise axis is read:
+#: every fragment rendered before gh-1710 lacks it, and reading it as a
+#: raise told each of them "the manifest's result shape needs raises" for
+#: a manifest nobody changed.
+_OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
+
+
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
 
@@ -1105,6 +1115,14 @@ _FEATURE_MARKERS = {
         (_OUT_CONTIG_RE,),
         "jm's out= guard tests C-contiguity and this fragment does not, "
         "so a strided out= is filled through a copy and silently ignored",
+    ),
+    # gh-1710: NOT a manifest declaration either -- jm's own guard, which a
+    # fragment rendered before it lacks. Named for its consequence.
+    "output-size": _Feature(
+        (_OUT_SIZE_RE,),
+        "jm's output-size guard refuses a size past NPY_MAX_INTP and this "
+        "fragment does not, so an oversized result wraps to a negative "
+        "dimension",
     ),
 }
 
@@ -1170,7 +1188,9 @@ def _method_return_shapes(text: str) -> dict:
             for label, spellings in _RETURN_SHAPE_MARKERS.items()
             if any(s in code for s in spellings)
         }
-        if _raises(code):
+        # gh-1710: jm's output-size guard is reported on the feature axis,
+        # so it is not also read here as a raise the manifest declared.
+        if _raises(_OUT_SIZE_RE.sub("", code)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)
     return out
