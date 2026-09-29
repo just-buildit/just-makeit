@@ -869,6 +869,19 @@ def run(root: Path) -> None:
         # silently editing a *declaration* changes what the project says its
         # own API does. A migration that quietly alters runtime behaviour is
         # worse than one that refuses.
+        #
+        # gh-1702: and it says what `apply` will DO with each key, which is
+        # accept it and ignore it. An unknown key never refuses: the walk is
+        # advisory by design (`_keys` module docstring; `warn_unknown_keys`
+        # reports with `gates=False`). gh-887's refusal was not the key but
+        # the declaration it left incoherent -- `error` with no
+        # `status_return` -- and that is refused inside `C.load`, which this
+        # command has already passed through above: a manifest `apply`
+        # refuses for such a reason stops `upgrade` too, with the same
+        # message. Claiming a refusal here was therefore always false, and a
+        # permanent false "not up to date" trains the reader to skip the
+        # line on the day it is true. `tests/test_gh1702_*` runs both real
+        # commands over each shape and holds their verdicts equal.
         stale = _keys.unknown_keys(cfg)
         if not stale:
             print(f"already up to date (schema {current})")
@@ -876,16 +889,17 @@ def run(root: Path) -> None:
             return
         print(f"schema {current} — current.")
         print(
-            f"\n{len(stale)} manifest key(s) not valid for just-makeit "
-            f"{C.jm_cli_version()}:"
+            f"\n{len(stale)} manifest key(s) just-makeit "
+            f"{C.jm_cli_version()} does not read:"
         )
         for unknown in stale:
             print(f"  {_where_declared(root, unknown)}{unknown.message()}")
         print(
-            "\nNot up to date: `just-makeit apply` will refuse until these "
-            "are resolved.\nEach must be changed by hand — the replacement "
-            "can alter what your API does,\nso it is yours to make, not a "
-            "migration's."
+            "\nAdvisory: `just-makeit apply` accepts these and ignores them "
+            "(it warns and exits 0),\nso each declares something the "
+            "generated code does not do. Change or remove\neach by hand — "
+            "a replacement can alter what your API does, so it is yours\n"
+            "to make, not a migration's."
         )
         _report_repairs(root)
         return
