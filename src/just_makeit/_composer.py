@@ -36,6 +36,7 @@ from . import _incpath as INC
 from . import _csym as CSYM
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
+from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
     ClassParam,
     DoxyBlock,
@@ -566,18 +567,66 @@ def _bridge_refusal_c(gen: dict) -> str:
     """
     fn = gen["bridge_fn"]
     efn = gen.get("bridge_error_fn")
+    # gh-1706: the raise is `reason_raise_c`'s, the one emitter every
+    # reason-carrying refusal shares; only how the reason is FETCHED differs
+    # here -- a second call, rather than an out-param of the first.
+    fallback = (
+        "PyErr_SetString(PyExc_RuntimeError,\n"
+        f'                "{fn} returned NULL");\n'
+    )
     if not efn:
-        return (
-            "            PyErr_SetString(PyExc_RuntimeError,\n"
-            f'                            "{fn} returned NULL");\n'
-        )
+        return reason_raise_c(fallback, indent=12)
+    return f"            const char *why = {efn}(&self->src, self->fs);\n" + (
+        reason_raise_c(fallback, "why", indent=12)
+    )
+
+
+def json_why(cfg: dict, module: str) -> "dict[str, bool]":
+    """Which JSON factories take a trailing ``const char **why`` (gh-1706).
+
+    ``[module.X.json] from_json_why`` / ``from_file_why`` declare that the
+    delegated ``from_json_fn`` / ``from_file_fn`` has the reason-naming
+    signature ``<state_t> *fn(const char *, const char **why)``. The Python
+    factory then passes ``&_why`` and a refusal raises the sentence the C
+    wrote, through `reason_raise_c`; the generated C CLI passes it too and
+    prints it. Undeclared, the one-argument call is unchanged.
+
+    >>> json_why({"module": {"m": {"json": {"from_json_why": True}}}}, "m")
+    {'from_json': True, 'from_file': False}
+    """
+    jtbl = cfg.get("module", {}).get(module, {}).get("json", {})
+    return {
+        "from_json": bool(jtbl.get("from_json_why")),
+        "from_file": bool(jtbl.get("from_file_why")),
+    }
+
+
+def _factory_refusal_c(
+    sym: str,
+    fn: str,
+    arg: str,
+    category: str,
+    why: bool,
+    release: str = "",
+) -> str:
+    """``st = fn(arg); if (!st) raise`` for one JSON factory (gh-1706).
+
+    *release* runs after the call and before the test (``from_file``'s path
+    object). With *why* the call gains a trailing ``&_why`` and the raise
+    carries it; without, the text is what the factory always emitted.
+    """
+    tail = f", &{WHY_LOCAL}" if why else ""
     return (
-        f"            const char *why = {efn}(&self->src, self->fs);\n"
-        "            if (why)\n"
-        "                PyErr_SetString(PyExc_ValueError, why);\n"
-        "            else\n"
-        "                PyErr_SetString(PyExc_RuntimeError,\n"
-        f'                                "{fn} returned NULL");\n'
+        (f"    {WHY_DECL}\n" if why else "")
+        + f"    {sym}_state_t *st = {fn}({arg}{tail});\n"
+        + release
+        + "    if (!st) {\n"
+        + reason_raise_c(
+            f'PyErr_SetString(PyExc_{category}, "{fn} failed");\n',
+            WHY_LOCAL if why else "",
+        )
+        + "        return NULL;\n"
+        "    }\n"
     )
 
 
@@ -2347,6 +2396,18 @@ def render_composer_type(cfg: dict, module: str) -> str:
         to_json_fn = jtbl.get("to_json_fn", f"{sym}_to_json")
         trailing = jtbl.get("to_json_trailing", [])
         trail = "" if not trailing else ", " + ", ".join(trailing)
+        _why = json_why(cfg, module)
+        from_json_call = _factory_refusal_c(
+            sym, from_json_fn, "json", "ValueError", _why["from_json"]
+        )
+        from_file_call = _factory_refusal_c(
+            sym,
+            from_file_fn,
+            "PyBytes_AS_STRING(pathobj)",
+            "OSError",
+            _why["from_file"],
+            release="    Py_DECREF(pathobj);\n",
+        )
         json_fns = f"""
 static PyObject *
 {cname}_from_json(PyObject *cls, PyObject *args)
@@ -2355,12 +2416,7 @@ static PyObject *
     const char *json;
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
-    {sym}_state_t *st = {from_json_fn}(json);
-    if (!st) {{
-        PyErr_SetString(PyExc_ValueError, "{from_json_fn} failed");
-        return NULL;
-    }}
-    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+{from_json_call}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -2377,13 +2433,7 @@ static PyObject *
     PyObject *pathobj;
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
-    {sym}_state_t *st = {from_file_fn}(PyBytes_AS_STRING(pathobj));
-    Py_DECREF(pathobj);
-    if (!st) {{
-        PyErr_SetString(PyExc_OSError, "{from_file_fn} failed");
-        return NULL;
-    }}
-    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+{from_file_call}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -2415,6 +2465,20 @@ static PyObject *
 }}
 """
     elif C.composer_json(cfg, module):
+        # gh-1706: the generated ser/de is jm's own parser, with no C
+        # factory to name a reason, so a `*_why` key here would be read by
+        # nobody -- refused rather than silently dropped.
+        _declared = [k for k, v in json_why(cfg, module).items() if v]
+        if _declared:
+            raise ValueError(
+                f"[module.{module}.json] declares "
+                + ", ".join(f"{k}_why" for k in _declared)
+                + ", but no to_json_fn: jm generates this composer's JSON "
+                "reader itself, so there is no C factory whose reason it "
+                "could carry. The *_why keys belong to the delegated path "
+                "(to_json_fn / from_json_fn / from_file_fn); drop them or "
+                "delegate."
+            )
         json_fns = render_json_funcs(cfg, module)
     if C.composer_json(cfg, module):
         json_rows = (
@@ -4635,6 +4699,17 @@ def render_cli(cfg: dict, module: str) -> str:
         .get("json", {})
         .get("from_file_fn", f"{sym}_from_file")
     )
+    # gh-1706: a `from_file_why` reader takes a trailing `const char **why`,
+    # so the C face must pass one -- and prints it, the CLI's form of the
+    # reason the Python factory raises.
+    file_why = json_why(cfg, module)["from_file"]
+    why_decl = "\n    const char *why = NULL;" if file_why else ""
+    from_file_args = "from_file, &why" if file_why else "from_file"
+    no_composer = (
+        'fprintf(stderr, "%s\\n", why ? why : "failed to build composer");'
+        if file_why
+        else 'fprintf(stderr, "failed to build composer\\n");'
+    )
     sample_types = " ".join(_app._SAMPLE_TYPES)
 
     # per-field flag decls (defaults), argv parse cases, struct assembly.
@@ -4773,9 +4848,9 @@ main(int argc, char **argv)
         else {{ fprintf(stderr, "unknown arg %s\\n", a); usage(argv[0]); return 2; }}
     }}
 
-    {sym}_state_t *c;
+    {sym}_state_t *c;{why_decl}
     if (from_file) {{
-        c = {from_file_fn}(from_file);
+        c = {from_file_fn}({from_file_args});
     }} else {{
         {src_struct} src;
         memset(&src, 0, sizeof src);
@@ -4787,7 +4862,7 @@ main(int argc, char **argv)
 {seg_assign_s}
         c = {create_fn}(&seg, 1, repeat, continuous);
 {bytes_free}    }}
-    if (!c) {{ fprintf(stderr, "failed to build composer\\n"); return 1; }}
+    if (!c) {{ {no_composer} return 1; }}
 
     FILE *out = out_path ? fopen(out_path, "wb") : stdout;
     if (!out) {{ perror("fopen"); {destroy_fn}(c); return 1; }}

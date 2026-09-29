@@ -1137,8 +1137,13 @@ def _build_fn_ctx(
         ),
         # gh-1591: the C call names the function's SYMBOL stem (`<p>_<fn>`
         # under a c_prefix); `function` above stays the Python name.
+        # gh-1706: a `why = true` function takes a trailing
+        # `const char **why` that is not a manifest param; NULL is "no
+        # reason wanted", so the call still matches the prototype.
         "call_and_print": _c_call_print(
-            CSYM.stem(cfg, function), ret_t, pnames
+            CSYM.stem(cfg, function),
+            ret_t,
+            pnames + (["NULL"] if fn.get("why") else []),
         ),
         "py_call_args": ", ".join(f"args.{n}" for n in pnames),
     }

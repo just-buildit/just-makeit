@@ -414,6 +414,8 @@ FUNCTION_KEYS = frozenset(
         "variable_output",
         # gh-816's subject: a `jm function` key, and only that.
         "check_return",
+        # gh-1706: the C function takes a trailing `const char **why`.
+        "why",
         "impl",
         "impl_file",
         "replace",
@@ -762,6 +764,9 @@ COMPOSER_JSON_KEYS = frozenset(
         "from_json_fn",
         "from_file_fn",
         "to_json_trailing",
+        # gh-1706: the delegated factories name their refusal.
+        "from_json_why",
+        "from_file_why",
     }
 )
 COMPOSER_CLI_KEYS = frozenset({"enabled", "name"})

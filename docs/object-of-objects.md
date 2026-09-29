@@ -485,6 +485,17 @@ With `[module.X.json] enabled = true` the composer gets
     pre-existing wire format byte-for-byte (e.g. a domain schema with conditional
     field emission that a generic generator cannot reproduce).
 
+A delegated reader that can say **why** it refused declares it per factory
+(gh-1706): `from_json_why = true` means `from_json_fn` is
+`<state_t> *fn(const char *json, const char **why)`, and `from_file_why = true` the same for `from_file_fn`. The generated factory passes the address
+of a `NULL`-initialised local, and a refusal raises
+`ValueError(<the reason>)`; a refusal that writes none keeps the old
+`ValueError("<fn> failed")` / `OSError("<fn> failed")`. The C CLI's
+`--from-file` passes it too and prints it. Both keys belong to the delegated
+mode only -- the generated reader has no C factory to ask -- and `apply`
+refuses them without `to_json_fn`. The same carriage on a module function is
+`why = true` ([`--why`](commands/extend.md#just-makeit-function)).
+
 ### 4.8 The CLI face
 
 With `[module.X.cli] enabled = true` the composer gets an opt-in **standalone C
@@ -803,7 +814,7 @@ reads instead.
 | `[X.segment]`    | `type_name`, `struct`, `sources` (`"multi"`/`"single"`), `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`)                                                                                                                                                                                                    |
 | `[X.timeline]`   | `type_name`, `loop[]`                                                                                                                                                                                                                                                                                                                            |
 | `[X.oo]`         | `factories[]`, `emit` (`"ctypes"`), `discriminant`, `composer_type_name`                                                                                                                                                                                                                                                                         |
-| `[X.json]`       | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing` (delegation), `header`/`include_dir` (generated path)                                                                                                                                                                                                          |
+| `[X.json]`       | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing`/`from_json_why`/`from_file_why` (delegation), `header`/`include_dir` (generated path)                                                                                                                                                                          |
 | `[X.composer]`   | `stream`, `to_dict`; optional `realtime = {clock_create, pace, destroy, header}` to pace `stream()` in C (gh-317)                                                                                                                                                                                                                                |
 | `[[X.settings]]` | a post-construction setting `{name, setter_fn, getter_fn, type, enum?}` — a scalar the backing exposes through a setter/getter pair and that is set once, after `create_fn` returns and before the first `execute()`. Becomes a constructor kwarg AND a read/write attribute; a string-valued one resolves through its `[[enum]]` SSOT (gh-1126) |
 | `[X.cli]`        | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                |

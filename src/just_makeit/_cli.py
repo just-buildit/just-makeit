@@ -322,6 +322,10 @@ Commands:
     --check-return              Treat a non-zero int return as failure: raise
                                 RuntimeError(rc), return None on success.
                                 Requires an integer --return-type.
+    --why                       The C function takes a trailing
+                                `const char **why`; a refusal raises the
+                                sentence it writes there (ValueError).
+                                Requires --check-return.
     --result-field name:type    Append a field to a returned record list; repeatable.
     --doc "text"                Docstring shown in Python help().
     --inline                    Emit static inline body in _core.h (no _core.c entry).
