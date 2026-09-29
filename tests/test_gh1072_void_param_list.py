@@ -182,6 +182,7 @@ _SHAPE_VALUES: dict[str, tuple] = {
     "result_fields": (None, [{"name": "i", "type": "size_t"}]),
     "max_results_param": ("",),
     "variable_output": (False, True),
+    "why": (False, True),
 }
 
 #: Keyword parameters every emitter has that say nothing about the shape.
