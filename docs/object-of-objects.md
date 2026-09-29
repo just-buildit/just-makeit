@@ -372,6 +372,18 @@ struct marshalling, the type's getset slots, the JSON shape, and the CLI flags â
 all from a single declaration. (`type` is the C type; `enum` tags a field as a
 string-enum resolved through the SSOT; `bytes` marks an owned byte buffer.)
 
+**A field's docstring comes from the header.** Each row is a member of the
+table's `struct`, so the member's own doc (a trailing `/**< ... */` or a
+`/** ... */` block above it) is the field's documentation, on the `.pyi` and
+on the runtime getset doc (`help(Synth.freq)`). A row's `doc` key is the
+fallback for a member the header leaves undocumented. jm reads the headers the
+binding includes (the module's `header` and whatever project headers it
+includes) and asks only the field's own struct, so a same-named member of
+another struct never documents it. An owned buffer is looked up by its
+pointer member, or by the first step of a `c_ptr` path. If a row's `doc` and
+the member's doc both exist and differ, `jm status` lists the row under `DOC`
+and `jm status --check` fails (gh-1703).
+
 A `bytes` field is **owned**: jm generates the coercion from a Python `bytes`,
 the getter, the setter, the `free` in `dealloc`, the deep-copy when a source is
 rebuilt from a resolved segment, and both halves of the JSON codec. By default

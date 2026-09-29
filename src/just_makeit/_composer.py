@@ -2082,6 +2082,152 @@ def _field_doc_c(f: dict) -> str:
     return authored_c_doc(str(f.get("doc") or ""))
 
 
+# ── a field's doc: the struct member's, then the manifest's (gh-1703) ────────
+
+#: The two field tables, each with the C struct its rows are members of.
+_FIELD_TABLES = (
+    ("source", C.composer_source),
+    ("segment", C.composer_segment),
+)
+
+
+def field_member(f: dict) -> str:
+    """The member of the table's own struct that field *f* is stored in.
+
+    A scalar, enum or ranged field is the member of its own name. An owned
+    buffer is its pointer member, :func:`buffer_members`' first half; when
+    ``c_ptr`` names a path into a nested struct (``sync.bits``), the member of
+    THIS struct is the path's first step, ``sync`` -- the one declaration the
+    field stands for. A deeper step belongs to another struct, and reading it
+    is the unscoped lookup gh-1300 removed.
+
+    Examples
+    --------
+    >>> field_member({"name": "freq", "type": "double"})
+    'freq'
+    >>> field_member({"name": "sync", "bytes": True, "c_ptr": "sync.bits"})
+    'sync'
+    """
+    if _field_is_buffer(f):
+        return buffer_members(f)[0].split(".", 1)[0]
+    return str(f["name"])
+
+
+def _struct_field_docs(
+    cfg: dict, module: str, root: "Path | None"
+) -> "dict[str, dict[str, str]]":
+    """``{struct: {member: doc}}`` from the headers the binding includes.
+
+    The headers are the ones :func:`render_ext` ``#include``s -- the backing
+    header and, when the source generates, the generator's -- and the project
+    headers they include in turn, read from *root*'s ``native/inc``. The walk
+    is gh-724's (``_object._included_member_docs``) and the parse gh-1167's
+    (``_docstring.extract_struct_member_docs``), so a trailing ``/**<`` and a
+    leading ``/** */`` block both count, exactly as for an object's property.
+
+    The map is keyed by struct, and a caller asks for one struct only: a
+    same-named member of any other struct these headers define is never an
+    answer (gh-1300). ``{}`` without a *root*, which is every caller that
+    renders for comparison rather than to write.
+    """
+    if root is None:
+        return {}
+    from ._object import _included_member_docs
+
+    header = C.capsule_header(cfg, module) or INC.core_include(
+        C.capsule_backing(cfg, module), cfg
+    )
+    gen = _source_generates(cfg, module)
+    seeds = [header] + ([gen["header"]] if gen else [])
+    text = "".join(f'#include "{h}"\n' for h in seeds)
+    return _included_member_docs(INC.inc_dir(Path(root)), text)[1]
+
+
+def _header_field_docs(
+    cfg: dict, module: str, root: "Path | None"
+) -> "list[tuple[str, dict, str, str]]":
+    """``(table, field, struct, header_doc)`` for every source/segment field.
+
+    *header_doc* is ``""`` when the field's member carries no Doxygen, or its
+    struct is not defined in a header the binding includes.
+    """
+    structs = _struct_field_docs(cfg, module, root)
+    out = []
+    for table, get in _FIELD_TABLES:
+        tbl = get(cfg, module)
+        struct = str(tbl.get("struct") or "")
+        for f in tbl.get("fields", []):
+            doc = structs.get(struct, {}).get(field_member(f), "")
+            out.append((table, f, struct, doc))
+    return out
+
+
+def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
+    """*cfg* with each composer field's ``doc`` read from its struct member.
+
+    gh-1703. A source / segment field IS a member of the struct the composer
+    wraps, and that member is documented in the header -- so the header is the
+    field's documentation, and a manifest ``doc`` is the fallback for a member
+    that has none. It is not a peer: where both exist the header wins, and
+    ``jm status`` reports the two disagreeing (:func:`field_doc_drift`).
+
+    Resolved once, here, into a copy of the manifest, so every face that reads
+    a field's ``doc`` -- the runtime getset doc (:func:`_field_doc_c`), the
+    ``.pyi`` class docstring (:func:`_pyi_doc_lines`) and the flat segment
+    accessors, which reuse a source field's row -- reads the one answer. A
+    second lookup per face is the peer pair gh-1499 was about.
+    """
+    import copy
+
+    found = [
+        (table, f["name"], doc)
+        for table, f, _s, doc in _header_field_docs(cfg, module, root)
+        if doc
+    ]
+    if not found:
+        return cfg
+    out = copy.deepcopy(cfg)
+    tables = dict(_FIELD_TABLES)
+    for table, name, doc in found:
+        for f in tables[table](out, module).get("fields", []):
+            if f.get("name") == name:
+                f["doc"] = doc
+    return out
+
+
+def field_doc_drift(root: Path, cfg: dict) -> "list":
+    """Composer fields whose manifest ``doc`` disagrees with the header.
+
+    gh-1703. The header's text is what renders (:func:`resolve_field_docs`),
+    so a manifest ``doc`` beside it is a second copy nothing keeps equal --
+    doppler carried 40 of them, drifted. Each disagreement is reported as a
+    ``shadowed`` :class:`_docstring.ManifestDoc`, in the ``DOC`` section
+    ``jm status`` already prints for manifest docs that do not render as
+    written, so ``--check`` fails on it. Whitespace is not a disagreement:
+    both sides are compared with runs of it collapsed.
+    """
+    from ._docstring import ManifestDoc
+
+    def _norm(s: str) -> str:
+        return " ".join(s.split())
+
+    found = []
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        for table, f, struct, doc in _header_field_docs(cfg, mod, root):
+            authored = str(f.get("doc") or "")
+            if doc and authored and _norm(doc) != _norm(authored):
+                found.append(
+                    ManifestDoc(
+                        f"module.{mod}.{table}.fields.{f['name']}.doc",
+                        f"{struct}.{field_member(f)}: {doc}",
+                        "shadowed",
+                    )
+                )
+    return found
+
+
 def render_composer_type(cfg: dict, module: str) -> str:
     """Emit the ``Composer`` ``PyTypeObject`` — the type that drives the backing
     ``wfm_compose_*`` kernel.
@@ -3981,6 +4127,9 @@ def materialize(
     from ._init import _write
 
     require_scope_names(arg_scopes(cfg, module))  # gh-1525
+    # gh-1703: a field's doc is its struct member's, read from the real
+    # project's headers -- the replay tree holds no hand-written backing.
+    cfg = resolve_field_docs(cfg, module, project_root or root)
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.capsule_package(cfg, module) or mp.pypath

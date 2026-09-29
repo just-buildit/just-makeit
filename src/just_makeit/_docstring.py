@@ -3206,6 +3206,9 @@ class ManifestDoc(NamedTuple):
     #: The first paragraph — for ``truncated``, the only part that survives.
     summary: str
     #: ``"duplicated"``: a numpy section jm also generates (gh-1493).
+    #: ``"shadowed"``: a composer field's ``doc`` that disagrees with its
+    #: struct member's Doxygen, which is what renders (gh-1703); *summary*
+    #: is then ``<struct>.<member>: <the header's text>``.
     #: Defaulted so a caller naming an entry by hand needs only the two facts
     #: that identify it.
     kind: str = "duplicated"
@@ -3221,15 +3224,27 @@ _DOC_KINDS = {
         "sections itself -- the `doc` renders verbatim (gh-1493), so the "
         "author's section and jm's generated Parameters/Returns both appear"
     ),
+    "shadowed": (
+        "it disagrees with the struct member's doc in the header, which is "
+        "what renders (gh-1703) -- {summary}"
+    ),
 }
 
-#: The remedy, shared by both reporters.
-_DOC_REMEDY = (
-    "Write the full docstring as Doxygen above the declaration in the "
-    "component's `_core.h` instead: @brief, prose, @param, @return and @code "
-    "render to a complete numpy docstring, doctest included, and survive "
-    "`apply`"
-)
+#: The remedy per shape, shared by both reporters.
+_DOC_REMEDIES = {
+    "duplicated": (
+        "Write the full docstring as Doxygen above the declaration in the "
+        "component's `_core.h` instead: @brief, prose, @param, @return and "
+        "@code render to a complete numpy docstring, doctest included, and "
+        "survive `apply`"
+    ),
+    "shadowed": (
+        "Delete the manifest `doc` -- the header is the field's "
+        "documentation, and the manifest's is only the fallback for a member "
+        "with none. If the manifest's sentence is the better one, move it "
+        "onto the member in the header"
+    ),
+}
 
 
 def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
@@ -3349,4 +3364,16 @@ def manifest_doc_advice(entry: "ManifestDoc") -> str:
     ``native/inc/dsp_filters/``), and a hint that is wrong for the nested case
     is worse than one that names the file by its shape.
     """
-    return f"{entry.where}: {manifest_doc_reason(entry)}. {_DOC_REMEDY}"
+    return (
+        f"{entry.where}: {manifest_doc_reason(entry)}. "
+        f"{manifest_doc_remedy(entry.kind)}"
+    )
+
+
+def manifest_doc_remedy(kind: str) -> str:
+    """What to do about a :class:`ManifestDoc` of shape *kind*.
+
+    >>> manifest_doc_remedy("shadowed").startswith("Delete the manifest")
+    True
+    """
+    return _DOC_REMEDIES[kind]
