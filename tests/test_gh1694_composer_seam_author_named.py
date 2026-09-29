@@ -2,7 +2,8 @@
 
 A composer source hands its straight-C seams back to the project by name:
 ``[module.X.source.generates] bridge_fn`` (and its optional
-``bridge_error_fn``) and each ``[[module.X.source.computed]] fn``. jm derives
+``bridge_error_fn``), each ``[[module.X.source.computed]] fn`` and each
+bit_pattern field's ``coerce_str_fn`` (gh-1709). jm derives
 none of those names -- the keys are required and author-named
 (``_csym.AUTHOR_NAMED_KEYS``) -- but it DECLARES each of them, in the
 module's generated ``<cname>_bridge.h`` (gh-998).
@@ -51,6 +52,8 @@ SEAMS = {
     "bridge_fn": f"{P}_wfm_source_to_synth",
     "bridge_error_fn": f"{P}_wfm_source_why",
     "fn": f"{P}_wfm_source_length",
+    # gh-1709: a bit_pattern field's str reader is declared there too.
+    "coerce_str_fn": f"{P}_wfm_bits_parse",
 }
 
 COMPOSER_TOML = """
@@ -64,7 +67,18 @@ composes = ["wfm"]
 object = "wfm"
 struct = "wfm_source_t"
 type_name = "Synth"
-fields = [{{ name = "freq", type = "double", default = "0.0" }}]
+
+[[module.wfm_compose.source.fields]]
+name = "freq"
+type = "double"
+default = "0.0"
+
+[[module.wfm_compose.source.fields]]
+name = "bits"
+type = "uint8_t*"
+bytes = true
+coerce = "bit_pattern"
+coerce_str_fn = "{coerce_str_fn}"
 
 [module.wfm_compose.source.generates]
 generator = "wfm"
@@ -105,6 +119,16 @@ double {fn}(const void *src)
 {{
     (void)src;
     return 0.0;
+}}
+
+size_t {coerce_str_fn}(const char *text, uint8_t *out, size_t max_out,
+                       const char **why)
+{{
+    (void)text;
+    (void)out;
+    (void)max_out;
+    (void)why;
+    return 0;
 }}
 """
 

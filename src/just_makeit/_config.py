@@ -6505,6 +6505,8 @@ def _inline_field(f: dict) -> str:
         )
     if f.get("coerce"):
         parts.append(f'coerce = "{f["coerce"]}"')
+    if f.get("coerce_str_fn"):
+        parts.append(f'coerce_str_fn = "{f["coerce_str_fn"]}"')
     if f.get("doc"):
         parts.append(f"doc = {_toml_scalar(str(f['doc']))}")
     return "{ " + ", ".join(parts) + " }"

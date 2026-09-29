@@ -62,6 +62,7 @@ _REPRESENTATIVE: dict[str, object] = {
     "c_ptr": "sync.bits",
     "c_len": "sync.len",
     "coerce": "hex",
+    "coerce_str_fn": "wfm_bits_parse",
     "aliases": ["i"],
     "doc": 'The "IQ" run.',
     "fn": "wfm_iq",

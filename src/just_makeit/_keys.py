@@ -702,6 +702,8 @@ COMPOSER_FIELD_KEYS = frozenset(
         "c_ptr",
         "c_len",
         "coerce",
+        # gh-1709: the project's reader for a bit_pattern field's str.
+        "coerce_str_fn",
         "aliases",
         "doc",
     }
