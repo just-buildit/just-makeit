@@ -1716,9 +1716,19 @@ def _py_wrapper_for_function(
                 if call_args
                 else f"{c_name}(_results, _max)"
             )
+        # gh-1710: `_max` may be the caller's int. `_max * sizeof` below
+        # wrapped for a large one, so malloc returned a SHORT buffer the
+        # callee then filled `_max` records into; bounded before the product.
         ret_line = (
-            f"    size_t _max = {_max_expr};\n"
-            f"    {_rt_disp} *_results ="
+            _coerce.output_size_c(
+                "_max",
+                _max_expr,
+                fn_name,
+                _cleanup_inline,
+                ctype="size_t",
+                limit=f"(PY_SSIZE_T_MAX / sizeof({_rt_disp}))",
+            )
+            + f"    {_rt_disp} *_results ="
             f" ({_rt_disp} *)malloc(_max * sizeof({_rt_disp}));\n"
             f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             f"    size_t _n = {_call};\n"
@@ -1776,9 +1786,18 @@ def _py_wrapper_for_function(
                 "  jm would have to hunt for a NUL the callee may never have "
                 "written."
             )
+        # gh-1710: `_cap + 1` below wraps to 0 for a SIZE_MAX `out_size`,
+        # so the bound is checked before the allocation, not after.
         ret_line = (
-            f"    size_t _cap = (size_t)({len_expr});\n"
-            f"    char *_buf = (char *)malloc(_cap + 1);\n"
+            _coerce.output_size_c(
+                "_cap",
+                len_expr,
+                fn_name,
+                _cleanup_inline,
+                ctype="size_t",
+                limit="PY_SSIZE_T_MAX",
+            )
+            + f"    char *_buf = (char *)malloc(_cap + 1);\n"
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             + _why_decl(why)
             + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
@@ -1819,9 +1838,11 @@ def _py_wrapper_for_function(
         _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
         _trim = bool(ret_meta) and ret_meta.get("kind") == "int"
+        # gh-1710: `out_size` is a size_t the callee computes, often from
+        # caller input; cast straight to npy_intp it wrapped negative.
         _alloc = (
-            f"    npy_intp _dim = (npy_intp)({len_expr});\n"
-            f"    PyObject *_out ="
+            _coerce.output_size_c("_dim", len_expr, fn_name, _cleanup_inline)
+            + f"    PyObject *_out ="
             f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
             f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
         )
@@ -1882,9 +1903,11 @@ def _py_wrapper_for_function(
             f"((PyArrayObject *)_out){_sep_after}{_parts_after}"
         )
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        # gh-1710: a `[M]` length is the caller's unsigned int, parsed with
+        # a format that does not range-check, so it is bounded here too.
         ret_line = (
-            f"    npy_intp _dim = (npy_intp){len_expr};\n"
-            f"    PyObject *_out ="
+            _coerce.output_size_c("_dim", len_expr, fn_name, _cleanup_inline)
+            + f"    PyObject *_out ="
             f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
             f"    if (!_out) {{{_cleanup_inline} return NULL; }}\n"
             f"    {c_name}({_call_with_out});\n"

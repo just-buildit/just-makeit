@@ -246,7 +246,10 @@ class TestFunctionResultFieldsWrapper:
             ],
             c_name="find_peaks",
         )
-        assert "size_t _max = 64;" in wrapper
+        # gh-1710: the literal cap reaches `_max` through the overflow
+        # guard, evaluated once into `_max_need`.
+        assert "size_t _max_need = (size_t)(64);" in wrapper
+        assert "size_t _max = (size_t)_max_need;" in wrapper
         assert "find_peaks(x, x_len, _results, _max)" in wrapper
 
     def test_named_param_case_unchanged(self):
@@ -265,7 +268,9 @@ class TestFunctionResultFieldsWrapper:
             max_results_param="max_events",
             c_name="push",
         )
-        assert "size_t _max = (size_t)max_events;" in wrapper
+        # gh-1710: the named cap reaches `_max` through the overflow guard.
+        assert "size_t _max_need = (size_t)((size_t)max_events);" in wrapper
+        assert "size_t _max = (size_t)_max_need;" in wrapper
         assert "push(x, max_events, _results)" in wrapper
 
 

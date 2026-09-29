@@ -135,7 +135,7 @@ class TestThePythonSurfaceIsStr:
 
     def test_it_sizes_from_out_size_and_frees(self) -> None:
         w = _wrapper()
-        assert "size_t _cap = (size_t)(bits_len * 2);" in w, w
+        assert "size_t _cap_need = (size_t)(bits_len * 2);" in w, w
         assert "char *_buf = (char *)malloc(_cap + 1);" in w, w
         assert "free(_buf);" in w, w
 
