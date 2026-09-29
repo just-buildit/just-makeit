@@ -113,6 +113,7 @@ _REPRESENTATIVE: dict[str, object] = {
     "from_json_fn": "wfm_from_json",
     "from_file_fn": "wfm_from_file",
     "to_json_trailing": ["seed"],
+    "include_dir": "${CMAKE_SOURCE_DIR}/vendor/cjson",
     # gh-1706: the delegated readers take a trailing `const char **why`.
     "from_json_why": True,
     "from_file_why": True,
@@ -362,37 +363,123 @@ class _Recording(dict):
         return super().__contains__(key)
 
 
-@pytest.mark.parametrize(
-    "tbl,accessor",
-    [("source", "composer_source"), ("segment", "composer_segment")],
+_COMPOSER_TABLES = sorted(
+    t for (k, t) in KIND_DICT_TABLE_VOCAB if k == "composer"
 )
+
+
+def _accessors() -> "dict[str, tuple[object, str]]":
+    """The sub-tables jm reads through an accessor that hands out a COPY.
+
+    A copy made by ``dict(...)`` records nothing on the raw table, so those
+    reads are recorded on what the accessor returns. A table absent here is
+    read raw, and the raw table is recorded for every table regardless."""
+    from just_makeit import _composer
+
+    return {
+        "source": (C, "composer_source"),
+        "segment": (C, "composer_segment"),
+        "timeline": (C, "composer_timeline"),
+        "oo": (C, "composer_oo"),
+        "composer": (C, "composer_stream"),
+        "cli": (_composer, "composer_cli"),
+    }
+
+
+def _renderers() -> "list":
+    """Every public ``_composer`` function taking ``(cfg, module)`` and
+    requiring nothing else -- found, not listed, so a renderer added later is
+    read by this gate the day it lands. gh-1725: the three it used to call by
+    name missed ``render_cmake``, which reads ``json.include_dir``."""
+    import inspect
+
+    from just_makeit import _composer
+
+    out = []
+    for name, fn in vars(_composer).items():
+        if name.startswith("_") or not inspect.isfunction(fn):
+            continue
+        if fn.__module__ != _composer.__name__:
+            continue
+        params = list(inspect.signature(fn).parameters.values())
+        if [q.name for q in params[:2]] != ["cfg", "module"]:
+            continue
+        if any(q.default is inspect.Parameter.empty for q in params[2:]):
+            continue
+        out.append(fn)
+    return out
+
+
+def _variants() -> "list[dict]":
+    """The fixture, once per branch that decides which keys are read.
+
+    Every dict sub-table is present in each, because an absent one is read as
+    ``.get(tbl, {})`` and a default records nothing. The JSON table runs both
+    ways: delegated (``to_json_fn``), and generated -- the branch that reads
+    ``header`` and ``include_dir``."""
+    import copy
+
+    from test_composer_codegen import _ranged_cfg
+
+    base = _ranged_cfg()
+    mod = base["module"][MOD]
+    mod.setdefault("cli", {"enabled": True, "name": "wfmgen"})
+    mod.setdefault("composer", {"stream": True, "to_dict": True})
+    gen = copy.deepcopy(base)
+    gen["module"][MOD]["json"] = {"enabled": True}
+    return [base, gen]
+
+
+def test_the_variants_carry_every_dict_subtable() -> None:
+    """The recorder below can only see a table the fixture has."""
+    for cfg in _variants():
+        missing = set(_COMPOSER_TABLES) - set(cfg["module"][MOD])
+        assert not missing, sorted(missing)
+
+
+@pytest.mark.parametrize("tbl", _COMPOSER_TABLES)
 def test_every_key_the_renderer_reads_is_accepted(
-    tbl: str, accessor: str, tmp_path: pathlib.Path, monkeypatch
+    tbl: str, monkeypatch
 ) -> None:
     """gh-1381. The vocabulary above was derived from the WRITER, and the one
     key the writer never had -- `ranged` -- was the one missing, so 0.77.0
     refused doppler's manifest for a key `_composer` reads to generate six
     fields. The issue asked for this direction, measured by RUNNING the
-    renderer rather than grepping it: the table's accessor hands out a dict
-    that records every key looked up, including the absent ones, which is
-    exactly how a key the fixture lacks still gets caught.
-    """
-    from just_makeit import _composer
-    from test_composer_codegen import _ranged_cfg
+    renderer rather than grepping it: the table hands out a dict that records
+    every key looked up, including the absent ones, which is exactly how a
+    key the fixture lacks still gets caught.
 
+    gh-1725: this covered `source` and `segment` only, through their
+    accessors, under three renderers. `[module.X.json] header` is read off the
+    raw table by `render_ext`, so a project naming its vendored cJSON got the
+    right binding AND a load-time warning that the key had no effect. Every
+    dict sub-table is now recorded -- raw and through its accessor -- under
+    every `(cfg, module)` function `_composer` exports.
+    """
     seen: "set[str]" = set()
-    real = getattr(C, accessor)
-    monkeypatch.setattr(
-        C, accessor, lambda cfg, module: _Recording(real(cfg, module), seen)
-    )
-    cfg = _ranged_cfg()
-    _composer.render_ext(cfg, MOD)
-    _composer.render_bridge_h(cfg, MOD)
-    _composer.composer_cli(cfg, MOD)
-    assert seen, f"the renderer read nothing through {accessor}"
+    acc = _accessors().get(tbl)
+    if acc is not None:
+        owner, name = acc
+        real = getattr(owner, name)
+        monkeypatch.setattr(
+            owner,
+            name,
+            lambda cfg, module, _r=real: _Recording(_r(cfg, module), seen),
+        )
+    renderers = _renderers()
+    assert {"render_ext", "render_cmake", "render_cli"} <= {
+        f.__name__ for f in renderers
+    }
+    for cfg in _variants():
+        mod = cfg["module"][MOD]
+        mod[tbl] = _Recording(mod[tbl], seen)
+        for fn in renderers:
+            fn(cfg, MOD)
+    assert seen, f"no renderer read [module.X.{tbl}]"
     vocab = KIND_KEYS[KIND_DICT_TABLE_VOCAB[("composer", tbl)]]
     unknown = sorted(k for k in seen if isinstance(k, str) and k not in vocab)
     assert not unknown, (
         f"_composer reads [module.X.{tbl}] {unknown}, which the vocabulary "
-        "does not accept -- a manifest carrying them is refused by `upgrade`"
+        "does not accept -- a manifest carrying them is warned as having no "
+        "effect"
     )

@@ -6940,9 +6940,16 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     if js:
         out.append(f"[module.{mk}.json]")
         out.append("enabled = " + ("true" if js.get("enabled") else "false"))
-        for k in ("to_json_fn", "from_json_fn", "from_file_fn"):
+        # gh-1725: `header` / `include_dir` are read by the generated path.
+        for k in (
+            "to_json_fn",
+            "from_json_fn",
+            "from_file_fn",
+            "header",
+            "include_dir",
+        ):
             if js.get(k):
-                out.append(f'{k} = "{js[k]}"')
+                out.append(f"{k} = {_toml_basic_string(js[k])}")
         # gh-1706: the reason-naming factory signature, per factory.
         for k in ("from_json_why", "from_file_why"):
             if js.get(k):
