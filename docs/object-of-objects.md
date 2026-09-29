@@ -406,6 +406,38 @@ attach, which needs a `uint8_t **`, and the `free`. A relocated member is
 commonly `const`-qualified, because the type it belongs to is written for the
 borrowing consumer while the source is the owner.
 
+`coerce = "bit_pattern"` widens what the field takes from Python: `bytes`, a
+sequence of ints (a list, a NumPy array; any nonzero is a 1), or a `str`. jm
+stores one bit per byte. By default jm reads a `str` itself: `0`/`1` digits,
+or `0x` hex expanded MSB first.
+
+A project that already has a text form for a bit pattern names its own reader
+with `coerce_str_fn` (gh-1709), so the `str` face uses that grammar instead of
+a second one from jm:
+
+```toml
+{ name = "payload", type = "uint8_t*", bytes = true,
+  coerce = "bit_pattern", coerce_str_fn = "pat_parse" },
+```
+
+```c
+/* Declared by jm in <module>_bridge.h; written by the project. */
+size_t pat_parse(const char *text, uint8_t *out, size_t max_out,
+                 const char **why);
+```
+
+jm calls it twice. The first call passes `out = NULL, max_out = 0` to get the
+size, and the second passes a buffer of that many bytes to fill. Each call
+returns the number of bits it read, one per byte. A return of 0 is a refusal,
+and `*why` becomes the `ValueError` message. The empty string is refused only
+if the project's reader refuses it. This happens on every face that takes text
+for the field: the constructor, the property setter, a segment's
+single-source keywords, and the c-face CLI's `--<field>` flag, which exits 2
+with the reason. A refused value leaves the field as it was. A `bytes` value
+or an int sequence is taken as before. The key belongs to one field, so a
+sibling `bit_pattern` field without it keeps jm's grammar. On a field that
+does not coerce, the key would have no effect, so jm refuses it.
+
 ### 4.3 The source type
 
 `render_source_type` emits a `PyTypeObject` wrapping the backing C struct

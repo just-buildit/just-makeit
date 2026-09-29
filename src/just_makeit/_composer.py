@@ -185,6 +185,100 @@ def buffer_is_relocated(field: dict) -> bool:
     return bool(field.get("c_ptr"))
 
 
+def coerce_str_fn(field: dict) -> str:
+    """The project's C function a field reads a ``str`` through, or ``""``.
+
+    gh-1709. ``coerce = "bit_pattern"`` lets a ``bytes`` field take a
+    ``bytes``, a sequence of ints or a ``str``, and the ``str`` was read by a
+    grammar of jm's own: ``0``/``1`` digits or ``0x`` hex. A project that
+    already has a text form for a bit pattern then has two, which disagree at
+    the edges -- the project's accepts what jm's refuses, and jm's accepts
+    ``""`` and ``"0x"`` as an empty pattern where the project's refuses them.
+
+    ``coerce_str_fn = "<fn>"`` names the project's reader instead::
+
+        size_t fn(const char *text, uint8_t *out, size_t max_out,
+                  const char **why);
+
+    It is called twice: with ``out = NULL, max_out = 0`` to size the pattern,
+    then with a buffer of that many bytes to fill it, one bit per byte. Each
+    call returns the number of bits, and 0 is a refusal: ``*why`` (when the
+    function set it) becomes the ``ValueError``'s message. A ``bytes`` value
+    or a sequence of ints is taken as ``bit_pattern`` always took it.
+
+    The key is per field: one field of a source may use the project's
+    grammar while another keeps jm's. It is refused on a field that does not
+    coerce, because it would be read by nobody.
+
+    >>> coerce_str_fn({"name": "p", "bytes": True, "coerce": "bit_pattern",
+    ...                "coerce_str_fn": "pat_parse"})
+    'pat_parse'
+    >>> coerce_str_fn({"name": "p", "bytes": True})
+    ''
+    """
+    fn = field.get("coerce_str_fn") or ""
+    if fn and not (
+        field.get("bytes") and field.get("coerce") == "bit_pattern"
+    ):
+        raise ValueError(
+            f"composer field '{field.get('name', '<unnamed>')}': "
+            f'`coerce_str_fn = "{fn}"` needs `bytes = true` and '
+            '`coerce = "bit_pattern"` -- it is how a bit_pattern field '
+            "reads a str, and no other field takes one."
+        )
+    return fn
+
+
+def _host_attach_c(name: str, fn: str) -> str:
+    """The attach for a field whose ``str`` is read by *fn* (gh-1709).
+
+    A ``str`` is sized by one call and filled by a second, and only then
+    replaces the field's buffer, so a refused value leaves the old pattern in
+    place. Anything else -- ``None``, ``bytes``, a sequence of ints -- goes to
+    ``_attach_bytes``, the one attach every bytes field shares. A refusal's
+    ``why`` is raised as the ``ValueError``'s message; a function that sets
+    none gets a message naming it.
+    """
+    return f"""
+/* `{name}`: a str is read by the project's {fn}() (coerce_str_fn,
+ * gh-1709) -- sized, then filled; 0 is a refusal and *why its reason.
+ * Anything else is _attach_bytes's. */
+static int
+_coerce_{name}(uint8_t **dst, size_t *n_dst, PyObject *obj)
+{{
+    if (!obj || !PyUnicode_Check(obj))
+        return _attach_bytes(dst, n_dst, obj);
+    Py_ssize_t slen;
+    const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
+    if (!s)
+        return 0;
+    if (strlen(s) != (size_t)slen) {{
+        PyErr_SetString(PyExc_ValueError, "embedded null character");
+        return 0;
+    }}
+    const char *why = NULL;
+    uint8_t *buf = NULL;
+    size_t nb = {fn}(s, NULL, 0, &why);
+    if (nb) {{
+        buf = (uint8_t *)malloc(nb);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        why = NULL;
+        nb = {fn}(s, buf, nb, &why);
+    }}
+    if (!nb) {{
+        free(buf);
+        PyErr_SetString(PyExc_ValueError,
+                        why ? why : "{fn}() refused the text");
+        return 0;
+    }}
+    free(*dst);
+    *dst   = buf;
+    *n_dst = nb;
+    return 1;
+}}
+"""
+
+
 def _field_is_enum(field: dict) -> bool:
     return bool(field.get("enum"))
 
@@ -697,6 +791,18 @@ def render_source_type(cfg: dict, module: str) -> str:
     bits_coerce = any(
         f.get("bytes") and f.get("coerce") == "bit_pattern" for f in fields
     )
+    # gh-1709: a field naming `coerce_str_fn` reads a str through the
+    # project's function, in an attach of its own that hands everything else
+    # to the shared `_attach_bytes`. Every other field keeps calling that one
+    # directly, so a source that names none renders as it always did.
+    host_attach = "".join(
+        _host_attach_c(f["name"], coerce_str_fn(f))
+        for f in fields
+        if coerce_str_fn(f)
+    )
+
+    def _attacher(f: dict) -> str:
+        return f"_coerce_{f['name']}" if coerce_str_fn(f) else "_attach_bytes"
 
     parts: list[str] = []
 
@@ -777,7 +883,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             assign.append(
-                f"    if (!_attach_bytes({_cast}&self->src.{_p}, "
+                f"    if (!{_attacher(f)}({_cast}&self->src.{_p}, "
                 f"&self->src.{_l}, {n}))\n        return -1;"
             )
         elif f.get("complex"):
@@ -1003,7 +1109,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
         return 1;
 {attach_body}
 }}
-
+{host_attach}
 static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -1076,7 +1182,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_bytes({_cast}&self->src.{_p}, &self->src.{_l}, value)
+    return {_attacher(f)}({_cast}&self->src.{_p}, &self->src.{_l}, value)
                ? 0
                : -1;
 }}""")
@@ -4033,13 +4139,15 @@ def bridge_h(module: str) -> str:
 def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     """``(name, prototype lines)`` for each straight-C seam
     :func:`render_bridge_h` declares, in order: the ``bridge_fn``, its
-    ``bridge_error_fn`` and each computed ``fn``. Every name is an
+    ``bridge_error_fn``, each computed ``fn`` and each field's
+    ``coerce_str_fn`` (gh-1709). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
     this one list, so they cannot disagree on which names those are."""
     gen = _source_generates(cfg, module)
     computed = _source_computed(cfg, module)
-    if not gen and not computed:
+    str_fns = _coerce_str_fns(cfg, module)
+    if not gen and not computed and not str_fns:
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
     out: "list[tuple[str, list[str]]]" = []
@@ -4083,14 +4191,53 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
                 ],
             )
         )
+    for fn, names in str_fns.items():
+        out.append(
+            (
+                fn,
+                [
+                    f"/* Read a str as the bits of {names} (coerce_str_fn,"
+                    " gh-1709): out",
+                    " * NULL sizes; returns the bit count, or 0 with *why"
+                    " set on a refusal. */",
+                    f"size_t {fn}(const char *, uint8_t *, size_t,"
+                    " const char **);",
+                    "",
+                ],
+            )
+        )
     return out
+
+
+def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
+    """Each source field's ``coerce_str_fn``, mapped to the fields that name
+    it (gh-1709), in field order -- one prototype per function, however many
+    fields share it.
+
+    A segment field shares the source field's key vocabulary but has no
+    bytes attach to route a ``str`` through, so the key there would be read
+    by nobody -- refused, as on a source field that does not coerce."""
+    for f in _segment_fields(cfg, module):
+        if f.get("coerce_str_fn"):
+            raise ValueError(
+                f"composer segment field '{f.get('name', '<unnamed>')}': "
+                "`coerce_str_fn` is read only on a source field with "
+                '`bytes = true` and `coerce = "bit_pattern"`.'
+            )
+    out: "dict[str, list[str]]" = {}
+    for f in _source_fields(cfg, module):
+        fn = coerce_str_fn(f)
+        if fn:
+            out.setdefault(fn, []).append(f"`{f['name']}`")
+    return {fn: ", ".join(names) for fn, names in out.items()}
 
 
 def seam_fns(cfg: dict, module: str) -> "list[str]":
     """The C functions *module*'s :func:`bridge_h` declares: the project's
     own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
-    ``fn`` key. jm derives none of them, whatever prefix their name has, so
-    :func:`_csym.renames` does not read them as derived (gh-1694)."""
+    ``fn`` / field ``coerce_str_fn`` key. jm derives none of them, whatever
+    prefix their name has, so :func:`_csym.renames` does not read them as
+    derived (gh-1694)."""
     return [name for name, _prototype in _seams(cfg, module)]
 
 
@@ -4735,6 +4882,25 @@ def render_cli(cfg: dict, module: str) -> str:
             parse.append(
                 f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
             )
+            _hfn = coerce_str_fn(f)
+            if _hfn:
+                # gh-1709: the flag is text, so it is read by the project's
+                # grammar -- the one the Python face's str goes through --
+                # and a refusal exits with its reason, as a bad enum does.
+                assign.append(f"""    if ({n}) {{
+        const char *_why = NULL;
+        size_t _k = {_hfn}({n}, NULL, 0, &_why);
+        uint8_t *_b = _k ? (uint8_t *)malloc(_k) : NULL;
+        if (_k && _b) {{ _why = NULL; _k = {_hfn}({n}, _b, _k, &_why); }}
+        if (!_k || !_b) {{
+            fprintf(stderr, "bad --{n}: %s\\n",
+                    _why ? _why : "{_hfn}() refused the text");
+            free(_b);
+            return 2;
+        }}
+        src.{_cp} = _b; src.{_cl} = _k;
+    }}""")
+                continue
             assign.append(f"""    if ({n}) {{
         size_t _ln = strlen({n});
         uint8_t *_b = (uint8_t *)malloc(_ln ? _ln : 1);
@@ -4787,6 +4953,16 @@ def render_cli(cfg: dict, module: str) -> str:
 
     # gh-1583: the include of a jm header is spelled by the layout.
     _common_h = INC.include("clib_common.h", cfg)
+    # gh-1709: a field's coerce_str_fn is declared by the bridge header, the
+    # one place a seam's prototype is written.
+    bridge_inc = (
+        f'#include "{INC.include(bridge_h(module), cfg)}"\n'
+        if _coerce_str_fns(cfg, module)
+        else ""
+    )
+    # The sample-type block is `jm app`'s, and carries the layout's include
+    # slot; left unfilled, `apply` refuses to write this file at all.
+    sample_type_c = R.render(_app._SAMPLE_TYPE_C, INC.ctx_slots(cfg))
     return f"""/*
  * {module}_cli.c — generic composer command-line tool (generated by jm; gh-287).
  *
@@ -4801,8 +4977,8 @@ def render_cli(cfg: dict, module: str) -> str:
 #include "{_common_h}"
 
 #include "{header}"
-
-{_app._SAMPLE_TYPE_C}
+{bridge_inc}
+{sample_type_c}
 {_app._WRITE_BLOCK_C}
 {render_enum_tables(cfg, module)}
 static int
