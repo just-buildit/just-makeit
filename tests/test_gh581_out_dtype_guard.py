@@ -56,7 +56,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 # the PyArray_Check/PyArray_TYPE/IS_C_CONTIGUOUS/ISWRITEABLE quad that must
 # precede it.
 WRITABLE_MARSHAL = re.compile(
-    r"PyArray_FROM_OTF\(\s*[^;]*?NPY_ARRAY_WRITEABLE", re.S
+    r"jm_array_arg\(\s*[^;]*?NPY_ARRAY_WRITEABLE", re.S
 )
 GUARD_HEAD = "if (!PyArray_Check("
 # The message is emitted as two adjacent C literals to stay inside 79 chars;
@@ -133,7 +133,7 @@ class TestObjectSteps:
     def test_guard_precedes_marshal(self, project):
         ext = _ext(project)
         branch = ext[ext.index("out_obj && out_obj != Py_None") :]
-        assert branch.index(GUARD_HEAD) < branch.index("PyArray_FROM_OTF")
+        assert branch.index(GUARD_HEAD) < branch.index("jm_array_arg(")
 
     def test_requires_exact_output_dtype(self, project):
         ext = _ext(project)
@@ -180,7 +180,7 @@ class TestMethodOutPaths:
         )
         ext = _ext(project)
         branch = ext[ext.index("out_obj && out_obj != Py_None") :]
-        assert branch.index(GUARD_HEAD) < branch.index("PyArray_FROM_OTF")
+        assert branch.index(GUARD_HEAD) < branch.index("jm_array_arg(")
 
 
 class TestFunctionOutParam:

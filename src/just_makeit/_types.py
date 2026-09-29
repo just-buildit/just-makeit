@@ -494,10 +494,46 @@ def py_param_annotation(base: str, ctype: str, default: str) -> str:
     'str | None'
     >>> py_param_annotation("str", "const char *", '"x"')
     'str'
+
+    A one-byte integer array also takes a byte buffer, one element per byte
+    (gh-1700: the binding's ``jm_array_arg`` reads it with
+    ``PyArray_FromBuffer``), so the stub admits the three builtin ones:
+
+    >>> py_param_annotation("NDArray[np.uint8]", "uint8_t[]", "")
+    'NDArray[np.uint8] | bytes | bytearray | memoryview'
+    >>> py_param_annotation("NDArray[np.float32]", "float[]", "")
+    'NDArray[np.float32]'
     """
     if is_nullable_string(ctype, default):
         return f"{base} | None"
+    if takes_byte_buffer(ctype):
+        return f"{base} | {BYTE_BUFFER_PY_TYPES}"
     return base
+
+
+#: The builtin byte buffers a one-byte integer array parameter accepts
+#: (gh-1700). ``collections.abc.Buffer`` would say it exactly but is 3.12+,
+#: and a stub must parse on every Python jm supports.
+BYTE_BUFFER_PY_TYPES = "bytes | bytearray | memoryview"
+
+
+def takes_byte_buffer(ctype: str) -> bool:
+    """Whether a parameter of *ctype* reads a byte buffer as its elements.
+
+    True for a 1-D array of a one-byte integer, ``uint8_t[]`` / ``int8_t[]``
+    -- the element types for which the binding's ``jm_array_arg`` takes one
+    element per byte (gh-1700). Keyed on the numpy dtype, as the C helper is keyed on
+    the typenum, so a new one-byte spelling cannot be missed by one side.
+
+    >>> takes_byte_buffer("uint8_t[]"), takes_byte_buffer("int8_t[]")
+    (True, True)
+    >>> takes_byte_buffer("uint8_t[][]"), takes_byte_buffer("bool[]")
+    (False, False)
+    """
+    if not ctype.endswith("[]") or ctype.endswith("[][]"):
+        return False
+    meta = _CTYPE_META.get(ctype[:-2])
+    return bool(meta) and meta.get("py_type") in ("np.uint8", "np.int8")
 
 
 def default_type_error(ctype: str, default: str) -> str:

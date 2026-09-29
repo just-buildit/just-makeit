@@ -162,7 +162,7 @@ class TestTheBindingHandsOverTheCallersArray:
         fn = _fn_text((project / path).read_text(encoding="utf-8"), head)
         assert _GUARD in fn and _MSG in fn, fn
         marshal = re.search(
-            r"PyArray_FROM_OTF\(\s*buf_obj,\s*NPY_FLOAT,\s*([^)]*)\)", fn
+            r"jm_array_arg\(\s*buf_obj,\s*NPY_FLOAT,\s*([^)]*)\)", fn
         )
         assert marshal, fn
         assert "NPY_ARRAY_WRITEABLE" in marshal.group(1), fn

@@ -342,7 +342,7 @@ class TestAnInputCanBeRefused:
 
         body = _wrapper((proj / EXT).read_text(), "write")
         # Nothing is converted...
-        assert "PyArray_FROM_OTF" not in body
+        assert "jm_array_arg(" not in body
         # ...the exact dtype is required, naming what it wanted and got...
         assert "PyArray_TYPE((PyArrayObject *)x_obj) != NPY_COMPLEX64" in body
         assert "PyExc_TypeError" in body
@@ -361,7 +361,7 @@ class TestAnInputCanBeRefused:
         assert self._write(proj).returncode == 0
 
         body = _wrapper((proj / EXT).read_text(), "write")
-        assert "PyArray_FROM_OTF" in body
+        assert "jm_array_arg(" in body
         assert "PyArray_IS_C_CONTIGUOUS" not in body
 
     def test_an_out_param_is_not_double_guarded(self, tmp_path):

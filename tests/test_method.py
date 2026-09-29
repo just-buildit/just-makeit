@@ -1500,8 +1500,7 @@ class TestMethodWithArrayParam:
         ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
-        assert "NPY_COMPLEX64" in ext
+        assert "jm_array_arg(ctrl_obj, NPY_COMPLEX64," in ext
 
     def test_ext_c_format_has_O(self, arr_method):
         ext = (arr_method / "native/src/nco/nco_ext.c").read_text(
@@ -1547,7 +1546,7 @@ class TestMethodWithArrayParam:
 
 
 class TestMethodArrayArgNoParams:
-    """Bug fix: array arg_type (not --param) must emit PyArray_FROM_OTF, not
+    """Bug fix: array arg_type (not --param) must emit an array conversion, not
     'float[] x;' invalid C syntax."""
 
     @pytest.fixture()
@@ -1568,7 +1567,7 @@ class TestMethodArrayArgNoParams:
         ext = (add_method / "native/src/nco/nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
+        assert "jm_array_arg(x_obj, NPY_FLOAT," in ext
 
     def test_ext_c_no_invalid_array_decl(self, add_method):
         ext = (add_method / "native/src/nco/nco_ext.c").read_text(

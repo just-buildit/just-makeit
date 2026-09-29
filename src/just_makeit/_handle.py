@@ -925,12 +925,12 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {{
 {d_parse}
 {closed_guard}
-    PyArrayObject *{xn}_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        {xn}_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *{xn}_arr =
+        {_coerce.array_arg(f"{xn}_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", xn)};
     if (!{xn}_arr) return NULL;
 
-{_out_guard}    PyArrayObject *{on}_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        {on}_obj, {out_npy}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+{_out_guard}    PyArrayObject *{on}_arr =
+        {_coerce.array_arg(f"{on}_obj", out_npy, "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE", on)};
     if (!{on}_arr) {{ Py_DECREF({xn}_arr); return NULL; }}
 
     size_t n_in    = (size_t)PyArray_SIZE({xn}_arr);
@@ -975,8 +975,8 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         ret_decl = f"    {returns} r;\n" if returns else ""
         assign = "r = " if returns else ""
         body_tail = f"""{closed_guard}
-    PyArrayObject *x_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        x_obj, {in_npy}, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *x_arr =
+        {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"])};
     if (!x_arr) return NULL;
     size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
@@ -1788,7 +1788,8 @@ def render_ext(
 #include <string.h>
 
 #include "{header}"
-{weak_decl}""",
+{weak_decl}
+{_coerce.ARRAY_ARG_C}""",
         render_enum_tables(cfg, module),
         render_type(cfg, module, doc_blocks),
     ]

@@ -780,7 +780,7 @@ class TestArrayArgTypeCLI:
         ext = (dest / "native/src/dsp/dsp_ext_filt.c").read_text(
             encoding="utf-8"
         )
-        assert "PyArray_FROM_OTF" in ext
+        assert "jm_array_arg(x_obj," in ext
         assert "Filt_steps" not in ext
 
 

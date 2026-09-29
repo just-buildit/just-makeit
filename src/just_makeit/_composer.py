@@ -25,6 +25,7 @@ from . import _textio
 
 from pathlib import Path
 
+from . import _coerce
 from . import _config as C
 from . import _modplatforms
 from ._builtins import require_scope_names
@@ -1074,8 +1075,7 @@ _attach_{cn}({struct} *src, PyObject *obj)
     src->{clp} = 0;
     if (!obj || obj == Py_None)
         return 1;
-    PyArrayObject *_arr = (PyArrayObject *)PyArray_FROM_OTF(
-        obj, NPY_COMPLEX64, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_FORCECAST);
+    PyArrayObject *_arr = {_coerce.array_arg("obj", "NPY_COMPLEX64", "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_FORCECAST", cn)};
     if (!_arr)
         return 0;
     Py_ssize_t _n = PyArray_SIZE(_arr);
@@ -3635,7 +3635,8 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 #include <string.h>
 
 #include "{header}"
-{gen_includes}{json_includes}{rt_includes}{serializer_includes}""",
+{gen_includes}{json_includes}{rt_includes}{serializer_includes}
+{_coerce.ARRAY_ARG_C}""",
         _extra_method_protos(cfg, module),
         render_enum_tables(cfg, module),
         render_range_helper(cfg, module),

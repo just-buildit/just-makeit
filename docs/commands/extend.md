@@ -113,7 +113,11 @@ double, int, int32_t, uint32_t, size_t, float \_Complex, etc.).
 
 **Array parameters** (`--param name:type[]`) generate a numpy array input.
 The C stub receives `(const elem_t *name, size_t name_len)` and the Python
-wrapper performs `PyArray_FROM_OTF` automatically:
+wrapper converts whatever the caller passes (a list, an ndarray of another
+dtype) automatically. A `str` is refused with a `TypeError` naming the
+parameter -- a string is never an array of its digits' value -- and a
+`uint8_t[]` / `int8_t[]` parameter also takes `bytes`, `bytearray` or
+`memoryview`, one element per byte (gh-1700):
 
 ```sh
 just-makeit method resamp execute_ctrl --module resample \
