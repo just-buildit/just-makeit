@@ -306,7 +306,8 @@ class OwnedPtr(NamedTuple):
     consumer, while the source owns the value and must hand it to
     ``free_fn`` -- the same asymmetry :func:`buffer_is_relocated` casts for.
     ``capsule`` is empty for a text-only field; ``py_class`` / ``py_import``
-    are empty unless the field names an ``object``.
+    are empty unless the field names an ``object``. ``parse_why`` says
+    ``parse_fn`` takes a trailing ``const char **why`` (gh-1735).
     """
 
     member: str
@@ -319,6 +320,7 @@ class OwnedPtr(NamedTuple):
     free_fn: str
     parse_fn: str
     format_fn: str
+    parse_why: bool = False
 
 
 def _field_is_owned_ptr(field: dict) -> bool:
@@ -412,7 +414,32 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
         free_fn=field["free_fn"],
         parse_fn=field["parse_fn"],
         format_fn=field["format_fn"],
+        parse_why=bool(field.get("parse_why")),
     )
+
+
+def _owned_ptr_parse_call(p: OwnedPtr, text: str, why: str) -> str:
+    """The call to an owned pointer's ``parse_fn`` -- the one spelling every
+    face that reads its text form uses (gh-1735).
+
+    Under ``parse_why`` the reader has the reason-naming signature
+    ``T *parse_fn(const char *, const char **why)`` (the shape of
+    ``[module.X.json] from_json_why``, gh-1706), so the call gains *why*, a
+    ``const char **`` expression -- ``&_why`` where the site owns the
+    local, or a parameter it was handed. Without, the one-argument call is
+    what gh-1711 emitted. The Python faces (constructor keyword and setter,
+    through ``_attach_<name>``), the generic JSON record and the c-face
+    CLI's ``--<name>`` all call it through here, so no face can pass the
+    reason while another drops it.
+
+    >>> p = OwnedPtr("f", "T *", "", "", "", "", "c", "d", "tp", "tf")
+    >>> _owned_ptr_parse_call(p, "s", "&_why")
+    'tp(s)'
+    >>> _owned_ptr_parse_call(p._replace(parse_why=True), "s", "&_why")
+    'tp(s, &_why)'
+    """
+    tail = f", {why}" if p.parse_why else ""
+    return f"{p.parse_fn}({text}{tail})"
 
 
 def _owned_ptrs(cfg: dict, module: str) -> "list[tuple[str, OwnedPtr]]":
@@ -443,7 +470,14 @@ def _owned_ptr_prototypes(
         for fn, proto, what in (
             (p.copy_fn, f"{t} *{p.copy_fn}(const {t} *);", "copy"),
             (p.free_fn, f"void {p.free_fn}({t} *);", "free"),
-            (p.parse_fn, f"{t} *{p.parse_fn}(const char *);", "parse"),
+            (
+                p.parse_fn,
+                f"{t} *{p.parse_fn}(const char *"
+                + (", const char **why" if p.parse_why else "")
+                + ");",
+                # gh-1735: the sentence a refusal leaves in *why is raised.
+                "parse, naming a refusal in *why" if p.parse_why else "parse",
+            ),
             (p.format_fn, f"char *{p.format_fn}(const {t} *);", "format"),
         ):
             if fn in out:
@@ -466,6 +500,23 @@ def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
     """
     p = owned_ptr(cfg, f)
     n = f["name"]
+    # gh-1735: under `parse_why` the host's sentence is raised, through the
+    # one emitter every reason-carrying refusal shares; this text stays the
+    # raise when the reader gives none.
+    fallback = (
+        "PyErr_SetString(PyExc_ValueError,\n"
+        f'                "{n}: {p.parse_fn} refused the text");\n'
+    )
+    why = WHY_LOCAL if p.parse_why else ""
+    call = _owned_ptr_parse_call(p, "_jm_s", f"&{WHY_LOCAL}")
+    parse = (
+        (f"        {WHY_DECL}\n" if why else "")
+        + f"        _jm_new = {call};\n"
+        + "        if (!_jm_new) {\n"
+        + reason_raise_c(fallback, why, indent=12)
+        + "            return 0;\n"
+        "        }"
+    )
     if p.capsule:
         other = (
             capsule_unwrap_c(
@@ -509,12 +560,7 @@ _attach_{n}({struct} *_jm_src, PyObject *_jm_obj)
             PyErr_SetString(PyExc_ValueError, "embedded null character");
             return 0;
         }}
-        _jm_new = {p.parse_fn}(_jm_s);
-        if (!_jm_new) {{
-            PyErr_SetString(PyExc_ValueError,
-                            "{n}: {p.parse_fn} refused the text");
-            return 0;
-        }}
+{parse}
     }} else {{
 {other}
     }}
@@ -5017,7 +5063,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 char *_t = cJSON_IsString(_o) ? NULL
                                               : cJSON_PrintUnformatted(_o);
                 const char *_s = _t ? _t : cJSON_GetStringValue(_o);
-                src->{op.member} = _s ? {op.parse_fn}(_s) : NULL;
+                src->{op.member} = _s ? {_owned_ptr_parse_call(op, "_s", "why")} : NULL;
                 free(_t);
                 if (!src->{op.member})
                     return -1;
@@ -5041,6 +5087,20 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 f"{_default_literal(f)});"
             )
     src_parse_s = "\n".join(src_parse)
+    # gh-1735: a `parse_why` reader's sentence is raised by `from_json` /
+    # `from_file`, so the record threads a `const char **why` from them down
+    # to the call -- and only then, so a record without one is unchanged.
+    rec_why = any(op.parse_why for _n, op in _owned_ptrs(cfg, module))
+    why_param = ", const char **why" if rec_why else ""
+    why_arg = ", why" if rec_why else ""
+    why_decl = f"\n    {WHY_DECL}" if rec_why else ""
+    why_ref = f", &{WHY_LOCAL}" if rec_why else ""
+    why_pass = f", {WHY_LOCAL}" if rec_why else ""
+    wrap_param = ", const char *why" if rec_why else ""
+    wrap_raise = reason_raise_c(
+        'PyErr_SetString(PyExc_ValueError, "invalid composer spec");\n',
+        "why" if rec_why else "",
+    )
 
     seg_parse = "\n".join(
         _parse_ranged(
@@ -5077,7 +5137,7 @@ _json_add_source(cJSON *so, const {src_struct} *src)
 }}
 
 static int
-_json_parse_source(const cJSON *so, {src_struct} *src)
+_json_parse_source(const cJSON *so, {src_struct} *src{why_param})
 {{
     memset(src, 0, sizeof(*src));
 {src_parse_s}
@@ -5123,7 +5183,7 @@ static PyObject *
 
 /* Build a composer state from a parsed JSON root (NULL on error). */
 static {sym}_state_t *
-_{backing}_from_root(cJSON *root)
+_{backing}_from_root(cJSON *root{why_param})
 {{
     const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "segments");
     if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) == 0)
@@ -5150,7 +5210,7 @@ _{backing}_from_root(cJSON *root)
         size_t k = 0;
         const cJSON *so = NULL;
         cJSON_ArrayForEach(so, srcarr) {{
-            if (_json_parse_source(so, &srcs[k]) != 0) goto fail;
+            if (_json_parse_source(so, &srcs[k]{why_arg}) != 0) goto fail;
             k++;
         }}
 {seg_parse}
@@ -5173,11 +5233,10 @@ fail:
 }}
 
 static PyObject *
-_{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st)
+_{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st{wrap_param})
 {{
     if (!st) {{
-        PyErr_SetString(PyExc_ValueError, "invalid composer spec");
-        return NULL;
+{wrap_raise}        return NULL;
     }}
     {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
@@ -5192,7 +5251,7 @@ _{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st)
 static PyObject *
 {cname}_from_json(PyObject *cls, PyObject *args)
 {{
-    const char *json;
+    const char *json;{why_decl}
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
     cJSON *root = cJSON_Parse(json);
@@ -5200,15 +5259,15 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "could not parse JSON");
         return NULL;
     }}
-    {sym}_state_t *st = _{backing}_from_root(root);
+    {sym}_state_t *st = _{backing}_from_root(root{why_ref});
     cJSON_Delete(root);
-    return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
+    return _{cname}_wrap_state((PyTypeObject *)cls, st{why_pass}); /* cls: subclass round-trips */
 }}
 
 static PyObject *
 {cname}_from_file(PyObject *cls, PyObject *args)
 {{
-    PyObject *pathobj;
+    PyObject *pathobj;{why_decl}
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
     FILE *fp = fopen(PyBytes_AS_STRING(pathobj), "rb");
@@ -5232,9 +5291,9 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "could not parse JSON file");
         return NULL;
     }}
-    {sym}_state_t *st = _{backing}_from_root(root);
+    {sym}_state_t *st = _{backing}_from_root(root{why_ref});
     cJSON_Delete(root);
-    return _{cname}_wrap_state((PyTypeObject *)cls, st); /* cls: subclass round-trips */
+    return _{cname}_wrap_state((PyTypeObject *)cls, st{why_pass}); /* cls: subclass round-trips */
 }}
 """
 
@@ -5315,8 +5374,22 @@ def render_cli(cfg: dict, module: str) -> str:
             parse.append(
                 f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
             )
+            # gh-1735: under `parse_why` the refusal prints the host's
+            # sentence, the CLI's form of the reason Python raises.
+            call = _owned_ptr_parse_call(op, n, f"&{WHY_LOCAL}")
+            if op.parse_why:
+                assign.append(f"""    if ({n}) {{
+        {WHY_DECL}
+        src.{op.member} = {call};
+        if (!src.{op.member}) {{
+            fprintf(stderr, "bad --{n} %s: %s\\n", {n},
+                    {WHY_LOCAL} ? {WHY_LOCAL} : "{op.parse_fn} refused the text");
+            return 2;
+        }}
+    }}""")
+                continue
             assign.append(f"""    if ({n}) {{
-        src.{op.member} = {op.parse_fn}({n});
+        src.{op.member} = {call};
         if (!src.{op.member}) {{
             fprintf(stderr, "bad --{n} %s\\n", {n});
             return 2;

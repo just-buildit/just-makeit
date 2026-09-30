@@ -719,8 +719,13 @@ COMPOSER_OWNED_PTR_FNS = ("copy_fn", "free_fn", "parse_fn", "format_fn")
 #: below, the manifest writer (`_config._inline_field`) and the renderer
 #: (`_composer.owned_ptr`) all read it, so a key cannot be accepted and then
 #: dropped on the next save.
-COMPOSER_OWNED_PTR_KEYS = ("object", "capsule", "header") + (
-    COMPOSER_OWNED_PTR_FNS
+COMPOSER_OWNED_PTR_KEYS = (
+    ("object", "capsule", "header")
+    + COMPOSER_OWNED_PTR_FNS
+    # gh-1735: `parse_fn` takes a trailing `const char **why`, and a refusal
+    # raises the sentence it wrote -- `[module.X.json] from_json_why`'s
+    # switch, for the owned pointer's reader.
+    + ("parse_why",)
 )
 #: A SOURCE field's own vocabulary rather than the shared one, because a
 #: segment field has no owned-pointer face and a key accepted there would be

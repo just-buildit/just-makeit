@@ -382,8 +382,9 @@ def expand_template(name: str, spec: dict) -> "tuple[dict, list[str]]":
 def _why_key_errors(cfg: dict) -> "list[str]":
     """Every ``why`` switch given something other than ``true``/``false``.
 
-    ``[module.X.json] from_json_why`` / ``from_file_why`` and a module
-    function's ``why`` each say that an EXISTING function takes a trailing
+    ``[module.X.json] from_json_why`` / ``from_file_why``, a module
+    function's ``why`` and an owned-pointer source field's ``parse_why``
+    (gh-1735) each say that an EXISTING function takes a trailing
     ``const char **why`` (gh-1706). None of them names a function, but a name
     is what an author reaches for, and a string is truthy: jm accepted it and
     rendered ``<fn>(json, &_why)`` against a one-argument reader, which failed
@@ -411,6 +412,21 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"[module.{mid}.json] {key} = {v!r} must be true or "
                         f"false: it marks {face}_fn as taking a trailing "
                         f"`const char **why`. Name the function in {face}_fn."
+                    )
+        # gh-1735: an owned-pointer source field's `parse_why` is the same
+        # switch, for its `parse_fn`.
+        src = mod.get("source")
+        rows = (src.get("fields") or []) if isinstance(src, dict) else []
+        for f in rows:
+            if isinstance(f, dict) and "parse_why" in f:
+                v = f["parse_why"]
+                if not isinstance(v, bool):
+                    errors.append(
+                        f"[[module.{mid}.source.fields]] "
+                        f"{f.get('name', '?')}: parse_why = {v!r} must be "
+                        "true or false: it marks parse_fn as taking a "
+                        "trailing `const char **why`. Name the function in "
+                        "parse_fn."
                     )
         for fn in mod.get("functions") or []:
             if isinstance(fn, dict) and "why" in fn:
@@ -6565,9 +6581,11 @@ def _inline_field(f: dict) -> str:
         parts.append(f'coerce_str_fn = "{f["coerce_str_fn"]}"')
     # gh-1711: an owned-pointer field. Dropped, the next save would turn it
     # back into a scalar of a pointer type, which the renderer refuses.
+    # gh-1735: through the scalar writer, because `parse_why` is a switch --
+    # quoted like the names, it would read back as a string and be refused.
     for _k in _COMPOSER_OWNED_PTR_KEYS:
         if f.get(_k):
-            parts.append(f'{_k} = "{f[_k]}"')
+            parts.append(f"{_k} = {_toml_scalar(f[_k])}")
     if f.get("doc"):
         parts.append(f"doc = {_toml_scalar(str(f['doc']))}")
     return "{ " + ", ".join(parts) + " }"

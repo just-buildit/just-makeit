@@ -456,6 +456,7 @@ copy_fn   = "dp_wfm_frame_desc_copy"
 free_fn   = "dp_wfm_frame_desc_free"
 parse_fn  = "dp_wfm_frame_desc_from_json"
 format_fn = "dp_wfm_frame_desc_to_json"
+parse_why = true   # optional: parse_fn names its refusal (gh-1735)
 ```
 
 ```c
@@ -468,6 +469,16 @@ char *format_fn(const T *);   /* owned text, released with free()    */
 ```
 
 All four are required together, because each face calls one of them.
+
+`parse_why = true` (gh-1735) declares the reason-naming reader instead, the
+shape of `[X.json] from_json_why` (gh-1706):
+`T *parse_fn(const char *, const char **why)`. On a refusal the reader
+points `*why` at a static sentence naming the cause; every face that reads
+text passes it and reports that sentence -- the constructor keyword and the
+setter raise `ValueError(<sentence>)`, the generic `from_json` / `from_file`
+raise it too, and the CLI prints `bad --<name> TEXT: <sentence>`. A reader
+that refuses without writing one keeps the generic message. It is a switch:
+a function name there is refused at load.
 `object` and `capsule` are both optional, so a field bound only from its text
 form is valid; writing both is refused, as is a key of another field shape
 (`bytes`, `enum`, `default`, `c_len`, ...), a `type` that is not a pointer,
@@ -907,7 +918,7 @@ A **field** entry (`source.fields`/`segment.fields`):
 `{ name, type, enum?, default?, bytes? }` — one declaration drives the
 marshalling, the type slots, the JSON shape, and the CLI flag. A source field
 may instead be an owned pointer (§4.2, gh-1711):
-`{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn }`.
+`{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn, parse_why? }`.
 
 **Handle only:**
 

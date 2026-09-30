@@ -302,8 +302,11 @@ the composed generator from the source struct, and each
 bits with the project's own grammar. An owned-pointer source field's
 `copy_fn` / `free_fn` / `parse_fn` / `format_fn` (gh-1711) copy, free, read and
 write the host object it holds; the source owns a copy, so every face
-(`segments`, `from_json`) can make its own. jm generates the binding that
-calls them; the project writes the bodies.
+(`segments`, `from_json`) can make its own. Under `parse_why = true`
+(gh-1735) `parse_fn` takes a trailing `const char **why`, and every face
+that reads text calls it through `_composer._owned_ptr_parse_call` and
+raises or prints the sentence. jm generates the binding that calls them;
+the project writes the bodies.
 
 Their **prototypes are jm's**, and they are published in a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h` — self-contained (it pulls in the source
