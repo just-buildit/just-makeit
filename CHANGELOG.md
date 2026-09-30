@@ -1,5 +1,95 @@
 ## [Unreleased]
 
+## [0.94.0] — 2026-09-30
+
+### Added
+
+- **A composer `bit_pattern` field can read a `str` with the project's own
+    grammar** (gh-1709). `coerce_str_fn = "<fn>"` on the field names a
+    project function with the signature
+    `size_t fn(const char *, uint8_t *, size_t, const char **)`, which jm
+    declares in the module's `_bridge.h`. jm calls it once with `out = NULL`
+    to size the pattern and again to fill it. A return of 0 raises
+    `ValueError(why)`. The constructor, the property setter, a segment's
+    single-source keywords and the c-face CLI flag all read text this way,
+    so a string the project accepts works on every face and one it refuses
+    (such as `""` or `"0x"`) is refused everywhere. `bytes` and int
+    sequences work as before. The key is set per field.
+
+- **A composer source field can bind a host object into a pointer member**
+    (gh-1711). An owned-pointer field names the pointed-to type with
+    `object = "<comp>[.<Class>]"` (or `type`, `capsule` and `header`), an
+    optional `c_ptr`, and four host functions that are required together:
+    `copy_fn`, `free_fn`, `parse_fn` and `format_fn`. jm declares all four in
+    the module's `_bridge.h`. The source owns a copy, never a reference: the
+    constructor keyword and the setter take `None`, the host object (copied
+    through `copy_fn`) or its text (read through `parse_fn`, and a refusal
+    raises `ValueError`). The getter returns the text from `format_fn`.
+    Dealloc frees the copy, and `Composer.segments` gives each rebuilt source
+    its own copy. The generic `to_json` nests the text as JSON and
+    `from_json` reads it back, and the c-face CLI takes `--<name> TEXT`. The
+    `.pyi` types the keyword `FrameDesc | str | None` and the property
+    `str | None`.
+
+### Fixed
+
+- **An array argument is never text, and a byte array takes `bytes`**
+    (gh-1700). Every generated binding converted an array argument with a
+    bare `PyArray_FROM_OTF`, which reads a `str` or `bytes` as one text
+    scalar and casts it: `Fld("0101")` reached a `uint8_t[]` as the single
+    element 101 with no error, and `Fld(b"\x01\x00")` was refused with
+    `invalid literal for int()`. All of them now go through one converter,
+    `jm_array_arg`, emitted into every extension (objects, modules,
+    functions, handle, capsule and composer kinds): a `str` is a `TypeError`
+    naming the parameter for every element type, and a `uint8_t[]` /
+    `int8_t[]` parameter reads any one-byte buffer (`bytes`, `bytearray`,
+    `memoryview`) as its elements, one per byte. `bytes` into a wider array
+    is refused rather than parsed as a number. Both stub generators say
+    `| bytes | bytearray | memoryview` for a byte-array parameter, and a stub
+    annotating an array init-param `npt.ArrayLike` now imports `npt`.
+
+- **A mutating save keeps the comments on every row it did not change**
+    (gh-1701). A table whose value changed was re-rendered whole, so every
+    comment inside it was deleted: appending one method to each of
+    doppler's objects deleted 422 comment lines across 60
+    `objects/*.toml`, and editing one `doc` on one composer
+    `source.fields` row deleted 15. A changed table array (`[[x]]` or an
+    inline `x = [{...}]`) is now synced row by row, and a changed row key
+    by key, in the manifest, in `objects/*.toml` and `modules/*.toml`
+    fragments, in composer sub-tables and in `[[enum]]`. A comment above a
+    row stays with that row: it is deleted with it, and it no longer ends up
+    above a neighbour when a row is added or removed. A new key lands with
+    its table's values rather than under the next table's comment.
+
+- **A composer's c-face CLI can be generated again in a project using the
+    `native/inc/<pkg>/` layout** (found while fixing gh-1709). The CLI copies
+    `jm app`'s sample-type block, and the block's `#include` slot was left
+    unfilled, so `apply` refused to write `<module>_cli.c`.
+
+- **An output size past `NPY_MAX_INTP` raises `OverflowError`** (gh-1710).
+    A binding that sizes its output from a C value -- a function's
+    `out_size`, a caller-sized `[M]` length, a function's list-of-records
+    capacity, a method's `max_out()` or integer-param length, a borrowed
+    view's count, a handle's `out_len_fn` -- cast it straight to `npy_intp`,
+    so `SIZE_MAX` wrapped to `-1` and the caller saw numpy's
+    `ValueError: negative dimensions are not allowed`. Two sites handed the
+    callee a short buffer: a `str` output's `malloc(_cap + 1)` wrapped to
+    `malloc(0)`, and a list-of-records `malloc(_max * sizeof(T))` wrapped for a large capacity.
+    The size is now evaluated once into a `size_t` and refused before the
+    cast or the arithmetic with
+    `OverflowError("<name>: output of <n> elements is too large")`, after
+    releasing any parsed input. Every site uses one emitter,
+    `_coerce.output_size_c`.
+
+- **A `why` switch that is not `true`/`false` is refused at load**
+    (gh-1722). `[module.X.json] from_json_why` / `from_file_why` and a
+    module function's `why` mark an existing function as taking a trailing
+    `const char **why`. A function name, the natural guess, was accepted as
+    truthy and rendered a two-argument call to a one-argument reader, which
+    failed in the C compiler. Every command now refuses it, naming the key and
+    where the function name goes. The `@param why` line jm adds to an authored
+    docblock now says what the parameter means instead of being blank.
+
 ## [0.93.0] — 2026-09-29
 
 ### Added
