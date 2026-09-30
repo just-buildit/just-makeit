@@ -72,6 +72,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "free_fn": "frame_free",
     "parse_fn": "frame_parse",
     "format_fn": "frame_format",
+    # gh-1735: `parse_fn` takes a trailing `const char **why`.
+    "parse_why": True,
     # source
     "object": "wfm_synth",
     "struct": "wfm_source_t",

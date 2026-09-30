@@ -1229,16 +1229,21 @@ def _ok(r: subprocess.CompletedProcess) -> str:
     return r.stdout
 
 
-@pytest.fixture(scope="module")
-def project(tmp_path_factory) -> Path:
-    """`studio`: a `frame` object publishing its state as a capsule, a `clip`
-    generator, and a composer whose source owns a copy of a frame. Built with
-    the prefix `jm new` defaults to, so the author-named host functions are
-    also shown to survive it unrenamed."""
+def build_project(
+    root: Path,
+    playlist_h: str = PLAYLIST_H,
+    playlist_c: str = PLAYLIST_C,
+    composer_toml: str = COMPOSER_TOML,
+) -> Path:
+    """Scaffold and build the `studio` project at *root* (a new directory).
+
+    The backing kernel, its host functions and the composer table are
+    parameters, so a variant of the owned pointer (gh-1735's reason-naming
+    reader) builds the same project rather than a second copy of it.
+    """
     import contextlib
     import io
 
-    root = tmp_path_factory.mktemp("g1711") / "studio"
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("studio", root)
         object_run(
@@ -1270,8 +1275,8 @@ def project(tmp_path_factory) -> Path:
         inc.mkdir(parents=True)
         backing = root / "native" / "src" / "backing"
         backing.mkdir(parents=True)
-        _textio.write_text(inc / "playlist_core.h", PLAYLIST_H)
-        _textio.write_text(backing / "playlist_core.c", PLAYLIST_C)
+        _textio.write_text(inc / "playlist_core.h", playlist_h)
+        _textio.write_text(backing / "playlist_core.c", playlist_c)
         _textio.write_text(backing / "playlist_bridge.c", BRIDGE_C)
         _textio.write_text(backing / "CMakeLists.txt", BACKING_CMAKE)
         _textio.write_text(backing / "cJSON.h", CJSON_H)
@@ -1280,7 +1285,7 @@ def project(tmp_path_factory) -> Path:
         text = toml.read_text(encoding="utf-8").replace(
             "[project]\n", '[project]\nc_deps = ["backing"]\n', 1
         )
-        _textio.write_text(toml, text + COMPOSER_TOML)
+        _textio.write_text(toml, text + composer_toml)
         apply_run(root)
     _ok(
         _run(
@@ -1299,6 +1304,15 @@ def project(tmp_path_factory) -> Path:
     )
     _ok(_run(["cmake", "--build", "build", "--parallel", "4"], root))
     return root
+
+
+@pytest.fixture(scope="module")
+def project(tmp_path_factory) -> Path:
+    """`studio`: a `frame` object publishing its state as a capsule, a `clip`
+    generator, and a composer whose source owns a copy of a frame. Built with
+    the prefix `jm new` defaults to, so the author-named host functions are
+    also shown to survive it unrenamed."""
+    return build_project(tmp_path_factory.mktemp("g1711") / "studio")
 
 
 def test_every_python_face_owns_and_frees_its_copy(project: Path) -> None:
