@@ -2583,10 +2583,13 @@ def make_state_ctx(
                 "    pass  # no auto-state; add assertions for your reset"
             ),
             "c_create_args": "",
-            "bench_create_stmt": (
-                f"    /* TODO: {csym}_state_t *obj = {_create}(...); */"
-            ),
-            "bench_destroy_stmt": "",
+            # gh-1742: a no-state object's constructor is `create(void)` --
+            # `create_params` above -- so it is callable, exactly as gh-181
+            # found for a no_step one. A TODO comment in its place declared
+            # `obj` only inside the comment, and any method the bench then
+            # timed passed an undeclared `obj`: the tree did not build.
+            "bench_create_stmt": (f"    {csym}_state_t *obj = {_create}();"),
+            "bench_destroy_stmt": f"    {csym}_destroy(obj);",
             "getter_setter_test_c": "",
             "reset_test_c": (f"    /* reset */\n    {csym}_reset(obj);"),
             "array_args_parse_block": "",
@@ -3560,10 +3563,11 @@ def make_state_ctx(
             _py_args = ", ".join(_aa_py + _ip_py)
             _init_ctx["c_create_args"] = _c_args
             _init_ctx["py_create_args"] = _py_args
+            # gh-1742: the create() call these args were built for, even when
+            # there are none -- a TODO comment declared `obj` only inside the
+            # comment, and the bench's destroy / method calls still used it.
             _init_ctx["bench_create_stmt"] = (
                 f"    {csym}_state_t *obj = {_create}({_c_args});"
-                if _c_args
-                else (f"    /* TODO: {csym}_state_t *obj = {_create}(...); */")
             )
         _CTOR_OVERRIDE_KEYS = (
             "create_params",

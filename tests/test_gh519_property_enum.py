@@ -166,10 +166,25 @@ class TestGetterDecode:
             ],
             enums=ENUMS,
         )
+        # Writable: a setter is what calls the lookup, and only a lookup with
+        # a caller is emitted (gh-1745) -- so both must be, for the one
+        # lookup they share to be counted.
         body = _tables(
             [
-                {"name": "a", "type": "int", "field": True, "enum": "ftype"},
-                {"name": "b", "type": "int", "field": True, "enum": "ftype"},
+                {
+                    "name": "a",
+                    "type": "int",
+                    "field": True,
+                    "enum": "ftype",
+                    "writable": True,
+                },
+                {
+                    "name": "b",
+                    "type": "int",
+                    "field": True,
+                    "enum": "ftype",
+                    "writable": True,
+                },
             ],
             enums=ENUMS,
         )

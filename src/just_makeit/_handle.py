@@ -93,6 +93,18 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
     return seen
 
 
+def _lookup_args(cfg: dict, module: str) -> list[dict]:
+    """The create-args whose choice string ``tp_init`` looks up (gh-1745).
+
+    The one predicate for both halves: :func:`render_tp_init` emits a
+    `_enumc.validate_c` block for each of these, and
+    :func:`render_enum_tables` emits the ``_enum_index`` lookup only when
+    there is one. A getter only decodes, so a handle whose enums are all on
+    getters (doppler's ``wfm_plan``) used to carry a lookup nothing called.
+    """
+    return [a for a in C.handle_create_args(cfg, module) if a.get("enum")]
+
+
 def render_enum_tables(cfg: dict, module: str) -> str:
     """Emit the per-enum ``_enum_<name>[]`` tables + the shared ``_enum_index``.
 
@@ -100,7 +112,11 @@ def render_enum_tables(cfg: dict, module: str) -> str:
     set (:func:`_enums_used`) — the same lookup body and the same "order is
     the C int" table layout, which is what makes a choice mean one integer
     across every surface."""
-    return _enumc.render_tables(_enums_used(cfg, module), C.enums(cfg))
+    return _enumc.render_tables(
+        _enums_used(cfg, module),
+        C.enums(cfg),
+        looked_up=[a["enum"] for a in _lookup_args(cfg, module)],
+    )
 
 
 # ── stashed init scalars (referenced by decoded-getter exprs) ─────────────────
@@ -263,18 +279,17 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # hard-coded NULL compiles and reports SUCCESS. The emitter takes the
     # failure statement for exactly that reason.
     _henums = C.enums(cfg)
-    for a in args:
-        if a.get("enum"):
-            n, e = a["name"], a["enum"]
-            enum_validate.append(
-                _enumc.validate_c(
-                    n,
-                    e,
-                    _henums,
-                    fail="return -1;",
-                    cleanup=_init_fsfree(args),
-                )
+    for a in _lookup_args(cfg, module):
+        n, e = a["name"], a["enum"]
+        enum_validate.append(
+            _enumc.validate_c(
+                n,
+                e,
+                _henums,
+                fail="return -1;",
+                cleanup=_init_fsfree(args),
             )
+        )
     enum_validate_s = "\n".join(enum_validate)
 
     call_args = ", ".join(_create_call_arg(a) for a in args)

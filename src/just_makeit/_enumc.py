@@ -106,6 +106,7 @@ def render_tables(
     *,
     prefix: str = "",
     include_string_h: bool = False,
+    looked_up: "list[str] | None" = None,
 ) -> str:
     """The lookup plus one ``static const char *const`` table per enum.
 
@@ -116,6 +117,17 @@ def render_tables(
         a handle scans its create-args and getters, a composer its source and
         segment tables, a module its functions — and only the *set* differs,
         which is why that is the parameter rather than the manifest.
+    looked_up : list of str, optional
+        The enums whose choice STRING some generated call site turns into
+        its int -- the ones a :func:`validate_c` block is emitted for. The
+        lookup is emitted only when this is non-empty (gh-1745): a face that
+        only decodes (a read-only property, a handle getter) indexes the
+        table but never calls the lookup, and an uncalled ``static``
+        function is ``-Wunused-function``, an error under ``-Werror``. A
+        face passes the set its call sites are emitted from, through the
+        same predicate, so the two cannot disagree. ``None`` means every
+        enum in *used* is looked up -- true of each face that does not pass
+        it, whose every reference is a parameter or a setter.
     enums : dict
         The ``[[enum]]`` registry: name → ordered choices.
     prefix : str, optional
@@ -129,12 +141,25 @@ def render_tables(
     Returns
     -------
     str
-        C source. An empty *used* still emits the lookup, matching what every
-        face did before this was shared — a caller that wants nothing emitted
-        for an enum-free component checks that before calling.
+        C source. An empty *used* with no *looked_up* still emits the lookup,
+        matching what every face did before this was shared — a caller that
+        wants nothing emitted for an enum-free component checks that before
+        calling.
+
+    Examples
+    --------
+    A decode-only face gets the table and no lookup:
+
+    >>> "_enum_index" in render_tables(["k"], {"k": ["a"]}, looked_up=[])
+    False
+    >>> "_enum_index" in render_tables(["k"], {"k": ["a"]}, looked_up=["k"])
+    True
     """
     index_fn, _ = symbols(prefix, "")
     parts: list[str] = []
+    if looked_up is not None and not looked_up:
+        # gh-1745: no call site, so no lookup -- and no <string.h> for it.
+        include_string_h = False
     if include_string_h:
         parts += [
             "/* gh-519: strcmp for the enum lookup below. Python.h already",
@@ -143,7 +168,11 @@ def render_tables(
             "#include <string.h>",
             "",
         ]
-    parts.append(_INDEX_FN_TEMPLATE.format(fn=index_fn))
+    if looked_up is None or looked_up:
+        parts.append(_INDEX_FN_TEMPLATE.format(fn=index_fn))
+    else:
+        # The comment the lookup carries heads the tables either way.
+        parts.append(_INDEX_FN_TEMPLATE.splitlines()[0])
     for name in used:
         _, table = symbols(prefix, name)
         items = "".join(f'    "{v}",\n' for v in enums.get(name, []))
