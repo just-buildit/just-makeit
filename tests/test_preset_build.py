@@ -149,6 +149,12 @@ _WARN_FLAGS = (
 )
 
 _ENUM = '\n[[enum]]\nname = "mode"\nvalues = ["a", "b", "c"]\n'
+# gh-1748: an enum bound to C constants (gh-1450), which adds the
+# `_enum_<name>_name` reverse lookup beside its tables.
+_ENUM_CONSTANTS = (
+    '\n[[enum]]\nname = "lvl"\nvalues = ["lo", "hi"]\n'
+    'enumerators = ["0", "1"]\n'
+)
 
 _FILL = ["--param", "b:uint8_t[]", "--out-param", "o:uint8_t[]"] + [
     "--return-type",
@@ -156,10 +162,21 @@ _FILL = ["--param", "b:uint8_t[]", "--out-param", "o:uint8_t[]"] + [
 ]
 _VOID = ["--arg-type", "void", "--return-type", "void"]
 
-#: shape id -> the CLI commands that scaffold it after `jm new wp`. A `None`
-#: entry appends the `[[enum]]` above to the manifest, which has no CLI.
+#: shape id -> the CLI commands that scaffold it after `jm new wp`. A `str`
+#: entry is appended to the manifest verbatim: an `[[enum]]` has no CLI. A
+#: `(path, text)` entry appends *text* to that file under the project, for a
+#: key with no CLI on a table the commands above it wrote.
 _WARN_SHAPES = {
     "default_object": [["object", "deflt"]],
+    # gh-1747: the extension calls only `jm_array_arg_hint` (a `str_hint`,
+    # gh-1756, on its one array argument), so the `jm_array_arg` wrapper
+    # beside it goes uncalled.
+    "array_arg_hint_only": [
+        ["object", "hint", "--no-state", "--no-step", *_VOID]
+        + ["--init-param", "b:uint8_t[]"],
+        ("objects/hint.toml", 'str_hint = "pass bytes"\n'),
+        ["apply"],
+    ],
     "no_state": [["object", "ns", "--no-state"]],
     # gh-1742: no state and no step, with and without a benchable method.
     "no_state_no_step": [
@@ -176,7 +193,7 @@ _WARN_SHAPES = {
     # gh-1745 item 1: a module whose type only DECODES the enum (a read-only
     # property) has no call site for the lookup ...
     "module_enum_decode_only": [
-        None,
+        _ENUM,
         ["module", "m"],
         ["object", "ro", "--module", "m", "--state", "mode:int:0"],
         ["property", "ro", "mode", "--module", "m", "--type", "int"]
@@ -184,12 +201,31 @@ _WARN_SHAPES = {
     ],
     # ... and one whose setter and function parameter look it up does.
     "module_enum_looked_up": [
-        None,
+        _ENUM,
         ["module", "m"],
         ["object", "rw", "--module", "m", "--state", "mode:int:0"],
         ["property", "rw", "mode", "--module", "m", "--type", "int"]
         + ["--enum", "mode", "--writable"],
         ["function", "pick", "--module", "m", "--param", "k:enum:mode"]
+        + ["--return-type", "int"],
+    ],
+    # gh-1748: a constant-bound enum only a function parameter looks up has
+    # no decoder, so no `_enum_lvl_name` ... (and, gh-1747, a module whose
+    # extension takes no array argument at all).
+    "module_enum_constants_looked_up": [
+        _ENUM_CONSTANTS,
+        ["module", "m"],
+        ["function", "pick", "--module", "m", "--param", "k:enum:lvl"]
+        + ["--return-type", "int"],
+    ],
+    # ... while a property's getter decodes it, so the object face keeps it.
+    "module_enum_constants_decoded": [
+        _ENUM_CONSTANTS,
+        ["module", "m"],
+        ["object", "ro", "--module", "m", "--state", "lv:int:0"],
+        ["property", "ro", "lv", "--module", "m", "--type", "int"]
+        + ["--enum", "lvl"],
+        ["function", "pick", "--module", "m", "--param", "k:enum:lvl"]
         + ["--return-type", "int"],
     ],
 }
@@ -199,11 +235,7 @@ _WARN_SHAPES = {
 #: exactly that error and no other, so a new finding in the shape is still
 #: caught -- and the day the issue is fixed this goes red and the entry
 #: comes out.
-_WARN_KNOWN = {
-    # gh-1747: `jm_array_arg` is a main-file `static inline` with no caller
-    # in an extension that takes no array; clang (not gcc) reports it.
-    ("no_state_no_step", "clang"): "unused function 'jm_array_arg'",
-}
+_WARN_KNOWN: "dict[tuple[str, str], str]" = {}
 
 
 def _compiler_family(cc: str) -> str:
@@ -241,9 +273,11 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
     r = run_cli("new", "wp", str(root))
     assert r.returncode == 0, r.stderr
     for cmd in _WARN_SHAPES[shape]:
-        if cmd is None:
-            with (root / "just-makeit.toml").open("a", encoding="utf-8") as f:
-                f.write(_ENUM)
+        if isinstance(cmd, (str, tuple)):
+            rel, text = cmd if isinstance(cmd, tuple) else ("", cmd)
+            target = root / (rel or "just-makeit.toml")
+            with target.open("a", encoding="utf-8") as f:
+                f.write(text)
             continue
         r = run_cli(*cmd, cwd=root)
         assert r.returncode == 0, f"jm {' '.join(cmd)}:\n{r.stderr}"

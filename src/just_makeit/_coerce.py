@@ -431,6 +431,22 @@ def array_rank_guard(
 # methods. A per-site guard is how a fix lands in four of those and not the
 # fifth; ``tests/test_gh1700_array_arg_str_bytes.py`` refuses a generator that
 # calls ``PyArray_FROM_OTF`` on an argument directly.
+#
+# It is emitted UNCONDITIONALLY, and ``jm_array_arg`` is marked ``unused``
+# (gh-1747). ``jm_array_arg_hint`` (gh-1756) needs no mark: the wrapper
+# always calls it, so clang never sees it uncalled, and marking it anyway is
+# a change no build can tell from its absence. An extension with no array
+# argument, or one whose every argument declares a ``str_hint``, never
+# calls the wrapper, and clang reports an
+# uncalled ``static inline`` defined in the main file (gcc does not), so a
+# ``-Werror`` build failed. Emitting it only where a generated call site
+# exists cannot be decided when the file is rendered: a module's ``_ext.c``
+# ``#include``s its per-object fragments, which the author may hand-patch
+# and jm then preserves, plus any ``*_prologue.c`` / ``*_extra.c`` hook, and
+# the aggregator is rendered without reading any of them. The helper is
+# that translation unit's shared infrastructure -- the role a ``static
+# inline`` in a header plays, where neither compiler warns -- so the
+# attribute says what is true of it: it may go uncalled.
 
 ARRAY_ARG_FN = "jm_array_arg"
 
@@ -483,6 +499,12 @@ jm_array_arg_hint(PyObject *obj, int typenum, int requirements,
     }
     return (PyArrayObject *)PyArray_FROM_OTF(obj, typenum, requirements);
 }
+/* `unused` (gh-1747): emitted into every extension translation unit,
+ * including one that takes no array, or calls only jm_array_arg_hint above
+ * -- which needs no mark, since this wrapper always calls it. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
 static inline PyArrayObject *
 jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
 {
