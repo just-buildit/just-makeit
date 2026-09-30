@@ -1,5 +1,44 @@
 ## [Unreleased]
 
+## [0.96.0] — 2026-09-30
+
+### Added
+
+- **A composer's create can name its refusal** (gh-1755). A
+    `kind = "composer"` module declared `create_why = true` has a create --
+    its `create_fn`, or the `<backing>_create` default -- that takes a
+    trailing `const char **why`, the shape of a JSON reader's
+    `from_json_why`. Every face that builds a composer from segments passes
+    the reason through: the `Composer([...])` constructor raises
+    `ValueError(<the reason>)` instead of `<create> failed`, the generic
+    `from_json` / `from_file` raise it instead of `invalid composer spec`,
+    and the c-face CLI prints it instead of `failed to build composer`. A
+    refusal that writes no reason keeps the old message, and a module
+    without the key renders byte-identically. Like gh-1722's switches, a
+    `create_why` that is not `true`/`false` is refused at load.
+
+- **An array param can say where text goes** (gh-1756). A `str_hint` on an
+    array init param, method param, module-function param or handle method
+    arg is appended to gh-1700's refusal of a `str`:
+    `TypeError: sync must be an array of numbers, not str: build bits from text with field_bits()`. The converter gains one entry point,
+    `jm_array_arg_hint`, which `jm_array_arg` now calls with `NULL`; a param
+    without the key keeps its four-argument call, so its binding and its
+    message are unchanged. The hint is escaped into a C string literal and
+    passed as text, never as a format. `load` refuses a `str_hint` that is
+    not a non-empty string, one on a param that is not an array, and one on
+    an `out` buffer, a `strict` method's param or a record-typed param,
+    where it could never be shown. `jm apply` now replays it for a module function, and `jm status`
+    reports a sacred fragment rendered before a declared `str_hint`.
+
+### Fixed
+
+- **A composer honours `create_fn`** (gh-1758). The key was accepted on a
+    `kind = "composer"` module and read by nothing: every face called
+    `<backing>_create`. It now names the create the `Composer` constructor,
+    the generic `from_json` / `from_file` and the c-face CLI all call,
+    exactly as written (an author-named key, never respelled by a
+    `c_prefix`); unset, the `<backing>_create` default is unchanged.
+
 ## [0.95.0] — 2026-09-30
 
 ### Added
