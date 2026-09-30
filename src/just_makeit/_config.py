@@ -413,14 +413,14 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"false: it marks {face}_fn as taking a trailing "
                         f"`const char **why`. Name the function in {face}_fn."
                     )
-        # gh-1755: a composer's `create_why` is the same switch, for the
-        # backing's create.
+        # gh-1755: a composer's `create_why` is the same switch, for its
+        # create (`create_fn`, or the `<backing>_create` default).
         if "create_why" in mod and not isinstance(mod["create_why"], bool):
             errors.append(
                 f"[module.{mid}] create_why = {mod['create_why']!r} must be "
-                "true or false: it marks the backing as providing "
-                "`<backing>_create_why`, its create with a trailing "
-                "`const char **why`."
+                "true or false: it marks the composer's create as taking a "
+                "trailing `const char **why`. Name the function in "
+                "create_fn."
             )
         # gh-1735: an owned-pointer source field's `parse_why` is the same
         # switch, for its `parse_fn`.
@@ -3006,11 +3006,22 @@ def handle_create_fn(cfg: dict, module: str) -> str:
     ``<handle_type> *create_fn(...)``; a NULL return becomes a ``tp_init``
     error. Defaults to ``<backing>_open``."""
     backing = handle_backing(cfg, module)
-    return (
-        cfg.get("module", {})
-        .get(module, {})
-        .get("create_fn", f"{backing}_open" if backing else "")
-    )
+    return module_create_fn(cfg, module, f"{backing}_open" if backing else "")
+
+
+def module_create_fn(cfg: dict, module: str, default: str) -> str:
+    """A kind module's declared ``create_fn``, else *default*.
+
+    The one reading of the key for every kind that honours it: a handle
+    defaults to ``<backing>_open`` (:func:`handle_create_fn`), a composer to
+    ``<backing>_create`` (``_composer.composer_create_fn``, gh-1758).
+
+    >>> module_create_fn({"module": {"m": {"create_fn": "f"}}}, "m", "d")
+    'f'
+    >>> module_create_fn({"module": {"m": {}}}, "m", "d")
+    'd'
+    """
+    return cfg.get("module", {}).get(module, {}).get("create_fn", default)
 
 
 def handle_init_fn(cfg: dict, module: str) -> str:
