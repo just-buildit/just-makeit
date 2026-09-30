@@ -144,8 +144,9 @@ TypeError: sync must be an array of numbers, not str: build bits from text with 
 The hint is text, never a format: quotes, backslashes and `%` reach the
 message unchanged. It is TOML-only, and `load` refuses one that is not a
 non-empty string, one on a param that is not an array, and one on an `out`
-buffer or a `strict` method's param -- both refuse anything but an ndarray
-with their own message first, so the hint could never be shown. A param
+buffer, a `strict` method's param or an array of a declared record -- each
+refuses anything but an ndarray with its own message first, so the hint could
+never be shown. A param
 without the key renders exactly as before.
 
 Generated C stub:

@@ -553,22 +553,30 @@ def str_hint(param) -> str:
     return (param[16] if len(param) > 16 else "") or ""
 
 
-def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, bool]]":
-    """Every ``(table, param row, strict)`` whose param can reach `array_arg`.
+def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str]]":
+    """Every ``(table, param row, pre-empted)`` whose param can reach `array_arg`.
 
     An object's (and a view's) ``init_params``, its methods' ``params``, a
     module function's ``params`` and a handle module method's ``args``: the
-    tables a ``str_hint`` is honoured on. *strict* is True for the params of
-    a ``strict = true`` method, whose input is refused before any
-    conversion (gh-1426 B), so ``jm_array_arg`` never sees it.
+    tables a ``str_hint`` is honoured on. *pre-empted* names what refuses a
+    non-ndarray BEFORE ``jm_array_arg`` runs, so a hint on that param could
+    never be shown, or is ``""``:
+
+    - ``"a strict method's input"`` -- gh-1426 B refuses rather than
+      converts;
+    - ``"a record param"`` -- an array of a declared ``[[<obj>.records]]``
+      element is acquired by the record's dtype, which requires an ndarray
+      of it (gh-1405). Decided by `_record.declared` over `_config.records`,
+      the predicate the method binding itself uses.
     """
-    from . import _config
+    from . import _config, _record
+    from ._types import array_elem_ctype, is_array_param_type
 
-    rows: "list[tuple[str, dict, bool]]" = []
+    rows: "list[tuple[str, dict, str]]" = []
 
-    def add(where: str, params, strict: bool = False) -> None:
+    def add(where: str, params, why=lambda p: "") -> None:
         rows.extend(
-            (where, p, strict) for p in params or [] if isinstance(p, dict)
+            (where, p, why(p)) for p in params or [] if isinstance(p, dict)
         )
 
     for comp in _config.components(cfg):
@@ -576,12 +584,23 @@ def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, bool]]":
         if not isinstance(body, dict):
             continue
         add(f"[[{comp}.init_params]]", body.get("init_params"))
+        records = _config.records(cfg, comp)
+
+        def method_why(p: dict, strict: bool) -> str:
+            ptype = str(p.get("type", ""))
+            if is_array_param_type(ptype) and _record.declared(
+                records, array_elem_ctype(ptype)
+            ):
+                return "a record param"
+            return "a strict method's input" if strict else ""
+
         for m in body.get("methods") or []:
             if isinstance(m, dict):
+                strict = bool(m.get("strict"))
                 add(
                     f"[[{comp}.methods.params]]",
                     m.get("params"),
-                    bool(m.get("strict")),
+                    lambda p, s=strict: method_why(p, s),
                 )
         for v in body.get("views") or []:
             if isinstance(v, dict):
@@ -609,9 +628,9 @@ def str_hint_errors(cfg: dict) -> "list[str]":
       and ``str_hint = true`` has no text to append.
     - a ``str_hint`` on a parameter that is not an array. Only an array
       parameter's refusal of a ``str`` reads it.
-    - one on an ``out`` / ``mutable`` / ``writable`` array, or on a
-      ``strict`` method's param. Both refuse anything that is not already
-      an ndarray BEFORE ``jm_array_arg`` runs, with their own message.
+    - one on an ``out`` / ``mutable`` / ``writable`` array, a ``strict``
+      method's param or a record param. Each refuses anything that is not
+      already an ndarray BEFORE ``jm_array_arg`` runs, with its own message.
 
     Examples
     --------
@@ -629,7 +648,7 @@ def str_hint_errors(cfg: dict) -> "list[str]":
     from ._types import is_array_param_type, param_writable
 
     errors: "list[str]" = []
-    for where, p, strict in str_hint_rows(cfg):
+    for where, p, pre_empted in str_hint_rows(cfg):
         if STR_HINT_KEY not in p:
             continue
         value = p[STR_HINT_KEY]
@@ -646,12 +665,12 @@ def str_hint_errors(cfg: dict) -> "list[str]":
                 f"parameter's refusal of a str, and {name} is "
                 f"{p.get('type', '?')!r}; drop the key"
             )
-        elif param_writable(p) or p.get("writable") or strict:
-            what = "a strict method's input" if strict else "an out buffer"
+        elif param_writable(p) or p.get("writable") or pre_empted:
+            what = pre_empted or "an out buffer"
             errors.append(
                 f"{where} {name}: str_hint is never shown on {what}, which "
                 "must already be an ndarray and is refused with its own "
-                "message before any conversion; drop the key"
+                "message before the hint could apply; drop the key"
             )
     return errors
 
