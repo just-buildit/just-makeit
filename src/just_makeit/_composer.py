@@ -1091,6 +1091,47 @@ def json_why(cfg: dict, module: str) -> "dict[str, bool]":
     }
 
 
+def create_why(cfg: dict, module: str) -> bool:
+    """Whether the composer is built by the reason-naming create (gh-1755).
+
+    ``[module.X] create_why = true`` declares that the backing provides
+    ``<state_t> *<backing>_create_why(segs, n, repeat, continuous,
+    const char **why)`` beside its plain ``<backing>_create``: the
+    constructor's form of ``[module.X.json] from_json_why`` (gh-1706). Every
+    face that builds a composer from segments then calls it through
+    `_create_call`, and a refusal raises -- or, in the C CLI, prints -- the
+    sentence the C wrote. Undeclared, every face calls the plain create.
+
+    >>> create_why({"module": {"m": {"create_why": True}}}, "m")
+    True
+    >>> create_why({"module": {"m": {}}}, "m")
+    False
+    """
+    return bool(cfg.get("module", {}).get(module, {}).get("create_why"))
+
+
+def _create_call(sym: str, args: str, why: str = "") -> str:
+    """The backing create call every composer face makes (gh-1755).
+
+    The one spelling of "build the state from segments": the ``Composer``
+    constructor, the generated JSON record and the c-face CLI each render
+    their call here, so the switch reaches all of them or none. *why* is the
+    ``const char **`` expression the site owns -- ``&_why`` for a local, the
+    record's ``why`` parameter -- and empty means `create_why` is off, which
+    renders the plain call byte-identically. The reason-naming function is
+    ``<sym>_create_why``: a host keeps its plain create (doppler's is a thin
+    wrapper over the other), so a C caller of it is untouched.
+
+    >>> _create_call("wfm", "segs, n, repeat, continuous")
+    'wfm_create(segs, n, repeat, continuous)'
+    >>> _create_call("wfm", "segs, n, repeat, continuous", "&_why")
+    'wfm_create_why(segs, n, repeat, continuous, &_why)'
+    """
+    if not why:
+        return f"{sym}_create({args})"
+    return f"{sym}_create_why({args}, {why})"
+
+
 def _factory_refusal_c(
     sym: str,
     fn: str,
@@ -2950,6 +2991,18 @@ def render_composer_type(cfg: dict, module: str) -> str:
     execute_fn = f"{sym}_execute"
     segments_fn = f"{sym}_segments"
     destroy_fn = f"{sym}_destroy"
+    # gh-1755: under `create_why` the constructor calls the reason-naming
+    # create and raises its sentence through `reason_raise_c`; with none it
+    # keeps the fixed text, and without the key the lines are unchanged.
+    _cw = create_why(cfg, module)
+    ctor_why_decl = f"    {WHY_DECL}\n" if _cw else ""
+    ctor_create = _create_call(
+        sym, "segs, n, repeat, continuous", f"&{WHY_LOCAL}" if _cw else ""
+    )
+    ctor_raise = reason_raise_c(
+        f'PyErr_SetString(PyExc_ValueError, "{create_fn} failed");\n',
+        WHY_LOCAL if _cw else "",
+    )
 
     # segment scalar field copy lines (both directions). Ranged segment fields
     # also carry their `ranged` bitmask + <name>_hi companion across, so a
@@ -3608,12 +3661,11 @@ static int
      * seglist must outlive the create call below (which deep-copies them) --
      * dropping it earlier would, in the single-segment-kwargs path where
      * seglist is the sole owner, free the bits out from under the read. */
-    self->state = {create_fn}(segs, n, repeat, continuous);
+{ctor_why_decl}    self->state = {ctor_create};
     _free_{backing}_segments(segs, n);
     Py_DECREF(seglist);
     if (!self->state) {{
-        PyErr_SetString(PyExc_ValueError, "{create_fn} failed");
-        return -1;
+{ctor_raise}        return -1;
     }}
 {settings_apply}    return 0;
 }}
@@ -5019,7 +5071,6 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
     obj = f"{cname}Object"
-    create_fn = f"{sym}_create"
     segments_fn = f"{sym}_segments"
     destroy_fn = f"{sym}_destroy"
 
@@ -5210,9 +5261,18 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     # gh-1735: a `parse_why` reader's sentence is raised by `from_json` /
     # `from_file`, so the record threads a `const char **why` from them down
     # to the call -- and only then, so a record without one is unchanged.
-    rec_why = any(op.parse_why for _n, op in _owned_ptrs(cfg, module))
+    # gh-1755: `create_why` threads the same parameter, to the create call,
+    # so the record takes it when either switch is on -- and the source
+    # parser only when a reader of its own consumes it.
+    src_why = any(op.parse_why for _n, op in _owned_ptrs(cfg, module))
+    rec_create_why = create_why(cfg, module)
+    rec_why = src_why or rec_create_why
+    src_why_param = ", const char **why" if src_why else ""
     why_param = ", const char **why" if rec_why else ""
-    why_arg = ", why" if rec_why else ""
+    why_arg = ", why" if src_why else ""
+    rec_create = _create_call(
+        sym, "segs, n, repeat, continuous", "why" if rec_create_why else ""
+    )
     why_decl = f"\n    {WHY_DECL}" if rec_why else ""
     why_ref = f", &{WHY_LOCAL}" if rec_why else ""
     why_pass = f", {WHY_LOCAL}" if rec_why else ""
@@ -5257,7 +5317,7 @@ _json_add_source(cJSON *so, const {src_struct} *src)
 }}
 
 static int
-_json_parse_source(const cJSON *so, {src_struct} *src{why_param})
+_json_parse_source(const cJSON *so, {src_struct} *src{src_why_param})
 {{
     memset(src, 0, sizeof(*src));
 {src_parse_s}
@@ -5337,7 +5397,7 @@ _{backing}_from_root(cJSON *root{why_param})
         i++;
     }}
     {{
-        {sym}_state_t *st = {create_fn}(segs, n, repeat, continuous);
+        {sym}_state_t *st = {rec_create};
         for (size_t j = 0; j < n; j++) {{
             {_free_src_bytes("            ")}free(segs[j].{sources_member});
         }}
@@ -5448,7 +5508,6 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_fields = list(seg.get("fields", []))
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
-    create_fn = f"{sym}_create"
     execute_fn = f"{sym}_execute"
     destroy_fn = f"{sym}_destroy"
     from_file_fn = (
@@ -5461,11 +5520,18 @@ def render_cli(cfg: dict, module: str) -> str:
     # so the C face must pass one -- and prints it, the CLI's form of the
     # reason the Python factory raises.
     file_why = json_why(cfg, module)["from_file"]
-    why_decl = "\n    const char *why = NULL;" if file_why else ""
+    # gh-1755: `create_why` builds the flag path through the reason-naming
+    # create, into the same `why` the `--from-file` reader fills.
+    cli_create_why = create_why(cfg, module)
+    cli_why = file_why or cli_create_why
+    why_decl = "\n    const char *why = NULL;" if cli_why else ""
     from_file_args = "from_file, &why" if file_why else "from_file"
+    cli_create = _create_call(
+        sym, "&seg, 1, repeat, continuous", "&why" if cli_create_why else ""
+    )
     no_composer = (
         'fprintf(stderr, "%s\\n", why ? why : "failed to build composer");'
-        if file_why
+        if cli_why
         else 'fprintf(stderr, "failed to build composer\\n");'
     )
     sample_types = " ".join(_app._SAMPLE_TYPES)
@@ -5690,7 +5756,7 @@ main(int argc, char **argv)
         seg.{sources_member} = &src;
         seg.{count_member} = 1;
 {seg_assign_s}
-        c = {create_fn}(&seg, 1, repeat, continuous);
+        c = {cli_create};
 {bytes_free}    }}
     if (!c) {{ {no_composer} return 1; }}
 

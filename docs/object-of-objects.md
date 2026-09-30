@@ -564,6 +564,26 @@ The transient `<segment_struct>[]` **aliases** each source's `bits` pointer;
 the transient arrays are freed straight after and ownership stays with the
 `Synth` objects.
 
+A backing that can say **why** it refused a composition declares it with
+`[module.X] create_why = true` (gh-1755), the constructor's form of
+`[X.json] from_json_why` ([§4.7](#47-json-faces-generated-vs-delegated)). The
+backing then provides, beside its plain create,
+
+```c
+<state_t> *<backing>_create_why(const <segment_struct> *segs, size_t n,
+                                int repeat, int continuous,
+                                const char **why);
+```
+
+and every face that builds a composer from segments calls it: the
+constructor raises `ValueError(<the reason>)`, the generated `from_json` /
+`from_file` raise it instead of `invalid composer spec`, and the C CLI's
+flag path prints it. A refusal that writes no reason keeps the old
+`ValueError("<backing>_create failed")`, and the plain `<backing>_create`
+stays the backing's C API -- typically a thin wrapper
+over the other. A `create_why` that is not `true`/`false` is refused at
+load.
+
 ### 4.7 JSON faces (generated vs delegated)
 
 With `[module.X.json] enabled = true` the composer gets
@@ -907,6 +927,7 @@ reads instead.
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `composes`       | the generator source object(s) the composer reuses                                                                                                                                                                                                                                                                                               |
 | `sample_type`    | opt into the jm-app output axes on the CLI                                                                                                                                                                                                                                                                                                       |
+| `create_why`     | the backing provides `<backing>_create_why(..., const char **why)`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                |
 | `[X.source]`     | `object`, `struct`, `type_name`, `fields[]`                                                                                                                                                                                                                                                                                                      |
 | `[X.segment]`    | `type_name`, `struct`, `sources` (`"multi"`/`"single"`), `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`)                                                                                                                                                                                                    |
 | `[X.timeline]`   | `type_name`, `loop[]`                                                                                                                                                                                                                                                                                                                            |

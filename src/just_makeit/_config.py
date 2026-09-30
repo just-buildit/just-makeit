@@ -383,8 +383,8 @@ def _why_key_errors(cfg: dict) -> "list[str]":
     """Every ``why`` switch given something other than ``true``/``false``.
 
     ``[module.X.json] from_json_why`` / ``from_file_why``, a module
-    function's ``why`` and an owned-pointer source field's ``parse_why``
-    (gh-1735) each say that an EXISTING function takes a trailing
+    function's ``why``, an owned-pointer source field's ``parse_why``
+    (gh-1735) and a composer's ``create_why`` (gh-1755) each say that an EXISTING function takes a trailing
     ``const char **why`` (gh-1706). None of them names a function, but a name
     is what an author reaches for, and a string is truthy: jm accepted it and
     rendered ``<fn>(json, &_why)`` against a one-argument reader, which failed
@@ -413,6 +413,15 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"false: it marks {face}_fn as taking a trailing "
                         f"`const char **why`. Name the function in {face}_fn."
                     )
+        # gh-1755: a composer's `create_why` is the same switch, for the
+        # backing's create.
+        if "create_why" in mod and not isinstance(mod["create_why"], bool):
+            errors.append(
+                f"[module.{mid}] create_why = {mod['create_why']!r} must be "
+                "true or false: it marks the backing as providing "
+                "`<backing>_create_why`, its create with a trailing "
+                "`const char **why`."
+            )
         # gh-1735: an owned-pointer source field's `parse_why` is the same
         # switch, for its `parse_fn`.
         src = mod.get("source")
