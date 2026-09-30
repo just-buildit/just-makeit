@@ -321,7 +321,10 @@ class TestAddComponentFlags:
                 # gh-1224: (object, object_class, object_import) — empty for
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
-                # import line that makes the annotation resolvable.
+                # import line that makes the annotation resolvable. gh-1756's
+                # `str_hint` sits between the declared reference and the two
+                # it resolves to, which stay trailing.
+                "",
                 "",
                 "",
                 "",
@@ -345,7 +348,10 @@ class TestAddComponentFlags:
                 # gh-1224: (object, object_class, object_import) — empty for
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
-                # import line that makes the annotation resolvable.
+                # import line that makes the annotation resolvable. gh-1756's
+                # `str_hint` sits between the declared reference and the two
+                # it resolves to, which stay trailing.
+                "",
                 "",
                 "",
                 "",

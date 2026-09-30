@@ -926,7 +926,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {d_parse}
 {closed_guard}
     PyArrayObject *{xn}_arr =
-        {_coerce.array_arg(f"{xn}_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", xn)};
+        {_coerce.array_arg(f"{xn}_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", xn, _coerce.str_hint(a))};
     if (!{xn}_arr) return NULL;
 
 {_out_guard}    PyArrayObject *{on}_arr =
@@ -976,7 +976,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         assign = "r = " if returns else ""
         body_tail = f"""{closed_guard}
     PyArrayObject *x_arr =
-        {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"])};
+        {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"], _coerce.str_hint(a))};
     if (!x_arr) return NULL;
     size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);

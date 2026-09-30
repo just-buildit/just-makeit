@@ -250,6 +250,9 @@ def _build_no_state_init_ctx(
     # when the array is supplied; this one always calls the same create_fn,
     # passing (NULL, 0) for the array when omitted.
     def_arr_ip: list[tuple[str, str, int, str]] = []
+    # gh-1756: each array param's `str_hint`, by name, for every acquisition
+    # below -- read through the one accessor every other face uses.
+    _hints = {param[0]: _coerce.str_hint(param) for param in params}
 
     for param in params:
         name, ct, dflt = param[:3]
@@ -280,13 +283,13 @@ def _build_no_state_init_ctx(
                     " is always a required positional (like 'path' and"
                     " 'bytes')."
                 )
-            # gh-1224: slot 16 is the Python class an `object` reference
+            # gh-1224: slot 17 is the Python class an `object` reference
             # resolved to, and "" for a capsule declared the gh-790 way. It
             # rides along here rather than in a parallel dict because every
             # consumer below already indexes `_capsule_meta` by name, and a
             # second dict keyed the same way is the peer that drifts.
-            _obj_cls = param[16] if len(param) > 16 else ""
-            _obj_imp = param[17] if len(param) > 17 else ""
+            _obj_cls = param[17] if len(param) > 17 else ""
+            _obj_imp = param[18] if len(param) > 18 else ""
             if _obj_imp and _obj_imp not in object_imports:
                 object_imports.append(_obj_imp)
             capsule_ip.append(
@@ -1059,7 +1062,7 @@ def _build_no_state_init_ctx(
                 f"        Py_XDECREF(_{aname}_probe);\n"
                 f"        if (_{aname}_real) {{\n"
                 f"            PyArrayObject *{aname}_arr ="
-                f"\n                {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname)};\n"
+                f"\n                {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
                 f"            size_t {aname}_len ="
                 f" (size_t)PyArray_SIZE({aname}_arr);\n"
@@ -1068,7 +1071,7 @@ def _build_no_state_init_ctx(
                 f"            Py_DECREF({aname}_arr);\n"
                 f"        }} else {{\n"
                 f"            PyArrayObject *{aname}_arr ="
-                f"\n                {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname)};\n"
+                f"\n                {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
                 f"            size_t {aname}_len ="
                 f" (size_t)PyArray_SIZE({aname}_arr);\n"
@@ -1081,7 +1084,7 @@ def _build_no_state_init_ctx(
         elif andim == 2:
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr ="
-                f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname)};\n"
+                f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
                 f"    if (PyArray_NDIM({aname}_arr) != 2) {{\n"
                 f"        PyErr_SetString(PyExc_ValueError,\n"
@@ -1098,7 +1101,7 @@ def _build_no_state_init_ctx(
         else:
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr ="
-                f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname)};\n"
+                f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
                 f"    size_t {aname}_len ="
                 f" (size_t)PyArray_SIZE({aname}_arr);\n"
@@ -1121,7 +1124,7 @@ def _build_no_state_init_ctx(
             f"    size_t {aname}_len = 0;\n"
             f"    if ({aname}_obj && {aname}_obj != Py_None) {{\n"
             f"        {aname}_arr =\n"
-            f"            {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname)};\n"
+            f"            {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
             f"        if (!{aname}_arr) {{{cleanup} return -1; }}\n"
             f"        {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
             f"    }}\n"
@@ -1135,7 +1138,7 @@ def _build_no_state_init_ctx(
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
-                f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname)};\n"
+                f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
                 f"        if (!{oname}_arr) {{ return -1; }}\n"
                 f"        if (PyArray_NDIM({oname}_arr) != 2) {{\n"
                 f"            PyErr_SetString(PyExc_ValueError,\n"
@@ -1165,7 +1168,7 @@ def _build_no_state_init_ctx(
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
-                f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname)};\n"
+                f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
                 f"        if (!{oname}_arr) {{ return -1; }}\n"
                 f"        size_t {oname}_len ="
                 f" (size_t)PyArray_SIZE({oname}_arr);\n"

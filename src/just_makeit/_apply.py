@@ -1000,6 +1000,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                         p.get("enum", ""),
                         # gh-1493: manifest-only; see `_function.run`.
                         p.get("doc", ""),
+                        # gh-1756: likewise.
+                        p.get("str_hint", ""),
                     )
                     for p in fn.get("params", [])
                 ],

@@ -1442,7 +1442,7 @@ def _build_params_parse(
             arr_acq.append(
                 f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
                 f"\n"
-                f"        {_coerce.array_arg(obj_var, npy_enum, npy_flags, pname)};\n"
+                f"        {_coerce.array_arg(obj_var, npy_enum, npy_flags, pname, _coerce.str_hint(p))};\n"
                 f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
             )
             # gh-805 §C: the module-function copy of _context/_parse.py's
