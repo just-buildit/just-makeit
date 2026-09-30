@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
+from . import _coerce
 from . import _config as C
 from . import _gluedoc
 from . import _record
@@ -1058,6 +1059,17 @@ _OUT_CONTIG_RE = re.compile(
 #: a manifest nobody changed.
 _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
 
+#: jm's one array-argument converter (gh-1700, `_coerce.ARRAY_ARG_C`): every
+#: generated acquisition of an array argument CALLS it, where a fragment
+#: rendered before gh-1700 calls a bare ``PyArray_FROM_OTF`` -- which parses
+#: a ``str`` as one text scalar and converts it silently, while the ``.pyi``
+#: beside it was widened to take ``bytes``. The CALL is the marker, on the
+#: masked body: the helper's name in a comment or docstring is erased by the
+#: mask, and the helper's own definition is not a ``PyMethodDef`` row body.
+#: A member with no array argument has no call in the reference either, so
+#: it is never reported (gh-1734).
+_ARRAY_ARG_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_FN}\s*\(")
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1123,6 +1135,15 @@ _FEATURE_MARKERS = {
         "jm's output-size guard refuses a size past NPY_MAX_INTP and this "
         "fragment does not, so an oversized result wraps to a negative "
         "dimension",
+    ),
+    # gh-1734: gh-1700's converter, jm's own like the two guards above --
+    # a fragment rendered before it converts its array arguments with a
+    # bare PyArray_FROM_OTF. Named for its consequence.
+    "array-arg": _Feature(
+        (_ARRAY_ARG_RE,),
+        "jm converts an array argument through jm_array_arg and this "
+        "fragment does not, so a str argument is silently parsed as a "
+        "number rather than refused",
     ),
 }
 
