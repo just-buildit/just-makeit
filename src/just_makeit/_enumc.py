@@ -107,6 +107,7 @@ def render_tables(
     prefix: str = "",
     include_string_h: bool = False,
     looked_up: "list[str] | None" = None,
+    decoded: "list[str] | None" = None,
 ) -> str:
     """The lookup plus one ``static const char *const`` table per enum.
 
@@ -128,6 +129,17 @@ def render_tables(
         same predicate, so the two cannot disagree. ``None`` means every
         enum in *used* is looked up -- true of each face that does not pass
         it, whose every reference is a parameter or a setter.
+    decoded : list of str, optional
+        The enums whose C int some generated call site turns back into its
+        choice string -- through :func:`decode_c` or :func:`name_expr`. The
+        mirror of *looked_up* (gh-1748): an enum that declares
+        ``enumerators`` gets a ``<table>_name`` reverse lookup, and only
+        those two emitters call it, so it is emitted only for an enum in
+        this set. A face that only looks an enum up (a module function
+        parameter, a handle create-arg, a composer CLI flag) would
+        otherwise carry a function nothing calls, which clang reports as
+        ``-Wunused-function`` in a main file. ``None`` means every enum in
+        *used* is decoded.
     enums : dict
         The ``[[enum]]`` registry: name → ordered choices.
     prefix : str, optional
@@ -153,6 +165,15 @@ def render_tables(
     >>> "_enum_index" in render_tables(["k"], {"k": ["a"]}, looked_up=[])
     False
     >>> "_enum_index" in render_tables(["k"], {"k": ["a"]}, looked_up=["k"])
+    True
+
+    and a lookup-only face gets no reverse lookup for a constant-bound enum:
+
+    >>> from just_makeit._config import EnumChoices
+    >>> reg = {"k": EnumChoices(["a"], constants=["K_A"])}
+    >>> "_enum_k_name" in render_tables(["k"], reg, decoded=[])
+    False
+    >>> "_enum_k_name" in render_tables(["k"], reg, decoded=["k"])
     True
     """
     index_fn, _ = symbols(prefix, "")
@@ -185,10 +206,13 @@ def render_tables(
             # checks every one, so a renamed constant fails the build rather
             # than shifting what a string means -- and the reverse lookup,
             # as a function so it can stand where an expression must.
-            # `static inline`: a face that never decodes leaves it unused,
-            # and an unused plain `static` function warns.
             parts.append(f"static const int {table}_c[] = {{")
             parts.append("".join(f"    {c},\n" for c in consts) + "};")
+        if consts and (decoded is None or name in decoded):
+            # gh-1748: only where a decode_c / name_expr call site exists.
+            # `static inline` alone did not make an uncalled one quiet:
+            # clang reports an unused `static inline` defined in the main
+            # file, which every face's TU is.
             parts += [
                 "static inline const char *",
                 f"{table}_name(long v)",

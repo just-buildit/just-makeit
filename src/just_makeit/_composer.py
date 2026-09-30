@@ -675,16 +675,24 @@ def _to_py_scalar(ctype: str, expr: str) -> str:
 # ── enum SSOT → C tables ─────────────────────────────────────────────────────
 
 
-def _enums_used(cfg: dict, module: str) -> list[str]:
-    """Ordered, de-duplicated enum names referenced by the source/segment
-    fields of *module* (so we only emit the tables the type actually needs)."""
+def _decoded_enums(cfg: dict, module: str) -> list[str]:
+    """The enums whose C int the extension turns back into a choice string.
+
+    gh-1748. Every source and segment field that `_field_is_enum` answers
+    gets a getter emitting `_enumc.decode_c` (and a ``to_json`` entry
+    through `_enumc.name_expr`), and every setting with an ``enum`` a getter
+    decoding it. A serializer parameter is only ever looked up. This is the
+    set `render_enum_tables` gives a constant-bound enum's ``_name``
+    reverse lookup for, so a composer whose only reference to such an enum
+    is a serializer parameter does not carry a function nothing calls.
+    """
     seen: list[str] = []
     for tbl in (
         C.composer_source(cfg, module),
         C.composer_segment(cfg, module),
     ):
         for f in tbl.get("fields", []):
-            e = f.get("enum")
+            e = f.get("enum") if _field_is_enum(f) else ""
             if e and e not in seen:
                 seen.append(e)
     # gh-1126: a string-valued setting resolves through the same tables, and
@@ -695,6 +703,13 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
         e = st.get("enum")
         if e and e not in seen:
             seen.append(e)
+    return seen
+
+
+def _enums_used(cfg: dict, module: str) -> list[str]:
+    """Ordered, de-duplicated enum names referenced by the source/segment
+    fields of *module* (so we only emit the tables the type actually needs)."""
+    seen = _decoded_enums(cfg, module)
     # gh-317: delegated serializers' enum params need their SSOT tables too.
     for s in C.composer_serializers(cfg, module):
         for p in s.get("params", []):
@@ -712,15 +727,25 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
 _ENUM_INDEX_FN = _enumc.INDEX_FN
 
 
-def render_enum_tables(cfg: dict, module: str) -> str:
+def render_enum_tables(
+    cfg: dict, module: str, *, decoded: "list[str] | None" = None
+) -> str:
     """The lookup plus one table per enum this module references.
 
     Order **is** the C int (the ``[[enum]]`` SSOT contract — append-only), so
     every face agrees about what a choice means. The emitter is shared with
     every other face (gh-1026); only the SET of enums differs, and that is
     what `_enums_used` decides.
+
+    *decoded* is the set a translation unit decodes (gh-1748); ``None`` is
+    the extension's, :func:`_decoded_enums`. The generated CLI only
+    validates flags, so it passes an empty list.
     """
-    return _enumc.render_tables(_enums_used(cfg, module), C.enums(cfg))
+    return _enumc.render_tables(
+        _enums_used(cfg, module),
+        C.enums(cfg),
+        decoded=_decoded_enums(cfg, module) if decoded is None else decoded,
+    )
 
 
 # ── source type (e.g. Synth) ─────────────────────────────────────────────────
@@ -5722,7 +5747,7 @@ def render_cli(cfg: dict, module: str) -> str:
 {bridge_inc}
 {sample_type_c}
 {_app._WRITE_BLOCK_C}
-{render_enum_tables(cfg, module)}
+{render_enum_tables(cfg, module, decoded=[])}
 static int
 _st_index(const char *s)
 {{

@@ -2015,10 +2015,16 @@ def _render_function_enum_tables(
 
     One emitter with every other face (gh-1026): the same lookup body and the
     same "order is the C int" table layout, over the enums this module's
-    functions reference."""
+    functions reference.
+
+    A function parameter is only ever looked up, never decoded -- no
+    module function returns an enum -- so no enum gets the ``_name``
+    reverse lookup here (gh-1748)."""
     from . import _enumc
 
-    return _enumc.render_tables(_functions_enums_used(functions), enums)
+    return _enumc.render_tables(
+        _functions_enums_used(functions), enums, decoded=[]
+    )
 
 
 def make_functions_ctx(

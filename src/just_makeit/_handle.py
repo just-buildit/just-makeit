@@ -105,6 +105,19 @@ def _lookup_args(cfg: dict, module: str) -> list[dict]:
     return [a for a in C.handle_create_args(cfg, module) if a.get("enum")]
 
 
+def _decoded_enum(f: dict) -> str:
+    """The ``[[enum]]`` a getter field's C int is decoded through, or ``""``.
+
+    gh-1748, the mirror of :func:`_lookup_args`. The one predicate for both
+    halves: :func:`_decode_field_stmts` emits `_enumc.decode_c` for a field
+    it answers, and :func:`render_enum_tables` emits a constant-bound enum's
+    ``_name`` reverse lookup only when some field does. An ``expr`` field
+    returns its expression and decodes nothing, and a create-arg is only
+    ever looked up.
+    """
+    return "" if f.get("expr") else f.get("enum") or ""
+
+
 def render_enum_tables(cfg: dict, module: str) -> str:
     """Emit the per-enum ``_enum_<name>[]`` tables + the shared ``_enum_index``.
 
@@ -116,6 +129,12 @@ def render_enum_tables(cfg: dict, module: str) -> str:
         _enums_used(cfg, module),
         C.enums(cfg),
         looked_up=[a["enum"] for a in _lookup_args(cfg, module)],
+        decoded=[
+            _decoded_enum(f)
+            for g in C.handle_getters(cfg, module)
+            for f in g.get("fields", [])
+            if _decoded_enum(f)
+        ],
     )
 
 
@@ -1299,7 +1318,7 @@ def _decode_field_stmts(f: dict, scalar: bool, enums: dict) -> str:
     *enums* is the ``[[enum]]`` registry. An enum it cannot resolve keeps
     the unchecked form rather than emitting a check that rejects everything.
     """
-    if not f.get("enum") or f.get("expr") or not enums.get(f["enum"]):
+    if not _decoded_enum(f) or not enums.get(f["enum"]):
         return f"    return {_decode_field(f, scalar)};"
     acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
     # gh-1450: one emitter for int -> choice string, shared by every face,

@@ -4187,10 +4187,16 @@ def make_enum_tables_ctx(
     # gh-1745: every method parameter is looked up; a property only when its
     # setter is, which `_property_lookup_enum` decides for both halves.
     looked_up = list(used)
+    # gh-1748: no method parameter is decoded; a property's getter decodes
+    # the enum `_property_enum` names -- the same call `make_properties_ctx`
+    # makes to decide whether the getter emits `_enumc.decode_c`.
+    decoded: list[str] = []
     for prp in properties or []:
         name = _property_enum(component, Component, prp, enums)
         if name and name not in used:
             used.append(name)
+        if name and name not in decoded:
+            decoded.append(name)
         lk = _property_lookup_enum(component, Component, prp, enums)
         if lk and lk not in looked_up:
             looked_up.append(lk)
@@ -4198,7 +4204,7 @@ def make_enum_tables_ctx(
         return {"enum_tables": ""}
     return {
         "enum_tables": _render_enum_tables(
-            Component, used, enums or {}, looked_up
+            Component, used, enums or {}, looked_up, decoded
         )
     }
 
@@ -4208,13 +4214,16 @@ def _render_enum_tables(
     used: list[str],
     enums: dict[str, list[str]],
     looked_up: list[str],
+    decoded: list[str],
 ) -> str:
     """The ``_enum_index_<Component>`` helper + one table per enum in *used*.
 
     `_enumc.render_tables` in this type's namespace. This was a second copy
     of it -- byte-identical, which is the only reason gh-1450's constant
     tables did not reach objects through one and not the other. The helper
-    is emitted only when *looked_up* is non-empty (gh-1745).
+    is emitted only when *looked_up* is non-empty (gh-1745), and a
+    constant-bound enum's ``_name`` reverse lookup only when it is in
+    *decoded* (gh-1748).
     """
     return _enumc.render_tables(
         used,
@@ -4222,6 +4231,7 @@ def _render_enum_tables(
         prefix=Component,
         include_string_h=True,
         looked_up=looked_up,
+        decoded=decoded,
     )
 
 
