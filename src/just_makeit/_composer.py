@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from . import _textio
 
+import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
@@ -229,8 +230,85 @@ def coerce_str_fn(field: dict) -> str:
     return fn
 
 
-def _host_attach_c(name: str, fn: str) -> str:
-    """The attach for a field whose ``str`` is read by *fn* (gh-1709).
+def uses_builtin_bit_grammar(fields: "list[dict]") -> bool:
+    """True when some source field reads a ``str`` with jm's own grammar.
+
+    gh-1736. That grammar -- ``0``/``1`` digits or ``0x`` hex -- is the
+    ``str`` branch of the shared ``_attach_bytes``, and only a
+    ``bit_pattern`` field naming no ``coerce_str_fn`` reaches it: a field
+    naming one hands its ``str`` to the project before ``_attach_bytes`` is
+    called (:func:`_host_attach_c`). When every ``bit_pattern`` field names
+    one, the branch is dead code, and a second grammar beside the project's
+    -- the thing gh-1709 exists to remove.
+
+    The one predicate for whether the grammar is emitted. ``bytes`` and
+    int-sequence coercion is a separate question -- whether any field
+    coerces at all -- and a host-read field still needs it.
+
+    >>> uses_builtin_bit_grammar([{"name": "p", "bytes": True,
+    ...                            "coerce": "bit_pattern"}])
+    True
+    >>> uses_builtin_bit_grammar([{"name": "p", "bytes": True,
+    ...                            "coerce": "bit_pattern",
+    ...                            "coerce_str_fn": "pat_parse"}])
+    False
+    >>> uses_builtin_bit_grammar([{"name": "p", "bytes": True}])
+    False
+    """
+    return any(
+        f.get("bytes")
+        and f.get("coerce") == "bit_pattern"
+        and not coerce_str_fn(f)
+        for f in fields
+    )
+
+
+def host_coercer(fn: str) -> str:
+    """The generated static that reads a ``str`` through the project's *fn*.
+
+    gh-1736: named by the FUNCTION, not the field, so the fields naming one
+    function share one helper -- named by the field, doppler's four fields
+    naming ``dp_wfm_field_bits`` got four byte-identical copies.
+    :func:`_host_attach_c` defines it, and each field's constructor and
+    setter call it, both through this one name.
+
+    >>> host_coercer("pat_parse")
+    '_coerce_pat_parse'
+    """
+    return f"_coerce_{fn}"
+
+
+def _c_comment(text: str, first: str = "/* ", close: bool = True) -> str:
+    """*text* as C comment lines that fit 79 columns (gh-1736).
+
+    A generated comment that interpolates a name -- a module, a field list,
+    a function -- is as wide as the name, so it is wrapped here rather than
+    broken by hand at a column only the example names fit. *first* leads the
+    first line and `` * `` each continuation. Wrapped at 76 so the closing
+    `` */`` always fits; *close* false leaves the comment open, for a banner
+    that goes on. A single word wider than the line is left whole.
+
+    >>> print(_c_comment("word " * 15 + "end"))
+    /* word word word word word word word word word word word word word word
+     * word end */
+    >>> print(_c_comment("title", first=" * ", close=False))
+     * title
+    """
+    lines = textwrap.wrap(
+        text,
+        width=76,
+        initial_indent=first,
+        subsequent_indent=" * ",
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    if close:
+        lines[-1] += " */"
+    return "\n".join(lines)
+
+
+def _host_attach_c(fn: str) -> str:
+    """The attach for every field whose ``str`` is read by *fn* (gh-1709).
 
     A ``str`` is sized by one call and filled by a second, and only then
     replaces the field's buffer, so a refused value leaves the old pattern in
@@ -238,13 +316,19 @@ def _host_attach_c(name: str, fn: str) -> str:
     ``_attach_bytes``, the one attach every bytes field shares. A refusal's
     ``why`` is raised as the ``ValueError``'s message; a function that sets
     none gets a message naming it.
+
+    One per distinct *fn* (gh-1736): the body names no field, because each
+    caller passes its own destination.
     """
+    doc = _c_comment(
+        f"A str is read by the project's {fn}() (coerce_str_fn, gh-1709) "
+        "-- sized, then filled; 0 is a refusal and *why its reason. "
+        "Anything else is _attach_bytes's."
+    )
     return f"""
-/* `{name}`: a str is read by the project's {fn}() (coerce_str_fn,
- * gh-1709) -- sized, then filled; 0 is a refusal and *why its reason.
- * Anything else is _attach_bytes's. */
+{doc}
 static int
-_coerce_{name}(uint8_t **dst, size_t *n_dst, PyObject *obj)
+{host_coercer(fn)}(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {{
     if (!obj || !PyUnicode_Check(obj))
         return _attach_bytes(dst, n_dst, obj);
@@ -1057,18 +1141,22 @@ def render_source_type(cfg: dict, module: str) -> str:
     bits_coerce = any(
         f.get("bytes") and f.get("coerce") == "bit_pattern" for f in fields
     )
+    # gh-1736: jm's own str grammar, only while some field still reads it.
+    bits_grammar = uses_builtin_bit_grammar(fields)
     # gh-1709: a field naming `coerce_str_fn` reads a str through the
     # project's function, in an attach of its own that hands everything else
     # to the shared `_attach_bytes`. Every other field keeps calling that one
-    # directly, so a source that names none renders as it always did.
+    # directly, so a source that names none renders as it always did. One
+    # attach per distinct function, however many fields name it (gh-1736).
     host_attach = "".join(
-        _host_attach_c(f["name"], coerce_str_fn(f))
-        for f in fields
-        if coerce_str_fn(f)
+        _host_attach_c(fn)
+        for fn in dict.fromkeys(coerce_str_fn(f) for f in fields)
+        if fn
     )
 
     def _attacher(f: dict) -> str:
-        return f"_coerce_{f['name']}" if coerce_str_fn(f) else "_attach_bytes"
+        fn = coerce_str_fn(f)
+        return host_coercer(fn) if fn else "_attach_bytes"
 
     parts: list[str] = []
 
@@ -1188,20 +1276,19 @@ def render_source_type(cfg: dict, module: str) -> str:
     store_bits = """    *dst   = buf;
     *n_dst = (size_t)nb;
     return 1;"""
-    if bits_coerce:
+    if bits_coerce and bits_grammar:
         attach_doc = (
             "Coerce a 0/1 pattern (bytes | binary/hex str | int sequence)"
         )
-        attach_body = f"""    if (PyBytes_Check(obj)) {{
-        Py_ssize_t nb = PyBytes_GET_SIZE(obj);
-        if (nb <= 0)
-            return 1;
-        uint8_t *buf = (uint8_t *)malloc((size_t)nb);
-        if (!buf) {{ PyErr_NoMemory(); return 0; }}
-        memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
-{store_bits}
-    }}
-    if (PyUnicode_Check(obj)) {{
+        seq_err = "bits must be bytes, a 0/1 string, or a sequence of ints"
+    elif bits_coerce:
+        # gh-1736: every bit_pattern field reads its str through the project,
+        # so jm's grammar would be read by nobody.
+        attach_doc = "Coerce a 0/1 pattern (bytes | int sequence) or None"
+        seq_err = "bits must be bytes or a sequence of ints"
+    if bits_coerce:
+        str_grammar = (
+            f"""    if (PyUnicode_Check(obj)) {{
         Py_ssize_t slen;
         const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
         if (!s)
@@ -1240,9 +1327,22 @@ def render_source_type(cfg: dict, module: str) -> str:
         Py_ssize_t nb = slen;
 {store_bits}
     }}
-    {{
+"""
+            if bits_grammar
+            else ""
+        )
+        attach_body = f"""    if (PyBytes_Check(obj)) {{
+        Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+        if (nb <= 0)
+            return 1;
+        uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+        if (!buf) {{ PyErr_NoMemory(); return 0; }}
+        memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}
+    }}
+{str_grammar}    {{
         PyObject *seq = PySequence_Fast(
-            obj, "bits must be bytes, a 0/1 string, or a sequence of ints");
+            obj, "{seq_err}");
         if (!seq)
             return 0;
         Py_ssize_t nb = PySequence_Fast_GET_SIZE(seq);
@@ -2731,6 +2831,12 @@ def render_composer_type(cfg: dict, module: str) -> str:
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
     pkg = C.project_name(cfg)
+    # gh-1736: wrapped, since the type and struct names set its width.
+    rebuild_doc = _c_comment(
+        f"Rebuild a list of {seg_t} objects from a resolved {seg_struct}[] "
+        f"(deep-copies each source's bits so the new {src_t} objects own "
+        "their own)."
+    )
 
     # gh-560: when rebuilding source objects out of a resolved segment array,
     # deep-copy EVERY declared bytes field (`<name>` + `n_<name>`) rather than a
@@ -3293,8 +3399,7 @@ _free_{backing}_segments({seg_struct} *segs, size_t n)
     free(segs);
 }}
 
-/* Rebuild a list of {seg_t} objects from a resolved {seg_struct}[] (deep-copies
- * each source's bits so the new {src_t} objects own their own). */
+{rebuild_doc}
 static PyObject *
 _{backing}_segments_to_list(const {seg_struct} *src, size_t n)
 {{
@@ -3454,9 +3559,9 @@ static int
         return -1;
     }}
     /* The transient segs' bits pointers ALIAS the Synth objects' buffers, so
-     * seglist must outlive {create_fn} (which deep-copies them) — dropping it
-     * earlier would, in the single-segment-kwargs path where seglist is the
-     * sole owner, free the bits out from under the read. */
+     * seglist must outlive the create call below (which deep-copies them) --
+     * dropping it earlier would, in the single-segment-kwargs path where
+     * seglist is the sole owner, free the bits out from under the read. */
     self->state = {create_fn}(segs, n, repeat, continuous);
     _free_{backing}_segments(segs, n);
     Py_DECREF(seglist);
@@ -3973,9 +4078,16 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 
     # gh-1583: the include of a jm header is spelled by the layout.
     _common_h = INC.include("clib_common.h", cfg)
+    # gh-1736: wrapped, since the module and backing names set its width.
+    banner = _c_comment(
+        f"{mp.cname}_ext.c — composer extension for `{backing}`"
+        " (generated by jm; gh-287).",
+        first=" * ",
+        close=False,
+    )
     parts = [
         f"""/*
- * {mp.cname}_ext.c — composer extension for `{backing}` (generated by jm; gh-287).
+{banner}
  *
  * The Synth / Segment / Timeline / Composer OO types live here, in the .so;
  * the composition kernels stay hand-written in the backing _core.c.
@@ -4581,10 +4693,14 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
             (
                 fn,
                 [
-                    f"/* Read a str as the bits of {names} (coerce_str_fn,"
-                    " gh-1709): out",
-                    " * NULL sizes; returns the bit count, or 0 with *why"
-                    " set on a refusal. */",
+                    # gh-1736: wrapped, since a field list is as wide as
+                    # the names in it (doppler's ran to 104 columns).
+                    *_c_comment(
+                        f"Read a str as the bits of {names} "
+                        "(coerce_str_fn, gh-1709): out NULL sizes; "
+                        "returns the bit count, or 0 with *why set on "
+                        "a refusal."
+                    ).splitlines(),
                     f"size_t {fn}(const char *, uint8_t *, size_t,"
                     " const char **);",
                     "",
@@ -4678,8 +4794,12 @@ def render_bridge_h(cfg: dict, module: str) -> str:
 
     lines = [
         "/*",
-        f" * {mp.cname}_bridge.h — straight-C seams of the `{module}`"
-        " composer (generated by jm; gh-998).",
+        *_c_comment(
+            f"{mp.cname}_bridge.h — straight-C seams of the `{module}`"
+            " composer (generated by jm; gh-998).",
+            first=" * ",
+            close=False,
+        ).splitlines(),
         " *",
         " * Every function declared here is written by THIS PROJECT, in plain"
         " C, and",
@@ -5417,8 +5537,15 @@ def render_cli(cfg: dict, module: str) -> str:
     # The sample-type block is `jm app`'s, and carries the layout's include
     # slot; left unfilled, `apply` refuses to write this file at all.
     sample_type_c = R.render(_app._SAMPLE_TYPE_C, INC.ctx_slots(cfg))
+    # gh-1736: wrapped, since the module name sets its width.
+    banner = _c_comment(
+        f"{module}_cli.c — generic composer command-line tool"
+        " (generated by jm; gh-287).",
+        first=" * ",
+        close=False,
+    )
     return f"""/*
- * {module}_cli.c — generic composer command-line tool (generated by jm; gh-287).
+{banner}
  *
  * Build a composer from source/segment-field flags or a JSON spec
  * (--from-file), then stream samples in the chosen wire format. Enum flags are

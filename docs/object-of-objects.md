@@ -435,8 +435,10 @@ for the field: the constructor, the property setter, a segment's
 single-source keywords, and the c-face CLI's `--<field>` flag, which exits 2
 with the reason. A refused value leaves the field as it was. A `bytes` value
 or an int sequence is taken as before. The key belongs to one field, so a
-sibling `bit_pattern` field without it keeps jm's grammar. On a field that
-does not coerce, the key would have no effect, so jm refuses it.
+sibling `bit_pattern` field without it keeps jm's grammar. When every
+`bit_pattern` field names a reader, jm emits no grammar of its own, and
+fields naming the same reader share one generated helper (gh-1736). On a
+field that does not coerce, the key would have no effect, so jm refuses it.
 
 An **owned-pointer field** (gh-1711) holds a pointer to a host-owned
 description object, such as a frame description a source is framed by. The
