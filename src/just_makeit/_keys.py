@@ -541,11 +541,12 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     "cli",
     "serializers",
     "type_name",
+    # gh-1758: honoured -- `_composer.composer_create_fn` -- by every face.
     "create_fn",
     # gh-1126: post-construction settings.
     "settings",
-    # gh-1755: the backing is built by `<backing>_create_why`, which takes a
-    # trailing `const char **why` -- `[module.X.json] from_json_why`'s shape.
+    # gh-1755: the create takes a trailing `const char **why` --
+    # `[module.X.json] from_json_why`'s shape.
     "create_why",
 }
 

@@ -1091,16 +1091,38 @@ def json_why(cfg: dict, module: str) -> "dict[str, bool]":
     }
 
 
-def create_why(cfg: dict, module: str) -> bool:
-    """Whether the composer is built by the reason-naming create (gh-1755).
+def composer_create_fn(cfg: dict, module: str) -> str:
+    """The C function every composer face builds the state with (gh-1758).
 
-    ``[module.X] create_why = true`` declares that the backing provides
-    ``<state_t> *<backing>_create_why(segs, n, repeat, continuous,
-    const char **why)`` beside its plain ``<backing>_create``: the
-    constructor's form of ``[module.X.json] from_json_why`` (gh-1706). Every
-    face that builds a composer from segments then calls it through
-    `_create_call`, and a refusal raises -- or, in the C CLI, prints -- the
-    sentence the C wrote. Undeclared, every face calls the plain create.
+    ``[module.X] create_fn`` names it when the backing's constructor is not
+    ``<backing>_create`` -- an author-named function, so it is used exactly
+    as written and never prefixed (``_csym.AUTHOR_NAMED_KEYS``). Unset, it
+    is ``<backing>_create`` spelled through the backing's stem (gh-1685).
+    The lookup is `_config.module_create_fn`'s, the one a handle's
+    ``create_fn`` goes through; only the default differs.
+
+    >>> cfg = {"module": {"m": {"kind": "composer", "backing": "wfm"}}}
+    >>> composer_create_fn(cfg, "m")
+    'wfm_create'
+    >>> cfg["module"]["m"]["create_fn"] = "wfm_make"
+    >>> composer_create_fn(cfg, "m")
+    'wfm_make'
+    """
+    sym = CSYM.backing_stem(cfg, C.capsule_backing(cfg, module))
+    return C.module_create_fn(cfg, module, f"{sym}_create")
+
+
+def create_why(cfg: dict, module: str) -> bool:
+    """Whether the composer's create names its refusal (gh-1755).
+
+    ``[module.X] create_why = true`` declares that `composer_create_fn` --
+    the author's ``create_fn``, or the ``<backing>_create`` default -- takes
+    a trailing ``const char **why``: the constructor's form of
+    ``[module.X.json] from_json_why`` (gh-1706), a switch on the function
+    the manifest already names, not a second name. Every face that builds a
+    composer from segments then passes the reason through `_create_call`,
+    and a refusal raises -- or, in the C CLI, prints -- the sentence the C
+    wrote. Undeclared, every call is the four-argument one.
 
     >>> create_why({"module": {"m": {"create_why": True}}}, "m")
     True
@@ -1110,26 +1132,26 @@ def create_why(cfg: dict, module: str) -> bool:
     return bool(cfg.get("module", {}).get(module, {}).get("create_why"))
 
 
-def _create_call(sym: str, args: str, why: str = "") -> str:
-    """The backing create call every composer face makes (gh-1755).
+def _create_call(cfg: dict, module: str, args: str, why: str) -> str:
+    """The create call every composer face makes (gh-1755, gh-1758).
 
     The one spelling of "build the state from segments": the ``Composer``
     constructor, the generated JSON record and the c-face CLI each render
-    their call here, so the switch reaches all of them or none. *why* is the
-    ``const char **`` expression the site owns -- ``&_why`` for a local, the
-    record's ``why`` parameter -- and empty means `create_why` is off, which
-    renders the plain call byte-identically. The reason-naming function is
-    ``<sym>_create_why``: a host keeps its plain create (doppler's is a thin
-    wrapper over the other), so a C caller of it is untouched.
+    their call here, so `composer_create_fn` and the `create_why` switch
+    reach all of them or none. *why* is the ``const char **`` expression the
+    site owns -- ``&_why`` for a local, the record's ``why`` parameter --
+    and is passed only under `create_why`; without the switch the call is
+    the four-argument one, byte-identical to before.
 
-    >>> _create_call("wfm", "segs, n, repeat, continuous")
+    >>> cfg = {"module": {"m": {"kind": "composer", "backing": "wfm"}}}
+    >>> _create_call(cfg, "m", "segs, n, repeat, continuous", "&_why")
     'wfm_create(segs, n, repeat, continuous)'
-    >>> _create_call("wfm", "segs, n, repeat, continuous", "&_why")
-    'wfm_create_why(segs, n, repeat, continuous, &_why)'
+    >>> cfg["module"]["m"].update(create_fn="wfm_make", create_why=True)
+    >>> _create_call(cfg, "m", "segs, n, repeat, continuous", "&_why")
+    'wfm_make(segs, n, repeat, continuous, &_why)'
     """
-    if not why:
-        return f"{sym}_create({args})"
-    return f"{sym}_create_why({args}, {why})"
+    tail = f", {why}" if create_why(cfg, module) else ""
+    return f"{composer_create_fn(cfg, module)}({args}{tail})"
 
 
 def _factory_refusal_c(
@@ -2987,17 +3009,17 @@ def render_composer_type(cfg: dict, module: str) -> str:
     obj = f"{cname}Object"
     type_obj = f"{cname}Type"
 
-    create_fn = f"{sym}_create"
+    create_fn = composer_create_fn(cfg, module)  # gh-1758
     execute_fn = f"{sym}_execute"
     segments_fn = f"{sym}_segments"
     destroy_fn = f"{sym}_destroy"
-    # gh-1755: under `create_why` the constructor calls the reason-naming
-    # create and raises its sentence through `reason_raise_c`; with none it
+    # gh-1755: under `create_why` the create names its refusal and the
+    # constructor raises the sentence through `reason_raise_c`; with none it
     # keeps the fixed text, and without the key the lines are unchanged.
     _cw = create_why(cfg, module)
     ctor_why_decl = f"    {WHY_DECL}\n" if _cw else ""
     ctor_create = _create_call(
-        sym, "segs, n, repeat, continuous", f"&{WHY_LOCAL}" if _cw else ""
+        cfg, module, "segs, n, repeat, continuous", f"&{WHY_LOCAL}"
     )
     ctor_raise = reason_raise_c(
         f'PyErr_SetString(PyExc_ValueError, "{create_fn} failed");\n',
@@ -5271,7 +5293,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     why_param = ", const char **why" if rec_why else ""
     why_arg = ", why" if src_why else ""
     rec_create = _create_call(
-        sym, "segs, n, repeat, continuous", "why" if rec_create_why else ""
+        cfg, module, "segs, n, repeat, continuous", "why"
     )
     why_decl = f"\n    {WHY_DECL}" if rec_why else ""
     why_ref = f", &{WHY_LOCAL}" if rec_why else ""
@@ -5520,14 +5542,14 @@ def render_cli(cfg: dict, module: str) -> str:
     # so the C face must pass one -- and prints it, the CLI's form of the
     # reason the Python factory raises.
     file_why = json_why(cfg, module)["from_file"]
-    # gh-1755: `create_why` builds the flag path through the reason-naming
-    # create, into the same `why` the `--from-file` reader fills.
+    # gh-1755: under `create_why` the flag path's create fills the same
+    # `why` the `--from-file` reader does.
     cli_create_why = create_why(cfg, module)
     cli_why = file_why or cli_create_why
     why_decl = "\n    const char *why = NULL;" if cli_why else ""
     from_file_args = "from_file, &why" if file_why else "from_file"
     cli_create = _create_call(
-        sym, "&seg, 1, repeat, continuous", "&why" if cli_create_why else ""
+        cfg, module, "&seg, 1, repeat, continuous", "&why"
     )
     no_composer = (
         'fprintf(stderr, "%s\\n", why ? why : "failed to build composer");'
