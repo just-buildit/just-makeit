@@ -428,7 +428,10 @@ the old per-target blocks. The `make` build backend is POSIX-only and
     (`ghcr.io/just-buildit/jm-examples-linux:latest`)
 - Images are rebuilt on push to `main` (paths: `docker/**`, `src/**`,
     `pyproject.toml`) and on every release tag via `docker.yml` called from
-    `release.yml`
+    `release.yml`. A version bump alone builds none: every workflow a release
+    commit reaches gates its jobs on the reusable `changes.yml`
+    (`make ci-changes`), and `tests/test_release_bump_fast_path.py` refuses
+    one that does not
 - `.devcontainer/devcontainer.json` — Codespaces config. `remoteUser` must be
     the image's own `USER`, not `root`: the image's home **is** the workspace
     folder, so as root every `~/...` path the sandbox prints resolves under

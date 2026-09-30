@@ -43,11 +43,17 @@ permissions:
   packages: write
 
 jobs:
+  # A version bump alone builds nothing here: see changes.yml.
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   # ── Linux ─────────────────────────────────────────────────────────────────────
   # One native build per architecture (no QEMU) — each is loaded into its
   # runner's local daemon and smoke-tested before anything is pushed.
   linux:
     name: Linux image (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     strategy:
       fail-fast: false
       matrix:
