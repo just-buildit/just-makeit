@@ -257,6 +257,13 @@ def load(root: Path) -> dict:
     if why_errors:
         _refuse(why_errors)
     _expand_init_groups(cfg)
+    # gh-1756: a `str_hint` that would be accepted and never shown. After the
+    # group expansion, so the init params it makes are checked too.
+    from ._coerce import str_hint_errors
+
+    hint_errors = str_hint_errors(cfg)
+    if hint_errors:
+        _refuse(hint_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -4480,13 +4487,17 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # one are different values with different readers, and a single
             # slot standing in for both is how a key comes back wrong: slot 15
             # is what the author WROTE (persisted verbatim by
-            # `init_param_tuple_to_dict`), slot 16 is the Python class it
+            # `init_param_tuple_to_dict`), slot 17 is the Python class it
             # RESOLVES to (read by the two `.pyi` producers). Every C-side
             # slot above is already filled by the same resolution, so the
             # generated C path is the shipped capsule one, unchanged.
             p.get("object", ""),
+            # Slot 16 (gh-1756): text appended to an array param's refusal
+            # of a str, read by `_coerce.str_hint`. Authored, so it sits with
+            # the authored slots, ahead of the two resolved ones.
+            p.get("str_hint", ""),
             _object_ref_slot(cfg, p, 3),
-            # Slot 17: the `.pyi` import for that class. Resolved HERE, with
+            # Slot 18: the `.pyi` import for that class. Resolved HERE, with
             # the rest, because it is the last point that still has `cfg` --
             # `make_state_ctx` gets tuples, not the manifest, so a stub
             # producer could name the class but never find out where it lives.
@@ -4557,6 +4568,8 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["c_type"] = p[13]
     if len(p) > 14 and p[14]:
         rec["example_value"] = p[14]
+    if len(p) > 16 and p[16]:
+        rec["str_hint"] = p[16]
     return rec
 
 

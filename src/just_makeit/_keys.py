@@ -195,6 +195,9 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # sugar over the shipped capsule path rather than a new param kind; what
     # it adds is a checked declaration and a `.pyi` naming the real class.
     ("object", False),
+    # gh-1756: text appended to an array param's refusal of a str, naming
+    # what to pass instead (`_coerce.str_hint`).
+    ("str_hint", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
@@ -337,6 +340,8 @@ PARAM_KEYS = frozenset(
         "elements_per_sample",
         # A codec method's params carry the tag/variant role (`_codec.py`).
         "role",
+        # gh-1756: appended to an array param's refusal of a str.
+        "str_hint",
     }
 )
 
@@ -440,6 +445,8 @@ FUNCTION_PARAM_KEYS = frozenset(
         "doc",
         "rank",
         "elements_per_sample",
+        # gh-1756, as in `PARAM_KEYS`: the same emitter reads it.
+        "str_hint",
     }
 )
 
@@ -604,7 +611,17 @@ KIND_CREATE_ARG_KEYS = frozenset(
 )
 KIND_CREATE_POST_KEYS = frozenset({"fn", "when", "arg"})
 KIND_METHOD_ARG_KEYS = frozenset(
-    {"name", "type", "default", "writable", "enum", "capsule", "kwonly"}
+    {
+        "name",
+        "type",
+        "default",
+        "writable",
+        "enum",
+        "capsule",
+        "kwonly",
+        # gh-1756: a handle method's array arg, as on an object's params.
+        "str_hint",
+    }
 )
 KIND_DEPENDS_ON_KEYS = frozenset({"name", "link", "test_only"})
 KIND_PROPERTY_KEYS = frozenset(

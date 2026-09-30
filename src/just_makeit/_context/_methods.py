@@ -2520,7 +2520,7 @@ def make_methods_ctx(
                             _flags += " | NPY_ARRAY_WRITEABLE"
                         _conv_lines += [
                             f"    {_pn}_arr =",
-                            f"        {_coerce.array_arg(f'{_pn}_obj', _pe_np, _flags, _pn)};",
+                            f"        {_coerce.array_arg(f'{_pn}_obj', _pe_np, _flags, _pn, _coerce.str_hint(_p))};",
                             f"    if (!{_pn}_arr) {{ {_release} return NULL; }}"
                             if _release
                             else f"    if (!{_pn}_arr) return NULL;",

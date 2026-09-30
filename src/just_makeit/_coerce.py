@@ -434,6 +434,13 @@ def array_rank_guard(
 
 ARRAY_ARG_FN = "jm_array_arg"
 
+#: The same converter taking a ``str_hint`` (gh-1756). ``jm_array_arg`` is it
+#: with ``NULL``, so a param declaring none renders exactly as before.
+ARRAY_ARG_HINT_FN = "jm_array_arg_hint"
+
+#: The per-param manifest key naming what to pass instead of a ``str``.
+STR_HINT_KEY = "str_hint"
+
 ARRAY_ARG_C = """\
 #ifndef JM_ARRAY_ARG_DEFINED
 #define JM_ARRAY_ARG_DEFINED
@@ -442,15 +449,20 @@ ARRAY_ARG_C = """\
  * it reads as text (gh-1700): a str is refused, never parsed as a number,
  * and for a one-byte element type a byte buffer (bytes, bytearray,
  * memoryview) is its bytes, one element per byte. `name` is the parameter,
- * for the message. Returns a new reference, or NULL with an exception. */
+ * for the message, and `hint` (NULL for none) is appended to a str's
+ * refusal. Returns a new reference, or NULL with an exception. */
 static inline PyArrayObject *
-jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
+jm_array_arg_hint(PyObject *obj, int typenum, int requirements,
+                  const char *name, const char *hint)
 {
     int one_byte = typenum == NPY_UINT8 || typenum == NPY_INT8;
     if (PyUnicode_Check(obj) || (!one_byte && PyBytes_Check(obj))) {
+        /* `hint` (gh-1756) says where text goes instead: a str only. */
+        int say = hint && PyUnicode_Check(obj);
         PyErr_Format(PyExc_TypeError,
-                     "%s must be an array of numbers, not %.200s", name,
-                     Py_TYPE(obj)->tp_name);
+                     "%s must be an array of numbers, not %.200s%s%s", name,
+                     Py_TYPE(obj)->tp_name, say ? ": " : "",
+                     say ? hint : "");
         return NULL;
     }
     if (one_byte && !PyArray_Check(obj) && PyObject_CheckBuffer(obj)) {
@@ -471,12 +483,19 @@ jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
     }
     return (PyArrayObject *)PyArray_FROM_OTF(obj, typenum, requirements);
 }
+static inline PyArrayObject *
+jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
+{
+    return jm_array_arg_hint(obj, typenum, requirements, name, NULL);
+}
 #endif /* JM_ARRAY_ARG_DEFINED */
 """
 
 
-def array_arg(obj_var: str, npy_enum: str, flags: str, name: str) -> str:
-    """The C expression converting *obj_var* for array parameter *name*.
+def array_arg(
+    obj_var: str, npy_enum: str, flags: str, name: str, hint: str = ""
+) -> str:
+    r"""The C expression converting *obj_var* for array parameter *name*.
 
     Every generated acquisition of an array argument is this call to the
     ``ARRAY_ARG_C`` helper, never a bare ``PyArray_FROM_OTF`` (see the note
@@ -484,12 +503,157 @@ def array_arg(obj_var: str, npy_enum: str, flags: str, name: str) -> str:
     ``PyArrayObject *`` reference, or ``NULL`` with an exception set, exactly
     as the ``(PyArrayObject *)PyArray_FROM_OTF(...)`` it replaces.
 
+    *hint* is the parameter's declared ``str_hint`` (gh-1756), read through
+    `str_hint`: text appended to the refusal of a ``str``, naming what to
+    pass instead. It is escaped here into a C string literal, through the
+    table every other manifest-authored C message uses. Empty -- every
+    parameter declaring none -- keeps the four-argument ``jm_array_arg``
+    call, so such a binding renders byte-for-byte as before the key existed.
+
     Examples
     --------
     >>> array_arg("bits_obj", "NPY_UINT8", "NPY_ARRAY_C_CONTIGUOUS", "bits")
     'jm_array_arg(bits_obj, NPY_UINT8, NPY_ARRAY_C_CONTIGUOUS, "bits")'
+    >>> print(array_arg("s_obj", "NPY_UINT8", "0", "s", 'use "bits()"'))
+    jm_array_arg_hint(s_obj, NPY_UINT8, 0, "s", "use \"bits()\"")
     """
-    return f'{ARRAY_ARG_FN}({obj_var}, {npy_enum}, {flags}, "{name}")'
+    if not hint:
+        return f'{ARRAY_ARG_FN}({obj_var}, {npy_enum}, {flags}, "{name}")'
+    # Deferred: `_context` imports this module, so a top-level import of the
+    # escape table would be circular.
+    from ._context._diagnostics import _C_ESCAPES
+
+    literal = hint.translate(_C_ESCAPES)
+    return (
+        f'{ARRAY_ARG_HINT_FN}({obj_var}, {npy_enum}, {flags}, "{name}",'
+        f' "{literal}")'
+    )
+
+
+def str_hint(param) -> str:
+    """A parameter's declared ``str_hint`` (gh-1756), or ``""``.
+
+    The ONE reader every array-acquiring generator hands to `array_arg`, so
+    no two faces can disagree about where the key lives. *param* is a
+    manifest row (a dict: a method, function or handle-method param) or an
+    init-param tuple from `_config.init_params`, whose slot 16 carries it.
+    The value itself is checked at load, by `str_hint_errors`.
+
+    Examples
+    --------
+    >>> str_hint({"name": "sync", "str_hint": "use field_bits()"})
+    'use field_bits()'
+    >>> str_hint({"name": "sync"})
+    ''
+    >>> str_hint(("sync", "uint8_t[]", ""))
+    ''
+    """
+    if isinstance(param, dict):
+        return param.get(STR_HINT_KEY) or ""
+    return (param[16] if len(param) > 16 else "") or ""
+
+
+def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, bool]]":
+    """Every ``(table, param row, strict)`` whose param can reach `array_arg`.
+
+    An object's (and a view's) ``init_params``, its methods' ``params``, a
+    module function's ``params`` and a handle module method's ``args``: the
+    tables a ``str_hint`` is honoured on. *strict* is True for the params of
+    a ``strict = true`` method, whose input is refused before any
+    conversion (gh-1426 B), so ``jm_array_arg`` never sees it.
+    """
+    from . import _config
+
+    rows: "list[tuple[str, dict, bool]]" = []
+
+    def add(where: str, params, strict: bool = False) -> None:
+        rows.extend(
+            (where, p, strict) for p in params or [] if isinstance(p, dict)
+        )
+
+    for comp in _config.components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        add(f"[[{comp}.init_params]]", body.get("init_params"))
+        for m in body.get("methods") or []:
+            if isinstance(m, dict):
+                add(
+                    f"[[{comp}.methods.params]]",
+                    m.get("params"),
+                    bool(m.get("strict")),
+                )
+        for v in body.get("views") or []:
+            if isinstance(v, dict):
+                add(f"[[{comp}.views.init_params]]", v.get("init_params"))
+    for mid, mod in (cfg.get("module") or {}).items():
+        if not isinstance(mod, dict):
+            continue
+        for fn in mod.get("functions") or []:
+            if isinstance(fn, dict):
+                add(f"[[module.{mid}.functions.params]]", fn.get("params"))
+        if mod.get("kind") == "handle":
+            for m in mod.get("methods") or []:
+                if isinstance(m, dict):
+                    add(f"[[module.{mid}.methods.args]]", m.get("args"))
+    return rows
+
+
+def str_hint_errors(cfg: dict) -> "list[str]":
+    """Every ``str_hint`` jm would not honour, as a message naming its row.
+
+    gh-1756. Refused at load, where the row can still be named, because
+    each of these would otherwise be accepted and then do nothing:
+
+    - a value that is not a non-empty string. It becomes a C string literal,
+      and ``str_hint = true`` has no text to append.
+    - a ``str_hint`` on a parameter that is not an array. Only an array
+      parameter's refusal of a ``str`` reads it.
+    - one on an ``out`` / ``mutable`` / ``writable`` array, or on a
+      ``strict`` method's param. Both refuse anything that is not already
+      an ndarray BEFORE ``jm_array_arg`` runs, with their own message.
+
+    Examples
+    --------
+    >>> bad = {"f": {"init_params": [
+    ...     {"name": "n", "type": "int", "str_hint": "x"}]}}
+    >>> str_hint_errors(bad)[0].split(":")[0]
+    '[[f.init_params]] n'
+    >>> bad["f"]["init_params"][0].update(type="uint8_t[]", str_hint=1)
+    >>> "str_hint = 1 must be a non-empty string" in str_hint_errors(bad)[0]
+    True
+    >>> bad["f"]["init_params"][0]["str_hint"] = "use bits()"
+    >>> str_hint_errors(bad)
+    []
+    """
+    from ._types import is_array_param_type, param_writable
+
+    errors: "list[str]" = []
+    for where, p, strict in str_hint_rows(cfg):
+        if STR_HINT_KEY not in p:
+            continue
+        value = p[STR_HINT_KEY]
+        name = p.get("name", "?")
+        if not isinstance(value, str) or not value:
+            errors.append(
+                f"{where} {name}: str_hint = {value!r} must be a non-empty "
+                "string -- the text appended to the parameter's refusal of "
+                "a str, naming what to pass instead"
+            )
+        elif not is_array_param_type(str(p.get("type", ""))):
+            errors.append(
+                f"{where} {name}: str_hint is read only by an array "
+                f"parameter's refusal of a str, and {name} is "
+                f"{p.get('type', '?')!r}; drop the key"
+            )
+        elif param_writable(p) or p.get("writable") or strict:
+            what = "a strict method's input" if strict else "an out buffer"
+            errors.append(
+                f"{where} {name}: str_hint is never shown on {what}, which "
+                "must already be an ndarray and is refused with its own "
+                "message before any conversion; drop the key"
+            )
+    return errors
 
 
 def input_array_acq(
@@ -503,6 +667,7 @@ def input_array_acq(
     strict: bool = False,
     expect: str = "",
     label: str = "",
+    hint: str = "",
 ) -> str:
     """Acquire an input array as *arr_var*, C-contiguous.
 
@@ -535,6 +700,8 @@ def input_array_acq(
         The parameter name a refusal names; defaults to *arr_var* less its
         ``_arr`` suffix. A method's primary input is the local ``in_arr``
         while the caller spells it ``x``.
+    hint : str
+        The parameter's ``str_hint`` (gh-1756), passed to `array_arg`.
 
     Examples
     --------
@@ -615,7 +782,7 @@ def input_array_acq(
         )
     return (
         f"    PyArrayObject *{arr_var} =\n"
-        f"        {array_arg(obj_var, npy_enum, flags, label or label_of(arr_var))};\n"
+        f"        {array_arg(obj_var, npy_enum, flags, label or label_of(arr_var), hint)};\n"
         f"    if (!{arr_var}) {{ {fail} }}\n"
     )
 

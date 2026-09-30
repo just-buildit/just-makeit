@@ -480,6 +480,10 @@ def run(
             # binding rendered from that manifest dropped it.
             if len(p) > 5 and p[5]:
                 entry["doc"] = p[5]
+            # gh-1756: the param's `str_hint` (7th element) -- manifest-only
+            # like `doc`, and dropped by the replay for the same reason.
+            if len(p) > 6 and p[6]:
+                entry["str_hint"] = p[6]
             _entries.append(entry)
         fn_entry["params"] = _entries
     if return_type != "void":

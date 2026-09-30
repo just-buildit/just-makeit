@@ -125,6 +125,29 @@ just-makeit method resamp execute_ctrl --module resample \
     --return-type size_t
 ```
 
+To say where text goes instead, give the param a `str_hint` in the manifest
+(gh-1756). It is appended to the refusal of a `str`, and the same key works on
+an init param, a method param, a module-function param and a handle method's
+array arg:
+
+```toml
+[[frame.init_params]]
+name     = "sync"
+type     = "uint8_t[]"
+str_hint = "build bits from text with field_bits()"
+```
+
+```text
+TypeError: sync must be an array of numbers, not str: build bits from text with field_bits()
+```
+
+The hint is text, never a format: quotes, backslashes and `%` reach the
+message unchanged. It is TOML-only, and `load` refuses one that is not a
+non-empty string, one on a param that is not an array, and one on an `out`
+buffer or a `strict` method's param -- both refuse anything but an ndarray
+with their own message first, so the hint could never be shown. A param
+without the key renders exactly as before.
+
 Generated C stub:
 
 ```c

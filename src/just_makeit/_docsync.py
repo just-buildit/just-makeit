@@ -1067,8 +1067,15 @@ _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
 #: masked body: the helper's name in a comment or docstring is erased by the
 #: mask, and the helper's own definition is not a ``PyMethodDef`` row body.
 #: A member with no array argument has no call in the reference either, so
-#: it is never reported (gh-1734).
-_ARRAY_ARG_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_FN}\s*\(")
+#: it is never reported (gh-1734). A param declaring a ``str_hint`` calls the
+#: converter's hinted entry point instead (gh-1756), which is the same helper.
+_ARRAY_ARG_RE = re.compile(
+    rf"\b(?:{_coerce.ARRAY_ARG_FN}|{_coerce.ARRAY_ARG_HINT_FN})\s*\("
+)
+
+#: The hinted entry point alone (gh-1756): a ``str_hint`` the manifest declares
+#: and a fragment rendered before it lacks.
+_ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 
 
 class _Feature(NamedTuple):
@@ -1144,6 +1151,13 @@ _FEATURE_MARKERS = {
         "jm converts an array argument through jm_array_arg and this "
         "fragment does not, so a str argument is silently parsed as a "
         "number rather than refused",
+    ),
+    # gh-1756: a manifest declaration this time -- a param's `str_hint`,
+    # which a fragment rendered before it never shows.
+    "str-hint": _Feature(
+        (_ARRAY_ARG_HINT_RE,),
+        "the manifest declares a str_hint on an array param and this "
+        "fragment's refusal of a str does not append it",
     ),
 }
 

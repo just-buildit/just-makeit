@@ -47,10 +47,17 @@ def _maximal_param() -> dict:
     slots (`optional`, `required`) become `True`, which is what the writer
     keys on — a falsy value would make them absent and quietly untested.
     """
+    # gh-1756: "one slot added nothing" is not "the tuple has ended". Slot
+    # 15 persists nothing on this shape (the object slot is emptied), so
+    # stopping at the first quiet slot never reached slot 16 and a key there
+    # went unchecked. Stop after a run of quiet slots longer than any gap the
+    # tuple has (17-18, the object resolution, are the widest).
     previous: dict = {}
+    quiet = 0
     for n in range(3, _MAX_SLOTS):
         current = C.init_param_tuple_to_dict(_slots(n))
-        if n > 3 and set(current) == set(previous):
+        quiet = quiet + 1 if n > 3 and set(current) == set(previous) else 0
+        if quiet == _QUIET_SLOTS:
             return previous
         previous = current
     raise AssertionError(
@@ -70,7 +77,16 @@ def _slots(n: int) -> tuple:
     So the object slot is left empty here and covered by
     :func:`_maximal_object_param`.
     """
-    return tuple("" if i == 15 else f"v{i}" for i in range(n))
+    # Slot 1 is an ARRAY type (gh-1756): `load` refuses a `str_hint` on a
+    # scalar, and the maximal param carries one.
+    return tuple(
+        "" if i == 15 else "v1[]" if i == 1 else f"v{i}" for i in range(n)
+    )
+
+
+#: Consecutive slots adding no key before the probe decides the tuple ended.
+#: Longer than the widest run of non-persisted slots (17-18 here).
+_QUIET_SLOTS = 4
 
 
 def _maximal_object_param() -> dict:
@@ -122,6 +138,9 @@ class TestTheKeySetIsDerived:
         found = set(_maximal_param())
         assert {"name", "type", "capsule", "header", "doc"} <= found
         assert len(found) >= 12
+        # ...and it reads PAST the quiet slot 15 (gh-1756): slot 16 is the
+        # first key beyond it.
+        assert "str_hint" in found
         # ...and the object shape's probe is not vacuous either, or the union
         # above would silently collapse back to one shape.
         assert "object" in set(_maximal_object_param())

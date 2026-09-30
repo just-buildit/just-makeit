@@ -597,6 +597,7 @@ def _build_params_parse(
                     # the INPUT side and does not double it.
                     strict=strict and not is_out,
                     expect=_CTYPE_META.get(elem_ct, {}).get("py_type", ""),
+                    hint=_coerce.str_hint(p),
                 ).rstrip("\n")
             )
             # gh-805 §C: an opt-in rank guard, before the length is taken —
