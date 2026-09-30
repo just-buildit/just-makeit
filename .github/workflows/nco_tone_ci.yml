@@ -21,13 +21,6 @@ name: nco_tone example
 on:
   push:
     branches: ["main"]
-    # A release bump moves only these four files and cannot affect the
-    # end-to-end example, so it should not trigger one.
-    paths-ignore:
-      - CHANGELOG.md
-      - pyproject.toml
-      - bootstrap.toml
-      - uv.lock
   pull_request:
     paths:
       - "src/just_makeit/**"
@@ -39,8 +32,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # A version bump alone cannot affect the
+  # end-to-end example, so it does not run one: see changes.yml.
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   nco-tone:
     name: nco_tone (Ubuntu, static doppler)
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
 
     steps:

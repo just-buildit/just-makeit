@@ -35,46 +35,10 @@ jobs:
   # independently builds the wheel and runs the scaffold->cmake->test smoke on
   # the tagged commit. merge_group and workflow_dispatch still always run —
   # those are integration events where testing the combined tree is the point.
+  # Is this a version bump alone? One answer for every workflow (gh-1537):
+  # the reusable changes.yml, which runs `make ci-changes`.
   changes:
-    runs-on: ubuntu-latest
-    outputs:
-      src: ${{ steps.check.outputs.src }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 2
-
-      - id: check
-        run: |
-          # Integration events always run the full matrix.
-          case "${{ github.event_name }}" in
-            merge_group|workflow_dispatch)
-              echo "src=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
-          esac
-
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            base="${{ github.event.pull_request.base.sha }}"
-            git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
-          else
-            # push: diff the whole pushed range. Fail SAFE -- if the previous
-            # tip is not reachable in this shallow clone we cannot prove the
-            # push is bump-only, so run everything.
-            base="${{ github.event.before }}"
-            if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-              echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
-            fi
-          fi
-
-          # Is this a version bump and nothing else? The standard's answer
-          # (gh-1537), not a hand-kept list of files: every changed path,
-          # except CHANGELOG.md and changelog.d/ (which a release rewrites),
-          # must equal its $base copy with the old version replaced by the
-          # new one, read through the Makefile's VERSION_PROBES. So a new
-          # version site needs no declaration, and a dependency moving in
-          # uv.lock fails the substitution and runs everything. The list it
-          # replaced went stale once (jb.toml) and had to grow for
-          # changelog.d/. It writes src= to $GITHUB_OUTPUT itself.
-          make -s ci-changes BASE="$base"
+    uses: ./.github/workflows/changes.yml
 
   test:
     needs: changes

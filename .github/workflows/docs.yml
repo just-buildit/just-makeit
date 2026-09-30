@@ -28,11 +28,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A version bump alone builds nothing here: see changes.yml.
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   # ------------------------------------------------------------------
   # Build — runs on every push and PR
   # ------------------------------------------------------------------
   build:
     name: Build
+    needs: changes
+    # A push to main always builds and deploys (see the trigger comment);
+    # a PR builds unless it is a version bump alone.
+    if: github.event_name == 'push' || needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1

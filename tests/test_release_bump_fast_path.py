@@ -36,7 +36,9 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).parent.parent
-CI = REPO / ".github/workflows/ci.yml"
+WF = REPO / ".github/workflows"
+CI = WF / "ci.yml"
+CHANGES = WF / "changes.yml"
 
 # A merged source change (gh-1363, #1504): not a version bump, so the
 # matrix must run. A fixed commit, because "the parent of a release" is not
@@ -45,10 +47,8 @@ _SOURCE_COMMIT = "5eb3e85"
 
 
 def _changes_job() -> str:
-    text = CI.read_text(encoding="utf-8")
-    m = re.search(r"^  changes:\n(.*?)(?=^  [\w-]+:\n)", text, re.M | re.S)
-    assert m, "no `changes:` job in ci.yml"
-    return m.group(1)
+    """The one bump-only decision, which every workflow calls (reusable)."""
+    return CHANGES.read_text(encoding="utf-8")
 
 
 def _ci_changes(commit: str) -> str:
@@ -167,4 +167,136 @@ def test_the_aggregator_still_greens_a_skip():
     # keeps the pointer from the fast path to the rule it depends on.
     assert 'if [[ "$SRC" == "false" ]]; then exit 0; fi' in text, (
         "ci-passed no longer treats a bump-only skip as green"
+    )
+
+
+# ── Every workflow a release reaches takes the fast path ─────────────────────
+#
+# The fast path lived in ci.yml alone. docs.yml, docker.yml and nco_tone_ci.yml
+# filtered on hand-written `paths:` lists naming pyproject.toml, so a release
+# PR built the docs site, two multi-arch images and the end-to-end example for
+# a version string; nco_tone_ci.yml's push-side `paths-ignore` named four bump
+# files and missed the changelog.d/ fragments a release deletes, so it ran on
+# every release push to main too. The file set is read off the newest release
+# commit and the workflows are globbed, so neither can go stale.
+
+
+def _release_files() -> "list[str]":
+    """Every path the newest ``chore: release v`` commit on HEAD touched."""
+    sha = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--grep=^chore: release v"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert sha, "no `chore: release v` commit reachable from HEAD"
+    out = subprocess.run(
+        ["git", "show", "--format=", "--name-only", sha],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert "pyproject.toml" in out, (sha, out)
+    return out
+
+
+def _glob(pattern: str, path: str) -> bool:
+    """GitHub's `paths` glob: ``**`` crosses ``/``, ``*`` does not."""
+    rx = ""
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            rx += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            rx += "[^/]*"
+            i += 1
+        else:
+            rx += re.escape(pattern[i])
+            i += 1
+    return re.fullmatch(rx, path) is not None
+
+
+def _reached(trigger: "dict | None", files: "list[str]") -> bool:
+    """Would a push/PR changing exactly *files* start this trigger?"""
+    if trigger is None:
+        return True
+    if "tags" in trigger and "branches" not in trigger:
+        return False
+    if "paths" in trigger:
+        return any(_glob(p, f) for p in trigger["paths"] for f in files)
+    if "paths-ignore" in trigger:
+        ign = trigger["paths-ignore"]
+        return any(not any(_glob(p, f) for p in ign) for f in files)
+    return True
+
+
+def _workflows_a_release_reaches() -> "list[tuple[str, dict]]":
+    import yaml
+
+    files = _release_files()
+    out = []
+    for wf in sorted(WF.glob("*.yml")):
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        on = doc.get(True, doc.get("on")) or {}
+        if isinstance(on, (str, list)):
+            on = {e: None for e in ([on] if isinstance(on, str) else on)}
+        if any(
+            e in on and _reached(on[e], files)
+            for e in ("push", "pull_request")
+        ):
+            out.append((wf.name, doc["jobs"]))
+    return out
+
+
+def _ungated(jobs: dict) -> "list[str]":
+    """Jobs that would run on a bump alone.
+
+    A job is gated when it reads `needs.changes.outputs.src` itself, or needs
+    a gated job without an `if` that runs it anyway (`always()`,
+    `!cancelled()`), since a skipped need skips its dependents.
+    """
+    import json
+
+    gated: "set[str]" = {"changes"}
+    changed = True
+    while changed:
+        changed = False
+        for name, job in jobs.items():
+            if name in gated:
+                continue
+            body = json.dumps(job)
+            needs = job.get("needs", [])
+            needs = [needs] if isinstance(needs, str) else needs
+            cond = str(job.get("if", ""))
+            forced = "always()" in cond or "cancelled()" in cond
+            if "needs.changes.outputs.src" in body or (
+                any(n in gated and n != "changes" for n in needs)
+                and not forced
+            ):
+                gated.add(name)
+                changed = True
+    return sorted(set(jobs) - gated)
+
+
+def test_a_release_reaches_some_workflow():
+    """The walk below must have something to walk."""
+    names = [n for n, _ in _workflows_a_release_reaches()]
+    assert "ci.yml" in names, names
+
+
+@pytest.mark.parametrize(
+    "name,jobs",
+    _workflows_a_release_reaches(),
+    ids=[n for n, _ in _workflows_a_release_reaches()],
+)
+def test_every_job_a_release_reaches_is_gated_on_changes(name, jobs):
+    uses = (jobs.get("changes") or {}).get("uses", "")
+    assert uses == "./.github/workflows/changes.yml", (
+        f"{name} is started by a release commit and has no `changes` job "
+        "calling ./.github/workflows/changes.yml"
+    )
+    assert not _ungated(jobs), (
+        f"{name}: {_ungated(jobs)} run on a version bump alone -- gate them "
+        "on `needs.changes.outputs.src == 'true'`"
     )
