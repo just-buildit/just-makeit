@@ -447,6 +447,7 @@ def make_sample_ctx(
             "bench_out_decl": _bench_out_decl(out_disp, "free(in); "),
             "bench_volatile_sink": "",
             "bench_sink_assign": "",
+            "bench_sink_read": "",
             "bench_steps_out_arg": " out",
             "bench_free_out": "    free(out);",
             "test_arr_4_init": "{0}",
@@ -498,6 +499,7 @@ def make_sample_ctx(
         bench_out_decl_after_in = ""
         bench_volatile_sink = ""
         bench_sink_assign = ""
+        bench_sink_read = ""
         bench_steps_out_arg = " BENCH_N"
         bench_free_out = ""
     else:
@@ -511,6 +513,11 @@ def make_sample_ctx(
             f"    volatile {ret_disp} _sink;"
         )
         bench_sink_assign = "_sink = "
+        # gh-1745: a volatile that is only ever stored to is
+        # -Wunused-but-set-variable (gcc and clang), an error under -Werror.
+        # One read after the last store makes it used without costing the
+        # timed loop anything.
+        bench_sink_read = "    (void)_sink;"
         bench_steps_out_arg = " out, BENCH_N"
         bench_free_out = "    free(out);"
 
@@ -568,6 +575,7 @@ def make_sample_ctx(
             "bench_out_decl": bench_out_decl,
             "bench_volatile_sink": bench_volatile_sink,
             "bench_sink_assign": bench_sink_assign,
+            "bench_sink_read": bench_sink_read,
             "bench_steps_out_arg": bench_steps_out_arg,
             "bench_free_out": bench_free_out,
             "test_arr_4_init": "{0}",
@@ -652,6 +660,7 @@ def make_sample_ctx(
             "bench_out_decl": bench_out_decl_after_in,
             "bench_volatile_sink": bench_volatile_sink,
             "bench_sink_assign": bench_sink_assign,
+            "bench_sink_read": bench_sink_read,
             "bench_steps_out_arg": bench_steps_out_arg,
             "bench_free_out": bench_free_out,
             "test_arr_4_init": "{0}",
@@ -750,6 +759,7 @@ def make_sample_ctx(
         "bench_out_decl": bench_out_decl_after_in,
         "bench_volatile_sink": bench_volatile_sink,
         "bench_sink_assign": bench_sink_assign,
+        "bench_sink_read": bench_sink_read,
         "bench_steps_out_arg": bench_steps_out_arg,
         "bench_free_out": bench_free_out,
         "test_arr_4_init": _test_arr_4_init(arg_type, samp),

@@ -31,6 +31,7 @@ main(void)
 /*<<bench_step_timing_block>>*/
 /*<<bench_steps_timing_block>>*/
 /*<<bench_methods_timing_block>>*/
+/*<<bench_sink_read>>*/
     jm_bench_write_json(&_bench, "/*<<component>>*/");
     /*<<csym>>*/_destroy(obj);
 /*<<bench_free_in>>*/

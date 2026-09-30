@@ -548,6 +548,7 @@ def _bench_method_block(
     )
 
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
+    has_sink = False
     lines.append(f"        double _times_{name}[ITERATIONS];")
 
     if result_fields and not single_record and not borrow_m:
@@ -571,6 +572,7 @@ def _bench_method_block(
         else:
             call = f"{c_fn}(obj, {name}_results, {max_results})"
         lines.append(f"        volatile size_t {name}_sink;")
+        has_sink = True
         lines += [
             f"        for (int i = 0; i < 4; i++) {name}_sink = {call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
@@ -633,6 +635,7 @@ def _bench_method_block(
                 if borrow_m
                 else f"        volatile {ret_disp} {name}_sink;"
             )
+            has_sink = True
         sink = f"{name}_sink = " if has_ret else ""
         lines += mo_decls
         call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args}{mo_args})"
@@ -658,6 +661,7 @@ def _bench_method_block(
                 if borrow_m
                 else f"        volatile {ret_disp} {name}_sink;"
             )
+            has_sink = True
         sink = f"{name}_sink = " if has_ret else ""
         lines += mo_decls
         in_arg = f", {arg_zero}" if has_arg else ""
@@ -673,6 +677,12 @@ def _bench_method_block(
             "        }",
         ]
 
+    # gh-1745: every branch above that declares `<name>_sink` only stores to
+    # it, which is -Wunused-but-set-variable (gcc and clang) and an error
+    # under -Werror. One read after the timing loop makes it used; each
+    # declaration sets `has_sink`, so no branch can declare one and miss it.
+    if has_sink:
+        lines.append(f"        (void){name}_sink;")
     add_line = f'        jm_bench_add(&_bench, "{name}", _times_{name}, ITERATIONS, BENCH_N);'
     lines += [
         add_line,
@@ -4167,26 +4177,44 @@ def make_enum_tables_ctx(
     so a type without one renders byte-identically to before.
     """
     used = method_param_enums(methods, enums)
+    # gh-1745: every method parameter is looked up; a property only when its
+    # setter is, which `_property_lookup_enum` decides for both halves.
+    looked_up = list(used)
     for prp in properties or []:
         name = _property_enum(component, Component, prp, enums)
         if name and name not in used:
             used.append(name)
+        lk = _property_lookup_enum(component, Component, prp, enums)
+        if lk and lk not in looked_up:
+            looked_up.append(lk)
     if not used:
         return {"enum_tables": ""}
-    return {"enum_tables": _render_enum_tables(Component, used, enums or {})}
+    return {
+        "enum_tables": _render_enum_tables(
+            Component, used, enums or {}, looked_up
+        )
+    }
 
 
 def _render_enum_tables(
-    Component: str, used: list[str], enums: dict[str, list[str]]
+    Component: str,
+    used: list[str],
+    enums: dict[str, list[str]],
+    looked_up: list[str],
 ) -> str:
     """The ``_enum_index_<Component>`` helper + one table per enum in *used*.
 
     `_enumc.render_tables` in this type's namespace. This was a second copy
     of it -- byte-identical, which is the only reason gh-1450's constant
-    tables did not reach objects through one and not the other.
+    tables did not reach objects through one and not the other. The helper
+    is emitted only when *looked_up* is non-empty (gh-1745).
     """
     return _enumc.render_tables(
-        used, enums, prefix=Component, include_string_h=True
+        used,
+        enums,
+        prefix=Component,
+        include_string_h=True,
+        looked_up=looked_up,
     )
 
 
@@ -4223,6 +4251,27 @@ def _property_enum(
             f"decoded form. Drop `enum` or drop `buf_field`."
         )
     return name
+
+
+def _property_lookup_enum(
+    component: str,
+    Component: str,
+    p: dict,
+    enums: dict[str, list[str]] | None,
+) -> str:
+    """The ``[[enum]]`` a property's SETTER looks a choice up in, or ``""``.
+
+    gh-1745. A property's getter only decodes -- it indexes the table -- so
+    the ``_enum_index_<Component>`` lookup has a caller only when the
+    property is writable. This is the one predicate for both halves: the
+    setter emits its :func:`_enumc.validate_c` block when it answers a name,
+    and :func:`make_enum_tables_ctx` emits the lookup when any property or
+    method parameter does. A read-only enum property used to get the lookup
+    anyway, which ``-Wall`` reports as an unused function.
+    """
+    if not p.get("writable", False):
+        return ""
+    return _property_enum(component, Component, p, enums)
 
 
 def validate_container_property(component: str, p: dict) -> None:
@@ -4724,7 +4773,9 @@ def make_properties_ctx(
         setter_name = "NULL"
         if writable:
             setter_name = f"(setter){Component}_setprop_{pname}"
-            if p_enum:
+            # gh-1745: the predicate `make_enum_tables_ctx` emits the lookup
+            # from, so a setter never calls one that was not emitted.
+            if _property_lookup_enum(component, Component, p, enums):
                 # gh-519: accept the Python string, resolve it through the
                 # SSOT table, and assign the resolved int wherever the plain
                 # setter would have assigned `v`. "s" already raises TypeError
