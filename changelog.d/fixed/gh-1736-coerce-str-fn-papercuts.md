@@ -8,4 +8,8 @@
     attach takes `bytes` and int sequences only. And the generated comments
     that interpolate a name (the bridge header's `coerce_str_fn` field list,
     the `_bridge.h` / `_ext.c` / `_cli.c` banners, the segments-rebuild
-    comment) are wrapped to 79 columns; doppler's ran to 104.
+    comment) are wrapped to 79 columns; doppler's ran to 104. One visible
+    change: a plain `bytes = true` field (no `coerce`) used to take a `str`
+    through that shared grammar, which was never documented; where no
+    `bit_pattern` field reads jm's grammar, it now refuses a `str` with
+    `TypeError`, as the docs describe.
