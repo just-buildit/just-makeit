@@ -1,5 +1,74 @@
 ## [Unreleased]
 
+## [0.95.0] — 2026-09-30
+
+### Added
+
+- **An owned pointer's reader can name its refusal** (gh-1735). An
+    owned-pointer composer source field declared `parse_why = true` has the
+    reason-naming `parse_fn`, `T *parse_fn(const char *, const char **why)`,
+    declared so in `<module>_bridge.h`. Every face that reads its text form
+    passes the reason through: the constructor keyword and the setter raise
+    `ValueError(<the reason>)` instead of `<name>: <parse_fn> refused the text`, the generic `from_json` / `from_file` raise it instead of
+    `invalid composer spec`, and the c-face CLI prints
+    `bad --<name> TEXT: <reason>`. A refusal that writes no reason keeps the
+    old message, and a field without the key renders byte-identically. Like
+    gh-1722's switches, a `parse_why` that is not `true`/`false` is refused
+    at load.
+
+### Fixed
+
+- **A composer's `[module.X.json] header` and `include_dir` are accepted and
+    kept** (gh-1725). The generated JSON path includes the named cJSON header
+    and adds `include_dir` to the extension's include path, as documented,
+    but the key check did not know either key: a project naming its vendored
+    cJSON got the right binding and a load-time warning that the key "has no
+    effect". A mutating save also dropped both, which put the default
+    `cJSON.h` back in the next generated `_ext.c`. The test that checks every
+    key the composer renderer reads against the accepted keys now covers every
+    composer sub-table and every renderer, not two tables and three renderers.
+
+- **A byte-array output buffer is stubbed as the ndarray it must be**
+    (gh-1733). gh-1700 widened every `uint8_t[]` / `int8_t[]` parameter's
+    stub to `NDArray[...] | bytes | bytearray | memoryview`, including an
+    `out` or `mutable` one -- the caller's buffer for C to fill, which the
+    binding refuses unless it is a writable ndarray of the exact dtype. A
+    type checker therefore approved `int_to_bin(5, 8, bytearray(8), 0)`,
+    which raises `TypeError`, and a `bytes` output can never be written at
+    all. The widening now applies to array inputs only, in both stub
+    generators and the runtime `__doc__`, for object methods, module object
+    methods and module functions alike; an output buffer reads
+    `NDArray[np.uint8]`.
+
+- **`apply` names a sacred fragment whose array arguments predate
+    `jm_array_arg`** (gh-1734). gh-1700 routed every array-argument
+    conversion through `jm_array_arg`, which refuses a `str`, and widened the
+    `.pyi` to match; a sacred `_ext_<obj>.c` fragment rendered before it
+    still calls a bare `PyArray_FROM_OTF`, so a `str` is silently parsed as a
+    number while the stub says otherwise. `apply` and `jm status` warned
+    about fragments lacking gh-1710's output-size guard but said nothing
+    about these. Each such member is now reported the same way, with the
+    consequence, so a project knows which fragments to delete and
+    regenerate. The marker is the helper CALL in the masked body, so its
+    name in a comment does not satisfy it and a GNU-formatted
+    `jm_array_arg (` does.
+
+- **One `coerce_str_fn` helper per function, no dead grammar, and composer
+    comments within 79 columns** (gh-1736). A composer emitted one
+    byte-identical `_coerce_<field>` helper per field naming a
+    `coerce_str_fn`; the helper is now `_coerce_<fn>`, one per distinct
+    function, called by every field that names it. jm's own `0`/`1` / `0x`
+    str grammar is emitted in `_attach_bytes` only while some `bit_pattern`
+    field still reads it -- when every one names a host reader, the shared
+    attach takes `bytes` and int sequences only. And the generated comments
+    that interpolate a name (the bridge header's `coerce_str_fn` field list,
+    the `_bridge.h` / `_ext.c` / `_cli.c` banners, the segments-rebuild
+    comment) are wrapped to 79 columns; doppler's ran to 104. One visible
+    change: a plain `bytes = true` field (no `coerce`) used to take a `str`
+    through that shared grammar, which was never documented; where no
+    `bit_pattern` field reads jm's grammar, it now refuses a `str` with
+    `TypeError`, as the docs describe.
+
 ## [0.94.0] — 2026-09-30
 
 ### Added
