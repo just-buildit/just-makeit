@@ -287,6 +287,15 @@ class TestEveryFace:
 # -- the manifest: refused at load, kept on save -----------------------------
 
 
+#: A declared record element (gh-1405): an `iq16_t[]` param is acquired by
+#: the record's dtype, which demands an ndarray of it before any conversion.
+_RECORD = (
+    '[[fld.records]]\nname = "iq16_t"\n'
+    'fields = [{ name = "i", type = "int16_t" },'
+    ' { name = "q", type = "int16_t" }]\n\n'
+)
+
+
 def _load_with(tmp_path: Path, row: dict, table: str = "init_params"):
     """`load` a one-object manifest whose param *row* sits in *table*.
 
@@ -304,7 +313,7 @@ def _load_with(tmp_path: Path, row: dict, table: str = "init_params"):
         )
     (tmp_path / C.FILENAME).write_text(
         '[project]\nname = "x"\nversion = "0.1.0"\n\n'
-        '[fld]\narg_type = "void"\nreturn_type = "void"\n\n' + tail,
+        '[fld]\narg_type = "void"\nreturn_type = "void"\n\n' + _RECORD + tail,
         encoding="utf-8",
     )
     return C.load(tmp_path)
@@ -334,13 +343,20 @@ def test_a_hint_on_a_scalar_is_refused_at_load(tmp_path, capsys, ptype):
         ({"name": "y", "type": "float[]", "out": True}, "params"),
         ({"name": "y", "type": "float[]", "mutable": True}, "params"),
         ({"name": "x", "type": "float[]"}, "strict"),
+        ({"name": "rows", "type": "iq16_t[]"}, "params"),
     ],
 )
 def test_a_hint_that_could_never_show_is_refused(tmp_path, capsys, row, table):
-    """Both refuse a non-ndarray before ``jm_array_arg`` runs."""
+    """Each refuses a non-ndarray before ``jm_array_arg`` runs."""
     with pytest.raises(SystemExit):
         _load_with(tmp_path, row | {"str_hint": "x"}, table)
     assert "str_hint is never shown on" in capsys.readouterr().err
+
+
+def test_a_record_param_without_a_hint_still_loads(tmp_path):
+    """The record refusal is about the KEY, not the record param."""
+    cfg = _load_with(tmp_path, {"name": "rows", "type": "iq16_t[]"}, "params")
+    assert cfg["fld"]["methods"][0]["params"][0]["type"] == "iq16_t[]"
 
 
 def test_a_function_and_a_handle_arg_are_checked_too(tmp_path, capsys):

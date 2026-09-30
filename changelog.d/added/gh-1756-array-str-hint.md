@@ -7,6 +7,6 @@
     message are unchanged. The hint is escaped into a C string literal and
     passed as text, never as a format. `load` refuses a `str_hint` that is
     not a non-empty string, one on a param that is not an array, and one on
-    an `out` buffer or a `strict` method's param, where it could never be
-    shown. `jm apply` now replays it for a module function, and `jm status`
+    an `out` buffer, a `strict` method's param or a record-typed param,
+    where it could never be shown. `jm apply` now replays it for a module function, and `jm status`
     reports a sacred fragment rendered before a declared `str_hint`.
