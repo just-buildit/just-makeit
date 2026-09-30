@@ -96,13 +96,10 @@ class TestTheKeyIsPartOfTheManifest:
 class TestTheGeneratedBinding:
     def test_constructor_and_setter_both_route_through_it(self) -> None:
         s = _composer.render_source_type(_hosted(), "wfm_compose")
-        assert (
-            "if (!_coerce_bits(&self->src.bits, &self->src.n_bits, bits))" in s
-        )
-        assert (
-            "return _coerce_bits(&self->src.bits, &self->src.n_bits, value)"
-            in s
-        )
+        # gh-1736: the helper is named by the function, not the field.
+        co = f"_coerce_{HOST}"
+        assert f"if (!{co}(&self->src.bits, &self->src.n_bits, bits))" in s
+        assert f"return {co}(&self->src.bits, &self->src.n_bits, value)" in s
         assert f"size_t nb = {HOST}(s, NULL, 0, &why);" in s
         assert f"nb = {HOST}(s, buf, nb, &why);" in s
         assert "PyErr_SetString(PyExc_ValueError,\n" in s
@@ -118,7 +115,7 @@ class TestTheGeneratedBinding:
     def test_undeclared_renders_as_before(self) -> None:
         cfg = _with_bits(coerce="bit_pattern")
         s = _composer.render_source_type(cfg, "wfm_compose")
-        assert "_coerce_bits" not in s
+        assert "_coerce_" not in s
         assert "bit string must be 0/1 or '0x..' hex" in s
         assert _composer.render_bridge_h(cfg, "wfm_compose") == ""
 
