@@ -54,16 +54,16 @@ ______________________________________________________________________
 
 ## Functions and properties
 
-| Feature                                                     | Example                                                   |
-| ----------------------------------------------------------- | --------------------------------------------------------- |
-| Module-level C function                                     | [Module functions](examples/jm_function.md)               |
-| Inline function (in the header)                             | [Module functions](examples/jm_function.md)               |
-| Filesystem path argument (`name:path`)                      | [Extend command](commands/extend.md#just-makeit-function) |
-| Enum argument (`name:enum:<ename>`)                         | [Extend command](commands/extend.md#just-makeit-function) |
-| Raise on non-zero return (`--check-return`)                 | [Extend command](commands/extend.md#just-makeit-function) |
-| Raise the C refusal's own reason (`--why`, `from_json_why`) | [Extend command](commands/extend.md#just-makeit-function) |
-| Writable property                                           | [Feature tour](feature-tour.md)                           |
-| Field-backed property                                       | [IQ file](examples/iqfile.md)                             |
+| Feature                                                                   | Example                                                   |
+| ------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Module-level C function                                                   | [Module functions](examples/jm_function.md)               |
+| Inline function (in the header)                                           | [Module functions](examples/jm_function.md)               |
+| Filesystem path argument (`name:path`)                                    | [Extend command](commands/extend.md#just-makeit-function) |
+| Enum argument (`name:enum:<ename>`)                                       | [Extend command](commands/extend.md#just-makeit-function) |
+| Raise on non-zero return (`--check-return`)                               | [Extend command](commands/extend.md#just-makeit-function) |
+| Raise the C refusal's own reason (`--why`, `from_json_why`, `create_why`) | [Extend command](commands/extend.md#just-makeit-function) |
+| Writable property                                                         | [Feature tour](feature-tour.md)                           |
+| Field-backed property                                                     | [IQ file](examples/iqfile.md)                             |
 
 ## Modules and linking
 

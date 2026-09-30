@@ -544,6 +544,9 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     "create_fn",
     # gh-1126: post-construction settings.
     "settings",
+    # gh-1755: the backing is built by `<backing>_create_why`, which takes a
+    # trailing `const char **why` -- `[module.X.json] from_json_why`'s shape.
+    "create_why",
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.

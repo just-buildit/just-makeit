@@ -99,6 +99,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "generator": {"name": "g"},
     "flat_sources": True,
     "settings": [{"name": "st", "setter_fn": "c_set", "type": "int"}],
+    # gh-1755: the backing's create takes a trailing `const char **why`.
+    "create_why": True,
 }
 
 #: `methods` is the one key whose row shape differs per face -- a handle
