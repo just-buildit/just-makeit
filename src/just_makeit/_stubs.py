@@ -2090,7 +2090,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-1271: `str | None` where the binding takes `z`. Derived from
             # the same predicate the format char is, so the stub cannot
             # document a call the extension refuses.
-            pann = f"{p['name']}: {T.py_param_annotation(_pbase, p['type'], _pdflt)}"
+            # gh-1733: an `out` / `mutable` array is the caller's buffer to
+            # fill; its binding takes only a writable ndarray.
+            _pann = T.py_param_annotation(
+                _pbase, p["type"], _pdflt, writable=T.param_writable(p)
+            )
+            pann = f"{p['name']}: {_pann}"
             # gh-1426 A: a release's count defaults to the OUTSTANDING
             # borrow's -- a runtime value with no literal, so `...`. Asked of
             # `_borrow` rather than derived here, because the peer producer
@@ -2245,7 +2250,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 _ann = "object | None"
             else:
                 _ann = T.py_param_annotation(
-                    _py(p["type"]), p["type"], p.get("default") or ""
+                    _py(p["type"]),
+                    p["type"],
+                    p.get("default") or "",
+                    writable=T.param_writable(p),
                 )
             _py_params.append((p["name"], _ann))
         # gh-1042: the binding's own arguments, in the order the signature
@@ -2515,7 +2523,12 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
         # gh-1271: the same two corrections as the method producer above, and
         # for the same reason — this is that producer's peer, and the defect
         # was in both.
-        ann = T.py_param_annotation(ann, p["type"], p.get("default") or "")
+        ann = T.py_param_annotation(
+            ann,
+            p["type"],
+            p.get("default") or "",
+            writable=T.param_writable(p),
+        )
         py_params.append((p["name"], ann))
         part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):

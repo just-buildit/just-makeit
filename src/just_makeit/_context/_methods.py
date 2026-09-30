@@ -162,7 +162,14 @@ def _stub_params(
             fields.append(
                 (
                     p["name"],
-                    T.py_param_annotation(_pyi_ndarray(pt[:-2]), pt, ""),
+                    # gh-1733: an `out` / `mutable` array takes only a
+                    # writable ndarray, never a byte buffer.
+                    T.py_param_annotation(
+                        _pyi_ndarray(pt[:-2]),
+                        pt,
+                        "",
+                        writable=T.param_writable(p),
+                    ),
                     "",
                 )
             )

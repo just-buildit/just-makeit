@@ -479,7 +479,9 @@ def string_default_literal(default: str) -> str:
     return default if default.strip() else "..."
 
 
-def py_param_annotation(base: str, ctype: str, default: str) -> str:
+def py_param_annotation(
+    base: str, ctype: str, default: str, *, writable: bool = False
+) -> str:
     """*base*, widened to ``| None`` when the parameter accepts ``None``.
 
     The annotation and the format char are one decision read in two places, so
@@ -503,10 +505,20 @@ def py_param_annotation(base: str, ctype: str, default: str) -> str:
     'NDArray[np.uint8] | bytes | bytearray | memoryview'
     >>> py_param_annotation("NDArray[np.float32]", "float[]", "")
     'NDArray[np.float32]'
+
+    Only an INPUT does (gh-1733). A *writable* parameter -- ``out`` or
+    ``mutable``, :func:`param_writable` -- is the caller's own buffer for C to
+    fill, and its binding refuses anything but a writable ndarray of the exact
+    dtype (`_coerce.out_buffer_guard`), so a ``bytes`` could never be one and a
+    ``bytearray`` is refused too. The caller passes ``param_writable(p)``:
+
+    >>> py_param_annotation("NDArray[np.uint8]", "uint8_t[]", "",
+    ...                     writable=True)
+    'NDArray[np.uint8]'
     """
     if is_nullable_string(ctype, default):
         return f"{base} | None"
-    if takes_byte_buffer(ctype):
+    if takes_byte_buffer(ctype) and not writable:
         return f"{base} | {BYTE_BUFFER_PY_TYPES}"
     return base
 
