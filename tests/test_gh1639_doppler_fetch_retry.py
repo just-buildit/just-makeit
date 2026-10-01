@@ -39,7 +39,11 @@ def _dns_blip():
 
 
 def _http(code):
-    return urllib.error.HTTPError("u", code, "status", {}, None)
+    # A real body, as urllib always passes one. With ``fp=None`` Python 3.9's
+    # HTTPError never sets ``.file``, so ANY missing-attribute lookup on it
+    # -- pytest's ``getattr(val, "__name__", None)`` when naming a parameter
+    # -- raises KeyError from tempfile's wrapper instead of AttributeError.
+    return urllib.error.HTTPError("u", code, "status", {}, io.BytesIO(b""))
 
 
 class _Fake:
