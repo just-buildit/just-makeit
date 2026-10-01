@@ -47,12 +47,79 @@ from ._object import _regenerate_module
 # ``A | B``) because this is a runtime module-level value, and ``GenericAlias |
 # GenericAlias`` raises on Python 3.9 (`from __future__ import annotations` only
 # defers annotations).
+#
+# Or the manifest's own ``[[module.<mod>.functions.params]]`` row, a ``dict``:
+# what `apply` replays (gh-1760). A row carries every key the manifest
+# declared, including the ones no CLI flag can spell, so `run` stores it
+# verbatim -- see `_param_row`.
 FnParam = Union[
     tuple[str, str],
     tuple[str, str, bool],
     tuple[str, str, bool, str],
     tuple[str, str, bool, str, str],
+    dict,
 ]
+
+
+def _param_row(p: FnParam) -> dict:
+    """The manifest row a function param is stored as.
+
+    A ``dict`` IS a manifest row -- `apply` replays the project's own -- and
+    is copied whole. Copying it is the point: the replay used to rebuild each
+    row from a positional tuple, and any key the tuple had no slot for was
+    silently absent from the replayed manifest the binding is rendered from.
+    `doc` (gh-1493) and `str_hint` (gh-1756) were each patched in as one more
+    slot; `rank` and `elements_per_sample` were not, so the binding lost its
+    rank guard and its interleave divisor (gh-1760). A row passed whole has
+    no slot to forget.
+
+    A tuple is the CLI's ``(name, type[, is_out[, default[, enum]]])``, and
+    only the keys it can carry are written; a falsy slot writes nothing.
+
+    Examples
+    --------
+    >>> _param_row(("x", "float[]", True))
+    {'name': 'x', 'type': 'float[]', 'out': True}
+    >>> _param_row(("k", "int", False, "", "mode"))
+    {'name': 'k', 'type': 'int', 'enum': 'mode'}
+    >>> _param_row({"name": "x", "type": "float[]", "rank": 1})
+    {'name': 'x', 'type': 'float[]', 'rank': 1}
+    """
+    if isinstance(p, dict):
+        return dict(p)
+    entry: dict = {"name": p[0], "type": p[1]}
+    if len(p) > 2 and p[2]:
+        entry["out"] = True
+    # gh-240: a defaulted scalar is optional in the binding.
+    if len(p) > 3 and p[3]:
+        entry["default"] = p[3]
+    # gh-353: an enum param stores its [[enum]] name (type stays "int") so
+    # the binding validates the choice string to its SSOT index.
+    if len(p) > 4 and p[4]:
+        entry["enum"] = p[4]
+    return entry
+
+
+def _param_tuple(row: dict) -> tuple[str, str, bool, str, str]:
+    """The positional form the C prototype writers (`_render.fn_c_*`) read.
+
+    Only what reaches the C declaration: name, type, whether the array is the
+    caller's buffer (`out`, or its synonym `mutable`, gh-170 -- one question,
+    `_types.param_writable`), and the default and enum the checks below read.
+    Everything else stays in the row, which is what the binding renders from.
+
+    >>> _param_tuple({"name": "y", "type": "float[]", "mutable": True})
+    ('y', 'float[]', True, '', '')
+    """
+    from ._types import param_writable
+
+    return (
+        row["name"],
+        row["type"],
+        param_writable(row),
+        row.get("default", ""),
+        row.get("enum", ""),
+    )
 
 
 def _write_function_c(
@@ -209,6 +276,10 @@ def run(
     why: bool = False,
 ) -> None:
     C.require_name(fn_name, "function")
+    # gh-1760: one row per param is what the manifest stores; the C writers
+    # below read the positional form derived from it.
+    rows = [_param_row(p) for p in params or []]
+    params = [_param_tuple(r) for r in rows]
     # gh-1064: the same two rules as `jm method`. This face accepts
     # `result_fields` too and generated the identical non-compiling binding
     # from the identical bad declaration -- fixing one of a pair is what
@@ -458,34 +529,11 @@ def run(
     fn_entry: dict = {"name": fn_name}
     if doc:
         fn_entry["doc"] = doc
-    if params:
-        # Round-trip the optional `out` flag (gh-72) and `default` (gh-240) from
-        # the CLI tuples so they survive apply / script regeneration.
-        _entries: list[dict] = []
-        for p in params:
-            n, t = p[0], p[1]
-            entry = {"name": n, "type": t}
-            if len(p) > 2 and p[2]:
-                entry["out"] = True
-            if len(p) > 3 and p[3]:
-                entry["default"] = p[3]
-            # gh-353: an enum param stores its [[enum]] name (type stays "int")
-            # so the binding validates the choice string to its SSOT index. The
-            # 5th tuple element is "" for non-enum params.
-            if len(p) > 4 and p[4]:
-                entry["enum"] = p[4]
-            # gh-1493: the param's manifest `doc` (6th element). There is no
-            # CLI flag for it, so only `apply`'s replay passes one -- and
-            # without it the replayed manifest had none, so the stub and the
-            # binding rendered from that manifest dropped it.
-            if len(p) > 5 and p[5]:
-                entry["doc"] = p[5]
-            # gh-1756: the param's `str_hint` (7th element) -- manifest-only
-            # like `doc`, and dropped by the replay for the same reason.
-            if len(p) > 6 and p[6]:
-                entry["str_hint"] = p[6]
-            _entries.append(entry)
-        fn_entry["params"] = _entries
+    if rows:
+        # gh-1760: the rows `_param_row` built above, whole -- a replayed
+        # manifest row keeps every key it declared (gh-1493's `doc`,
+        # gh-1756's `str_hint`, gh-805 §C's `rank`/`elements_per_sample`).
+        fn_entry["params"] = rows
     if return_type != "void":
         fn_entry["return_type"] = return_type
     if out_type:

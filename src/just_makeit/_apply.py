@@ -985,26 +985,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 fn["name"],
                 mod,
                 doc=fn.get("doc", ""),
-                params=[
-                    # gh-170: `mutable` is accepted as a synonym for `out` —
-                    # both drop the `const` on a writable array param.
-                    # gh-353: replay the 5-tuple including `default` and `enum`
-                    # so path/enum/defaulted params survive `jm apply`
-                    # regeneration (the rendered _ext.c keeps its enum/path
-                    # handling, otherwise these would silently drop).
-                    (
-                        p["name"],
-                        p["type"],
-                        bool(p.get("out") or p.get("mutable")),
-                        p.get("default", ""),
-                        p.get("enum", ""),
-                        # gh-1493: manifest-only; see `_function.run`.
-                        p.get("doc", ""),
-                        # gh-1756: likewise.
-                        p.get("str_hint", ""),
-                    )
-                    for p in fn.get("params", [])
-                ],
+                # gh-1760: each param's manifest row, WHOLE -- as gh-432 did
+                # for method params. A tuple rebuilt here named its keys one
+                # by one (gh-353 `default`/`enum`, gh-1493 `doc`, gh-1756
+                # `str_hint`), and `rank` / `elements_per_sample` were never
+                # named: the binding lost its rank guard and its interleave
+                # divisor, and `apply` reported success.
+                params=[dict(p) for p in fn.get("params", [])],
                 return_type=fn.get("return_type", "void"),
                 impl_body=f_impl,
                 # An inline function lives as a `static inline` body in the
