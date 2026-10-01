@@ -39,9 +39,11 @@ ARG APT_SNAPSHOT=20261001T000000Z
 ARG APT_PACKAGES
 # What CI needs beyond the dev group: git for actions/checkout (without it
 # the action falls back to a tarball, and the suite's release gates read
-# tags), and clang/clang++ for the -Werror scaffold sweep, which builds every
-# shape under gcc AND clang.
-ARG CI_EXTRA_PACKAGES="ca-certificates git clang"
+# tags); clang for the -Werror scaffold sweep, which builds every shape under
+# gcc AND clang; jq for changes.yml's fast-path verdict, whose tests run the
+# step itself. ubuntu-latest ships all of them, so a missing one shows up
+# here as a suite that skips or fails only in the image.
+ARG CI_EXTRA_PACKAGES="ca-certificates git clang jq"
 # Set by `make ci-image-build`: a hash of this file and APT_PACKAGES, so
 # `make ci-image-check` can tell an image built from other inputs.
 ARG CI_INPUTS
