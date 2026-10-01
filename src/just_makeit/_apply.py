@@ -158,6 +158,36 @@ def is_build_tree(path: Path) -> bool:
     return (path / "CMakeCache.txt").is_file()
 
 
+def is_nested_checkout(path: Path) -> bool:
+    """True when *path* is the root of a git checkout of its own.
+
+    gh-1713. A git worktree, a clone or a submodule placed inside a project
+    is a different working tree -- usually another branch -- and none of its
+    files is this checkout's. Claude Code puts agent worktrees at
+    ``<repo>/.claude/worktrees/agent-*``; in doppler one held 3414 of the
+    41870 paths `status` walked, every one counted as manifest-owned, and a
+    file edited in that other checkout read as STALE in this one, with
+    `jm apply` -- which would write into the other branch's tree -- as the
+    advice.
+
+    Recognised by what it IS, as :func:`is_build_tree` recognises a build
+    tree: git marks the top of every working tree with ``.git``, a
+    directory for a clone and a FILE for a linked worktree or a submodule.
+    It needs no git, so it holds outside a repository too. Callers ask it
+    of a directory BELOW the project root, never of the root itself, whose
+    own ``.git`` is what makes it a checkout.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> is_nested_checkout(d)
+    False
+    >>> _ = (d / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\\n")
+    >>> is_nested_checkout(d)
+    True
+    """
+    return (path / ".git").exists()
+
+
 def _tree_digests(root: Path) -> dict:
     """Digest of every project file, keyed by POSIX path relative to *root*.
 
@@ -171,7 +201,8 @@ def _tree_digests(root: Path) -> dict:
     ``__init__.py`` in turn, so it was announced twice.
 
     Taken once, before anything is written, from the same walk rules
-    `status` uses: skipped names and build trees are never descended into.
+    `status` uses: skipped names, build trees and nested checkouts
+    (gh-1713) are never descended into.
     """
     out: dict = {}
     for dirpath, dirnames, filenames in os.walk(root):
@@ -179,7 +210,9 @@ def _tree_digests(root: Path) -> dict:
         dirnames[:] = [
             d
             for d in dirnames
-            if d not in _SKIP_DIRS and not is_build_tree(base / d)
+            if d not in _SKIP_DIRS
+            and not is_build_tree(base / d)
+            and not is_nested_checkout(base / d)
         ]
         for name in filenames:
             p = base / name

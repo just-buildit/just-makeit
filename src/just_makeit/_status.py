@@ -104,15 +104,24 @@ _COPY_IGNORE_NAMES = shutil.ignore_patterns(
 
 
 def _COPY_IGNORE(directory: str, names: list) -> set:
-    """`copytree` ignore: the fixed names above, plus any build tree.
+    """`copytree` ignore: the fixed names above, any build tree, and any
+    nested checkout.
 
     gh-1473: a build tree is recognised by `_apply.is_build_tree`, not by
     its name, so `cmake-build-debug` and `build-rel` stay out of the
     scratch -- and so out of every count `_walk_managed` makes from it.
+
+    gh-1713: so is another checkout -- a git worktree or clone below the
+    root, `_apply.is_nested_checkout`. An agent worktree under ``.claude/``
+    was copied, counted, and its own branch's edits reported as STALE here.
     """
+    here = Path(directory)
     ignored = set(_COPY_IGNORE_NAMES(directory, names))
     return ignored | {
-        n for n in names if _apply.is_build_tree(Path(directory) / n)
+        n
+        for n in names
+        if _apply.is_build_tree(here / n)
+        or _apply.is_nested_checkout(here / n)
     }
 
 
