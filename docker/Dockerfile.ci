@@ -70,5 +70,13 @@ RUN test -n "${APT_PACKAGES}" \
         --no-install-recommends ${APT_PACKAGES} ${CI_EXTRA_PACKAGES} \
     && rm -rf /var/lib/apt/lists/* /tmp/snapshot-ca.crt
 
+# The legs run as this user (ci.yml: `options: --user 1001`), never as root:
+# root deletes a read-only directory, so the suite's gate that scratch_dir
+# survives a cleanup the OS refuses skips there (measured 2026-10-01, the
+# only image-caused skip). 1001 is the hosted runner's own uid, so the
+# workspace and tool cache the runner mounts stay writable; the base's
+# `ubuntu` user holds 1000.
+RUN useradd --uid 1001 --create-home ci
+
 COPY --from=ghcr.io/astral-sh/uv@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 \
     /uv /uvx /usr/local/bin/
