@@ -421,6 +421,9 @@ FUNCTION_KEYS = frozenset(
         "check_return",
         # gh-1706: the C function takes a trailing `const char **why`.
         "why",
+        # gh-1614: the gh-1418 status -> exception table, read on the
+        # status a check_return function returns.
+        "status_errors",
         "impl",
         "impl_file",
         "replace",

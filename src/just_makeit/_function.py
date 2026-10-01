@@ -274,6 +274,7 @@ def run(
     inline: bool = False,
     check_return: bool = False,
     why: bool = False,
+    status_errors: list[dict] | None = None,
 ) -> None:
     C.require_name(fn_name, "function")
     # gh-1760: one row per param is what the manifest stores; the C writers
@@ -338,6 +339,23 @@ def run(
         if _why_err:
             print(f"error: {_why_err}", file=sys.stderr)
             sys.exit(1)
+
+    # gh-1614: refused here, before any C is written, by the same check the
+    # renderer makes -- a table on a function that never reads a status, or
+    # a row the borrow face would refuse too.
+    _status_err = T.status_errors_why_not(
+        {
+            "name": fn_name,
+            "params": rows,
+            "check_return": check_return,
+            "out_type": out_type,
+            "result_fields": result_fields,
+            "status_errors": status_errors,
+        }
+    )
+    if _status_err:
+        print(f"error: {_status_err}", file=sys.stderr)
+        sys.exit(1)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -560,6 +578,8 @@ def run(
         fn_entry["check_return"] = True
     if why:
         fn_entry["why"] = True
+    if status_errors:
+        fn_entry["status_errors"] = C.as_named_tables(status_errors)
     C.add_module_function(cfg, module, fn_entry)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")

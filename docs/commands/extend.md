@@ -1148,6 +1148,7 @@ capability is ~free unless keywords are actually used — see
 | `--return-type TYPE`            | C return type (default: `void`).                                                                                                                                                                                                                                                                                                                  |
 | `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                                                                                                                                                                                                     |
 | `--why`                         | Manifest `why = true`. The C function takes a trailing `const char **why`, and a refusal raises the sentence it writes there as `ValueError`; with none written the `--check-return` error is unchanged. Requires `--check-return` (gh-1706).                                                                                                     |
+| `--status-error SPEC`           | `STATUS:ExcName[:message]` — raise `ExcName` when the function returns `STATUS`, a C constant emitted as a `case` label. Repeatable; a status with no row keeps the `--check-return` error. Manifest `status_errors`, the same table a borrow method declares. Requires `--check-return` on a status-returning function (gh-1614).                |
 | `--out-type TYPE`               | Allocate a 1-D output array of this element type per call and append `out` last to the C call.                                                                                                                                                                                                                                                    |
 | `--variable-output`             | With `--out-type`: the function allocates its own 1-D output rather than returning a scalar — no caller buffer and no cached instance buffer. `out` is appended **last** to the C call, and the binding returns the ndarray (gh-335). A `size_t`-returning function is trimmed to the count it reports; a `void` one returns the full allocation. |
 | `--out-size EXPR`               | Length of that output, as a **verbatim C expression** over the function's own arguments — including each array param's generated `<name>_len` (e.g. `x_len * factor`, or a call like `wfm_rrc_ntaps(sps, span)`). Omit it and the length falls back to the first array parameter's length.                                                        |
@@ -1271,7 +1272,8 @@ just-makeit function convert_image \
 
 **`--check-return`** makes the generated binding treat a non-zero `int`
 return value as a failure: it captures the result, raises `RuntimeError` on
-a non-zero code, and returns `None` on success. Requires `--return-type` to
+a non-zero code (or the exception a `--status-error` row names for that
+code, below), and returns `None` on success. Requires `--return-type` to
 be an integer type (`int`, `size_t`, …). It is the module-function analog of
 the handle generator's `close_returns` and composes naturally with path and
 enum args.
@@ -1306,6 +1308,32 @@ parse_rate(const char *spec, const char **why)
 ```python
 img.parse_rate("")   # ValueError: RATE must not be empty
 ```
+
+**`--status-error STATUS:ExcName[:message]`** (manifest `status_errors`)
+lets the returned status choose the exception (gh-1614). The binding
+switches on the status before its generic raise: a row raises its exception,
+and a status with no row keeps the `--check-return` `RuntimeError`. `STATUS`
+is the author's C constant -- jm knows none -- so it must be visible to the
+module's `_ext.c`, for instance from the module's `_core.h`. A message may
+name the function's scalar params as `{name}`. It is the table a
+[`--borrow` method](#just-makeit-method) declares with `--status-fn`; on a function
+the status is the return value, so there is no status function to name.
+
+```sh
+just-makeit function simpson_weights --module util \
+    --param 'w:double[]' --return-type int --check-return \
+    --status-error 'DP_ERR_INVALID:ValueError:w must have odd length' \
+    --status-error DP_ERR_MEMORY:MemoryError
+```
+
+```python
+util.simpson_weights(np.ones(4))   # ValueError: w must have odd length
+util.simpson_weights(np.ones(1))   # MemoryError: ... failed (DP_ERR_MEMORY)
+```
+
+With `--why` too, the row picks the class and the sentence the function
+wrote is the text, so a reason no longer has to mean `ValueError`; a status
+with no row raises a written sentence as `ValueError`, as before.
 
 A composer's delegated JSON reader has the same shape, declared per factory
 as `from_json_why` / `from_file_why` under `[module.X.json]`

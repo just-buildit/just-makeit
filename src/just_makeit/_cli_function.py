@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from . import _borrow
+
 
 def _required_after_default_ok(
     fn_params: list[tuple], pname: str, pdefault: str
@@ -42,6 +44,7 @@ def run(args: list[str]) -> None:
     fn_variable_output = False
     fn_check_return = False
     fn_why = False
+    fn_status_errors: list[dict] = []
     fn_out_size: str = ""
     fn_result_fields: list[dict] = []
     impl_spec_f: str | None = None
@@ -212,6 +215,18 @@ def run(args: list[str]) -> None:
             # binding passes `&_why` and a refusal raises what it wrote.
             fn_why = True
             i += 1
+        elif tok == "--status-error":
+            # gh-1614: the gh-1418 table on a check_return function -- one
+            # repeatable colon spec, parsed by the method face's parser.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --status-error requires STATUS:ExcName[:message]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fn_status_errors.append(_borrow.parse_status_error(remaining[i]))
+            i += 1
         elif tok == "--out-size":
             i += 1
             if i >= len(remaining):
@@ -348,4 +363,5 @@ def run(args: list[str]) -> None:
         out_size=fn_out_size,
         check_return=fn_check_return,
         why=fn_why,
+        status_errors=fn_status_errors or None,
     )

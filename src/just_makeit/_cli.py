@@ -326,6 +326,10 @@ Commands:
                                 `const char **why`; a refusal raises the
                                 sentence it writes there (ValueError).
                                 Requires --check-return.
+    --status-error SPEC         STATUS:ExcName[:message] — raise ExcName when
+                                the returned status is STATUS; other non-zero
+                                statuses keep the --check-return error.
+                                Repeatable. Requires --check-return.
     --result-field name:type    Append a field to a returned record list; repeatable.
     --doc "text"                Docstring shown in Python help().
     --inline                    Emit static inline body in _core.h (no _core.c entry).

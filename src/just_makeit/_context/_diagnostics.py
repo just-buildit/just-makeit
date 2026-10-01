@@ -207,7 +207,11 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
 
 
 def empty_raise_c(
-    category: str, message: str, decrefs: str = "", indent: int = 24
+    category: str,
+    message: str,
+    decrefs: str = "",
+    indent: int = 24,
+    ret: bool = True,
 ) -> str:
     """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
 
@@ -227,6 +231,10 @@ def empty_raise_c(
     name the array differently, so copying one into the other is a compile
     error if you are lucky and a leak if you are not.
 
+    *ret* False leaves off the ``return NULL;``, for a caller that puts the
+    raise under a condition and returns once after it -- `reason_raise_c`'s
+    ``else`` branch takes a single statement (gh-1614).
+
     Examples
     --------
     >>> print(empty_raise_c("ValueError", "bad length", indent=0))
@@ -239,7 +247,7 @@ def empty_raise_c(
         f"        {decrefs}"
         f"PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, indent)});\n"
-        f"        return NULL;\n"
+        + ("        return NULL;\n" if ret else "")
     )
 
 
@@ -253,7 +261,9 @@ WHY_LOCAL = "_why"
 WHY_DECL = f"const char *{WHY_LOCAL} = NULL;"
 
 
-def reason_raise_c(fallback: str, why: str = "", indent: int = 8) -> str:
+def reason_raise_c(
+    fallback: str, why: str = "", indent: int = 8, category: str = "ValueError"
+) -> str:
     """The raise for a C refusal that may carry its reason (gh-1706).
 
     The one emitter for "raise the C function's own sentence when it gave
@@ -283,6 +293,11 @@ def reason_raise_c(fallback: str, why: str = "", indent: int = 8) -> str:
         the site emitted before gh-1706.
     indent : int, optional
         Column of the ``if``, or of *fallback* when there is no *why*.
+    category : str, optional
+        The exception the reason is raised as. ``ValueError`` -- a reason
+        names a refused input -- unless a declared table already chose the
+        class for this refusal: a function's ``status_errors`` row picks the
+        TYPE and the sentence is still the TEXT (gh-1614).
 
     Examples
     --------
@@ -300,7 +315,7 @@ def reason_raise_c(fallback: str, why: str = "", indent: int = 8) -> str:
         return textwrap.indent(fallback, pad)
     return (
         f"{pad}if ({why})\n"
-        f"{pad}    PyErr_SetString(PyExc_ValueError, {why});\n"
+        f"{pad}    PyErr_SetString(PyExc_{category}, {why});\n"
         f"{pad}else\n" + textwrap.indent(fallback, pad + "    ")
     )
 
@@ -335,6 +350,7 @@ def format_raise_c(
     message: str,
     slots: "dict[str, tuple[str, str]]",
     indent: int = 8,
+    ret: bool = True,
 ) -> str:
     """A raise whose message interpolates C values (gh-1426 C).
 
@@ -372,6 +388,8 @@ def format_raise_c(
         a missing one is refused at declaration time, not here.
     indent : int
         Column for the rendered literal's continuation lines.
+    ret : bool
+        Whether the raise ends in ``return NULL;`` -- as `empty_raise_c`.
 
     Examples
     --------
@@ -389,7 +407,7 @@ def format_raise_c(
     """
     names = placeholders(message)
     if not names:
-        return empty_raise_c(category, message, indent=indent)
+        return empty_raise_c(category, message, indent=indent, ret=ret)
     fmt, args, pos = "", [], 0
     for match in _PLACEHOLDER_RE.finditer(message):
         name = match.group(1)
@@ -420,8 +438,7 @@ def format_raise_c(
     return (
         f"        PyErr_Format(PyExc_{category},\n"
         f"{_c_string_literal(fmt, indent)},\n"
-        f"{pad}{joined});\n"
-        f"        return NULL;\n"
+        f"{pad}{joined});\n" + ("        return NULL;\n" if ret else "")
     )
 
 
