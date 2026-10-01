@@ -149,6 +149,26 @@ refuses anything but an ndarray with its own message first, so the hint could
 never be shown. A param
 without the key renders exactly as before.
 
+An array **state field**'s setter takes the same key (gh-1761). A
+`[[<obj>.state]]` field typed `T[N]` gets a `set_<name>` that converts its
+argument the same way, so the hint goes on the state row:
+
+```toml
+[[frame.state]]
+name     = "sync"
+type     = "uint8_t[8]"
+str_hint = "build bits from text with field_bits()"
+```
+
+```text
+>>> Frame().set_sync("01010101")
+TypeError: sync must be an array of numbers, not str: build bits from text with field_bits()
+```
+
+`load` refuses one on a scalar or `opaque` state field (which has no
+`set_<name>`), and one on a `[[<obj>.properties]]` row: no property setter
+converts an array, so that message names the state row instead.
+
 Generated C stub:
 
 ```c

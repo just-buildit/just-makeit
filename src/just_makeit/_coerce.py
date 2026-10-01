@@ -577,30 +577,56 @@ def str_hint(param) -> str:
     return (param[16] if len(param) > 16 else "") or ""
 
 
-def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str]]":
-    """Every ``(table, param row, pre-empted)`` whose param can reach `array_arg`.
+#: A ``[[<obj>.state]]`` row with no generated accessor at all (gh-1761).
+_OPAQUE_STATE = "an opaque state field"
 
-    An object's (and a view's) ``init_params``, its methods' ``params``, a
-    module function's ``params`` and a handle module method's ``args``: the
-    tables a ``str_hint`` is honoured on. *pre-empted* names what refuses a
-    non-ndarray BEFORE ``jm_array_arg`` runs, so a hint on that param could
-    never be shown, or is ``""``:
+#: Why a hint on each pre-empted row could never be shown. Every other entry
+#: is refused as a non-ndarray before ``jm_array_arg`` runs.
+_NEVER_SHOWN_WHY = {
+    _OPAQUE_STATE: "which has no generated set_<name> to refuse a str",
+}
+_NEVER_SHOWN_DEFAULT = (
+    "which must already be an ndarray and is refused with its own message "
+    "before the hint could apply"
+)
+
+
+def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str, bool]]":
+    """Every ``(table, row, pre-empted, is array)`` that can reach `array_arg`.
+
+    An object's (and a view's) ``init_params``, its methods' ``params``, its
+    ``state`` fields (gh-1761: an array field's ``set_<name>``), a module
+    function's ``params`` and a handle module method's ``args``: the tables
+    a ``str_hint`` is honoured on. *is array* is whether the row's ``type``
+    is an array in that table's grammar -- ``T[]`` for a parameter, ``T[N]``
+    for a state field. *pre-empted* names what refuses a non-ndarray BEFORE
+    ``jm_array_arg`` runs, so a hint on that row could never be shown, or is
+    ``""``:
 
     - ``"a strict method's input"`` -- gh-1426 B refuses rather than
       converts;
     - ``"a record param"`` -- an array of a declared ``[[<obj>.records]]``
       element is acquired by the record's dtype, which requires an ndarray
       of it (gh-1405). Decided by `_record.declared` over `_config.records`,
-      the predicate the method binding itself uses.
+      the predicate the method binding itself uses;
+    - ``"an opaque state field"`` -- it has no ``set_<name>`` at all.
     """
     from . import _config, _record
-    from ._types import array_elem_ctype, is_array_param_type
+    from ._types import (
+        array_elem_ctype,
+        is_array_param_type,
+        parse_array_type,
+    )
 
-    rows: "list[tuple[str, dict, str]]" = []
+    rows: "list[tuple[str, dict, str, bool]]" = []
 
-    def add(where: str, params, why=lambda p: "") -> None:
+    def add(
+        where: str, params, why=lambda p: "", array=is_array_param_type
+    ) -> None:
         rows.extend(
-            (where, p, why(p)) for p in params or [] if isinstance(p, dict)
+            (where, p, why(p), bool(array(str(p.get("type", "")))))
+            for p in params or []
+            if isinstance(p, dict)
         )
 
     for comp in _config.components(cfg):
@@ -608,6 +634,13 @@ def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str]]":
         if not isinstance(body, dict):
             continue
         add(f"[[{comp}.init_params]]", body.get("init_params"))
+        # gh-1761: the declaration of an array field's `set_<name>`.
+        add(
+            f"[[{comp}.state]]",
+            body.get("state"),
+            lambda p: _OPAQUE_STATE if p.get("opaque") else "",
+            parse_array_type,
+        )
         records = _config.records(cfg, comp)
 
         def method_why(p: dict, strict: bool) -> str:
@@ -655,6 +688,11 @@ def str_hint_errors(cfg: dict) -> "list[str]":
     - one on an ``out`` / ``mutable`` / ``writable`` array, a ``strict``
       method's param or a record param. Each refuses anything that is not
       already an ndarray BEFORE ``jm_array_arg`` runs, with its own message.
+    - one on an opaque state field, which has no ``set_<name>`` (gh-1761).
+    - one on a ``[[<obj>.properties]]`` row (gh-1761). No property setter
+      converts an array -- a property's type is a scalar, a container, a
+      capsule, or a read-only ``buf_field`` view -- so the message names
+      the ``[[<obj>.state]]`` row, whose array ``set_<name>`` does.
 
     Examples
     --------
@@ -669,10 +707,11 @@ def str_hint_errors(cfg: dict) -> "list[str]":
     >>> str_hint_errors(bad)
     []
     """
-    from ._types import is_array_param_type, param_writable
+    from ._config import components
+    from ._types import param_writable
 
     errors: "list[str]" = []
-    for where, p, pre_empted in str_hint_rows(cfg):
+    for where, p, pre_empted, is_array in str_hint_rows(cfg):
         if STR_HINT_KEY not in p:
             continue
         value = p[STR_HINT_KEY]
@@ -683,7 +722,7 @@ def str_hint_errors(cfg: dict) -> "list[str]":
                 "string -- the text appended to the parameter's refusal of "
                 "a str, naming what to pass instead"
             )
-        elif not is_array_param_type(str(p.get("type", ""))):
+        elif not is_array:
             errors.append(
                 f"{where} {name}: str_hint is read only by an array "
                 f"parameter's refusal of a str, and {name} is "
@@ -691,11 +730,34 @@ def str_hint_errors(cfg: dict) -> "list[str]":
             )
         elif param_writable(p) or p.get("writable") or pre_empted:
             what = pre_empted or "an out buffer"
+            why = _NEVER_SHOWN_WHY.get(what, _NEVER_SHOWN_DEFAULT)
             errors.append(
-                f"{where} {name}: str_hint is never shown on {what}, which "
-                "must already be an ndarray and is refused with its own "
-                "message before the hint could apply; drop the key"
+                f"{where} {name}: str_hint is never shown on {what}, {why}; "
+                "drop the key"
             )
+    # gh-1761: a property is not a row `array_arg` can reach, so it is not
+    # in `str_hint_rows`; the key there is the natural wrong guess for an
+    # array field's setter, and accepted it would do nothing.
+    for comp in components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        tables = [(f"[[{comp}.properties]]", body.get("properties"))]
+        tables += [
+            (f"[[{comp}.views.properties]]", v.get("properties"))
+            for v in body.get("views") or []
+            if isinstance(v, dict)
+        ]
+        for where, props in tables:
+            for p in props or []:
+                if isinstance(p, dict) and STR_HINT_KEY in p:
+                    name = p.get("name", "?")
+                    errors.append(
+                        f"{where} {name}: str_hint is never shown on a "
+                        "property -- no property setter converts an array. "
+                        "An array state field's set_<name> does: declare "
+                        f"the hint on its [[{comp}.state]] row"
+                    )
     return errors
 
 

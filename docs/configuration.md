@@ -592,12 +592,13 @@ still succeeds, and *neither* tree is formatted, so they still compare equal.
 
 ### `[[<component>.state]]` entries
 
-| TOML field                            | CLI flag                                             | Status |
-| ------------------------------------- | ---------------------------------------------------- | ------ |
-| `name`, `type`, `default`             | `jm object --state name:type[:default]` (repeatable) | ✅     |
-| `name`, `type`, `opaque = true`       | (TOML only)                                          | 🟡     |
-| `name`, `type`, `no_ctor = true`      | (TOML only)                                          | 🟡     |
-| `name`, `type`, `controllable = true` | (TOML only)                                          | 🟡     |
+| TOML field                            | CLI flag                                                | Status       |
+| ------------------------------------- | ------------------------------------------------------- | ------------ |
+| `name`, `type`, `default`             | `jm object --state name:type[:default]` (repeatable)    | ✅           |
+| `name`, `type`, `opaque = true`       | (TOML only)                                             | 🟡           |
+| `name`, `type`, `no_ctor = true`      | (TOML only)                                             | 🟡           |
+| `name`, `type`, `controllable = true` | (TOML only)                                             | 🟡           |
+| `str_hint = "<text>"` (array field)   | (TOML only; see [Array parameters](commands/extend.md)) | ✅ (gh-1761) |
 
 The three rare modifiers (`opaque`, `no_ctor`, `controllable`) currently
 require editing `just-makeit.toml` directly. CLI flags are pending
@@ -1203,11 +1204,12 @@ is whatever you passed to `just-makeit object <name>`.
 
 One entry per `--state` declaration.
 
-| Key       | Type   | Notes                                              |
-| --------- | ------ | -------------------------------------------------- |
-| `name`    | string | ASCII letters/digits/underscores, no leading digit |
-| `type`    | string | C type; append `[N]` for fixed arrays              |
-| `default` | string | C initialiser expression                           |
+| Key        | Type   | Notes                                                                      |
+| ---------- | ------ | -------------------------------------------------------------------------- |
+| `name`     | string | ASCII letters/digits/underscores, no leading digit                         |
+| `type`     | string | C type; append `[N]` for fixed arrays                                      |
+| `default`  | string | C initialiser expression                                                   |
+| `str_hint` | string | `T[N]` field only: appended to `set_<name>`'s refusal of a `str` (gh-1761) |
 
 ### `[[<object>.array_args]]`
 

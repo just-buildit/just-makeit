@@ -425,8 +425,13 @@ def _make_object_ctx(
     block_sizes: "list[int] | None" = None,
     create_fn: str | None = None,
     owner: "INC.Owner" = None,
+    str_hints: "dict[str, str] | None" = None,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
+
+    *str_hints* is `_config.state_str_hints` for the object: each array
+    state field's ``set_<name>`` appends its hint to the refusal of a
+    ``str`` (gh-1761).
 
     A view passes ``class_name`` (its Python-facing name) and ``create_fn``
     (its C constructor) while ``component`` stays the parent's, so the ctx
@@ -472,6 +477,7 @@ def _make_object_ctx(
             # reset kept the canned literal, from the same parsed blocks.
             doc_blocks=doc_blocks,
             csym=ctx["csym"],
+            str_hints=str_hints,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1215,6 +1221,7 @@ def _make_view_ctx(
         doc_blocks=doc_blocks,
         block_sizes=C.project_bench_block_sizes(cfg),
         owner=cfg,
+        str_hints=C.state_str_hints(cfg, obj),  # gh-1761
     )
     # gh-504: a view's surface is the parent's, minus excludes, with its OWN
     # members merged over by name — an own entry OVERRIDES a parent one of the
@@ -1499,6 +1506,7 @@ def build_component_ctxs(
             block_sizes=C.project_bench_block_sizes(cfg),
             create_fn=C.object_create_fn(cfg, obj),
             owner=cfg,
+            str_hints=C.state_str_hints(cfg, obj),  # gh-1761
         )
         _override_slots = overridden_builtin_slots(
             ctx["component"], C.methods(cfg, obj), ctx
@@ -2464,6 +2472,7 @@ def run(
     core_family: "C.CoreFamily | None" = None,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
+    state_str_hints: "dict[str, str] | None" = None,
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -2565,6 +2574,7 @@ def run(
             opaque_state=opaque_state,
             no_ctor_names=no_ctor_names,
             controllable_names=controllable_names,
+            state_str_hints=state_str_hints,
             class_name=class_name,
             depends_on=list(depends_on),
             extra_link_libs=list(extra_link_libs),
@@ -2658,6 +2668,10 @@ def run(
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
         owner=cfg,
+        # gh-1761: no `str_hints` here. This ctx renders the module object's
+        # create-only files, never its binding fragment: that is
+        # `_regenerate_module`'s, which reads the hint back from the
+        # manifest `add_component` below writes it into.
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -2987,6 +3001,7 @@ def run(
         opaque_fields_=list(opaque_fields),
         no_ctor_names_=no_ctor_names,
         controllable_names_=controllable_names,
+        state_str_hints_=state_str_hints,
         # gh-160: persist extra_link_libs/extra_include_dirs for module objects
         # too (the standalone path already did). Without this they're dropped
         # from the manifest, so the module aggregation can't propagate a

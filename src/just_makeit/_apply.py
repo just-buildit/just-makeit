@@ -336,6 +336,8 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "opaque_fields": C.opaque_fields(cfg, comp),
         "no_ctor_names": C.no_ctor_names(cfg, comp),
         "controllable_names": C.controllable_names(cfg, comp),
+        # gh-1761: manifest-only, like every key above that has no flag.
+        "state_str_hints": C.state_str_hints(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),
         "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
         # gh-541/gh-544: the destructor contract is manifest-only (no CLI

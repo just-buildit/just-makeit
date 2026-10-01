@@ -136,6 +136,10 @@ STATE_KEYS = frozenset(
         "opaque",
         "no_ctor",
         "controllable",
+        # gh-1761: an array field's `set_<name>` refuses a `str` through
+        # gh-1700's converter, and this is appended to that refusal -- the
+        # gh-1756 key, on the row that declares the setter.
+        "str_hint",
     }
 )
 

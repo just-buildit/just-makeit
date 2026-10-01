@@ -2486,6 +2486,7 @@ def make_state_ctx(
     doc_blocks: dict | None = None,
     *,
     csym: str,
+    str_hints: "dict[str, str] | None" = None,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -2519,6 +2520,11 @@ def make_state_ctx(
     ``<component>_create`` directly and blank ``create_line``, so callers that
     use those paths must not also pass ``create_fn`` (the view generator
     rejects array-dispatch parents up front).
+
+    str_hints maps an array state field to its ``str_hint`` (gh-1761),
+    from `_config.state_str_hints`: its ``set_<name>`` appends it to the
+    refusal of a ``str``. A field absent from it -- every field, when the
+    caller passes none -- keeps the plain ``jm_array_arg`` call.
 
     no_reset removes the reset() surface entirely (gh-542) — binding, C
     declaration and definition, .pyi entry, and the generated tests that
@@ -3028,6 +3034,9 @@ def make_state_ctx(
             )
         method_parts.append(getter + "\n\n" + setter)
 
+    # gh-1761: the row's `str_hint`, read once by `_config.state_str_hints`
+    # through `_coerce.str_hint` -- the reader every array face shares.
+    _str_hints = str_hints or {}
     for name, elem_ct, size in array_info:
         npy_enum = _NP_DTYPE_ENUM[elem_ct]
         ptr_cast = f"({elem_ct} *)"
@@ -3084,7 +3093,7 @@ def make_state_ctx(
             f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
             f"        return NULL;\n"
             f"    PyArrayObject *arr =\n"
-            f"        {_coerce.array_arg('in_obj', npy_enum, 'NPY_ARRAY_C_CONTIGUOUS', name)};\n"
+            f"        {_coerce.array_arg('in_obj', npy_enum, 'NPY_ARRAY_C_CONTIGUOUS', name, _str_hints.get(name, ''))};\n"
             f"    if (!arr) return NULL;\n"
             f"    if (PyArray_SIZE(arr) != {size}) {{\n"
             f"        PyErr_Format(PyExc_ValueError,\n"
