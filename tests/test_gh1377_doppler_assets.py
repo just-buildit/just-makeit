@@ -80,8 +80,11 @@ def test_a_failed_fetch_reaches_the_switch(monkeypatch):
         mod._find_doppler_prefix()
 
 
+# The third spelling is `nco_tone_ci.yml`, which runs the example directly
+# and, since gh-1639, lets it fetch doppler itself -- so it can skip too.
 _RUNS_EXAMPLES = re.compile(
     r"make test-examples|just-makeit example \"\$example\""
+    r"|examples/nco_tone/test\.py"
 )
 # A job is a two-space-indented key under `jobs:`, up to the next one.
 _JOB = re.compile(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)")

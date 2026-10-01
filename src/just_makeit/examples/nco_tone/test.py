@@ -10,8 +10,8 @@ Demonstrates:
 doppler is supplied two ways, tried in order:
   1. --doppler-prefix PATH on the command line (or argument to run()).
      The explicit, opt-in escape hatch: a doppler developer testing a working
-     tree passes `--doppler-prefix ~/doppler/build`, and CI passes the prefix
-     it extracted. Whatever is passed is printed.
+     tree passes `--doppler-prefix ~/doppler/build`. Whatever is passed is
+     printed.
   2. Otherwise the LATEST doppler release is downloaded into a per-user cache
      (~/.cache/jm-tests/doppler/v<version>/<platform>) and built against.
      `_DOPPLER_VERSION` is the fallback when the release list is unreachable,
@@ -85,6 +85,14 @@ _DOPPLER_RELEASE_URL = (
 # bounds the whole transfer. The asset is ~2 MB (a normal fetch is well under a
 # second), so this only fires on a genuine stall — and the caller then skips.
 _DOWNLOAD_DEADLINE_S = 120
+#: How long to wait before each RETRY of one network fetch (gh-1639); the
+#: number of attempts is one more than its length, so this tuple is the one
+#: declaration of both. A single attempt meant one DNS blip on one runner
+#: failed a release leg: v0.90.1's macOS smoke died on `nodename nor servname
+#: provided`, which `JM_REQUIRE_DOPPLER` rightly turns into a failure. Only a
+#: TRANSIENT error is retried (see :func:`_transient`) -- a 404 is an answer,
+#: not a blip, and still fails at once.
+_RETRY_DELAYS_S = (5.0, 20.0)
 
 
 def _cmd(args, cwd, env=None):
@@ -137,6 +145,66 @@ def _platform_tag() -> tuple[str, str] | None:
     return _ASSETS.get((sys.platform, machine))
 
 
+def _transient(exc: BaseException) -> bool:
+    """Whether *exc* is a network blip worth another attempt.
+
+    Transient: a server error (HTTP 5xx), and a failure below HTTP -- name
+    resolution, a refused or reset connection, a socket timeout. urllib wraps
+    those as a ``URLError`` whose ``reason`` is the ``OSError``; raised
+    mid-read they arrive bare.
+
+    Not transient, so they fail at once: any other HTTP status (a 404 is a
+    missing asset, a 403 a rate limit that outlasts any backoff here), a
+    ``URLError`` whose reason is not an ``OSError`` (``unknown url type``),
+    and everything that is not a network error at all.
+
+    >>> import socket, urllib.error
+    >>> _transient(urllib.error.URLError(socket.gaierror(8, "nodename")))
+    True
+    >>> _transient(urllib.error.HTTPError("u", 503, "busy", {}, None))
+    True
+    >>> _transient(urllib.error.HTTPError("u", 404, "Not Found", {}, None))
+    False
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, OSError)
+    return isinstance(exc, (ConnectionError, TimeoutError))
+
+
+def _retrying(fetch, what: str, deadline: float | None = None):
+    """Return ``fetch()``, retrying it on a transient network error.
+
+    Waits ``_RETRY_DELAYS_S[i]`` before retry *i*, so it makes at most
+    ``len(_RETRY_DELAYS_S) + 1`` attempts. A non-transient error, or the
+    last attempt's error, propagates unchanged -- the caller's handling of a
+    failed fetch is the same as before there were retries.
+
+    *deadline* (a ``time.monotonic()`` value) is the caller's wall-clock cap
+    over the WHOLE fetch, retries included: a retry whose wait would end past
+    it is not attempted, so retrying never lengthens the cap.
+
+    *fetch* must be restartable from nothing -- the download reopens its
+    output file -- because a retry starts it over.
+    """
+    for attempt, delay in enumerate((*_RETRY_DELAYS_S, None), start=1):
+        try:
+            return fetch()
+        except Exception as exc:
+            if delay is None or not _transient(exc):
+                raise
+            if deadline is not None and time.monotonic() + delay > deadline:
+                raise
+            print(
+                f"nco_tone: {what} failed on attempt {attempt} ({exc}); "
+                f"retrying in {delay:g}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt re-raises")
+
+
 def _cache_dir() -> Path:
     """The per-user cache directory for jm-test downloads."""
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
@@ -170,21 +238,25 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
     )
     extract_dir.mkdir(parents=True, exist_ok=True)
     tarball = extract_dir.parent / f"doppler-{version}-{platform}{ext}"
-    try:
+    # Bounded copy: urlopen's timeout is per-read only, so enforce an overall
+    # deadline to abort a trickling/stalled transfer. It spans every attempt.
+    deadline = time.monotonic() + _DOWNLOAD_DEADLINE_S
+
+    def fetch() -> None:
         with (
             urllib.request.urlopen(url, timeout=60) as resp,
             open(tarball, "wb") as fh,
         ):
-            # Bounded copy: urlopen's timeout is per-read only, so enforce an
-            # overall deadline to abort a trickling/stalled transfer.
-            deadline = time.monotonic() + _DOWNLOAD_DEADLINE_S
             while chunk := resp.read(1 << 16):
                 fh.write(chunk)
                 if time.monotonic() > deadline:
-                    raise TimeoutError(
+                    raise _DeadlineExceeded(
                         f"doppler download exceeded {_DOWNLOAD_DEADLINE_S}s"
                     )
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+
+    try:
+        _retrying(fetch, f"downloading {url}", deadline)
+    except (urllib.error.URLError, OSError, _DeadlineExceeded) as exc:
         print(
             f"nco_tone: doppler auto-download failed ({exc}); "
             f"the test will skip unless --doppler-prefix is passed.",
@@ -219,6 +291,14 @@ def _download_doppler(version: str = _DOPPLER_VERSION) -> str | None:
         except ValueError:
             return str(cfg.parent)
     return None
+
+
+class _DeadlineExceeded(Exception):
+    """The download's wall-clock cap ran out.
+
+    Deliberately not a ``TimeoutError``: that is a socket timeout, which
+    :func:`_transient` retries, while the cap is the bound on retrying.
+    """
 
 
 def _version_key(v: str) -> tuple:
@@ -280,12 +360,22 @@ def latest_release(url: str = _LATEST_URL) -> str | None:
     import urllib.error
     import urllib.request
 
-    try:
-        req = urllib.request.Request(
-            url, headers={"Accept": "application/vnd.github+json"}
-        )
+    headers = {"Accept": "application/vnd.github+json"}
+    # A CI job has a token; an anonymous lookup shares the runner IP's 60
+    # requests an hour, and a rate-limited one falls back to the pin -- which
+    # for `nco_tone_ci.yml`, whose point is building against doppler's
+    # LATEST, would quietly test the wrong release.
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def fetch() -> str:
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as fh:
-            tag = json.load(fh).get("tag_name") or ""
+            return json.load(fh).get("tag_name") or ""
+
+    try:
+        tag = _retrying(fetch, "looking up doppler's latest release")
     except (urllib.error.URLError, OSError, ValueError, TimeoutError):
         return None
     return tag.lstrip("v") or None
@@ -381,9 +471,10 @@ def _find_doppler_prefix() -> str | None:
     unknown". A developer prefix is now opt-IN via `--doppler-prefix`, which is
     explicit and printed, rather than opt-out by accident.
 
-    CI downloads the latest release too, so the two paths now agree by
-    construction instead of agreeing only while someone remembers to bump a
-    constant.
+    CI runs this same fetch (`nco_tone_ci.yml` included, since gh-1639 routed
+    its own `gh release download` through here for the retry), so the two
+    paths agree by construction instead of agreeing only while someone
+    remembers to bump a constant.
 
     The pin is the **fallback**, not the target: when the release lookup cannot
     be made, `_DOPPLER_VERSION` is used so an offline box still runs against a
