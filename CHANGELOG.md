@@ -1,5 +1,114 @@
 ## [Unreleased]
 
+## [0.97.0] — 2026-10-01
+
+### Added
+
+- **A module function's status names its exception** (gh-1614).
+    `check_return = true` raised `RuntimeError("<fn> failed (rc=N)")` for
+    every non-zero status, so a bad argument (`DP_ERR_INVALID`) could not be
+    `ValueError` nor an allocation failure `MemoryError`. A `check_return`
+    function now takes the `status_errors` table methods already have
+    (gh-1418): `--status-error DP_ERR_INVALID:ValueError[:message]` on
+    `jm function`, repeatable, or `status_errors` rows in the manifest. The
+    binding switches on the returned status, a row raises its exception, and
+    a status with no row keeps the `check_return` error. A message may name
+    the function's scalar params (`{n}`). Under `why = true` (gh-1706) the
+    row picks the class and the sentence the C function wrote is the text.
+    Rows on a function whose binding reads no status -- no `check_return`,
+    or a self-sizing output whose refusal is a zero count -- are refused, as
+    are rows the method face refuses.
+
+- **An array state field's setter can say where text goes** (gh-1761). A
+    `str_hint` on a `[[<obj>.state]]` field typed `T[N]` is appended to its
+    `set_<name>`'s refusal of a `str`, through gh-1756's one converter:
+    `TypeError: sync must be an array of numbers, not str: build bits from text with field_bits()`. A field without the key renders exactly as
+    before. The key lives on the state row because that is the setter that
+    converts an array: no `[[<obj>.properties]]` setter does, so `load`
+    refuses a `str_hint` on a property and names the state row, and refuses
+    one on a scalar or `opaque` state field. `jm apply` replays the key, and
+    `jm status` reports a sacred fragment whose `set_<name>` predates it.
+    The manifest dumper used by `jm split-objects` and
+    `jm migrate-to-fragments` now writes every state key, so it no longer
+    drops a state field's `doc` (gh-1493) either.
+
+### Fixed
+
+- **The `nco_tone` example survives a network blip** (gh-1639). It fetched
+    doppler with a single attempt, so one DNS failure on one CI runner failed
+    a release leg. The release lookup and the download now retry a transient
+    error (name resolution, a refused or reset connection, a timeout, an HTTP
+    5xx) up to three attempts, within the download's existing time cap. A 404
+    still fails at once. `nco_tone_ci.yml` now runs that same fetch instead
+    of its own `gh release download`, which had no retry either.
+
+- **`jm apply <fragment>` with `module = "X"` routes into the module wherever
+    it is declared** (gh-1677). The check read the central manifest alone, so
+    on a split-layout project -- `jm new`'s default, where `[module.X]` lives
+    in `modules/X.toml` -- it refused a module the project has
+    (`Defined modules: ['(none)']`). And the wiring was a text edit of that
+    one file that never matched a dotted id's `[module."dsp.filters"]`, so on
+    a single-manifest project the object was silently left unwired and built
+    as a standalone extension, with exit 0. Both now go through the reader
+    and writer every other command uses: the merged manifest is checked, and
+    the object is added to `[module.X].objects` in the file that declares
+    it. A refusal after composing restores that file too.
+
+- **`jm status` leaves another checkout inside the project out of it**
+    (gh-1713). `status` copied the project directory whole and counted every
+    file in it as manifest-owned, so a git worktree placed inside a project
+    -- Claude Code's agent worktrees under `.claude/worktrees/` -- was part
+    of the count (it doubled a fresh project's, 35 to 70), and a file edited
+    in that other branch's tree while `status` ran was reported STALE here,
+    with `jm apply` as the advice. A directory holding its own `.git` (a
+    clone, a linked worktree, a submodule) is now another checkout: never
+    copied, compared or counted, with or without git installed. `jm apply`'s
+    change report no longer reads one either.
+
+- **Two keys naming one composer seam function must agree on its
+    prototype** (gh-1739). The bridge header declares each straight-C seam
+    once per function, taking the first key's prototype. Two owned-pointer
+    source fields naming one `parse_fn` with `parse_why` on only one of them,
+    or one `copy_fn` / `free_fn` / `format_fn` over two `type`s, were
+    accepted, and the call site that did not match the one declaration
+    failed in the C compiler with conflicting types. jm now refuses it when
+    it renders the bridge header, naming the function, both keys (fields
+    included) and both prototypes. The rule covers every seam the header
+    declares, so a `coerce_str_fn` that collides with an owned pointer's
+    function is refused the same way. Keys that agree are still declared
+    once.
+
+- **`jm script` names every param key its command line cannot spell**
+    (gh-1765). A method, module function or constructor param was replayed
+    as `--param name:type` (or `--init-param name:type:...`), and the rest of
+    its manifest row was dropped with no word: `rank` and
+    `elements_per_sample`, so the replayed project lost its rank guard and
+    interleave divisor, plus `doc`, `str_hint` and others. Only `enum` on a
+    method param got a `# NOTE`. Each param spelling now reports the keys it
+    carries, and a `# NOTE` before the command names every other key the row
+    declares, on method, view-method, function, object and view init params.
+    A key added to the manifest later is covered without a change here. A
+    method param's `default`, which `jm method --param name:type=<default>`
+    can spell, is now emitted instead of dropped.
+
+- **A manifest refusal prints one `error:` line, not a traceback**
+    (gh-1777). An object declared both in `objects/<obj>.toml` and in the
+    central manifest was refused with a good message -- the file, what is
+    wrong, what to do -- under a dozen stack frames, by every command that
+    reads the manifest (`apply`, `status`, `script`, `upgrade`, `method`,
+    ...), so an author's own mistake read as a crash in jm. The same held
+    under `jm upgrade` for a composer's partial owned-pointer set (gh-1711)
+    and for two prototypes of one seam function (gh-1739). Deliberate
+    refusals now raise `Refusal`, a `ValueError` subclass, and the CLI
+    prints one as `error: <message>` and exits 1, as before. Only that type
+    is caught, so a `ValueError` jm did not raise on purpose -- a bug --
+    still tracebacks. `JM_DEBUG=1` brings a refusal's traceback back.
+    Converted here: the fragment-merge refusals in manifest load, the
+    composer owned-pointer and seam-prototype refusals, and the existing
+    `[codec.X]` and `process_global` refusal types. The remaining bare
+    `raise ValueError` sites are counted by a ratchet that only lets the
+    count shrink (gh-1783).
+
 ## [0.96.1] — 2026-10-01
 
 ### Fixed
