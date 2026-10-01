@@ -16,7 +16,7 @@ on:
       # workflow's `github.event_name` is the CALLER's -- `workflow_dispatch`
       # on release.yml's dispatch path, which an event check did not list, so
       # the images were built and silently not pushed; and ci.yml calls this
-      # on a pull_request and on a merge_group too. Off by default, so a new
+      # on a pull_request too. Off by default, so a new
       # caller builds and smoke-tests without pushing anything.
       publish:
         type: boolean

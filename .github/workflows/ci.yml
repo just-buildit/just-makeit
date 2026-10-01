@@ -4,12 +4,11 @@ on:
   push:
     branches: ["main"]
   pull_request:
-  merge_group:
   workflow_dispatch:
 
 # A force-push used to leave the superseded run burning all 18 matrix legs to
 # completion, which wastes minutes and leaves confusing check state on the PR.
-# Cancel only PR runs: a main or merge_group result is something else depends
+# Cancel only PR runs: a main result is something else depends
 # on (release.yml's verify-ci polls for "CI passed" on the merged SHA), so
 # those must always run to completion.
 concurrency:
@@ -35,9 +34,8 @@ jobs:
   # parent is the code merge, which got the full matrix" was assumed, and a
   # superseded pending run made it false for v0.96.0. The bump itself adds a
   # version string, and release.yml independently builds the wheel and runs
-  # the scaffold->cmake->test smoke on the tagged commit. merge_group and
-  # workflow_dispatch still always run — those are integration events where
-  # testing the combined tree is the point.
+  # the scaffold->cmake->test smoke on the tagged commit. workflow_dispatch
+  # still always runs everything.
   # Is this a version bump alone? One answer for every workflow (gh-1537):
   # the reusable changes.yml, which runs `make ci-changes`.
   changes:

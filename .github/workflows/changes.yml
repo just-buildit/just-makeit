@@ -57,12 +57,12 @@ jobs:
           BEFORE: ${{ github.event.before }}
           CI_CHECK: CI passed
         run: |
-          # Integration and scheduled events always run everything, and so
+          # Dispatched and scheduled events always run everything, and so
           # does a push that is not to a branch: release.yml calls docker.yml
           # on the tag push, and the tag's images must be built. (Only a
           # push: a pull_request's ref is refs/pull/N/merge.)
           case "$EVENT" in
-            merge_group|workflow_dispatch|schedule)
+            workflow_dispatch|schedule)
               echo "src=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
           if [[ "$EVENT" == "push" && "$REF" != refs/heads/* ]]; then
