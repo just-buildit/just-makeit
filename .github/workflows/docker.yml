@@ -12,51 +12,38 @@ on:
         type: string
         required: false
         default: ""
-      # ...and whether to publish. The gates below read `github.event_name`,
-      # which for a called workflow is the caller's event — `workflow_dispatch`
-      # on that path, which the old condition did not list, so the images
-      # would have been built and silently not pushed.
+      # ...and whether to publish: this input and nothing else. A called
+      # workflow's `github.event_name` is the CALLER's -- `workflow_dispatch`
+      # on release.yml's dispatch path, which an event check did not list, so
+      # the images were built and silently not pushed; and ci.yml calls this
+      # on a pull_request and on a merge_group too. Off by default, so a new
+      # caller builds and smoke-tests without pushing anything.
       publish:
         type: boolean
         required: false
-        default: true
-  push:
-    branches: [main]
-    paths:
-      - docker/**
-      - src/just_makeit/**
-      - pyproject.toml
-  # On a PR, build only when something that can actually break the image
-  # changed: the image definition, or the dependency set it installs.
-  # `src/just_makeit/**` used to be here, which meant every ordinary Python or
-  # test PR built two multi-arch images for no signal. Freshness of the
-  # published images is not a PR concern -- the push-to-main trigger above
-  # keeps them current on the broader path set, and release.yml calls this
-  # workflow on every tag.
-  pull_request:
-    paths:
-      - docker/**
-      - pyproject.toml
+        default: false
+
+# No `push` or `pull_request` trigger of its own (gh-1643). ci.yml calls
+# this workflow from a job `CI passed` waits on, on every PR and every push to
+# main that is more than a version bump, and publishes only on the push. With
+# triggers of its own it was red on main for 9 hours after #1602 (and for 14
+# runs before that, gh-1089) while every PR merged green, because no required
+# check waited on it; and its PR `paths` list did not name this file, so the
+# PR fixing it never ran it. Both were the same mistake -- a second, hand-kept
+# answer to "does this run need the image?" -- and ci.yml already has the one
+# answer, changes.yml. tests/test_gh1632_workflow_gates.py refuses a
+# PR-triggered workflow outside ci.yml.
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  # A version bump alone builds nothing here: see changes.yml.
-  changes:
-    uses: ./.github/workflows/changes.yml
-    permissions:
-      checks: read
-      contents: read
-
   # ── Linux ─────────────────────────────────────────────────────────────────────
   # One native build per architecture (no QEMU) — each is loaded into its
   # runner's local daemon and smoke-tested before anything is pushed.
   linux:
     name: Linux image (${{ matrix.arch }})
-    needs: changes
-    if: needs.changes.outputs.src == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +61,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4.4.1
 
       - uses: docker/login-action@v4.6.0
-        if: github.event_name == 'push' || inputs.publish
+        if: inputs.publish
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -134,11 +121,11 @@ jobs:
             echo "pkg-config OK"
           '
 
-      # Push an arch-suffixed tag on every push to main — never :latest
+      # Push an arch-suffixed tag on every publishing run — never :latest
       # directly, so that tag never briefly points at a single-arch image.
       # The manifest job below combines these into the public tags.
       - name: Tag and push arch-specific image to GHCR
-        if: github.event_name == 'push' || inputs.publish
+        if: inputs.publish
         run: |
           BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
           docker tag jm-examples-linux:ci "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
@@ -150,7 +137,7 @@ jobs:
   manifest:
     name: Publish multi-arch manifest
     needs: linux
-    if: github.event_name == 'push' || inputs.publish
+    if: inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: docker/login-action@v4.6.0

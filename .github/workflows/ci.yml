@@ -594,12 +594,32 @@ jobs:
       wheel-artifact: dist-pr
       quick: true
 
+  # gh-1643: the Codespaces image, built and smoke-tested on every run that
+  # is more than a version bump, and published from main. docker.yml had
+  # triggers of its own and fed no required check, so #1602's renamed `.pc`
+  # left it red on main for 9 hours while every PR merged green -- the gh-1089
+  # pattern a second time. Here it gates the merge, and it runs on any change
+  # at all, its own workflow file included, because the only filter is
+  # changes.yml. Two native legs of ~3 min each with the GHA layer cache, in
+  # parallel with the matrix, so it adds runner minutes but not wall time.
+  docker:
+    name: Docker image
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    uses: ./.github/workflows/docker.yml
+    with:
+      publish: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: read
+      packages: write
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, test, examples, examples-windows, install-deps-smoke,
-            consumer-smoke, coverage, lint, bench, wheel, artifact-smoke]
+            consumer-smoke, coverage, lint, bench, wheel, artifact-smoke,
+            docker]
     if: always()
     # Inputs as env, so the script below reads only shell variables and
     # tests/test_ci_passed_aggregator.py can run it as-is with any results.

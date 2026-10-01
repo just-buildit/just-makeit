@@ -315,11 +315,7 @@ jobs:
       # ref — the tag on a push, but the branch on a dispatch.
       ref: ${{ needs.resolve.outputs.tag }}
       publish: true
-    # `checks: read` reaches docker.yml's `changes` job (changes.yml reads a
-    # base commit's "CI passed"); a nested job asking for more than this cap
-    # fails the whole workflow before it starts.
     permissions:
-      checks: read
       contents: read
       packages: write
     secrets: inherit

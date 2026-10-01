@@ -13,8 +13,10 @@ wrote the pre-schema-8 layout. Two things let that reach a tag:
   moved and the step stayed green. A ``! grep`` on a path must be preceded,
   in the same step, by ``test -f`` of that path.
 
-GATE: every ci.yml job but the aggregator and what runs after it feeds
-      `CI passed`; ci.yml runs the artifact smoke from the wheel `make wheel`
+GATE: no workflow but ci.yml runs on a PR (gh-1643, a shrink-only set aside);
+      ci.yml builds the docker image on every source change and publishes
+      it only on a push; every ci.yml job but the aggregator and what runs
+      after it feeds `CI passed`; ci.yml runs the artifact smoke from the wheel `make wheel`
       builds; no workflow step negates a grep of a file it has not proven
       exists, or negates any command, which bash -e would not stop on.
 """
@@ -73,6 +75,101 @@ def test_ci_runs_the_artifact_smoke_from_the_wheel_it_builds():
         f"no job the smoke needs builds `{wheel}` with `make wheel`, the "
         "command the release builds with"
     )
+
+
+# ── gh-1643: nothing that runs on a PR fails where no one must look ─────────
+#
+# docker.yml ran on PRs and on main with triggers of its own and fed no
+# required check. #1602 renamed the `.pc` its smoke asks pkg-config for, and
+# it was red on main for 9 hours while every PR merged green -- the gh-1089
+# pattern again (14 red runs). Its PR `paths` also omitted docker.yml itself,
+# so the PR fixing it never ran it. ci.yml now calls it; the rule that keeps
+# the next workflow from repeating this is that `CI passed` is the only thing
+# a PR is required to pass, so a workflow with its own PR trigger gates
+# nothing. These may only shrink (gh-1782).
+_PR_WORKFLOWS_OUTSIDE_CI = {
+    "docs.yml": "gh-1782",
+    "nco_tone_ci.yml": "gh-1782",
+}
+
+
+def _on(name: str) -> dict:
+    doc = yaml.safe_load((WF / name).read_text(encoding="utf-8"))
+    # PyYAML reads the bare key `on` as the boolean True.
+    on = doc.get(True, doc.get("on")) or {}
+    if isinstance(on, (str, list)):
+        on = {e: None for e in ([on] if isinstance(on, str) else on)}
+    return on
+
+
+def test_no_workflow_but_ci_runs_on_a_pull_request():
+    pr = {
+        wf.name
+        for wf in WF.glob("*.yml")
+        if {"pull_request", "pull_request_target"} & set(_on(wf.name))
+    }
+    assert "ci.yml" in pr, "the walk below must have something to find"
+    extra = sorted(pr - {"ci.yml"} - set(_PR_WORKFLOWS_OUTSIDE_CI))
+    assert extra == [], (
+        f"{extra} run on a pull_request but `CI passed` -- the one required "
+        "check -- cannot wait on them, so a red run merges. Call the "
+        "workflow from a ci.yml job instead (see the `docker` job)"
+    )
+    stale = sorted(set(_PR_WORKFLOWS_OUTSIDE_CI) - pr)
+    assert stale == [], f"fixed; drop from _PR_WORKFLOWS_OUTSIDE_CI: {stale}"
+
+
+def test_ci_builds_the_docker_image_on_every_source_change():
+    """A PR editing only docker.yml must run it (gh-1643's second hole).
+
+    ci.yml's PR trigger is unfiltered, so the one filter is changes.yml,
+    which runs everything but a version bump.
+    """
+    assert not set(_on("ci.yml")["pull_request"] or {}) & {
+        "paths",
+        "paths-ignore",
+    }, "a path filter on ci.yml's PR trigger is a second answer to changes.yml"
+    jobs = _jobs("ci.yml")
+    callers = [
+        k
+        for k, j in jobs.items()
+        if j.get("uses") == "./.github/workflows/docker.yml"
+    ]
+    assert len(callers) == 1, "ci.yml must call docker.yml once"
+    job = jobs[callers[0]]
+    assert job.get("if") == "needs.changes.outputs.src == 'true'", job
+    assert callers[0] in _needs(jobs["ci-passed"])
+    # Built and smoke-tested on a PR and in the merge queue; pushed from main.
+    assert job["with"]["publish"] == "${{ github.event_name == 'push' }}"
+
+
+def test_docker_publishes_on_its_input_alone():
+    """Every step that logs in or pushes reads `inputs.publish`, nothing else.
+
+    A called workflow's ``github.event_name`` is its caller's, so an event
+    check here would decide publishing for ci.yml's PR and merge_group runs
+    by the caller's event, and once already silently skipped the push on
+    release.yml's dispatch path.
+    """
+    jobs = _jobs("docker.yml")
+    pushes = re.compile(r"docker push|imagetools create")
+    bad = []
+    for name, job in jobs.items():
+        for step in job.get("steps", []):
+            if not (
+                "login-action" in step.get("uses", "")
+                or pushes.search(step.get("run") or "")
+            ):
+                continue
+            if "inputs.publish" not in (step.get("if") or job.get("if", "")):
+                bad.append(f"{name}: {step.get('name') or step['uses']}")
+    assert bad == [], f"publishes without reading inputs.publish: {bad}"
+    text = (WF / "docker.yml").read_text(encoding="utf-8")
+    assert "github.event_name" not in text.split("\njobs:")[1]
+    assert (
+        _on("docker.yml")["workflow_call"]["inputs"]["publish"]["default"]
+        is False
+    ), "a new caller must not publish by default"
 
 
 _NEG_GREP = re.compile(r"^\s*!\s+grep\s+(.*)$")
