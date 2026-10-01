@@ -20,7 +20,10 @@ go stale. What stays jm's to get right, and is what this file tests:
 - the workflow really calls the target;
 - the target, with jm's own ``VERSION_PROBES``, calls jm's real release
   commits bump-only and a real source commit not;
-- ``ci-passed`` still treats the skip as green.
+- ``ci-passed`` still treats the skip as green;
+- on a push, the skip holds only over a base whose own ``CI passed`` is
+  completed and successful, failing safe on anything else (gh-1763);
+- every caller grants the token permissions that check needs.
 
 The mechanism itself is tested in canonical's CI, where it is defined.
 """
@@ -299,4 +302,312 @@ def test_every_job_a_release_reaches_is_gated_on_changes(name, jobs):
     assert not _ungated(jobs), (
         f"{name}: {_ungated(jobs)} run on a version bump alone -- gate them "
         "on `needs.changes.outputs.src == 'true'`"
+    )
+
+
+# ── The fast path holds only over a base main certified (gh-1763) ────────────
+#
+# ci.yml's concurrency group keeps ONE pending run per group on main, so a
+# third push cancels the second's pending run and that commit never runs CI.
+# Cutting v0.96.0, #1759's merge (07f09d2) was superseded that way and has no
+# "CI passed" at all; the release commit on top was bump-only, so changes.yml
+# said src=false and its "CI passed" would have certified code main never
+# ran. On a push, the fast path now also needs the base's own "CI passed" to
+# be completed and successful; anything else, an API error included, runs
+# everything.
+#
+# These run the `check` step's exact `run:` text, as GitHub does (`bash -e`),
+# in a worktree at a real commit, with a fake `gh` on PATH that serves a
+# check-runs payload -- so the API's JSON shape is filtered by the real `jq`
+# line and the diff verdict comes from the real `make ci-changes`.
+
+_REPO_SLUG = "just-buildit/just-makeit"
+
+_FAKE_GH = """#!/bin/sh
+printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+[ -n "$FAKE_GH_FAIL" ] && { echo "HTTP 502" >&2; exit 1; }
+cat "$FAKE_GH_JSON"
+"""
+
+
+def _check_step() -> dict:
+    import yaml
+
+    doc = yaml.safe_load(_changes_job())
+    (step,) = [
+        s for s in doc["jobs"]["changes"]["steps"] if s.get("id") == "check"
+    ]
+    return step
+
+
+def _newest_release_commit() -> str:
+    return subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--grep=^chore: release v"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _rev(rev: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", rev],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+@pytest.fixture(scope="module")
+def checkouts():
+    """Detached worktrees at the newest release commit and at a source
+    commit, with today's make files, plus a bin dir holding the fake gh."""
+    tmp = Path(tempfile.mkdtemp())
+    made = []
+    try:
+        trees = {}
+        for key, commit in (
+            ("bump", _newest_release_commit()),
+            ("source", _SOURCE_COMMIT),
+        ):
+            wt = tmp / key
+            r = subprocess.run(
+                ["git", "worktree", "add", "--detach", str(wt), commit],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                pytest.skip(f"{commit} not in this clone: {r.stderr.strip()}")
+            made.append(wt)
+            for f in ("Makefile", "standard.mk", "local.mk"):
+                shutil.copy2(REPO / f, wt / f)
+            trees[key] = (wt, _rev(f"{commit}^"))
+        bindir = tmp / "bin"
+        bindir.mkdir()
+        gh = bindir / "gh"
+        gh.write_text(_FAKE_GH, encoding="utf-8")
+        gh.chmod(0o755)
+        yield trees, bindir, tmp
+    finally:
+        for wt in made:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(wt)],
+                cwd=REPO,
+                capture_output=True,
+            )
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _payload(*runs: "tuple[str, str, str | None]") -> str:
+    import json
+
+    return json.dumps(
+        {
+            "total_count": len(runs),
+            "check_runs": [
+                {"name": n, "status": s, "conclusion": c} for n, s, c in runs
+            ],
+        }
+    )
+
+
+_OTHERS = (("Lint", "completed", "success"), ("Docs", "completed", "success"))
+
+
+def _decide(checkouts, tree: str, event: str, payload: "str | None"):
+    """Run the step; return (src, the gh calls it made)."""
+    import os
+
+    trees, bindir, tmp = checkouts
+    wt, base = trees[tree]
+    out = tmp / "github_output"
+    out.write_text("", encoding="utf-8")
+    log = tmp / "gh.log"
+    log.write_text("", encoding="utf-8")
+    body = tmp / "gh.json"
+    body.write_text(payload or "", encoding="utf-8")
+    step = _check_step()
+    env = dict(os.environ)
+    env.update({k: str(v) for k, v in step["env"].items()})
+    env.update(
+        {
+            "PATH": f"{bindir}{os.pathsep}{env['PATH']}",
+            "GH_TOKEN": "fake",
+            "EVENT": event,
+            "REF": (
+                "refs/heads/main" if event == "push" else "refs/pull/1/merge"
+            ),
+            "REPO": _REPO_SLUG,
+            "PR_BASE": base if event == "pull_request" else "",
+            "BEFORE": base if event == "push" else "",
+            "GITHUB_OUTPUT": str(out),
+            "FAKE_GH_LOG": str(log),
+            "FAKE_GH_JSON": str(body),
+        }
+    )
+    env.pop("FAKE_GH_FAIL", None)
+    if payload is None:
+        env["FAKE_GH_FAIL"] = "1"
+    script = tmp / "step.sh"
+    script.write_text(step["run"], encoding="utf-8")
+    r = subprocess.run(
+        ["bash", "-e", str(script)],
+        cwd=wt,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    srcs = re.findall(r"^src=(\w+)$", out.read_text(encoding="utf-8"), re.M)
+    assert len(srcs) == 1, (srcs, r.stderr)
+    calls = log.read_text(encoding="utf-8").splitlines()
+    for call in calls:
+        assert f"repos/{_REPO_SLUG}/commits/{base}/check-runs" in call, call
+    return srcs[0], calls
+
+
+class TestTheFastPathNeedsACertifiedBase:
+    def test_the_step_reads_the_aggregator_by_its_real_name(self):
+        import yaml
+
+        doc = yaml.safe_load(CI.read_text(encoding="utf-8"))
+        names = {j.get("name") for j in doc["jobs"].values()}
+        assert _check_step()["env"]["CI_CHECK"] in names, (
+            "changes.yml asks for a check ci.yml does not produce, so no "
+            "base would ever read as certified"
+        )
+
+    def test_a_bump_over_a_green_base_takes_the_fast_path(self, checkouts):
+        payload = _payload(*_OTHERS, ("CI passed", "completed", "success"))
+        src, calls = _decide(checkouts, "bump", "push", payload)
+        assert src == "false"
+        assert calls, "the base's checks were never asked for"
+
+    def test_a_green_base_found_on_a_later_page(self, checkouts):
+        """`gh api --paginate` concatenates one object per page."""
+        payload = _payload(*_OTHERS) + _payload(
+            ("CI passed", "completed", "success")
+        )
+        assert _decide(checkouts, "bump", "push", payload)[0] == "false"
+
+    @pytest.mark.parametrize(
+        "status,conclusion",
+        [
+            ("completed", "cancelled"),
+            ("completed", "failure"),
+            ("completed", "skipped"),
+            ("completed", "timed_out"),
+            ("in_progress", None),
+            ("queued", None),
+        ],
+    )
+    def test_a_bump_over_an_uncertified_base_runs_everything(
+        self, checkouts, status, conclusion
+    ):
+        payload = _payload(*_OTHERS, ("CI passed", status, conclusion))
+        assert _decide(checkouts, "bump", "push", payload)[0] == "true"
+
+    def test_a_base_with_no_ci_passed_runs_everything(self, checkouts):
+        """07f09d2's case: a superseded pending run leaves no check."""
+        payload = _payload(*_OTHERS)
+        assert _decide(checkouts, "bump", "push", payload)[0] == "true"
+
+    def test_an_api_error_runs_everything(self, checkouts):
+        assert _decide(checkouts, "bump", "push", None)[0] == "true"
+
+    def test_an_unreadable_answer_runs_everything(self, checkouts):
+        assert _decide(checkouts, "bump", "push", "<html>")[0] == "true"
+
+    def test_a_source_change_over_a_green_base_still_runs(self, checkouts):
+        payload = _payload(("CI passed", "completed", "success"))
+        assert _decide(checkouts, "source", "push", payload)[0] == "true"
+
+    def test_a_pr_is_decided_by_its_diff_alone(self, checkouts):
+        """A PR's own run covers its diff: no base lookup, as before."""
+        src, calls = _decide(checkouts, "bump", "pull_request", None)
+        assert (src, calls) == ("false", [])
+        src, calls = _decide(checkouts, "source", "pull_request", None)
+        assert (src, calls) == ("true", [])
+
+
+# ── A reusable workflow's token is capped by its caller's ────────────────────
+#
+# changes.yml asks for `checks: read`. A called job asking for more than its
+# caller grants fails the WHOLE workflow before any job starts, and this
+# repo's default token (restricted) grants no `checks` -- so every caller,
+# down every chain (release.yml -> docker.yml -> changes.yml), must grant it.
+
+_LEVEL = {"none": 0, "read": 1, "write": 2}
+# GitHub's "restricted" default, which this repo uses
+# (`gh api repos/just-buildit/just-makeit/actions/permissions/workflow`).
+_RESTRICTED = {"contents": "read", "packages": "read", "metadata": "read"}
+
+
+def _perms(p) -> "dict[str, str]":
+    if p in ("read-all", "write-all"):
+        return {k: p[:-4] for k in ("checks", "contents", "packages")}
+    return dict(p or {})
+
+
+def _workflow(name: str) -> dict:
+    import yaml
+
+    return yaml.safe_load((WF / name).read_text(encoding="utf-8"))
+
+
+def _needs(name: str) -> "dict[str, str]":
+    """The most any job in *name* (or anything it calls) asks for."""
+    want: "dict[str, str]" = {}
+    for job in _workflow(name)["jobs"].values():
+        uses = job.get("uses", "")
+        asks = (
+            _needs(uses.rsplit("/", 1)[1])
+            if uses.startswith("./.github/workflows/")
+            else _perms(job.get("permissions"))
+        )
+        for k, v in asks.items():
+            if _LEVEL[v] > _LEVEL[want.get(k, "none")]:
+                want[k] = v
+    return want
+
+
+def _local_calls() -> "list[tuple[str, str, str]]":
+    out = []
+    for wf in sorted(WF.glob("*.yml")):
+        for jname, job in _workflow(wf.name)["jobs"].items():
+            uses = job.get("uses", "")
+            if uses.startswith("./.github/workflows/"):
+                out.append((wf.name, jname, uses.rsplit("/", 1)[1]))
+    return out
+
+
+def test_changes_yml_asks_for_checks():
+    """The walk below must have something to find."""
+    assert _needs("changes.yml").get("checks") == "read"
+
+
+@pytest.mark.parametrize(
+    "caller,job,callee",
+    _local_calls(),
+    ids=[f"{c}:{j}" for c, j, _ in _local_calls()],
+)
+def test_every_caller_grants_what_its_callee_asks(caller, job, callee):
+    doc = _workflow(caller)
+    spec = doc["jobs"][job]
+    if "permissions" in spec:
+        grant = _perms(spec["permissions"])
+    elif "permissions" in doc:
+        grant = _perms(doc["permissions"])
+    else:
+        grant = dict(_RESTRICTED)
+    short = {
+        k: v
+        for k, v in _needs(callee).items()
+        if _LEVEL[v] > _LEVEL[grant.get(k, "none")]
+    }
+    assert not short, (
+        f"{caller}'s `{job}` calls {callee}, which asks for {short} beyond "
+        f"what the caller grants ({grant}); GitHub refuses to start the run"
     )

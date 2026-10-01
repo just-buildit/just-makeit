@@ -30,15 +30,21 @@ jobs:
   # conflation: a release bump took 15m13s on main having just taken 2m22s as
   # a PR, for byte-identical content, on every release.
   #
-  # Nothing goes untested. The bump's parent is the code merge, which got the
-  # full matrix; the bump itself adds a version string; and release.yml
-  # independently builds the wheel and runs the scaffold->cmake->test smoke on
-  # the tagged commit. merge_group and workflow_dispatch still always run —
-  # those are integration events where testing the combined tree is the point.
+  # Nothing goes untested. On a push, the fast path holds only when the
+  # bump's base has a successful "CI passed" of its own (gh-1763): "the
+  # parent is the code merge, which got the full matrix" was assumed, and a
+  # superseded pending run made it false for v0.96.0. The bump itself adds a
+  # version string, and release.yml independently builds the wheel and runs
+  # the scaffold->cmake->test smoke on the tagged commit. merge_group and
+  # workflow_dispatch still always run — those are integration events where
+  # testing the combined tree is the point.
   # Is this a version bump alone? One answer for every workflow (gh-1537):
   # the reusable changes.yml, which runs `make ci-changes`.
   changes:
     uses: ./.github/workflows/changes.yml
+    permissions:
+      checks: read
+      contents: read
 
   test:
     needs: changes
