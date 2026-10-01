@@ -21,6 +21,7 @@ default = "8"
 from __future__ import annotations
 
 from . import _textio
+from ._report import Refusal
 
 import copy as _copy
 import re as _re
@@ -91,7 +92,7 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
     """
     for key, value in fragment.items():
         if key == "project":
-            raise ValueError(
+            raise Refusal(
                 f"{source}: [project] must live in the manifest, "
                 f"not in an included fragment."
             )
@@ -104,7 +105,7 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
                     if mk == "functions":
                         dest.setdefault("functions", []).extend(mv)
                     elif mk in dest and dest[mk] != mv:
-                        raise ValueError(
+                        raise Refusal(
                             f"{source}: [module.{mod}].{mk} conflicts with an "
                             f"earlier definition — a module's config belongs "
                             f"in exactly one place (modules/{mod}.toml)."
@@ -113,7 +114,7 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
                         dest[mk] = mv
             continue
         if key in cfg:
-            raise ValueError(
+            raise Refusal(
                 f"{source}: '{key}' already exists. "
                 f"Run `jm remove object {key}` first, "
                 f"or rename the object in the fragment."

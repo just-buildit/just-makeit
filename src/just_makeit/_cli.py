@@ -712,7 +712,40 @@ def _warn_schema() -> None:
     _warn_version_skew(cfg)
 
 
+def _debug() -> bool:
+    """Whether ``JM_DEBUG`` asks for a refusal's traceback (gh-1777).
+
+    Any value but empty or ``0``, so ``JM_DEBUG=0`` reads as off the way a
+    reader expects it to.
+    """
+    return os.environ.get("JM_DEBUG", "") not in ("", "0")
+
+
 def main() -> None:
+    """The ``just-makeit`` / ``jm`` console script.
+
+    A :class:`~just_makeit._report.Refusal` that reaches here is jm declining
+    on purpose, with a message already written for the author: it prints as
+    one ``error: <message>`` line and exits 1 (gh-1777). The stack frames
+    above it would make the author's own mistake read as a crash in jm.
+
+    Only that subclass is caught. A plain ``ValueError`` -- or anything else
+    jm did not raise deliberately -- is a bug, and still tracebacks. With
+    ``JM_DEBUG=1`` a refusal tracebacks too.
+    """
+    from ._report import Refusal
+
+    try:
+        _main()
+    except Refusal as exc:
+        if _debug():
+            raise
+        sys.stdout.flush()
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main() -> None:
     # gh-1387: before anything prints -- a pipe on Windows is cp1252.
     from ._textio import utf8_stdio
 

@@ -80,17 +80,18 @@ class TestDispatch:
 
 
 def _dispatched_commands() -> set[str]:
-    """Every command name the dispatcher in `main()` actually handles.
+    """Every command name the dispatcher, `_cli._main()`, actually handles.
 
     Derived from the source, not a hand-maintained list: we AST-parse
-    `main()` and collect every string literal compared against the local
+    `_main()` (what `main()` wraps in its refusal boundary, gh-1777) and
+    collect every string literal compared against the local
     `cmd` variable, whether via ``cmd == "x"`` or ``cmd in ("x", "y")``.
     This is the ground truth of "what commands exist" — if a branch is
     added, this set grows automatically.
     """
     from just_makeit import _cli
 
-    tree = ast.parse(inspect.getsource(_cli.main))
+    tree = ast.parse(inspect.getsource(_cli._main))
     found: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare):

@@ -30,6 +30,7 @@ from . import _record
 from . import _borrow
 from . import _incpath as INC
 from . import _csym as CSYM
+from ._report import Refusal
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 
 _TMPL_DIR = Path(__file__).parent / "templates"
@@ -1776,7 +1777,7 @@ def _py_wrapper_for_function(
         }
     )
     if _status_err:
-        raise ValueError(_status_err)
+        raise Refusal(_status_err)
 
     if params:
         parse_block, call_args, cleanup = _build_params_parse(params, enums)

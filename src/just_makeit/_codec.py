@@ -40,9 +40,10 @@ argument on input); a container property refers to one with the same key
 from __future__ import annotations
 
 from . import _types as T
+from ._report import Refusal
 
 
-class CodecError(ValueError):
+class CodecError(Refusal):
     """A malformed ``[codec.X]`` declaration."""
 
 

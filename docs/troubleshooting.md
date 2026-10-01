@@ -333,3 +333,25 @@ name = "scan"
 return_type = "ber_align_t"          # a user struct — fine, because:
 result_fields = [{name = "lag", type = "int"}]
 ```
+
+______________________________________________________________________
+
+## `error:` with no stack trace, or a traceback
+
+**Symptom:** a command stops with one line, for example
+
+```
+error: objects/gen.toml: 'gen' already exists. Run `jm remove object gen` first, or rename the object in the fragment.
+```
+
+**Cause:** jm refused the manifest or the command on purpose, and the
+message is the whole report: the file or key, what is wrong, what to do. It
+exits 1. Set `JM_DEBUG=1` to see where it was raised:
+
+```sh
+JM_DEBUG=1 jm apply
+```
+
+A Python **traceback** without `JM_DEBUG` is either a bug in jm or a
+refusal not yet marked as one (gh-1783 tracks those). Report it either way,
+with the command and the manifest that produced it.

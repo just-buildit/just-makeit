@@ -23,11 +23,42 @@ long scroll when individual lines do not.
 Deliberately not a severity *system*. Two weights, one question: will
 `jm status --check` fail on this? Anything finer would need a policy nobody
 has asked for, and a third level is how the second stops meaning anything.
+
+Above both weights sits a refusal (gh-1777): jm declines to go on, and says
+why. :class:`Refusal` marks one, and the CLI boundary (`_cli.main`) prints it
+as one ``error:`` line and exits 1, without the stack frames that make an
+author's own mistake read as a crash in jm. It is a ``ValueError`` so every
+existing ``except ValueError`` still catches it; the boundary catches only the
+subclass, so a ``ValueError`` jm did not raise on purpose -- a bug -- still
+tracebacks.
 """
 
 from __future__ import annotations
 
 import sys
+
+
+class Refusal(ValueError):
+    """jm declines a manifest or a command, with a message for its author.
+
+    Raise this, not a bare ``ValueError``, wherever jm refuses on purpose.
+    The message is the whole report: it names the file or key, what is wrong
+    and what to do, because the CLI prints it alone as
+    ``error: <message>`` and exits 1. Set ``JM_DEBUG=1`` to get the traceback
+    back.
+
+    ``tests/test_gh1777_refusal_ratchet.py`` holds the count of bare
+    ``raise ValueError`` sites per file, and it may only shrink: a new
+    deliberate refusal uses this type.
+
+    Examples
+    --------
+    >>> issubclass(Refusal, ValueError)
+    True
+    >>> str(Refusal("objects/gen.toml: 'gen' already exists."))
+    "objects/gen.toml: 'gen' already exists."
+    """
+
 
 #: Marks a warning whose condition `jm status --check` counts as drift. The
 #: same characters `jm status` uses in its own listings, so a reader who has
