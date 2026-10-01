@@ -1018,6 +1018,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # replay rendered a prototype without it and a binding that
                 # dropped the reason again.
                 why=bool(fn.get("why")),
+                # gh-1614: replayed as declared, or the rows are dropped
+                # from the replay's manifest and the binding raises the
+                # check_return error for every status again.
+                status_errors=fn.get("status_errors") or None,
             )
 
 

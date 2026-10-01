@@ -106,9 +106,15 @@ the table would leave a borrow that declares none swallowing Ctrl-C.
 
 from __future__ import annotations
 
+import textwrap
+
 from . import _config as C
 from . import _csym as CSYM
-from ._context._diagnostics import format_raise_c, placeholders
+from ._context._diagnostics import (
+    format_raise_c,
+    placeholders,
+    reason_raise_c,
+)
 
 
 def is_borrow(m: dict) -> bool:
@@ -598,19 +604,64 @@ def status_dispatch_c(
     out += (
         f"        switch ({status_fn(m)}({state_expr}, {count_param(m)})) {{\n"
     )
-    slots = message_slots(m, csym, properties)
+    out += status_cases_c(rows, name, message_slots(m, csym, properties))
+    return out + "        default: break;\n        }\n"
+
+
+def status_cases_c(
+    rows: list[dict],
+    name: str,
+    slots: "dict[str, tuple[str, str]]",
+    why: str = "",
+) -> str:
+    """One ``case STATUS:`` and its raise per ``status_errors`` row.
+
+    The body of the ``switch`` both table faces emit: a borrow switches on
+    its ``status_fn``'s answer (gh-1418), a ``check_return`` module function
+    on the status it returned (gh-1614). One emitter, because the table is
+    one concept and two copies of its raise are the pair that drifts. Every
+    case returns, so falling out of the ``switch`` is the caller's fallback.
+
+    *why* is the C expression holding a reason the function wrote
+    (gh-1706): a row then raises its declared class with that sentence when
+    there is one, and its own message when there is not -- the row chooses
+    the TYPE, the C function's sentence the TEXT.
+
+    Examples
+    --------
+    >>> rows = [{"status": "DP_ERR_MEMORY", "error": "MemoryError"}]
+    >>> print(status_cases_c(rows, "f", {}), end="")
+            case DP_ERR_MEMORY:
+            PyErr_SetString(PyExc_MemoryError,
+            "f failed (DP_ERR_MEMORY)");
+            return NULL;
+    >>> print(status_cases_c(rows, "f", {}, why="_why"), end="")
+            case DP_ERR_MEMORY:
+            if (_why)
+                PyErr_SetString(PyExc_MemoryError, _why);
+            else
+                PyErr_SetString(PyExc_MemoryError,
+                "f failed (DP_ERR_MEMORY)");
+            return NULL;
+    """
+    out = ""
     for row in rows:
-        message = str(row.get("message", "") or "").strip()
+        category = str(row["error"])
         # gh-1426 C: `format_raise_c` falls back to `empty_raise_c` when the
         # message references nothing, so the static case keeps exactly one
         # spelling rather than a second that happens to agree today.
-        out += f"        case {row['status']}:\n" + format_raise_c(
-            str(row["error"]),
-            message or f"{name} failed ({row['status']})",
-            slots,
-            indent=8,
+        message = str(row.get("message", "") or "").strip()
+        message = message or f"{name} failed ({row['status']})"
+        out += f"        case {row['status']}:\n"
+        if not why:
+            out += format_raise_c(category, message, slots, indent=8)
+            continue
+        statement = format_raise_c(category, message, slots, 8, ret=False)
+        out += (
+            reason_raise_c(textwrap.dedent(statement), why, 8, category)
+            + "        return NULL;\n"
         )
-    return out + "        default: break;\n        }\n"
+    return out
 
 
 def why_not(
@@ -799,13 +850,39 @@ def _why_not_status(
             f"  It is emitted as a call in the generated binding, so it must "
             f"be a plain identifier."
         )
+    return rows_why_not(rows, f"method '{name}'", slots)
+
+
+def rows_why_not(
+    rows: list[dict],
+    where: str,
+    slots: "dict[str, tuple[str, str]]",
+) -> str:
+    """Why a ``status_errors`` table's rows cannot be generated, or ``""``.
+
+    The row rules, shared by both faces that carry the table -- a borrow's
+    ``status_fn`` answers (gh-1418) and a ``check_return`` module function's
+    returned status (gh-1614) -- because both emit the rows through
+    :func:`status_cases_c`, and a row one face accepts and the other refuses
+    would be the same table read two ways. *where* names the declaration
+    (``method 'wait'``, ``function 'parse'``); *slots* is what a message's
+    ``{name}`` may reference there.
+
+    Examples
+    --------
+    >>> rows_why_not([{"status": "E_BAD", "error": "ValueError"}], "f", {})
+    ''
+    >>> print(rows_why_not([{"status": "E_BAD", "error": "Nope"}], "f", {})
+    ...       .splitlines()[0])
+    f: `status_errors` names exception 'Nope', which jm does not emit.
+    """
     seen: set[str] = set()
     for row in rows:
         status = str(row.get("status", "") or "").strip()
         error = str(row.get("error", "") or "").strip()
         if not status or not error:
             return (
-                f"method '{name}': every `status_errors` row needs both "
+                f"{where}: every `status_errors` row needs both "
                 f"`status` and `error`.\n"
                 f"  Got status={status or '<missing>'!r}, "
                 f"error={error or '<missing>'!r}. The row maps one C "
@@ -816,23 +893,22 @@ def _why_not_status(
             # a status function answers 0 for SUCCESS, which cannot be the
             # answer after a NULL, so a row for it can only ever be dead C.
             extra = (
-                "\n  `0` is what a status function answers for SUCCESS, and "
-                "a borrow only asks after a NULL,\n  so that row could never "
-                "fire."
+                "\n  `0` is the status for SUCCESS, and the table is read "
+                "only after a failure,\n  so that row could never fire."
                 if status == "0"
                 else ""
             )
             return (
-                f"method '{name}': `status_errors` status '{status}' is not "
+                f"{where}: `status_errors` status '{status}' is not "
                 f"a C constant name.\n"
-                f"  It is emitted as a `case` label, so it must be the "
-                f"enumerator your status function\n"
-                f"  returns (e.g. DP_WAIT_CLOSED).{extra}"
+                f"  It is emitted as a `case` label, so it must be the C "
+                f"constant the status is\n"
+                f"  compared against (e.g. DP_WAIT_CLOSED).{extra}"
             )
         if error not in C.ERROR_CATEGORIES:
             supported = ", ".join(sorted(C.ERROR_CATEGORIES))
             return (
-                f"method '{name}': `status_errors` names exception "
+                f"{where}: `status_errors` names exception "
                 f"'{error}', which jm does not emit.\n"
                 f"  Choose one of: {supported}."
             )
@@ -848,10 +924,11 @@ def _why_not_status(
             # number anybody wanted is missing.
             available = ", ".join(sorted(slots)) or "(none)"
             return (
-                f"method '{name}': `status_errors` message references "
+                f"{where}: `status_errors` message references "
                 f"{{{unknown[0]}}}, which is not in scope.\n"
-                f"  A message may name this method's params and this "
-                f"object's properties. Available here: {available}.\n"
+                f"  A message may name the declaration's scalar params "
+                f"and, on a method, its object's\n"
+                f"  properties. Available here: {available}.\n"
                 f"  A property backed by a buffer, a codec or a capsule has "
                 f"no scalar reading and cannot be named."
             )
@@ -860,7 +937,7 @@ def _why_not_status(
             # author's build rather than a jm diagnostic -- and the author
             # would be reading generated C to find out which row lost.
             return (
-                f"method '{name}': `status_errors` maps '{status}' twice.\n"
+                f"{where}: `status_errors` maps '{status}' twice.\n"
                 f"  One status has one exception; the second row would be an "
                 f"unreachable `case` label."
             )

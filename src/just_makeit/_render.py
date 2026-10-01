@@ -27,6 +27,7 @@ from . import _coerce
 from . import _config as C
 from . import _types as T
 from . import _record
+from . import _borrow
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
@@ -1622,6 +1623,74 @@ def _why_unreadable(fn_name: str) -> str:
     )
 
 
+def status_errors_why_not(fn: dict) -> str:
+    """Why a function's ``status_errors`` table cannot be generated, or ``""``.
+
+    gh-1614: the gh-1418 table, read on the one function shape that has a
+    status to read -- ``check_return`` on a function whose return IS the
+    status. The binding switches on that status before its generic raise,
+    so a row names the exception for one code (``DP_ERR_INVALID`` ->
+    ``ValueError``, ``DP_ERR_MEMORY`` -> ``MemoryError``) and a code with no
+    row keeps the ``check_return`` error. Anywhere else the rows would be
+    recorded and read by nobody -- gh-1232's silent key -- so they are
+    refused, and the rows themselves by the rules a borrow's table obeys
+    (`_borrow.rows_why_not`).
+
+    Examples
+    --------
+    >>> status_errors_why_not({"name": "f", "return_type": "int",
+    ...     "check_return": True,
+    ...     "status_errors": [{"status": "E_BAD", "error": "ValueError"}]})
+    ''
+    >>> status_errors_why_not({"name": "f", "return_type": "int",
+    ...     "status_errors": [{"status": "E_BAD", "error": "ValueError"}]}
+    ...     ).splitlines()[0]
+    "function 'f' declares status_errors, but its binding never reads a status."
+    """
+    rows = _borrow.status_rows(fn)
+    if not rows:
+        return ""
+    name = str(fn.get("name", "<function>"))
+    if (
+        not fn.get("check_return")
+        or fn.get("out_type")
+        or (fn.get("result_fields"))
+    ):
+        return (
+            f"function '{name}' declares status_errors, but its binding "
+            "never reads a status.\n"
+            "  The rows map the non-zero status a check_return function "
+            "returns to an\n"
+            "  exception. Add check_return = true on a function whose return "
+            "is that status,\n"
+            "  or drop status_errors. A self-sizing output's refusal is a "
+            "zero count, which\n"
+            "  has no status to tell apart."
+        )
+    return _borrow.rows_why_not(
+        rows, f"function '{name}'", _borrow.message_slots(fn)
+    )
+
+
+def _status_cases(
+    fn_name: str, c_name: str, params: list[dict], rows: list[dict], why: bool
+) -> str:
+    """The ``switch`` a declared table puts ahead of the generic raise.
+
+    Empty without rows, so a function that declares none is byte-identical
+    to what it was before gh-1614. Rows and their raises are the borrow
+    table's own emitter (`_borrow.status_cases_c`).
+    """
+    if not rows:
+        return ""
+    slots = _borrow.message_slots({"name": fn_name, "params": params})
+    return (
+        "        switch (_rc) {\n"
+        + _borrow.status_cases_c(rows, c_name, slots, WHY_LOCAL if why else "")
+        + "        default: break;\n        }\n"
+    )
+
+
 def _why_decl(why: bool) -> str:
     """The ``_why`` local's declaration line, ahead of the call (gh-1706)."""
     return f"    {WHY_DECL}\n" if why else ""
@@ -1666,6 +1735,8 @@ def _py_wrapper_for_function(
     # gh-1706: the C function takes a trailing `const char **why`, and a
     # refusal raises the sentence it wrote there.
     why: bool = False,
+    # gh-1614: `status_errors` rows -- a status -> exception table.
+    status_errors: "list[dict] | None" = None,
     # gh-1026: the `[[enum]]` registry, so a bad choice can be refused by
     # NAMING the choices — the wording a method parameter for the same enum
     # has had since gh-1021, and this face had not.
@@ -1693,6 +1764,19 @@ def _py_wrapper_for_function(
     ret_meta = _CTYPE_META.get(return_type)
     if why and (not check_return or result_fields):
         raise ValueError(_why_unreadable(fn_name))
+    status_errors = status_errors or []
+    _status_err = status_errors_why_not(
+        {
+            "name": fn_name,
+            "params": params,
+            "check_return": check_return,
+            "out_type": out_type,
+            "result_fields": result_fields,
+            "status_errors": status_errors,
+        }
+    )
+    if _status_err:
+        raise ValueError(_status_err)
 
     if params:
         parse_block, call_args, cleanup = _build_params_parse(params, enums)
@@ -1951,6 +2035,7 @@ def _py_wrapper_for_function(
             _why_decl(why) + f"    {_rt_disp} _rc = {_call};\n"
             f"{cleanup}"
             f"    if (_rc != 0) {{\n"
+            + _status_cases(fn_name, c_name, params, status_errors, why)
             + reason_raise_c(
                 "PyErr_Format(PyExc_RuntimeError,\n"
                 f'    "{c_name} failed (rc=%d)", (int)_rc);\n',
@@ -2149,6 +2234,7 @@ def make_functions_ctx(
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
                 why=bool(fn.get("why")),
+                status_errors=_borrow.status_rows(fn),
                 enums=enums,
                 c_name=c_name,
             )
