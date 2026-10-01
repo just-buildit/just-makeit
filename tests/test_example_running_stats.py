@@ -11,6 +11,7 @@ from pathlib import Path
 _MAKE_ENV = {**os.environ, "PYTHON": Path(sys.executable).as_posix()}
 
 import pytest
+from _jmrun import run_cli
 
 STEPS = (
     Path(__file__).parent.parent
@@ -48,24 +49,20 @@ def project(tmp_path_factory):
     """Scaffold → implement → build.  Shared by all steps."""
     _require("cmake")
     _require("gcc")
-    _require("just-makeit")
 
     root = tmp_path_factory.mktemp("stats") / "my_stats"
 
-    r = _run(
-        [
-            "just-makeit",
-            "new",
-            "my_stats",
-            "--object",
-            "running_stats",
-            "--state",
-            "n:int32_t:0",
-            "--state",
-            "mean:double:0.0",
-            "--state",
-            "m2:double:0.0",
-        ],
+    r = run_cli(
+        "new",
+        "my_stats",
+        "--object",
+        "running_stats",
+        "--state",
+        "n:int32_t:0",
+        "--state",
+        "mean:double:0.0",
+        "--state",
+        "m2:double:0.0",
         cwd=root.parent,
     )
     assert r.returncode == 0, f"scaffold failed:\n{r.stderr}"
@@ -148,15 +145,12 @@ class TestStep5C:
 
 class TestStep6AddState:
     def test_add_min_max(self, project):
-        r = _run(
-            [
-                "just-makeit",
-                "add",
-                "--state",
-                "min_val:double:0.0",
-                "--state",
-                "max_val:double:0.0",
-            ],
+        r = run_cli(
+            "add",
+            "--state",
+            "min_val:double:0.0",
+            "--state",
+            "max_val:double:0.0",
             cwd=project,
         )
         assert r.returncode == 0, f"add failed:\n{r.stderr}"

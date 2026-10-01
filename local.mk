@@ -192,7 +192,7 @@ gates-declared-check: ## Verify every declared gate is recorded and none dropped
 # documented hints; CI sets CONSUMER_SMOKE_DEFAULT_PREFIX=1 on a throwaway
 # runner to install to the default prefix and consume with no hints at all.
 consumer-smoke: ## Install jm packages, consume them by the official instructions
-	bash scripts/consumer-smoke.sh
+	JM='$(JM)' bash scripts/consumer-smoke.sh
 
 # gh-1589: the commands every released jm rendered in the root install
 # section, so `jm adopt --packaging` can tell an older jm's command from one

@@ -26,16 +26,36 @@
 
 set -euo pipefail
 
-JM=${JM:-just-makeit}
-WORK=${WORK:-$(mktemp -d)}
-mkdir -p "$WORK"
-CC=${CC:-cc}
-
 say() { printf '\n==> %s\n' "$*"; }
 die() {
     printf '::error::%s\n' "$*" >&2
     exit 1
 }
+
+# ── the jm under test ────────────────────────────────────────────────────────
+# gh-1625: JM is the command line of THIS checkout's jm, and the Makefile is
+# the one place that names it (`make consumer-smoke`). It used to default to
+# whatever `just-makeit` came first on PATH -- on a developer's box a stale
+# `uv tool` install, fifteen releases old -- so this gate could pass while
+# saying nothing about the branch, or fail on the harness. There is no
+# default now, and the version jm reports must be the one this tree
+# declares, or nothing runs.
+[[ -n ${JM:-} ]] \
+    || die "JM is unset: run \`make consumer-smoke\`, which names this checkout's jm"
+# A command line, not a path: the Makefile's is `uv run ... just-makeit`.
+read -r -a JM_ARGV <<<"$JM"
+tree_jm() { "${JM_ARGV[@]}" "$@"; }
+TREE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+want=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$TREE/pyproject.toml")
+[[ -n $want ]] || die "no [project] version in $TREE/pyproject.toml"
+got=$(tree_jm --version) || die "\`$JM --version\` failed"
+say "jm $got: $JM ($(command -v "${JM_ARGV[0]}" || echo "${JM_ARGV[0]} not found"))"
+[[ $got == "$want" ]] \
+    || die "the jm under test is $got but this tree is $want: \`$JM\` is not this checkout's jm"
+
+WORK=${WORK:-$(mktemp -d)}
+mkdir -p "$WORK"
+CC=${CC:-cc}
 
 # ── the toolchain ────────────────────────────────────────────────────────────
 if [[ -n ${CONSUMER_CMAKE_VERSION:-} ]]; then
@@ -127,7 +147,7 @@ cd "$WORK"
 
 # ── alpha: the dependency ────────────────────────────────────────────────────
 say "alpha"
-"$JM" new alpha --object acore >/dev/null
+tree_jm new alpha --object acore >/dev/null
 # A hand-written header at the package root of the include tree, spelled the
 # way every include should be: "alpha/alpha_api.h".
 mkdir -p alpha/native/inc/alpha
@@ -153,11 +173,11 @@ dependent() { # name, component, the [project] declaration, its core's link
     # macOS ships bash 3.2, which has no ${name^^}.
     guard=$(printf '%s_API_H' "$name" | tr '[:lower:]' '[:upper:]')
     say "$name ($decl)"
-    "$JM" new "$name" --object "$comp" >/dev/null
+    tree_jm new "$name" --object "$comp" >/dev/null
     toml_add "$name/just-makeit.toml" project "$decl"
     toml_add "$name/objects/$comp.toml" "$comp" \
         "extra_link_libs = [\"$target\"]"
-    (cd "$name" && "$JM" apply >/dev/null)
+    (cd "$name" && tree_jm apply >/dev/null)
     # The dependent's PUBLIC header includes alpha's: a consumer compiling it
     # needs alpha's compile usage, which only the dependency metadata carries.
     mkdir -p "$name/native/inc/$name"
@@ -289,7 +309,7 @@ consume gamma
 # guarded path and is built; `winonly` is guarded to Windows, so here it must
 # be absent -- nothing installed, and a COMPONENTS request for it not found.
 say "delta ([project.libraries])"
-"$JM" new delta --object dcore >/dev/null
+tree_jm new delta --object dcore >/dev/null
 mkdir -p delta/native/inc/delta/ext
 cat >delta/native/inc/delta/delta_base.h <<'EOF'
 #ifndef DELTA_BASE_H
@@ -339,7 +359,7 @@ platforms = ["linux", "macos"]
 cores = ["winonly_obj"]
 platforms = ["windows"]
 EOF
-(cd delta && "$JM" apply >/dev/null)
+(cd delta && tree_jm apply >/dev/null)
 install_project delta
 
 delta_use="$WORK/use-delta"
@@ -472,7 +492,7 @@ expect prefixed-include "\"alpha/acore/...\" and \"beta/bcore/...\" in one TU" \
 # than merely failing to link.
 say "pa and pb: one component name, two packages ([project] c_prefix)"
 for p in pa pb; do
-    "$JM" new "$p" --c-prefix "$p" --object fir --state gain:double:1.0 \
+    tree_jm new "$p" --c-prefix "$p" --object fir --state gain:double:1.0 \
         >/dev/null
 done
 sed -i.bak 's/obj->gain = gain;/obj->gain = gain * 1000.0;/' \
