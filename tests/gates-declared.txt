@@ -96,6 +96,7 @@ test_gh1694_composer_seam_author_named
 test_gh1695_container_accessor_stem
 test_gh1734_array_arg_advisory
 test_gh1734_array_arg_clang_format
+test_gh1765_script_param_notes
 test_gh949_outdated
 test_lint_ssot
 test_one_replay_path

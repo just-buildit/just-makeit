@@ -102,8 +102,8 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
     return parts
 
 
-def _init_param_spec(p: dict) -> str:
-    """The ``--init-param`` argument that re-declares *p*.
+def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
+    """The ``--init-param`` argument for *p*, and the keys it spells.
 
     gh-838. Both replay paths — an object's `init_params` and a view's
     (gh-504) — reconstruct this spec, and they disagreed: the object path
@@ -121,6 +121,18 @@ def _init_param_spec(p: dict) -> str:
     The order of the branches is the grammar's, not a preference: `optional`
     and `required` are positional words in slot 3, so a param carrying either
     cannot also spell a default there.
+
+    gh-1765: each branch also returns the manifest keys its spelling
+    CARRIES. :func:`_param_notes` names every other key the row declares,
+    so a key this grammar cannot spell -- one of today's, or one added to
+    `_keys.INIT_PARAM_KEYS` later -- is never dropped in silence. The
+    spelling and its carried set come from the same branch, so they cannot
+    disagree.
+
+    >>> spec, carried = _init_param_carry(
+    ...     {"name": "g", "type": "double", "default": "1.0"})
+    >>> spec, sorted(carried)
+    ('g:double:1.0', ['default', 'name', 'type'])
     """
     name, typ = p["name"], p.get("type", "")
     # gh-1224. FIRST, because an `object` param's `capsule`/`header` are
@@ -133,7 +145,11 @@ def _init_param_spec(p: dict) -> str:
         spec = f"{name}:object:{p['object']}"
         if not p.get("required"):
             spec += ":optional"
-        return spec
+        # `type`, `capsule` and `header` are what `object` RESOLVES to
+        # (`_config.resolve_object_ref`), so the reference carries them.
+        return spec, frozenset(
+            {"name", "object", "required", "type", "capsule", "header"}
+        )
     if p.get("capsule"):
         spec = f"{name}:{typ}:capsule:{p['capsule']}"
         if p.get("header"):
@@ -146,24 +162,104 @@ def _init_param_spec(p: dict) -> str:
         # itself.
         if not p.get("required"):
             spec += ":optional"
-        return spec
+        return spec, frozenset(
+            {"name", "type", "capsule", "header", "required"}
+        )
     # gh-900: also a slot-3 positional word, so it belongs among these rather
     # than after the default. Dropping it replays the array with jm's trailing
     # `<name>_len` instead of the author's leading named length — a script
     # that rebuilds the project with a DIFFERENT create() prototype, which is
     # the divergence class this docstring is about.
     if p.get("derived"):
-        return f"{name}:{typ}:derived:{p['derived']}"
+        spec = f"{name}:{typ}:derived:{p['derived']}"
+        return spec, frozenset({"name", "type", "derived"})
     if p.get("optional"):
         spec = f"{name}:{typ}:optional"
         if p.get("create_fn"):
             spec += f":{p['create_fn']}"
-        return spec
+        return spec, frozenset({"name", "type", "optional", "create_fn"})
     if p.get("required"):
-        return f"{name}:{typ}:required"
+        spec = f"{name}:{typ}:required"
+        return spec, frozenset({"name", "type", "required"})
     if p.get("default") not in (None, ""):
-        return f"{name}:{typ}:{p['default']}"
-    return f"{name}:{typ}"
+        spec = f"{name}:{typ}:{p['default']}"
+        return spec, frozenset({"name", "type", "default"})
+    return f"{name}:{typ}", frozenset({"name", "type"})
+
+
+def _init_param_spec(p: dict) -> str:
+    """The ``--init-param`` argument alone; see :func:`_init_param_carry`.
+
+    >>> _init_param_spec({"name": "x", "type": "int", "doc": "n taps"})
+    'x:int'
+    """
+    return _init_param_carry(p)[0]
+
+
+def _declares(value: object) -> bool:
+    """True when a manifest value declares something a replay must keep.
+
+    ``required = false``, ``default = ""`` and an empty list say the same
+    as the key being absent, so replaying without them loses nothing and
+    a NOTE about them would be noise. ``0`` is a value, not an absence:
+    compared by identity so ``rank = 0`` is not read as ``False``.
+
+    >>> [_declares(v) for v in (None, False, "", [], 0, 1, "x", True)]
+    [False, False, False, False, True, True, True, True]
+    """
+    if value is None or value is False:
+        return False
+    if isinstance(value, (str, list, dict)) and not value:
+        return False
+    return True
+
+
+def _param_notes(
+    what: str, row: dict, carried: frozenset[str], flag: str
+) -> list[str]:
+    """``# NOTE`` lines for every key *row* declares that *carried* omits.
+
+    gh-1765. A param's spelling (``--param name:type``, ``--init-param
+    name:type:default``, ...) carries a fixed handful of keys; the rest of
+    the row -- `rank`, `elements_per_sample`, `doc`, `str_hint`, and any key
+    the vocabulary gains later -- has no flag. Hand-listing the ones that
+    get a NOTE is how they were dropped: gh-1021 noted `enum` and nothing
+    else. This is the complement, so it is registration-free: what the
+    emitter did not spell is named, whatever it is called.
+
+    Returned as WHOLE lines for the caller to place before the command, the
+    gh-1021 rule: a ``#`` among the flags comments out every flag after it.
+
+    >>> print("".join(_param_notes(
+    ...     "param", {"name": "x", "type": "float[]", "rank": 1},
+    ...     frozenset({"name", "type"}), "--param")), end="")
+    # NOTE: param 'x' declares rank = 1, which `--param` cannot spell.
+    #       Re-add it to just-makeit.toml after replaying.
+    """
+    dropped = [k for k, v in row.items() if k not in carried and _declares(v)]
+    if not dropped:
+        return []
+    said = ", ".join(
+        f"{k} = {json.dumps(row[k], default=str)}" for k in dropped
+    )
+    # Newline-terminated: the caller's list is joined verbatim, and
+    # `_render_cmd` supplies its own, so a note without one glues itself to
+    # the command it is meant to precede.
+    return [
+        f"# NOTE: {what} '{row.get('name')}' declares {said},"
+        f" which `{flag}` cannot spell.\n",
+        f"#       Re-add {'it' if len(dropped) == 1 else 'them'}"
+        " to just-makeit.toml after replaying.\n",
+    ]
+
+
+def _init_param_notes(params: list[dict]) -> list[str]:
+    """NOTE lines for the `init_params` of an object or a view (gh-1765)."""
+    out: list[str] = []
+    for p in params:
+        _spec, carried = _init_param_carry(p)
+        out += _param_notes("init-param", p, carried, "--init-param")
+    return out
 
 
 def _object_flags(
@@ -416,20 +512,84 @@ def _method_notes(m: dict) -> list[str]:
     among them comments out every flag that follows it. The first attempt did
     exactly that and swallowed `--return-type`, which is a worse bug than the
     one being fixed: silently lossy became silently wrong.
+
+    gh-1765: `enum` was the only key noted, so `rank`,
+    `elements_per_sample`, `doc`, `str_hint`, `capsule` and `role` replayed
+    as a bare ``--param name:type``. Every key :func:`_method_param_spec`
+    does not carry is now named, by :func:`_param_notes`.
     """
     out: list[str] = []
     for p in m.get("params", []):
-        if p.get("enum"):
-            # Newline-terminated: the caller's list is joined verbatim, and
-            # `_render_cmd` supplies its own, so a note without one glues
-            # itself to the command it is meant to precede.
-            out.append(
-                f"# NOTE: param '{p['name']}' declares enum ="
-                f' "{p["enum"]}", which `--param` cannot spell.\n'
-            )
-            out.append(
-                "#       Re-add it to just-makeit.toml after replaying.\n"
-            )
+        flag, _val, carried = _method_param_spec(p)
+        out += _param_notes("param", p, carried, flag)
+    return out
+
+
+def _method_param_spec(p: dict) -> tuple[str, str, frozenset[str]]:
+    """The flag, value and carried keys that re-declare one method param.
+
+    ``jm method --param`` spells ``name:type[=default]``, and the flag
+    itself (:func:`_param_flag`) spells writability. Nothing else: the
+    default was not emitted before gh-1765, so a defaulted method param
+    replayed as a required one.
+
+    >>> flag, val, carried = _method_param_spec(
+    ...     {"name": "k", "type": "int", "default": "3", "rank": 1})
+    >>> flag, val, sorted(carried)
+    ('--param', 'k:int=3', ['default', 'mutable', 'name', 'out', 'type'])
+    """
+    val = f"{p['name']}:{p['type']}"
+    if p.get("default") not in (None, ""):
+        val += f"={p['default']}"
+    carried = frozenset({"name", "type", "default", "out", "mutable"})
+    return _param_flag(p), val, carried
+
+
+def _function_param_spec(p: dict) -> tuple[str, str, frozenset[str]]:
+    """The flag, value and carried keys that re-declare one function param.
+
+    gh-353: ``jm function --param`` has three shapes::
+
+        name:path                   -> type "path"
+        name:enum:<ename>[=<dflt>]  -> type "int", enum <ename>
+        name:type[=<dflt>]          -> a plain scalar or array
+
+    The flag spells writability (:func:`_param_flag`). A `path` param's
+    shape takes no default, so a declared one is NOT carried and gets a
+    NOTE; an enum's type is carried only when it is the `int` the enum
+    shape writes.
+
+    >>> _function_param_spec({"name": "x", "type": "float[]", "rank": 1})[1]
+    'x:float[]'
+    >>> _function_param_spec({"name": "m", "type": "int", "enum": "e",
+    ...                       "default": "a"})[1]
+    'm:enum:e=a'
+    """
+    writable = frozenset({"name", "out", "mutable"})
+    if p["type"] == "path":
+        val = f"{p['name']}:path"
+        carried = writable | {"type"}
+    elif p.get("enum"):
+        val = f"{p['name']}:enum:{p['enum']}"
+        if p.get("default") not in (None, ""):
+            val += f"={p['default']}"
+        carried = writable | {"enum", "default"}
+        if p["type"] == "int":
+            carried |= {"type"}
+    else:
+        val = f"{p['name']}:{p['type']}"
+        if p.get("default") not in (None, ""):
+            val += f"={p['default']}"
+        carried = writable | {"type", "default"}
+    return _param_flag(p), val, frozenset(carried)
+
+
+def _function_notes(fn: dict) -> list[str]:
+    """NOTE lines for a module function's params (gh-1765)."""
+    out: list[str] = []
+    for p in fn.get("params", []):
+        flag, _val, carried = _function_param_spec(p)
+        out += _param_notes("param", p, carried, flag)
     return out
 
 
@@ -461,10 +621,10 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--module", module))
 
     for p in m.get("params", []):
-        val = f"{p['name']}:{p['type']}"
         # gh-1491: a writable param replayed as `--param` comes back const
         # and read-only -- exit 0, and a kernel that can no longer write.
-        parts.append(_flag(_param_flag(p), val))
+        flag, val, _carried = _method_param_spec(p)
+        parts.append(_flag(flag, val))
 
     at = m.get("arg_type", "")
     if at:
@@ -699,21 +859,8 @@ def _function_flags(fn: dict, module: str) -> list[str]:
     parts: list[str] = [_flag("--module", module)]
 
     for p in fn.get("params", []):
-        # gh-353: reconstruct the path / enum --param syntax.
-        #   path arg  -> name:path
-        #   enum arg  -> name:enum:<ename>[=<default>]   (type is "int")
-        # A plain scalar with a default round-trips as name:type=<default>.
-        if p["type"] == "path":
-            val = f"{p['name']}:path"
-        elif p.get("enum"):
-            val = f"{p['name']}:enum:{p['enum']}"
-            if p.get("default") not in (None, ""):
-                val += f"={p['default']}"
-        else:
-            val = f"{p['name']}:{p['type']}"
-            if p.get("default") not in (None, ""):
-                val += f"={p['default']}"
-        parts.append(_flag(_param_flag(p), val))
+        flag, val, _carried = _function_param_spec(p)
+        parts.append(_flag(flag, val))
 
     rt = fn.get("return_type", "")
     if rt:
@@ -910,6 +1057,7 @@ def run(root: Path) -> None:
     # ── standalone objects ───────────────────────────────────────────────────
     for comp in standalone:
         flags = _object_flags(cfg, comp)
+        lines += _init_param_notes(cfg[comp].get("init_params", []))
         lines.append(_render_cmd(["just-makeit", "object", comp], flags))
 
     if standalone:
@@ -921,6 +1069,7 @@ def run(root: Path) -> None:
             if comp in templated:
                 continue
             flags = _object_flags(cfg, comp, module=mod)
+            lines += _init_param_notes(cfg[comp].get("init_params", []))
             lines.append(_render_cmd(["just-makeit", "object", comp], flags))
         lines.append("\n")
 
@@ -985,6 +1134,7 @@ def run(root: Path) -> None:
     for comp in all_comps:
         mod = C.component_module(cfg, comp)
         for v in C.views(cfg, comp):
+            view_lines += _init_param_notes(v.get("init_params", []))
             view_lines.append(
                 _render_cmd(
                     ["just-makeit", "view", comp, v["class_name"]],
@@ -1097,6 +1247,7 @@ def run(root: Path) -> None:
     for mod in mods:
         for fn in C.module_functions(cfg, mod):
             flags = _function_flags(fn, mod)
+            fn_lines += _function_notes(fn)
             fn_lines.append(
                 _render_cmd(["just-makeit", "function", fn["name"]], flags)
             )
