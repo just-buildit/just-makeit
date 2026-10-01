@@ -54,6 +54,15 @@ ZENSICAL   = $(DEV_RUN) zensical
 PRE_COMMIT = $(DEV_RUN) pre-commit
 SYNC_CMD   = $(UV) sync --group dev
 
+# gh-1625: the jm a recipe drives is THIS checkout's, named once here. A bare
+# `just-makeit` is whichever is first on PATH -- a stale `uv tool` install on
+# a developer's box -- so `make consumer-smoke` tested a jm fifteen releases
+# old and reported on it. Absolute, so it means the same from any directory a
+# recipe cds into; `--no-project` keeps the dev group out, as PYTEST does.
+# tests/test_gh1625_tree_jm.py refuses a recipe or script that names a bare
+# jm instead.
+JM         = $(UV) run -q --no-project --with-editable $(CURDIR) just-makeit
+
 # Each formatter runs over the whole tree so `make format` and the pre-commit
 # hook can never disagree about scope. ruff reads its own excludes from
 # pyproject.toml; mdformat has no config file here, so its exclusions are named

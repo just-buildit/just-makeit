@@ -15,6 +15,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _jmrun import run_cli
 
 STEPS = (
     Path(__file__).parent.parent
@@ -58,25 +59,21 @@ def project(tmp_path_factory):
     """Scaffold → implement → build.  Shared by all steps."""
     _require("cmake")
     _require("gcc")
-    _require("just-makeit")
 
     root = tmp_path_factory.mktemp("fir") / "my_fir"
 
     # Step 1 — scaffold
-    r = _run(
-        [
-            "just-makeit",
-            "new",
-            "my_fir",
-            "--object",
-            "fir_filter",
-            "--state",
-            "coeffs:float[16]",
-            "--state",
-            "delay:float _Complex[16]",
-            "--state",
-            "gain:float:1.0",
-        ],
+    r = run_cli(
+        "new",
+        "my_fir",
+        "--object",
+        "fir_filter",
+        "--state",
+        "coeffs:float[16]",
+        "--state",
+        "delay:float _Complex[16]",
+        "--state",
+        "gain:float:1.0",
         cwd=root.parent,
     )
     assert r.returncode == 0, f"scaffold failed:\n{r.stderr}"
@@ -180,10 +177,7 @@ class TestStep5C:
 
 class TestStep6AddState:
     def test_add_scalar_state(self, project):
-        r = _run(
-            ["just-makeit", "add", "--state", "n_taps:int32_t:16"],
-            cwd=project,
-        )
+        r = run_cli("add", "--state", "n_taps:int32_t:16", cwd=project)
         assert r.returncode == 0, f"add failed:\n{r.stderr}"
         r = _run(["make", "test"], cwd=project, env=_MAKE_ENV)
         assert r.returncode == 0, f"make test after add failed:\n{r.stdout}"
@@ -265,24 +259,20 @@ def _scaffold_perf(tmp_path_factory):
     """Scaffold plain my_fir, implement step(), upgrade via 'just-makeit perf', apply step-7 patch."""
     _require("cmake")
     _require("gcc")
-    _require("just-makeit")
 
     root = tmp_path_factory.mktemp("fir_perf") / "my_fir"
 
-    r = _run(
-        [
-            "just-makeit",
-            "new",
-            "my_fir",
-            "--object",
-            "fir_filter",
-            "--state",
-            "coeffs:float[16]",
-            "--state",
-            "delay:float _Complex[16]",
-            "--state",
-            "gain:float:1.0",
-        ],
+    r = run_cli(
+        "new",
+        "my_fir",
+        "--object",
+        "fir_filter",
+        "--state",
+        "coeffs:float[16]",
+        "--state",
+        "delay:float _Complex[16]",
+        "--state",
+        "gain:float:1.0",
         cwd=root.parent,
     )
     assert r.returncode == 0, f"scaffold failed:\n{r.stderr}"
@@ -290,7 +280,7 @@ def _scaffold_perf(tmp_path_factory):
     r = _run([PYTHON, str(STEPS / "02_patch.py")], cwd=root)
     assert r.returncode == 0, f"step-2 patch failed:\n{r.stderr}"
 
-    r = _run(["just-makeit", "perf"], cwd=root)
+    r = run_cli("perf", cwd=root)
     assert r.returncode == 0, f"perf upgrade failed:\n{r.stderr}"
 
     r = _run([PYTHON, str(STEPS / "07_patch.py")], cwd=root)

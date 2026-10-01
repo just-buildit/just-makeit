@@ -50,12 +50,11 @@ import ast
 import contextlib
 import io
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _jmrun import run_cli
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -68,12 +67,6 @@ from just_makeit import _script  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
-
-
-#: The installed console script. Driving the real entry point matters here:
-#: the check being tested lives in the CLI parser, and a test that reached
-#: `_method.run` directly would pass over a flag nobody can invoke.
-_JM = shutil.which("just-makeit") or shutil.which("jm")
 
 
 def _quiet(fn, *a, **kw):
@@ -374,32 +367,32 @@ class TestItSurvivesTheRoundTrip:
         assert ["n", "out"] in _kwlists(_ext(project))
 
 
-@pytest.mark.skipif(_JM is None, reason="just-makeit not on PATH")
 class TestTheCliRefusesAnUnusableName:
     """A name that cannot be a keyword argument must fail at declaration.
 
     Left unchecked it reaches the generated C as a `_kwlist` entry and the
     `.pyi` as a syntax error, which is a worse place to find out.
+
+    Through the CLI's own `main()`: the check lives in the argument parser,
+    and a test that reached `_method.run` directly would pass over a flag
+    nobody can invoke. In this process, not the `just-makeit` on PATH, which
+    is whatever jm happens to be installed there rather than this tree's
+    (gh-1625) -- and was a skip wherever none was.
     """
 
     def _run(self, project, name):
-        return subprocess.run(
-            [
-                _JM,
-                "method",
-                "delay",
-                "ptr",
-                "--arg-type",
-                "void",
-                "--return-type",
-                "double _Complex",
-                "--variable-output",
-                "--count-name",
-                name,
-            ],
+        return run_cli(
+            "method",
+            "delay",
+            "ptr",
+            "--arg-type",
+            "void",
+            "--return-type",
+            "double _Complex",
+            "--variable-output",
+            "--count-name",
+            name,
             cwd=project,
-            capture_output=True,
-            text=True,
         )
 
     @pytest.mark.parametrize(
