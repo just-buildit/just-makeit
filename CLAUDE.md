@@ -514,3 +514,11 @@ just-buildit/.github README under "Makefile standard".
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images
 - `artifact.yml` — standalone artifact build/test job
+- `ci-image.yml` (gh-1796) — jm's CI toolchain as a snapshot:
+    `docker/Dockerfile.ci` pins the base and uv by digest and every apt
+    package by a dated snapshot.ubuntu.com snapshot, and `.github/ci-image`
+    pins the image the Linux legs run in. A weekly cron moves the pins and
+    re-pins through a PR, whose CI runs on the new image. A PR editing the Dockerfile or `bootstrap.toml`'s `dev.apt`
+    re-pins by `gh workflow run ci-image.yml --ref <branch> -f refresh=false`.
+    Why each pin exists: `scripts/ci_image.py`; `make ci-shell` opens the
+    pinned image locally.

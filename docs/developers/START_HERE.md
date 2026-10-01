@@ -273,12 +273,13 @@ ______________________________________________________________________
 
 ## CI overview
 
-| Workflow       | Trigger                | What it does                                                                                                              |
-| -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.9–3.14; separate `coverage` job uploads to Codecov                                  |
-| `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                |
-| `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification |
-| `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                            |
+| Workflow       | Trigger                | What it does                                                                                                                    |
+| -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`       | push to `main`, PRs    | `pytest` on Ubuntu + macOS × Python 3.9–3.14; separate `coverage` job uploads to Codecov                                        |
+| `release.yml`  | push of `v*` tag       | Same tests → build wheel → publish to PyPI                                                                                      |
+| `artifact.yml` | after Release succeeds | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification       |
+| `docs.yml`     | push to `main`         | Builds MkDocs site and deploys to GitHub Pages                                                                                  |
+| `ci-image.yml` | weekly cron, dispatch  | Rebuilds the CI toolchain image from today's pinned inputs; re-pins `.github/ci-image` through a PR (`make help`: `ci-image-*`) |
 
 **CI must be green on `main` before tagging a release.**
 

@@ -5,6 +5,7 @@
 Makefile:a branch never edits a CHANGELOG section that already shipped.
 Makefile:a change under src/ carries a changelog.d/ fragment.
 test_changelog_has_every_release
+test_ci_image
 test_claude_md_drift
 test_cli_flag_docs
 test_example_scratch_dir
