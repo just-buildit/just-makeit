@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _jmrun import run_cli
+from _jmrun import replay_script, run_cli
 
 EXT = Path("native") / "src" / "ring" / "ring_ext.c"
 PYI = Path("src") / "q" / "ring.pyi"
@@ -173,16 +173,7 @@ class TestItIsReachableAndReplayable:
 
         replay = tmp_path / "replay"
         replay.mkdir()
-        import subprocess
-
-        done = subprocess.run(
-            ["bash", "-s"],
-            input=out.stdout,
-            cwd=replay,
-            capture_output=True,
-            text=True,
-        )
-        assert done.returncode == 0, done.stderr + done.stdout
+        replay_script(out.stdout, replay)
 
         def _keys(p: Path) -> set:
             return {

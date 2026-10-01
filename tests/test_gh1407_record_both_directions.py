@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _jmrun import run_cli
+from _jmrun import replay_script, run_cli
 
 
 def _project(tmp_path: Path, name: str = "p") -> Path:
@@ -218,16 +218,7 @@ class TestScriptRoundTrip:
 
         replay = tmp_path / "replay"
         replay.mkdir()
-        import subprocess
-
-        done = subprocess.run(
-            ["bash", "-s"],
-            input=out.stdout,
-            cwd=replay,
-            capture_output=True,
-            text=True,
-        )
-        assert done.returncode == 0, done.stderr + done.stdout
+        replay_script(out.stdout, replay)
         before = (proj / "objects" / "ring.toml").read_text()
         after = (replay / "p" / "objects" / "ring.toml").read_text()
         assert before == after
