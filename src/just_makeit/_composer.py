@@ -3037,6 +3037,20 @@ def render_composer_type(cfg: dict, module: str) -> str:
     create_fn = composer_create_fn(cfg, module)  # gh-1758
     execute_fn = f"{sym}_execute"
     segments_fn = f"{sym}_segments"
+    # gh-1716: `got` is the count `execute_fn` wrote into a `max` / `block`
+    # array. compose() trims the array's dimension to it, which reads past
+    # the allocation when it is larger; execute()'s slice clamps, but a
+    # count past the buffer means the generator already wrote past it.
+    execute_got_guard = _coerce.returned_count_c(
+        "got", "max", f"{cname}.execute", "Py_DECREF(arr);"
+    )
+    compose_got_guard = _coerce.returned_count_c(
+        "got",
+        "block",
+        f"{cname}.compose",
+        "Py_DECREF(arr); Py_DECREF(chunks);",
+        indent=" " * 8,
+    )
     destroy_fn = f"{sym}_destroy"
     # gh-1755: under `create_why` the create names its refusal and the
     # constructor raises the sentence through `reason_raise_c`; with none it
@@ -3741,7 +3755,7 @@ static PyObject *
     Py_BEGIN_ALLOW_THREADS
     got = {execute_fn}(self->state, out, (size_t)max);
     Py_END_ALLOW_THREADS
-    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
+{execute_got_guard}    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
     PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;
     Py_XDECREF(stop);
     PyObject *view = slice ? PyObject_GetItem(arr, slice) : NULL;
@@ -3791,7 +3805,7 @@ static PyObject *
             Py_DECREF(arr);
             break;
         }}
-        PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim view */
+{compose_got_guard}        PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim view */
         if (PyList_Append(chunks, arr) < 0) {{
             Py_DECREF(arr);
             Py_DECREF(chunks);

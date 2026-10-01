@@ -1152,6 +1152,15 @@ _FEATURE_MARKERS = {
         "fragment does not, so a str argument is silently parsed as a "
         "number rather than refused",
     ),
+    # gh-1716: jm's own guard, the read-side twin of the output-size one
+    # -- a fragment rendered before it trusts the count its kernel returns.
+    # Named for its consequence.
+    "returned-count": _Feature(
+        (_coerce.RETURNED_COUNT_GUARD_RE,),
+        "jm refuses a count the kernel returns past the buffer it was "
+        "given and this fragment does not, so an overrunning kernel's "
+        "result is shaped past its allocation",
+    ),
     # gh-1756: a manifest declaration this time -- a param's `str_hint`,
     # which a fragment rendered before it never shows.
     "str-hint": _Feature(
@@ -1223,9 +1232,11 @@ def _method_return_shapes(text: str) -> dict:
             for label, spellings in _RETURN_SHAPE_MARKERS.items()
             if any(s in code for s in spellings)
         }
-        # gh-1710: jm's output-size guard is reported on the feature axis,
-        # so it is not also read here as a raise the manifest declared.
-        if _raises(_OUT_SIZE_RE.sub("", code)):
+        # gh-1710 / gh-1716: jm's output-size and returned-count guards are
+        # reported on the feature axis, so neither is also read here as a
+        # raise the manifest declared.
+        jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
+        if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)
     return out

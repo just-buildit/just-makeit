@@ -797,6 +797,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         _n_decl = _coerce.output_size_c(
             "_n", f"{out_len_fn}(self->h)", f"{tname}.{name}"
         )
+        # gh-1716: `_got` becomes the dimension of an `_n`-element array.
+        _got_guard = _coerce.returned_count_c(
+            "_got", "_n", f"{tname}.{name}", "Py_DECREF(arr);"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
@@ -806,7 +810,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     {out_elem} *_out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
     size_t _got;
 {gil_open}    _got = {fn}(self->h{call_args}, _out);
-{gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)_got; /* trim */
+{gil_close}{_got_guard}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)_got; /* trim */
     return arr;
 }}
 """
@@ -820,6 +824,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     if returns == "bytes" and out_len_fn:
         decls, parse, calls = _scalar_string_argparse(margs)
         call_args = "".join(f", {c}" for c in calls)
+        # gh-1716: `_got` bytes are copied out of an `_n`-byte buffer.
+        _got_guard = _coerce.returned_count_c(
+            "_got", "_n", f"{tname}.{name}", "PyMem_Free(_buf);"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
@@ -829,7 +837,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     if (!_buf) return PyErr_NoMemory();
     size_t _got;
 {gil_open}    _got = {fn}(self->h{call_args}, _buf);
-{gil_close}    PyObject *_r = PyBytes_FromStringAndSize(_buf, (Py_ssize_t)_got);
+{gil_close}{_got_guard}    PyObject *_r = PyBytes_FromStringAndSize(_buf, (Py_ssize_t)_got);
     PyMem_Free(_buf);
     return _r;
 }}
@@ -839,6 +847,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     if returns and str(returns).endswith("[]") and not array_in:
         out_elem, out_npy = _array_elem_npy(returns)
         cnt = margs[0]["name"] if margs else "n"
+        # gh-1716: `got` becomes the dimension of a `cnt`-element array.
+        _got_guard = _coerce.returned_count_c(
+            "got", cnt, f"{tname}.{name}", "Py_DECREF(arr);"
+        )
         return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args)
 {{
@@ -857,7 +869,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     {out_elem} *out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
     size_t got;
 {gil_open}    got = {fn}(self->h, out, (size_t){cnt});
-{gil_close}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim */
+{gil_close}{_got_guard}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim */
     return arr;
 }}
 """
@@ -954,6 +966,12 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         _out_guard = _coerce.out_buffer_guard(
             f"{on}_obj", out_npy, label=on, decrefs=f"Py_DECREF({xn}_arr);"
         )
+        # gh-1716: the slice below clamps, so nothing is READ past the
+        # caller's buffer -- but a count past `max_out` means the kernel
+        # wrote past it, and a quietly trimmed view would hide that.
+        _n_out_guard = _coerce.returned_count_c(
+            "n_out", "max_out", f"{tname}.{name}", f"Py_DECREF({on}_arr);"
+        )
         return f"""static PyObject *
 {d_sig}
 {{
@@ -974,7 +992,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     size_t n_out;
 {gil_open}    n_out = {fn}(self->h, in_data, n_in{d_scal_call}, out_data, max_out);
 {gil_close}    Py_DECREF({xn}_arr);
-
+{_n_out_guard}
     /* Return {on}_arr[:n_out] — zero-copy view into the caller's buffer. */
     PyObject *stop  = PyLong_FromSsize_t((Py_ssize_t)n_out);
     PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;

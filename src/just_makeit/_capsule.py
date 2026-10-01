@@ -141,6 +141,12 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
     _out_guard = _coerce.out_buffer_guard(
         "out_obj", out_npy, decrefs="Py_DECREF(x_arr);"
     )
+    # gh-1716: the slice below clamps, so nothing is READ past `out` -- but
+    # a count past `max_out` means the kernel wrote past it, and a quietly
+    # trimmed view would hand back data from a call that overran.
+    _n_out_guard = _coerce.returned_count_c(
+        "n_out", "max_out", f"{backing}_{name}", "Py_DECREF(out_arr);"
+    )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 {{
@@ -168,7 +174,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     size_t n_out;
 {gil_open}    n_out = {sym}_{name}(w->state, in_data, n_in, out_data, max_out);
 {gil_close}    Py_DECREF(x_arr);
-
+{_n_out_guard}
     /* Return out_arr[:n_out] — zero-copy view into the caller's buffer. */
     PyObject *stop  = PyLong_FromSsize_t((Py_ssize_t)n_out);
     PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;

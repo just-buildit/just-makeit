@@ -106,6 +106,12 @@ kernel can return fewer samples than requested, the binding allocates
 The trim is not a copy. Where the kernel fills the allocation exactly — the
 generator shape's normal case — a fast path returns the array directly. Where
 it writes fewer, the array is shrunk in place, which releases the tail.
+Where it reports MORE than the allocation, nothing is trimmed: the binding
+raises `RuntimeError("<name>: wrote <n> elements into a buffer of <cap>")`,
+because a kernel that reports writing past its buffer has already overrun it
+(gh-1716). Every binding that shapes a result by a returned count -- methods,
+module functions, handles, capsules, composers -- checks through the one
+emitter, `_coerce.returned_count_c`.
 
 **The thing to watch on a short-writing kernel is memory, not CPU** — and the
 amount at stake is governed entirely by how tight `max_out()` is. A kernel

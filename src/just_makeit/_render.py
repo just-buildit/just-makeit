@@ -1742,7 +1742,11 @@ def _py_wrapper_for_function(
             f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             f"    size_t _n = {_call};\n"
             f"{cleanup}"
-            f"    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
+            # gh-1716: `_n` records were read from a buffer of `_max`.
+            + _coerce.returned_count_c(
+                "_n", "_max", fn_name, "free(_results);"
+            )
+            + "    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
             f"    if (!_lst) {{ free(_results); return NULL; }}\n"
             f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
             f"        PyObject *_tup = Py_BuildValue({_bv});\n"
@@ -1816,8 +1820,10 @@ def _py_wrapper_for_function(
                 if check_return
                 else ""
             )
-            + "    if (_n > _cap) _n = _cap;\n"
-            "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
+            # gh-1716: a count past `_cap` was clamped here, silently --
+            # hiding a kernel that had already written past the buffer.
+            + _coerce.returned_count_c("_n", "_cap", fn_name, "free(_buf);")
+            + "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
             "(Py_ssize_t)_n);\n"
             "    free(_buf);\n"
             "    return _s;"
@@ -1867,6 +1873,10 @@ def _py_wrapper_for_function(
                     _count_refusal(c_name, "Py_DECREF(_out);", why)
                     if check_return
                     else ""
+                )
+                # gh-1716: `_n` becomes the dimension of a `_dim` buffer.
+                + _coerce.returned_count_c(
+                    "_n", "_dim", fn_name, "Py_DECREF(_out);"
                 )
                 + "    PyArray_DIMS((PyArrayObject *)_out)[0] ="
                 " (npy_intp)_n;\n"

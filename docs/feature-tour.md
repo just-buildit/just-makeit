@@ -141,7 +141,9 @@ just-makeit method fir taps --module signal \
 helper `dsp_demo_fir_taps_max_out(state, n)` bounds it, and the kernel reports the
 actual count. The Python binding allocates a NumPy-owned array per call and
 returns it trimmed to that count — each result is independent and safe to
-keep. See [Array memory ownership](memory-ownership.md).
+keep. A count larger than the buffer the kernel was given raises
+`RuntimeError` instead (gh-1716). See
+[Array memory ownership](memory-ownership.md).
 
 !!! note "String-enum params (TOML-only)"
 

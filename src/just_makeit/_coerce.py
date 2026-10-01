@@ -15,6 +15,8 @@ a ``jm function`` path param) emit exactly this shape — so it lives here once.
 
 from __future__ import annotations
 
+import re
+
 # The C function parameter type a path arg presents to user C code: the callee
 # gets a borrowed C string and must copy it before returning (see path_release).
 PATH_C_TYPE = "const char *"
@@ -1025,3 +1027,114 @@ def output_size_c(
         f"{i}}}\n"
         f"{i}{ctype} {var} = ({ctype}){need};\n"
     )
+
+
+def returned_count_c(
+    count: str,
+    cap: str,
+    who: str,
+    release: str = "",
+    *,
+    indent: str = "    ",
+) -> str:
+    """Refuse a COUNT the kernel returned that exceeds the buffer it was given.
+
+    The read-side twin of :func:`output_size_c`. A self-sizing output hands
+    the kernel a buffer of *cap* elements and then trusts the count it
+    returns: the count becomes the array's dimension
+    (``PyArray_DIMS(arr)[0] = n``), the ``PyArray_Resize`` target, the
+    length of a ``list`` built from a records buffer, the length of a
+    ``str``/``bytes`` copied out of a byte buffer, or the stop of a
+    ``out[:n]`` view. A count past *cap* -- a kernel bug, or a sentinel such
+    as ``(size_t)-1`` -- made each of those read past the allocation: an
+    ndarray whose shape ran off its own buffer, a view over the caller's
+    ``out=`` reaching past its end, a ``PyArray_Resize`` that GREW the
+    result into uninitialised memory (gh-1716).
+
+    It refuses rather than clamps. A count past the capacity means the
+    kernel has very likely already WRITTEN past the end, so a trimmed result
+    would hand back plausible data from a call that corrupted memory. The
+    ``str`` output used to clamp the count down to ``_cap``, silently; it
+    goes through here now, like every other site.
+
+    The exception is ``RuntimeError``, the class jm already raises when the
+    callee breaks its side of the contract -- ``<fn> failed (rc=%d)``,
+    ``<fn> returned NULL``, ``create`` returning NULL -- as opposed to
+    ``ValueError`` for an argument the CALLER got wrong. Nothing the caller
+    passed can produce this; the C code did.
+
+    The guard declares nothing: *count* and *cap* are locals the site
+    already holds, so a site's set of C locals (which a manifest name may
+    collide with, ``_builtins``) is unchanged. Both are converted to
+    ``size_t`` before comparing, so a signed capacity (a ``Py_ssize_t``
+    count the binding already proved non-negative, an ``npy_intp``) compares
+    as an unsigned length.
+
+    One emitter for every site, for the reason :func:`output_size_c` is
+    one: a guard pasted per site is how the ndarray output is fixed while
+    the ``str`` output keeps clamping. ``RETURNED_COUNT_GUARD_RE`` finds the
+    guard this emits, for ``_docsync``'s advisory and for the tests that
+    refuse a count consumed without it.
+
+    Parameters
+    ----------
+    count : str
+        The C local holding the count the kernel returned. An identifier,
+        evaluated (twice) after the call.
+    cap : str
+        A C expression for the capacity, in the same unit as *count*
+        (elements, records or bytes). Must still be valid after *release*
+        runs, so pass a local, not ``PyArray_SIZE(<released array>)``.
+    who : str
+        The Python-facing name the ``RuntimeError`` message leads with.
+    release : str
+        C statements that drop what the binding owns at this point (the
+        output array, a malloc'd buffer), run before ``return NULL``.
+    indent : str
+        Leading whitespace for each emitted line.
+
+    Examples
+    --------
+    >>> print(returned_count_c("_n", "_dim", "fb", "Py_DECREF(_out);"))
+        if ((size_t)(_n) > (size_t)(_dim)) {
+            Py_DECREF(_out);
+            PyErr_Format(PyExc_RuntimeError,
+                "fb: wrote %zu elements into a buffer of %zu",
+                (size_t)(_n), (size_t)(_dim));
+            return NULL;
+        }
+    <BLANKLINE>
+    >>> bool(RETURNED_COUNT_GUARD_RE.search(
+    ...     returned_count_c("n_out", "_cap", "F.g")))
+    True
+    """
+    i = indent
+    rel = f"{i}    {release.strip()}\n" if release.strip() else ""
+    return (
+        f"{i}if ((size_t)({count}) > (size_t)({cap})) {{\n"
+        f"{rel}"
+        f"{i}    PyErr_Format(PyExc_RuntimeError,\n"
+        f'{i}        "{who}: wrote %zu elements into a buffer of %zu",\n'
+        f"{i}        (size_t)({count}), (size_t)({cap}));\n"
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+    )
+
+
+#: The opening of the guard :func:`returned_count_c` emits, group 1 the count
+#: it bounds. Whitespace-tolerant everywhere a C formatter may move it
+#: (``(size_t) (n)`` in GNU style), and anchored on CODE, not on the message:
+#: ``_docsync`` reads it from a comment- and string-masked body, where the
+#: message text is blanked.
+RETURNED_COUNT_GUARD_RE = re.compile(
+    r"\bif\s*\(\s*\(\s*size_t\s*\)\s*\(\s*([A-Za-z_]\w*)\s*\)\s*>"
+    r"\s*\(\s*size_t\s*\)\s*\("
+)
+
+#: The whole guard block, opener through its closing brace -- what
+#: ``_docsync`` removes before asking whether a wrapper raises, because the
+#: raise is jm's guard and not a result shape the manifest declared. The
+#: body holds only statements (release, raise, return), never a brace.
+RETURNED_COUNT_BLOCK_RE = re.compile(
+    RETURNED_COUNT_GUARD_RE.pattern + r"[^{}]*\{[^{}]*\}"
+)
