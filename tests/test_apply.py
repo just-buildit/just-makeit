@@ -431,9 +431,9 @@ class TestApplyModuleDirective:
             'include = ["objects/*.toml"]\n\n'
             + manifest.read_text(encoding="utf-8")
         )
-        from just_makeit._apply import _wire_module_object
+        from just_makeit import _config as C
 
-        _wire_module_object(manifest, "dsp", "counter")
+        C.save(proj, C.add_to_module(C.load(proj), "dsp", "counter"))
 
         # Must not raise — proceeds straight to materialization.
         apply_run(proj, fragment=dest)
@@ -459,9 +459,9 @@ class TestApplyModuleDirective:
             'include = ["objects/*.toml"]\n\n'
             + manifest.read_text(encoding="utf-8")
         )
-        from just_makeit._apply import _wire_module_object
+        from just_makeit import _config as C
 
-        _wire_module_object(manifest, "dsp", "counter")
+        C.save(proj, C.add_to_module(C.load(proj), "dsp", "counter"))
 
         original_mtime = dest.stat().st_mtime
         apply_run(proj, fragment=dest)

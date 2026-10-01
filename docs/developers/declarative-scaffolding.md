@@ -99,8 +99,9 @@ origin file, preserving formatting.
 - A new object (`jm object foo`) is written to a new file
     (`objects/foo.toml`) when the project uses the split layout, or
     appended to the manifest when it does not.
-- `[project]` and `[module.X]` declarations always live in the
-    manifest.
+- `[project]` always lives in the manifest. A `[module.X]` declaration
+    is routed back to the file that declares it: the manifest, or
+    `modules/<name>.toml` in the split layout `jm new` uses by default.
 
 Provenance is in-memory only — never serialized.
 

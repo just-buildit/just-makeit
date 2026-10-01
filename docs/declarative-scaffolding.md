@@ -847,8 +847,9 @@ flowchart LR
 
 Properties:
 
-- `[project]` and `[module.X]` declarations **always** live in the
-    manifest.
+- `[project]` always lives in the manifest. A `[module.X]` declaration
+    is routed back to the file that declares it: the manifest, or
+    `modules/<name>.toml` in the split layout `jm new` uses by default.
 - A mutation to `[agc]` rewrites `objects/agc.toml` — the manifest and
     sibling fragments are **byte-for-byte unchanged**.
 - A new object on a split-layout project gets a brand-new
