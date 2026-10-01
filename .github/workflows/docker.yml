@@ -46,6 +46,9 @@ jobs:
   # A version bump alone builds nothing here: see changes.yml.
   changes:
     uses: ./.github/workflows/changes.yml
+    permissions:
+      checks: read
+      contents: read
 
   # ── Linux ─────────────────────────────────────────────────────────────────────
   # One native build per architecture (no QEMU) — each is loaded into its

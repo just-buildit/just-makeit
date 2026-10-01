@@ -6,6 +6,9 @@ name: changes
 #
 #   changes:
 #     uses: ./.github/workflows/changes.yml
+#     permissions:
+#       checks: read
+#       contents: read
 #   <job>:
 #     needs: changes
 #     if: needs.changes.outputs.src == 'true'
@@ -27,6 +30,13 @@ on:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # `checks: read` is for the base commit's "CI passed" (gh-1763). A
+    # reusable workflow's token is capped by its caller's, and the repo's
+    # default token grants no `checks`, so every caller grants these too;
+    # tests/test_release_bump_fast_path.py refuses a caller that does not.
+    permissions:
+      checks: read
+      contents: read
     outputs:
       src: ${{ steps.check.outputs.src }}
     steps:
@@ -35,30 +45,69 @@ jobs:
           fetch-depth: 2
 
       - id: check
+        # Every value the script reads comes in through env, so
+        # tests/test_release_bump_fast_path.py runs this exact `run:` text
+        # with a fake `gh` and no GitHub.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPO: ${{ github.repository }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          CI_CHECK: CI passed
         run: |
           # Integration and scheduled events always run everything, and so
           # does a push that is not to a branch: release.yml calls docker.yml
           # on the tag push, and the tag's images must be built. (Only a
           # push: a pull_request's ref is refs/pull/N/merge.)
-          case "${{ github.event_name }}" in
+          case "$EVENT" in
             merge_group|workflow_dispatch|schedule)
               echo "src=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
-          if [[ "${{ github.event_name }}" == "push" &&
-                "${{ github.ref }}" != refs/heads/* ]]; then
+          if [[ "$EVENT" == "push" && "$REF" != refs/heads/* ]]; then
             echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
 
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            base="${{ github.event.pull_request.base.sha }}"
+          if [[ "$EVENT" == "pull_request" ]]; then
+            base="$PR_BASE"
             git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
           else
             # push: diff the whole pushed range. Fail SAFE -- if the previous
             # tip is not reachable in this shallow clone we cannot prove the
             # push is bump-only, so run everything.
-            base="${{ github.event.before }}"
+            base="$BEFORE"
             if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
               echo "src=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+
+            # A bump skips CI only because the code under it already passed
+            # it -- so that has to be TRUE, not assumed (gh-1763). A push's
+            # base is the branch's previous tip, and ci.yml's concurrency
+            # group keeps ONE pending run per group: a third push cancels the
+            # second's pending run, which then never runs at all. Cutting
+            # 0.96.0, #1759's merge (07f09d2) was superseded that way and has
+            # no "CI passed" check; the bump-only release commit on top of it
+            # would have been certified green over code main never ran.
+            #
+            # So the fast path holds only when the base has a COMPLETED,
+            # SUCCESSFUL "CI passed". Anything else -- in progress, cancelled,
+            # failed, absent, or an API error -- runs everything. A PR needs
+            # no such check: its own run covers its whole diff.
+            if ! runs=$(gh api --paginate \
+                   "repos/$REPO/commits/$base/check-runs?per_page=100"); then
+              echo "src=true" >> "$GITHUB_OUTPUT"
+              echo "changes: cannot read $base's checks; running all" >&2
+              exit 0
+            fi
+            verdict=$(printf '%s\n' "$runs" | jq -r --arg n "$CI_CHECK" \
+              '.check_runs[] | select(.name == $n)
+               | "\(.status) \(.conclusion)"' | head -n1) || verdict=""
+            if [[ "$verdict" != "completed success" ]]; then
+              echo "src=true" >> "$GITHUB_OUTPUT"
+              echo "changes: $base's '$CI_CHECK' is '${verdict:-absent}'," \
+                   "not a pass; running all" >&2
+              exit 0
             fi
           fi
 
