@@ -32,6 +32,7 @@ from . import _config as C
 from . import _modplatforms
 from ._builtins import require_scope_names
 from . import _render as R
+from ._report import Refusal
 from . import _procglobal
 from . import _enumc
 from . import _keys
@@ -431,7 +432,7 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
 
     Raises
     ------
-    ValueError
+    Refusal
         A function missing from :data:`OWNED_PTR_FNS`, a key that belongs to
         another field shape, both ``object`` and ``capsule``, or a ``type``
         that is not a pointer.
@@ -444,7 +445,7 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
         # an owned pointer, and a message about functions alone would not
         # say why a field with `object` on it needs any.
         wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if field.get(k)]
-        raise ValueError(
+        raise Refusal(
             f"{where}: `{'`, `'.join(wrote)}` declares an owned pointer, "
             f"which names all four host functions "
             f"-- {', '.join(OWNED_PTR_FNS)} -- and this one lacks "
@@ -454,13 +455,13 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
         )
     clash = [k for k in _OWNED_PTR_EXCLUSIVE if k in field]
     if clash:
-        raise ValueError(
+        raise Refusal(
             f"{where}: {', '.join(clash)} cannot sit beside an owned "
             f"pointer; those keys describe another field shape."
         )
     ref = field.get("object", "")
     if ref and field.get("capsule"):
-        raise ValueError(
+        raise Refusal(
             f"{where}: `object` and `capsule` cannot both be declared -- "
             f"`object = '{ref}'` derives the capsule name from the "
             f"referenced component. Drop the `capsule` key."
@@ -481,7 +482,7 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
         header = field.get("header", "")
     ctype = " ".join(str(ctype).split())
     if not ctype.endswith("*"):
-        raise ValueError(
+        raise Refusal(
             f"{where}: an owned pointer needs a pointer `type` (`T *`), or "
             f"an `object` it resolves from; got {ctype!r}."
         )
@@ -4901,7 +4902,7 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     for s in seams:
         had = first.setdefault(s.name, s)
         if had.prototype != s.prototype:
-            raise ValueError(
+            raise Refusal(
                 f"composer `{module}`: {had.owner} and {s.owner} both name "
                 f"`{s.name}`, but would declare it differently:\n"
                 f"    {had.prototype}\n"

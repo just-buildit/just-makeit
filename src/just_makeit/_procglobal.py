@@ -41,6 +41,7 @@ from typing import NamedTuple
 from . import _config as C
 from . import _incpath as INC
 from . import _csym as CSYM
+from ._report import Refusal
 
 
 class SharedCore(NamedTuple):
@@ -161,7 +162,7 @@ def shared_cores(cfg: dict) -> "list[SharedCore]":
 # the same `.so`.
 
 
-class ProcGlobalRefusal(ValueError):
+class ProcGlobalRefusal(Refusal):
     """A ``process_global`` declaration jm cannot honour."""
 
 

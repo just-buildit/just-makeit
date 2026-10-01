@@ -57,6 +57,11 @@ NEEDS_A_CHILD = {
         "the subject IS a process's stdio encoding -- in-process it would "
         "assert about io.StringIO, not about what Windows does to a pipe"
     ),
+    "test_gh1777_refusal_in_a_real_process.py": (
+        "the subject IS what the interpreter does with an exception escaping "
+        "main() -- run_cli prints a traceback and returns 1 for one itself, "
+        "so in-process the traceback and exit code would be the harness's"
+    ),
 }
 
 # This file names both halves of what it looks for, so it matches itself.
