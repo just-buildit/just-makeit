@@ -73,6 +73,7 @@ test_gh1601_install_components
 test_gh1604_rootcmake_literals
 test_gh1619_status_check_names
 test_gh1625_tree_jm
+test_gh1630_code_span_runs
 test_gh1632_workflow_gates
 test_gh1633_stem_reaches_every_symbol
 test_gh1647_complex_respell_manifest

@@ -13,7 +13,8 @@ LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install
                 complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update
+                doppler-pin-check consumer-smoke install-history-update \
+                code-span-check
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -136,6 +137,16 @@ lint: complex-spelling-check
 
 complex-spelling-check: ## Fail on the pre-gh-1246 `complex` spelling outside its allow-list
 	@scripts/complex-spelling-check.sh
+
+# gh-1630: a code span holding a whitespace run ships verbatim in the release
+# notes (`jm   upgrade`), and `make format` is what makes one -- mdformat joins
+# a span hand-wrapped across a fragment's line break with the indent inside
+# it. Scope is what has not shipped: changelog.d/ and [Unreleased]; released
+# sections are history (changelog-sections-check).
+lint: code-span-check
+
+code-span-check: ## Fail on a whitespace run inside a changelog code span
+	@python3 scripts/check_code_spans.py
 
 # ADVISORY, and hung off `lint` so it is seen on every PR without gating one.
 # The pin drifts because doppler published, not because of the change being
