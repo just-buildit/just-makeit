@@ -2814,7 +2814,17 @@ def make_methods_ctx(
                     f"        }}\n"
                     f"{_out_kernel}"
                     f"{_out_decref}"
-                    f"{_out_none}"
+                    # gh-1716: `n_out` becomes the length of a view over the
+                    # caller's `_cap`-element buffer; past it, the view reads
+                    # beyond the caller's allocation.
+                    + _coerce.returned_count_c(
+                        "n_out",
+                        "_cap",
+                        f"{Component}.{name}",
+                        "Py_DECREF(out_arr);",
+                        indent=" " * 8,
+                    )
+                    + f"{_out_none}"
                     f"        npy_intp _odim = (npy_intp)n_out;\n"
                     f"{_vo_view}"
                     f"        if (!_oview)"
@@ -3042,7 +3052,12 @@ def make_methods_ctx(
                     f"{_vo_alloc}"
                     f"{_kernel_vo}"
                     f"{decref_in}"
-                    f"{_vo_empty}"
+                    # gh-1716: past `_cap`, PyArray_Resize below GREW the
+                    # result into memory the kernel never wrote.
+                    + _coerce.returned_count_c(
+                        "n_out", "_cap", f"{Component}.{name}", _decref_arrs
+                    )
+                    + f"{_vo_empty}"
                     f"{_vo_exact}"
                     f"{_none_on_empty_line if not none_on_empty else ''}"
                     f"{_vo_views}"
@@ -3485,26 +3500,33 @@ def make_methods_ctx(
                         nogil,
                     )
                 )
-            wrapper = _in_dtype_helper + (
-                f"static PyObject *\n"
-                f"{wrapper_prefix}_{name}"
-                f"({Component}Object *self, PyObject *args)\n"
-                f"{{\n"
-                f"{guard}"
-                f"{_rf_parse}"
-                f"{_rf_call}"
-                f"    PyObject *lst ="
-                f" PyList_New((Py_ssize_t)n_out);\n"
-                f"    if (!lst) return NULL;\n"
-                f"    for (size_t i = 0; i < n_out; i++) {{\n"
-                f"        PyObject *tup ="
-                f" Py_BuildValue({_bv});\n"
-                f"        if (!tup)"
-                f" {{ Py_DECREF(lst); return NULL; }}\n"
-                f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
-                f"    }}\n"
-                f"    return lst;\n"
-                f"}}"
+            wrapper = (
+                _in_dtype_helper
+                + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}"
+                    f"({Component}Object *self, PyObject *args)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"{_rf_parse}"
+                    f"{_rf_call}"
+                    # gh-1716: `n_out` records are read from `results[]`.
+                    + _coerce.returned_count_c(
+                        "n_out", str(max_results), f"{Component}.{name}"
+                    )
+                    + f"    PyObject *lst ="
+                    f" PyList_New((Py_ssize_t)n_out);\n"
+                    f"    if (!lst) return NULL;\n"
+                    f"    for (size_t i = 0; i < n_out; i++) {{\n"
+                    f"        PyObject *tup ="
+                    f" Py_BuildValue({_bv});\n"
+                    f"        if (!tup)"
+                    f" {{ Py_DECREF(lst); return NULL; }}\n"
+                    f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
+                    f"    }}\n"
+                    f"    return lst;\n"
+                    f"}}"
+                )
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
             _rf_call_arg = (

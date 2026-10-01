@@ -53,6 +53,7 @@ import pytest
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
+from just_makeit import _coerce  # noqa: E402
 from just_makeit import _render as R  # noqa: E402
 from just_makeit import _stubs as S  # noqa: E402
 from just_makeit._types import unsupported_return_type_help  # noqa: E402
@@ -143,11 +144,17 @@ class TestThePythonSurfaceIsStr:
         w = _wrapper()
         assert "size_t _n = (size_t)bin_to_hex(bits, bits_len, _buf);" in w, w
 
-    def test_a_callee_overrun_is_clamped(self) -> None:
+    def test_a_callee_overrun_is_refused(self) -> None:
         """The length comes from the callee, and a callee that reports more
         than it was given would otherwise read past the buffer on the way
-        out."""
-        assert "if (_n > _cap) _n = _cap;" in _wrapper()
+        out. gh-1716: refused through the one emitter, where this used to
+        clamp silently -- a count past the buffer means it was overrun."""
+        w = _wrapper()
+        guard = _coerce.returned_count_c(
+            "_n", "_cap", "bin_to_hex", "free(_buf);"
+        )
+        assert guard in w, w
+        assert "_n = _cap;" not in w, w
 
     def test_the_stub_says_str(self) -> None:
         ann = S._fn_stub(

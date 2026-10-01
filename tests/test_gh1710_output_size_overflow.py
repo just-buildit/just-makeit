@@ -274,14 +274,12 @@ def test_borrowed_view_count(built):
     _raises_overflow(built, f"Gen().peek({SIZE_MAX})", "Gen.peek", _GEN)
 
 
-# A narrowing to `npy_intp` that is NOT a size the emitter bounded. Each is a
+# A narrowing to `npy_intp` that is NOT a size the emitter bounded is a
 # COUNT the kernel returned after writing into a buffer of known capacity --
 # a different contract (a count past the capacity is the kernel's bug, not a
-# request too large), tracked by gh-1716. Ratchet: this set may only shrink.
-_RETURNED_COUNT = {
-    "npy_intp _odim = (npy_intp)n_out;",
-    "PyArray_DIMS((PyArrayObject *)_out)[0] = (npy_intp)_n;",
-}
+# request too large). gh-1716 bounds every one with `returned_count_c`, so a
+# narrowing passes here only behind one of the two guards; this was a
+# ratchet set of the unbounded ones, and gh-1716 emptied it.
 _NARROWING = re.compile(r"\(npy_intp\)\s*\(?\s*([A-Za-z_]\w*)")
 
 
@@ -294,13 +292,17 @@ def test_every_narrowing_reads_a_bounded_size(built):
     """
     seen, offenders = 0, []
     for src in sorted((built / "native/src").rglob("*_ext.c")):
+        counts: "set[str]" = set()
         for line in src.read_text("utf-8").splitlines():
             code = line.split("//", 1)[0].split("/*", 1)[0].strip()
+            g = _coerce.RETURNED_COUNT_GUARD_RE.search(code)
+            if g:
+                counts.add(g.group(1))
             m = _NARROWING.search(code)
             if not m:
                 continue
             seen += 1
-            if m.group(1).endswith("_need") or code in _RETURNED_COUNT:
+            if m.group(1).endswith("_need") or m.group(1) in counts:
                 continue
             offenders.append(f"{src.name}: {code}")
     assert seen >= 7, f"only {seen} narrowings found -- the scan is inert"
