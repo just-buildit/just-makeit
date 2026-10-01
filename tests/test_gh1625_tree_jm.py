@@ -22,7 +22,18 @@ This file refuses the bare name coming back, registration-free: every make
 file at the root, every script under ``scripts/`` and every test is read,
 so a new one is covered the moment it exists.
 
-GATE: no recipe, script or test runs a bare `just-makeit`/`jm` from PATH;
+The bare name can also arrive as TEXT a shell runs: two tests replayed
+`jm script` output with ``subprocess.run(["bash", "-s"], input=...)``, and
+every ``just-makeit ...`` line in it went through PATH -- green under
+`make test` (the venv is first there), red from a plain shell with a stale
+tool install. No argv names jm, so the argv check could not see it. A test
+therefore may not hand a shell its program as text (``-s``, ``-c``, or no
+script operand at all); `_jmrun.replay_script` replays a script through
+this tree, and `SHELL_TEXT_ALLOWED` names the files whose subject IS a
+shell text that runs no jm.
+
+GATE: no recipe, script or test runs a bare `just-makeit`/`jm` from PATH,
+      nor a test a shell reading its program from text;
       the consumer smoke refuses a jm that is not this tree's version.
 """
 
@@ -159,8 +170,67 @@ def _is_bare(arg: ast.AST) -> bool:
     return False
 
 
-def bare_python_jm(text: str) -> list[int]:
-    """Line numbers in Python *text* that run, or look up, a bare jm.
+#: A shell whose program can arrive as text. Matched on the basename, so
+#: ``/bin/sh`` counts.
+SHELLS = ("bash", "sh", "dash", "zsh", "ksh")
+
+#: Test files whose subject is a shell TEXT, which they may hand to a shell
+#: as ``-c``/``-s``. Each must say why that text cannot run a jm; an entry
+#: whose file no longer does so fails `test_shell_text_allowances_are_live`.
+SHELL_TEXT_ALLOWED = {
+    "test_ci_passed_aggregator.py": (
+        "runs ci.yml's `CI passed` run: block, the text GitHub runs, with "
+        "PATH pinned to /usr/bin:/bin; it calls no jm"
+    ),
+}
+
+
+def _argv_words(arg: ast.AST) -> list[str | None] | None:
+    """*arg* as argv words, ``None`` for one not known statically.
+
+    A list/tuple literal, or a constant string (a `shell=True` line or an
+    `os.system` one) split as a shell would.
+    """
+    if isinstance(arg, (ast.List, ast.Tuple)) and arg.elts:
+        return [
+            e.value
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            else None
+            for e in arg.elts
+        ]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        try:
+            return list(shlex.split(arg.value)) or None
+        except ValueError:
+            return None
+    return None
+
+
+def _shell_reads_text(arg: ast.AST) -> bool:
+    """An argv running a shell whose program is text, not a script file.
+
+    `-c` takes it from an argument and `-s` (or no operand at all) from
+    stdin. Only the options BEFORE the first operand are the shell's --
+    after it they are the script's own (``bash x.sh -s``). An operand that
+    is not a literal (``str(script)``) is taken to be a file: innocent.
+    """
+    words = _argv_words(arg)
+    if not words or words[0] is None:
+        return False
+    if os.path.basename(words[0]) not in SHELLS:
+        return False
+    for word in words[1:]:
+        if word is None or not word.startswith("-") or word == "-":
+            return word == "-"  # `-` is stdin too; anything else a file
+        if word == "--":
+            return False
+        if not word.startswith("--") and ({"c", "s"} & set(word[1:])):
+            return True
+    return True  # options only: the shell reads its program from stdin
+
+
+def _scan_python(text: str) -> tuple[list[int], list[int]]:
+    """One AST pass: (lines running a bare jm, lines spawning shell text).
 
     A spawner is `subprocess`'s family, `os.system`/`exec*` -- and any
     function the same file defines that itself calls `subprocess`, since a
@@ -180,7 +250,7 @@ def bare_python_jm(text: str) -> list[int]:
             for n in ast.walk(fn)
         )
     }
-    hits = set()
+    hits, shells = set(), set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -189,13 +259,26 @@ def bare_python_jm(text: str) -> list[int]:
             isinstance(a, ast.Constant) and a.value in NAMES for a in node.args
         ):
             hits.add(node.lineno)
-        elif (
-            (name in _SPAWNERS or name in wrappers)
-            and node.args
-            and _is_bare(node.args[0])
-        ):
-            hits.add(node.lineno)
-    return sorted(hits)
+        elif (name in _SPAWNERS or name in wrappers) and node.args:
+            if _is_bare(node.args[0]):
+                hits.add(node.lineno)
+            if _shell_reads_text(node.args[0]):
+                shells.add(node.lineno)
+    return sorted(hits), sorted(shells)
+
+
+def bare_python_jm(text: str) -> list[int]:
+    """Line numbers in Python *text* that run, or look up, a bare jm."""
+    return _scan_python(text)[0]
+
+
+def shell_text_spawns(text: str) -> list[int]:
+    """Line numbers in Python *text* handing a shell its program as text.
+
+    That text's commands resolve through PATH, so a `jm script` replayed
+    this way runs whatever `just-makeit` is first there (gh-1625).
+    """
+    return _scan_python(text)[1]
 
 
 def _python_files() -> list[Path]:
@@ -216,6 +299,38 @@ def test_no_test_or_script_runs_a_bare_jm(path):
         "is whatever `just-makeit` is on PATH, not this tree (gh-1625). "
         "Use `from _jmrun import run_cli` -- this tree's CLI, in process."
     )
+
+
+def _test_files() -> list[Path]:
+    return [p for p in _python_files() if p.parent.name == "tests"]
+
+
+@pytest.mark.parametrize(
+    "path", _test_files(), ids=lambda p: str(p.relative_to(ROOT))
+)
+def test_no_test_hands_a_shell_its_program_as_text(path):
+    if path.name in SHELL_TEXT_ALLOWED:
+        return
+    lines = shell_text_spawns(path.read_text(encoding="utf-8"))
+    assert not lines, (
+        f"{path.relative_to(ROOT)} hands a shell its program as text at "
+        f"line(s) {lines} (`bash -s`, `sh -c`, ...): every `just-makeit` in "
+        "it resolves through PATH, often a stale tool install, not this "
+        "tree (gh-1625). To replay `jm script` output use "
+        "`from _jmrun import replay_script` -- this tree's CLI, in process. "
+        "A test whose subject IS a shell text that runs no jm is named, "
+        "with its reason, in SHELL_TEXT_ALLOWED."
+    )
+
+
+def test_shell_text_allowances_are_live():
+    """An allowance outliving its use would excuse the next one silently."""
+    for name in SHELL_TEXT_ALLOWED:
+        path = ROOT / "tests" / name
+        assert path.is_file(), f"SHELL_TEXT_ALLOWED names missing {name}"
+        assert shell_text_spawns(path.read_text(encoding="utf-8")), (
+            f"{name} no longer spawns shell text; drop its allowance"
+        )
 
 
 def test_the_detectors_catch_each_spelling_and_pass_innocent_ones():
@@ -266,6 +381,33 @@ def test_the_detectors_catch_each_spelling_and_pass_innocent_ones():
         f'subprocess.run(["make", "test"], cwd="{jm}")',
     ):
         assert not bare_python_jm(fine), fine
+
+    for bad in (
+        'subprocess.run(["bash", "-s"], input=script)',
+        'subprocess.run(["sh", "-c", text])',
+        'subprocess.run(("/bin/bash", "-c", text))',
+        'subprocess.run(["bash", "-ec", text])',
+        'subprocess.run(["bash", "-e", "-s"], input=script)',
+        'subprocess.run(["bash"], input=script)',
+        'subprocess.run(["sh", "-"], input=script)',
+        'subprocess.check_output(["zsh", "-lc", text])',
+        'subprocess.run("bash -s", shell=True, input=script)',
+        'os.system("sh -c true")',
+        "import subprocess\n"
+        "def _run(cmd):\n    return subprocess.run(cmd)\n"
+        '_run(["bash", "-s"])',
+    ):
+        assert shell_text_spawns(bad), bad
+    for fine in (
+        'subprocess.run(["bash", str(script)])',
+        'subprocess.run(["bash", "-e", str(script)])',
+        'subprocess.run(["sh", "x.sh", "-s"])',
+        'subprocess.run(["bash", "--", "x.sh"])',
+        'subprocess.run(["make", "-s", "test"])',
+        "replay_script(out.stdout, replay)",
+        'run_cli("script")',
+    ):
+        assert not shell_text_spawns(fine), fine
 
 
 # ── the smoke: make names the tree's jm, and the script checks it ───────────
