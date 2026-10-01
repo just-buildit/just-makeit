@@ -72,51 +72,21 @@ jobs:
       - name: Install jm build deps (cmake, Python, NumPy)
         run: jm-install-deps ${{ runner.temp }}/jm-venv
 
-      # ── Install doppler from its GitHub release ────────────────────────────
-      # doppler ships a self-contained static target (doppler::doppler-static),
-      # which the example links — so we just extract the tarball; no .so strip
-      # or SHARED→STATIC cmake patching is needed (that hack was for the old
-      # single doppler::doppler_lib SHARED target, removed in 0.13.x).
-      - name: Download doppler release
-        run: |
-          # `doppler-*` is too loose: the release also carries
-          # `doppler-starter-<ver>-linux-x86_64.tar.gz`, which appeared on
-          # 2026-08-22 and matched. A version always starts with a digit, so
-          # anchoring on that selects the library tarball and nothing else.
-          gh release download \
-            --repo doppler-dsp/doppler \
-            --pattern "doppler-[0-9]*-linux-x86_64.tar.gz" \
-            --dir /tmp/doppler-dl
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Install doppler
-        run: |
-          mkdir -p /tmp/doppler
-          # Resolve the glob to ONE file and say so if it is not one. A glob
-          # straight into `tar xzf` is what turned the extra asset into
-          # "tar: doppler-starter-...: Not found in archive": with two
-          # matches, `tar xzf A B` reads B as a MEMBER to extract from A, so
-          # the wrong-number-of-files case cannot be told from a corrupt
-          # archive. The failure mode is not that the glob was loose, it is
-          # that the command had no way to report it.
-          shopt -s nullglob
-          tarballs=(/tmp/doppler-dl/doppler-[0-9]*-linux-x86_64.tar.gz)
-          if [ ${#tarballs[@]} -ne 1 ]; then
-            echo "::error::expected exactly 1 doppler tarball," \
-                 "got ${#tarballs[@]}: ${tarballs[*]}"
-            exit 1
-          fi
-          tar xzf "${tarballs[0]}" -C /tmp/doppler --strip-components=1
-          # Which doppler this ran against is the first question a failure
-          # raises, and the download above is unpinned — so state it in the log
-          # rather than making the next reader infer it from the run date.
-          echo "::notice::built against $(basename "${tarballs[0]}")"
-
-      # ── Run the nco_tone example ────────────────────────────────────────────
-      # Pass the install prefix; cmake's find_package searches both
-      # <prefix>/lib/cmake and <prefix>/lib64/cmake, so this is libdir-agnostic.
+      # ── Run the nco_tone example against doppler's latest release ─────────
+      # No --doppler-prefix: the example fetches doppler's LATEST release
+      # itself, the same fetch every other examples leg runs. This job used
+      # to `gh release download` it here, a second fetch with a single
+      # attempt, so one DNS blip failed the run (gh-1639); the example's
+      # fetch retries a transient error and still fails a 404 at once
+      # (tests/test_gh1639_doppler_fetch_retry.py). It also names the asset
+      # exactly, so the `doppler-starter-*` tarball that once matched this
+      # job's glob cannot be picked, and it prints the doppler it used.
       - name: Run nco_tone example
-        run: |
-          uv run python src/just_makeit/examples/nco_tone/test.py \
-            --doppler-prefix /tmp/doppler
+        env:
+          # gh-1377: a doppler that cannot be fetched fails the run; without
+          # this the example would SKIP its build and report success.
+          JM_REQUIRE_DOPPLER: "1"
+          # The release-list lookup sends it, so a shared runner IP's
+          # anonymous rate limit cannot silently drop this job to the pin.
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python src/just_makeit/examples/nco_tone/test.py
