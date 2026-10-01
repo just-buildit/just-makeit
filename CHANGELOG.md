@@ -1,5 +1,94 @@
 ## [Unreleased]
 
+## [0.96.1] — 2026-10-01
+
+### Fixed
+
+- **A count the kernel returns past its buffer raises `RuntimeError`**
+    (gh-1716). A self-sizing output hands its kernel a buffer of known
+    capacity and then shapes the result by the count the kernel returns.
+    Nothing compared the two, so a kernel returning more than it was given (a
+    bug, or a `(size_t)-1` sentinel) produced a result shaped past its own
+    allocation: a module function's array read past its buffer, a
+    `variable_output` method's `PyArray_Resize` grew the result into memory
+    the kernel never wrote, and its `out=` view ran past the caller's array.
+    Every such site now raises
+    `RuntimeError("<name>: wrote <n> elements into a buffer of <cap>")`
+    before the count is used. That covers a module function's ndarray,
+    `str` and list-of-records outputs, a method's allocated and `out=`
+    paths (`record_dtype` included) and its list-of-records, a handle's
+    `out_len_fn` array and `bytes`, its int-in array and its `out[:n]` view,
+    a capsule's `execute`, and a composer's `execute` and `compose`. The
+    `str` output used to clamp the count silently; it raises too, because a
+    count past the buffer means the kernel already wrote past it. A count
+    up to the capacity, zero included, is returned as before. `jm apply`
+    and `jm status` report a sacred fragment rendered before the guard.
+
+- **A `--no-state` object's benchmark builds** (gh-1742). Its scaffolded
+    `bench_<obj>_core.c` wrote the `create()` call only as a TODO comment,
+    but any method it then timed still passed `obj`, so
+    `jm object X --no-state --no-step ...` followed by `jm method X ...` made
+    a tree whose plain `make` failed with `'obj' undeclared`. A no-state
+    object's constructor is `create(void)`, so the benchmark now creates and
+    destroys `obj` like every other one (the same repair gh-181 made for
+    `--no-step`). A new sweep builds every `--no-state` / `--no-step` shape,
+    with and without a method, to hold it.
+
+- **A scaffold builds clean under `-Wall -Wextra -Werror`** (gh-1745). Three
+    things jm generates failed a project building its C with warnings as
+    errors. A string-enum lookup (`_enum_index`, `_enum_index_<Type>`) was
+    emitted into extensions that never call it, such as a read-only enum
+    property or a handle whose enums are only on getters
+    (`-Wunused-function`). It is now emitted only when a setter, parameter or
+    constructor argument looks the enum up. The benchmark's `volatile` sinks
+    were stored to and never read (`-Wunused-but-set-variable`); each is now
+    read once after its timing loop. `jm_bench.h`'s `strncpy` copies
+    (`-Wstringop-truncation`, gcc) are now one bounded-copy helper. Existing
+    projects get the new `jm_bench.h` from `jm status`'s OUTDATED report. A
+    new sweep builds representative shapes, the benchmark included, with
+    those flags under gcc and clang. It found two more unused helpers under
+    clang, filed as gh-1747 and gh-1748.
+
+- **An extension that takes no array builds clean under clang `-Werror`**
+    (gh-1747). `jm_array_arg`, the array-argument converter every extension
+    carries (gh-1700), is a `static inline` defined in the `_ext.c` itself.
+    clang reports an uncalled one there as `-Wunused-function` (gcc does
+    not), so a `--no-state --no-step` object with no method, a module
+    whose functions take only scalars, or an extension whose every array
+    argument declares a `str_hint` (so calls only `jm_array_arg_hint`),
+    failed a clang `-Werror` build. The
+    helper stays in every extension, because a module's `_ext.c` also
+    compiles hand-patched fragments and `*_extra.c` hooks jm does not read,
+    and it is now marked `unused`, which is what a `static inline` in a
+    header already is to both compilers. Regenerating the `_ext.c` picks it
+    up.
+
+- **An `[[enum]]` with `enumerators` no longer emits an unused reverse
+    lookup** (gh-1748). An enum bound to C constants (gh-1450) got a
+    `_enum_<name>_name` function beside its tables, which maps a C value
+    back to its choice string. Only a getter or a JSON serializer calls it,
+    so a face that only looks the enum up, such as a module function
+    parameter, a method parameter, a handle constructor argument or a
+    composer's C CLI, carried a function nothing called. clang reports that
+    as `-Wunused-function`, which failed a `-Werror` build. It is now emitted
+    only where a getter or serializer decodes the enum, decided by the same
+    check that emits the decode.
+
+- **`jm apply` keeps every key on a module function's param** (gh-1760).
+    `apply` rebuilt each function param from a fixed tuple
+    `(name, type, out, default, enum, doc, str_hint)`. Any key without a
+    slot never reached the manifest the binding is rendered from, and
+    `apply` still exited 0. `rank` and `elements_per_sample` (gh-805 §C)
+    were two such keys, so a function's array param lost its rank guard and
+    its interleave divisor. The kernel was then handed `n` elements where it
+    counts `n / k` samples. An object method's param kept both. The replay
+    now passes each param's manifest row whole, as gh-432 did for method
+    params. A new test sends a representative value for every key in
+    `FUNCTION_PARAM_KEYS` through `apply` and fails on a vocabulary key it
+    has no value for, and a build calls the function to check both the guard
+    and the divisor. `jm script` still drops these keys with no NOTE, filed
+    as gh-1765.
+
 ## [0.96.0] — 2026-09-30
 
 ### Added
