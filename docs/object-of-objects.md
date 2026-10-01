@@ -481,6 +481,14 @@ setter raise `ValueError(<sentence>)`, the generic `from_json` / `from_file`
 raise it too, and the CLI prints `bad --<name> TEXT: <sentence>`. A reader
 that refuses without writing one keeps the generic message. It is a switch:
 a function name there is refused at load.
+
+Fields may share a host function, and the bridge header declares it once.
+A C function has one prototype, so every key naming it must agree on it:
+two fields naming one `parse_fn` with `parse_why` on only one of them, or
+one `copy_fn` over two `type`s, are refused naming the function, both
+fields and both prototypes (gh-1739), as is any other seam colliding with
+one of these names.
+
 `object` and `capsule` are both optional, so a field bound only from its text
 form is valid; writing both is refused, as is a key of another field shape
 (`bytes`, `enum`, `default`, `c_len`, ...), a `type` that is not a pointer,

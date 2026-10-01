@@ -325,7 +325,9 @@ source shapes went missing one at a time.
 Every name that header declares is author-named, so none is a derived C
 symbol whatever its prefix: `_composer.seam_fns` (the one list
 `render_bridge_h` renders, via `_seams`) is what `_csym._echoed` excludes
-from the `c_prefix` rename table, per header (gh-1694). The header's path is
+from the `c_prefix` rename table, per header (gh-1694). `_seams` declares
+each function once and refuses two keys naming it with different prototypes,
+naming both (gh-1739): a prototype belongs to the function. The header's path is
 `_composer.bridge_h`, in every place that writes, includes or syncs it.
 
 ### The capsule triangle

@@ -535,12 +535,27 @@ def _owned_ptrs(cfg: dict, module: str) -> "list[tuple[str, OwnedPtr]]":
     ]
 
 
-def _owned_ptr_prototypes(
-    cfg: dict, module: str
-) -> "list[tuple[str, list[str]]]":
+class _Seam(NamedTuple):
+    """One straight-C seam the bridge header declares (gh-998), before
+    :func:`_seams` merges the entries that name one function (gh-1739).
+
+    ``prototype`` is the declaration line itself -- what two entries naming
+    one ``name`` must agree on, since C declares a function once.
+    ``owner`` says which manifest key named it, for the refusal when they
+    do not; ``comment`` is the text above the prototype.
+    """
+
+    name: str
+    prototype: str
+    owner: str
+    comment: str
+
+
+def _owned_ptr_prototypes(cfg: dict, module: str) -> "list[_Seam]":
     """The four host functions of every owned-pointer field, as
-    :func:`_seams` entries: one prototype per function name, however many
-    fields share it.
+    :class:`_Seam` entries: one per field and function, so a name two fields
+    share appears once for each of them, and :func:`_seams` both declares it
+    once and refuses the pair when their prototypes disagree (gh-1739).
 
     The signatures are the design's contract (gh-1711), so jm writes them
     down once, in the bridge header, and a host function declared any other
@@ -548,13 +563,14 @@ def _owned_ptr_prototypes(
     type. ``T`` is the pointee: the source may hold a ``const T *``, but the
     functions take and return the owned, mutable ``T *``.
     """
-    out: "dict[str, list[str]]" = {}
+    out: "list[_Seam]" = []
     for name, p in _owned_ptrs(cfg, module):
         t = p.ctype[:-1].rstrip()
-        for fn, proto, what in (
-            (p.copy_fn, f"{t} *{p.copy_fn}(const {t} *);", "copy"),
-            (p.free_fn, f"void {p.free_fn}({t} *);", "free"),
+        for key, fn, proto, what in (
+            ("copy_fn", p.copy_fn, f"{t} *{p.copy_fn}(const {t} *);", "copy"),
+            ("free_fn", p.free_fn, f"void {p.free_fn}({t} *);", "free"),
             (
+                "parse_fn",
                 p.parse_fn,
                 f"{t} *{p.parse_fn}(const char *"
                 + (", const char **why" if p.parse_why else "")
@@ -562,16 +578,22 @@ def _owned_ptr_prototypes(
                 # gh-1735: the sentence a refusal leaves in *why is raised.
                 "parse, naming a refusal in *why" if p.parse_why else "parse",
             ),
-            (p.format_fn, f"char *{p.format_fn}(const {t} *);", "format"),
+            (
+                "format_fn",
+                p.format_fn,
+                f"char *{p.format_fn}(const {t} *);",
+                "format",
+            ),
         ):
-            if fn in out:
-                continue
-            out[fn] = [
-                f"/* Owned pointer `{name}` (gh-1711): {what}. */",
-                proto,
-                "",
-            ]
-    return list(out.items())
+            out.append(
+                _Seam(
+                    fn,
+                    proto,
+                    f"source field `{name}` ({key})",
+                    f"/* Owned pointer `{name}` (gh-1711): {what}. */",
+                )
+            )
+    return out
 
 
 def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
@@ -4798,7 +4820,22 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     functions (gh-1711). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
-    this one list, so they cannot disagree on which names those are."""
+    this one list, so they cannot disagree on which names those are.
+
+    A prototype is a property of the FUNCTION, not of the key that names
+    it, so a name several keys share is declared once -- and refused when
+    they would declare it differently (gh-1739): two owned-pointer fields
+    naming one ``parse_fn`` with only one ``parse_why``, or one ``copy_fn``
+    over two ``type`` s, used to reach the C compiler as a call that does
+    not match the one declaration, far from the manifest lines at fault.
+
+    Raises
+    ------
+    ValueError
+        Two keys name one function and would declare different prototypes
+        for it; the message names the function, both keys and both
+        prototypes.
+    """
     gen = _source_generates(cfg, module)
     computed = _source_computed(cfg, module)
     str_fns = _coerce_str_fns(cfg, module)
@@ -4806,67 +4843,78 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     if not gen and not computed and not str_fns and not ptr_fns:
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
-    out: "list[tuple[str, list[str]]]" = []
+    seams: "list[_Seam]" = []
     if gen:
-        out.append(
-            (
+        seams.append(
+            _Seam(
                 gen["bridge_fn"],
-                [
-                    "/* Build the composed generator from a source config"
-                    " (source -> generator). */",
-                    f"{gen['state_type']} *{gen['bridge_fn']}("
-                    f"const {src_struct} *, double);",
-                    "",
-                ],
+                f"{gen['state_type']} *{gen['bridge_fn']}("
+                f"const {src_struct} *, double);",
+                "`[source.generates] bridge_fn`",
+                "/* Build the composed generator from a source config"
+                " (source -> generator). */",
             )
         )
         if gen["bridge_error_fn"]:
-            out.append(
-                (
+            seams.append(
+                _Seam(
                     gen["bridge_error_fn"],
-                    [
-                        f"/* Why {gen['bridge_fn']}() refused: a reason"
-                        " raised as ValueError, or NULL",
-                        " * for none (RuntimeError). Same arguments; called"
-                        " only after it returned",
-                        " * NULL (gh-1307). */",
-                        f"const char *{gen['bridge_error_fn']}("
-                        f"const {src_struct} *, double);",
-                        "",
-                    ],
+                    f"const char *{gen['bridge_error_fn']}("
+                    f"const {src_struct} *, double);",
+                    "`[source.generates] bridge_error_fn`",
+                    f"/* Why {gen['bridge_fn']}() refused: a reason"
+                    " raised as ValueError, or NULL\n"
+                    " * for none (RuntimeError). Same arguments; called"
+                    " only after it returned\n"
+                    " * NULL (gh-1307). */",
                 )
             )
     for c in computed:
-        out.append(
-            (
+        seams.append(
+            _Seam(
                 c["fn"],
-                [
-                    f"/* Computed read-only property `{c['name']}`. */",
-                    f"{c['type']} {c['fn']}(const {src_struct} *);",
-                    "",
-                ],
+                f"{c['type']} {c['fn']}(const {src_struct} *);",
+                f"computed property `{c['name']}` (fn)",
+                f"/* Computed read-only property `{c['name']}`. */",
             )
         )
     for fn, names in str_fns.items():
-        out.append(
-            (
+        seams.append(
+            _Seam(
                 fn,
-                [
-                    # gh-1736: wrapped, since a field list is as wide as
-                    # the names in it (doppler's ran to 104 columns).
-                    *_c_comment(
-                        f"Read a str as the bits of {names} "
-                        "(coerce_str_fn, gh-1709): out NULL sizes; "
-                        "returns the bit count, or 0 with *why set on "
-                        "a refusal."
-                    ).splitlines(),
-                    f"size_t {fn}(const char *, uint8_t *, size_t,"
-                    " const char **);",
-                    "",
-                ],
+                f"size_t {fn}(const char *, uint8_t *, size_t,"
+                " const char **);",
+                f"source field {names} (coerce_str_fn)",
+                # gh-1736: wrapped, since a field list is as wide as the
+                # names in it (doppler's ran to 104 columns).
+                _c_comment(
+                    f"Read a str as the bits of {names} "
+                    "(coerce_str_fn, gh-1709): out NULL sizes; "
+                    "returns the bit count, or 0 with *why set on "
+                    "a refusal."
+                ),
             )
         )
-    return out + ptr_fns
+    seams += ptr_fns
+    # gh-1739: one declaration per name, and every key naming it agrees.
+    first: "dict[str, _Seam]" = {}
+    for s in seams:
+        had = first.setdefault(s.name, s)
+        if had.prototype != s.prototype:
+            raise ValueError(
+                f"composer `{module}`: {had.owner} and {s.owner} both name "
+                f"`{s.name}`, but would declare it differently:\n"
+                f"    {had.prototype}\n"
+                f"    {s.prototype}\n"
+                "A C function has one prototype, so every key naming it "
+                "must agree on it -- the same `type` (or `object`), and "
+                "the same `parse_why` -- or name a function of its own "
+                "(gh-1739)."
+            )
+    return [
+        (s.name, [*s.comment.splitlines(), s.prototype, ""])
+        for s in first.values()
+    ]
 
 
 def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
