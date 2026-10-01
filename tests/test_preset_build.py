@@ -178,6 +178,28 @@ _WARN_SHAPES = {
         ["apply"],
     ],
     "no_state": [["object", "ns", "--no-state"]],
+    # gh-1716: the returned-count guard (`_coerce.returned_count_c`) on
+    # every path that builds with no author C -- a module function's ndarray
+    # and `str` outputs, and a method's allocated and `out=` paths.
+    "variable_output_function": [
+        ["module", "m"],
+        ["function", "fb", "--module", "m", "--param", "n:size_t"]
+        + ["--return-type", "size_t", "--out-type", "uint8_t"]
+        + ["--variable-output", "--out-size", "n"],
+        # A `str` output has no CLI spelling (gh-1180): declared, then applied.
+        (
+            "modules/m.toml",
+            '\n[[module.m.functions]]\nname = "fs"\nreturn_type = "size_t"\n'
+            'out_type = "str"\nvariable_output = true\nout_size = "n"\n\n'
+            '[[module.m.functions.params]]\nname = "n"\ntype = "size_t"\n',
+        ),
+        ["apply"],
+    ],
+    "variable_output_method": [
+        ["object", "gen", "--state", "k:size_t:0", "--no-step", *_VOID],
+        ["method", "gen", "burst", "--arg-type", "void"]
+        + ["--return-type", "uint32_t", "--variable-output"],
+    ],
     # gh-1742: no state and no step, with and without a benchable method.
     "no_state_no_step": [
         ["object", "nsns", "--no-state", "--no-step", *_VOID]
