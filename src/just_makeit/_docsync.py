@@ -1153,10 +1153,13 @@ _FEATURE_MARKERS = {
         "number rather than refused",
     ),
     # gh-1756: a manifest declaration this time -- a param's `str_hint`,
-    # which a fragment rendered before it never shows.
+    # which a fragment rendered before it never shows. gh-1761: an array
+    # state field's `set_<name>` is a PyMethodDef row too, so its hint is
+    # read here with no second marker.
     "str-hint": _Feature(
         (_ARRAY_ARG_HINT_RE,),
-        "the manifest declares a str_hint on an array param and this "
+        "the manifest declares a str_hint on an array param or state "
+        "field and this "
         "fragment's refusal of a str does not append it",
     ),
 }

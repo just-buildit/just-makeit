@@ -1160,6 +1160,7 @@ def run(
     core_family: "C.CoreFamily | None" = None,
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
+    state_str_hints: "dict[str, str] | None" = None,
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
@@ -1298,6 +1299,10 @@ def run(
             opaque_state=opaque_state,
             header_only=header_only,
             csym=ctx["csym"],
+            # gh-1761: an array state field's `set_<name>` str_hint. The
+            # argument, not the manifest: at creation (and in a replay) the
+            # component is not in `cfg` until `add_component` below.
+            str_hints=state_str_hints,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1837,6 +1842,7 @@ def run(
         opaque_fields_=list(opaque_fields),
         no_ctor_names_=no_ctor_names,
         controllable_names_=controllable_names,
+        state_str_hints_=state_str_hints,
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
         doc_=doc,

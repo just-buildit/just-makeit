@@ -37,6 +37,7 @@ from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
 from ._keys import PROPERTY_KEYS as _PROPERTY_KEYS
+from ._keys import STATE_KEYS as _STATE_KEYS
 
 try:
     import tomllib
@@ -5509,6 +5510,32 @@ def state_docs(cfg: dict, component: str) -> "dict[str, str]":
     }
 
 
+def state_str_hints(cfg: dict, component: str) -> "dict[str, str]":
+    """``{state field: its str_hint}`` for *component* (gh-1761).
+
+    An array state field's ``set_<name>`` converts its argument through
+    gh-1700's ``jm_array_arg``, so it refuses a ``str`` like any array param,
+    and a ``str_hint`` on the ``[[<obj>.state]]`` row is appended to that
+    refusal. Each value is read through `_coerce.str_hint`, the one reader
+    every array face shares; `_coerce.str_hint_errors` has already refused
+    one that could never be shown. Fields declaring none are absent.
+
+    Examples
+    --------
+    >>> state_str_hints({"g": {"state": [
+    ...     {"name": "w", "type": "uint8_t[8]", "str_hint": "use bits()"},
+    ...     {"name": "n", "type": "int"}]}}, "g")
+    {'w': 'use bits()'}
+    """
+    from ._coerce import str_hint
+
+    return {
+        str(s["name"]): str_hint(s)
+        for s in cfg.get(component, {}).get("state", [])
+        if str_hint(s) and not s.get("opaque")
+    }
+
+
 def no_ctor_names(cfg: dict, component: str) -> frozenset[str]:
     """Names of non-opaque state entries flagged ``no_ctor = true``.
 
@@ -6262,6 +6289,7 @@ def add_component(
     opaque_fields_: "list[tuple[str, str]]" = (),
     no_ctor_names_: "frozenset[str]" = frozenset(),
     controllable_names_: "frozenset[str]" = frozenset(),
+    state_str_hints_: "dict[str, str] | None" = None,
     extra_link_libs_: list[str] = (),
     extra_include_dirs_: list[str] = (),
     create_fn_: str | None = None,
@@ -6281,6 +6309,14 @@ def add_component(
             "default": d,
             **({"no_ctor": True} if n in no_ctor_names_ else {}),
             **({"controllable": True} if n in controllable_names_ else {}),
+            # gh-1761: TOML-only, so only a replay (`_apply._object_kwargs`)
+            # passes it -- dropped here, the replayed manifest has no hint
+            # and every file rendered from it calls the plain converter.
+            **(
+                {"str_hint": state_str_hints_[n]}
+                if n in (state_str_hints_ or {})
+                else {}
+            ),
         }
         for n, t, d in vars_
     ]
@@ -7234,6 +7270,13 @@ def _reparse_or_raise(text: str) -> dict:
         ) from exc
 
 
+#: The ``[[<obj>.state]]`` keys `_dump` writes by name, in its own order;
+#: the rest of `STATE_KEYS` is written after them, derived (gh-1761).
+_STATE_KEYS_WRITTEN = frozenset(
+    {"name", "type", "default", "opaque", "no_ctor", "controllable"}
+)
+
+
 def _dump(cfg: dict) -> str:
     lines: list[str] = []
 
@@ -7667,6 +7710,15 @@ def _dump(cfg: dict) -> str:
                 lines.append("no_ctor = true")
             if s.get("controllable"):
                 lines.append("controllable = true")
+            # gh-1761: every other `STATE_KEYS` key, DERIVED as gh-1242 does
+            # for a property. This chain was a list, and it was a key behind:
+            # gh-1493's `doc` and gh-1761's `str_hint` were both dropped by
+            # any rewrite that goes through this dumper (`jm split-objects`,
+            # `jm migrate-to-fragments`), with no error.
+            for _k in sorted(_STATE_KEYS - _STATE_KEYS_WRITTEN):
+                _v = s.get(_k)
+                if _v not in (None, "", False, [], {}):
+                    lines.append(f"{_k} = {_toml_value(_v)}")
             lines.append("")
         # gh-999: the DECLARATION round-trips, not the expansion. A grouped
         # param carries `GROUP_ORIGIN_KEY` and is skipped here; the

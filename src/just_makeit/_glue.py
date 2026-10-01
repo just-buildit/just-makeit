@@ -136,6 +136,8 @@ def component_ctx(
             # module .pyi and nothing else.
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
             csym=ctx["csym"],
+            # gh-1761: an array state field's `set_<name>` str_hint.
+            str_hints=C.state_str_hints(cfg, object_name),
         )
     )
     ctx.update(Ctx.make_perf_ctx(C.is_perf(cfg)))
