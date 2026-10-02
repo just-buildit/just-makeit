@@ -261,6 +261,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1651_class_name_imports.py \
                     tests/test_gh1599_public_flags.py \
                     tests/test_stub_conformance.py \
+                    tests/test_gh1724_array_stub_mypy.py \
                     tests/test_gh746_py_format_command.py \
                     tests/test_gh746_formatter_fixed_point.py \
                     tests/test_gh758_format_convergence.py \
