@@ -320,6 +320,23 @@ def reason_raise_c(
     )
 
 
+#: The conversion a `format_raise_c` slot names for a C ``double`` (gh-1785).
+#: Deliberately not a printf conversion: ``PyErr_Format`` formats through
+#: ``PyUnicode_FromFormatV``, which has NO floating-point conversion, so
+#: ``%g`` compiled and then raised ``SystemError: invalid format string``
+#: on the error path instead of the declared exception. The value is
+#: rendered by ``PyOS_double_to_string(v, 'r', 0, 0, NULL)`` -- Python's own
+#: ``repr`` of the float, so ``0.1`` reads ``0.1`` and nothing is rounded to
+#: six digits -- into a temporary that reaches the format as ``%s``.
+DOUBLE_REPR = "repr(double)"
+
+#: Every conversion ``PyUnicode_FromFormatV`` accepts that a slot may name
+#: (besides `DOUBLE_REPR`). Checked when the raise is RENDERED, because
+#: CPython checks it only when the raise FIRES -- and the error path is the
+#: one least likely to run before a release (gh-1785).
+_FROMFORMAT_CONVERSION = re.compile(r"%(?:(?:l|ll|z)?[diux]|[cspAURSV])")
+
+
 #: A `{name}` slot in an author's message. Only a bare identifier in braces
 #: counts, so any other brace in ordinary prose stays literal and needs no
 #: escape of its own -- an author writing `{}` or `a {b c} d` means it.
@@ -385,7 +402,10 @@ def format_raise_c(
         ``name -> (conversion, argument expression)``, already resolved by
         the caller -- it is the caller that knows what is in scope at the
         point of the raise. Every name `placeholders` finds must be present;
-        a missing one is refused at declaration time, not here.
+        a missing one is refused at declaration time, not here. The
+        conversion is one ``PyUnicode_FromFormatV`` accepts, or
+        `DOUBLE_REPR` for a ``double``; any other raises here rather than
+        ``SystemError`` in the generated binding.
     indent : int
         Column for the rendered literal's continuation lines.
     ret : bool
@@ -404,11 +424,35 @@ def format_raise_c(
                          (long long)n,
                          (long long)ring_get_capacity(self->handle));
             return NULL;
+
+    A ``double`` slot is rendered to text first and freed after the raise,
+    on every path -- ``PyMem_Free(NULL)`` is a no-op. A rendering that fails
+    has already set ``MemoryError``, so the declared raise is skipped rather
+    than handed a NULL ``%s``. The block makes the temporaries declarations
+    a ``case`` label may precede, and one statement an ``else`` may take:
+
+    >>> print(format_raise_c(
+    ...     "ValueError", "gain {g} is out of range, {g} again",
+    ...     {"g": (DOUBLE_REPR, "(double)g")}, indent=8), end="")
+            {
+                char *_repr0 = PyOS_double_to_string(
+                    (double)g, 'r', 0, 0, NULL);
+                if (_repr0)
+                    PyErr_Format(PyExc_ValueError,
+            "gain %s is out of range, %s again",
+                                 _repr0,
+                                 _repr0);
+                PyMem_Free(_repr0);
+            }
+            return NULL;
     """
     names = placeholders(message)
     if not names:
         return empty_raise_c(category, message, indent=indent, ret=ret)
     fmt, args, pos = "", [], 0
+    #: name -> (C local, double expression), one per `DOUBLE_REPR` NAME, so
+    #: a slot named twice is rendered and freed once.
+    reprs: "dict[str, tuple[str, str]]" = {}
     for match in _PLACEHOLDER_RE.finditer(message):
         name = match.group(1)
         # Literal prose between slots: every `%` doubled, so it prints as
@@ -428,17 +472,52 @@ def format_raise_c(
                 f"validated against."
             )
         conversion, expr = slots[name]
+        if conversion == DOUBLE_REPR:
+            if name not in reprs:
+                reprs[name] = (f"_repr{len(reprs)}", expr)
+            conversion, expr = "%s", reprs[name][0]
+        elif not _FROMFORMAT_CONVERSION.fullmatch(conversion):
+            raise ValueError(
+                f"format_raise_c: {{{name}}} in {message!r} names the "
+                f"conversion {conversion!r}, which PyErr_Format does not "
+                f"accept -- the raise would be SystemError when it fires. "
+                f"A double slot is DOUBLE_REPR."
+            )
         fmt += conversion
         args.append(expr)
         pos = match.end()
     fmt += message[pos:].replace("%", "%%")
-    # Aligned under the open paren, as `_rc_raise_c`'s own varargs are.
-    pad = " " * len("        PyErr_Format(")
+    tail = "        return NULL;\n" if ret else ""
+    if not reprs:
+        # Aligned under the open paren, as `_rc_raise_c`'s own varargs are.
+        pad = " " * len("        PyErr_Format(")
+        joined = f",\n{pad}".join(args)
+        return (
+            f"        PyErr_Format(PyExc_{category},\n"
+            f"{_c_string_literal(fmt, indent)},\n"
+            f"{pad}{joined});\n" + tail
+        )
+    temps = "".join(
+        f"            char *{local} = PyOS_double_to_string(\n"
+        f"                {expr}, 'r', 0, 0, NULL);\n"
+        for local, expr in reprs.values()
+    )
+    ready = " && ".join(local for local, _ in reprs.values())
+    pad = " " * len("                PyErr_Format(")
     joined = f",\n{pad}".join(args)
+    frees = "".join(
+        f"            PyMem_Free({local});\n" for local, _ in reprs.values()
+    )
     return (
-        f"        PyErr_Format(PyExc_{category},\n"
-        f"{_c_string_literal(fmt, indent)},\n"
-        f"{pad}{joined});\n" + ("        return NULL;\n" if ret else "")
+        "        {\n"
+        + temps
+        + f"            if ({ready})\n"
+        + f"                PyErr_Format(PyExc_{category},\n"
+        + f"{_c_string_literal(fmt, indent)},\n"
+        + f"{pad}{joined});\n"
+        + frees
+        + "        }\n"
+        + tail
     )
 
 
