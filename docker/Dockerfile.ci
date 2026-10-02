@@ -35,7 +35,7 @@ RUN apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 update -qq \
 
 FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
-ARG APT_SNAPSHOT=20261001T000000Z
+ARG APT_SNAPSHOT=20261002T000000Z
 ARG APT_PACKAGES
 # What CI needs beyond the dev group: git for actions/checkout (without it
 # the action falls back to a tarball, and the suite's release gates read
