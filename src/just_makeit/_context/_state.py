@@ -1294,21 +1294,16 @@ def _build_no_state_init_ctx(
 
     scalar_call_str = create_call_args
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
-        # gh-1825: a failed acquisition releases every array acquired before
-        # it; a bare `return -1` leaked them.
-        ocleanup = "".join(
-            f" Py_DECREF({n}_arr);" for n in allocated
-        ) + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
         if ondim == 2:
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{{ocleanup} return -1; }}\n"
+                f"        if (!{oname}_arr) {{ return -1; }}\n"
                 f"        if (PyArray_NDIM({oname}_arr) != 2) {{\n"
                 f"            PyErr_SetString(PyExc_ValueError,\n"
                 f'                            "{oname} must be a 2-D array");\n'
-                f"           {ocleanup} Py_DECREF({oname}_arr); return -1;\n"
+                f"            Py_DECREF({oname}_arr); return -1;\n"
                 f"        }}\n"
                 f"        size_t {oname}_dim0 ="
                 f" (size_t)PyArray_DIM({oname}_arr, 0);\n"
@@ -1329,7 +1324,7 @@ def _build_no_state_init_ctx(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{{ocleanup} return -1; }}\n"
+                f"        if (!{oname}_arr) {{ return -1; }}\n"
                 f"        size_t {oname}_len ="
                 f" (size_t)PyArray_SIZE({oname}_arr);\n"
                 # gh-1827: the argument list its scaffolded prototype is
