@@ -168,7 +168,18 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
-_install_apt()    { $SUDO apt-get update -qq && $SUDO apt-get install -y cmake gcc pkg-config; }
+# Retries cover only a request that ERRORS; a stalled mirror never errors, so
+# without a per-request timeout it hangs the caller's job (gh-1792).
+_install_apt()    {
+    $SUDO apt-get -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        update -qq \
+        && $SUDO apt-get -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        install -y cmake gcc pkg-config
+}
 _install_dnf()    { $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config; }
 _install_pacman() { $SUDO pacman -Sy --noconfirm cmake gcc pkgconf; }
 _install_zypper() { $SUDO zypper install -y cmake gcc pkgconfig; }

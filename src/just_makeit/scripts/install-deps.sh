@@ -143,7 +143,19 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
-_install_apt()    { info "apt"; $SUDO apt-get -o Acquire::Retries=3 update -qq && $SUDO apt-get -o Acquire::Retries=3 install -y cmake gcc pkg-config patchelf; }
+# Retries cover only a request that ERRORS; a stalled mirror never errors, so
+# without a per-request timeout it hangs the caller's job (gh-1792).
+_install_apt()    {
+    info "apt"
+    $SUDO apt-get -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        update -qq \
+        && $SUDO apt-get -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        install -y cmake gcc pkg-config patchelf
+}
 _install_dnf()    { info "${MGR}"; $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config patchelf; }
 _install_pacman() { info "pacman"; $SUDO pacman -Sy --noconfirm cmake gcc pkgconf patchelf; }
 _install_zypper() { info "zypper"; $SUDO zypper install -y cmake gcc pkgconfig patchelf; }

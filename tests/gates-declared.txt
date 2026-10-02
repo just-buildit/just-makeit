@@ -103,6 +103,7 @@ test_gh1765_script_param_notes
 test_gh1777_refusal_in_a_real_process
 test_gh1777_refusal_not_traceback
 test_gh1777_refusal_ratchet
+test_gh1792_apt_timeouts
 test_gh949_outdated
 test_lint_ssot
 test_one_replay_path
