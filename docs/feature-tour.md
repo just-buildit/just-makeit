@@ -119,11 +119,11 @@ just-makeit object fir --module signal \
 
 The three init-params demonstrate the three kinds:
 
-| Param                                              | Form                | Python annotation                            |
-| -------------------------------------------------- | ------------------- | -------------------------------------------- |
-| `n_taps:int:64`                                    | scalar with default | `n_taps: int = 64`                           |
-| `coeff:float _Complex[]`                           | required array      | `coeff: NDArray[np.complex64]`               |
-| `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array  | `bank: NDArray[np.complex64] \| None = None` |
+| Param                                              | Form                | Python annotation                                |
+| -------------------------------------------------- | ------------------- | ------------------------------------------------ |
+| `n_taps:int:64`                                    | scalar with default | `n_taps: int = 64`                               |
+| `coeff:float _Complex[]`                           | required array      | `coeff: npt.NDArray[np.complex64]`               |
+| `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array  | `bank: npt.NDArray[np.complex64] \| None = None` |
 
 When `bank` is provided, `fir_create_poly(dim0, dim1, ptr, n_taps)` is called
 instead of the default `dsp_demo_fir_create(coeff_ptr, coeff_len, n_taps)`.
@@ -182,7 +182,7 @@ just-makeit function magnitude_db --module signal \
 The generated Python stub:
 
 ```python
-def magnitude_db(x: NDArray[np.complex64], floor: float) -> NDArray[np.float32]:
+def magnitude_db(x: npt.NDArray[np.complex64], floor: float) -> NDArray[np.float32]:
     """Magnitude db."""
 ```
 

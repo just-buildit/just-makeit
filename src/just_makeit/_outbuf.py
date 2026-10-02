@@ -172,3 +172,37 @@ def enabled(
         has_arg=has_arg,
         params=params,
     )
+
+
+def element(
+    *,
+    variable_output: bool,
+    record_dtype: str,
+    borrow: object,
+    out_type: str,
+    return_type: str,
+) -> str:
+    """The element C type of a variable-output method's output buffer.
+
+    A ``record_dtype`` names it outright -- the struct the kernel writes rows
+    of (gh-788) -- and wins over ``out_type``, which wins over
+    ``return_type``. A ``T[]`` spelling is reduced to ``T`` (gh-201): the
+    buffer holds elements. ONE answer for the binding's ``*out`` parameter,
+    its ``sizeof`` and data-pointer cast, and the ``out=`` annotation of both
+    ``.pyi`` generators (gh-1724), so they cannot describe different buffers.
+
+    >>> element(variable_output=True, record_dtype="", borrow=None,
+    ...         out_type="float[]", return_type="size_t")
+    'float'
+    >>> element(variable_output=True, record_dtype="rec_t", borrow=None,
+    ...         out_type="", return_type="size_t")
+    'rec_t'
+    """
+    from . import _record
+
+    src = (
+        record_dtype
+        if _record.is_record_array(variable_output, record_dtype, borrow)
+        else (out_type if (variable_output and out_type) else return_type)
+    )
+    return src[:-2] if src.endswith("[]") else src

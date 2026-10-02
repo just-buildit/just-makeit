@@ -15,6 +15,7 @@ the generated `src/my_dsp/gain.pyi` looks like:
 
 ```python
 import numpy as np
+import numpy.typing as npt
 from numpy.typing import NDArray
 
 class Gain:
@@ -51,8 +52,8 @@ class Gain:
     def step(self, x: float) -> float:
         """Process one input sample."""
 
-    def steps(self, x: NDArray[np.float32],
-              out: NDArray[np.float32] | None = None) -> NDArray[np.float32]:
+    def steps(self, x: npt.NDArray[np.float32],
+              out: npt.NDArray[np.float32] | None = None) -> NDArray[np.float32]:
         """Process a samples array. Returns ndarray, or fills out= if supplied."""
 
     def get_gain(self) -> float:
@@ -113,3 +114,26 @@ is generated and passes automatically. Non-round-trip defaults (e.g.
 The stub is regenerated on every `just-makeit object`, `method`, `property`,
 and `function` call. Manual edits to the generated file are overwritten —
 put any extra annotations in a separate `py.typed` marker or alongside file.
+
+## How an array parameter is annotated
+
+Every array parameter, on every surface (constructor, method, module
+function, `steps()`, a property setter, a handle or capsule method), is
+annotated with exactly the element type the manifest declares:
+
+| Declared                                      | Stub annotation                                             |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| `taps:float[]`                                | `npt.NDArray[np.float32]`                                   |
+| `bits:uint8_t[]` (an input)                   | `npt.NDArray[np.uint8] \| bytes \| bytearray \| memoryview` |
+| `--out-param o:uint8_t[]`, `mutable`          | `npt.NDArray[np.uint8]`                                     |
+| `real_type = "float[]"` on `float _Complex[]` | `npt.NDArray[np.complex64] \| npt.NDArray[np.float32]`      |
+| `bank:float[][]:optional:<create_fn>`         | `npt.NDArray[np.float32] \| None`                           |
+
+This is deliberately narrower than what the binding accepts when run: numpy
+still converts a list, a tuple or an ndarray of another safely castable dtype,
+so `Fir([1.0, 2.0])` works, but a type checker asks for the declared ndarray.
+A one-byte integer input also names the byte buffers, because reading one
+directly is jm's own behaviour rather than numpy's; a writable buffer does not,
+since the binding needs a real ndarray to write into. One helper,
+`_types.array_param_annotation`, spells all of them, so the two stub
+generators cannot disagree.

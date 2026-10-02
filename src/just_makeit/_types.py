@@ -482,13 +482,19 @@ def string_default_literal(default: str) -> str:
 def py_param_annotation(
     base: str, ctype: str, default: str, *, writable: bool = False
 ) -> str:
-    """*base*, widened to ``| None`` when the parameter accepts ``None``.
+    """The ``.pyi`` annotation of one parameter of *ctype*.
 
-    The annotation and the format char are one decision read in two places, so
-    they are derived from the same predicate. A stub saying ``str`` for a
-    parameter the binding accepts ``None`` on is the mismatch gh-805 §E is the
-    worked example of -- the module-aggregated stub offering a call the
-    binding refused.
+    An ARRAY parameter is annotated by :func:`array_param_annotation`, its one
+    spelling on every face (gh-1724), and *base* is not read: a caller holding
+    a parameter of either kind asks here and cannot spell an array itself.
+    *writable* is :func:`param_writable` of it, passed through.
+
+    Any other parameter is *base*, widened to ``| None`` when the parameter
+    accepts ``None``. The annotation and the format char are one decision read
+    in two places, so they are derived from the same predicate. A stub saying
+    ``str`` for a parameter the binding accepts ``None`` on is the mismatch
+    gh-805 §E is the worked example of -- the module-aggregated stub offering a
+    call the binding refused.
 
     Examples
     --------
@@ -496,37 +502,14 @@ def py_param_annotation(
     'str | None'
     >>> py_param_annotation("str", "const char *", '"x"')
     'str'
-
-    A one-byte integer array also takes a byte buffer, one element per byte
-    (gh-1700: the binding's ``jm_array_arg`` reads it with
-    ``PyArray_FromBuffer``), so the stub admits the three builtin ones:
-
-    >>> py_param_annotation("NDArray[np.uint8]", "uint8_t[]", "")
-    'NDArray[np.uint8] | bytes | bytearray | memoryview'
-    >>> py_param_annotation("NDArray[np.float32]", "float[]", "")
-    'NDArray[np.float32]'
-
-    Only an INPUT does (gh-1733). A *writable* parameter -- ``out`` or
-    ``mutable``, :func:`param_writable` -- is the caller's own buffer for C to
-    fill, and its binding refuses anything but a writable ndarray of the exact
-    dtype (`_coerce.out_buffer_guard`), so a ``bytes`` could never be one and a
-    ``bytearray`` is refused too. The caller passes ``param_writable(p)``:
-
-    >>> py_param_annotation("NDArray[np.uint8]", "uint8_t[]", "",
-    ...                     writable=True)
-    'NDArray[np.uint8]'
+    >>> py_param_annotation("ignored", "float[]", "")
+    'npt.NDArray[np.float32]'
     """
+    if ctype.endswith("[]"):
+        return array_param_annotation(ctype, writable=writable)
     if is_nullable_string(ctype, default):
         return f"{base} | None"
-    if takes_byte_buffer(ctype) and not writable:
-        return f"{base} | {BYTE_BUFFER_PY_TYPES}"
     return base
-
-
-#: The builtin byte buffers a one-byte integer array parameter accepts
-#: (gh-1700). ``collections.abc.Buffer`` would say it exactly but is 3.12+,
-#: and a stub must parse on every Python jm supports.
-BYTE_BUFFER_PY_TYPES = "bytes | bytearray | memoryview"
 
 
 def takes_byte_buffer(ctype: str) -> bool:
@@ -536,6 +519,9 @@ def takes_byte_buffer(ctype: str) -> bool:
     -- the element types for which the binding's ``jm_array_arg`` takes one
     element per byte (gh-1700). Keyed on the numpy dtype, as the C helper is keyed on
     the typenum, so a new one-byte spelling cannot be missed by one side.
+
+    The stub says so too, for an input: :func:`array_param_annotation` widens
+    such a parameter by :data:`BYTE_BUFFER_PY_TYPES`.
 
     >>> takes_byte_buffer("uint8_t[]"), takes_byte_buffer("int8_t[]")
     (True, True)
@@ -548,47 +534,79 @@ def takes_byte_buffer(ctype: str) -> bool:
     return bool(meta) and meta.get("py_type") in ("np.uint8", "np.int8")
 
 
-def array_param_annotation(ctype: str, also: str = "") -> str:
-    """The ``.pyi`` annotation of an array constructor argument of *ctype*.
+#: The builtin byte buffers a one-byte integer array INPUT accepts (gh-1700).
+#: ``collections.abc.Buffer`` would say it exactly but is 3.12+, and a stub
+#: must parse on every Python jm supports.
+BYTE_BUFFER_PY_TYPES = "bytes | bytearray | memoryview"
 
-    gh-1724. The ONE spelling of an array init-param, for every way one is
-    declared -- required, defaulted (``default = "[]"``), optional-array
-    dispatch, ``--array-arg`` -- and for both stub generators, the standalone
-    ``_context/_state`` and the module-aggregated ``_stubs``. Before this the
-    standalone generator wrote ``npt.ArrayLike`` for all of them. That type
-    admits ``str``, which the binding's ``jm_array_arg`` refuses (gh-1700), so
-    ``Fld("0101")`` type-checked and failed only when run; the module peer said
-    ``NDArray[...]`` for the same object.
 
-    It is ``NDArray`` of the element's dtype, through
-    :func:`py_param_annotation`, so a one-byte integer array also admits the
-    byte buffers the binding reads -- the same widening a method parameter
-    gets. *also* is a dtype-dispatch parameter's second element type
-    (``real_type``): the binding takes an array of either and calls a
-    different constructor for each, so the stub names both.
+def array_param_annotation(
+    ctype: str, *, writable: bool = False, also: str = ""
+) -> str:
+    """The ``.pyi`` annotation of an array PARAMETER of element type *ctype*.
+
+    gh-1724. The ONE spelling of an array argument, on every face that takes
+    one -- a constructor argument however it is declared (required, defaulted
+    ``"[]"``, ``--array-arg``, optional dispatch), a method or module-function
+    parameter, a named method's array ``x``, the ``steps()`` input and its
+    ``out=``, an array property's setter, and a handle or capsule method's
+    array -- and for both stub generators, the standalone ``_context`` one and
+    the module-aggregated ``_stubs``. Each face spelled its own before this,
+    and they disagreed: the standalone constructor said ``npt.ArrayLike``
+    (which admits a ``str``) where the module peer said ``NDArray[...]``, and
+    only some faces widened a byte array to ``bytes | bytearray |
+    memoryview`` (gh-1819).
+
+    The annotation states EXACTLY what the jm user declared: ``npt.NDArray``
+    of the element's dtype. This is deliberately narrower than the runtime,
+    which converts whatever numpy accepts -- a list, a tuple, an ndarray of a
+    safely castable dtype -- so a type checker asks for the declared ndarray.
+
+    One widening is jm's own declared behaviour rather than numpy's: a 1-D
+    one-byte integer INPUT reads a byte buffer directly, one element per byte
+    (gh-1700, :func:`takes_byte_buffer`), so it also admits
+    :data:`BYTE_BUFFER_PY_TYPES`. A *writable* parameter (``out`` /
+    ``mutable``, :func:`param_writable`) does not: it is the caller's own
+    buffer for C to fill, and its binding takes only a writable ndarray of the
+    exact dtype (gh-1733).
+
+    *ctype* may be the array type (``float[]``, ``double[][]``) or its element
+    (``float``, as a ``steps()`` input's ``arg_type`` is): a stub annotation
+    does not carry the rank. *also* is a dtype-dispatch parameter's second
+    element type (``real_type``): the binding takes an array of either and
+    calls a different constructor for each, so the stub names both. An element
+    jm has no dtype for -- a ``record_dtype`` struct, which jm never sees the
+    definition of, so its dtype exists only at runtime -- is ``Any``.
 
     >>> array_param_annotation("float[]")
-    'NDArray[np.float32]'
+    'npt.NDArray[np.float32]'
     >>> array_param_annotation("uint8_t[]")
-    'NDArray[np.uint8] | bytes | bytearray | memoryview'
+    'npt.NDArray[np.uint8] | bytes | bytearray | memoryview'
+    >>> array_param_annotation("uint8_t[]", writable=True)
+    'npt.NDArray[np.uint8]'
+    >>> array_param_annotation("uint8_t")
+    'npt.NDArray[np.uint8] | bytes | bytearray | memoryview'
     >>> array_param_annotation("double[][]")
-    'NDArray[np.float64]'
+    'npt.NDArray[np.float64]'
+    >>> array_param_annotation("float _Complex")
+    'npt.NDArray[np.complex64]'
     >>> array_param_annotation("float _Complex[]", also="float[]")
-    'NDArray[np.complex64] | NDArray[np.float32]'
-
-    No spelling of it admits ``str``:
-
-    >>> "str" in array_param_annotation("int8_t[]")
-    False
+    'npt.NDArray[np.complex64] | npt.NDArray[np.float32]'
+    >>> array_param_annotation("my_rec_t")
+    'npt.NDArray[Any]'
     """
-    dtypes = [array_elem_ctype(ctype)] + (
+    elems = [array_elem_ctype(ctype)] + (
         [array_elem_ctype(also)] if also else []
     )
-    base = " | ".join(
-        f"NDArray[{_CTYPE_META.get(e, {}).get('py_type', 'Any')}]"
-        for e in dtypes
+    ann = " | ".join(
+        f"npt.NDArray[{_CTYPE_META.get(e, {}).get('py_type', 'Any')}]"
+        for e in elems
     )
-    return py_param_annotation(base, ctype, "")
+    # An element type is a 1-D array of itself (a `steps()` input).
+    one_d = ctype if ctype.endswith("[]") else f"{ctype}[]"
+    if not writable and takes_byte_buffer(one_d):
+        ann = f"{ann} | {BYTE_BUFFER_PY_TYPES}"
+    return ann
 
 
 def default_type_error(ctype: str, default: str) -> str:

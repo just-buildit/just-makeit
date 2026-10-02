@@ -78,9 +78,9 @@ class TestDtypeDispatch:
 
     def test_pyi_signature_names_both_dtypes(self):
         # gh-1724: the binding takes either element type, so the stub names
-        # both -- and, unlike npt.ArrayLike, neither admits a str.
+        # both declared dtypes, each exactly.
         ctx = _ctx(self.PARAMS)
         assert (
-            "taps: NDArray[np.complex64] | NDArray[np.float32]"
+            "taps: npt.NDArray[np.complex64] | npt.NDArray[np.float32]"
             in ctx["init_params_pyi"]
         )

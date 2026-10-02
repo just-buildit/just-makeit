@@ -540,7 +540,7 @@ n = proc.step(block)   # passes the whole array; returns int
 ```python
 class BufProc:
     def __init__(self, count: np.int32 = 0) -> None: ...
-    def step(self, x: NDArray[np.complex64]) -> int:
+    def step(self, x: npt.NDArray[np.complex64]) -> int:
         """Process one sample."""
     # no steps() — the primary op already takes a buffer
 ```

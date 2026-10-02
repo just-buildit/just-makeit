@@ -38,6 +38,7 @@ from . import _enumc
 from . import _keys
 from . import _incpath as INC
 from . import _csym as CSYM
+from . import _types as T
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc, capsule_unwrap_c
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
@@ -4424,7 +4425,9 @@ def _pyi_field_type(f: dict) -> str:
     if f.get("bytes"):
         return "bytes | None"
     if f.get("complex"):
-        return "NDArray[np.complex64] | None"
+        # gh-1724: a complex stream is an array argument, spelled by the one
+        # helper every face calls.
+        return f"{T.array_param_annotation('float _Complex')} | None"
     scalar = "float" if f["type"] in ("double", "float") else "int"
     if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
         return f"{scalar} | tuple[{scalar}, {scalar}]"
@@ -4550,6 +4553,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         # `.pyi` is never executed, so this adds no runtime dependency.
         "from typing_extensions import disjoint_base",
         "import numpy as np",
+        "import numpy.typing as npt",
         "from numpy.typing import NDArray",
         # gh-1711: the class an owned-pointer field is bound from.
         *sorted({f["_py_import"] for f in src_fields if f.get("_py_import")}),

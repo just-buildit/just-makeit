@@ -236,7 +236,7 @@ def run(root: Path) -> None:
     )
     assert "class FirFilter:" in pyi
     assert "def step(self, x: complex) -> complex:" in pyi
-    assert "def steps(self, x: NDArray[np.complex64]" in pyi
+    assert "def steps(self, x: npt.NDArray[np.complex64]" in pyi
     assert "n_taps" in pyi
 
     # The header enrichment (step 5b) reached the class docstring: the real

@@ -2118,6 +2118,18 @@ class PyFace(NamedTuple):
 CLOSE_DOC = "Release the handle and free resources."
 
 
+def _arg_array_ann(a: dict) -> str:
+    """The ``.pyi`` annotation of one array ``arg`` of a handle method.
+
+    gh-1724: the one helper every face calls, of the arg's DECLARED type. This
+    said ``NDArray[Any]`` for every array although the binding converts to the
+    declared dtype; a ``writable`` arg is the caller's buffer (gh-1733).
+    """
+    return T.array_param_annotation(
+        str(a["type"]), writable=bool(a.get("writable"))
+    )
+
+
 def py_face(m: dict) -> PyFace:
     """The Python-facing shape of one handle method."""
     name = m["name"]
@@ -2149,9 +2161,10 @@ def py_face(m: dict) -> PyFace:
         _d_out = writable_out[0]
         _d_in = [a for a in arrays if a is not _d_out][0]
         _d_scalars = [a for a in margs if a not in arrays]
+        # gh-1724: each array arg by the one helper, of its declared type.
         sig = (
-            f"self, {_d_in['name']}: NDArray[Any]"
-            f", {_d_out['name']}: NDArray[Any]"
+            f"self, {_d_in['name']}: {_arg_array_ann(_d_in)}"
+            f", {_d_out['name']}: {_arg_array_ann(_d_out)}"
         )
         for a in _d_scalars:
             dflt = a.get("default")
@@ -2180,7 +2193,7 @@ def py_face(m: dict) -> PyFace:
     elif arrays:
         # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
         # `= ...` (gh-178 review #6).
-        parts = ["self", "x: NDArray[Any]"] + [
+        parts = ["self", f"x: {_arg_array_ann(arrays[0])}"] + [
             f"{s['name']}: {_pyi_scalar(s['type'])}"
             + (" = ..." if s.get("default") is not None else "")
             for s in scalars
@@ -2228,7 +2241,7 @@ def py_face(m: dict) -> PyFace:
         [
             (
                 a["name"],
-                "NDArray[Any]"
+                _arg_array_ann(a)
                 if str(a.get("type", "")).endswith("[]")
                 else _pyi_arg_ann(a),
             )
@@ -2276,6 +2289,7 @@ def render_pyi(
         "from typing import Any, final",
         "",
         "import numpy as np",
+        "import numpy.typing as npt",
         "from numpy.typing import NDArray",
         "",
         # A handle type is Py_TPFLAGS_DEFAULT (never BASETYPE), so it cannot be

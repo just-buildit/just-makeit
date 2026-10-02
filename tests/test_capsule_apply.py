@@ -116,8 +116,8 @@ class TestRenderPyi:
         assert "State = Any" not in s
         assert "def ddcr_create(norm_freq: float, rate: float) -> Any:" in s
         assert (
-            "def ddcr_execute(state: Any, x: NDArray[Any], "
-            "out: NDArray[Any]) -> NDArray[Any]: ..." in s
+            "def ddcr_execute(state: Any, x: npt.NDArray[np.float32], "
+            "out: npt.NDArray[np.complex64]) -> NDArray[Any]: ..." in s
         )
         assert "def ddcr_reset(state: Any) -> None: ..." in s
         assert "def ddcr_destroy(state: Any) -> None: ..." in s

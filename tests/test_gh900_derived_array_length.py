@@ -131,7 +131,7 @@ def test_it_is_not_a_python_argument(tmp_path):
     assert "num_taps" not in pyi, (
         f"the stub asks the caller for a length jm derives:\n{pyi[:600]}"
     )
-    assert "def __init__(self, h: NDArray[np.float32]) -> None: ..." in pyi
+    assert "def __init__(self, h: npt.NDArray[np.float32]) -> None: ..." in pyi
 
 
 def test_without_it_the_default_shape_is_unchanged(tmp_path):

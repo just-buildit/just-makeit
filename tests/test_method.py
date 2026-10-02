@@ -2135,7 +2135,7 @@ class TestMethodSingleRecord:
         # indexing type-check exactly as they did before.
         pyi = (self._scaffold(tmp_path) / "src/p/tm.pyi").read_text("utf-8")
         assert (
-            "def analyze(self, x: NDArray[np.complex64])"
+            "def analyze(self, x: npt.NDArray[np.complex64])"
             " -> ToneMetrics:" in pyi
         )
         assert "class ToneMetrics(tuple[float, float, int]):" in pyi
@@ -2215,7 +2215,7 @@ class TestMethodSingleRecord:
             )
         )
         assert (
-            "def analyze(self, x: NDArray[np.complex64], lo: float,"
+            "def analyze(self, x: npt.NDArray[np.complex64], lo: float,"
             " hi: float, guard_hz: float = 0.0) -> ToneMetrics:" in pyi
         )
         assert "class ToneMetrics(tuple[float, float]):" in pyi

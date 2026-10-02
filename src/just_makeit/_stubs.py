@@ -1881,6 +1881,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         )
 
     # step() / steps()
+    # gh-1724 (gh-1819): the array input and the caller's `out=` buffer are
+    # spelled by the one helper, as on the standalone face; only the return
+    # keeps the ndarray it is.
+    _x_arr = T.array_param_annotation(arg_type)
+    _out_buf = T.array_param_annotation(return_type, writable=True)
     if no_step:
         pass
     elif arg_type.endswith("[]") and return_type.endswith("[]"):
@@ -1891,8 +1896,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         ctrl = C.controllable_state_vars(cfg, obj)
         params = [
             "        self,",
-            f"        x: NDArray[{_np(arg_type)}],",
-            f"        out: NDArray[{_np(return_type)}] | None = None,",
+            f"        x: {_x_arr},",
+            f"        out: {_out_buf} | None = None,",
         ]
         params += [f"        {n}: {_py(ct)} = ..." for n, ct in ctrl]
         lines += [
@@ -1903,19 +1908,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         ]
         lines += _builtin_doc(
             f"{csym}_steps",
-            [("x", f"NDArray[{_np(arg_type)}]")],
+            [("x", _x_arr)],
             f"NDArray[{_np(return_type)}]",
             "Apply the blockwise transform to the input array.",
         )
     elif arg_type.endswith("[]"):
         lines += [
             "",
-            f"    def step(self, x: {_py(arg_type)}{_ctrl_kw}"
+            f"    def step(self, x: {_x_arr}{_ctrl_kw}"
             f"{_ctrl_posonly}) -> {_py(return_type)}:",
         ]
         lines += _builtin_doc(
             f"{csym}_step",
-            [("x", _py(arg_type))],
+            [("x", _x_arr)],
             _py(return_type),
             "Process one buffer of samples.",
         )
@@ -1938,14 +1943,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if return_type != "void":
             lines += [
                 "",
-                f"    def steps(self, x: NDArray[{_np(arg_type)}],"
-                f" out: NDArray[{_np(return_type)}] | None = None"
+                f"    def steps(self, x: {_x_arr},"
+                f" out: {_out_buf} | None = None"
                 f"{_ctrl_kw})"
                 f" -> NDArray[{_np(return_type)}]:",
             ]
             lines += _builtin_doc(
                 f"{csym}_steps",
-                [("x", f"NDArray[{_np(arg_type)}]")],
+                [("x", _x_arr)],
                 f"NDArray[{_np(return_type)}]",
                 # gh-867: the standalone face's exact wording. Two
                 # spellings of one canned summary is the same drift one
@@ -1956,12 +1961,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             lines += [
                 "",
-                f"    def steps(self, x: NDArray[{_np(arg_type)}]"
-                f"{_ctrl_kw}) -> None:",
+                f"    def steps(self, x: {_x_arr}{_ctrl_kw}) -> None:",
             ]
             lines += _builtin_doc(
                 f"{csym}_steps",
-                [("x", f"NDArray[{_np(arg_type)}]")],
+                [("x", _x_arr)],
                 "None",
                 # gh-881: the standalone face's wording. These canned
                 # summaries drifted per shape; the standalone is the
@@ -2085,16 +2089,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # arg_type means an array input here, not a scalar.
         _x_ann = ""
         if m_arg != "void":
+            # gh-1724: an array `x` is spelled by the one helper.
             _x_ann = (
-                f"NDArray[{_np(m_arg)}]"
-                if (m_var and not m_arg.endswith("[]"))
+                T.array_param_annotation(m_arg)
+                if (m_var or m_arg.endswith("[]"))
                 else _py(m_arg)
             )
-            # gh-1700: an array `x` of one-byte integers takes a byte buffer.
-            if _x_ann.startswith("NDArray["):
-                _x_ann = T.py_param_annotation(
-                    _x_ann, m_arg.removesuffix("[]") + "[]", ""
-                )
             param_parts.append(f"x: {_x_ann}")
         for p in m_params:
             # gh-432: a capsule param takes the named PyCapsule, a wrapper
@@ -2250,8 +2250,21 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 f"{_count_kw}: int = "
                 f"{_gluedoc.count_stub_default(m.get('count_default', ''))}"
             )
+        # gh-1724: the caller's buffer, spelled by the one helper as a
+        # writable array of the element the binding writes -- the same
+        # `_outbuf.element` the standalone peer and the binding read.
+        _out_ann = T.array_param_annotation(
+            _outbuf.element(
+                variable_output=bool(m_var),
+                record_dtype=str(m.get("record_dtype", "") or "").strip(),
+                borrow=m.get("borrow"),
+                out_type=m.get("out_type") or "",
+                return_type=m_ret,
+            ),
+            writable=True,
+        )
         if _stub_enable_out:
-            param_parts.append(f"out: {ret_ann} | None = None")
+            param_parts.append(f"out: {_out_ann} | None = None")
 
         sig = ", ".join(param_parts)
         # (name, annotation) for the Python-facing args, for the doc builder.
@@ -2291,7 +2304,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         if _stub_count_arg:
             _py_params.append((_count_kw, "int"))
         if _stub_enable_out:
-            _py_params.append(("out", f"{ret_ann} | None"))
+            _py_params.append(("out", f"{_out_ann} | None"))
         _doc = _method_doc_lines(
             _blk,
             m_name,
@@ -2690,14 +2703,13 @@ def numpy_imports(body: str) -> "list[str]":
     >>> numpy_imports("    def f(self) -> NDArray[Any]: ...")
     ['from numpy.typing import NDArray']
 
-    ``npt`` is asked for too. An array init-param was annotated
-    ``npt.ArrayLike`` until gh-1724 (it is ``T.array_param_annotation`` now),
-    and a stub naming ``npt`` without the import failed ``mypy`` on every
-    object with an array constructor argument (gh-1700). A hand-written
-    ``.pyi`` fragment may still name it:
+    ``npt`` is asked for too: every array parameter is ``npt.NDArray[...]``
+    (``T.array_param_annotation``, gh-1724), and a stub naming ``npt`` without
+    the import failed ``mypy`` (gh-1700). That spelling does not ask for the
+    bare ``NDArray`` import, which would then be unused:
 
-    >>> numpy_imports("    def __init__(self, h: npt.ArrayLike) -> None: ...")
-    ['import numpy.typing as npt']
+    >>> numpy_imports("    def f(self, h: npt.NDArray[np.uint8]) -> None: ...")
+    ['import numpy as np', 'import numpy.typing as npt']
     """
     code = _DOCSTRING_RE.sub("", body)
     out = []
@@ -2705,7 +2717,8 @@ def numpy_imports(body: str) -> "list[str]":
         out.append("import numpy as np")
     if _re.search(r"\bnpt\.", code):
         out.append("import numpy.typing as npt")
-    if _re.search(r"\bNDArray\b", code):
+    # Not `npt.NDArray`, which the `npt` import already covers (gh-1724).
+    if _re.search(r"(?<!\.)\bNDArray\b", code):
         out.append("from numpy.typing import NDArray")
     return out
 

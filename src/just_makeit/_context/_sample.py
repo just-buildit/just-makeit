@@ -5,6 +5,7 @@ Builds the sample-type portion of the template rendering dict.
 
 from __future__ import annotations
 
+from .. import _types as T
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -420,7 +421,8 @@ def make_sample_ctx(
             "out_np_dtype": out_np_dtype,
             "in_np_enum": in_np_enum,
             "out_np_enum": out_np_enum,
-            "in_py_hint": f"NDArray[{in_np_dtype}]",
+            # gh-1724: the input array, spelled by the one helper.
+            "in_py_hint": T.array_param_annotation(arg_type),
             "out_py_hint": f"NDArray[{out_np_dtype}]",
             "out_py_isinstance": f"NDArray[{out_np_dtype}]",
             "in_py_test_val": f"np.zeros(4, dtype={in_np_dtype})",
@@ -459,8 +461,9 @@ def make_sample_ctx(
             "pyi_steps_stub": (
                 f"\n    def steps(\n"
                 f"        self,\n"
-                f"        x: NDArray[{in_np_dtype}],\n"
-                f"        out: NDArray[{out_np_dtype}] | None = None,\n"
+                f"        x: {T.array_param_annotation(arg_type)},\n"
+                f"        out: {T.array_param_annotation(return_type, writable=True)}"
+                f" | None = None,\n"
                 f"    ) -> NDArray[{out_np_dtype}]: ...\n"
             ),
             "bench_step_py": _bw_step_py,
@@ -627,7 +630,8 @@ def make_sample_ctx(
             "out_np_dtype": out_np_dtype,
             "in_np_enum": in_np_enum,
             "out_np_enum": _NP_ENUM[out_np_dtype],
-            "in_py_hint": f"NDArray[{in_np_dtype}]",
+            # gh-1724: the input array, spelled by the one helper.
+            "in_py_hint": T.array_param_annotation(arg_type),
             "out_py_hint": (
                 "None" if is_void_return else _KIND_PY_ISINSTANCE[ret["kind"]]
             ),
@@ -768,15 +772,19 @@ def make_sample_ctx(
         "pure_x_parse_arg": pure_x_parse_arg,
         "pure_x_to_c": pure_x_to_c,
         "pyi_steps_stub": (
-            f"\n    def steps(self, x: NDArray[{in_np_dtype}], "
-            f"out: NDArray[{out_np_dtype}] | None = None) "
+            # gh-1724 (gh-1819): the input and the caller's `out=` buffer
+            # are spelled by the one helper.
+            f"\n    def steps(self, x: {T.array_param_annotation(arg_type)}, "
+            f"out: {T.array_param_annotation(return_type, writable=True)}"
+            " | None = None) "
             f"-> NDArray[{out_np_dtype}]:\n"
             '        """Process a samples array. Returns ndarray, '
             'or fills out= if supplied."""\n'
         )
         if not is_void_return
         else (
-            f"\n    def steps(self, x: NDArray[{in_np_dtype}]) -> None:\n"
+            f"\n    def steps(self, x: {T.array_param_annotation(arg_type)})"
+            " -> None:\n"
             '        """Process a block of input samples."""\n'
         ),
         "bench_block_consts": bench_block_consts,

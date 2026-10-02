@@ -155,8 +155,9 @@ def state_accessor_stubs(
                     "        **Do not use after destroy().**",
                     '        """',
                     "",
+                    # gh-1724: an input array, spelled by the one helper.
                     f"    def set_{name}(self, value:"
-                    f" NDArray[{py_type}]) -> None:",
+                    f" {T.array_param_annotation(elem_ct)}) -> None:",
                     f'        """Set {name} from a {py_type}'
                     f' array of length {size}."""',
                 ]
@@ -1229,7 +1230,8 @@ def _build_no_state_init_ctx(
     # gh-1724: every array argument -- `--array-arg`, required, defaulted,
     # optional dispatch -- is annotated by `T.array_param_annotation`, the one
     # spelling the module-aggregated peer (`_stubs._obj_stub`) calls too. This
-    # wrote `npt.ArrayLike`, which admits the `str` the binding refuses.
+    # wrote `npt.ArrayLike`, which stated no element type while the module
+    # peer said `NDArray[...]` for the same object.
     _any_arr_meta = {
         **_arr_meta,
         **_def_arr_meta,

@@ -843,8 +843,10 @@ class TestComplexField:
 
     def test_pyi_annotation(self):
         pyi = _composer.render_pyi(_complex_cfg(), "wfm_compose")
-        assert "symbols: NDArray[np.complex64] | None" in pyi
-        assert "symbols : NDArray[np.complex64] | None, default None" in pyi
+        assert "symbols: npt.NDArray[np.complex64] | None" in pyi
+        assert (
+            "symbols : npt.NDArray[np.complex64] | None, default None" in pyi
+        )
 
     def test_complex_skipped_in_generic_json(self):
         """A complex field is omitted from the generic cJSON serializer (it

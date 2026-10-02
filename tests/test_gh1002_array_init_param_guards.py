@@ -202,7 +202,7 @@ class TestTheWorkingSpellingStillWorks:
         pyi = (root / "src/proj/frame.pyi").read_text(encoding="utf-8")
         for n in ("preamble", "sync", "payload"):
             assert (
-                f"{n}: NDArray[np.uint8] | bytes | bytearray | memoryview"
+                f"{n}: npt.NDArray[np.uint8] | bytes | bytearray | memoryview"
                 " = ..."
             ) in pyi
 

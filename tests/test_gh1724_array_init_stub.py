@@ -1,25 +1,43 @@
-"""gh-1724: an array constructor argument's stub never admits ``str``.
+"""gh-1724: every array parameter's stub is spelled by ONE helper.
 
-After gh-1700 every generated binding refuses a ``str`` for an array
-argument (``jm_array_arg``), and a ``uint8_t[]`` / ``int8_t[]`` also takes a
-byte buffer. The standalone stub generator (``_context/_state``) still wrote
-``npt.ArrayLike`` for every array init-param -- required, defaulted,
-optional dispatch and ``--array-arg`` alike -- and ``npt.ArrayLike`` admits
-``str``, so ``Fld("0101")`` type-checked and failed only when run. The module
-generator (``_stubs._obj_stub``) wrote ``NDArray[...]`` for the same object,
-except that its optional-array branch skipped the byte widening (a ``bytes``
-the binding takes was a type error) and it did not read ``--array-arg`` at
-all (``(self, /, *args, **kwargs)``).
+An array argument reaches a generated stub on many faces -- a constructor
+argument however it is declared, a method or module-function parameter, a
+named method's array ``x`` and its ``out=``, the ``steps()`` input and its
+``out=``, an array property's setter, a handle or capsule method, a composer
+stream field -- and through two stub generators, the standalone ``_context``
+one and the module-aggregated ``_stubs``. Each face spelled its own, and they
+disagreed: a standalone constructor said ``npt.ArrayLike`` where the module
+peer said ``NDArray[...]`` for the same object, the module peer dropped an
+``--array-arg`` from the signature altogether, and ``steps()`` alone left a
+byte array without its byte-buffer widening (gh-1819).
 
-Both now call ``T.array_param_annotation``. This walks every way an array
-reaches a constructor, renders it through BOTH generators, and requires the
-two to agree with that helper and with each other. The mypy half type-checks
-a ``str`` call against each generated stub.
+The owner's decision (2026-10-02, recorded on gh-1724 / gh-1821): the stub
+states EXACTLY what the jm user declared -- ``npt.NDArray`` of the declared
+dtype, both dtypes for a dtype-dispatch array, ``| None`` for an optional one,
+and for a 1-D one-byte integer INPUT also the byte buffers jm itself reads
+(gh-1700). A writable (``out`` / ``mutable``) parameter stays exactly the
+ndarray (gh-1733). That is deliberately narrower than the runtime, which
+still converts whatever numpy accepts (a list, a tuple, another safely
+castable dtype); gh-1821 asked to widen it and was closed by this decision.
+
+So this file checks three things:
+
+* the generator-level init shapes -- every way an array reaches a
+  constructor, through BOTH generators -- equal the helper, and the two
+  generators render one signature;
+* a scaffolded project covering every face, plus the handle / capsule /
+  composer stubs, has NO array parameter spelled other than by the helper:
+  every annotation naming ``NDArray`` must be one the helper produces, so a
+  site reverted to its own ``NDArray[...]`` fails here without being listed;
+* mypy, run on those stubs: the declared ndarray is accepted on every face,
+  a ``list`` is refused on an input, and ``bytes`` is accepted on a byte
+  INPUT and refused on a writable byte array.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -28,13 +46,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from _jmrun import run_cli  # noqa: E402
+from just_makeit import _capsule, _composer, _handle  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _stubs  # noqa: E402
 from just_makeit import _types as T  # noqa: E402
 from just_makeit._context import _build_no_state_init_ctx  # noqa: E402
+from just_makeit._object import run as object_run  # noqa: E402
+from test_capsule_codegen import _cfg as _capsule_cfg  # noqa: E402
+from test_composer_codegen import (  # noqa: E402
+    _complex_cfg as _composer_complex_cfg,
+)
+from test_handle_codegen import _ring_cfg  # noqa: E402
 
 # Every shape an array constructor argument can be declared in, as
-# (init_params, array_args, the param's name, its C type, a dispatch dtype).
+# (init_params, array_args, the param's C type, a dispatch dtype).
 _SHAPES = {
     "required byte": (
         [{"name": "a", "type": "uint8_t[]"}], [], "uint8_t[]", ""
@@ -136,7 +162,6 @@ def test_each_generator_annotates_the_array_by_the_one_helper(gen, shape):
     ips, aa, _, _ = _SHAPES[shape]
     ann = _GENERATORS[gen](_cfg(ips, aa)).get("a")
     assert ann == _expected(shape), (gen, shape, ann)
-    assert "str" not in ann and "ArrayLike" not in ann, ann
 
 
 @pytest.mark.parametrize("shape", sorted(_SHAPES))
@@ -147,66 +172,356 @@ def test_the_two_generators_agree(shape):
     assert _standalone(cfg) == _module(cfg)
 
 
-def test_required_and_defaulted_spell_the_array_alike():
-    """The issue's ask, stated directly: a default changes no annotation."""
-    for gen in _GENERATORS.values():
-        req = gen(_cfg(_SHAPES["required byte"][0], []))["a"]
-        dflt = gen(_cfg(_SHAPES["defaulted byte"][0], []))["a"]
-        assert req == dflt == T.array_param_annotation("uint8_t[]")
+def test_the_helper_states_exactly_the_declaration():
+    """The decided spelling, stated once (gh-1724, gh-1821's closure)."""
+    f = T.array_param_annotation
+    assert f("float[]") == "npt.NDArray[np.float32]"
+    assert f("double[][]") == "npt.NDArray[np.float64]"
+    assert (
+        f("float _Complex[]", also="float[]")
+        == "npt.NDArray[np.complex64] | npt.NDArray[np.float32]"
+    )
+    wide = "npt.NDArray[np.uint8] | bytes | bytearray | memoryview"
+    assert f("uint8_t[]") == f("uint8_t") == wide
+    assert f("uint8_t[]", writable=True) == "npt.NDArray[np.uint8]"
+    for ct in ("float[]", "uint8_t[]", "int16_t[]", "double[][]"):
+        assert "ArrayLike" not in f(ct) and "list" not in f(ct)
 
 
-# -- the type checker: a str call is an error against both stubs -------------
+# -- every face, scaffolded: no array parameter spelled outside the helper ---
 
 
-def _mypy_errors(stub: str, use: str, tmp_path: Path) -> list[str]:
+def _jm(*args, cwd):
+    r = run_cli(*args, cwd=cwd)
+    assert r.returncode == 0, f"jm {' '.join(args)}\n{r.stdout}\n{r.stderr}"
+
+
+_ARRAY_INIT = (
+    "--array-arg", "coef:float32",
+    "--init-param", "taps:float[]",
+    "--init-param", "mat:double[][]",
+    "--init-param", "bits:uint8_t[]:[]",
+)  # fmt: skip
+
+_METHODS = (
+    ("peek", "--param", "b:float[]", "--return-type", "int64_t"),
+    ("peek8", "--param", "b:uint8_t[]", "--return-type", "int64_t"),
+    ("fill", "--param", "b:uint8_t[]", "--out-param", "o:uint8_t[]",
+     "--return-type", "size_t"),
+    ("drain", "--arg-type", "float", "--return-type", "float",
+     "--variable-output"),
+)  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def project(tmp_path_factory) -> Path:
+    """One project with every array face, standalone and in a module."""
+    root = tmp_path_factory.mktemp("gh1724")
+    _jm("new", "jmp", cwd=root)
+    p = root / "jmp"
+    void = ("--arg-type", "void", "--return-type", "void")
+    for args in (
+        ("object", "fld", "--no-state", "--no-step", *void, *_ARRAY_INIT),
+        ("object", "opt", "--no-state", "--no-step", *void,
+         "--init-param", "bank:float[][]:optional:opt_create_bank",
+         "--init-param", "rate:double:0.0"),
+        ("object", "acc", "--arg-type", "float", "--return-type", "float",
+         "--state", "h:float[4]"),
+        ("object", "acc8", "--arg-type", "uint8_t",
+         "--return-type", "uint8_t"),
+        ("object", "blk", "--arg-type", "float[]", "--return-type", "float[]"),
+        ("object", "arr", "--arg-type", "uint8_t[]", "--return-type", "int"),
+        ("module", "m"),
+        ("object", "mfld", "--module", "m", "--no-state", "--no-step",
+         *void, *_ARRAY_INIT),
+        ("object", "macc8", "--module", "m", "--arg-type", "uint8_t",
+         "--return-type", "uint8_t"),
+        ("function", "peekf", "--module", "m", "--param", "b:float[]",
+         "--return-type", "int64_t"),
+        ("function", "tobin", "--module", "m", "--param", "b:uint8_t[]",
+         "--out-param", "out:uint8_t[]", "--return-type", "size_t"),
+    ):  # fmt: skip
+        _jm(*args, cwd=p)
+    for obj in ("fld", "mfld"):
+        for name, *rest in _METHODS:
+            _jm("method", obj, name, *rest, cwd=p)
+    _jm("property", "acc", "buf", "--type", "float", "--buf-field", "buf",
+        "--writable", cwd=p)  # fmt: skip
+    # A controllable state field re-renders `steps()` on its own path, for
+    # the blockwise and the scalar shape alike; the CLI cannot declare one.
+    for name, arg, ret in (
+        ("cblk", "float[]", "float[]"),
+        ("cacc", "float", "float"),
+    ):
+        object_run(
+            p,
+            name,
+            None,
+            arg_type=arg,
+            return_type=ret,
+            state_vars=[("gain", "float", "1.0")],
+            controllable_names=frozenset({"gain"}),
+        )
+    return p
+
+
+def _project_stubs(project: Path) -> dict[str, str]:
+    return {
+        f.relative_to(project / "src").as_posix(): f.read_text("utf-8")
+        for f in sorted((project / "src").rglob("*.pyi"))
+    }
+
+
+def _kind_stubs() -> dict[str, str]:
+    return {
+        "handle": _handle.render_pyi(_ring_cfg(), "ringbuf"),
+        "capsule": _capsule.render_pyi(_capsule_cfg(), "ddc_fn"),
+        "composer": _composer.render_pyi(
+            _composer_complex_cfg(), "wfm_compose"
+        ),
+    }
+
+
+def _param_annotations(source: str):
+    """``(function, param, annotation)`` for every annotated parameter."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = node.args
+            for arg in a.posonlyargs + a.args + a.kwonlyargs:
+                if arg.annotation is not None:
+                    yield node.name, arg.arg, ast.unparse(arg.annotation)
+
+
+# The helper's output, and nothing else: one or two exact ndarrays, then the
+# byte buffers of a byte input, then `| None` for an optional one.
+_HELPER_SHAPE = re.compile(
+    r"npt\.NDArray\[(?:np\.\w+|Any)\]"
+    r"(?: \| npt\.NDArray\[np\.\w+\])?"
+    r"(?: \| bytes \| bytearray \| memoryview)?"
+    r"(?: \| None)?"
+)
+
+
+def test_no_array_parameter_is_spelled_outside_the_helper(project):
+    """Registration-free: every face's array params, read from the stubs."""
+    stubs = {**_project_stubs(project), **_kind_stubs()}
+    seen = 0
+    bad = []
+    for where, src in stubs.items():
+        for fn, param, ann in _param_annotations(src):
+            if "NDArray" not in ann and "ArrayLike" not in ann:
+                continue
+            seen += 1
+            if not _HELPER_SHAPE.fullmatch(ann):
+                bad.append(f"{where}: {fn}({param}: {ann})")
+    assert not bad, "array params not spelled by the helper:\n" + "\n".join(
+        bad
+    )
+    # Armed: the walk read array params on every face, not an empty tree.
+    assert seen >= 40, seen
+
+
+# (stub, function, param) -> the C type the manifest declared, and whether
+# the parameter is the caller's writable buffer.
+_FACES = {
+    ("jmp/fld.pyi", "__init__", "coef"): ("float[]", False),
+    ("jmp/fld.pyi", "__init__", "taps"): ("float[]", False),
+    ("jmp/fld.pyi", "__init__", "mat"): ("double[][]", False),
+    ("jmp/fld.pyi", "__init__", "bits"): ("uint8_t[]", False),
+    ("jmp/fld.pyi", "peek", "b"): ("float[]", False),
+    ("jmp/fld.pyi", "peek8", "b"): ("uint8_t[]", False),
+    ("jmp/fld.pyi", "fill", "b"): ("uint8_t[]", False),
+    ("jmp/fld.pyi", "fill", "o"): ("uint8_t[]", True),
+    ("jmp/fld.pyi", "drain", "x"): ("float", False),
+    ("jmp/acc.pyi", "steps", "x"): ("float", False),
+    ("jmp/acc.pyi", "set_h", "value"): ("float", False),
+    ("jmp/acc.pyi", "buf", "value"): ("float", False),
+    ("jmp/cblk.pyi", "steps", "x"): ("float[]", False),
+    ("jmp/cblk.pyi", "steps", "out"): ("float[]", True),
+    ("jmp/cacc.pyi", "steps", "x"): ("float", False),
+    ("jmp/cacc.pyi", "steps", "out"): ("float", True),
+    ("jmp/acc8.pyi", "steps", "x"): ("uint8_t", False),
+    ("jmp/acc8.pyi", "steps", "out"): ("uint8_t", True),
+    ("jmp/blk.pyi", "steps", "x"): ("float[]", False),
+    ("jmp/blk.pyi", "steps", "out"): ("float[]", True),
+    ("jmp/arr.pyi", "step", "x"): ("uint8_t[]", False),
+    ("jmp/m/m.pyi", "__init__", "coef"): ("float[]", False),
+    ("jmp/m/m.pyi", "__init__", "taps"): ("float[]", False),
+    ("jmp/m/m.pyi", "__init__", "mat"): ("double[][]", False),
+    ("jmp/m/m.pyi", "__init__", "bits"): ("uint8_t[]", False),
+    ("jmp/m/m.pyi", "peek", "b"): ("float[]", False),
+    ("jmp/m/m.pyi", "fill", "o"): ("uint8_t[]", True),
+    ("jmp/m/m.pyi", "drain", "x"): ("float", False),
+    ("jmp/m/m.pyi", "steps", "x"): ("uint8_t", False),
+    ("jmp/m/m.pyi", "steps", "out"): ("uint8_t", True),
+    ("jmp/m/m.pyi", "peekf", "b"): ("float[]", False),
+    ("jmp/m/m.pyi", "tobin", "out"): ("uint8_t[]", True),
+    ("handle", "push", "x"): ("float[]", False),
+    ("handle", "scale", "x"): ("float[]", False),
+    ("handle", "scale", "out"): ("float[]", True),
+    ("capsule", "ddcr_execute", "x"): ("float[]", False),
+    ("capsule", "ddcr_execute", "out"): ("float _Complex[]", True),
+}
+
+
+def test_each_face_states_its_declaration(project):
+    """The faces by name: the helper of what the manifest declared."""
+    anns: dict = {}
+    for where, src in {**_project_stubs(project), **_kind_stubs()}.items():
+        for fn, param, ann in _param_annotations(src):
+            anns.setdefault((where, fn, param), set()).add(ann)
+    wrong = {}
+    for key, (ct, writable) in _FACES.items():
+        want = T.array_param_annotation(ct, writable=writable)
+        got = {a.removesuffix(" | None") for a in anns.get(key, set())}
+        if got != {want}:
+            wrong[key] = (want, got)
+    assert not wrong, wrong
+
+
+# -- the type checker, on the generated stubs --------------------------------
+
+
+def _mypy(project: Path, use: str, tmp_path: Path) -> list[int]:
+    """Line numbers mypy reports an error on, for *use* against *project*."""
     from mypy import api
 
-    pkg = tmp_path / "stubpkg"
-    pkg.mkdir()
-    (pkg / "__init__.pyi").write_text(stub, encoding="utf-8")
-    (tmp_path / "use.py").write_text(use, encoding="utf-8")
-    out, _, _ = api.run(
+    script = tmp_path / "use.py"
+    script.write_text(use, encoding="utf-8")
+    out, err, _ = api.run(
         [
             "--no-incremental",
             "--cache-dir",
             str(tmp_path / ".mypy_cache"),
-            str(tmp_path / "use.py"),
+            str(script),
         ]
     )
-    return [ln for ln in out.splitlines() if ": error:" in ln]
+    errs = [ln for ln in out.splitlines() if ": error:" in ln]
+    # Armed: mypy ran and type-checked the file; a usage error or a crash
+    # reports no `error:` line, which would read as every call passing.
+    assert "Success" in out or "Found" in out, out + err
+    # A stub mypy cannot read fails as an error in the STUB, not in use.py,
+    # and would read as the call being refused.
+    assert all(e.split(":")[0].endswith("use.py") for e in errs), out + err
+    return sorted({int(e.split(":")[1]) for e in errs})
 
 
-@pytest.mark.parametrize("gen", sorted(_GENERATORS))
-def test_mypy_refuses_a_str_and_accepts_bytes(gen, tmp_path, monkeypatch):
+# (call, mypy must refuse it)
+_CALLS = [
+    # The declared ndarray is accepted on every face.
+    ("Fld(f32, f32, f64x2, bits=u8)", False),
+    ("Fld(f32, f32, f64x2).peek(f32)", False),
+    ("Fld(f32, f32, f64x2).peek8(u8)", False),
+    ("Fld(f32, f32, f64x2).fill(u8, u8)", False),
+    ("Fld(f32, f32, f64x2).drain(f32, out=f32)", False),
+    ("Opt(bank=f32x2)", False),
+    ("Opt()", False),
+    ("Acc().steps(f32, out=f32)", False),
+    ("Acc().set_h(f32)", False),
+    ("acc.buf = f32", False),
+    ("Cblk().steps(f32, out=f32, gain=1.0)", False),
+    ("Cacc().steps(f32, out=f32, gain=1.0)", False),
+    ("Acc8().steps(u8, out=u8)", False),
+    ("Blk().steps(f32, out=f32)", False),
+    ("Arr().step(u8)", False),
+    ("Mfld(f32, f32, f64x2, bits=u8).peek(f32)", False),
+    ("Macc8().steps(u8)", False),
+    ("peekf(f32)", False),
+    ("tobin(u8, u8)", False),
+    # A byte INPUT also takes the byte buffers jm reads (gh-1700) ...
+    ('Fld(f32, f32, f64x2, bits=b"\\x01")', False),
+    ('Fld(f32, f32, f64x2).peek8(bytearray(b"\\x01"))', False),
+    ('Acc8().steps(b"\\x01")', False),
+    ('Macc8().steps(b"\\x01")', False),
+    ('Arr().step(memoryview(b"\\x01"))', False),
+    # ... and a writable byte array does not (gh-1733).
+    ('Fld(f32, f32, f64x2).fill(u8, b"\\x00")', True),
+    ('tobin(u8, b"\\x00")', True),
+    ('Acc8().steps(u8, out=bytearray(b"\\x00"))', True),
+    # A list is refused on an input, on every face: the stub states the
+    # declared ndarray, deliberately narrower than the runtime.
+    ("Fld([1.0], f32, f64x2)", True),
+    ("Fld(f32, [1.0], f64x2)", True),
+    ("Fld(f32, f32, [[1.0]])", True),
+    ("Fld(f32, f32, f64x2, bits=[1])", True),
+    ("Fld(f32, f32, f64x2).peek([1.0])", True),
+    ("Fld(f32, f32, f64x2).drain([1.0])", True),
+    ("Opt(bank=[[1.0]])", True),
+    ("Acc().steps([1.0])", True),
+    ("Acc().set_h([1.0])", True),
+    ("acc.buf = [1.0]", True),
+    ("Cblk().steps([1.0])", True),
+    ("Cacc().steps([1.0])", True),
+    ("Blk().steps([1.0])", True),
+    ("Arr().step([1])", True),
+    ("Mfld([1.0], f32, f64x2)", True),
+    ("peekf([1.0])", True),
+    ("tobin([1], u8)", True),
+]
+
+_PRELUDE = """\
+import numpy as np
+import numpy.typing as npt
+from jmp import Acc, Acc8, Arr, Blk, Cacc, Cblk, Fld, Opt
+from jmp.m import Macc8, Mfld, peekf, tobin
+
+f32: npt.NDArray[np.float32] = np.zeros(2, np.float32)
+f32x2: npt.NDArray[np.float32] = np.zeros((2, 2), np.float32)
+f64x2: npt.NDArray[np.float64] = np.zeros((2, 2), np.float64)
+u8: npt.NDArray[np.uint8] = np.zeros(2, np.uint8)
+acc = Acc()
+"""
+
+
+def test_mypy_reads_the_declaration_on_every_face(
+    project, tmp_path, monkeypatch
+):
     pytest.importorskip("mypy.api")
-    cfg = _cfg(
-        [
-            {"name": "req", "type": "uint8_t[]"},
-            {"name": "bits", "type": "uint8_t[]", "default": "[]"},
-            {"name": "taps", "type": "float[]", "default": "[]"},
+    monkeypatch.setenv("MYPYPATH", str(project / "src"))
+    first = _PRELUDE.count("\n") + 1
+    use = _PRELUDE + "".join(f"{call}\n" for call, _ in _CALLS)
+    refused = {first + i for i, (_, bad) in enumerate(_CALLS) if bad}
+    got = _mypy(project, use, tmp_path)
+    lines = use.splitlines()
+    assert set(got) == refused, {
+        "refused but should pass": [lines[n - 1] for n in set(got) - refused],
+        "passed but should be refused": [
+            lines[n - 1] for n in refused - set(got)
         ],
-        [],
-    )
-    if gen == "module":
-        stub = _stubs._obj_stub(cfg, "obj", pkg="p", module="m")
-    else:
-        sig = _build_no_state_init_ctx(
-            "obj", "Obj", C.init_params(cfg, "obj"), csym="obj"
-        )["init_params_pyi"]
-        stub = f"class Obj:\n    def __init__(self, {sig}) -> None: ...\n"
-    stub = "from typing import Any, final\n" + textwrap.dedent(stub)
-    stub = "\n".join(_stubs.numpy_imports(stub)) + "\n" + stub
+    }
+
+
+def test_mypy_accepts_either_dispatch_dtype(tmp_path, monkeypatch):
+    """A dtype-dispatch array names both declared dtypes, each exactly."""
+    pytest.importorskip("mypy.api")
+    ips, aa, _, _ = _SHAPES["dtype dispatch"]
+    cfg = _cfg(ips, aa)
+    pkg = tmp_path / "stubpkg"
+    pkg.mkdir()
+    for gen, stub in (
+        ("module", _stubs._obj_stub(cfg, "obj", pkg="p", module="m")),
+        (
+            "standalone",
+            "class Obj:\n    def __init__(self, "
+            + _build_no_state_init_ctx(
+                "obj", "Obj", C.init_params(cfg, "obj"), csym="obj"
+            )["init_params_pyi"]
+            + ") -> None: ...\n",
+        ),
+    ):
+        stub = "from typing import Any, final\n" + textwrap.dedent(stub)
+        stub = "\n".join(_stubs.numpy_imports(stub)) + "\n" + stub
+        (pkg / f"{gen}.pyi").write_text(stub, encoding="utf-8")
     use = (
-        "from stubpkg import Obj\n"
-        'Obj("0101")\n'
-        'Obj(b"\\x01", bits="0101")\n'
-        'Obj(b"\\x01", taps="1.5")\n'
-        'Obj(b"\\x01", bits=bytearray(b"\\x01"), taps=None)\n'
+        "import numpy as np\n"
+        "import numpy.typing as npt\n"
+        "from stubpkg.module import Obj as M\n"
+        "from stubpkg.standalone import Obj as S\n"
+        "c: npt.NDArray[np.complex64] = np.zeros(2, np.complex64)\n"
+        "r: npt.NDArray[np.float32] = np.zeros(2, np.float32)\n"
+        "M(c); M(r); S(c); S(r)\n"
+        "M([1.0])\n"
+        "S([1.0])\n"
     )
     monkeypatch.setenv("MYPYPATH", str(tmp_path))
-    errs = _mypy_errors(stub, use, tmp_path)
-    lines = sorted(int(e.split(":")[1]) for e in errs)
-    # One error per str call (lines 2-4), and the last call's only error is
-    # `taps=None` -- proof the checker read the stub rather than failing it.
-    assert lines == [2, 3, 4, 5], errs
-    assert '"taps"' in errs[-1] and '"None"' in errs[-1], errs
+    assert _mypy(tmp_path, use, tmp_path) == [8, 9]

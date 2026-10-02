@@ -1261,8 +1261,8 @@ class TestVariableOutputArraySignature:
         # multi_output) is also `out=`-eligible (gh-219), so the module
         # aggregator's stub carries the optional `out=` buffer param.
         assert (
-            "def execute(self, x: NDArray[np.complex64],"
-            " out: NDArray[np.complex64] | None = None)"
+            "def execute(self, x: npt.NDArray[np.complex64],"
+            " out: npt.NDArray[np.complex64] | None = None)"
             " -> NDArray[np.complex64]:" in pyi
         )
         assert "x: complex" not in pyi
