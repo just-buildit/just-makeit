@@ -509,4 +509,11 @@ endef
 VENDORED_FILES = scripts/release-watch.sh scripts/msvc-env.sh \
                  .github/dependabot.yml
 
+# ci-docs (gh-1801 item 3): what counts as docs is the standard's CI_DOCS_RE
+# minus this. docs/examples/ is GENERATED -- copied from each example's
+# README.md, itself assembled from .steps by lint-assemble-examples -- so a
+# diff there is a code change wearing a docs path. The originals under
+# src/just_makeit/examples/ are already outside CI_DOCS_RE's anchors.
+CI_DOCS_EXCLUDE_RE = ^docs/examples/
+
 include standard.mk
