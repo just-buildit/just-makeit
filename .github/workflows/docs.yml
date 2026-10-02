@@ -17,6 +17,11 @@ on:
       - src/just_makeit/**
       - pyproject.toml
       - .github/workflows/docs.yml
+  # A run that fails before any job starts (2026-10-02: the Actions policy
+  # briefly allowed local actions only) cannot be re-run, and with no other
+  # trigger the site stayed two merges stale until the next push. Dispatched
+  # from main it builds and deploys; from a branch it only builds.
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
