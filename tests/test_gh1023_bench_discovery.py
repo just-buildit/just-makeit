@@ -285,7 +285,9 @@ class TestDiscoveredFailureIsNotFatal:
 
         seen = {}
 
-        def _fake_collect(root, bdir, comps, optional=frozenset()):
+        # `**_kw`: the run budget and its timed-out list (gh-1687) are not
+        # what this test is about.
+        def _fake_collect(root, bdir, comps, optional=frozenset(), **_kw):
             seen["optional"] = optional
             return None
 

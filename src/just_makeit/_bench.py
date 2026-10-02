@@ -73,6 +73,14 @@ def _ensure_built(root: Path, build_dir: Path, python: str) -> None:
 
     Configures against *python* so the compiled extension is ABI-matched
     to the interpreter the Python benchmarks will run under.
+
+    Not timed (gh-1687). A cold build of a real project took 603 s on a
+    Cortex-A53-class board, just over the 600 s these calls used to carry, and
+    a build that is slow has not failed. Bounding a job's wall clock is the
+    CI job's business (`timeout-minutes:`) -- the precedent `jm-run-tests`
+    set for the same 600 s literal. The benchmark RUNS keep a budget, because
+    there a timeout costs one benchmark and the run carries on; see
+    `C.bench_timeout`.
     """
     cmake = _require("cmake")
     if not (build_dir / "CMakeCache.txt").exists():
@@ -86,11 +94,11 @@ def _ensure_built(root: Path, build_dir: Path, python: str) -> None:
             f"-DPython3_EXECUTABLE={python}",
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         ]
-        if subprocess.run(cfg, cwd=str(root), timeout=600).returncode != 0:
+        if subprocess.run(cfg, cwd=str(root)).returncode != 0:
             sys.exit(1)
     nproc = os.cpu_count() or 4
     build = [cmake, "--build", str(build_dir), "--parallel", str(nproc)]
-    if subprocess.run(build, cwd=str(root), timeout=600).returncode != 0:
+    if subprocess.run(build, cwd=str(root)).returncode != 0:
         sys.exit(1)
 
 
@@ -104,7 +112,8 @@ def _build_bench_target(
     commented-out `add_executable` still names its target. A guess must not be
     able to abort a run whose declared components are all fine, so a failure
     there is a skip. A manifest component keeps the hard exit — its target not
-    building is a real breakage.
+    building is a real breakage. Not timed, for the reason `_ensure_built`
+    gives.
 
     Returns True when the target built.
     """
@@ -125,7 +134,6 @@ def _build_bench_target(
         cwd=str(root),
         capture_output=True,
         text=True,
-        timeout=600,
     )
     if r.returncode != 0:
         if not fatal:
@@ -239,6 +247,8 @@ def _collect_c(
     build_dir: Path,
     comps: list[str],
     optional: "frozenset[str]" = frozenset(),
+    timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
+    timed_out: "list[str] | None" = None,
 ) -> dict | None:
     """Build + run each component's bench binary; return one merged report.
 
@@ -246,6 +256,20 @@ def _collect_c(
     directory (see jm_bench.h).  Entry names are prefixed with the
     component so a merged history table is unambiguous.  Returns None
     when no component produced any benchmark.
+
+    A binary that outlives *timeout* seconds (``None``: no limit) costs
+    that binary and nothing else (gh-1687). It is killed, reported as
+    ``timeout``, appended to *timed_out* for the caller to fail on, and the
+    loop moves to the next component. Before this the ``TimeoutExpired``
+    escaped and took every result already collected down with it, so one
+    slow kernel on a slow board left ``benchmarks/history/`` empty. Its own
+    partial sections are lost with it: `jm_bench_write_json` writes once, at
+    the end of ``main``.
+
+    A binary that ran and recorded nothing is reported as ``silent``, read
+    from the JSON it wrote rather than predicted from its source (gh-1691):
+    the artifact is the one place where whether it measured anything is a
+    fact rather than an inference.
     """
     benchmarks: list[dict] = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -259,8 +283,24 @@ def _collect_c(
             if binary is None:
                 continue
             print(f"  run        bench_{comp}_core", flush=True)
-            subprocess.run([str(binary.resolve())], cwd=tmp, timeout=600)
             jf = tmpd / f"bench_{comp}_core.json"
+            try:
+                subprocess.run(
+                    [str(binary.resolve())], cwd=tmp, timeout=timeout
+                )
+            except subprocess.TimeoutExpired:
+                print(
+                    f"  timeout    bench_{comp}_core (over {timeout:g} s;"
+                    " skipped, the other benchmarks still run)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if timed_out is not None:
+                    timed_out.append(f"bench_{comp}_core")
+                # A killed binary wrote nothing whole; never read a fragment.
+                if jf.exists():
+                    jf.unlink()
+                continue
             if not jf.exists():
                 continue
             try:
@@ -268,6 +308,12 @@ def _collect_c(
             except json.JSONDecodeError:
                 jf.unlink()
                 continue
+            if not data.get("benchmarks"):
+                print(
+                    f"  silent     bench_{comp}_core (ran, and recorded no"
+                    " measurement)",
+                    flush=True,
+                )
             for entry in data.get("benchmarks", []):
                 entry["name"] = f"{comp}::{entry.get('name', '')}"
                 benchmarks.append(entry)
@@ -320,11 +366,21 @@ def _has_pytest_benchmark(python: str) -> bool:
     )
 
 
-def _run_python(root: Path, python: str) -> dict | None:
+def _run_python(
+    root: Path,
+    python: str,
+    timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
+    timed_out: "list[str] | None" = None,
+) -> dict | None:
     """Run pytest-benchmark over ``src/``; return its (untrimmed) report.
 
     Returns None when the pytest-benchmark plugin or any benchmark is
     absent — a project may legitimately ship only C benchmarks.
+
+    The whole suite is one run under one *timeout* (``None``: no limit),
+    because pytest-benchmark writes its JSON once, at the end. Past it the
+    Python side is reported as ``timeout`` and appended to *timed_out*; the C
+    side, already collected, is unaffected (gh-1687).
     """
     if not _has_pytest_benchmark(python):
         print(
@@ -344,7 +400,20 @@ def _run_python(root: Path, python: str) -> dict | None:
             "-q",
         ]
         print("  run        pytest --benchmark-only", flush=True)
-        subprocess.run(cmd, cwd=str(root), timeout=600, env=child_pytest_env())
+        try:
+            subprocess.run(
+                cmd, cwd=str(root), timeout=timeout, env=child_pytest_env()
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                f"  timeout    pytest --benchmark-only (over {timeout:g} s;"
+                " no Python results)",
+                file=sys.stderr,
+                flush=True,
+            )
+            if timed_out is not None:
+                timed_out.append("pytest --benchmark-only")
+            return None
         # No JSON => no pytest-benchmark plugin, or no benchmarks collected.
         if not report.exists():
             return None
@@ -757,6 +826,7 @@ def run(
     baseline: str | None = None,
     as_json: bool = False,
     allow: tuple[str, ...] = (),
+    timeout: float | None = None,
 ) -> None:
     """Build, benchmark, and snapshot the project at *root*.
 
@@ -783,11 +853,21 @@ def run(
         In check mode, emit the comparison as JSON.
     allow : tuple[str, ...]
         Benchmark names exempt from the gate (reported, never fail).
+    timeout : float or None
+        ``--timeout``: seconds one benchmark run may take, for this run
+        only (``0``: no limit). None → ``[project.bench] timeout``, else
+        600 s; `C.bench_timeout` decides. A run past it costs that one
+        benchmark: the rest are still run and saved, and the command exits
+        1 naming it (gh-1687).
     """
     cfg = C.load(root)
     if not cfg:
         print("error: no just-makeit.toml found.", file=sys.stderr)
         sys.exit(1)
+    # Resolved before anything builds, so a malformed budget is refused in
+    # the first second rather than after a twenty-minute build.
+    budget = C.bench_timeout(cfg, timeout)
+    timed_out: list[str] = []
 
     runnable, extra, globbed = runnable_comps(root, cfg)
     if globbed:
@@ -855,15 +935,26 @@ def run(
             as_json,
             set(allow),
             frozenset(extra),
+            budget,
         )
         return
 
     if do_c:
         creport = _collect_c(
-            root, bdir, target_comps, optional=frozenset(extra)
+            root,
+            bdir,
+            target_comps,
+            optional=frozenset(extra),
+            timeout=budget,
+            timed_out=timed_out,
         )
         if creport:
             _trim(creport)
+            if timed_out:
+                # The snapshot is committed and outlives this terminal, so it
+                # says itself that it is partial: a later reader comparing
+                # against it should not have to guess why a component is gone.
+                creport["timed_out"] = list(timed_out)
             prev = _prev_snapshot(hdir, tag, is_c=True)
             _save_snapshot(root, hdir, tag, creport, is_c=True)
             _display_table("C benchmarks", creport, prev)
@@ -871,7 +962,9 @@ def run(
             print("  C benchmarks: none found.")
 
     if do_python:
-        preport = _run_python(root, python)
+        preport = _run_python(
+            root, python, timeout=budget, timed_out=timed_out
+        )
         if preport and preport.get("benchmarks"):
             _trim(preport)
             prev = _prev_snapshot(hdir, tag, is_c=False)
@@ -879,6 +972,28 @@ def run(
             _display_table("Python benchmarks", preport, prev)
         else:
             print("  Python benchmarks: none found.")
+
+    _fail_on_timeouts(timed_out, budget)
+
+
+def _fail_on_timeouts(timed_out: list[str], budget: float | None) -> None:
+    """Exit 1 naming every benchmark run that hit the budget (gh-1687).
+
+    Called last, after everything that DID finish has been saved: the other
+    benchmarks' numbers are kept, and the failure is still loud. A timeout
+    is not a pass -- the run measured less than it was asked to.
+    """
+    if not timed_out:
+        return
+    print(
+        f"TIMEOUT — {len(timed_out)} benchmark run(s) took longer than"
+        f" {budget:g} s and were skipped: {', '.join(timed_out)}.\n"
+        "  Raise the budget with `jm bench --timeout S` for one run, or"
+        " `[project.bench] timeout = S`\n"
+        "  in just-makeit.toml for every run (0 = no limit).",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _run_check(
@@ -894,18 +1009,31 @@ def _run_check(
     as_json: bool,
     allow: set[str],
     optional: "frozenset[str]" = frozenset(),
+    budget: float | None = C.DEFAULT_BENCH_TIMEOUT,
 ) -> None:
     """Compare current benchmarks against a baseline snapshot and exit
     non-zero on regression. Does not save a snapshot (a gate is not a record).
+
+    A benchmark run past *budget* fails the gate too, after the comparison
+    of everything that did finish is printed: its baseline entries are
+    already ``missing`` (gh-1029), and `_fail_on_timeouts` says why.
     """
+    timed_out: list[str] = []
     sides: list[tuple[str, dict | None, dict | None]] = []
     if do_c:
-        cur = _collect_c(root, bdir, target_comps, optional=optional)
+        cur = _collect_c(
+            root,
+            bdir,
+            target_comps,
+            optional=optional,
+            timeout=budget,
+            timed_out=timed_out,
+        )
         if cur:
             _trim(cur)
             sides.append(("C", cur, _baseline_snapshot(hdir, True, baseline)))
     if do_python:
-        cur = _run_python(root, python)
+        cur = _run_python(root, python, timeout=budget, timed_out=timed_out)
         if cur and cur.get("benchmarks"):
             _trim(cur)
             sides.append(
@@ -929,6 +1057,7 @@ def _run_check(
                     "threshold_pct": threshold * 100.0,
                     "baseline": baseline or "latest",
                     "missing_baseline": missing_baseline,
+                    "timed_out": timed_out,
                     "results": rows,
                 },
                 indent=2,
@@ -979,6 +1108,7 @@ def _run_check(
                     " --allow <name>."
                 )
 
+    _fail_on_timeouts(timed_out, budget)
     # gh-1029: `missing` fails alongside `regressed`. See `_compare_reports`
     # for why the gate treats a vanished benchmark as a failure rather than
     # as a note, and why `--allow` is the whole escape hatch it needs.
