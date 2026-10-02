@@ -84,6 +84,7 @@ from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
 from . import _stubs
+from . import _textio
 from . import _incpath as INC
 from ._apply import _SKIP_DIRS
 
@@ -564,6 +565,8 @@ def run(
     # the reader past the one that costs everything.
     unparseable_entries: list[tuple[str, int, str, list[str]]] = []
     ok_count = 0
+    # gh-1641: files that differ from jm's render only in CRLF versus LF.
+    eol_entries: list[str] = []
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
         # `_status.run(Path("."))` collapsed the scratch path onto the temp
@@ -740,6 +743,16 @@ def run(
                 if before == after:
                     ok_count += 1
                     continue
+                # gh-1641: a CRLF checkout of a current file. Its own state,
+                # never counted: no tool the build runs reads it differently,
+                # and STALE sent every Windows clone's CI red over nothing.
+                if _textio.eol_only(before, after):
+                    eol_entries.append(rel_posix)
+                    continue
+                # Everything below reads the CONTENT, so it compares the two
+                # with the line endings out of the way -- a CRLF file with one
+                # real change otherwise diffs, and parses, as every line.
+                before, after = _textio.lf(before), _textio.lf(after)
                 # gh-767: "stale" means `jm apply` will rewrite this. For the
                 # unreconciled glue it will not — saying so would send the
                 # reader to a command that changes nothing.
@@ -1230,6 +1243,9 @@ def run(
                         {"path": p, "allowed": a}
                         for (p, a) in outdated_entries
                     ],
+                    # gh-1641: a CRLF checkout of a current file. Never
+                    # counted, and never `allowed`: there is nothing to allow.
+                    "line_endings": list(eol_entries),
                     # gh-1459/gh-1471: root-template fixes the project's
                     # root CMakeLists.txt lacks. Reported, never counted, on
                     # `outdated`'s reasoning: the file is the author's.
@@ -1622,6 +1638,30 @@ def run(
         )
         print()
 
+    # gh-1641: printed under --check too, because the reader it is for is a
+    # Windows CI log -- but only the count there, not one line per file: a
+    # clone without the attributes file has every managed file in it.
+    if eol_entries:
+        print(
+            f"LINE ENDINGS ({len(eol_entries)}) — differ from jm's render"
+            " only in CRLF vs LF:"
+        )
+        if not check:
+            for p in eol_entries:
+                print(f"  ≈ {p}")
+        print(
+            "  The content is current, and nothing the build runs reads"
+            " them differently.\n"
+            "  A Windows checkout writes CRLF unless the project's"
+            " .gitattributes says\n"
+            "  `eol=lf`: `jm new` writes one, and `jm apply` adds it to an"
+            " older project.\n"
+            "  `jm apply` rewrites the files it regenerates as LF. Not"
+            " counted; see\n"
+            "  docs/windows.md."
+        )
+        print()
+
     # gh-1459/gh-1471: printed regardless of --check, for OUTDATED's reason
     # -- a reader running `status --check` before an upgrade must not see OK
     # and conclude the root file has nothing to receive. Not counted: the
@@ -1645,7 +1685,7 @@ def run(
             "  `CMakeLists.txt:<fix>`. Not counted."
         )
         if root_render is not None:
-            _real = (root / "CMakeLists.txt").read_bytes()
+            _real = _textio.lf((root / "CMakeLists.txt").read_bytes())
             print(_unified_diff(_real, root_render, "CMakeLists.txt"), end="")
         print()
 
@@ -2293,6 +2333,9 @@ def run(
         _out = (
             f"; {len(outdated_entries)} outdated" if outdated_entries else ""
         ) + (f"; {len(root_fixes)} root-cmake" if root_fixes else "")
+        # gh-1641: on gh-767's rule -- the bytes are not jm's render, so the
+        # line says how, though the content is.
+        _out += f"; {len(eol_entries)} line-endings" if eol_entries else ""
         # gh-1589: beside root-cmake, for its reason.
         _out += (
             f"; {len(packaging_entries)} packaging"
@@ -2435,6 +2478,8 @@ def run(
             )
             # gh-1459: beside `outdated`, for its reason.
             + (f", {len(root_fixes)} root-cmake" if root_fixes else "")
+            # gh-1641: and the line-endings row, uncounted like it.
+            + (f", {len(eol_entries)} line-endings" if eol_entries else "")
             # gh-1589: beside root-cmake, for its reason.
             + (
                 f", {len(packaging_entries)} packaging"

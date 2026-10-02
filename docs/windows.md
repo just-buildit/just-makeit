@@ -104,6 +104,38 @@ personal build directory stay on your machine:
 A project created before the file existed gets it from `jm apply`, which adds
 missing files and changes nothing else.
 
+## Line endings
+
+jm writes every file with LF line endings, on Windows too (gh-1368), and
+`jm status` compares the tree against that render. Git for Windows checks text
+files out CRLF by default (`core.autocrlf=true`), so `jm new` writes a
+**`.gitattributes`** that keeps every checkout LF:
+
+```text
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+```
+
+A project created before the file existed gets it from `jm apply`, like any
+other file it adds; until then `jm status --check` lists it as `MISSING`. It
+is jm's content and create-only, as `.gitignore` is: add your own attributes
+to it, and `jm status` reports it `OUTDATED` when a newer jm renders it
+differently. Adding it to a repository that already holds CRLF files changes
+nothing on disk until git renormalises them, which you do once, on any
+platform:
+
+```powershell
+git add --renormalize .
+git commit -m "Normalise line endings to LF"
+```
+
+A CRLF file whose content is current is not drift (gh-1641): `jm status` lists
+it under `LINE ENDINGS`, uncounted, rather than as `STALE` or `OUTDATED`, so
+`jm status --check` passes on a Windows checkout either way. A real change
+under a CRLF checkout is still `STALE`, and `--diff` shows that change alone.
+`jm apply` rewrites the files it regenerates as LF and lists each as `eol`.
+
 ## A module that cannot build on Windows
 
 A module over a core that only exists on Linux and macOS (a POSIX-only
