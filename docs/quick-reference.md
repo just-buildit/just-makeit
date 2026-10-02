@@ -427,8 +427,8 @@ run `jm apply`.
 
 ```python
 # Dtype-dispatched array
-# int16 → real_create_fn
-# other → create_fn
+# int16 ndarray → real_create_fn
+# other → <comp>_create
 ```
 
 </td>

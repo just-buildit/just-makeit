@@ -1335,6 +1335,33 @@ cases (gh-1004 / gh-1005). An init-param may also not be named
 `<array>_len`, which is the length parameter jm derives for the array beside
 it (gh-1002).
 
+**dtype dispatch** is the other per-call choice. A 1-D array declaring
+`real_type` and `real_create_fn` calls `real_create_fn` when the caller
+passes an ndarray of exactly that dtype, and `<component>_create` with the
+declared type otherwise:
+
+```toml
+[[fir.init_params]]
+name           = "taps"
+type           = "float _Complex[]"
+real_type      = "float[]"
+real_create_fn = "fir_create_real"
+```
+
+Only an ndarray of the `real_type` dtype (here `float32`) reaches
+`real_create_fn`. A list of floats takes the default constructor, converted
+to the declared type. Any other rank, `None` included, is a
+`ValueError: taps must be a 1-D array` (gh-1826). Defaulted arrays compose
+with it and reach either constructor as `NULL`/`0` when omitted (gh-1825).
+It does not compose with a second dispatch or with an `optional` array, and
+jm refuses both.
+
+Every constructor the binding can call is declared in `<component>_core.h`
+beside `create()`, with the same parameters except the swapped array, and the
+scaffold stubs it in `_core.c` (gh-1827). That covers `real_create_fn` and an
+`optional` array's `create_fn`, whose parameters are the array (its length or
+two extents first, then the pointer) followed by `create()`'s.
+
 ### `[[<object>.methods]]`
 
 One entry per `just-makeit method` call.
