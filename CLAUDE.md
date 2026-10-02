@@ -507,6 +507,11 @@ just-buildit/.github README under "Makefile standard".
     contained the replaced tip and passed `CI passed`; if so the push skips
     the matrix like a bump (`src=false`), and `docker` still publishes
     (`tested == 'true'`). Fail-safe: any doubt runs everything.
+- A docs-only diff (gh-1801 item 3) skips every `ci.yml` job but `lint`,
+    `coverage` (the full suite on one leg) and `docs`: `changes.yml` runs
+    `make ci-docs` (CI_DOCS_RE minus the Makefile's CI_DOCS_EXCLUDE_RE), and
+    the rest skip only on an explicit `code=false`. `docs` runs `make   docs-check` (strict build + docs tests) and gates `CI passed`;
+    `docs.yml` only deploys.
 - `Consumer smoke` in `ci.yml` (gh-1590) — `make consumer-smoke` installs jm
     packages and their dependencies to the DEFAULT prefix and consumes them
     by the official pkg-config and CMake instructions, with no hints: the

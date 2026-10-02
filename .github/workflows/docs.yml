@@ -1,22 +1,13 @@
 name: Docs
 
 on:
+  # Deploy only. The strict build that GATES a merge is ci.yml's `docs`
+  # job, which `CI passed` waits on (gh-1801 item 3, gh-1782). This file ran
+  # it on PRs, where no required check waited on it, so a broken strict build
+  # merged green. A push to main stays unfiltered: a path list that misses a
+  # case would silently serve a stale site.
   push:
     branches: [main]
-  # On a PR, build only when something that can actually change the site
-  # changed. Deliberately asymmetric with the push trigger above, which stays
-  # unfiltered: freshness of the deployed site is not a PR concern, and a path
-  # list that misses a case would silently serve a stale site.
-  pull_request:
-    branches: [main]
-    paths:
-      - docs/**
-      - mkdocs.yml
-      - zensical.toml
-      - README.md
-      - src/just_makeit/**
-      - pyproject.toml
-      - .github/workflows/docs.yml
   # A run that fails before any job starts (2026-10-02: the Actions policy
   # briefly allowed local actions only) cannot be re-run, and with no other
   # trigger the site stayed two merges stale until the next push. Dispatched

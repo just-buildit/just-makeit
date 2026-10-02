@@ -304,10 +304,8 @@ TEST_ALL_DEPS = test test-examples
 # be compared to ci.yml's `ci-passed` needs mechanically — which
 # tests/test_lint_ssot.py now does, so it cannot drift back.
 #
-# `docs-check` stays, and is the one entry here that CI does not run under that
-# name -- so `gates-home-check` (the reverse direction of `gates-check`, added
-# to the standard for just-makeit#1158) reports it, correctly, and it is named
-# in GATES_LOCAL_ONLY below with the reason.
+# `docs-check` is run by CI under that name since gh-1801 item 3 (ci.yml's
+# `docs` job); see GATES_LOCAL_ONLY below for what it used to be.
 #
 # `consumer-smoke` (gh-1590) is a gate CI runs by name. Locally it installs to
 # a temp prefix and consumes with the documented hints; only CI, on a
@@ -316,28 +314,12 @@ TEST_ALL_DEPS = test test-examples
 GATES_DEPS    = lint test test-examples coverage-gate bench docs-check \
                 consumer-smoke
 
-# `docs-check` is a pre-push AGGREGATE, and every check it performs already
-# gates a merge under another name -- measured rather than assumed:
-#
-#   its `zensical build --strict`   -> docs.yml runs `make docs`, which is the
-#                                      same build with `--clean`, so strictly
-#                                      more than docs-check's own
-#   its `pytest tests/test_docs.py` -> ci.yml runs `make test`, which collects
-#                                      113 tests from that file
-#
-# So the work has a home; only the name does not. That is one of the two
-# reasons GATES_LOCAL_ONLY takes (see its comment in standard.mk) -- the other
-# being a gate that cannot run on a runner, which this one plainly can.
-#
-# The alternatives were both wrong: making `docs-check` a required check would
-# duplicate in CI what CI already runs, and dropping it from GATES_DEPS would
-# lose the one command that runs both halves together before a push.
-#
-# `gates-home-check`'s aggregate rule does not rescue it, and should not:
-# `docs-check` has a recipe of its own (the run-and-report harness that makes a
-# build failure stop hiding what test_docs.py would have said), so running the
-# parts is genuinely not the same as running it.
-GATES_LOCAL_ONLY = docs-check
+# `docs-check` (the strict build, then tests/test_docs.py) is a merge gate
+# CI runs by name: ci.yml's `docs` job, which `CI passed` waits on (gh-1801
+# item 3, gh-1782). It used to be named in GATES_LOCAL_ONLY, on the grounds
+# that docs.yml ran the same build -- but docs.yml fed no required check, so
+# a broken strict build merged green. docs.yml now only deploys.
+GATES_LOCAL_ONLY =
 
 # Setup, not gates. `gates-check` requires every `make <target>` CI runs to be
 # reachable from `gates`, and it caught both of these the moment ci.yml started
