@@ -132,18 +132,54 @@ just-makeit bench --check --allow fir::step_64k   # this one is gone on purpose
 benchmark uses. The noise floor does not apply here: it answers "is this timing
 trustworthy?", and an absent benchmark has no timing to distrust.
 
+**Slow hardware: the run budget (gh-1687).** Each benchmark run — one
+`bench_<comp>_core` binary, or the one `pytest --benchmark-only` — gets 600 s
+by default. That was sized on a desktop core; a Cortex-A53-class board runs the
+same binary 10–20× slower, so the budget is yours to set:
+
+```toml
+# just-makeit.toml — every run
+[project.bench]
+timeout = 3600   # seconds; 0 = no limit
+```
+
+```sh
+just-makeit bench --timeout 0    # this run only, no limit
+```
+
+A run past the budget costs **that benchmark and nothing else**: it is killed
+and reported as `timeout    bench_<comp>_core`, the remaining benchmarks still
+run, the ones that finished are saved (the snapshot lists what timed out under
+`"timed_out"`), and the command then exits 1 naming it — so the numbers you did
+get are kept and the failure is still loud. Under `--check` the timed-out
+benchmark's baseline entries are `missing`, and the gate fails. The timed-out
+binary's own sections are lost: `jm_bench_write_json` writes once, at the end
+of `main`. The Python side is one `pytest` run, so a timeout there loses the
+Python results for that run.
+
+The builds `jm bench` drives are **not** timed: a cold build on the same board
+took 603 s, and a build that is slow has not failed. Bound a CI job's wall
+clock with the job's own `timeout-minutes:`.
+
+**`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
+empty `"benchmarks": []` is named as `silent     bench_<comp>_core`. That is
+read from the JSON the binary wrote, so it holds however the source records —
+including through a helper of your own that wraps `jm_bench_add`. It is the
+authoritative version of the `SILENT` advisory `jm status` gives from source.
+
 **Arguments**
 
-| Argument                     | Description                                                         |
-| ---------------------------- | ------------------------------------------------------------------- |
-| `comp …`                     | Restrict to the named components (default: all).                    |
-| `--tag TAG`                  | Snapshot tag (default: a UTC timestamp).                            |
-| `--c-only` / `--python-only` | Run only one benchmark side.                                        |
-| `--check`                    | Compare against a baseline and exit 1 on regression; saves nothing. |
-| `--threshold N`              | Fractional slowdown that fails `--check` (default `0.10` = 10%).    |
-| `--baseline TAG`             | Baseline snapshot for `--check` (default: the latest).              |
-| `--allow NAME`               | A benchmark exempt from `--check` (repeatable).                     |
-| `--json`                     | With `--check`, emit the comparison as JSON.                        |
+| Argument                     | Description                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comp …`                     | Restrict to the named components (default: all).                                                                                                     |
+| `--tag TAG`                  | Snapshot tag (default: a UTC timestamp).                                                                                                             |
+| `--c-only` / `--python-only` | Run only one benchmark side.                                                                                                                         |
+| `--check`                    | Compare against a baseline and exit 1 on regression; saves nothing.                                                                                  |
+| `--threshold N`              | Fractional slowdown that fails `--check` (default `0.10` = 10%).                                                                                     |
+| `--baseline TAG`             | Baseline snapshot for `--check` (default: the latest).                                                                                               |
+| `--allow NAME`               | A benchmark exempt from `--check` (repeatable).                                                                                                      |
+| `--json`                     | With `--check`, emit the comparison as JSON.                                                                                                         |
+| `--timeout S`                | Seconds one benchmark run may take before it is skipped and the run fails at the end (default: `[project.bench] timeout`, else 600; `0` = no limit). |
 
 ______________________________________________________________________
 
@@ -487,7 +523,7 @@ Prints a table of files, each in one of these states:
 | `UNBUILT`     | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | yes       |
 | `CTOR`        | The `<obj>_create()` declaration in the sacred `native/inc/<pkg>/<obj>/<obj>_core.h` takes different parameters from the ones the manifest renders (gh-1076). jm **injects** that declaration, so this is jm verifying what it wrote. It cannot tell which side is stale — fix one to match. Never suppressible: while they disagree, `jm regenerate <obj>` emits a `create()` that does not compile against your `_core.c`.                                                                                                                                                                                                                                                                                                                                                                                                                       | yes       |
 | `UNCHECKED`   | The `UNBUILT` scan above did not run (gh-1033): a build file enumerates its sources by wildcard, so "is this compiled?" cannot be answered by reading. Reported because the absence of an `UNBUILT` section otherwise means "not checked" and "checked and clean" indistinguishably. Not a gate — no `jm apply` clears a wildcard; name your sources explicitly to put the tree back under the gate.                                                                                                                                                                                                                                                                                                                                                                                                                                               | no        |
-| `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | no        |
+| `SILENT`      | A generated benchmark that records no measurement: the component has no `step()` and none of its methods has a benchable shape, so the target writes an empty `"benchmarks": []` array (gh-806). The file itself carries a `TODO:` naming the candidate methods and a worked `jm_bench_add` example (gh-840) — `SILENT` is the to-do list; the file is the instructions. Read from source, so it says only what it can see: the `jm_bench_t` accumulator passed to `jm_bench_write_json` is declared in the file and touched by nothing else. Hand it to anything — `jm_bench_add`, or a helper of your own, in the file or a header — and it is not reported (gh-1691); `jm bench` reports a binary that in fact recorded nothing as `silent`, from its JSON.                                                                                     | no        |
 | `UNPARSEABLE` | A `.pyi` on disk that is not valid Python **and** holds hand-written members (gh-785). jm finds a stub's members with `ast`, so it can find none in this one and the next `jm apply` renders over them. Never suppressible.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | yes       |
 | `NOTE`        | A method sets `pass_capacity` while its header still declares `max_out(state)` (gh-921), so the exact allocation the opt-in asks for is not the one generated. Nothing is broken — see below — so this is a note, never counted and never printed under `--check`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | no        |
 | `OUTDATED`    | A **create-only** file whose content is jm's own — the `Makefile`, `.clang-tidy`, `.clang-format`, `jm_test.h`, `jm_bench.h`, `jm_perf.h`, `jm_simd.h`, the common headers, the cmake `.in` templates — and which differs from what this jm renders (gh-949). `apply` never rewrites a create-only file, so adopting the new version is your call; suppressible with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               | no        |
