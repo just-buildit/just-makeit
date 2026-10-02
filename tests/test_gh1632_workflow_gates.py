@@ -20,7 +20,9 @@ GATE: no workflow but ci.yml runs on a PR (gh-1643, a shrink-only set aside);
       builds; no workflow step negates a grep of a file it has not proven
       exists, or negates any command, which bash -e would not stop on; no
       workflow or doc wires or describes a merge queue jm does not have; ci.yml
-      has a nightly that never skips, in a concurrency group of its own.
+      has a nightly that never skips, in a concurrency group of its own; a
+      docs-only diff skips every ci.yml job but lint, coverage and the strict
+      docs build, which gates `CI passed`.
 """
 
 from __future__ import annotations
@@ -90,7 +92,6 @@ def test_ci_runs_the_artifact_smoke_from_the_wheel_it_builds():
 # a PR is required to pass, so a workflow with its own PR trigger gates
 # nothing. These may only shrink (gh-1782).
 _PR_WORKFLOWS_OUTSIDE_CI = {
-    "docs.yml": "gh-1782",
     "nco_tone_ci.yml": "gh-1782",
 }
 
@@ -138,6 +139,41 @@ def test_main_has_a_nightly_full_run_of_its_own():
     assert arm and "schedule" in arm.group(1).split("|"), (
         "changes.yml must send a scheduled run to src=true"
     )
+
+
+# The ci.yml jobs a docs-only diff can break, so they run on one (gh-1801
+# item 3): lint (mdformat reads the docs), coverage (the full suite on one
+# leg; tests read the live tree), and the strict docs build. Plus the jobs
+# that are not checks of the diff at all.
+_DOCS_CAN_BREAK = {"lint", "coverage", "docs"}
+_NOT_A_CHECK = {"changes", "ci-passed", "trigger-mirror"}
+
+
+def test_a_docs_only_diff_skips_only_what_docs_cannot_break():
+    """Every other ci.yml job skips on an explicit code=false -- and only on
+    an explicit one, so an unset output (any early exit in changes.yml)
+    runs it."""
+    jobs = _jobs("ci.yml")
+    assert "docs" in jobs and "docs" in _needs(jobs["ci-passed"])
+    run = " ".join(s.get("run", "") for s in jobs["docs"]["steps"])
+    assert "make docs-check" in run
+    rest = sorted(set(jobs) - _DOCS_CAN_BREAK - _NOT_A_CHECK)
+    assert len(rest) >= 8, f"the walk must find the jobs: {rest}"
+    ungated = [
+        k
+        for k in rest
+        if "needs.changes.outputs.code != 'false'"
+        not in str(jobs[k].get("if"))
+    ]
+    assert ungated == [], (
+        f"{ungated} run on a docs-only diff; gate them on "
+        "`needs.changes.outputs.code != 'false'`, or name them in "
+        "_DOCS_CAN_BREAK with the reason"
+    )
+    for k in _DOCS_CAN_BREAK - {"docs"}:
+        assert "code" not in str(jobs[k].get("if")), (
+            f"{k} must run on a docs-only diff"
+        )
 
 
 DOCS = WF.parent.parent / "docs"
@@ -191,8 +227,10 @@ def test_ci_builds_the_docker_image_on_every_source_change():
     job = jobs[callers[0]]
     # A source change, or a push whose tree its PR tested (gh-1801): the
     # matrix skips that push, but the image must still publish from main.
+    # A docs-only diff (code=false) cannot change the image (gh-1801 item 3).
     assert job.get("if") == (
-        "needs.changes.outputs.src == 'true' || "
+        "(needs.changes.outputs.src == 'true' &&\n"
+        " needs.changes.outputs.code != 'false') ||\n"
         "needs.changes.outputs.tested == 'true'"
     ), job
     assert callers[0] in _needs(jobs["ci-passed"])

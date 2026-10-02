@@ -58,7 +58,7 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -237,7 +237,7 @@ jobs:
   examples:
     name: Examples (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -293,7 +293,7 @@ jobs:
     # 14 runs. clang-cl, not cl.exe: MSVC's own compiler has no `_Complex`.
     name: Examples (windows-latest, clang-cl)
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -351,7 +351,7 @@ jobs:
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -511,7 +511,7 @@ jobs:
   bench:
     name: Benchmarks run
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -531,7 +531,7 @@ jobs:
   consumer-smoke:
     name: Consumer smoke (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -581,7 +581,7 @@ jobs:
   wheel:
     name: Build the wheel
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -598,7 +598,7 @@ jobs:
   artifact-smoke:
     name: Artifact smoke
     needs: [changes, wheel]
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     uses: ./.github/workflows/artifact.yml
     with:
       wheel-artifact: dist-pr
@@ -619,8 +619,10 @@ jobs:
     # need not run again, but publishing `:latest` from main is not a test,
     # and skipping it would leave the image -- the Codespaces base -- behind
     # main for every merge that skips.
+    # A docs-only diff (code=false) cannot change the image, so it skips.
     if: >-
-      needs.changes.outputs.src == 'true' ||
+      (needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
       needs.changes.outputs.tested == 'true'
     uses: ./.github/workflows/docker.yml
     with:
@@ -629,23 +631,57 @@ jobs:
       contents: read
       packages: write
 
+  # The site's strict build, gating `CI passed` (gh-1801 item 3, gh-1782).
+  # docs.yml used to run it on PRs, where no required check waited on it, so
+  # a broken strict build merged green; docs.yml now only deploys. It runs on
+  # any source change, and on a version bump too when the docs moved -- a
+  # release rewrites CHANGELOG.md. A docs-only diff keeps it, with `lint`
+  # and `coverage` (the full suite on one leg), and skips the rest.
+  docs:
+    name: Docs (strict build)
+    needs: changes
+    if: >-
+      needs.changes.outputs.src == 'true' ||
+      needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+
+      # docs-check, not `docs`: the strict build AND test_docs.py, run
+      # together -- the merge gate `make gates` names (GATES_DEPS).
+      - run: make docs-check
+
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, test, examples, examples-windows, install-deps-smoke,
             consumer-smoke, coverage, lint, bench, wheel, artifact-smoke,
-            docker]
+            docker, docs]
     if: always()
     # Inputs as env, so the script below reads only shell variables and
     # tests/test_ci_passed_aggregator.py can run it as-is with any results.
     env:
       SRC: ${{ needs.changes.outputs.src }}
       RESULTS: ${{ join(needs.*.result, ' ') }}
+      DOCS: ${{ needs.docs.result }}
     steps:
       - run: |
-          # Bump-only PRs skip the matrix (src=false) — that is expected and green.
-          if [[ "$SRC" == "false" ]]; then exit 0; fi
+          # Bump-only PRs skip the matrix (src=false) — that is expected and
+          # green. But `docs` can still run under src=false (a release
+          # rewrites CHANGELOG.md, so docs=true), and a broken strict build
+          # must not be certified by this early exit (gh-1801).
+          if [[ "$SRC" == "false" ]]; then
+            case "$DOCS" in
+              success | skipped | "") exit 0 ;;
+              *) echo "::error::the docs build ended '$DOCS'"; exit 1 ;;
+            esac
+          fi
           # Every required job must have SUCCEEDED or been skipped by its own
           # `if`. This used to fail only on `failure` -- and a job that hits
           # its timeout-minutes ends `cancelled`, so a Coverage run killed at

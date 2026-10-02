@@ -29,6 +29,12 @@ on:
       tested:
         description: "'true' when a push's tree already passed CI as a merged PR"
         value: ${{ jobs.changes.outputs.tested }}
+      docs:
+        description: "'true' when the diff touches the docs (ci-docs)"
+        value: ${{ jobs.changes.outputs.docs }}
+      code:
+        description: "'false' only for a docs-only diff (ci-docs); else 'true' or unset"
+        value: ${{ jobs.changes.outputs.code }}
 
 jobs:
   changes:
@@ -44,6 +50,8 @@ jobs:
     outputs:
       src: ${{ steps.check.outputs.src }}
       tested: ${{ steps.check.outputs.tested }}
+      docs: ${{ steps.check.outputs.docs }}
+      code: ${{ steps.check.outputs.code }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -142,3 +150,14 @@ jobs:
           # replaced went stale once (jb.toml) and had to grow for
           # changelog.d/. It writes src= to $GITHUB_OUTPUT itself.
           make -s ci-changes BASE="$base"
+
+          # Is it docs and nothing else (gh-1801 item 3)? The standard's
+          # answer, `make ci-docs`: CI_DOCS_RE minus CI_DOCS_EXCLUDE_RE (the
+          # Makefile's), and a deletion outside the docs dirs is never
+          # docs-only. It writes docs= and code= itself, failing safe to
+          # true/true. ci.yml skips the jobs docs cannot break only on an
+          # explicit code=false, so every early exit above -- which writes
+          # neither -- runs everything, and so does a classifier that cannot
+          # run at all (hence `|| true`: it must not fail the step that has
+          # already written src=).
+          make -s ci-docs BASE="$base" || true

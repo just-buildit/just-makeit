@@ -47,6 +47,9 @@ CHANGES = WF / "changes.yml"
 # matrix must run. A fixed commit, because "the parent of a release" is not
 # guaranteed to be one.
 _SOURCE_COMMIT = "5eb3e85"
+# A merged docs-only change (gh-1801 item 3): one page under docs/, nothing
+# else, so ci-docs must answer code=false.
+_DOCS_COMMIT = "9762df4"
 
 
 def _changes_job() -> str:
@@ -168,7 +171,12 @@ def test_the_aggregator_still_greens_a_skip():
     text = CI.read_text(encoding="utf-8")
     # Executed, not string-matched, in test_ci_passed_aggregator.py; this
     # keeps the pointer from the fast path to the rule it depends on.
-    assert 'if [[ "$SRC" == "false" ]]; then exit 0; fi' in text, (
+    # gh-1801: the early exit now also requires the docs build, which a
+    # bump can still run; a skipped or absent one is still green.
+    assert 'if [[ "$SRC" == "false" ]]; then' in text, (
+        "ci-passed no longer treats a bump-only skip as green"
+    )
+    assert 'success | skipped | "") exit 0 ;;' in text, (
         "ci-passed no longer treats a bump-only skip as green"
     )
 
@@ -394,6 +402,7 @@ def checkouts():
         for key, commit in (
             ("bump", _newest_release_commit()),
             ("source", _SOURCE_COMMIT),
+            ("docs", _DOCS_COMMIT),
         ):
             wt = tmp / key
             r = subprocess.run(
@@ -407,11 +416,12 @@ def checkouts():
             made.append(wt)
             for f in ("Makefile", "standard.mk", "local.mk"):
                 shutil.copy2(REPO / f, wt / f)
-            # The helper `make ci-tree-tested` runs; these commits predate it.
-            shutil.copy2(
-                REPO / "scripts" / "ci-tree-tested.sh",
-                wt / "scripts" / "ci-tree-tested.sh",
-            )
+            # The helpers `make ci-tree-tested` and `make ci-docs` run;
+            # these commits predate both.
+            for helper in ("ci-tree-tested.sh", "ci-docs.py"):
+                shutil.copy2(
+                    REPO / "scripts" / helper, wt / "scripts" / helper
+                )
             trees[key] = (wt, _rev(f"{commit}^"))
         bindir = tmp / "bin"
         bindir.mkdir()
@@ -452,6 +462,7 @@ def _decide(
     payload: "str | None",
     tree_api: "dict[str, str] | None" = None,
     want_tested: "str | None" = None,
+    outputs: "dict[str, str] | None" = None,
 ):
     """Run the step; return (src, the gh calls it made for the base).
 
@@ -515,6 +526,9 @@ def _decide(
         want = [want_tested] if want_tested else []
         got = re.findall(r"^tested=(\w+)$", written, re.M)
         assert got == want, (written, r.stderr)
+    for key, value in (outputs or {}).items():
+        got = re.findall(rf"^{key}=(\w+)$", written, re.M)
+        assert got == [value], (key, written, r.stderr)
     calls = [
         c
         for c in log.read_text(encoding="utf-8").splitlines()
@@ -796,3 +810,32 @@ class TestATestedTreeIsNotRunAgain:
             want_tested="",
         )
         assert src == "true"
+
+
+# ── A docs-only diff skips what docs cannot break (gh-1801 item 3) ──────────
+#
+# `make ci-docs`, run by the step itself after ci-changes, writes docs= and
+# code=. ci.yml skips the jobs docs cannot break only on an explicit
+# code=false, so the step must produce exactly that for a docs-only diff, and
+# code=true for anything else.
+
+
+class TestADocsOnlyDiffIsClassified:
+    def test_a_docs_only_pr(self, checkouts):
+        src, _ = _decide(
+            checkouts,
+            "docs",
+            "pull_request",
+            _payload(*_OTHERS),
+            outputs={"docs": "true", "code": "false"},
+        )
+        assert src == "true", "a docs change is not a version bump"
+
+    def test_a_source_pr_is_code(self, checkouts):
+        _decide(
+            checkouts,
+            "source",
+            "pull_request",
+            _payload(*_OTHERS),
+            outputs={"code": "true"},
+        )

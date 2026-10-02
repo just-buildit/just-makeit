@@ -40,12 +40,13 @@ def _script() -> str:
     return "\n".join(lines)
 
 
-def _exit(src: str, *results: str) -> int:
+def _exit(src: str, *results: str, docs: str = "") -> int:
     return subprocess.run(
         ["bash", "-c", _script()],
         env={
             "SRC": src,
             "RESULTS": " ".join(results),
+            "DOCS": docs,
             "PATH": "/usr/bin:/bin",
         },
         capture_output=True,
@@ -82,3 +83,20 @@ def test_only_success_or_skipped_passes(results, code):
 def test_a_bump_only_skip_is_green():
     """src=false skips the matrix on purpose (the release fast path)."""
     assert _exit("false", "skipped", "skipped", "cancelled") == 0
+
+
+@pytest.mark.parametrize(
+    "docs, code",
+    [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)],
+)
+def test_a_bump_still_needs_its_docs_build(docs, code):
+    """gh-1801: under src=false the docs job can still run (a release
+    rewrites CHANGELOG.md), and the bump early exit must not certify a
+    broken strict build."""
+    assert _exit("false", "skipped", docs, docs=docs) == code
+
+
+def test_the_aggregator_reads_the_docs_result():
+    text = CI.read_text(encoding="utf-8")
+    job = text[text.index("\n  ci-passed:") :]
+    assert "DOCS: ${{ needs.docs.result }}" in job
