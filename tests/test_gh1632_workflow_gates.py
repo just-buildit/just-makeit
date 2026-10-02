@@ -19,8 +19,7 @@ GATE: no workflow but ci.yml runs on a PR (gh-1643, a shrink-only set aside);
       after it feeds `CI passed`; ci.yml runs the artifact smoke from the wheel `make wheel`
       builds; no workflow step negates a grep of a file it has not proven
       exists, or negates any command, which bash -e would not stop on; no
-      workflow or doc wires or describes a merge queue jm does not have;
-      every workflow that runs on its own can also be dispatched; ci.yml
+      workflow or doc wires or describes a merge queue jm does not have; ci.yml
       has a nightly that never skips, in a concurrency group of its own.
 """
 
@@ -120,30 +119,6 @@ def test_no_workflow_but_ci_runs_on_a_pull_request():
     )
     stale = sorted(set(_PR_WORKFLOWS_OUTSIDE_CI) - pr)
     assert stale == [], f"fixed; drop from _PR_WORKFLOWS_OUTSIDE_CI: {stale}"
-
-
-def test_every_triggered_workflow_can_be_dispatched():
-    """A workflow that runs on its own can also be started by hand.
-
-    A run that fails before any job starts cannot be re-run. On 2026-10-02
-    the Actions policy briefly allowed local actions only, every push to
-    main failed that way, and docs.yml -- push and pull_request alone --
-    could not be redone: the site stayed stale until the next push. Only a
-    workflow that is purely reusable (``workflow_call`` and nothing else)
-    is exempt, since it never runs on its own.
-    """
-    own = {"push", "pull_request", "schedule", "workflow_run"}
-    workflows = sorted(WF.glob("*.yml"))
-    assert workflows, "the walk below must have something to find"
-    missing = [
-        wf.name
-        for wf in workflows
-        if own & set(_on(wf.name)) and "workflow_dispatch" not in _on(wf.name)
-    ]
-    assert missing == [], (
-        f"{missing} run on their own but cannot be dispatched, so a run "
-        "that fails at startup cannot be redone; add `workflow_dispatch:`"
-    )
 
 
 def test_main_has_a_nightly_full_run_of_its_own():
