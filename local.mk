@@ -13,9 +13,7 @@ LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install
                 complex-spelling-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update \
-                ci-image-build ci-image-smoke ci-image-check ci-image-refresh \
-                ci-shell
+                doppler-pin-check consumer-smoke install-history-update
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -203,36 +201,3 @@ consumer-smoke: ## Install jm packages, consume them by the official instruction
 install-history-update: ## Record the root install section's commands for adopt
 	@python3 scripts/install_history.py
 	@$(RUFF) format -q src/just_makeit/_installhistory.py
-
-# The CI toolchain image (docker/Dockerfile.ci): the Linux legs of ci.yml run
-# in it, pinned by digest in .github/ci-image, so the toolchain a PR is tested
-# with changes only when a commit says so. scripts/ci_image.py explains each
-# pin; ci-image.yml refreshes them weekly and opens the re-pin PR.
-#
-# The package list is bootstrap.toml's dev.apt group -- the one
-# install-deps-dev reads -- passed in here, so the image and a laptop share
-# one declaration. CI_IMAGE_BUILD_FLAGS is how the workflow adds --platform
-# and --push; locally the default loads the image into the docker daemon.
-CI_IMAGE_TAG         ?= jm-ci:local
-CI_IMAGE_BUILD_FLAGS ?= --load
-
-ci-image-build: ## Build the CI toolchain image (docker/Dockerfile.ci)
-	docker buildx build $(CI_IMAGE_BUILD_FLAGS) -t $(CI_IMAGE_TAG) \
-	    -f docker/Dockerfile.ci \
-	    --build-arg APT_PACKAGES="$$(python3 scripts/ci_image.py packages)" \
-	    --build-arg CI_INPUTS="$$(python3 scripts/ci_image.py inputs)" .
-
-ci-image-smoke: ## Prove CI_IMAGE_TAG compiles, configures and imports numpy
-	@python3 scripts/ci_image.py smoke $(CI_IMAGE_TAG)
-
-# Hung off nothing but ci.yml's `toolchain` job, which `CI passed` waits on:
-# it reads the registry, and `make lint` must not need ghcr to be up.
-ci-image-check: ## Fail unless .github/ci-image was built from this tree
-	@python3 scripts/ci_image.py check
-
-ci-image-refresh: ## Move the CI image's base, apt snapshot and uv pins to today
-	@python3 scripts/ci_image.py refresh
-
-# The pinned image, with this checkout at /w: what a Linux CI leg sees.
-ci-shell: ## Open a shell in the pinned CI image, with this checkout mounted
-	docker run --rm -it -v "$$PWD":/w -w /w "$$(cat .github/ci-image)" bash

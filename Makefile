@@ -32,6 +32,19 @@ HAS_COVERAGE = 1
 HAS_CHANGELOG        = 1
 CHANGELOG_CODE_PATHS = src/just_makeit
 
+# The CI toolchain image (gh-1796), the org standard's shared one
+# (just-buildit.github.io#86): the Linux CI legs run in it, pinned with every
+# input it was built from in .github/ci-images.env. The flag vendors
+# docker/ci.Dockerfile, scripts/ci-image.py and .github/workflows/ci-image.yml,
+# and hangs `ci-image-check` off lint, so a PR moving bootstrap.toml or the
+# Dockerfile cannot merge on the old image. jm's own copy of all three
+# (gh-1797) is gone: one implementation, in canonical.
+# GATE: the pinned CI image was built from this tree's image sources.
+HAS_CI_IMAGE   = 1
+CI_IMAGE_REPO  = ghcr.io/just-buildit/jm-ci
+CI_IMAGE_BASES = ubuntu:24.04
+CI_IMAGE_GROUPS = dev
+
 PYTHON     ?= $(shell uv run --no-project python -c \
                   "import sys; print(sys.executable)" 2>/dev/null || python3)
 UV          = uv
