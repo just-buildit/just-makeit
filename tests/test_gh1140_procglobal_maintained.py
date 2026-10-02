@@ -210,6 +210,14 @@ YOURS = {
     "benchmarks/history/.gitkeep",
     "docs/api.md",
     "docs/index.md",
+    # gh-1691: the C benchmarks are create-only and the author's, like the
+    # C tests below. `status` "saw" them only because the old SILENT scan
+    # read ANY file without a `jm_bench_add(` line -- this clobber included
+    # -- as an empty benchmark. The scan now judges only a file whose own
+    # accumulator it can see, and a clobbered file has none.
+    "native/benchmarks/bench_flag_core.c",
+    "native/benchmarks/bench_solo_core.c",
+    "native/benchmarks/bench_user_core.c",
     "native/src/other/other_core.c",
     "native/src/own/own_core.c",
     "native/src/pgdemo_lib.c",
