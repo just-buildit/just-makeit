@@ -148,7 +148,7 @@ just-makeit bench --timeout 0    # this run only, no limit
 ```
 
 A run past the budget costs **that benchmark and nothing else**: it is killed
-and reported as `timeout    bench_<comp>_core`, the remaining benchmarks still
+and reported as `timeout bench_<comp>_core`, the remaining benchmarks still
 run, the ones that finished are saved (the snapshot lists what timed out under
 `"timed_out"`), and the command then exits 1 naming it — so the numbers you did
 get are kept and the failure is still loud. Under `--check` the timed-out
@@ -162,7 +162,7 @@ took 603 s, and a build that is slow has not failed. Bound a CI job's wall
 clock with the job's own `timeout-minutes:`.
 
 **`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
-empty `"benchmarks": []` is named as `silent     bench_<comp>_core`. That is
+empty `"benchmarks": []` is named as `silent bench_<comp>_core`. That is
 read from the JSON the binary wrote, so it holds however the source records —
 including through a helper of your own that wraps `jm_bench_add`. It is the
 authoritative version of the `SILENT` advisory `jm status` gives from source.
