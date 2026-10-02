@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from .. import _coerce
+from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import ctor_demo_label as _ctor_demo_label
 from .._docstring import (
@@ -360,7 +361,7 @@ def _build_no_state_init_ctx(
                 if dispatch_meta:
                     # gh-1825: an optional array beside a dtype dispatch is
                     # the same uncomposable pair, met in the other order.
-                    raise ValueError(
+                    raise Refusal(
                         _two_dispatches(
                             component, next(iter(dispatch_meta)), name
                         )
@@ -416,7 +417,7 @@ def _build_no_state_init_ctx(
                     # while a 2-D array's call passes `<name>_dim0/_dim1`,
                     # which the dispatch never declared. Refused, not built.
                     if ndim == 2:
-                        raise ValueError(
+                        raise Refusal(
                             f"'{component}': array init-param '{name}' -- dtype"
                             " dispatch (real_type/real_create_fn) is only"
                             " supported for a 1-D array."
@@ -426,7 +427,7 @@ def _build_no_state_init_ctx(
                     # so two of them -- or one beside an `optional` array --
                     # would need a constructor per combination.
                     if dispatch_meta or opt_arr_ip:
-                        raise ValueError(
+                        raise Refusal(
                             _two_dispatches(
                                 component,
                                 [*dispatch_meta, *(o[0] for o in opt_arr_ip)][
