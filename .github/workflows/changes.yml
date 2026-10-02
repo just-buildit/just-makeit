@@ -24,8 +24,11 @@ on:
   workflow_call:
     outputs:
       src:
-        description: "'false' for a version bump alone, else 'true'"
+        description: "'false' for a version bump alone or a tree already tested, else 'true'"
         value: ${{ jobs.changes.outputs.src }}
+      tested:
+        description: "'true' when a push's tree already passed CI as a merged PR"
+        value: ${{ jobs.changes.outputs.tested }}
 
 jobs:
   changes:
@@ -39,6 +42,7 @@ jobs:
       contents: read
     outputs:
       src: ${{ steps.check.outputs.src }}
+      tested: ${{ steps.check.outputs.tested }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -73,6 +77,22 @@ jobs:
             base="$PR_BASE"
             git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD^"
           else
+            # Each tree that lands on main is tested once (gh-1801). A merged
+            # PR whose head IS this tree, contains the tip this push replaced,
+            # and passed "CI passed" already ran the matrix on exactly this
+            # code, so main does not run it again. The canonical answer is
+            # `make ci-tree-tested`; it fails safe (tested=false) on any
+            # doubt, and so does a helper that cannot run at all. It writes
+            # tested= to $GITHUB_OUTPUT itself. This comes BEFORE the bump
+            # check because it proves the tree passed directly: a superseded
+            # pending run on the base no longer leaves the commit uncertified.
+            tested=$(GITHUB_REPOSITORY="$REPO" CI_CHECK_NAME="$CI_CHECK" \
+                       make -s ci-tree-tested BEFORE="$BEFORE" \
+                     | sed -n 's/^tested=//p') || tested=false
+            if [[ "$tested" == "true" ]]; then
+              echo "src=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+
             # push: diff the whole pushed range. Fail SAFE -- if the previous
             # tip is not reachable in this shallow clone we cannot prove the
             # push is bump-only, so run everything.

@@ -194,7 +194,12 @@ def test_ci_builds_the_docker_image_on_every_source_change():
     ]
     assert len(callers) == 1, "ci.yml must call docker.yml once"
     job = jobs[callers[0]]
-    assert job.get("if") == "needs.changes.outputs.src == 'true'", job
+    # A source change, or a push whose tree its PR tested (gh-1801): the
+    # matrix skips that push, but the image must still publish from main.
+    assert job.get("if") == (
+        "needs.changes.outputs.src == 'true' || "
+        "needs.changes.outputs.tested == 'true'"
+    ), job
     assert callers[0] in _needs(jobs["ci-passed"])
     # Built and smoke-tested on a PR; pushed from main.
     assert job["with"]["publish"] == "${{ github.event_name == 'push' }}"

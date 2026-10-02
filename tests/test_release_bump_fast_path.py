@@ -323,11 +323,35 @@ def test_every_job_a_release_reaches_is_gated_on_changes(name, jobs):
 
 _REPO_SLUG = "just-buildit/just-makeit"
 
+# Routed by endpoint, and `--jq` applied with the real jq as gh does, so
+# ci-tree-tested's own calls (gh-1801) see the API's shapes too. An endpoint
+# with no body configured answers 404, as an unknown one would.
 _FAKE_GH = """#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+# One line per call, whatever the --jq argument's own newlines.
+printf '%s' "$*" | tr '\\n' ' ' >> "$FAKE_GH_LOG"; echo >> "$FAKE_GH_LOG"
 [ -n "$FAKE_GH_FAIL" ] && { echo "HTTP 502" >&2; exit 1; }
-cat "$FAKE_GH_JSON"
+jq_expr=""; ep=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --jq) jq_expr="$2"; shift 2 ;;
+    -X|-f) shift 2 ;;
+    api|--paginate) shift ;;
+    *) ep="$1"; shift ;;
+  esac
+done
+case "$ep" in
+  */pulls) body="$FAKE_GH_PULLS" ;;
+  */git/commits/*) body="$FAKE_GH_COMMIT" ;;
+  */compare/*) body="$FAKE_GH_COMPARE" ;;
+  *) body="$FAKE_GH_JSON" ;;
+esac
+[ -n "$body" ] && [ -s "$body" ] || { echo "HTTP 404" >&2; exit 1; }
+if [ -n "$jq_expr" ]; then jq -r "$jq_expr" "$body"; else cat "$body"; fi
 """
+
+# ci-tree-tested's endpoints; every OTHER call the step makes reads the
+# base's checks.
+_TREE_CALL = re.compile(r"/pulls\b|/git/commits/|/compare/|check_name=")
 
 
 def _check_step() -> dict:
@@ -383,6 +407,11 @@ def checkouts():
             made.append(wt)
             for f in ("Makefile", "standard.mk", "local.mk"):
                 shutil.copy2(REPO / f, wt / f)
+            # The helper `make ci-tree-tested` runs; these commits predate it.
+            shutil.copy2(
+                REPO / "scripts" / "ci-tree-tested.sh",
+                wt / "scripts" / "ci-tree-tested.sh",
+            )
             trees[key] = (wt, _rev(f"{commit}^"))
         bindir = tmp / "bin"
         bindir.mkdir()
@@ -416,8 +445,20 @@ def _payload(*runs: "tuple[str, str, str | None]") -> str:
 _OTHERS = (("Lint", "completed", "success"), ("Docs", "completed", "success"))
 
 
-def _decide(checkouts, tree: str, event: str, payload: "str | None"):
-    """Run the step; return (src, the gh calls it made)."""
+def _decide(
+    checkouts,
+    tree: str,
+    event: str,
+    payload: "str | None",
+    tree_api: "dict[str, str] | None" = None,
+    want_tested: "str | None" = None,
+):
+    """Run the step; return (src, the gh calls it made for the base).
+
+    ``tree_api`` serves ci-tree-tested's endpoints (``pulls``, ``commit``,
+    ``compare``); absent, each answers 404 and the helper says
+    tested=false. ``want_tested`` asserts the ``tested`` output.
+    """
     import os
 
     trees, bindir, tmp = checkouts
@@ -428,6 +469,11 @@ def _decide(checkouts, tree: str, event: str, payload: "str | None"):
     log.write_text("", encoding="utf-8")
     body = tmp / "gh.json"
     body.write_text(payload or "", encoding="utf-8")
+    bodies = {}
+    for kind in ("pulls", "commit", "compare"):
+        f = tmp / f"gh-{kind}.json"
+        f.write_text((tree_api or {}).get(kind, ""), encoding="utf-8")
+        bodies[f"FAKE_GH_{kind.upper()}"] = str(f)
     step = _check_step()
     env = dict(os.environ)
     env.update({k: str(v) for k, v in step["env"].items()})
@@ -445,6 +491,7 @@ def _decide(checkouts, tree: str, event: str, payload: "str | None"):
             "GITHUB_OUTPUT": str(out),
             "FAKE_GH_LOG": str(log),
             "FAKE_GH_JSON": str(body),
+            **bodies,
         }
     )
     env.pop("FAKE_GH_FAIL", None)
@@ -460,9 +507,19 @@ def _decide(checkouts, tree: str, event: str, payload: "str | None"):
         text=True,
     )
     assert r.returncode == 0, r.stderr
-    srcs = re.findall(r"^src=(\w+)$", out.read_text(encoding="utf-8"), re.M)
+    written = out.read_text(encoding="utf-8")
+    srcs = re.findall(r"^src=(\w+)$", written, re.M)
     assert len(srcs) == 1, (srcs, r.stderr)
-    calls = log.read_text(encoding="utf-8").splitlines()
+    if want_tested is not None:
+        # "" means the step must not have asked at all.
+        want = [want_tested] if want_tested else []
+        got = re.findall(r"^tested=(\w+)$", written, re.M)
+        assert got == want, (written, r.stderr)
+    calls = [
+        c
+        for c in log.read_text(encoding="utf-8").splitlines()
+        if not _TREE_CALL.search(c)
+    ]
     for call in calls:
         assert f"repos/{_REPO_SLUG}/commits/{base}/check-runs" in call, call
     return srcs[0], calls
@@ -611,3 +668,131 @@ def test_every_caller_grants_what_its_callee_asks(caller, job, callee):
         f"{caller}'s `{job}` calls {callee}, which asks for {short} beyond "
         f"what the caller grants ({grant}); GitHub refuses to start the run"
     )
+
+
+# ── A tree its merged PR already tested is not run again (gh-1801) ───────────
+#
+# Each tree that lands on main is tested once: a push whose tree IS a merged
+# PR's head, which contains the tip the push replaced and passed "CI passed"
+# from GitHub Actions, skips the matrix like a bump does. The verdict is the
+# canonical `make ci-tree-tested`, run here for real against the fake API;
+# every case where one condition fails must fall through to the normal path,
+# which for a source commit is the full run.
+
+_PR_HEAD = "f" * 40
+
+
+def _head_tree(checkouts, key: str) -> str:
+    trees, _, _ = checkouts
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=trees[key][0],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _tree_api(tree_sha: str, compare: str = "ahead") -> "dict[str, str]":
+    import json
+
+    return {
+        "pulls": json.dumps(
+            [{"merged_at": "2026-10-02T00:00:00Z", "head": {"sha": _PR_HEAD}}]
+        ),
+        "commit": json.dumps({"tree": {"sha": tree_sha}}),
+        "compare": json.dumps({"status": compare}),
+    }
+
+
+def _pr_checks(conclusion: str, slug: str = "github-actions") -> str:
+    import json
+
+    return json.dumps(
+        {
+            "total_count": 1,
+            "check_runs": [
+                {
+                    "name": "CI passed",
+                    "status": "completed",
+                    "conclusion": conclusion,
+                    "app": {"slug": slug},
+                    "started_at": "2026-10-02T00:00:00Z",
+                }
+            ],
+        }
+    )
+
+
+class TestATestedTreeIsNotRunAgain:
+    def test_a_source_push_whose_pr_passed_skips_without_a_diff(
+        self, checkouts
+    ):
+        src, calls = _decide(
+            checkouts,
+            "source",
+            "push",
+            _pr_checks("success"),
+            tree_api=_tree_api(_head_tree(checkouts, "source")),
+            want_tested="true",
+        )
+        assert src == "false"
+        assert calls == [], "a tested tree needs no base or diff verdict"
+
+    def test_a_pr_that_already_had_the_tip_is_enough(self, checkouts):
+        src, _ = _decide(
+            checkouts,
+            "source",
+            "push",
+            _pr_checks("success"),
+            tree_api=_tree_api(_head_tree(checkouts, "source"), "identical"),
+            want_tested="true",
+        )
+        assert src == "false"
+
+    @pytest.mark.parametrize(
+        "why,api,checks",
+        [
+            ("another tree", lambda t: _tree_api("0" * 40), "success"),
+            (
+                "branch moved under it",
+                lambda t: _tree_api(t, "diverged"),
+                "success",
+            ),
+            ("its CI failed", lambda t: _tree_api(t), "failure"),
+            (
+                "not from GitHub Actions",
+                lambda t: _tree_api(t),
+                "success-other",
+            ),
+            ("no merged PR", lambda t: {}, "success"),
+        ],
+    )
+    def test_any_unmet_condition_runs_everything(
+        self, checkouts, why, api, checks
+    ):
+        payload = (
+            _pr_checks("success", slug="someone-else")
+            if checks == "success-other"
+            else _pr_checks(checks)
+        )
+        src, _ = _decide(
+            checkouts,
+            "source",
+            "push",
+            payload,
+            tree_api=api(_head_tree(checkouts, "source")),
+            want_tested="false",
+        )
+        assert src == "true", why
+
+    def test_a_pull_request_never_asks(self, checkouts):
+        src, _ = _decide(
+            checkouts,
+            "source",
+            "pull_request",
+            _pr_checks("success"),
+            tree_api=_tree_api(_head_tree(checkouts, "source")),
+            want_tested="",
+        )
+        assert src == "true"

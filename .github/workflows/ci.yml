@@ -603,7 +603,13 @@ jobs:
   docker:
     name: Docker image
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    # Also on a push whose tree its PR already tested (gh-1801): the matrix
+    # need not run again, but publishing `:latest` from main is not a test,
+    # and skipping it would leave the image -- the Codespaces base -- behind
+    # main for every merge that skips.
+    if: >-
+      needs.changes.outputs.src == 'true' ||
+      needs.changes.outputs.tested == 'true'
     uses: ./.github/workflows/docker.yml
     with:
       publish: ${{ github.event_name == 'push' }}

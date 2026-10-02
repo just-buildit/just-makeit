@@ -502,6 +502,11 @@ just-buildit/.github README under "Makefile standard".
 - `ci.yml` — matrix (ubuntu/macos/ubuntu-arm64 × py3.9–3.14); runs
     `jm-install-deps` then `jm-run-tests`. Windows: the examples, under
     clang-cl, in a job that feeds `CI passed` (see the Windows section).
+- Each tree on `main` is tested once (gh-1801): `changes.yml` asks
+    `make ci-tree-tested` whether a push's tree is a merged PR's head that
+    contained the replaced tip and passed `CI passed`; if so the push skips
+    the matrix like a bump (`src=false`), and `docker` still publishes
+    (`tested == 'true'`). Fail-safe: any doubt runs everything.
 - `Consumer smoke` in `ci.yml` (gh-1590) — `make consumer-smoke` installs jm
     packages and their dependencies to the DEFAULT prefix and consumes them
     by the official pkg-config and CMake instructions, with no hints: the
