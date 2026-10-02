@@ -93,6 +93,30 @@ class TestThePollWindowOutlastsMainsCI:
             f"with the new numbers recorded in this file."
         )
 
+    def test_the_job_outlasts_its_own_poll(self):
+        """The job's timeout-minutes must exceed the poll window (gh-1801).
+
+        Every job carries a timeout now. One at or under the window would
+        cancel the job before the loop's own timeout fires, so a slow main
+        would end as GitHub's bare `cancelled` -- not the error that says
+        this is longer than main's CI has ever taken, and where to look.
+        """
+        import yaml
+
+        body = _verify_step()
+        window_min = (
+            _int_assignment("ATTEMPTS", body)
+            * _int_assignment("INTERVAL", body)
+            / 60
+        )
+        job = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"][
+            "verify-ci"
+        ]
+        assert job.get("timeout-minutes", 0) > window_min, (
+            f"verify-ci's timeout-minutes ({job.get('timeout-minutes')}) "
+            f"does not outlast its {window_min:.0f} min poll"
+        )
+
     def test_the_floor_actually_clears_the_measurement(self):
         """Guard the guard. A floor that drifted below the measurement it
         cites would pass the test above while gating nothing."""

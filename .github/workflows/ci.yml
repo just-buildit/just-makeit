@@ -664,6 +664,7 @@ jobs:
     # Never blocks anything else in this repo — not a required check.
     needs: ci-passed
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success'
     steps:
       - name: Dispatch mirror refresh
