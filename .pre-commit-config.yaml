@@ -14,8 +14,11 @@
 # the hook runs. Both go through `make -s lint-<tool>` like every other one,
 # so the hook, `make lint`, and the CI lint job are one invocation.
 #
-# clang-format and cmake-format stay on their upstream mirrors: they are not
-# Python project dependencies, so pinning them in pyproject would be a lie.
+# Every hook dispatches to `make -s lint-<tool>`, with no exception (gh-1801
+# item 4). uv-lock was the last: it ran astral's upstream hook at its own
+# pinned uv, a second answer to "which uv locks this project" beside the
+# Makefile's $(UV). uv.lock is a fixed point under both uv 0.11.28 and
+# 0.12.21 (measured 2026-10-02), so the move changes no lock.
 repos:
   - repo: local
     hooks:
@@ -26,10 +29,12 @@ repos:
         files: ^(pyproject\.toml|bootstrap\.toml)$
         pass_filenames: false
 
-  - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.28
-    hooks:
       - id: uv-lock
+        name: uv lock (uv.lock agrees with pyproject.toml)
+        entry: make -s lint-uv-lock
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
 
   # Python + markdown formatting, dispatched through the Makefile so the hook
   # and `make format` cannot disagree. Each runs over the whole tree
