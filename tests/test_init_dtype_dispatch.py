@@ -71,6 +71,14 @@ class TestDtypeDispatch:
             "self->handle = fir_create("
         )
 
+    def test_a_failed_probe_clears_its_error(self):
+        """gh-1826: the probe only chooses the constructor. Its failure is
+        cleared so the acquisition after it -- which reports the argument's
+        own error -- does not run with an exception already set."""
+        block = _ctx(self.PARAMS)["array_args_parse_block"]
+        assert "if (_taps_probe) {" in block
+        assert "} else {\n            PyErr_Clear();\n        }" in block
+
     def test_the_block_acquires_and_never_constructs(self):
         """gh-1825: the call is `create_line`'s, after every array's locals;
         the dispatch block only acquires the array and records its dtype."""

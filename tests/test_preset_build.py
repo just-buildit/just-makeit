@@ -279,8 +279,13 @@ _WARN_SHAPES = {
         '\n[module.m]\nobjects = ["disp"]\n' + _DISPATCH,
         ["apply"],
     ],
-    # gh-1827: an optional array's `create_fn`, likewise.
+    # gh-1827: an optional array's `create_fn`, likewise -- and under
+    # `header_only`, where both constructors are `static inline` in the
+    # header rather than defined in a `_core.c`.
     "optional_array_create_fn": [["object", "disp", *_OPTIONAL]],
+    "header_only_optional_array_create_fn": [
+        ["object", "disp", "--header-only", *_OPTIONAL]
+    ],
     "module_optional_array_create_fn": [
         ["module", "m"],
         ["object", "disp", "--module", "m", *_OPTIONAL],
