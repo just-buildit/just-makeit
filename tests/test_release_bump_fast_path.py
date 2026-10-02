@@ -242,12 +242,37 @@ def _reached(trigger: "dict | None", files: "list[str]") -> bool:
     return True
 
 
+def _vendored() -> "set[str]":
+    """The standard's VENDORED_FILES, from make, the one place they are named.
+
+    A vendored workflow is canonical's (standard-check refuses any edit), so
+    it cannot call jm's changes.yml; the obligation is canonical's to meet in
+    its own way and its own tests. ci-image.yml meets it: a branch push whose
+    pin is not owed -- a version bump -- resolves and builds nothing.
+    """
+    out = subprocess.run(
+        # The rule arrives on stdin, not through --eval: macOS ships GNU
+        # make 3.81, which has no --eval.
+        ["make", "-s", "-f", "Makefile", "-f", "-", "_jm-vendored"],
+        input="_jm-vendored: ; @echo $(VENDORED_FILES)\n",
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert out, "make named no VENDORED_FILES"
+    return set(out)
+
+
 def _workflows_a_release_reaches() -> "list[tuple[str, dict]]":
     import yaml
 
     files = _release_files()
+    vendored = _vendored()
     out = []
     for wf in sorted(WF.glob("*.yml")):
+        if wf.relative_to(REPO).as_posix() in vendored:
+            continue
         doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
         on = doc.get(True, doc.get("on")) or {}
         if isinstance(on, (str, list)):
