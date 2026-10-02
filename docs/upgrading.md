@@ -241,7 +241,7 @@ rewritten:
     in its scope;
 - in a call to a macro that **token-pastes** a stem into derived names
     (gh-1669): jm's `JM_DEFINE_STEPS (fir, ...)`, which pastes `fir_step` /
-    `fir_steps` / `fir_step_batch`, or your own `#define T(pfx, s)   pfx##_reset (s)` in any project C file. That argument moves, and so does
+    `fir_steps` / `fir_step_batch`, or your own `#define T(pfx, s) pfx##_reset (s)` in any project C file. That argument moves, and so does
     your `fir_step_batch`. When your macro pastes the same argument into a
     derived name AND one of yours (`pfx##_reset`, `pfx##_mine`), no one
     spelling is right: `upgrade` and `apply` refuse, naming the call. The

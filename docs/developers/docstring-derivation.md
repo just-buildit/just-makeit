@@ -180,7 +180,7 @@ void <pkg>_fir_tune(<pkg>_fir_state_t *state, double x, double hz);
 
 Three properties are load-bearing:
 
-- **No invented descriptions.** A generated `@param hz  double parameter.` is
+- **No invented descriptions.** A generated `@param hz double parameter.` is
     not documentation, and once it is in the header nothing can distinguish it
     from prose a human typed — so it would derive into the `.pyi` as if
     authored.

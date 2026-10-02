@@ -53,9 +53,10 @@ ______________________________________________________________________
     the table maps its answers to `ValueError`, `EOFError` and
     `KeyboardInterrupt`. End of stream is what a consumer loop **catches**,
     not an error.
-- **A message that names its numbers** — `wait({n}) can never be satisfied:
-    the ring holds {capacity}` resolves `{n}` from the method's param and
-    `{capacity}` from a declared property, through `PyErr_Format`.
+- **A message that names its numbers** —
+    `wait({n}) can never be satisfied: the ring holds {capacity}` resolves
+    `{n}` from the method's param and `{capacity}` from a declared property,
+    through `PyErr_Format`.
 - **`--none-on-empty`** — `peek()` shares one table with `wait()` and
     declines only the "not yet" row, so it answers `None` where `wait()`
     would raise. One table, two readings.
