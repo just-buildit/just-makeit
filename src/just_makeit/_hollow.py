@@ -42,6 +42,28 @@ Read from the emitted source, never predicted from the manifest — the
 `_codecheck` precedent. A hand-edited benchmark that added its own timing loop
 is not silent, and a manifest-side prediction would call it one.
 
+What the source scan looks at is the ONE thing every measurement has to pass
+through: the ``jm_bench_t`` accumulator the file hands to
+``jm_bench_write_json`` (gh-1691). It used to look for a call spelled
+``jm_bench_add(``, which is a guess about the author's call graph, and doppler
+showed where that guess is wrong -- its benchmarks record through
+``dp_bench_record(&_bench, ...)``, a helper in a project header that calls
+``jm_bench_add`` itself, and every one of them was reported as measuring
+nothing while writing 4-7 entries. A source scan cannot see into that header,
+and getting smarter about which calls might record is the wrong direction. So
+the scan says less instead: a file is silent only when its accumulator is
+declared in it and touched by nothing but that declaration and the write. Any
+other mention -- a ``jm_bench_add``, a wrapper defined in the file or in a
+header, a pointer taken to it -- is code jm cannot see the end of, and it
+stays quiet.
+
+What still escapes it, stated: a helper that receives the accumulator and
+records nothing is not reported (the miss is in the cheap direction, and
+`jm bench` reports that binary as ``silent`` from the JSON it actually wrote);
+and a header MACRO that names the accumulator itself, so the file never spells
+it, would still be called silent. The runtime verdict is the authoritative
+one; this scan is the advance notice for a tree nobody has benchmarked yet.
+
 What this does *not* fix
 ------------------------
 The generated C is create-only, so the runtime half of gh-806 — a test that
@@ -77,14 +99,14 @@ _KINDS = (
     ),
 )
 
-#: A **call** to `jm_bench_add`, at statement position. Anchored, and that is
-#: not a nicety: gh-840 put a worked `jm_bench_add(...)` example into the
-#: `TODO` comment of every benchmark jm could not populate — which is exactly
-#: the population this detector exists to find. A plain `"jm_bench_add" in
-#: body` therefore matched the instructions telling the author the file is
-#: empty, and `SILENT` stopped firing altogether. The comment lines begin
-#: ` *`, so requiring the call to open its own line separates them.
-_BENCH_ADD_CALL = re.compile(r"^\s*jm_bench_add\s*\(", re.M)
+#: The call that writes a benchmark's JSON, capturing the accumulator it is
+#: written FROM (``&_bench`` in every file jm scaffolds). Matched on the code
+#: mask, never the raw text: gh-840 put a worked ``jm_bench_add(&_bench, ...)``
+#: into the ``TODO`` comment of every benchmark jm could not populate -- the
+#: exact population this detector exists to find -- and a scan that read
+#: comments matched the instructions saying the file is empty and called it
+#: full.
+_BENCH_WRITE = re.compile(r"\bjm_bench_write_json\s*\(\s*&?\s*(\w+)\b")
 
 #: A build file that enumerates sources by wildcard tells us nothing about
 #: which ones it picked up, so the scan stands down rather than guessing.
@@ -402,12 +424,58 @@ def orphans(root: Path, cfg: dict) -> list[Orphan] | None:
     return found
 
 
-def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
-    """Every component benchmark whose source records no measurement.
+def records_nothing(body: str) -> bool:
+    r"""Whether a benchmark source visibly cannot record a measurement.
 
-    ``jm_bench_add`` is the only way a timing reaches the JSON, so its absence
-    from the source *is* the emptiness — no need to run the binary, and no way
-    for the answer to disagree with what the target will do.
+    True only when every accumulator the file writes with
+    ``jm_bench_write_json`` is declared in this file and mentioned nowhere
+    else in its code: nothing in the file hands it to anything, so nothing
+    can have put a timing in it. Anything else -- no write jm can see, an
+    accumulator declared elsewhere, or one passed to any call at all -- is
+    False: jm cannot see the end of that code, so it does not claim the file
+    is empty (gh-1691). Comments and string literals are blanked first, by
+    the one C mask every scanner here shares.
+
+    Examples
+    --------
+    >>> records_nothing(
+    ...     "jm_bench_t _bench = {0};\n"
+    ...     "/* jm_bench_add(&_bench, ...) */\n"
+    ...     'jm_bench_write_json(&_bench, "x");\n'
+    ... )
+    True
+    >>> records_nothing(
+    ...     "jm_bench_t _bench = {0};\n"
+    ...     'my_record(&_bench, "step", t, 200);\n'
+    ...     'jm_bench_write_json(&_bench, "x");\n'
+    ... )
+    False
+    >>> records_nothing('jm_bench_write_json(&g_bench, "x");\n')
+    False
+    """
+    from ._docsync import _code_mask
+
+    code = _code_mask(body)
+    accumulators = {m.group(1) for m in _BENCH_WRITE.finditer(code)}
+    if not accumulators:
+        return False
+    rest = _BENCH_WRITE.sub(" ", code)
+    for acc in accumulators:
+        decl = re.compile(rf"\bjm_bench_t\s+{re.escape(acc)}\b")
+        if not decl.search(rest):
+            return False
+        if re.search(rf"\b{re.escape(acc)}\b", decl.sub(" ", rest)):
+            return False
+    return True
+
+
+def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
+    """Every component benchmark whose source visibly records nothing.
+
+    Decided by `records_nothing`: the file's accumulator reaches
+    ``jm_bench_write_json`` and nothing else. That is narrower than "no
+    ``jm_bench_add`` call", deliberately -- see the module docstring for the
+    wrapper case it stopped misreporting (gh-1691) and what still escapes.
     """
     out: list[SilentBench] = []
     # gh-836: `C.components` is ALREADY every component, module objects
@@ -426,7 +494,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
             body = src.read_text(encoding="utf-8")
         except OSError:
             continue
-        if _BENCH_ADD_CALL.search(body):
+        if not records_nothing(body):
             continue
         out.append(
             SilentBench(
@@ -451,7 +519,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
             body = src.read_text(encoding="utf-8")
         except OSError:
             continue
-        if _BENCH_ADD_CALL.search(body):
+        if not records_nothing(body):
             continue
         out.append(
             SilentBench(
