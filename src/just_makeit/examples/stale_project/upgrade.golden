@@ -1,7 +1,8 @@
 $ jm status   # exit 1
 warning: project generated with just-makeit 0.33.14, running <HEAD> (gh-183) — results may not reflect the pinned version.
-MISSING (7) — `jm apply` will create:
+MISSING (8) — `jm apply` will create:
   + .clang-tidy
+  + .gitattributes
   + CMakePresets.json
   + native/benchmarks/bench_dsp_core.c
   + native/tests/jm_test.h
@@ -84,7 +85,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
+summary: 40 OK, 8 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
 Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
@@ -99,6 +100,7 @@ just-makeit: applying just-makeit.toml
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match.
 warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   create  .clang-tidy
+  create  .gitattributes
   create  CMakePresets.json
   create  native/benchmarks/bench_dsp_core.c
   create  native/tests/jm_test.h
@@ -116,7 +118,7 @@ warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.to
   update  src/stale/gain.pyi
   update  native/src/dsp/dsp_ext_fir.c
 
-Done!  Materialized 7 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
+Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm status   # exit 0
@@ -176,7 +178,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
+OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -272,7 +274,7 @@ SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 56 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 2 packaging.
+OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -415,7 +417,7 @@ SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 57 manifest-owned file(s) match; 1 silent bench.
+OK — up to date; 58 manifest-owned file(s) match; 1 silent bench.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
