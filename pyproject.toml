@@ -66,6 +66,7 @@ extend-exclude = [
     # Vendored verbatim from canonical and held there by standard-check; a
     # local formatter pass is a guaranteed drift failure (gh-1526).
     "scripts/changelog.py",
+    "scripts/ci-docs.py",
 ]
 
 [tool.ruff.lint]
