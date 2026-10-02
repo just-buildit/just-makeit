@@ -80,8 +80,9 @@ def test_a_failed_fetch_reaches_the_switch(monkeypatch):
         mod._find_doppler_prefix()
 
 
-# The third spelling is `nco_tone_ci.yml`, which runs the example directly
-# and, since gh-1639, lets it fetch doppler itself -- so it can skip too.
+# The third spelling runs an example's test.py directly, letting it fetch
+# doppler itself -- so it can skip too. nco_tone_ci.yml did, until gh-1782
+# folded it into ci.yml; the pattern stays for the next job that does.
 _RUNS_EXAMPLES = re.compile(
     r"make test-examples|just-makeit example \"\$example\""
     r"|examples/nco_tone/test\.py"
@@ -114,4 +115,27 @@ def test_every_job_running_the_examples_requires_doppler():
     assert not missing, (
         "these jobs run the examples without JM_REQUIRE_DOPPLER, so an "
         f"unfetchable doppler would skip their build and pass: {missing}"
+    )
+
+
+def test_every_job_running_the_examples_passes_a_token():
+    """gh-1782: the latest-doppler lookup goes through the GitHub API, and
+    anonymous it shares the runner IP's 60 requests an hour. Rate-limited, it
+    falls back to the pinned doppler -- quietly testing the wrong release in
+    a job whose point is the latest one. nco_tone_ci.yml passed the token;
+    the required jobs that replaced it must too."""
+    jobs = list(_jobs_running_examples())
+    assert jobs, "found no job running the examples; the scan is unarmed"
+    missing = [
+        f"{wf}:{job}"
+        for wf, job, body in jobs
+        if not re.search(
+            r"^\s+GH_TOKEN: \$\{\{ (github\.token|secrets\.GITHUB_TOKEN) \}\}",
+            body,
+            re.M,
+        )
+    ]
+    assert not missing, (
+        "these jobs run the examples with no GH_TOKEN, so a rate-limited "
+        f"doppler lookup falls back to the pin: {missing}"
     )

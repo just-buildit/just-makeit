@@ -284,6 +284,11 @@ jobs:
           # gh-1377: a doppler that cannot be fetched fails the run instead
           # of silently skipping nco_tone's build and kitchen_sink's `tone`.
           JM_REQUIRE_DOPPLER: "1"
+          # The example resolves doppler's LATEST release through the GitHub
+          # API; anonymous, a shared runner IP's 60 requests an hour can run
+          # out and the lookup falls back to the pin -- quietly testing the
+          # wrong doppler in the one required job that builds it (gh-1782).
+          GH_TOKEN: ${{ github.token }}
         run: make test-examples
 
   examples-windows:
@@ -307,6 +312,8 @@ jobs:
       # gh-1377: a doppler that cannot be fetched fails the run instead of
       # silently skipping nco_tone's build and kitchen_sink's `tone` object.
       JM_REQUIRE_DOPPLER: "1"
+      # The latest-release lookup's rate limit (see `examples`, gh-1782).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7.0.1
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report when the nco_tone example's doppler pin lags doppler's latest release.
 
-`_DOPPLER_VERSION` is what a local run downloads; `nco_tone_ci.yml` downloads
+`_DOPPLER_VERSION` is what a local run downloads; CI's `examples` job downloads
 doppler's *latest* release instead, deliberately — the example is worth more
 exercising current doppler than frozen against an old one. The two paths
 therefore agree only while the pin tracks the latest release, and a stale pin
