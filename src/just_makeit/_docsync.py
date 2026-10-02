@@ -1059,18 +1059,27 @@ _OUT_CONTIG_RE = re.compile(
 #: a manifest nobody changed.
 _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
 
-#: jm's one array-argument converter (gh-1700, `_coerce.ARRAY_ARG_C`): every
-#: generated acquisition of an array argument CALLS it, where a fragment
-#: rendered before gh-1700 calls a bare ``PyArray_FROM_OTF`` -- which parses
-#: a ``str`` as one text scalar and converts it silently, while the ``.pyi``
-#: beside it was widened to take ``bytes``. The CALL is the marker, on the
-#: masked body: the helper's name in a comment or docstring is erased by the
-#: mask, and the helper's own definition is not a ``PyMethodDef`` row body.
-#: A member with no array argument has no call in the reference either, so
-#: it is never reported (gh-1734). A param declaring a ``str_hint`` calls the
-#: converter's hinted entry point instead (gh-1756), which is the same helper.
+#: jm's one array-argument converter (gh-1700, `_coerce.ARRAY_ARG_C`), CALLED
+#: for a one-byte element type. Every generated acquisition of an array
+#: argument calls it, where a fragment rendered before gh-1700 calls a bare
+#: ``PyArray_FROM_OTF``. Since gh-1824 the two differ only for ``NPY_UINT8``
+#: / ``NPY_INT8``: the helper reads a byte buffer as its bytes, while numpy
+#: parses a ``bytes`` as one text scalar -- and the ``.pyi`` beside it says
+#: the param takes ``bytes``. For any other element type, and for a ``str``
+#: on a param declaring no ``str_hint``, the helper IS ``PyArray_FROM_OTF``,
+#: so a bare call there has no consequence to name and is not reported. A
+#: declared ``str_hint`` is its own marker, below.
+#:
+#: The CALL is the marker, on the masked body: the helper's name in a
+#: comment or docstring is erased by the mask, and the helper's own
+#: definition is not a ``PyMethodDef`` row body. A member with no byte
+#: array argument has no such call in the reference either, so it is never
+#: reported (gh-1734). Both entry points count -- a hinted call (gh-1756)
+#: is the same helper -- and the typenum is read as the call's second
+#: argument, in any layout a formatter gives it.
 _ARRAY_ARG_RE = re.compile(
     rf"\b(?:{_coerce.ARRAY_ARG_FN}|{_coerce.ARRAY_ARG_HINT_FN})\s*\("
+    r"\s*[^,()]+,\s*NPY_U?INT8\b"
 )
 
 #: The hinted entry point alone (gh-1756): a ``str_hint`` the manifest declares
@@ -1145,12 +1154,13 @@ _FEATURE_MARKERS = {
     ),
     # gh-1734: gh-1700's converter, jm's own like the two guards above --
     # a fragment rendered before it converts its array arguments with a
-    # bare PyArray_FROM_OTF. Named for its consequence.
+    # bare PyArray_FROM_OTF. Named for its consequence, which since gh-1824
+    # exists only for a one-byte element type.
     "array-arg": _Feature(
         (_ARRAY_ARG_RE,),
-        "jm converts an array argument through jm_array_arg and this "
-        "fragment does not, so a str argument is silently parsed as a "
-        "number rather than refused",
+        "jm converts a uint8_t[] / int8_t[] argument through jm_array_arg "
+        "and this fragment does not, so a bytes, bytearray or memoryview "
+        "is parsed as text rather than read as its bytes",
     ),
     # gh-1716: jm's own guard, the read-side twin of the output-size one
     # -- a fragment rendered before it trusts the count its kernel returns.
@@ -1162,14 +1172,15 @@ _FEATURE_MARKERS = {
         "result is shaped past its allocation",
     ),
     # gh-1756: a manifest declaration this time -- a param's `str_hint`,
-    # which a fragment rendered before it never shows. gh-1761: an array
+    # which a fragment rendered before it never passes. gh-1761: an array
     # state field's `set_<name>` is a PyMethodDef row too, so its hint is
-    # read here with no second marker.
+    # read here with no second marker. Since gh-1824 the hint is also what
+    # refuses a str at all, so the consequence is the conversion.
     "str-hint": _Feature(
         (_ARRAY_ARG_HINT_RE,),
         "the manifest declares a str_hint on an array param or state "
-        "field and this "
-        "fragment's refusal of a str does not append it",
+        "field and this fragment does not pass it to jm_array_arg, so a "
+        "str is converted by numpy rather than refused with the hint",
     ),
 }
 

@@ -3,8 +3,10 @@
 gh-1756 let an array param carry a ``str_hint``, appended to gh-1700's
 refusal of a ``str``. The one other array argument jm converts with a
 declaration behind it is an array STATE field's ``set_<name>``: it goes
-through the same ``jm_array_arg``, so it already refuses a ``str`` --
+through the same ``jm_array_arg``, so it refused a ``str`` --
 ``sync must be an array of numbers, not str`` -- and could not say more.
+(Since gh-1824 that refusal is the key's opt-in: a field without it leaves a
+``str`` to numpy, and the setter's length check sees one element.)
 
 The issue proposed the key on ``[[<obj>.properties]]``. Measured on main, no
 property setter converts an array: ``jm property`` refuses a ``T[N]`` type,
@@ -318,10 +320,13 @@ class TestTheSetter:
             "msg": f"{field} must be an array of numbers, not str: {hint}",
         }
 
-    def test_a_field_without_the_key_is_unchanged(self, results):
+    def test_a_field_without_the_key_leaves_a_str_to_numpy(self, results):
+        """gh-1824: no blanket refusal. numpy makes ``"1.5"`` ONE float,
+        and the setter's own length check is what refuses it for a
+        ``float[4]`` -- not a refusal of ``str``."""
         assert results["taps unhinted"] == {
-            "err": "TypeError",
-            "msg": "taps must be an array of numbers, not str",
+            "err": "ValueError",
+            "msg": "taps requires exactly 4 elements, got 1",
         }
 
     @pytest.mark.parametrize("case", ["sync bytes ok", "w floats ok"])
