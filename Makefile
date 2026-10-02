@@ -45,6 +45,13 @@ CI_IMAGE_REPO  = ghcr.io/just-buildit/jm-ci
 CI_IMAGE_BASES = ubuntu:24.04
 CI_IMAGE_GROUPS = dev
 
+# `make pr-watch PR=<n>` (gh-1818): the standard's target, and the flag vendors
+# scripts/pr-watch.sh, so standard-check holds it to canonical. jm's own
+# target ran a hand copy that had already missed canonical's REPO derivation
+# and its stuck-queued-run detector (gh-1812). Nothing to configure: REPO
+# derives from origin.
+HAS_PR_WATCH = 1
+
 PYTHON     ?= $(shell uv run --no-project python -c \
                   "import sys; print(sys.executable)" 2>/dev/null || python3)
 UV          = uv

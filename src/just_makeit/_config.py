@@ -5786,6 +5786,72 @@ def project_bench_block_sizes(cfg: dict) -> list[int]:
     return sizes or list(_DEFAULT_BENCH_BLOCK_SIZES)
 
 
+#: How long `jm bench` lets ONE benchmark run take before it gives up on it.
+#: Sized long ago on a desktop x86 core; a Cortex-A53-class board runs the
+#: same binary 10-20x slower, which is why it is a key and not a constant
+#: (gh-1687).
+DEFAULT_BENCH_TIMEOUT = 600.0
+
+
+def bench_timeout(cfg: dict, override: "float | None" = None) -> float | None:
+    """Seconds one benchmark run may take, or ``None`` for no limit.
+
+    The one place the budget is decided, so the C binaries and the pytest
+    run cannot come to disagree about it. Read from::
+
+        [project.bench]
+        timeout = 3600   # seconds; 0 = no limit
+
+    and overridden for a single run by ``jm bench --timeout S`` (*override*,
+    already a number). ``0`` means no limit, on either side. Unset keeps the
+    historical 600 s, so no existing project changes behaviour.
+
+    It bounds each benchmark RUN -- one ``bench_<comp>_core`` binary, and
+    the one ``pytest --benchmark-only`` invocation -- and nothing else. The
+    builds `jm bench` drives are not timed at all: a cold build on the same
+    board took 603 s, and a build that is slow is not a failure. That is
+    the `jm-run-tests` precedent: a CI job bounds its own wall clock.
+
+    Raises
+    ------
+    Refusal
+        When the value is not a number, or is negative -- refused rather
+        than read as "no limit", because a typo would otherwise switch the
+        budget off silently.
+
+    Examples
+    --------
+    >>> bench_timeout({})
+    600.0
+    >>> bench_timeout({"project": {"bench": {"timeout": 0}}}) is None
+    True
+    >>> bench_timeout({"project": {"bench": {"timeout": 3600}}})
+    3600.0
+    >>> bench_timeout({"project": {"bench": {"timeout": 3600}}}, 5.0)
+    5.0
+    """
+    if override is not None:
+        raw: object = override
+        where = "--timeout"
+    else:
+        raw = cfg.get("project", {}).get("bench", {}).get("timeout")
+        where = "[project.bench] timeout"
+        if raw is None:
+            return DEFAULT_BENCH_TIMEOUT
+    why = f"{where} must be a number of seconds (0 = no limit), not {raw!r}"
+    # A TOML `true` would otherwise read as 1 s: bool is an int subclass.
+    if isinstance(raw, bool):
+        raise Refusal(why)
+    try:
+        seconds = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise Refusal(why) from None
+    # `not >= 0` also refuses NaN, which compares false to everything.
+    if not seconds >= 0:
+        raise Refusal(why)
+    return seconds or None
+
+
 def c_style(cfg: dict) -> str:
     """C-output style declared under ``[project] c_style`` (gh-265).
 

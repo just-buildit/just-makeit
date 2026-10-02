@@ -461,6 +461,9 @@ Commands:
     --baseline TAG              Baseline snapshot for --check (default: latest).
     --allow NAME                Benchmark exempt from --check (repeatable).
     --json                      With --check, emit the comparison as JSON.
+    --timeout S                 Seconds one benchmark run may take before it
+                                is skipped (default: [project.bench] timeout,
+                                else 600; 0 = no limit).
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
@@ -1508,6 +1511,7 @@ def _main() -> None:
         bench_baseline: str | None = None
         bench_json = False
         bench_allow: list[str] = []
+        bench_timeout: float | None = None
         i = 0
         while i < len(rest):
             a = rest[i]
@@ -1543,6 +1547,20 @@ def _main() -> None:
             elif a == "--allow" and i + 1 < len(rest):
                 bench_allow.append(rest[i + 1])
                 i += 2
+            elif a == "--timeout" and i + 1 < len(rest):
+                # Parsed to a number here, checked (negative, NaN) by the one
+                # reader of the budget, `C.bench_timeout`, which also reads
+                # the manifest key -- so both spellings refuse alike.
+                try:
+                    bench_timeout = float(rest[i + 1])
+                except ValueError:
+                    print(
+                        "error: --timeout requires a number of seconds "
+                        "(0 = no limit)",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                i += 2
             else:
                 comps.append(a)
                 i += 1
@@ -1557,6 +1575,7 @@ def _main() -> None:
             baseline=bench_baseline,
             as_json=bench_json,
             allow=tuple(bench_allow),
+            timeout=bench_timeout,
         )
 
     elif cmd == "bind":
