@@ -42,7 +42,7 @@ from test_gh1614_function_status_errors import (  # noqa: E402
 def test_a_conversion_pyerr_format_lacks_is_refused_at_render():
     """The render-time half: CPython checks the format only when the raise
     fires, so a printf-only conversion must not survive to the C."""
-    with pytest.raises(ValueError, match="does not accept"):
+    with pytest.raises(RuntimeError, match="does not accept"):
         D.format_raise_c("ValueError", "g={g}", {"g": ("%g", "(double)g")})
 
 

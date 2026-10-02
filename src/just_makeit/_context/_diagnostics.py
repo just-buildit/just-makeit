@@ -477,7 +477,10 @@ def format_raise_c(
                 reprs[name] = (f"_repr{len(reprs)}", expr)
             conversion, expr = "%s", reprs[name][0]
         elif not _FROMFORMAT_CONVERSION.fullmatch(conversion):
-            raise ValueError(
+            # jm's bug, never the author's -- a slot's conversion comes from
+            # `_borrow._SLOT_CONVERSIONS` -- so it tracebacks rather than
+            # reading as a `Refusal` (gh-1777).
+            raise RuntimeError(
                 f"format_raise_c: {{{name}}} in {message!r} names the "
                 f"conversion {conversion!r}, which PyErr_Format does not "
                 f"accept -- the raise would be SystemError when it fires. "
