@@ -170,6 +170,32 @@ def state_accessor_stubs(
 # ---------------------------------------------------------------------------
 
 
+def _two_dispatches(component: str, first: str, second: str) -> str:
+    """Why two per-call constructor choices on one object are refused.
+
+    gh-1825. A dtype dispatch (``real_type`` / ``real_create_fn``) and an
+    ``optional`` array (``create_fn``) each pick the constructor per call,
+    from one array. Two of them -- of either kind, in either order -- would
+    need a constructor per combination, and the generated ``tp_init`` would
+    build with one and overwrite it with the other (gh-1005 found that pair
+    for two ``optional`` arrays, which keeps its own wording).
+
+    Examples
+    --------
+    >>> "'taps' and 'bank'" in _two_dispatches("fir", "taps", "bank")
+    True
+    """
+    return (
+        f"'{component}': array init-params '{first}' and '{second}' each"
+        " select a constructor per call (real_type/real_create_fn, or"
+        " optional = true).\n"
+        "  Dispatch picks ONE constructor, so two of them have no combined"
+        " meaning. Dispatch on one array; declare the others"
+        ' default = "[]" -- omitted, they reach the constructor as NULL with'
+        " length 0."
+    )
+
+
 def _build_no_state_init_ctx(
     component: str,
     Component: str,
@@ -209,11 +235,18 @@ def _build_no_state_init_ctx(
       --array-arg first, then array init-params, then string-enum,
       then scalars.
 
-    create_fn (gh-504) overrides the C constructor the non-dispatch
-    create_line calls; None ⇒ ``<component>_create`` (byte-identical to
-    today).  The dtype/optional-array dispatch paths still embed
-    ``<component>_create`` directly — a view never takes those paths (its
-    generator rejects array-dispatch parents).
+    create_fn (gh-504) overrides the C constructor create_line calls;
+    None ⇒ ``<component>_create``. A view never takes the dtype /
+    optional-array dispatch paths (its generator rejects array-dispatch
+    parents).
+
+    Dispatch (gh-1825/1826/1827): a ``real_type`` array is acquired at the
+    top level like every other array, with ``_<name>_real`` recording which
+    dtype the caller passed, and ``create_line`` -- after every array's
+    locals -- calls ``real_create_fn`` or create(). Every constructor besides
+    create() (``real_create_fn``, an ``optional`` array's ``create_fn``) is
+    in ``alt_create_decls`` / ``alt_create_impls``, so the scaffold declares
+    and stubs it beside create() and the tree builds untouched.
     """
     _create = CSYM.create_name(csym, create_fn)
     # ── Classify params ───────────────────────────────────────────────────
@@ -324,6 +357,14 @@ def _build_no_state_init_ctx(
                 # constructors; the shape that actually scales is one create()
                 # with a NULL/0 pair per absent array, which is what
                 # `default = "[]"` already does.
+                if dispatch_meta:
+                    # gh-1825: an optional array beside a dtype dispatch is
+                    # the same uncomposable pair, met in the other order.
+                    raise ValueError(
+                        _two_dispatches(
+                            component, next(iter(dispatch_meta)), name
+                        )
+                    )
                 if opt_arr_ip:
                     raise ValueError(
                         f"'{component}': array init-params"
@@ -370,6 +411,30 @@ def _build_no_state_init_ctx(
             else:
                 arr_ip.append((name, elem_ct, ndim, _CTYPE_TO_NPY[elem_ct]))
                 if real_type and real_create_fn_p:
+                    # gh-1825: the dispatch acquires the array as 1-D -- its
+                    # probe, its `<name>_len` and the shape check after it --
+                    # while a 2-D array's call passes `<name>_dim0/_dim1`,
+                    # which the dispatch never declared. Refused, not built.
+                    if ndim == 2:
+                        raise ValueError(
+                            f"'{component}': array init-param '{name}' -- dtype"
+                            " dispatch (real_type/real_create_fn) is only"
+                            " supported for a 1-D array."
+                        )
+                    # gh-1825: and, like `optional` (gh-1005), it does not
+                    # compose. Each dispatch picks one constructor per call,
+                    # so two of them -- or one beside an `optional` array --
+                    # would need a constructor per combination.
+                    if dispatch_meta or opt_arr_ip:
+                        raise ValueError(
+                            _two_dispatches(
+                                component,
+                                [*dispatch_meta, *(o[0] for o in opt_arr_ip)][
+                                    0
+                                ],
+                                name,
+                            )
+                        )
                     real_elem_ct = array_elem_ctype(real_type)
                     dispatch_meta[name] = (
                         real_elem_ct,
@@ -570,6 +635,56 @@ def _build_no_state_init_ctx(
         )
         c_create_parts_ordered.append("NULL, 0")
 
+    def _array_parts(pname: str, adisp: str, andim: int):
+        """``(signature, @param doc, call, C seed)`` for one required array,
+        its elements typed *adisp*.
+
+        gh-1827: one rule for both constructors a dtype dispatch names, so
+        ``real_create_fn``'s prototype differs from ``create()``'s in the
+        element type and nothing else.
+        """
+        if andim == 2:
+            # gh-1097: the extents are already here and already passed;
+            # `derived` only decides what they are CALLED. The C locals
+            # keep jm's names, so nothing downstream of the call changes
+            # — the same split gh-900 made for the 1-D length.
+            _ext = _ctor_extent_names(
+                pname, _derived_len.get(pname, ""), andim
+            )
+            return (
+                f"const {adisp} *{pname}, "
+                + ", ".join(f"size_t {e}" for e in _ext),
+                f" * @param {pname}  Input {adisp} 2-D array"
+                f" (shape: {_ext[0]} x {_ext[1]}).",
+                f"(const {adisp} *)PyArray_DATA({pname}_arr),"
+                f" {pname}_dim0, {pname}_dim1",
+                "NULL, 0, 0",
+            )
+        if pname in _derived_len:
+            # gh-900: length first, and named. The value is still the
+            # `{pname}_len` local — only the declared parameter's name and
+            # position differ, so nothing downstream of the call changes.
+            _dname = _derived_len[pname]
+            return (
+                f"size_t {_dname}, const {adisp} *{pname}",
+                f" * @param {_dname}  Number of {adisp} elements in"
+                f" {pname}.\n"
+                f" * @param {pname}  Input {adisp} array"
+                f" (length passed as {_dname}).",
+                f"{pname}_len, (const {adisp} *)PyArray_DATA({pname}_arr)",
+                "0, NULL",
+            )
+        return (
+            f"const {adisp} *{pname}, size_t {pname}_len",
+            f" * @param {pname}  Input {adisp} array"
+            f" (length passed as {pname}_len).",
+            f"(const {adisp} *)PyArray_DATA({pname}_arr), {pname}_len",
+            "NULL, 0",
+        )
+
+    # gh-1827: `(index into sig/doc/call_parts, the real-typed parts)` for
+    # the one dtype-dispatched array, if any.
+    _real_slot: "tuple[int, tuple] | None" = None
     for param in params:
         pname = param[0]
         param[1]
@@ -578,54 +693,19 @@ def _build_no_state_init_ctx(
             continue
         if pname in _arr_meta:
             act, andim = _arr_meta[pname]
-            adisp = act
-            if andim == 2:
-                # gh-1097: the extents are already here and already passed;
-                # `derived` only decides what they are CALLED. The C locals
-                # keep jm's names, so nothing downstream of the call changes
-                # — the same split gh-900 made for the 1-D length.
-                _ext = _ctor_extent_names(
-                    pname, _derived_len.get(pname, ""), andim
+            _sig, _doc, _call, _seed = _array_parts(pname, act, andim)
+            if pname in dispatch_meta:
+                # gh-1827: the real constructor's parameter list is this one
+                # with the dispatched array's element type swapped, built by
+                # the same rule -- never a text replace on the rendered list.
+                _real_slot = (
+                    len(sig_parts),
+                    _array_parts(pname, dispatch_meta[pname][0], andim),
                 )
-                sig_parts.append(
-                    f"const {adisp} *{pname}, "
-                    + ", ".join(f"size_t {e}" for e in _ext)
-                )
-                doc_parts.append(
-                    f" * @param {pname}  Input {adisp} 2-D array"
-                    f" (shape: {_ext[0]} x {_ext[1]})."
-                )
-                call_parts.append(
-                    f"(const {adisp} *)PyArray_DATA({pname}_arr),"
-                    f" {pname}_dim0, {pname}_dim1"
-                )
-                c_create_parts_ordered.append("NULL, 0, 0")
-            elif pname in _derived_len:
-                # gh-900: length first, and named. The value is still the
-                # `{pname}_len` local — only the declared parameter's name and
-                # position differ, so nothing downstream of the call changes.
-                _dname = _derived_len[pname]
-                sig_parts.append(f"size_t {_dname}, const {adisp} *{pname}")
-                doc_parts.append(
-                    f" * @param {_dname}  Number of {adisp} elements in"
-                    f" {pname}.\n"
-                    f" * @param {pname}  Input {adisp} array"
-                    f" (length passed as {_dname})."
-                )
-                call_parts.append(
-                    f"{pname}_len, (const {adisp} *)PyArray_DATA({pname}_arr)"
-                )
-                c_create_parts_ordered.append("0, NULL")
-            else:
-                sig_parts.append(f"const {adisp} *{pname}, size_t {pname}_len")
-                doc_parts.append(
-                    f" * @param {pname}  Input {adisp} array"
-                    f" (length passed as {pname}_len)."
-                )
-                call_parts.append(
-                    f"(const {adisp} *)PyArray_DATA({pname}_arr), {pname}_len"
-                )
-                c_create_parts_ordered.append("NULL, 0")
+            sig_parts.append(_sig)
+            doc_parts.append(_doc)
+            call_parts.append(_call)
+            c_create_parts_ordered.append(_seed)
         elif pname in _def_arr_meta:
             # gh-611: a defaulted array's C signature is identical to a
             # required array's — the only difference is that `{pname}_arr`
@@ -973,6 +1053,84 @@ def _build_no_state_init_ctx(
     init_parse_args = ", ".join(parse_args)
     create_call_args = ", ".join(call_parts)
 
+    # gh-1827: every constructor the binding may call besides create() -- a
+    # dtype dispatch's `real_create_fn` and an optional array's `create_fn`
+    # -- as `{name: (C parameter list, @param docs, when it is called, the
+    # call's argument list)}`. The scaffold declares each in the sacred
+    # header and stubs it in `_core.c`, as it does create(); `_ext.c` calls
+    # it with the argument list built from the same parts, so the prototype
+    # and the call cannot disagree.
+    alt_ctors: dict[str, tuple[str, str, str, str]] = {}
+    if _real_slot is not None:
+        _ri, (_rsig, _rdoc, _rcall, _) = _real_slot
+        _rname = next(iter(dispatch_meta))
+        _rect, _, _rfn = dispatch_meta[_rname]
+
+        def _at_real(parts: "list[str]", part: str) -> "list[str]":
+            return parts[:_ri] + [part] + parts[_ri + 1 :]
+
+        alt_ctors[_rfn] = (
+            c_param_list(_at_real(sig_parts, _rsig)),
+            "\n".join(_at_real(doc_parts, _rdoc)),
+            f"{_rname} arrives as a {_rect} array (dtype dispatch)",
+            ", ".join(_at_real(call_parts, _rcall)),
+        )
+    for oname, oact, ondim, _, oalt_fn in opt_arr_ip:
+        _lead = (
+            [f"{oname}_dim0", f"{oname}_dim1"]
+            if ondim == 2
+            else [f"{oname}_len"]
+        )
+        alt_ctors[oalt_fn] = (
+            c_param_list(
+                [f"size_t {e}" for e in _lead]
+                + [f"const {oact} *{oname}"]
+                + sig_parts
+            ),
+            "\n".join(
+                [
+                    f" * @param {oname}"
+                    + (
+                        f"  Input {oact} 2-D array (shape: {oname}_dim0 x"
+                        f" {oname}_dim1)."
+                        if ondim == 2
+                        else f"  Input {oact} array (length {oname}_len)."
+                    )
+                ]
+                + doc_parts
+            ),
+            f"{oname} is supplied (optional array)",
+            ", ".join(
+                _lead
+                + [f"(const {oact} *)PyArray_DATA({oname}_arr)"]
+                + call_parts
+            ),
+        )
+    alt_create_decls = "".join(
+        f"\n\n/**\n"
+        f" * @brief Create a {component} instance when {when}.\n"
+        f" *\n"
+        f" * The binding calls this instead of {_create}().\n"
+        f"{docs + chr(10) if docs else ''}"
+        f" * @return Heap-allocated state, or NULL on allocation failure.\n"
+        f" * @note Caller must call {csym}_destroy() when done.\n"
+        f" */\n"
+        f"{csym}_state_t *{fn}({sig});"
+        for fn, (sig, docs, when, _) in alt_ctors.items()
+    )
+    alt_create_impls = "".join(
+        f"\n\n{csym}_state_t *\n"
+        f"{fn}({sig})\n"
+        f"{{\n"
+        f"    {csym}_state_t *obj = calloc(1, sizeof(*obj));\n"
+        f"    if (!obj)\n"
+        f"        return NULL;\n"
+        f"    /* <<IMPLEMENT: initialise state when {when} >> */\n"
+        f"    return obj;\n"
+        f"}}"
+        for fn, (sig, _, when, __) in alt_ctors.items()
+    )
+
     # gh-515/gh-219: PyArg may fail *after* an earlier O& converter already
     # produced a path borrow, so the failure path releases too. Py_XDECREF is
     # NULL-safe, so this is also correct when the converter never ran.
@@ -1040,47 +1198,50 @@ def _build_no_state_init_ctx(
         )
         if aname in dispatch_meta:
             real_ect, real_npy, d_create_fn = dispatch_meta[aname]
-            real_adisp = real_ect
-            complex_adisp = act
-            complex_cast = (
-                f"(const {complex_adisp} *)PyArray_DATA({aname}_arr)"
-            )
-            real_cast = f"(const {real_adisp} *)PyArray_DATA({aname}_arr)"
-            real_call_args = create_call_args.replace(
-                complex_cast, real_cast, 1
-            )
+            # gh-1825: this block only ACQUIRES the array, at the top level
+            # like every other one; the call is `create_line`'s, after every
+            # array's locals exist. Calling the constructor in here used
+            # `<other>_arr` / `<other>_len` before a later array declared them.
+            #
+            # gh-1826: the probe only asks which dtype the caller meant, so its
+            # failure is not the argument's error -- it is cleared, and the
+            # acquisition below, the same `jm_array_arg` every other array
+            # takes, reports it. Left set, a probe failure that the complex
+            # acquisition then survived (None, a 2-D array) returned a
+            # constructed object with an exception set: SystemError. The
+            # dispatch is 1-D (its probe asks for depth 1), so a converted
+            # value of any other rank is refused by name.
             aapb_lines.append(
-                f"    /* dtype dispatch: {real_adisp} → {d_create_fn},"
-                f" {complex_adisp} → {csym}_create */\n"
+                f"    /* dtype dispatch: {real_ect} -> {d_create_fn},"
+                f" {act} -> {_create} */\n"
+                f"    int _{aname}_real = 0;\n"
                 f"    {{\n"
                 f"        PyArrayObject *_{aname}_probe ="
                 f" (PyArrayObject *)PyArray_CheckFromAny(\n"
                 f"            {aname}_obj, NULL, 1, 1,"
                 f" NPY_ARRAY_C_CONTIGUOUS, NULL);\n"
-                f"        int _{aname}_real = _{aname}_probe &&"
-                f" (PyArray_TYPE(_{aname}_probe) == {real_npy});\n"
-                f"        Py_XDECREF(_{aname}_probe);\n"
-                f"        if (_{aname}_real) {{\n"
-                f"            PyArrayObject *{aname}_arr ="
-                f"\n                {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
-                f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"            size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
-                f"            self->handle ="
-                f" {d_create_fn}({real_call_args});\n"
-                f"            Py_DECREF({aname}_arr);\n"
+                f"        if (_{aname}_probe) {{\n"
+                f"            _{aname}_real ="
+                f" PyArray_TYPE(_{aname}_probe) == {real_npy};\n"
+                f"            Py_DECREF(_{aname}_probe);\n"
                 f"        }} else {{\n"
-                f"            PyArrayObject *{aname}_arr ="
-                f"\n                {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
-                f"            if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"            size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
-                f"            self->handle ="
-                f" {_create}({create_call_args});\n"
-                f"            Py_DECREF({aname}_arr);\n"
+                f"            PyErr_Clear();\n"
                 f"        }}\n"
                 f"    }}\n"
+                f"    PyArrayObject *{aname}_arr = _{aname}_real\n"
+                f"        ? {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))}\n"
+                f"        : {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
+                f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
+                f"    if (PyArray_NDIM({aname}_arr) != 1) {{\n"
+                f"        PyErr_SetString(PyExc_ValueError,\n"
+                f'                        "{aname} must be a 1-D array");\n'
+                f"        {cleanup} Py_DECREF({aname}_arr);"
+                f" return -1;\n"
+                f"    }}\n"
+                f"    size_t {aname}_len ="
+                f" (size_t)PyArray_SIZE({aname}_arr);\n"
             )
+            allocated.append(aname)
         elif andim == 2:
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr ="
@@ -1133,31 +1294,30 @@ def _build_no_state_init_ctx(
 
     scalar_call_str = create_call_args
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
-        odisp = oact
+        # gh-1825: a failed acquisition releases every array acquired before
+        # it; a bare `return -1` leaked them.
+        ocleanup = "".join(
+            f" Py_DECREF({n}_arr);" for n in allocated
+        ) + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
         if ondim == 2:
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        if (!{oname}_arr) {{{ocleanup} return -1; }}\n"
                 f"        if (PyArray_NDIM({oname}_arr) != 2) {{\n"
                 f"            PyErr_SetString(PyExc_ValueError,\n"
                 f'                            "{oname} must be a 2-D array");\n'
-                f"            Py_DECREF({oname}_arr); return -1;\n"
+                f"           {ocleanup} Py_DECREF({oname}_arr); return -1;\n"
                 f"        }}\n"
                 f"        size_t {oname}_dim0 ="
                 f" (size_t)PyArray_DIM({oname}_arr, 0);\n"
                 f"        size_t {oname}_dim1 ="
                 f" (size_t)PyArray_DIM({oname}_arr, 1);\n"
-                f"        self->handle = {oalt_fn}(\n"
-                f"            {oname}_dim0, {oname}_dim1,\n"
-                f"            (const {odisp} *)PyArray_DATA({oname}_arr)"
-                + (
-                    f",\n            {scalar_call_str}"
-                    if scalar_call_str
-                    else ""
-                )
-                + f");\n"
+                # gh-1827: the argument list its scaffolded prototype is
+                # built from, so the call and the declaration are one list.
+                f"        self->handle ="
+                f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
                 f"        self->handle ="
@@ -1169,18 +1329,13 @@ def _build_no_state_init_ctx(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        if (!{oname}_arr) {{{ocleanup} return -1; }}\n"
                 f"        size_t {oname}_len ="
                 f" (size_t)PyArray_SIZE({oname}_arr);\n"
-                f"        self->handle = {oalt_fn}(\n"
-                f"            {oname}_len,"
-                f" (const {odisp} *)PyArray_DATA({oname}_arr)"
-                + (
-                    f",\n            {scalar_call_str}"
-                    if scalar_call_str
-                    else ""
-                )
-                + f");\n"
+                # gh-1827: the argument list its scaffolded prototype is
+                # built from, so the call and the declaration are one list.
+                f"        self->handle ="
+                f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"
                 f"        self->handle ="
@@ -1193,8 +1348,21 @@ def _build_no_state_init_ctx(
         f"    Py_DECREF({name}_arr);\n" for name in allocated
     ) + "".join(f"    Py_XDECREF({name}_arr);\n" for name in maybe_allocated)
 
-    if dispatch_meta or opt_arr_ip:
+    if opt_arr_ip:
         create_line = ""
+    elif dispatch_meta:
+        # gh-1825: the dispatched call, after EVERY array's locals -- the
+        # acquisition above only sets `_<name>_real`. Both arguments lists
+        # come from the same parts (`alt_ctors`), so they differ only in the
+        # dispatched array's element type.
+        (_dname,) = dispatch_meta
+        _rfn = dispatch_meta[_dname][2]
+        create_line = (
+            f"    if (_{_dname}_real)\n"
+            f"        self->handle = {_rfn}({alt_ctors[_rfn][3]});\n"
+            f"    else\n"
+            f"        self->handle = {_create}({create_call_args});\n"
+        )
     else:
         create_line = f"    self->handle = {_create}({create_call_args});\n"
         # gh-515/gh-219: release the path borrow only AFTER create() has copied
@@ -1460,6 +1628,10 @@ def _build_no_state_init_ctx(
         ),
         "create_params": create_params,
         "create_param_docs": create_param_docs,
+        # gh-1827: the other constructors the binding calls, declared and
+        # stubbed beside create() so a scaffold builds untouched.
+        "alt_create_decls": alt_create_decls,
+        "alt_create_impls": alt_create_impls,
         "init_kwlist": init_kwlist,
         "init_locals": init_locals,
         "init_post_parse": init_post_parse,
@@ -1954,6 +2126,8 @@ def _apply_no_reset(ctx: dict, no_reset: bool) -> dict:
 #: ``header_only`` the declaration is dropped and the definition moves into
 #: the header as ``static inline`` -- see :func:`apply_header_only`.
 _HEADER_ONLY_DECL_SLOTS = (
+    # gh-1827: its definitions ride in `inline_core` beside create()'s.
+    "alt_create_decls",
     "builtin_reset_decl",
     "steps_c_decl",
     "getter_setter_decls",
@@ -2091,13 +2265,17 @@ def apply_header_only(
         f"    {csym}_state_t *obj = calloc(1, sizeof(*obj));{L}"
         f"    if (!obj){L}        return NULL;{L}"
         f"{ctx.get('create_assignments', '')}"
-        f"    return obj;{L}}}{L}{L}"
+        f"    return obj;{L}}}"
+        # gh-1827: the dispatch / optional-array constructors, where
+        # `_core.c` puts them -- right after create().
+        f"{staticize(ctx.get('alt_create_impls', ''))}{L}{L}"
         f"static inline {ctx.get('destroy_c_ret', 'void')}{L}"
         f"{csym}_destroy({csym}_state_t *state){L}{{{L}"
         f"{ctx.get('destroy_impl', '')}    free(state);"
         f"{ctx.get('destroy_ret_stmt', '')}{L}}}{L}"
     )
     ctx["inline_core"] = lifecycle + staticize(_header_only_defs(ctx))
+    ctx["alt_create_impls"] = ""
     ctx["create_decl"] = ""
     ctx["destroy_decl"] = ""
     # gh-1679: each definition lands in `inline_core`, BELOW the inline
@@ -2550,6 +2728,8 @@ def make_state_ctx(
             "create_param_docs": (
                 " * @param (none)  Caller is responsible for all state management."
             ),
+            "alt_create_decls": "",  # gh-1827
+            "alt_create_impls": "",
             "getter_setter_decls": "",
             "create_assignments": "    /* <<IMPLEMENT: initialise state >> */",
             "reset_assignments": "    /* <<IMPLEMENT: restore defaults >> */",
@@ -3395,6 +3575,8 @@ def make_state_ctx(
         "state_struct_fields": state_struct_fields,
         "create_params": create_params,
         "create_param_docs": create_param_docs,
+        "alt_create_decls": "",  # gh-1827: init_params override these
+        "alt_create_impls": "",
         "getter_setter_decls": getter_setter_decls,
         "create_assignments": create_assignments,
         "reset_assignments": reset_assignments,
@@ -3581,6 +3763,10 @@ def make_state_ctx(
         _CTOR_OVERRIDE_KEYS = (
             "create_params",
             "create_param_docs",
+            # gh-1827: the dispatch / optional-array constructors travel with
+            # the create() they stand beside.
+            "alt_create_decls",
+            "alt_create_impls",
             "init_kwlist",
             "init_locals",
             "init_post_parse",

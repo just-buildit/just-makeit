@@ -42,6 +42,7 @@ from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
 import contextlib
+import re
 import io
 import shutil
 import sys
@@ -220,7 +221,17 @@ class TestAnOptionalArrayAlsoHonoursTheObjectLevelName:
         assert "acq_create(" not in after, (
             f"phantom constructor appended:\n{after[len(before) :]}"
         )
-        assert after == before, "apply rewrote a sacred file"
+        # gh-1827: the ONE addition is the declared `create_fn` the binding
+        # calls and the author has not written yet -- gh-1294's additive stub,
+        # without which the extension does not link. Everything that was
+        # there is untouched.
+        assert after.startswith(before.rstrip("\n")), (
+            "apply rewrote a sacred file"
+        )
+        added = after[len(before.rstrip("\n")) :]
+        assert re.findall(r"^(\w+)\(", added, re.M) == ["acq_create_coded"], (
+            added
+        )
 
     def test_without_an_object_level_create_fn_nothing_moves(self, tmp_path):
         """The param-level feature on its own is untouched: the not-supplied

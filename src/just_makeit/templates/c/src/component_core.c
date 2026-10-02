@@ -8,7 +8,7 @@
         return NULL;
 /*<<create_assignments>>*/
     return obj;
-}
+}/*<<alt_create_impls>>*/
 
 /*<<destroy_c_ret>>*/
 /*<<csym>>*/_destroy(/*<<csym>>*/_state_t *state)

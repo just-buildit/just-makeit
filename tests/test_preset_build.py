@@ -156,6 +156,27 @@ _ENUM_CONSTANTS = (
     'enumerators = ["0", "1"]\n'
 )
 
+#: gh-1825/gh-1827: a dtype-dispatched array (`real_type` has no CLI) beside
+#: a defaulted one, declared in the manifest before anything is
+#: materialized, so `apply` scaffolds it fresh.
+_DISPATCH = (
+    '\n[disp]\narg_type = "void"\nreturn_type = "void"\n'
+    'no_state = "true"\nno_step = "true"\n\n'
+    '[[disp.init_params]]\nname = "taps"\ntype = "float _Complex[]"\n'
+    'real_type = "float[]"\nreal_create_fn = "wp_disp_create_real"\n\n'
+    '[[disp.init_params]]\nname = "sync"\ntype = "uint8_t[]"\n'
+    'default = "[]"\n'
+)
+#: gh-1827: an `optional` array's own constructor, from the CLI alone.
+_OPTIONAL = ["--no-state", "--no-step", "--arg-type", "void"] + [
+    "--return-type",
+    "void",
+    "--init-param",
+    "taps:float[]:optional:wp_disp_create_taps",
+    "--init-param",
+    "k:int:0",
+]
+
 _FILL = ["--param", "b:uint8_t[]", "--out-param", "o:uint8_t[]"] + [
     "--return-type",
     "size_t",
@@ -249,6 +270,20 @@ _WARN_SHAPES = {
         + ["--enum", "lvl"],
         ["function", "pick", "--module", "m", "--param", "k:enum:lvl"]
         + ["--return-type", "int"],
+    ],
+    # gh-1825: the dispatch's real call used `sync_arr` / `sync_len` before
+    # the defaulted array declared them; gh-1827: `wp_disp_create_real` was
+    # neither declared nor stubbed. Both faces.
+    "dispatch_defaulted_array": [_DISPATCH, ["apply"]],
+    "module_dispatch_defaulted_array": [
+        '\n[module.m]\nobjects = ["disp"]\n' + _DISPATCH,
+        ["apply"],
+    ],
+    # gh-1827: an optional array's `create_fn`, likewise.
+    "optional_array_create_fn": [["object", "disp", *_OPTIONAL]],
+    "module_optional_array_create_fn": [
+        ["module", "m"],
+        ["object", "disp", "--module", "m", *_OPTIONAL],
     ],
 }
 
