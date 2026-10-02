@@ -121,7 +121,7 @@ CMAKE_EXCLUDE_RE = CMakeLists_(component|module|object_core)\.cmake
 # ALLOWED while `ruff check .` was denied. In a repo whose entire C surface is
 # generated, that is the ungated command that matters most.
 LINT_TOOLS   = ruff ruff-format mdformat clang-format cmake-format \
-               sync-version assemble-examples
+               sync-version assemble-examples uv-lock
 # `format` is the auto-fixer, so sync-version is deliberately NOT here: it
 # exits 1 when it rewrites bootstrap.toml (pre-commit's "re-stage me" convention),
 # and a fixer that fails because it fixed something is a trap. assemble-examples
@@ -136,6 +136,10 @@ CMAKE_FORMAT = $(DEV_RUN) cmake-format
 LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
 LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
 LINT_sync-version = $(DEV_RUN) python scripts/sync_version.py
+# Re-locks, as astral's upstream hook did; pre-commit fails the commit when
+# that rewrites uv.lock, so CI's `make lint` refuses a stale lock. Not in
+# FORMAT_TOOLS: re-resolving is not formatting.
+LINT_uv-lock      = $(UV) lock
 
 # `git ls-files` rather than a directory walk, so .venv/ and every build tree
 # are excluded by virtue of being untracked — the mirror hook needed an
