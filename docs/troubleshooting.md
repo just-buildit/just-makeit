@@ -172,7 +172,8 @@ ______________________________________________________________________
 ran `jm apply`, but `<comp>_core.c` still has the old body.
 
 **Cause:** this is by design. `_core.c` is **sacred** — `jm apply` never
-splices or re-renders it. Apply regenerates the glue (`_ext.c`, `.pyi`,
+re-renders it or rewrites a line you wrote; the one thing it does is ADD a
+definition the manifest declares and the file lacks (gh-1294), which `jm status` lists as "STALE — yours". Apply regenerates the glue (`_ext.c`, `.pyi`,
 `CMakeLists.txt`) and injects any missing method/property *declaration* into
 `_core.h`, but your hand-written `steps()` and lifecycle bodies are yours to
 keep.

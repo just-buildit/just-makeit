@@ -55,8 +55,11 @@ the files `apply` *merges* rather than overwrites (the package
               allocation is correct — which is why it is never counted and
               never printed under `--check`.
 
-Your `_core.c` is sacred: `apply` never changes it, so hand-edited
-algorithm code never shows up as STALE. To rebuild a component from the
+Your `_core.c` is yours: `apply` only ADDS a definition the manifest
+declares and the file lacks (gh-1294), never rewriting what you wrote, so
+hand-edited algorithm code never shows up as STALE -- a missing definition
+does, under its own "STALE -- yours" heading, and only then does the summary
+end with the sentence saying so (gh-1628). To rebuild a component from the
 manifest (discarding its `_core.c`), use `jm regenerate <component>`.
 
 The verb is purely read-only — it only ever writes to the throwaway copy,
@@ -704,6 +707,26 @@ def run(
             (p, a, _is_allowed(p, allow_patterns))
             for (p, a) in _createonly.missing_anchors(root, replay_root)
         ]
+        # gh-1626: the cores `apply` leaves unwired, asked of the scratch
+        # copy it has just run on -- so the UNWIRED advice below is decided
+        # by what apply DID, not by a second account of what it does. A
+        # `no_generate` module or a c_dep owns its CMakeLists and gets only
+        # an `add_subdirectory`, so its core is never wired; the advice
+        # promised an apply that could not come. Inside the temp tree's
+        # lifetime, like `outdated` above.
+        #
+        # And which cores jm's own render wires at all: one apply leaves
+        # unwired although its render has the line could not PLACE it (a
+        # missing `# ── Modules` anchor, gh-975), which is a different fix
+        # from a core jm never writes a line for.
+        from . import _libwiring
+
+        _apply_leaves_unwired = {
+            u.core for u in _libwiring.unwired(scratch, cfg)
+        }
+        _jm_renders_wiring = {
+            c for _t, c in _libwiring.wired_pairs(replay_root)
+        }
         # gh-1459: the replay's root file is jm's current render of this
         # project's, managed blocks included -- the text `--diff` offers.
         if show_diff and root_fixes:
@@ -1283,6 +1306,9 @@ def run(
                             "component": u.component,
                             "targets": list(u.targets),
                             "allowed": _wiring_allowed[u.core],
+                            # gh-1626: whether `jm apply` clears it, read
+                            # from the replay, as the text's advice is.
+                            "apply_wires": u.core not in _apply_leaves_unwired,
                         }
                         for u in _unwired
                     ],
@@ -1334,30 +1360,35 @@ def run(
     # which is what the collapse is for.
     missing = [e for e in drift if e[1] == "missing"]
     stale = [e for e in drift if e[1] == "stale"]
+
+    # gh-1337: split by WHO OWNS the file, because `apply` does two
+    # different things and one header cannot describe both. Printed
+    # together, the old wording contradicted itself inside a single
+    # screen -- "`jm apply` will rewrite from the manifest" above a
+    # list containing `_core.c`, then "your _core.c is kept" two
+    # lines below it, then "apply never changes it" in the footer.
+    #
+    # Ownership is `_createonly`'s question and it already answers
+    # it; asking it a second way here is how the two would drift.
+    def _is_yours(entry) -> bool:
+        # Unclassified falls to the glue wording: a false "jm will
+        # rewrite this" sends the reader to look, while a false
+        # "yours, apply only adds" tells them not to.
+        rule = _createonly.classify(Path(entry[0]).as_posix(), root)
+        return rule is not None and rule.kind == _createonly.AUTHOR
+
+    # gh-1628: computed out here, not inside the listing below, because
+    # the summary footer about `_core.c` is decided by this same list. It
+    # used to print on ANY drift, so a glue-only change ended with a
+    # sentence about a file the report did not contain.
+    _sacred = [e for e in stale if _is_yours(e)]
+    _glue = [e for e in stale if not _is_yours(e)]
     if missing:
         print(f"MISSING ({len(missing)}) — `jm apply` will create:")
         for p, _, _, _, _ in missing:
             print(f"  + {p}")
         print()
     if stale:
-        # gh-1337: split by WHO OWNS the file, because `apply` does two
-        # different things and one header cannot describe both. Printed
-        # together, the old wording contradicted itself inside a single
-        # screen -- "`jm apply` will rewrite from the manifest" above a
-        # list containing `_core.c`, then "your _core.c is kept" two
-        # lines below it, then "apply never changes it" in the footer.
-        #
-        # Ownership is `_createonly`'s question and it already answers
-        # it; asking it a second way here is how the two would drift.
-        def _is_yours(entry) -> bool:
-            # Unclassified falls to the glue wording: a false "jm will
-            # rewrite this" sends the reader to look, while a false
-            # "yours, apply only adds" tells them not to.
-            rule = _createonly.classify(Path(entry[0]).as_posix(), root)
-            return rule is not None and rule.kind == _createonly.AUTHOR
-
-        _sacred = [e for e in stale if _is_yours(e)]
-        _glue = [e for e in stale if not _is_yours(e)]
 
         def _emit(entries):
             for p, _, _, diff, _ in entries:
@@ -1781,21 +1812,81 @@ def run(
                 f"  ⊘ {u.core} (native/src/{u.component}) — missing from "
                 f"{', '.join(u.targets)}{tag}"
             )
-        print(
+        # gh-1626: the advice is per core, from the replay -- what apply
+        # DID to a copy of this tree, and what its render wires. `apply`
+        # writes only an `add_subdirectory` for a `no_generate` module or a
+        # c_dep, so telling that author it would fix the wiring sent them
+        # to re-run a command that never would, `--check` red forever.
+        _apply_fixes = [
+            u.core for u in _unwired if u.core not in _apply_leaves_unwired
+        ]
+        _unplaced = [
+            u.core
+            for u in _unwired
+            if u.core in _apply_leaves_unwired and u.core in _jm_renders_wiring
+        ]
+        _yours = [
+            u
+            for u in _unwired
+            if u.core in _apply_leaves_unwired
+            and u.core not in _jm_renders_wiring
+        ]
+        _why = (
             "  These build, and their symbols ship in neither lib<pkg>.so nor"
             " lib<pkg>.a,\n"
             "  so the installed header declares functions a C consumer cannot"
             " link. Python\n"
             "  is unaffected — the extension links each core directly — which"
             " is why this\n"
-            "  goes unnoticed. `jm apply` writes the missing"
-            " target_sources() line. Keep a\n"
-            "  core out of the library on purpose by naming"
+            "  goes unnoticed."
+        )
+        _keep_out_rest = (
+            "core out of the library on purpose by naming"
             " `CMakeLists.txt:<core>` in\n"
             "  [project] status_allow; naming `CMakeLists.txt` itself exempts"
             " every core,\n"
             "  for a project that links its cores its own way."
         )
+        _keep_out = f"Keep a\n  {_keep_out_rest}"
+        if len(_apply_fixes) == len(_unwired):
+            # Every core is one apply wires: the paragraph as it always read.
+            print(
+                f"{_why} `jm apply` writes the missing target_sources() "
+                f"line. {_keep_out}"
+            )
+        else:
+            print(_why)
+            if _apply_fixes:
+                print(
+                    "  `jm apply` writes the missing target_sources() line"
+                    f" for {', '.join(_apply_fixes)}."
+                )
+            if _unplaced:
+                print(
+                    "  `jm apply` renders the line for "
+                    f"{', '.join(_unplaced)} but cannot place it in this\n"
+                    "  CMakeLists.txt, so re-running it will not clear this"
+                    + (
+                        " until the UNANCHORED line above is restored."
+                        if unanchored_entries
+                        else "."
+                    )
+                )
+            # Where to write it: the root. Not directly beneath an
+            # `add_subdirectory()`: `_libwiring.SUBDIR_BLOCK` lifts that run
+            # as jm's, so a `<X>_core` line there is deleted by the next
+            # apply.
+            for u in _yours:
+                print(
+                    f"  `jm apply` writes no line for {u.core}, so re-running"
+                    " it will not clear this.\n"
+                    "  Add these to the root CMakeLists.txt yourself -- not"
+                    " directly beneath an\n"
+                    "  add_subdirectory() line, which apply rewrites:"
+                )
+                for _t in u.targets:
+                    print(f"    {_libwiring.wiring_line(_t, u.core).rstrip()}")
+            print(f"  Keep a {_keep_out_rest}")
         print()
 
     # gh-984: the mirror, and the one finding here that stops the build
@@ -2494,9 +2585,9 @@ def run(
                 if any(not e[2] for e in unanchored_entries)
                 else ""
             )
-            # gh-984: on the skim line too, marked as gating. `jm apply` does
-            # clear this one, unlike the anchor gap above it — which is why
-            # the sentence below about apply is the right thing to read next.
+            # gh-984: on the skim line too, marked as gating. Whether
+            # `jm apply` clears it is per core (gh-1626), so the UNWIRED
+            # listing above says which, rather than this line.
             + (f", {_n_unwired} unwired (!)" if _n_unwired else "")
             + (f", {len(_dangling)} dangling (!)" if _dangling else "")
             + (
@@ -2504,7 +2595,7 @@ def run(
                 if _opt_outs
                 else ""
             )
-            + ".\n"
+            + "."
             # gh-1337: "never changes it" was false in the one direction
             # that matters -- gh-1294 taught apply to splice a declared
             # method's missing body, which is a change, to a sacred file, by
@@ -2512,10 +2603,18 @@ def run(
             # like a bug in the reader's own tree rather than the feature it
             # is; and when it WAS a bug (gh-1328) this line argued it had
             # not happened.
-            "Your `_core.c` is yours — apply only ADDS a definition the "
-            "manifest declares and the file lacks, never rewriting or "
-            "removing what you wrote; use `jm regenerate <component>` to "
-            "rebuild one from the manifest."
+            # gh-1628: and only when a file of the author's IS stale -- the
+            # same `_sacred` list the STALE listing above prints. On any
+            # other drift this sentence described a file the report did not
+            # name, so it read as a finding about the reader's own code.
+            + (
+                "\nYour `_core.c` is yours — apply only ADDS a definition "
+                "the manifest declares and the file lacks, never rewriting "
+                "or removing what you wrote; use `jm regenerate "
+                "<component>` to rebuild one from the manifest."
+                if _sacred
+                else ""
+            )
         )
         # gh-745: name the formatter *when there is drift to explain*. A
         # `c_style` project's most confusing failure is "stale in CI, clean

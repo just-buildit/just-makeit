@@ -184,6 +184,8 @@ def test_json_carries_it(project: Path):
             "component": "mpsk",
             "targets": ["p_lib", "p_lib_static"],
             "allowed": False,
+            # gh-1626: a generated module's core, which apply wires.
+            "apply_wires": True,
         }
     ]
 

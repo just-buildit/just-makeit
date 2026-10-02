@@ -27,7 +27,7 @@ extern "C" {
  * @return Heap-allocated state, or NULL on allocation failure.
  * @note Caller must call /*<<csym>>*/_destroy() when done.
  */
-/*<<create_decl>>*/
+/*<<create_decl>>*//*<<alt_create_decls>>*/
 
 /**
  * @brief Destroy a /*<<component>>*/ instance and release all memory.
