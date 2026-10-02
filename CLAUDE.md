@@ -524,11 +524,12 @@ just-buildit/.github README under "Makefile standard".
     GitHub Release (changelog extracted from `CHANGELOG.md`) → rebuild Docker
     images
 - `artifact.yml` — standalone artifact build/test job
-- `ci-image.yml` (gh-1796) — jm's CI toolchain as a snapshot:
-    `docker/Dockerfile.ci` pins the base and uv by digest and every apt
-    package by a dated snapshot.ubuntu.com snapshot, and a digest pin names
-    the image the Linux legs run in. A weekly cron moves the pins and
-    re-pins through a PR, whose CI runs on the new image. A PR editing the Dockerfile or `bootstrap.toml`'s `dev.apt`
-    re-pins by `gh workflow run ci-image.yml --ref <branch> -f refresh=false`.
-    Why each pin exists: `scripts/ci_image.py`; `make ci-shell` opens the
-    pinned image locally.
+- `ci-image.yml` (gh-1796) — the CI toolchain image, VENDORED from the org
+    standard (`HAS_CI_IMAGE`, just-buildit.github.io#86): `docker/ci.Dockerfile`,
+    `scripts/ci-image.py` and this workflow are canonical's, held by
+    `standard-check`. `.github/ci-images.env` pins the image and every input
+    it was built from (apt snapshot, base digest, the just-bashit installer
+    release); the weekly run repins only when the package fingerprint or the
+    sources move. A PR moving `bootstrap.toml` or the Dockerfile builds and
+    commits its own pin on push, and `make ci-image-check` (in `lint`)
+    refuses one that did not. `make help`'s CI-image section has the targets.

@@ -67,6 +67,7 @@ extend-exclude = [
     # local formatter pass is a guaranteed drift failure (gh-1526).
     "scripts/changelog.py",
     "scripts/ci-docs.py",
+    "scripts/ci-image.py",
 ]
 
 [tool.ruff.lint]
