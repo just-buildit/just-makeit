@@ -253,11 +253,20 @@ ______________________________________________________________________
 | ------------ | ------------------------------------------------------ |
 | `admonition` | `!!! note "Title"`, `!!! tip`, `!!! warning`, etc.     |
 | `attr_list`  | `{ .class #id key=val }` on blocks and inline spans    |
-| `def_list`   | `Term\n:   Definition` definition lists                |
+| `def_list`   | Definition lists (syntax below the table)              |
 | `footnotes`  | `[^1]` inline references, rendered at page bottom      |
 | `md_in_html` | Markdown inside `<div markdown>` and `<span markdown>` |
 | `tables`     | GFM pipe tables                                        |
 | `toc`        | Auto heading IDs; `permalink: true` adds a ¶ link      |
+
+A definition list is a term line, then a definition line that opens with a
+colon and three spaces. The line break and the spacing are the syntax, so it is
+shown as a fenced block rather than squeezed into a table cell:
+
+```markdown
+Term
+:   Definition
+```
 
 ### PyMdown extensions
 

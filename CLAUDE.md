@@ -510,7 +510,7 @@ just-buildit/.github README under "Makefile standard".
 - A docs-only diff (gh-1801 item 3) skips every `ci.yml` job but `lint`,
     `coverage` (the full suite on one leg) and `docs`: `changes.yml` runs
     `make ci-docs` (CI_DOCS_RE minus the Makefile's CI_DOCS_EXCLUDE_RE), and
-    the rest skip only on an explicit `code=false`. `docs` runs `make   docs-check` (strict build + docs tests) and gates `CI passed`;
+    the rest skip only on an explicit `code=false`. `docs` runs `make docs-check` (strict build + docs tests) and gates `CI passed`;
     `docs.yml` only deploys.
 - `Consumer smoke` in `ci.yml` (gh-1590) — `make consumer-smoke` installs jm
     packages and their dependencies to the DEFAULT prefix and consumes them

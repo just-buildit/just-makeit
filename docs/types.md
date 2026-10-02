@@ -153,7 +153,7 @@ Notes:
         corrupts with no error. Which half holds I is also
         endianness-dependent.
 
-    The structured form refuses arithmetic *loudly* instead — `ufunc 'add'   did not contain a loop` — which is the trade jm exists to make. Giving
+    The structured form refuses arithmetic *loudly* instead — `ufunc 'add' did not contain a loop` — which is the trade jm exists to make. Giving
     integer IQ the operations `complex64` gets is tracked separately as
     [gh-1314](https://github.com/just-buildit/just-makeit/issues/1314).
 

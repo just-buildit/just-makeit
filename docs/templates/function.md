@@ -117,7 +117,7 @@ positional-only).
 - **`--out-type T`** — the function allocates and returns a fresh `T[]`
     ndarray instead of writing through an `--out-param`, sized from the
     first array param's length (or the first integer scalar param, if
-    there's no array param). `jm function make_window --module win   --param n:size_t --out-type float` generates `void make_window(float   *out, size_t n)`, called from Python as `make_window(512)`.
+    there's no array param). `jm function make_window --module win --param n:size_t --out-type float` generates `void make_window(float *out, size_t n)`, called from Python as `make_window(512)`.
 - **`--result-field name:type`** — emit a list of `{name, type}` records
     per call (repeatable).
 

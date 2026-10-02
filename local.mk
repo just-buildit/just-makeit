@@ -10,7 +10,7 @@
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean pr-watch install-deps-dev tool-install \
                 conflict-check \
-                complex-spelling-check \
+                complex-spelling-check code-span-check \
                 coverage-subprocess-check gates-index gates-index-update \
                 gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
@@ -138,6 +138,16 @@ lint: complex-spelling-check
 
 complex-spelling-check: ## Fail on the pre-gh-1246 `complex` spelling outside its allow-list
 	@scripts/complex-spelling-check.sh
+
+# gh-1779: a code span hand-wrapped across an indented line break gets the
+# indent joined into it by mdformat, and renders as `jm   upgrade` on the docs
+# site. The changelog gates refuse it in changelog.d/ (gh-1630); this is the
+# same reader over every other tracked Markdown file. Why the scope stops
+# where it does: the script's docstring.
+lint: code-span-check
+
+code-span-check: ## Fail on a whitespace run inside a Markdown code span
+	@python3 scripts/check_code_spans.py
 
 # ADVISORY, and hung off `lint` so it is seen on every PR without gating one.
 # The pin drifts because doppler published, not because of the change being
