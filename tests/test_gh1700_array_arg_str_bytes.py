@@ -1,4 +1,4 @@
-"""gh-1700: an array argument is never text, and a byte array takes bytes.
+"""gh-1700: a byte array takes bytes; gh-1824: a str is numpy's to convert.
 
 Every generated binding acquired an array argument with a bare
 ``PyArray_FROM_OTF``. numpy reads a ``str`` or a ``bytes`` as ONE scalar of a
@@ -11,9 +11,15 @@ text dtype and then casts that scalar to the requested number type, so:
 
 The fix is one C helper, ``jm_array_arg`` (``_coerce.ARRAY_ARG_C``), emitted
 into every extension translation unit and called by every generator that
-acquires an array argument. It refuses a ``str`` for any element type, and a
-``bytes`` for any but a one-byte integer; for ``uint8_t[]`` / ``int8_t[]`` a
-byte buffer is its bytes, one element per byte.
+acquires an array argument: for ``uint8_t[]`` / ``int8_t[]`` a byte buffer is
+its bytes, one element per byte.
+
+gh-1700 also refused a ``str`` (and a ``bytes`` into a wider element type) on
+every array argument. gh-1824 made that refusal opt-in per parameter, through
+``str_hint`` (gh-1756, tested there): a parameter declaring none hands a
+``str`` to numpy, so ``"0101"`` into a ``uint8_t[]`` is the one element 101,
+exactly ``np.asarray("0101", dtype=np.uint8)``. What numpy does is measured in
+the same process as the call, not assumed here.
 
 The central test BUILDS a project with each parameter kind -- a required and
 a defaulted init-param, a method param, a module function param, and the
@@ -245,6 +251,7 @@ cases = {
     "init bits text": lambda: Fld(T, bits="pn:7:3"),
     "init sbits bytes": lambda: Fld(T, sbits=b"\x01\xff"),
     "init sbits str": lambda: Fld(T, sbits="12"),
+    "init bits overflow": lambda: Fld(T, bits="300"),
     "init taps str": lambda: Fld("1.5"),
     "init taps bytes": lambda: Fld(b"1.5"),
     "init taps list": lambda: Fld([1.5, 2.5]),
@@ -260,7 +267,27 @@ cases = {
     "steps bytes": lambda: Acc().steps(b"\x01\x02\x03").shape,
     "steps str": lambda: Acc().steps("123"),
 }
+# gh-1824: what numpy itself makes of each str (and the wide bytes) case,
+# measured here rather than assumed, as (value, dtype).
+NUMPY = {
+    "init bits str": ("0101", np.uint8),
+    "init bits text": ("pn:7:3", np.uint8),
+    "init bits overflow": ("300", np.uint8),
+    "init sbits str": ("12", np.int8),
+    "init taps str": ("1.5", np.float32),
+    "init taps bytes": (b"1.5", np.float32),
+    "method str": ("34", np.uint8),
+    "function str": ("12", np.int8),
+    "steps str": ("123", np.uint8),
+}
 out = {}
+for name, (value, dtype) in NUMPY.items():
+    try:
+        out["numpy " + name] = {
+            "ok": np.asarray(value, dtype=dtype).ravel().tolist()
+        }
+    except Exception as e:
+        out["numpy " + name] = {"err": type(e).__name__, "msg": str(e)}
 for name, call in cases.items():
     try:
         r = call()
@@ -303,30 +330,34 @@ class TestEveryParamKind:
     """The asked behaviour, per parameter kind, from the running extension."""
 
     @pytest.mark.parametrize(
-        "case, param",
+        "case, reached",
         [
-            ("init bits str", "bits"),
-            ("init bits text", "bits"),
-            ("init sbits str", "sbits"),
-            ("init taps str", "taps"),
-            ("method str", "b"),
-            ("function str", "b"),
-            ("steps str", "x"),
+            ("init bits str", lambda v: [_TAPS, _enc(v), _enc([])]),
+            ("init sbits str", lambda v: [_TAPS, _enc([]), _enc(v)]),
+            ("init taps str", lambda v: [_enc(v), _enc([]), _enc([])]),
+            # gh-1824: no `str_hint`, so a bytes into a float[] is numpy's
+            # too -- parsed as text, as numpy parses it.
+            ("init taps bytes", lambda v: [_enc(v), _enc([]), _enc([])]),
+            ("method str", _enc),
+            ("function str", _enc),
+            # The scaffold's step() passes each sample through.
+            ("steps str", lambda v: v),
         ],
     )
-    def test_a_str_is_a_type_error_naming_the_param(
-        self, results, case, param
+    def test_a_str_without_a_hint_is_what_numpy_makes_it(
+        self, results, case, reached
     ):
-        r = results[case]
-        assert r.get("err") == "TypeError", r
-        assert r["msg"].startswith(f"{param} must be an array"), r
-        assert "str" in r["msg"], r
+        """gh-1824: no blanket refusal; the param gets numpy's conversion."""
+        ref = results["numpy " + case]
+        assert "ok" in ref, ref  # numpy converts every one of these
+        assert results[case] == {"ok": reached(ref["ok"])}
 
-    def test_bytes_into_a_wide_array_is_refused_not_parsed(self, results):
-        """``b"1.5"`` was parsed as text into ``[1.5]``, the same defect."""
-        r = results["init taps bytes"]
-        assert r.get("err") == "TypeError", r
-        assert r["msg"].startswith("taps must be an array"), r
+    @pytest.mark.parametrize("case", ["init bits text", "init bits overflow"])
+    def test_numpy_refusing_a_str_is_the_refusal(self, results, case):
+        """Where numpy refuses, the binding raises numpy's own error."""
+        ref = results["numpy " + case]
+        assert "err" in ref, ref
+        assert results[case] == ref
 
     @pytest.mark.parametrize(
         "case, expect",

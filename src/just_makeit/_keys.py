@@ -136,9 +136,10 @@ STATE_KEYS = frozenset(
         "opaque",
         "no_ctor",
         "controllable",
-        # gh-1761: an array field's `set_<name>` refuses a `str` through
-        # gh-1700's converter, and this is appended to that refusal -- the
-        # gh-1756 key, on the row that declares the setter.
+        # gh-1761: an array field's `set_<name>` converts through gh-1700's
+        # converter, and this opts it in to refusing a `str` with the hint
+        # appended (gh-1824) -- the gh-1756 key, on the row that declares
+        # the setter.
         "str_hint",
     }
 )
@@ -199,8 +200,9 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # sugar over the shipped capsule path rather than a new param kind; what
     # it adds is a checked declaration and a `.pyi` naming the real class.
     ("object", False),
-    # gh-1756: text appended to an array param's refusal of a str, naming
-    # what to pass instead (`_coerce.str_hint`).
+    # gh-1756: opts an array param in to refusing a str (gh-1824), and is
+    # appended to that refusal, naming what to pass instead
+    # (`_coerce.str_hint`).
     ("str_hint", False),
 )
 
@@ -344,7 +346,7 @@ PARAM_KEYS = frozenset(
         "elements_per_sample",
         # A codec method's params carry the tag/variant role (`_codec.py`).
         "role",
-        # gh-1756: appended to an array param's refusal of a str.
+        # gh-1756: opts an array param in to refusing a str (gh-1824).
         "str_hint",
     }
 )

@@ -5515,9 +5515,9 @@ def state_str_hints(cfg: dict, component: str) -> "dict[str, str]":
     """``{state field: its str_hint}`` for *component* (gh-1761).
 
     An array state field's ``set_<name>`` converts its argument through
-    gh-1700's ``jm_array_arg``, so it refuses a ``str`` like any array param,
-    and a ``str_hint`` on the ``[[<obj>.state]]`` row is appended to that
-    refusal. Each value is read through `_coerce.str_hint`, the one reader
+    gh-1700's ``jm_array_arg``, like any array param, and a ``str_hint`` on
+    the ``[[<obj>.state]]`` row opts it in to refusing a ``str`` with that
+    hint appended (gh-1824). Each value is read through `_coerce.str_hint`, the one reader
     every array face shares; `_coerce.str_hint_errors` has already refused
     one that could never be shown. Fields declaring none are absent.
 

@@ -408,23 +408,28 @@ def array_rank_guard(
 # The **array-argument converter** (gh-1700): how every generated binding turns
 # the Python object a caller passed for a ``T[]`` parameter into an ndarray.
 #
-# ``PyArray_FROM_OTF`` alone gets two inputs wrong, and both come from numpy
-# treating a ``str`` or a ``bytes`` as ONE scalar of a text dtype and then
-# casting that scalar to the requested number type:
+# It is ``PyArray_FROM_OTF`` -- numpy decides what an argument converts to,
+# under the binding's own requirement flags -- plus one typing fix and one
+# per-parameter opt-in:
 #
-#   * a ``str`` is parsed as a number. ``Fld("0101")`` reached ``create()`` as
-#     a one-element array holding 101, with no error; ``"1.5"`` into a
-#     ``float[]`` became ``[1.5]``. A string is never an array of its digits'
-#     value, so it is refused, for every numeric element type.
-#   * a ``bytes`` is parsed the same way, so ``b"\x01\x00"`` was refused with
-#     ``invalid literal for int()`` -- although ``bytes`` is the one Python
-#     type that already IS a byte buffer. For a one-byte element type
-#     (``uint8_t[]``, ``int8_t[]``) any buffer-protocol object whose items are
+#   * a byte buffer into a one-byte element type. numpy reads a ``bytes`` as
+#     ONE scalar of a text dtype and casts it, so ``b"\x01\x00"`` into a
+#     ``uint8_t[]`` was refused with ``invalid literal for int()`` -- although
+#     ``bytes`` is the one Python type that already IS a byte buffer. For
+#     ``uint8_t[]`` / ``int8_t[]`` any buffer-protocol object whose items are
 #     one byte wide (``bytes``, ``bytearray``, ``memoryview``, ``array('B')``)
 #     is read as its bytes, one element per byte, which is ``np.frombuffer``.
 #     A buffer of wider items keeps numpy's element-wise conversion rather
-#     than being reinterpreted byte by byte. For every other element type a
-#     ``bytes`` is refused: it would otherwise be parsed as text too.
+#     than being reinterpreted byte by byte.
+#   * a ``str`` is refused ONLY by a parameter that declares a ``str_hint``
+#     (gh-1756, gh-1824), and the hint is appended to the refusal. Declaring
+#     the hint IS the opt-in: such a parameter refuses what gh-1700 once
+#     refused on every array -- a ``str``, and a ``bytes`` into an element
+#     type wider than a byte, both of which numpy would parse as a number.
+#     Every other array argument is numpy's: ``"0101"`` into a ``uint8_t[]``
+#     is ``np.asarray("0101", dtype=np.uint8)``, the one element 101. What a
+#     parameter accepts is a policy the parameter states, not one jm imposes
+#     on every array of every project (gh-1824).
 #
 # It is ONE C function, emitted once per extension translation unit through
 # ``ARRAY_ARG_C`` and called through ``array_arg`` from every generator that
@@ -453,30 +458,34 @@ def array_rank_guard(
 ARRAY_ARG_FN = "jm_array_arg"
 
 #: The same converter taking a ``str_hint`` (gh-1756). ``jm_array_arg`` is it
-#: with ``NULL``, so a param declaring none renders exactly as before.
+#: with ``NULL``: a param declaring no hint leaves a ``str`` to numpy.
 ARRAY_ARG_HINT_FN = "jm_array_arg_hint"
 
-#: The per-param manifest key naming what to pass instead of a ``str``.
+#: The per-param manifest key that opts a parameter in to refusing a ``str``
+#: (gh-1824), and names what to pass instead.
 STR_HINT_KEY = "str_hint"
 
 ARRAY_ARG_C = """\
 #ifndef JM_ARRAY_ARG_DEFINED
 #define JM_ARRAY_ARG_DEFINED
 /* Convert a Python argument for an array parameter to an ndarray of
- * `typenum` meeting `requirements` -- PyArray_FROM_OTF, less the two inputs
- * it reads as text (gh-1700): a str is refused, never parsed as a number,
- * and for a one-byte element type a byte buffer (bytes, bytearray,
- * memoryview) is its bytes, one element per byte. `name` is the parameter,
- * for the message, and `hint` (NULL for none) is appended to a str's
- * refusal. Returns a new reference, or NULL with an exception. */
+ * `typenum` meeting `requirements` -- PyArray_FROM_OTF, except that for a
+ * one-byte element type a byte buffer (bytes, bytearray, memoryview) is its
+ * bytes, one element per byte (gh-1700). `name` is the parameter, for the
+ * message. `hint` is its declared str_hint, or NULL. Declaring one is the
+ * opt-in to refusing text (gh-1824): a str, or a bytes numpy would parse as
+ * a number, and a str's refusal ends with the hint (gh-1756). With NULL,
+ * numpy converts a str as it converts anything else. Returns a new
+ * reference, or NULL with an exception. */
 static inline PyArrayObject *
 jm_array_arg_hint(PyObject *obj, int typenum, int requirements,
                   const char *name, const char *hint)
 {
     int one_byte = typenum == NPY_UINT8 || typenum == NPY_INT8;
-    if (PyUnicode_Check(obj) || (!one_byte && PyBytes_Check(obj))) {
-        /* `hint` (gh-1756) says where text goes instead: a str only. */
-        int say = hint && PyUnicode_Check(obj);
+    int text = PyUnicode_Check(obj) || (!one_byte && PyBytes_Check(obj));
+    if (hint && text) {
+        /* The hint says where text goes instead: a str's refusal only. */
+        int say = PyUnicode_Check(obj);
         PyErr_Format(PyExc_TypeError,
                      "%s must be an array of numbers, not %.200s%s%s", name,
                      Py_TYPE(obj)->tp_name, say ? ": " : "",
@@ -528,11 +537,12 @@ def array_arg(
     as the ``(PyArrayObject *)PyArray_FROM_OTF(...)`` it replaces.
 
     *hint* is the parameter's declared ``str_hint`` (gh-1756), read through
-    `str_hint`: text appended to the refusal of a ``str``, naming what to
+    `str_hint`. Declaring one is the opt-in to refusing a ``str``
+    (gh-1824), and the hint is appended to that refusal, naming what to
     pass instead. It is escaped here into a C string literal, through the
     table every other manifest-authored C message uses. Empty -- every
     parameter declaring none -- keeps the four-argument ``jm_array_arg``
-    call, so such a binding renders byte-for-byte as before the key existed.
+    call, which leaves a ``str`` to numpy's conversion.
 
     Examples
     --------

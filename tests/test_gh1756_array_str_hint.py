@@ -17,6 +17,9 @@ per param, appended to the refusal of a ``str``::
     TypeError: sync must be an array of numbers, not str: build bits from
     text with field_bits()
 
+Since gh-1824 the key is also the opt-in: only a param declaring it refuses
+a ``str`` at all, and every other array param leaves one to numpy.
+
 ONE mechanism: ``_coerce.array_arg`` takes the hint, read through the one
 accessor ``_coerce.str_hint``, and emits the helper's hinted entry point
 ``jm_array_arg_hint``; ``jm_array_arg`` is that with ``NULL``. So a param
@@ -273,11 +276,14 @@ class TestEveryFace:
             "msg": f"{param} must be an array of numbers, not str: {hint}",
         }
 
-    def test_a_param_without_the_key_is_unchanged(self, results):
-        assert results["init unhinted"] == {
-            "err": "TypeError",
-            "msg": "taps must be an array of numbers, not str",
-        }
+    def test_a_param_without_the_key_leaves_a_str_to_numpy(self, results):
+        """gh-1824: the refusal is the hint's opt-in, not every array's.
+
+        ``taps`` shares an object with the hinted ``sync``; ``"1.5"`` is
+        numpy's to convert, the one float 1.5 (`test_gh1700_array_arg_str_bytes`
+        checks the value against numpy itself).
+        """
+        assert results["init unhinted"] == {"ok": True}
 
     @pytest.mark.parametrize("case", ["init bytes ok", "function bytes ok"])
     def test_a_byte_buffer_still_converts(self, results, case):

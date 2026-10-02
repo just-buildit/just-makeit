@@ -627,7 +627,7 @@ for the full semantics.
 | `derived = ["<n0>", "<n1>"]` (name a 2-D array's extents)              | (TOML only)                                                                  | ✅ (gh-1097)                |
 | `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                                  | ✅ (gh-1096)                |
 | `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                                  | ✅ (gh-1105)                |
-| `str_hint = "<text>"` (appended to an array's refusal of a `str`)      | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-1756)                |
+| `str_hint = "<text>"` (an array refuses a `str`, with this appended)   | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-1756)                |
 | compose with `[[state]]`                                               | `--init-param + --state` together                                            | ✅ (0.13.23) (gate dropped) |
 
 #### `example_value` — constructing a required param in generated tests
@@ -955,7 +955,7 @@ way.
 | `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                      | ✅ (0.49.0)  |
 | `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                   | ✅           |
 | `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)      | ✅           |
-| `params … {str_hint = "..."}`          | (TOML only) appended to an array's refusal of a `str`        | ✅ (gh-1756) |
+| `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended     | ✅ (gh-1756) |
 | `varargs = true`                       | `jm method --varargs`                                        | ✅           |
 | `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)       | ✅ (0.14.2)  |
 | `variable_output = true`               | `jm method --variable-output`                                | ✅           |
@@ -1083,7 +1083,7 @@ guard, so guard anything platform-specific in it yourself.
 | `name`, `return_type`, `doc`     | `jm function <fn> --module <mod> --return-type T --doc STR` | ✅           |
 | `params = [{name, type, out?}]`  | `jm function --param name:T` + `--out-param name:T[]`       | ✅ (0.13.22) |
 | `params … {mutable = true}`      | (synonym for `out` — writable array param)                  | ✅ (0.15.3)  |
-| `params … {str_hint = "..."}`    | (TOML only) appended to an array's refusal of a `str`       | ✅ (gh-1756) |
+| `params … {str_hint = "..."}`    | (TOML only) an array refuses a `str`, with this appended    | ✅ (gh-1756) |
 | `inline = true`                  | `jm function --inline`                                      | ✅           |
 | `out_type = "T"`                 | `jm function --out-type T`                                  | ✅ (0.13.23) |
 | `out_type = "str"`               | (TOML only)                                                 | 🟡 (0.71.2)  |
@@ -1204,12 +1204,12 @@ is whatever you passed to `just-makeit object <name>`.
 
 One entry per `--state` declaration.
 
-| Key        | Type   | Notes                                                                      |
-| ---------- | ------ | -------------------------------------------------------------------------- |
-| `name`     | string | ASCII letters/digits/underscores, no leading digit                         |
-| `type`     | string | C type; append `[N]` for fixed arrays                                      |
-| `default`  | string | C initialiser expression                                                   |
-| `str_hint` | string | `T[N]` field only: appended to `set_<name>`'s refusal of a `str` (gh-1761) |
+| Key        | Type   | Notes                                                                         |
+| ---------- | ------ | ----------------------------------------------------------------------------- |
+| `name`     | string | ASCII letters/digits/underscores, no leading digit                            |
+| `type`     | string | C type; append `[N]` for fixed arrays                                         |
+| `default`  | string | C initialiser expression                                                      |
+| `str_hint` | string | `T[N]` field only: `set_<name>` refuses a `str`, with this appended (gh-1761) |
 
 ### `[[<object>.array_args]]`
 

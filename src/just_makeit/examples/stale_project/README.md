@@ -59,9 +59,7 @@ also warns, loudly, about a fragment it will not rewrite:
 
 ```
 warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the
-manifest [...; steps: jm converts an array argument through jm_array_arg and
-this fragment does not, so a str argument is silently parsed as a number
-rather than refused; jm's out= guard tests C-contiguity and this fragment
+manifest [...; steps: jm's out= guard tests C-contiguity and this fragment
 does not, so a strided out= is filled through a copy and silently ignored]
 ```
 

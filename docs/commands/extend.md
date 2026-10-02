@@ -114,10 +114,11 @@ double, int, int32_t, uint32_t, size_t, float \_Complex, etc.).
 **Array parameters** (`--param name:type[]`) generate a numpy array input.
 The C stub receives `(const elem_t *name, size_t name_len)` and the Python
 wrapper converts whatever the caller passes (a list, an ndarray of another
-dtype) automatically. A `str` is refused with a `TypeError` naming the
-parameter -- a string is never an array of its digits' value -- and a
-`uint8_t[]` / `int8_t[]` parameter also takes `bytes`, `bytearray` or
-`memoryview`, one element per byte (gh-1700):
+dtype) the way numpy does, `np.asarray(x, dtype=...)`. jm adds no refusal of
+its own: a `str` converts as numpy converts it, so `"0101"` into a
+`uint8_t[]` is the one element 101 (gh-1824). A `uint8_t[]` / `int8_t[]`
+parameter also takes `bytes`, `bytearray` or `memoryview`, one element per
+byte (gh-1700):
 
 ```sh
 just-makeit method resamp execute_ctrl --module resample \
@@ -125,10 +126,12 @@ just-makeit method resamp execute_ctrl --module resample \
     --return-type size_t
 ```
 
-To say where text goes instead, give the param a `str_hint` in the manifest
-(gh-1756). It is appended to the refusal of a `str`, and the same key works on
-an init param, a method param, a module-function param and a handle method's
-array arg:
+To refuse a `str` instead, and say where text goes, give the param a
+`str_hint` in the manifest (gh-1756). Declaring it is the opt-in (gh-1824):
+that param refuses a `str` with a `TypeError` naming it, the hint appended,
+and refuses a `bytes` numpy would parse as a number (one into an element type
+wider than a byte). The same key works on an init param, a method param, a
+module-function param and a handle method's array arg:
 
 ```toml
 [[frame.init_params]]
@@ -147,11 +150,11 @@ non-empty string, one on a param that is not an array, and one on an `out`
 buffer, a `strict` method's param or an array of a declared record -- each
 refuses anything but an ndarray with its own message first, so the hint could
 never be shown. A param
-without the key renders exactly as before.
+without the key leaves a `str` to numpy.
 
 An array **state field**'s setter takes the same key (gh-1761). A
 `[[<obj>.state]]` field typed `T[N]` gets a `set_<name>` that converts its
-argument the same way, so the hint goes on the state row:
+argument the same way, so the opt-in and its hint go on the state row:
 
 ```toml
 [[frame.state]]

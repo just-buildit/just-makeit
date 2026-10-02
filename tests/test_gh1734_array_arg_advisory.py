@@ -1,9 +1,13 @@
 """A sacred fragment predating ``jm_array_arg`` is reported (gh-1734).
 
 gh-1700 routed every generated array-argument conversion through one
-helper, ``jm_array_arg``, which refuses a ``str`` rather than parsing it as
-a number -- and widened the ``.pyi`` beside it. A sacred ``_ext_<obj>.c``
-fragment rendered before that still calls a bare ``PyArray_FROM_OTF``, and
+helper, ``jm_array_arg``, which reads a byte buffer into a ``uint8_t[]`` /
+``int8_t[]`` as its bytes -- and widened the ``.pyi`` beside it. (It also
+refused a ``str`` on every array until gh-1824 made that a per-param
+``str_hint`` opt-in; for any other element type the helper is now
+``PyArray_FROM_OTF``, so only a one-byte array's bare call is reported.)
+A sacred ``_ext_<obj>.c`` fragment rendered before that still calls a bare
+``PyArray_FROM_OTF``, and
 ``apply`` only ever ADDS members to one, so the stub and the runtime
 disagreed and nothing said so. doppler had ~40 such fragments; ``apply``
 named 55 lacking gh-1710's output-size guard and none of these.
@@ -12,9 +16,9 @@ The advisory rides the same declared-feature axis as gh-1710's guard
 (``_docsync._FEATURE_MARKERS``): the reference render calls the helper, the
 fragment does not, so the member is named with the consequence.
 
-GATE: a fragment converting an array argument without ``jm_array_arg`` is
-named on apply; a current one, a GNU-rewrapped current one and a member
-with no array argument are not.
+GATE: a fragment converting a byte-array argument without ``jm_array_arg``
+is named on apply; a current one, a GNU-rewrapped current one, a member
+with no array argument and (gh-1824) a bare call on a ``float[]`` are not.
 """
 
 from __future__ import annotations
@@ -59,25 +63,41 @@ def _apply(proj) -> str:
     return r.stdout + r.stderr
 
 
-def _array_project(tmp_path):
-    return _project(tmp_path, "--param", "w:float[]", "--return-type", "float")
+def _array_project(tmp_path, ptype="uint8_t[]"):
+    return _project(
+        tmp_path, "--param", f"w:{ptype}", "--return-type", "float"
+    )
 
 
-def test_a_fragment_predating_jm_array_arg_is_named(tmp_path):
-    proj = _array_project(tmp_path)
-    frag = proj.joinpath(*FRAG)
-    # Rendered before gh-1700: the helper call is a bare PyArray_FROM_OTF.
+def _predate(frag) -> None:
+    """Rewrite *frag* as rendered before gh-1700: a bare PyArray_FROM_OTF."""
     old, n = _CALL_RE.subn(
         r"(PyArrayObject *)PyArray_FROM_OTF(\1, \2, \3)", frag.read_text()
     )
     assert n == 1, "fixture no longer renders one jm_array_arg call"
     frag.write_text(old)
 
+
+def test_a_fragment_predating_jm_array_arg_is_named(tmp_path):
+    proj = _array_project(tmp_path)
+    _predate(proj.joinpath(*FRAG))
+
     out = _apply(proj)
     assert "m_ext_r.c" in out, out
-    assert f"scale: jm converts an array argument {WHY}" in out, out
+    assert f"scale: jm converts a uint8_t[] / int8_t[] argument {WHY}" in out
+    assert "read as its bytes" in out, out
     # ...and nothing else is blamed for it.
     assert "result shape" not in out, out
+
+
+def test_a_bare_call_on_a_wider_element_type_is_silent(tmp_path):
+    """gh-1824: for a float[] the helper IS PyArray_FROM_OTF -- a str is
+    numpy's without a str_hint -- so the old call has no consequence to
+    name, and a fragment is not told to regenerate for nothing."""
+    proj = _array_project(tmp_path, "float[]")
+    _predate(proj.joinpath(*FRAG))
+    out = _apply(proj)
+    assert "no longer matches" not in out, out
 
 
 def test_a_current_fragment_is_silent(tmp_path):
