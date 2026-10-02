@@ -45,6 +45,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v7.0.1

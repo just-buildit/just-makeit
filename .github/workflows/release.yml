@@ -23,6 +23,7 @@ jobs:
   resolve:
     name: Resolve the tag under release
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       tag: ${{ steps.r.outputs.tag }}
       sha: ${{ steps.r.outputs.sha }}
@@ -69,6 +70,10 @@ jobs:
     name: Verify CI already passed for this commit
     needs: resolve
     runs-on: ubuntu-latest
+    # Above the poll window below (ATTEMPTS x INTERVAL = 60 min), so the
+    # poll's own timeout message fires first, not GitHub's bare cancel;
+    # tests/test_gh1327_verify_ci_poll_window.py holds the ordering.
+    timeout-minutes: 75
     permissions:
       checks: read
       contents: read
@@ -123,6 +128,7 @@ jobs:
   build:
     needs: [resolve, verify-ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # Pin the checkout to the resolved tag. On a tag push this is the ref
       # the default checkout would have taken anyway; on a dispatch the
@@ -253,6 +259,7 @@ jobs:
   publish:
     needs: [smoke, artifact-smoke]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi
     permissions:
       id-token: write
@@ -268,6 +275,7 @@ jobs:
   github-release:
     needs: [resolve, publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
 

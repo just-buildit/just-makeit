@@ -30,6 +30,7 @@ on:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # `checks: read` is for the base commit's "CI passed" (gh-1763). A
     # reusable workflow's token is capped by its caller's, and the repo's
     # default token grants no `checks`, so every caller grants these too;
