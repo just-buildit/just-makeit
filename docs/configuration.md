@@ -1348,10 +1348,11 @@ real_type      = "float[]"
 real_create_fn = "fir_create_real"
 ```
 
-Only an ndarray of the `real_type` dtype (here `float32`) reaches
-`real_create_fn`. A list of floats takes the default constructor, converted
-to the declared type. Any other rank, `None` included, is a
-`ValueError: taps must be a 1-D array` (gh-1826). Defaulted arrays compose
+Only a 1-D ndarray of the `real_type` dtype (here `float32`) reaches
+`real_create_fn`. Everything else takes the default constructor and is
+converted exactly as a plain array param of the declared type would be: a
+list of floats, `None`, an array of another rank. numpy decides what
+converts, as it does for any array param (gh-1826). Defaulted arrays compose
 with it and reach either constructor as `NULL`/`0` when omitted (gh-1825).
 It does not compose with a second dispatch or with an `optional` array, and
 jm refuses both.

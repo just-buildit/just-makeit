@@ -1209,9 +1209,9 @@ def _build_no_state_init_ctx(
             # acquisition below, the same `jm_array_arg` every other array
             # takes, reports it. Left set, a probe failure that the complex
             # acquisition then survived (None, a 2-D array) returned a
-            # constructed object with an exception set: SystemError. The
-            # dispatch is 1-D (its probe asks for depth 1), so a converted
-            # value of any other rank is refused by name.
+            # constructed object with an exception set: SystemError. Past the
+            # probe, a dispatched array is acquired exactly as a plain one of
+            # its declared type: numpy decides what converts, rank included.
             aapb_lines.append(
                 f"    /* dtype dispatch: {real_ect} -> {d_create_fn},"
                 f" {act} -> {_create} */\n"
@@ -1233,12 +1233,6 @@ def _build_no_state_init_ctx(
                 f"        ? {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))}\n"
                 f"        : {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    if (PyArray_NDIM({aname}_arr) != 1) {{\n"
-                f"        PyErr_SetString(PyExc_ValueError,\n"
-                f'                        "{aname} must be a 1-D array");\n'
-                f"        {cleanup} Py_DECREF({aname}_arr);"
-                f" return -1;\n"
-                f"    }}\n"
                 f"    size_t {aname}_len ="
                 f" (size_t)PyArray_SIZE({aname}_arr);\n"
             )

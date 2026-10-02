@@ -1,4 +1,4 @@
-"""Array dispatch scaffolds that build, and refuse bad input by name.
+"""Array dispatch scaffolds that build, and take input as a plain array does.
 
 Three defects in one init path, each measured on a BUILT extension:
 
@@ -13,6 +13,10 @@ Three defects in one init path, each measured on a BUILT extension:
   ``SystemError: ... returned a result with an exception set``. The dtype
   probe (``PyArray_CheckFromAny``) failed and left its error set, and the
   complex acquisition then succeeded anyway (numpy makes ``None`` a 0-d nan).
+  Now the probe only picks the constructor, and past it a dispatched array
+  is acquired exactly as a plain one: the test holds each such input to
+  what a plain array param of the same declared type does IN THE SAME BUILD,
+  rather than to a value written down here.
 
 - gh-1827: the scaffold never declared or stubbed ``real_create_fn`` or an
   ``optional`` array's ``create_fn``, so an untouched tree failed with an
@@ -62,7 +66,21 @@ type = "uint8_t[]"
 default = "[]"
 """
 
-_MODULE = '\n[module.m]\nobjects = ["disp"]\n'
+#: A plain (non-dispatched) array param of the dispatch's declared type:
+#: the reference a dispatched param must behave as, input for input.
+PLAIN = """
+[plain]
+arg_type = "void"
+return_type = "void"
+no_state = "true"
+no_step = "true"
+
+[[plain.init_params]]
+name = "taps"
+type = "float _Complex[]"
+"""
+
+_MODULE = '\n[module.m]\nobjects = ["disp", "plain"]\n'
 
 FACES = {"standalone": "wp", "module": "wp.m"}
 
@@ -88,8 +106,8 @@ def _build(root: Path) -> Path:
     return root / "src"
 
 
-def _outcomes(src: Path, module: str, cases: str) -> dict:
-    """Run each ``name: expr`` in *cases* against *module*'s ``Disp``.
+def _outcomes(src: Path, module: str, cases: str, names="Disp") -> dict:
+    """Run each ``name: expr`` in *cases* against *module*'s *names*.
 
     A child process, because the extension is built for this interpreter
     but must be imported fresh -- and a SystemError must not be able to take
@@ -99,7 +117,7 @@ def _outcomes(src: Path, module: str, cases: str) -> dict:
         "import json, sys\n"
         f"sys.path.insert(0, {str(src)!r})\n"
         "import numpy as np\n"
-        f"from {module} import Disp\n"
+        f"from {module} import {names}\n"
         f"cases = {{{cases}}}\n"
         "out = {}\n"
         "for name, call in cases.items():\n"
@@ -121,17 +139,23 @@ def _outcomes(src: Path, module: str, cases: str) -> dict:
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="needs cmake and a C compiler")
 @pytest.mark.parametrize("face", sorted(FACES))
 def test_dispatch_beside_a_defaulted_array(face, tmp_path):
-    """gh-1825 compiles, gh-1826 refuses by name, and the dtype routes.
+    """gh-1825 compiles, gh-1826 never raises SystemError, the dtype routes.
 
     The real constructor's stub is made to fail, which is the only way to
     see from Python which constructor ran: a float32 array must reach it,
     and everything else -- a list of floats included -- must not.
+
+    gh-1826, owner's decision: a dispatched array is not stricter than a
+    plain one. Each input the probe cannot read (None, another rank) must
+    end exactly as it does on `Plain`, a plain array param of the same
+    declared type in the same build: the same success, or the same
+    exception type. Measured, never assumed -- numpy decides.
     """
     root = tmp_path / "wp"
     _jm("new", "wp", str(root), cwd=tmp_path)
     manifest = root / "just-makeit.toml"
     with manifest.open("a", encoding="utf-8") as f:
-        f.write((_MODULE if face == "module" else "") + DISPATCH)
+        f.write((_MODULE if face == "module" else "") + DISPATCH + PLAIN)
     _jm("apply", cwd=root)
 
     core = root / "native" / "src" / "disp" / "disp_core.c"
@@ -147,10 +171,23 @@ def test_dispatch_beside_a_defaulted_array(face, tmp_path):
         encoding="utf-8",
     )
 
+    unreadable = {
+        "None": "None",
+        "2-D float32": "np.zeros((2, 3), np.float32)",
+        "2-D complex64": "np.zeros((2, 3), np.complex64)",
+        "0-d float32": "np.float32(1.0)",
+        "str": "'abc'",
+    }
+    cases = "".join(
+        f'"{k} {cls}": lambda: {cls}({v}),'
+        for k, v in unreadable.items()
+        for cls in ("Disp", "Plain")
+    )
     got = _outcomes(
         _build(root),
         FACES[face],
-        """
+        cases
+        + """
         "complex64": lambda: Disp(np.zeros(3, np.complex64)),
         "complex64 + sync": lambda: Disp(
             np.zeros(3, np.complex64), sync=np.ones(4, np.uint8)
@@ -160,19 +197,20 @@ def test_dispatch_beside_a_defaulted_array(face, tmp_path):
         "float32 + sync": lambda: Disp(
             np.zeros(3, np.float32), sync=np.ones(4, np.uint8)
         ),
-        "None": lambda: Disp(None),
-        "2-D float32": lambda: Disp(np.zeros((2, 3), np.float32)),
-        "2-D complex64": lambda: Disp(np.zeros((2, 3), np.complex64)),
-        "0-d float32": lambda: Disp(np.float32(1.0)),
         """,
+        names="Disp, Plain",
     )
     assert not [k for k, v in got.items() if v.startswith("SystemError")], got
+
+    def kind(outcome: str) -> str:
+        return outcome.split(":", 1)[0]
+
+    for k in unreadable:
+        assert kind(got[f"{k} Disp"]) == kind(got[f"{k} Plain"]), (k, got)
     for ok in ("complex64", "complex64 + sync", "float list"):
         assert got[ok] == "ok", (ok, got)
     for real in ("float32", "float32 + sync"):
         assert got[real].startswith("MemoryError"), (real, got)
-    for bad in ("None", "2-D float32", "2-D complex64", "0-d float32"):
-        assert got[bad] == "ValueError: taps must be a 1-D array", (bad, got)
 
 
 @pytest.mark.slow
