@@ -91,9 +91,10 @@ def test_ci_runs_the_artifact_smoke_from_the_wheel_it_builds():
 # the next workflow from repeating this is that `CI passed` is the only thing
 # a PR is required to pass, so a workflow with its own PR trigger gates
 # nothing. These may only shrink (gh-1782).
-_PR_WORKFLOWS_OUTSIDE_CI = {
-    "nco_tone_ci.yml": "gh-1782",
-}
+# Empty since gh-1782: docs.yml became deploy-only (#1810) and
+# nco_tone_ci.yml was deleted, its PR run being the required `examples` job's
+# test_example[nco_tone] and its doppler-drift schedule ci.yml's nightly.
+_PR_WORKFLOWS_OUTSIDE_CI: "dict[str, str]" = {}
 
 
 def _on(name: str) -> dict:

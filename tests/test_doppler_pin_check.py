@@ -1,6 +1,6 @@
 """The nco_tone doppler pin, and the advisory that reports when it lags.
 
-`_DOPPLER_VERSION` is what a local run downloads; `nco_tone_ci.yml` downloads
+`_DOPPLER_VERSION` is what a local run downloads; CI's `examples` job downloads
 doppler's *latest* release instead, deliberately. The two paths agree only
 while the pin tracks the latest release.
 

@@ -363,8 +363,8 @@ def latest_release(url: str = _LATEST_URL) -> str | None:
     headers = {"Accept": "application/vnd.github+json"}
     # A CI job has a token; an anonymous lookup shares the runner IP's 60
     # requests an hour, and a rate-limited one falls back to the pin -- which
-    # for `nco_tone_ci.yml`, whose point is building against doppler's
-    # LATEST, would quietly test the wrong release.
+    # for CI's `examples` job, whose point is building against doppler's
+    # LATEST, would quietly test the wrong release (it passes GH_TOKEN).
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -471,8 +471,9 @@ def _find_doppler_prefix() -> str | None:
     unknown". A developer prefix is now opt-IN via `--doppler-prefix`, which is
     explicit and printed, rather than opt-out by accident.
 
-    CI runs this same fetch (`nco_tone_ci.yml` included, since gh-1639 routed
-    its own `gh release download` through here for the retry), so the two
+    CI runs this same fetch (ci.yml's `examples` job and its nightly; the
+    old nco_tone_ci.yml's `gh release download` came through here for the
+    retry in gh-1639, before gh-1782 folded it into those), so the two
     paths agree by construction instead of agreeing only while someone
     remembers to bump a constant.
 

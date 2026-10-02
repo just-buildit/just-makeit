@@ -123,6 +123,9 @@ jobs:
         env:
           # gh-1377: no silent skip of the doppler build.
           JM_REQUIRE_DOPPLER: "1"
+          # gh-1782: nor a silent fall-back to the pinned doppler when an
+          # anonymous latest-release lookup is rate-limited.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))" \
             | while read example; do
@@ -781,6 +784,9 @@ jobs:
           CMAKE_GENERATOR: Ninja
           # gh-1377: no silent skip of the doppler build.
           JM_REQUIRE_DOPPLER: "1"
+          # gh-1782: nor a silent fall-back to the pinned doppler when an
+          # anonymous latest-release lookup is rate-limited.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))" \
             | tr -d '\r' | while read -r example; do
