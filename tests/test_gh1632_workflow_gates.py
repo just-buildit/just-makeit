@@ -20,7 +20,8 @@ GATE: no workflow but ci.yml runs on a PR (gh-1643, a shrink-only set aside);
       builds; no workflow step negates a grep of a file it has not proven
       exists, or negates any command, which bash -e would not stop on; no
       workflow or doc wires or describes a merge queue jm does not have;
-      every workflow that runs on its own can also be dispatched.
+      every workflow that runs on its own can also be dispatched; ci.yml
+      has a nightly that never skips, in a concurrency group of its own.
 """
 
 from __future__ import annotations
@@ -142,6 +143,25 @@ def test_every_triggered_workflow_can_be_dispatched():
     assert missing == [], (
         f"{missing} run on their own but cannot be dispatched, so a run "
         "that fails at startup cannot be redone; add `workflow_dispatch:`"
+    )
+
+
+def test_main_has_a_nightly_full_run_of_its_own():
+    """gh-1801 item 2: a nightly that never skips, in its own concurrency group.
+
+    main skips every tree its PR tested, so the nightly is where drift no
+    diff causes goes red. changes.yml must send `schedule` to src=true, and
+    the run must not share main's group, or the next merge's pending run
+    supersedes it and it never runs (gh-1763's mechanism).
+    """
+    doc = yaml.safe_load((WF / "ci.yml").read_text(encoding="utf-8"))
+    assert _on("ci.yml").get("schedule"), "ci.yml has no nightly"
+    group = doc["concurrency"]["group"]
+    assert "github.event_name == 'schedule' && 'nightly'" in group, group
+    changes = (WF / "changes.yml").read_text(encoding="utf-8")
+    arm = re.search(r"^\s+([\w|]+)\)\s*\n\s+echo \"src=true\"", changes, re.M)
+    assert arm and "schedule" in arm.group(1).split("|"), (
+        "changes.yml must send a scheduled run to src=true"
     )
 
 

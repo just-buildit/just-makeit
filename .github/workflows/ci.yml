@@ -5,14 +5,26 @@ on:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+  # The nightly full run (gh-1801 item 2). With main skipping every tree its
+  # PR already tested, main rarely runs the matrix on a push, so drift that
+  # no diff causes -- hosted macOS/Windows images, the live-install jobs,
+  # anything a pinned image does not cover -- goes red here rather than on
+  # whichever PR meets it first. changes.yml sends `schedule` to src=true:
+  # this run never skips. 03:41 UTC, off the hour.
+  schedule:
+    - cron: "41 3 * * *"
 
 # A force-push used to leave the superseded run burning all 18 matrix legs to
 # completion, which wastes minutes and leaves confusing check state on the PR.
 # Cancel only PR runs: a main result is something else depends
 # on (release.yml's verify-ci polls for "CI passed" on the merged SHA), so
 # those must always run to completion.
+#
+# The nightly has a group of its own: sharing main's, the next merge's
+# pending run would supersede it and it would never run at all -- the
+# mechanism gh-1763 found cancelling #1759's run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
