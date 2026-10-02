@@ -111,11 +111,11 @@ ______________________________________________________________________
 You edited `just-makeit.toml` by hand. Which command carries the change into
 the generated files?
 
-|                            | [`jm apply`](commands/build.md#just-makeit-apply)                                                                                             | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component)           |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **Use when**               | Glue changed — `_ext.c`, `.pyi`, `CMakeLists.txt`, or a new method/property that just needs to reach the public API                           | Structural change — a new state field or a changed signature                           |
-| **What it does**           | Regenerates glue and injects missing declarations into `_core.h`. The state struct and inline `step()` are sacred; `_core.c` is never touched | Deletes every file the component owns and re-runs `apply`. Leaves the TOML alone       |
-| **Your hand-written code** | Untouched                                                                                                                                     | Lifted out and spliced back by function name; `--discard` skips that for a clean reset |
+|                            | [`jm apply`](commands/build.md#just-makeit-apply)                                                                                                                                       | [`jm regenerate <name>`](commands/build.md#just-makeit-regenerate-component)           |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Use when**               | Glue changed — `_ext.c`, `.pyi`, `CMakeLists.txt`, or a new method/property that just needs to reach the public API                                                                     | Structural change — a new state field or a changed signature                           |
+| **What it does**           | Regenerates glue and injects missing declarations into `_core.h`. The state struct and inline `step()` are sacred; `_core.c` only gains a definition the manifest declares and it lacks | Deletes every file the component owns and re-runs `apply`. Leaves the TOML alone       |
+| **Your hand-written code** | Untouched                                                                                                                                                                               | Lifted out and spliced back by function name; `--discard` skips that for a clean reset |
 
 `apply` is the safe, additive refresh. `regenerate` is the deliberate
 rebuild — reach for it when a signature change or new state field has to
