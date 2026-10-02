@@ -548,6 +548,49 @@ def takes_byte_buffer(ctype: str) -> bool:
     return bool(meta) and meta.get("py_type") in ("np.uint8", "np.int8")
 
 
+def array_param_annotation(ctype: str, also: str = "") -> str:
+    """The ``.pyi`` annotation of an array constructor argument of *ctype*.
+
+    gh-1724. The ONE spelling of an array init-param, for every way one is
+    declared -- required, defaulted (``default = "[]"``), optional-array
+    dispatch, ``--array-arg`` -- and for both stub generators, the standalone
+    ``_context/_state`` and the module-aggregated ``_stubs``. Before this the
+    standalone generator wrote ``npt.ArrayLike`` for all of them. That type
+    admits ``str``, which the binding's ``jm_array_arg`` refuses (gh-1700), so
+    ``Fld("0101")`` type-checked and failed only when run; the module peer said
+    ``NDArray[...]`` for the same object.
+
+    It is ``NDArray`` of the element's dtype, through
+    :func:`py_param_annotation`, so a one-byte integer array also admits the
+    byte buffers the binding reads -- the same widening a method parameter
+    gets. *also* is a dtype-dispatch parameter's second element type
+    (``real_type``): the binding takes an array of either and calls a
+    different constructor for each, so the stub names both.
+
+    >>> array_param_annotation("float[]")
+    'NDArray[np.float32]'
+    >>> array_param_annotation("uint8_t[]")
+    'NDArray[np.uint8] | bytes | bytearray | memoryview'
+    >>> array_param_annotation("double[][]")
+    'NDArray[np.float64]'
+    >>> array_param_annotation("float _Complex[]", also="float[]")
+    'NDArray[np.complex64] | NDArray[np.float32]'
+
+    No spelling of it admits ``str``:
+
+    >>> "str" in array_param_annotation("int8_t[]")
+    False
+    """
+    dtypes = [array_elem_ctype(ctype)] + (
+        [array_elem_ctype(also)] if also else []
+    )
+    base = " | ".join(
+        f"NDArray[{_CTYPE_META.get(e, {}).get('py_type', 'Any')}]"
+        for e in dtypes
+    )
+    return py_param_annotation(base, ctype, "")
+
+
 def default_type_error(ctype: str, default: str) -> str:
     """``""`` when *default* is a valid literal for *ctype*, else why not.
 

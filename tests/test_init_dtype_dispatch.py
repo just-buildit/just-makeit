@@ -76,6 +76,11 @@ class TestDtypeDispatch:
         # single-line create() slot stays empty (mirrors the optional shape).
         assert _ctx(self.PARAMS)["create_line"] == ""
 
-    def test_pyi_signature_uses_arraylike(self):
+    def test_pyi_signature_names_both_dtypes(self):
+        # gh-1724: the binding takes either element type, so the stub names
+        # both -- and, unlike npt.ArrayLike, neither admits a str.
         ctx = _ctx(self.PARAMS)
-        assert "taps: npt.ArrayLike" in ctx["init_params_pyi"]
+        assert (
+            "taps: NDArray[np.complex64] | NDArray[np.float32]"
+            in ctx["init_params_pyi"]
+        )

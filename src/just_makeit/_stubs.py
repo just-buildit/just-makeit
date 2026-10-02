@@ -1735,18 +1735,38 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # halves of the same stub disagreed. The standalone `component.pyi` never
     # had this bug: `make_state_ctx` already overrides its signature slot with
     # the init_params one. This is the module-aggregated peer.
-    if ip:
+    # gh-1724: `--array-arg` entries lead the binding's kwlist, ahead of every
+    # init-param (`_context/_state.py` parses them first). This generator did
+    # not read them at all, so such an object fell through to
+    # `(self, /, *args, **kwargs)`, which type-checks a `str` too.
+    aa = C.array_args(cfg, obj)
+    if ip or aa:
         # gh-266: a required scalar has no default, so it is emitted without a
         # `= ...` placeholder and hoisted ahead of every defaulted parameter —
         # a default-less stub arg after a defaulted one is a syntax error, and
         # this mirrors the constructor's positional-before-`|` ordering.
-        req_parts: list[str] = []
+        req_parts: list[str] = [
+            f"{n}: {T.array_param_annotation(T._ARRAY_DTYPE[dt][0] + '[]')}"
+            for n, dt in aa
+        ]
         parts_init: list[str] = []
         for param in ip:
             n, t = param[0], param[1]
             dflt = param[2] if len(param) > 2 else ""
             optional = param[6] if len(param) > 6 else False
             required = param[8] if len(param) > 8 else False
+            # gh-1724: every array -- required, defaulted, optional dispatch
+            # -- is annotated by the one helper the standalone peer calls, so
+            # the two cannot disagree and none admits `str`. A dtype-dispatch
+            # array (`real_type` + `real_create_fn`) takes either element type.
+            _real = (
+                param[4] if len(param) > 5 and param[4] and param[5] else ""
+            )
+            _arr_ann = (
+                T.array_param_annotation(t, also=_real)
+                if t.endswith("[]")
+                else ""
+            )
             # gh-611 (module peer of _context/_state.py's arr_ip): a 1-D/2-D
             # array with NO declared default is a required positional in the
             # C ABI — the generated kwlist hoists it ahead of every defaulted
@@ -1792,14 +1812,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 req_parts.append(
                     f"{n}: {_base} | None" if not required else f"{n}: {_base}"
                 )
-            elif (
-                t == "path"
-                or t == "bytes"
-                or is_required_array
-                or (required and not t.endswith("[]"))
-            ):
-                # gh-1700: through the one param widening, so a required
-                # byte array admits the buffers its binding reads.
+            elif is_required_array:
+                req_parts.append(f"{n}: {_arr_ann}")
+            elif _arr_ann:
+                # optional dispatch (`| None = None`) or defaulted `"[]"`.
+                parts_init.append(
+                    f"{n}: {_arr_ann} | None = None"
+                    if optional
+                    else f"{n}: {_arr_ann} = ..."
+                )
+            elif t == "path" or t == "bytes" or required:
                 req_parts.append(
                     f"{n}: {T.py_param_annotation(_py(t), t, '')}"
                 )
@@ -2668,9 +2690,11 @@ def numpy_imports(body: str) -> "list[str]":
     >>> numpy_imports("    def f(self) -> NDArray[Any]: ...")
     ['from numpy.typing import NDArray']
 
-    An array init-param is annotated ``npt.ArrayLike`` (``_context/_state``),
-    so ``npt`` is asked for too; a stub naming it without the import failed
-    ``mypy`` on every object with an array constructor argument (gh-1700):
+    ``npt`` is asked for too. An array init-param was annotated
+    ``npt.ArrayLike`` until gh-1724 (it is ``T.array_param_annotation`` now),
+    and a stub naming ``npt`` without the import failed ``mypy`` on every
+    object with an array constructor argument (gh-1700). A hand-written
+    ``.pyi`` fragment may still name it:
 
     >>> numpy_imports("    def __init__(self, h: npt.ArrayLike) -> None: ...")
     ['import numpy.typing as npt']

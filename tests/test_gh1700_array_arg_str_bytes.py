@@ -405,7 +405,12 @@ class TestEveryParamKind:
 
         Found building this fixture: every object with an array init-param
         got a stub naming ``npt`` it never imported, so the stub failed mypy.
+        gh-1724 then removed ``npt.ArrayLike`` (it admits the ``str`` the
+        binding refuses), so the stub names ``NDArray`` and imports exactly
+        that; ``_stubs.numpy_imports`` still asks for ``npt`` by name.
         """
         fld = (project / "src" / "jmp" / "fld.pyi").read_text("utf-8")
-        assert "npt.ArrayLike" in fld
-        assert "\nimport numpy.typing as npt\n" in fld
+        assert "npt." not in fld
+        assert "\nimport numpy.typing as npt\n" not in fld
+        assert "bits: NDArray[np.uint8] | bytes" in fld
+        assert "\nfrom numpy.typing import NDArray\n" in fld

@@ -91,7 +91,7 @@ class TestDefaultedArrayPreservesDeclOrder:
         assert (
             "def __init__(self, sample_rate_hz: float = 0.0, "
             "symbol_rate_hz: float = 0.0, resolution_hz: float = 0.0, "
-            "psd_template: npt.ArrayLike = ..., pfa: float = 1e-3)"
+            "psd_template: NDArray[np.float32] = ..., pfa: float = 1e-3)"
             " -> None: ..." in pyi
         )
 
