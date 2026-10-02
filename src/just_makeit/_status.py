@@ -1772,15 +1772,6 @@ def run(
                 f"  ⊘ {u.core} (native/src/{u.component}) — missing from "
                 f"{', '.join(u.targets)}{tag}"
             )
-        print(
-            "  These build, and their symbols ship in neither lib<pkg>.so nor"
-            " lib<pkg>.a,\n"
-            "  so the installed header declares functions a C consumer cannot"
-            " link. Python\n"
-            "  is unaffected — the extension links each core directly — which"
-            " is why this\n"
-            "  goes unnoticed."
-        )
         # gh-1626: the advice is per core, from the replay -- what apply
         # DID to a copy of this tree, and what its render wires. `apply`
         # writes only an `add_subdirectory` for a `no_generate` module or a
@@ -1800,44 +1791,62 @@ def run(
             if u.core in _apply_leaves_unwired
             and u.core not in _jm_renders_wiring
         ]
-        _partial = len(_apply_fixes) != len(_unwired)
-        if _apply_fixes:
-            print(
-                "  `jm apply` writes the missing target_sources() line"
-                + (f" for {', '.join(_apply_fixes)}" if _partial else "")
-                + "."
-            )
-        if _unplaced:
-            print(
-                "  `jm apply` renders the line for "
-                f"{', '.join(_unplaced)} but cannot place it in this\n"
-                "  CMakeLists.txt, so re-running it will not clear this"
-                + (
-                    " until the UNANCHORED line above is restored."
-                    if unanchored_entries
-                    else "."
-                )
-            )
-        # Where to write it: the root. Not directly beneath an
-        # `add_subdirectory()`: `_libwiring.SUBDIR_BLOCK` lifts that run as
-        # jm's, so a `<X>_core` line there is deleted by the next apply.
-        for u in _yours:
-            print(
-                f"  `jm apply` writes no line for {u.core}, so re-running it"
-                " will not clear this.\n"
-                "  Add these to the root CMakeLists.txt yourself -- not"
-                " directly beneath an\n"
-                "  add_subdirectory() line, which apply rewrites:"
-            )
-            for _t in u.targets:
-                print(f"    {_libwiring.wiring_line(_t, u.core).rstrip()}")
-        print(
-            "  Keep a core out of the library on purpose by naming"
+        _why = (
+            "  These build, and their symbols ship in neither lib<pkg>.so nor"
+            " lib<pkg>.a,\n"
+            "  so the installed header declares functions a C consumer cannot"
+            " link. Python\n"
+            "  is unaffected — the extension links each core directly — which"
+            " is why this\n"
+            "  goes unnoticed."
+        )
+        _keep_out_rest = (
+            "core out of the library on purpose by naming"
             " `CMakeLists.txt:<core>` in\n"
             "  [project] status_allow; naming `CMakeLists.txt` itself exempts"
             " every core,\n"
             "  for a project that links its cores its own way."
         )
+        _keep_out = f"Keep a\n  {_keep_out_rest}"
+        if len(_apply_fixes) == len(_unwired):
+            # Every core is one apply wires: the paragraph as it always read.
+            print(
+                f"{_why} `jm apply` writes the missing target_sources() "
+                f"line. {_keep_out}"
+            )
+        else:
+            print(_why)
+            if _apply_fixes:
+                print(
+                    "  `jm apply` writes the missing target_sources() line"
+                    f" for {', '.join(_apply_fixes)}."
+                )
+            if _unplaced:
+                print(
+                    "  `jm apply` renders the line for "
+                    f"{', '.join(_unplaced)} but cannot place it in this\n"
+                    "  CMakeLists.txt, so re-running it will not clear this"
+                    + (
+                        " until the UNANCHORED line above is restored."
+                        if unanchored_entries
+                        else "."
+                    )
+                )
+            # Where to write it: the root. Not directly beneath an
+            # `add_subdirectory()`: `_libwiring.SUBDIR_BLOCK` lifts that run
+            # as jm's, so a `<X>_core` line there is deleted by the next
+            # apply.
+            for u in _yours:
+                print(
+                    f"  `jm apply` writes no line for {u.core}, so re-running"
+                    " it will not clear this.\n"
+                    "  Add these to the root CMakeLists.txt yourself -- not"
+                    " directly beneath an\n"
+                    "  add_subdirectory() line, which apply rewrites:"
+                )
+                for _t in u.targets:
+                    print(f"    {_libwiring.wiring_line(_t, u.core).rstrip()}")
+            print(f"  Keep a {_keep_out_rest}")
         print()
 
     # gh-984: the mirror, and the one finding here that stops the build

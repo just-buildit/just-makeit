@@ -85,7 +85,6 @@ SUPERSEDED (1) — file(s) jm has renamed:
   Not drift.
 
 summary: 40 OK, 7 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
-Your `_core.c` is yours — apply only ADDS a definition the manifest declares and the file lacks, never rewriting or removing what you wrote; use `jm regenerate <component>` to rebuild one from the manifest.
 
 $ jm apply   # exit 0
 warning: project schema is v7, current is v8. Run 'just-makeit upgrade' to get new features.
