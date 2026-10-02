@@ -56,11 +56,49 @@ jobs:
       checks: read
       contents: read
 
-  test:
+  # gh-1796: the image the Linux legs run in, the CI_IMAGE_2404 that
+  # .github/ci-images.env pins (the org standard's HAS_CI_IMAGE). That the
+  # pin was built from this tree is `make ci-image-check`, which `lint`
+  # runs; this job only hands the reference to the legs.
+  toolchain:
+    name: CI toolchain image
+    # Gated like the legs it feeds: a version bump or a docs-only diff runs
+    # none of them, so it needs no image either.
     needs: changes
+    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # An empty reference would not fail anything: an empty `container:`
+      # image runs the leg on the bare runner, which is the macOS path. So a
+      # missing key fails here, by name.
+      - id: pin
+        run: |
+          ref=$(sed -n 's/^CI_IMAGE_2404=//p' .github/ci-images.env)
+          test -n "$ref" || { echo "no CI_IMAGE_2404 in .github/ci-images.env"; exit 1; }
+          echo "image=$ref" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # gh-1796: a Linux leg runs in the pinned CI toolchain image, so its
+    # compilers, cmake and every apt package are the snapshot the pin names,
+    # not whatever a live mirror serves this minute. An empty image -- a
+    # macOS leg -- runs on the runner as before.
+    container:
+      image: ${{ startsWith(matrix.os, 'ubuntu') && needs.toolchain.outputs.image || '' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # The image's `ci` user, never root: root deletes a read-only
+      # directory, so a declared gate of the suite skips there.
+      options: --user 1001
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
@@ -178,7 +216,11 @@ jobs:
       #
       # `jm-install-deps` is still exercised on every OS by install-deps-smoke,
       # which is where testing the product belongs.
+      #
+      # Not in the CI image (gh-1796): it already carries the dev group, from
+      # the snapshot, and a live apt here is exactly what the image replaces.
       - run: make install-deps
+        if: ${{ !job.container.id }}
 
       # `make test`, not `jm-run-tests -n auto --dist load`. That looked like
       # the same carve-out as the line above, and it was not: `jm-run-tests` is
@@ -192,6 +234,16 @@ jobs:
       # rather than beside every other pytest flag.
       #
       # The shipped runner keeps its own coverage in `install-deps-smoke`.
+      # The report path comes from the shell's $GITHUB_WORKSPACE, never an
+      # expression: `${{ runner.temp }}` and `${{ github.workspace }}` are the
+      # HOST's paths, which do not exist inside the CI image (gh-1796). There
+      # every nested pytest the suite runs inherited the option, could not
+      # create /home/runner, and failed 50 tests that had nothing wrong.
+      - name: Where the test report goes
+        run: >-
+          echo "PYTEST_ADDOPTS=--junitxml=$GITHUB_WORKSPACE/pytest-report.xml
+          -o junit_family=legacy" >> "$GITHUB_ENV"
+
       - run: make test
         id: suite
         continue-on-error: ${{ matrix.prerelease == true }}
@@ -210,11 +262,8 @@ jobs:
         # PYTEST_ADDOPTS is read by pytest itself, so it survives make -> uv ->
         # pytest and the report is written however the suite is invoked.
         # Retrying the step instead would have hidden a real failure just as
-        # effectively as it hides a flake.
-        env:
-          PYTEST_ADDOPTS: >-
-            --junitxml=${{ runner.temp }}/pytest-report.xml
-            -o junit_family=legacy
+        # effectively as it hides a flake. It is set by the step above, from
+        # the shell: see there for why not from `${{ runner.temp }}`.
 
       # A tolerated failure on the pre-release leg: say so where a reader
       # of the run looks, since the job itself stays green.
@@ -231,15 +280,27 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: pytest-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: ${{ runner.temp }}/pytest-report.xml
+          path: pytest-report.xml
           if-no-files-found: ignore
 
   examples:
     name: Examples (${{ matrix.os }})
-    needs: changes
+    needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # gh-1796: a Linux leg runs in the pinned CI toolchain image, so its
+    # compilers, cmake and every apt package are the snapshot the pin names,
+    # not whatever a live mirror serves this minute. An empty image -- a
+    # macOS leg -- runs on the runner as before.
+    container:
+      image: ${{ startsWith(matrix.os, 'ubuntu') && needs.toolchain.outputs.image || '' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # The image's `ci` user, never root: root deletes a read-only
+      # directory, so a declared gate of the suite skips there.
+      options: --user 1001
     strategy:
       fail-fast: false
       matrix:
@@ -255,7 +316,10 @@ jobs:
       - name: Install just-makeit
         run: make tool-install
 
+      # Off the CI image only (gh-1796): in it, the dev group is already
+      # installed from the snapshot, and jbx exists only to install it.
       - name: Install jbx
+        if: ${{ !job.container.id }}
         run: |
           _JBS="https://just-buildit.github.io"
           mkdir -p "$HOME/.local/bin"
@@ -267,7 +331,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install system deps (Ubuntu)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !job.container.id
         run: |
           # Retries cover only a request that ERRORS; a stalled mirror never
           # errors, so each request is bounded too (gh-1792).
@@ -673,7 +737,8 @@ jobs:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, examples, examples-windows, install-deps-smoke,
+    needs: [changes, toolchain, test, examples, examples-windows,
+            install-deps-smoke,
             consumer-smoke, coverage, lint, bench, wheel, artifact-smoke,
             docker, docs]
     if: always()

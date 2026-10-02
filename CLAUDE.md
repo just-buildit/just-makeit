@@ -533,3 +533,6 @@ just-buildit/.github README under "Makefile standard".
     sources move. A PR moving `bootstrap.toml` or the Dockerfile builds and
     commits its own pin on push, and `make ci-image-check` (in `lint`)
     refuses one that did not. `make help`'s CI-image section has the targets.
+    `ci.yml`'s Linux `test` and `examples` legs run in that image as uid
+    1001 and install nothing live (`tests/test_ci_legs_in_image.py`); the
+    product-install jobs stay on bare runners, since that is what they test.
