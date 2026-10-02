@@ -18,7 +18,8 @@ GATE: no workflow but ci.yml runs on a PR (gh-1643, a shrink-only set aside);
       it only on a push; every ci.yml job but the aggregator and what runs
       after it feeds `CI passed`; ci.yml runs the artifact smoke from the wheel `make wheel`
       builds; no workflow step negates a grep of a file it has not proven
-      exists, or negates any command, which bash -e would not stop on.
+      exists, or negates any command, which bash -e would not stop on; no
+      workflow or doc wires or describes a merge queue jm does not have.
 """
 
 from __future__ import annotations
@@ -119,6 +120,37 @@ def test_no_workflow_but_ci_runs_on_a_pull_request():
     assert stale == [], f"fixed; drop from _PR_WORKFLOWS_OUTSIDE_CI: {stale}"
 
 
+DOCS = WF.parent.parent / "docs"
+
+
+def test_no_merge_queue_wiring_or_docs():
+    """jm has no merge queue; nothing may run for one or describe one.
+
+    The queue was switched off in July 2026 (the last ``merge_group`` run
+    was PR #438), and the ``main`` ruleset has no ``merge_queue`` rule:
+    ``gh api repos/just-buildit/just-makeit/rules/branches/main``. The
+    ``merge_group`` trigger, a ``changes.yml`` case arm for it, and a
+    contributor guide telling people to "add the PR to the merge queue"
+    outlived it by three months. A PR merges by auto-merge on ``CI passed``.
+    Turning a queue back on is a decision; it removes this test with it.
+    """
+    workflows = sorted(WF.glob("*.yml"))
+    docs = sorted(DOCS.rglob("*.md"))
+    assert workflows and docs, "the walk below must have something to find"
+    hits = [
+        wf.name
+        for wf in workflows
+        if "merge_group" in _on(wf.name)
+        or re.search(r"\bmerge_group\b", wf.read_text(encoding="utf-8"))
+    ]
+    hits += [
+        str(d.relative_to(DOCS))
+        for d in docs
+        if re.search(r"merge[ -]queue", d.read_text(encoding="utf-8"), re.I)
+    ]
+    assert hits == [], f"merge queue wiring or docs, with no queue: {hits}"
+
+
 def test_ci_builds_the_docker_image_on_every_source_change():
     """A PR editing only docker.yml must run it (gh-1643's second hole).
 
@@ -139,7 +171,7 @@ def test_ci_builds_the_docker_image_on_every_source_change():
     job = jobs[callers[0]]
     assert job.get("if") == "needs.changes.outputs.src == 'true'", job
     assert callers[0] in _needs(jobs["ci-passed"])
-    # Built and smoke-tested on a PR and in the merge queue; pushed from main.
+    # Built and smoke-tested on a PR; pushed from main.
     assert job["with"]["publish"] == "${{ github.event_name == 'push' }}"
 
 
@@ -147,8 +179,8 @@ def test_docker_publishes_on_its_input_alone():
     """Every step that logs in or pushes reads `inputs.publish`, nothing else.
 
     A called workflow's ``github.event_name`` is its caller's, so an event
-    check here would decide publishing for ci.yml's PR and merge_group runs
-    by the caller's event, and once already silently skipped the push on
+    check here would decide publishing for ci.yml's PR runs by the
+    caller's event, and once already silently skipped the push on
     release.yml's dispatch path.
     """
     jobs = _jobs("docker.yml")

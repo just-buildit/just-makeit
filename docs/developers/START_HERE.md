@@ -237,20 +237,18 @@ gh pr create --fill
 
 ### PR rules
 
-- CI must be green before a PR can enter the merge queue (`ci.yml` runs on
-    every PR *and* on the merge queue's batched commit).
+- CI must be green before a PR merges: the `main` ruleset requires the
+    `CI passed` check, which `ci.yml` reports on every PR.
 - Keep PRs focused — one logical change per PR makes bisect and revert easy.
 - The PR title becomes the CHANGELOG entry; write it accordingly
     (`fix: jm apply drops extra_link_libs on regeneration`).
 
 ### Merging
 
-PRs land through the **merge queue**. Once CI is green, choose "Merge when
-ready" to add the PR to the queue: GitHub rebases it onto the latest `main`,
-runs the full CI on that batched commit (the required "CI passed" check), and
-**squash-merges automatically** when green. You never have to manually rebase a
-PR just because another landed ahead of it — the queue keeps things up to date
-by construction. The branch is deleted on merge; history stays linear.
+PRs land by auto-merge. Arm it (`gh pr merge --auto --squash`) and
+the PR squash-merges as soon as `CI passed` is green. The branch does not have
+to be up to date with `main`, so independent PRs never wait on each other. The
+branch is deleted on merge; history stays linear.
 
 ### What goes directly on `main`
 
@@ -308,9 +306,8 @@ ______________________________________________________________________
 
 1. Wait for CI to go green on the PR. Fix any failures before merging.
 
-1. Add the PR to the **merge queue** ("Merge when ready"). The queue rebases it
-    onto `main`, re-runs CI on the batched commit, and squash-merges it
-    automatically when green — no manual rebase, even if other PRs land first.
+1. Arm auto-merge (`gh pr merge --auto --squash`); it squash-merges when
+    `CI passed` is green, with no rebase needed if other PRs land first.
 
 1. The branch is deleted automatically on merge.
 
