@@ -5,8 +5,16 @@ steps:
   test:
     image: python:3.12-bookworm
     commands:
-      - apt-get update
-      - apt-get install -y --no-install-recommends cmake build-essential
+      # Retries cover only a request that ERRORS; a stalled mirror never
+      # errors, so each request is bounded too.
+      - >-
+        apt-get -o Acquire::Retries=3
+        -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+        update
+      - >-
+        apt-get -o Acquire::Retries=3
+        -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+        install -y --no-install-recommends cmake build-essential
       - python -m pip install --upgrade pip <<pip_deps>>
       - make
       - make test

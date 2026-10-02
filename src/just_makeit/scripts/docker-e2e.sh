@@ -63,8 +63,14 @@ step() { echo; echo "── $* ────────────────�
 # ── System deps ───────────────────────────────────────────────────────────────
 
 step "Installing system deps"
-apt-get update -qq
-apt-get install -y -qq cmake gcc pkg-config > /dev/null
+# Retries cover only a request that ERRORS; a stalled mirror never errors, so
+# each request is bounded too (gh-1792).
+apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+    -o Acquire::https::Timeout=30 update -qq
+apt-get -o Acquire::Retries=3 \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+    install -y -qq cmake gcc pkg-config > /dev/null
 
 # ── Install just-makeit ───────────────────────────────────────────────────────
 
