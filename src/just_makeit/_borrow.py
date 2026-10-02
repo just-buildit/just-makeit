@@ -111,6 +111,7 @@ import textwrap
 from . import _config as C
 from . import _csym as CSYM
 from ._context._diagnostics import (
+    DOUBLE_REPR,
     format_raise_c,
     placeholders,
     reason_raise_c,
@@ -442,11 +443,14 @@ def _is_c_identifier(text: str) -> bool:
 #: How a resolved slot reaches `PyErr_Format`. Two conversions, not one per
 #: C type: `_rc_raise_c` already established casting to the wide type rather
 #: than carrying a printf map beside `_CTYPE_META`, and the rendered text is
-#: the same either way. A `complex` slot has no scalar reading and is
+#: the same either way. A float has no `PyErr_Format` conversion at all --
+#: ``%g`` here raised ``SystemError`` the moment a row fired (gh-1785) -- so
+#: it names `DOUBLE_REPR`, which `format_raise_c` renders through
+#: ``PyOS_double_to_string``. A `complex` slot has no scalar reading and is
 #: refused rather than given a third.
 _SLOT_CONVERSIONS = {
     "int": ("%lld", "(long long)"),
-    "float": ("%g", "(double)"),
+    "float": (DOUBLE_REPR, "(double)"),
 }
 
 
