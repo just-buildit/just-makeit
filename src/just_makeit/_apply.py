@@ -203,6 +203,12 @@ def _tree_digests(root: Path) -> dict:
     Taken once, before anything is written, from the same walk rules
     `status` uses: skipped names, build trees and nested checkouts
     (gh-1713) are never descended into.
+
+    Each value is a pair, the digest of the bytes and of the bytes through
+    :func:`_textio.lf` (gh-1641), so :func:`_changed_report` can tell a
+    rewrite that only turned CRLF into LF from one that changed content --
+    :func:`_textio.eol_only`, asked of digests because the bytes are gone by
+    the time it is asked.
     """
     out: dict = {}
     for dirpath, dirnames, filenames in os.walk(root):
@@ -220,10 +226,18 @@ def _tree_digests(root: Path) -> dict:
             if is_skipped(rel):
                 continue
             try:
-                out[rel.as_posix()] = hashlib.sha1(p.read_bytes()).digest()
+                out[rel.as_posix()] = _digests(p.read_bytes())
             except OSError:
                 continue
     return out
+
+
+def _digests(data: bytes) -> "tuple[bytes, bytes]":
+    """``(raw, line-endings-normalised)`` digests of *data* (gh-1641)."""
+    return (
+        hashlib.sha1(data).digest(),
+        hashlib.sha1(_textio.lf(data)).digest(),
+    )
 
 
 def _project_rel(root: Path, path) -> str:
@@ -248,8 +262,10 @@ def _changed_report(
     *candidates* are the paths the write sites say they touched, relative or
     under *root*, in the order they were written. Each is reported at most
     once, project-relative: ``create`` if it did not exist before the run,
-    ``update`` if its bytes differ from *before*, and nothing if the run
-    ended where it started -- which is what a second `apply` must print.
+    ``update`` if its bytes differ from *before*, ``eol`` if they differ only
+    in line endings (gh-1641: a CRLF checkout rewritten as jm's LF, which is
+    not a change to anything the build reads), and nothing if the run ended
+    where it started -- which is what a second `apply` must print.
 
     A candidate :func:`is_skipped` excludes is never reported: *before* has no
     digest for it, so it would read as ``create`` on every run. The manifest
@@ -265,11 +281,13 @@ def _changed_report(
         real = root / rel
         if not real.is_file():
             continue
-        now = hashlib.sha1(real.read_bytes()).digest()
+        now = _digests(real.read_bytes())
         if rel not in before:
             out.append(("create", rel))
-        elif before[rel] != now:
+        elif before[rel][1] != now[1]:
             out.append(("update", rel))
+        elif before[rel][0] != now[0]:
+            out.append(("eol", rel))
     return out
 
 
@@ -4040,22 +4058,30 @@ def _apply_manifest(
             *app_written,
         ],
     )
-    for verb in ("create", "update"):
+    for verb in ("create", "update", "eol"):
         for v, rel in _changed:
             if v == verb:
-                print(f"  {verb}  {rel}")
+                print(f"  {verb:<6}  {rel}")
 
     print()
     _impl_rels = {_project_rel(root, p) for p in impl_patched}
     _n_created = sum(1 for v, _ in _changed if v == "create")
     _n_impl = sum(1 for v, r in _changed if v == "update" and r in _impl_rels)
-    _reconciled = len(_changed) - _n_created - _n_impl
+    # gh-1641: a CRLF file rewritten as LF reconciled nothing.
+    _n_eol = sum(1 for v, _ in _changed if v == "eol")
+    _reconciled = len(_changed) - _n_created - _n_impl - _n_eol
     if _changed:
         print(
             f"Done!  Materialized {_n_created} new file(s), "
             f"patched {_n_impl} impl(s), and "
             f"reconciled {_reconciled} wiring file(s)"
             f" from {C.FILENAME}."
+            + (
+                f"  {_n_eol} file(s) differed only in line endings"
+                " and are LF again."
+                if _n_eol
+                else ""
+            )
         )
     elif unanchored:
         # gh-975: "already matches — nothing to do" is the sentence that made

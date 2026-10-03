@@ -37,6 +37,51 @@ def write_text(path: Path, text: str) -> int:
         return fh.write(text)
 
 
+def lf(data: bytes) -> bytes:
+    r"""*data* with every CRLF line ending spelled LF, as jm writes it.
+
+    The one normalisation behind :func:`eol_only`, and what `status` diffs
+    when it shows a file whose real change sits under a CRLF checkout -- a
+    diff of the raw bytes reports every line. A lone ``\r`` is content, not
+    a line ending, and is left alone.
+
+    Examples
+    --------
+    >>> lf(b"a\r\nb\r\n")
+    b'a\nb\n'
+    >>> lf(b"a\rb\n")
+    b'a\rb\n'
+    """
+    return data.replace(b"\r\n", b"\n")
+
+
+def eol_only(disk: bytes, render: bytes) -> bool:
+    r"""True when *disk* differs from *render* only in CRLF versus LF.
+
+    gh-1641: jm writes LF everywhere (:func:`write_text`), and Git for
+    Windows checks text files out CRLF unless the project says otherwise, so
+    a fresh Windows clone differed from jm's render in every line of every
+    file. No compiler, CMake, Python or clang-format jm drives reads the two
+    differently, so that difference is not drift. This is the ONE predicate
+    for it: `status` reports such a file in its own uncounted row instead of
+    STALE or OUTDATED, and `apply` reports the rewrite to LF as ``eol``
+    rather than ``update``. Two copies of the rule are the peer pair that
+    drifts -- one would say STALE about a file the other calls current.
+
+    False for identical bytes: an equal file has no difference to classify.
+
+    Examples
+    --------
+    >>> eol_only(b"a\r\nb\r\n", b"a\nb\n")
+    True
+    >>> eol_only(b"a\nb\n", b"a\nb\n")
+    False
+    >>> eol_only(b"a\r\nc\r\n", b"a\nb\n")
+    False
+    """
+    return disk != render and lf(disk) == lf(render)
+
+
 def utf8_stdio() -> None:
     r"""Make ``sys.stdout`` and ``sys.stderr`` encode UTF-8, anywhere.
 

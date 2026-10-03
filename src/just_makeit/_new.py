@@ -146,6 +146,10 @@ def run(
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
     _write(root / "README.md", r(T.README_MD))
     _write(root / ".gitignore", r(T.GITIGNORE))
+    # gh-1641: jm renders LF everywhere (gh-1368), and Git for Windows
+    # checks text out CRLF unless the project says otherwise -- which read
+    # every managed file as STALE on a fresh Windows clone.
+    _write(root / ".gitattributes", T.GITATTRIBUTES)
     _write(root / "Doxyfile", r(T.DOXYFILE))
     _write(root / "zensical.toml", r(T.ZENSICAL_TOML))
     _write(root / "docs" / "index.md", r(T.DOCS_INDEX_MD))

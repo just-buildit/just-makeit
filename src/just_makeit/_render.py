@@ -478,6 +478,7 @@ PYPROJECT_TOML = _load("toml/pyproject.toml")
 BOOTSTRAP_TOML = _load("toml/bootstrap.toml")
 # ── Misc ─────────────────────────────────────────────────────────────────────
 GITIGNORE = _load("misc/.gitignore")
+GITATTRIBUTES = _load("misc/.gitattributes")
 CLANG_TIDY = _load("misc/.clang-tidy")
 CMAKE_PRESETS_JSON = _load("misc/CMakePresets.json")
 # ── Python ───────────────────────────────────────────────────────────────────

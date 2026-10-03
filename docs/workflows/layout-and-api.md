@@ -17,7 +17,8 @@ my_dsp/
 ├── CMakePresets.json                   [versioned] cmake --preset release|debug|…
 ├── Makefile                            [versioned] make · make test · make bench
 ├── bootstrap.toml                      [versioned] toolchain declaration for CI
-├── .clang-tidy  .gitignore  Doxyfile  zensical.toml          [versioned]
+├── .clang-tidy  .gitignore  .gitattributes                   [versioned]
+├── Doxyfile  zensical.toml                                   [versioned]
 ├── cmake/
 │   ├── my_dsp.pc.in                    [jm] pkg-config template
 │   └── my_dsp-config.cmake.in          [jm] find_package template

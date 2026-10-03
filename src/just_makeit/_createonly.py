@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _incpath as INC
+from . import _textio
 
 
 # The four states a manifest-owned file can be in. Four rather than a bool
@@ -152,6 +153,13 @@ RULES: tuple[Rule, ...] = (
         " says so with status_allow, as for any other JM file.",
     ),
     Rule(".gitignore", JM, "jm's ignore set, tracking what jm builds."),
+    Rule(
+        ".gitattributes",
+        JM,
+        "keeps a Windows checkout LF, which is what jm renders and `status`"
+        " compares against (gh-1641). Create-only so a project may add its"
+        " own attributes (LFS patterns, say) -- reported, as .gitignore is.",
+    ),
     Rule(
         "CMakePresets.json",
         JM,
@@ -504,7 +512,9 @@ def outdated(root: Path, replay_root: Path) -> list[str]:
         # there and behind.
         if not dst.is_file():
             continue
-        if dst.read_bytes() != src.read_bytes():
+        # gh-1641: modulo line endings. A CRLF checkout of a current file is
+        # not behind, and "adopt today's render" is the wrong advice for it.
+        if _textio.lf(dst.read_bytes()) != _textio.lf(src.read_bytes()):
             found.append(rel_posix)
     return sorted(found)
 
