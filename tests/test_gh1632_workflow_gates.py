@@ -127,19 +127,20 @@ def test_main_has_a_nightly_full_run_of_its_own():
     """gh-1801 item 2: a nightly that never skips, in its own concurrency group.
 
     main skips every tree its PR tested, so the nightly is where drift no
-    diff causes goes red. changes.yml must send `schedule` to src=true, and
-    the run must not share main's group, or the next merge's pending run
-    supersedes it and it never runs (gh-1763's mechanism).
+    diff causes goes red. The run must not share main's group, or the next
+    merge's pending run supersedes it and it never runs (gh-1763's
+    mechanism).
+
+    That changes.yml sends `schedule` to src=true is not re-read here from
+    the file's text: tests/test_release_bump_fast_path.py RUNS the step for a
+    scheduled event and asserts src, docs and code all true
+    (test_the_nightly_writes_every_output_true). The regex this held once
+    broke on a reformat of an unchanged behaviour -- canonical #103.
     """
     doc = yaml.safe_load((WF / "ci.yml").read_text(encoding="utf-8"))
     assert _on("ci.yml").get("schedule"), "ci.yml has no nightly"
     group = doc["concurrency"]["group"]
     assert "github.event_name == 'schedule' && 'nightly'" in group, group
-    changes = (WF / "changes.yml").read_text(encoding="utf-8")
-    arm = re.search(r"^\s+([\w|]+)\)\s*\n\s+echo \"src=true\"", changes, re.M)
-    assert arm and "schedule" in arm.group(1).split("|"), (
-        "changes.yml must send a scheduled run to src=true"
-    )
 
 
 # The ci.yml jobs a docs-only diff can break, so they run on one (gh-1801
