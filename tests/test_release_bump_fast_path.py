@@ -566,13 +566,30 @@ def _decide(
 
 class TestTheFastPathNeedsACertifiedBase:
     def test_the_step_reads_the_aggregator_by_its_real_name(self):
+        """The name comes from the Makefile, and ci.yml produces it.
+
+        changes.yml is canonical's now (vendored), and it carries no literal
+        check name: it asks ``make ci-check-name``, the Makefile's
+        CI_CHECK_NAME -- the one ``tag-release`` and ``ci-tree-tested`` read.
+        So the pairing to hold here is that answer against ci.yml's jobs.
+        """
         import yaml
 
+        assert "make -s ci-check-name" in _check_step()["run"], (
+            "changes.yml no longer asks the Makefile for the check name"
+        )
+        name = subprocess.run(
+            ["make", "-s", "ci-check-name"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
         doc = yaml.safe_load(CI.read_text(encoding="utf-8"))
         names = {j.get("name") for j in doc["jobs"].values()}
-        assert _check_step()["env"]["CI_CHECK"] in names, (
-            "changes.yml asks for a check ci.yml does not produce, so no "
-            "base would ever read as certified"
+        assert name in names, (
+            f"changes.yml asks for {name!r}, a check ci.yml does not "
+            "produce, so no base would ever read as certified"
         )
 
     def test_a_bump_over_a_green_base_takes_the_fast_path(self, checkouts):
