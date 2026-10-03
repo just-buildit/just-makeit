@@ -97,7 +97,7 @@ def _pyi_ndarray(ctype: str) -> str:
 
 
 def _stub_params(
-    arg_type: str, params: list[dict]
+    arg_type: str, params: list[dict], variable_output: bool = False
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """The Python-facing arguments of one method, for signature and prose.
 
@@ -123,6 +123,10 @@ def _stub_params(
     arg_type : str
         The method's primary input type, or ``"void"``. A non-void one is
         always Python-visible as ``x``.
+    variable_output : bool
+        Whether the method is ``variable_output``, whose binding consumes a
+        BLOCK of ``arg_type`` elements: its ``x`` is then an array even when
+        ``arg_type`` names one element (gh-385, the module peer's rule).
     params : list of dict
         Declared extra parameters, in manifest order.
 
@@ -148,11 +152,13 @@ def _stub_params(
     # (name, annotation, signature-only default suffix)
     fields: list[tuple[str, str, str]] = []
     if arg_type != "void":
-        # gh-1700: an array goes through the one param widening, so a
-        # one-byte integer array admits the byte buffers its binding reads.
+        # gh-1724: an array is spelled by the one helper every face calls.
+        # This said `x: float` for a variable-output method over a scalar
+        # element, whose binding reads an ndarray -- the module peer in
+        # `_stubs` already said so.
         ann = (
-            T.py_param_annotation(_pyi_ndarray(arg_type[:-2]), arg_type, "")
-            if arg_type.endswith("[]")
+            T.array_param_annotation(arg_type)
+            if arg_type.endswith("[]") or variable_output
             else _pyi_scalar(arg_type)
         )
         fields.append(("x", ann, ""))
@@ -162,14 +168,9 @@ def _stub_params(
             fields.append(
                 (
                     p["name"],
-                    # gh-1733: an `out` / `mutable` array takes only a
-                    # writable ndarray, never a byte buffer.
-                    T.py_param_annotation(
-                        _pyi_ndarray(pt[:-2]),
-                        pt,
-                        "",
-                        writable=T.param_writable(p),
-                    ),
+                    # gh-1724: the one helper. gh-1733: an `out` / `mutable`
+                    # array takes only a writable ndarray, never a byte buffer.
+                    T.array_param_annotation(pt, writable=T.param_writable(p)),
                     "",
                 )
             )
@@ -1713,13 +1714,12 @@ def make_methods_ctx(
         # `return_type` so the `*out` parameter, the `sizeof`, the data
         # pointer cast and the `.pyi` all describe the same struct without
         # the manifest having to spell it three times.
-        _vo_out_src = (
-            record_dtype
-            if _record.is_record_array(variable_output, record_dtype, borrow)
-            else (out_type if (variable_output and out_type) else return_type)
-        )
-        _vo_out_elem = (
-            _vo_out_src[:-2] if _vo_out_src.endswith("[]") else _vo_out_src
+        _vo_out_elem = _outbuf.element(
+            variable_output=variable_output,
+            record_dtype=record_dtype,
+            borrow=borrow,
+            out_type=out_type or "",
+            return_type=return_type,
         )
         _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
@@ -1735,7 +1735,9 @@ def make_methods_ctx(
         # .pyi stub built at the end of this loop document the same arguments
         # with the same annotations. It used to be built only at the stub, so
         # the runtime face had nothing to share and carried the @brief alone.
-        _sig_parts, _doc_params = _stub_params(arg_type, params)
+        _sig_parts, _doc_params = _stub_params(
+            arg_type, params, variable_output
+        )
         # ...and the return annotation with it, for the same reason: it is the
         # type line of the `Returns` section on both faces.
         if borrow:
@@ -1901,8 +1903,11 @@ def make_methods_ctx(
         )
         if _stub_count_arg:
             _doc_params = _doc_params + [(_count_kw, "int")]
+        # gh-1724: the caller's buffer, spelled by the one helper as a
+        # writable array of the element the binding writes.
+        _out_ann = T.array_param_annotation(_vo_out_elem, writable=True)
         if _stub_enable_out:
-            _doc_params = _doc_params + [("out", f"{_ret_ann} | None")]
+            _doc_params = _doc_params + [("out", f"{_out_ann} | None")]
         _doc_names = [n for n, _ in _doc_params]
         _in_acq = ""
         _in_dtype_helper = ""
@@ -3960,7 +3965,7 @@ def make_methods_ctx(
                 f" = {_gluedoc.count_stub_default(_count_default)}"
             )
         if _stub_enable_out:
-            param_parts.append(f"out: {ret_ann} | None = None")
+            param_parts.append(f"out: {_out_ann} | None = None")
         sig = ", ".join(param_parts)
         # gh-651: one renderer, shared with the module-aggregated .pyi. This
         # path used to build the numpy layout by hand and disagreed with its
@@ -4952,9 +4957,12 @@ def make_properties_ctx(
             ),
         ]
         if writable:
+            # gh-1724: an array setter's value is an input array, spelled by
+            # the one helper; the getter keeps the returned ndarray's type.
+            set_t = T.array_param_annotation(ctype) if buf_field else py_t
             pyi_block += [
                 f"    @{pname}.setter",
-                f"    def {pname}(self, value: {py_t}) -> None: ...",
+                f"    def {pname}(self, value: {set_t}) -> None: ...",
             ]
         pyi_parts.append("\n".join(pyi_block))
 

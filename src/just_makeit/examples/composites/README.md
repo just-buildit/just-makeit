@@ -250,12 +250,12 @@ full numpy-style docstring — including the `@code` block as an `Examples`
 doctest:
 
 ```python
-    def push(self, x: NDArray[Any]) -> int:
+    def push(self, x: npt.NDArray[np.float32]) -> int:
         """Append samples to the buffer, scaling each by the current gain.
 
         Parameters
         ----------
-        x : NDArray[Any]
+        x : npt.NDArray[np.float32]
             Samples to append (oldest-to-newest).
 
         Returns

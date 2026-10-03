@@ -169,7 +169,7 @@ class TestBothFacesReadOneDeclaration:
     def test_the_two_python_faces_agree(self, tmp_path):
         proj = _pair_project(tmp_path)
         pyi = (proj / PYI).read_text()
-        assert "def write(self, x: NDArray[np.complex64]) -> bool:" in pyi
+        assert "def write(self, x: npt.NDArray[np.complex64]) -> bool:" in pyi
         assert "def wait(self, n: int) -> NDArray[np.complex64]:" in pyi
 
     def test_the_manifest_keeps_the_name_not_the_width(self, tmp_path):

@@ -142,4 +142,4 @@ class TestEndToEnd:
         i = ext.index('kwds, "')
         fmt = ext[i + 7 : ext.index('"', i + 7)]
         assert fmt.startswith("|"), f"tmpl was hoisted before the `|`: {fmt!r}"
-        assert "tmpl: NDArray[np.float32] = ..." in pyi
+        assert "tmpl: npt.NDArray[np.float32] = ..." in pyi

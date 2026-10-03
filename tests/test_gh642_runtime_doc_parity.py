@@ -190,8 +190,10 @@ def _runtime_doc(ext_c: str, method: str) -> list[str]:
 
 def _stub_doc(pyi: str, method: str) -> list[str]:
     """The ``.pyi`` docstring for *method*, dedented and undelimited."""
+    # The signature may be wrapped to the column limit (gh-744); match up to
+    # the `:` that ends it, across lines, and anchor on the docstring after.
     m = re.search(
-        rf'    def {method}\([^\n]*\n        """(.*?)\n        """',
+        rf'    def {method}\(.*?:\n        """(.*?)\n        """',
         pyi,
         re.S,
     )

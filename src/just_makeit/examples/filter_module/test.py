@@ -238,7 +238,7 @@ print("filter_module: all checks passed")
     assert "class Fir:" in pyi
     assert "class Biquad:" in pyi
     assert "import numpy as np" in pyi
-    assert "def steps(self, x: NDArray" in pyi
+    assert "def steps(self, x: npt.NDArray" in pyi
 
     # The header enrichment (step 4b) reached the shared module stub: each
     # class summary comes from its create()'s @brief, not the generic fallback.

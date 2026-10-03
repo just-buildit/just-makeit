@@ -136,13 +136,14 @@ def test_a_kind_module_defines_the_helper_before_calling_it(ext):
 
 @pytest.mark.parametrize("ct", ["uint8_t[]", "int8_t[]"])
 def test_a_byte_array_param_admits_byte_buffers(ct):
-    ann = T.py_param_annotation("NDArray[np.x]", ct, "")
+    ann = T.array_param_annotation(ct)
     assert ann.endswith("| bytes | bytearray | memoryview"), ann
 
 
 @pytest.mark.parametrize("ct", ["float[]", "uint16_t[]", "uint8_t[][]"])
 def test_other_arrays_are_unchanged(ct):
-    assert T.py_param_annotation("NDArray[np.x]", ct, "") == "NDArray[np.x]"
+    ann = T.array_param_annotation(ct)
+    assert ann.startswith("npt.NDArray[") and "|" not in ann, ann
 
 
 # -- the build: every parameter kind, called --------------------------------
@@ -388,7 +389,7 @@ class TestEveryParamKind:
             (project / "src" / "jmp" / "fld.pyi").read_text("utf-8").split()
         )
         assert (
-            "def peek( self, b: NDArray[np.uint8] | bytes | bytearray"
+            "def peek( self, b: npt.NDArray[np.uint8] | bytes | bytearray"
             " | memoryview, ) -> int:"
         ) in fld
         m = " ".join(
@@ -397,7 +398,8 @@ class TestEveryParamKind:
             .split()
         )
         assert (
-            "def peekb(b: NDArray[np.int8] | bytes | bytearray | memoryview)"
+            "def peekb(b: npt.NDArray[np.int8]"
+            " | bytes | bytearray | memoryview)"
         ) in m
 
     def test_the_array_init_stub_imports_npt(self, project):
@@ -405,7 +407,11 @@ class TestEveryParamKind:
 
         Found building this fixture: every object with an array init-param
         got a stub naming ``npt`` it never imported, so the stub failed mypy.
+        gh-1724 spells every array parameter ``npt.NDArray[...]``, so the
+        import is needed by every such stub -- and the bare ``NDArray`` one
+        only where a return still names it (this object has none).
         """
         fld = (project / "src" / "jmp" / "fld.pyi").read_text("utf-8")
-        assert "npt.ArrayLike" in fld
+        assert "bits: npt.NDArray[np.uint8] | bytes" in fld
         assert "\nimport numpy.typing as npt\n" in fld
+        assert "\nfrom numpy.typing import NDArray\n" not in fld

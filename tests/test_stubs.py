@@ -200,7 +200,7 @@ class TestStepStubs:
 
     def test_steps_ndarray_arg_return(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
-        assert "def steps(self, x: NDArray[np.float32]" in pyi
+        assert "def steps(self, x: npt.NDArray[np.float32]" in pyi
         assert "NDArray[np.float32]" in pyi
 
     def test_step_void_return(self, void_return_project):
@@ -209,7 +209,7 @@ class TestStepStubs:
 
     def test_steps_void_return(self, void_return_project):
         pyi = _pyi(void_return_project, "dsp", "myproj")
-        assert "def steps(self, x: NDArray[np.float32]) -> None:" in pyi
+        assert "def steps(self, x: npt.NDArray[np.float32]) -> None:" in pyi
 
     def test_step_void_arg(self, void_arg_project):
         pyi = _pyi(void_arg_project, "dsp", "myproj")
@@ -235,7 +235,7 @@ class TestMethodStubs:
     def test_array_param_method(self, array_param_project):
         pyi = _pyi(array_param_project, "dsp", "myproj")
         assert (
-            "def execute_ctrl(self, ctrl: NDArray[np.complex64]) -> int:"
+            "def execute_ctrl(self, ctrl: npt.NDArray[np.complex64]) -> int:"
             in pyi
         )
 
@@ -351,16 +351,18 @@ class TestArrayArgTypeStubs:
 
     def test_step_annotation(self, arr_arg_project):
         pyi = _pyi(arr_arg_project, "dsp", "myproj")
-        assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi
+        assert "def step(self, x: npt.NDArray[np.complex64]) -> int:" in pyi
 
     def test_no_steps(self, arr_arg_project):
         pyi = _pyi(arr_arg_project, "dsp", "myproj")
         assert "def steps" not in pyi
 
     def test_numpy_imported(self, arr_arg_project):
+        # gh-1724: the array input is `npt.NDArray[...]`, so `npt` is the
+        # import it needs.
         pyi = _pyi(arr_arg_project, "dsp", "myproj")
         assert "import numpy as np" in pyi
-        assert "from numpy.typing import NDArray" in pyi
+        assert "import numpy.typing as npt" in pyi
 
 
 class TestNoStateStub:
@@ -639,7 +641,7 @@ class TestPyReturnTypeStub:
     def test_py_return_type_used_in_stub(self, py_ret_project):
         pyi = _pyi(py_ret_project, "dsp", "myproj")
         assert (
-            "def push(self, x: NDArray[np.complex64]) -> list[tuple[int, float, float]]:"
+            "def push(self, x: npt.NDArray[np.complex64]) -> list[tuple[int, float, float]]:"
             in pyi
         )
 
@@ -764,7 +766,7 @@ class TestTwoDArrayStub:
 
     def test_optional_null_default(self, twod_project):
         pyi = _pyi(twod_project, "dsp", "myproj")
-        assert "bank: NDArray[np.float32] | None = None" in pyi
+        assert "bank: npt.NDArray[np.float32] | None = None" in pyi
 
 
 def test_method_doc_lines_emits_examples_and_paragraphs():

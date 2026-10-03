@@ -237,7 +237,7 @@ def run(root: Path) -> None:
             encoding="utf-8"
         )
     )
-    assert "def step(self, x: NDArray[np.complex64]) -> int:" in pyi, (
+    assert "def step(self, x: npt.NDArray[np.complex64]) -> int:" in pyi, (
         f"array-arg step stub missing or wrong:\n{pyi}"
     )
     assert "def steps" not in pyi, (
@@ -255,7 +255,7 @@ def run(root: Path) -> None:
     )
     assert "class Ema:" in ema_pyi
     assert "def step(self, x: float) -> float:" in ema_pyi
-    assert "def steps(self, x: NDArray[np.float32]" in ema_pyi
+    assert "def steps(self, x: npt.NDArray[np.float32]" in ema_pyi
 
     # ── Pattern 6: --out-type (per-call typed output array) ───────────────────
     # Method takes an array param; output array is a different type and length.

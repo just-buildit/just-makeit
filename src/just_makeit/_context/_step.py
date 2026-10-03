@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .. import _coerce, _ctorsig
+from .. import _types as T
 from .. import _csym as CSYM
 from .._types import (
     _CTYPE_META,
@@ -490,8 +491,10 @@ def make_step_ctx(
             pyi_steps = (
                 f"\n    def steps(\n"
                 f"        self,\n"
-                f"        x: NDArray[{in_np_dtype}],\n"
-                f"        out: NDArray[{out_np_dtype}] | None = None,\n"
+                f"        x: {T.array_param_annotation(arg_type)},\n"
+                f"        out:"
+                f" {T.array_param_annotation(return_type, writable=True)}"
+                f" | None = None,\n"
                 f"{_ctrl_pyi}"
                 f"    ) -> NDArray[{out_np_dtype}]: ...\n"
             )
@@ -517,7 +520,7 @@ def make_step_ctx(
                     render_numpy_doc(
                         None,
                         "steps",
-                        [("x", f"NDArray[{in_np_dtype}]")],
+                        [("x", T.array_param_annotation(arg_type))],
                         f"NDArray[{out_np_dtype}]",
                         _bw_desc,
                         indent=8,
@@ -1689,7 +1692,9 @@ def make_step_ctx(
     # skeleton: before, `steps` showed a summary alone and there was no
     # Parameters section for the two to differ in.
     _steps_params: list[tuple[str, str]] = (
-        [("n", "int")] if _is_void_arg else [("x", f"NDArray[{_in_np_str}]")]
+        [("n", "int")]
+        if _is_void_arg
+        else [("x", T.array_param_annotation(arg_type))]
     )
     # ...and the placeholder has to suit it. "Input sample." is wrong for a
     # count, and this is the wording the module face already uses.
@@ -1798,8 +1803,9 @@ def make_step_ctx(
         # control kwargs) so the stub exposes `gain: float = ...` (keyword-ok).
         _out_np_full = ctx.get("out_np_dtype", "np.float32")
         pyi_steps = (
-            f"\n    def steps(self, x: NDArray[{_in_np_str}], "
-            f"out: NDArray[{_out_np_full}] | None = None"
+            f"\n    def steps(self, x: {T.array_param_annotation(arg_type)}, "
+            f"out: {T.array_param_annotation(return_type, writable=True)}"
+            " | None = None"
             f"{_ctrl_pyi_params}) -> NDArray[{_out_np_full}]:\n"
             '        """Process a samples array. Returns ndarray, '
             'or fills out= if supplied."""\n'

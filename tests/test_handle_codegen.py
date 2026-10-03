@@ -648,7 +648,8 @@ class TestPyi:
         assert "class Writer:" in pyi
         assert "def __init__(self, path: str" in pyi
         # Methods, properties and RAII now have docstrings (gh-374).
-        assert "def write(self, x: NDArray[Any]) -> int:" in pyi
+        # gh-1724: the arg's declared dtype, not `Any`.
+        assert "def write(self, x: npt.NDArray[np.complex64]) -> int:" in pyi
         assert '"""write(x) -> int."""' in pyi
         assert "@property" in pyi
         assert "def clip_fraction(self) -> float:" in pyi
@@ -896,11 +897,15 @@ class TestWritableProperty:
         )
 
     def test_pyi_exposes_setter(self):
-        pyi = _handle.render_pyi(_ring_cfg(), "ringbuf")
+        pyi = flatten_signatures(_handle.render_pyi(_ring_cfg(), "ringbuf"))
         assert "@gain.setter" in pyi
         # Setter stays as a one-liner; getter now has a docstring (gh-374).
         assert "def gain(self, value: float) -> None: ..." in pyi
-        assert "def scale(self, x: NDArray[Any], out: NDArray[Any])" in pyi
+        # gh-1724: the declared dtypes; the writable `out` stays exact.
+        assert (
+            "def scale(self, x: npt.NDArray[np.float32],"
+            " out: npt.NDArray[np.float32]"
+        ) in pyi
 
 
 def _handle_cfg(mod):

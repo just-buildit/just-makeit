@@ -91,7 +91,7 @@ class TestDefaultedArrayPreservesDeclOrder:
         assert (
             "def __init__(self, sample_rate_hz: float = 0.0, "
             "symbol_rate_hz: float = 0.0, resolution_hz: float = 0.0, "
-            "psd_template: npt.ArrayLike = ..., pfa: float = 1e-3)"
+            "psd_template: npt.NDArray[np.float32] = ..., pfa: float = 1e-3)"
             " -> None: ..." in pyi
         )
 
@@ -180,7 +180,7 @@ class TestRequiredArrayModulePyiOrder:
         # already carried that fix for the state-vars branch and this was the
         # branch it missed; the subject here (the ordering) is unchanged.
         assert (
-            "def __init__(self, taps: NDArray[np.float32],"
+            "def __init__(self, taps: npt.NDArray[np.float32],"
             " gain: float = 1.0) -> None: ..." in pyi
         )
 

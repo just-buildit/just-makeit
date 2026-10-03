@@ -86,9 +86,14 @@ class TestDtypeDispatch:
         assert "self->handle" not in ctx["array_args_parse_block"]
         assert "Py_DECREF(taps_arr);" in ctx["array_args_decref"]
 
-    def test_pyi_signature_uses_arraylike(self):
+    def test_pyi_signature_names_both_dtypes(self):
+        # gh-1724: the binding takes either element type, so the stub names
+        # both declared dtypes, each exactly.
         ctx = _ctx(self.PARAMS)
-        assert "taps: npt.ArrayLike" in ctx["init_params_pyi"]
+        assert (
+            "taps: npt.NDArray[np.complex64] | npt.NDArray[np.float32]"
+            in ctx["init_params_pyi"]
+        )
 
 
 def _p(name, ct, real_type="", real_fn="", optional=False, create_fn=""):

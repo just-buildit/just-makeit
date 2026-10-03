@@ -131,7 +131,7 @@ class TestTheGeneratorShape:
     def test_both_arguments_are_documented(self, tmp_path):
         doc = _stub(_project(tmp_path), "src/demo/rs.pyi", "generator")
         assert "count : int" in doc
-        assert "out : NDArray[np.uint8] | None" in doc
+        assert "out : npt.NDArray[np.uint8] | None" in doc
         # ...and with jm's own text, not the generic "Input." fallback. The
         # entry existing is not the same as the entry saying something true:
         # `out : ndarray | None` described as "Input." is worse than absent.
@@ -143,7 +143,7 @@ class TestTheGeneratorShape:
         """gh-642's invariant: the two faces are one text."""
         root = _project(tmp_path)
         rt = _runtime(root, "native/src/rs/rs_ext.c", "generator")
-        for line in ("count : int", "out : NDArray[np.uint8] | None"):
+        for line in ("count : int", "out : npt.NDArray[np.uint8] | None"):
             assert line in rt, rt
 
     def test_the_module_aggregated_stub_agrees(self, tmp_path):
@@ -166,7 +166,7 @@ class TestTheGeneratorShape:
         )
         doc = _stub(root, "src/demo/cod/cod.pyi", "generator")
         assert "count : int" in doc
-        assert "out : NDArray[np.uint8] | None" in doc
+        assert "out : npt.NDArray[np.uint8] | None" in doc
 
 
 class TestAuthoringReachesIt:
@@ -214,7 +214,7 @@ class TestTheRuleHasNoExceptions:
     def test_a_bulk_input_method_documents_out_as_well_as_x(self, tmp_path):
         doc = _stub(_project(tmp_path), "src/demo/rs.pyi", "encode")
         assert "x : " in doc
-        assert "out : NDArray[np.uint8] | None" in doc
+        assert "out : npt.NDArray[np.uint8] | None" in doc
 
     def test_a_method_offered_neither_gains_neither(self, tmp_path):
         """The guard against documenting arguments that do not exist."""

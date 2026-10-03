@@ -156,8 +156,9 @@ def state_accessor_stubs(
                     "        **Do not use after destroy().**",
                     '        """',
                     "",
+                    # gh-1724: an input array, spelled by the one helper.
                     f"    def set_{name}(self, value:"
-                    f" NDArray[{py_type}]) -> None:",
+                    f" {T.array_param_annotation(elem_ct)}) -> None:",
                     f'        """Set {name} from a {py_type}'
                     f' array of length {size}."""',
                 ]
@@ -1384,10 +1385,31 @@ def _build_no_state_init_ctx(
     # signatures forbid a default-less arg after a defaulted one — gh-266),
     # but within each group, arrays / string-enums / scalars interleave in
     # TOML declaration order rather than a fixed type-based sequence.
-    pyi_parts: list[str] = [f"{name}: npt.ArrayLike" for name, _ in _aa]
+    # gh-1724: every array argument -- `--array-arg`, required, defaulted,
+    # optional dispatch -- is annotated by `T.array_param_annotation`, the one
+    # spelling the module-aggregated peer (`_stubs._obj_stub`) calls too. This
+    # wrote `npt.ArrayLike`, which stated no element type while the module
+    # peer said `NDArray[...]` for the same object.
+    _any_arr_meta = {
+        **_arr_meta,
+        **_def_arr_meta,
+        **{n: (act, andim) for n, act, andim, *_ in opt_arr_ip},
+    }
+
+    def _arr_ann(name: str) -> str:
+        act, andim = _any_arr_meta[name]
+        real = dispatch_meta.get(name, ("",))[0]
+        return T.array_param_annotation(
+            act + "[]" * andim, also=real + "[]" if real else ""
+        )
+
+    pyi_parts: list[str] = [
+        f"{name}: {T.array_param_annotation(ct + '[]')}"
+        for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
+    ]
     for kind, name in required_entries:
         if kind == "arr":
-            pyi_parts.append(f"{name}: npt.ArrayLike")
+            pyi_parts.append(f"{name}: {_arr_ann(name)}")
         elif kind == "path":
             # gh-515: required, hence no `= ...` default.
             # gh-623: `str | os.PathLike` — the same annotation the module
@@ -1425,11 +1447,11 @@ def _build_no_state_init_ctx(
             sdflt = _str_enum_by_name[name][1]
             pyi_parts.append(f'{name}: str = "{sdflt}"')
         elif kind == "opt_arr":
-            pyi_parts.append(f"{name}: npt.ArrayLike | None = None")
+            pyi_parts.append(f"{name}: {_arr_ann(name)} | None = None")
         elif kind == "def_arr":
             # gh-611: genuinely optional (empty when omitted), not None —
             # distinct from opt_arr's dispatch-flavoured `| None = None`.
-            pyi_parts.append(f"{name}: npt.ArrayLike = ...")
+            pyi_parts.append(f"{name}: {_arr_ann(name)} = ...")
         else:
             ct, dflt, _dr = _opt_scalar_meta[name]
             # gh-1099: `default_raw` is C jm cannot evaluate, so the stub says

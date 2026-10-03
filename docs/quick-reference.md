@@ -132,7 +132,7 @@ jm object comp \
 # Buffer step
 def step(
     self,
-    x: NDArray[np.complex64],
+    x: npt.NDArray[np.complex64],
 ) -> NDArray[np.complex64]: ...
 ```
 
@@ -277,7 +277,7 @@ jm object comp \
 # Required array
 def __init__(
     self,
-    coeff: NDArray[np.complex64],
+    coeff: npt.NDArray[np.complex64],
 ) -> None: ...
 ```
 
@@ -310,7 +310,7 @@ jm object comp --no-state \
 # empty array when omitted
 def __init__(
     self,
-    template: NDArray[np.float32]
+    template: npt.NDArray[np.float32]
              = ...,
     pfa: float = ...,
 ) -> None: ...
@@ -358,7 +358,7 @@ only.
 # Optional 2-D array
 def __init__(
     self,
-    bank: NDArray[np.float32]
+    bank: npt.NDArray[np.float32]
          | None = None,
     rate: float = ...,
 ) -> None: ...
@@ -508,7 +508,7 @@ jm method comp execute_ctrl \
 # Variable-length output
 def execute(
     self,
-    x: NDArray[np.complex64],
+    x: npt.NDArray[np.complex64],
 ) -> NDArray[np.complex64]: ...
 ```
 
@@ -539,7 +539,7 @@ jm method comp execute \
 # Dual output
 def execute(
     self,
-    x: NDArray[np.uint32],
+    x: npt.NDArray[np.uint32],
 ) -> tuple[
     NDArray[np.uint32],
     NDArray[np.uint8],
@@ -579,7 +579,7 @@ jm method comp execute \
 # Struct-list return
 def find_peaks(
     self,
-    x: NDArray[np.float32],
+    x: npt.NDArray[np.float32],
 ) -> list[tuple[int, float]]: ...
 ```
 
@@ -795,7 +795,7 @@ the TOML and run
 ```python
 # Module-level function
 def apply(
-    x: NDArray[np.float32],
+    x: npt.NDArray[np.float32],
     scale: float,
 ) -> float: ...
 ```
@@ -868,7 +868,7 @@ jm function apply \
 ```python
 # Function with array output
 def magnitude_db(
-    x: NDArray[np.complex64],
+    x: npt.NDArray[np.complex64],
     floor: float,
 ) -> NDArray[np.float32]: ...
 ```

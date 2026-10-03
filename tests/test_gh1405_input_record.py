@@ -186,7 +186,7 @@ class TestTheGeneratedC:
     def test_the_stub_annotates_it_like_the_reading_side(self, tmp_path):
         proj = _declare(tmp_path)
         pyi = (proj / "src" / "p" / "ring.pyi").read_text()
-        assert "def write(self, x: NDArray[Any]) -> int:" in pyi
+        assert "def write(self, x: npt.NDArray[Any]) -> int:" in pyi
 
 
 @pytest.mark.slow

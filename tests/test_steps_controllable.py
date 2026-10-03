@@ -181,7 +181,7 @@ class TestModuleStub:
                 "float",
                 "void",
                 "gain: float = ..., /)",
-                "def steps(self, x: NDArray[np.float32], gain: float = ...)",
+                "def steps(self, x: npt.NDArray[np.float32], gain: float = ...)",
             ),
         ],
     )
@@ -396,7 +396,8 @@ class TestScalarSignature:
             "def step(self, x: float, gain: float = ..., /) -> float:" in pyi
         )
         assert (
-            "out: NDArray[np.float32] | None = None, gain: float = ..." in pyi
+            "out: npt.NDArray[np.float32] | None = None, gain: float = ..."
+            in pyi
         )
 
 

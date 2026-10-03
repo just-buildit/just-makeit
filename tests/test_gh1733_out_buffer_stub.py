@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from _jmrun import run_cli  # noqa: E402
 from just_makeit import _types as T  # noqa: E402
 
-_WIDE = "NDArray[np.uint8] | bytes | bytearray | memoryview"
+_WIDE = "npt.NDArray[np.uint8] | bytes | bytearray | memoryview"
 
 
 def _jm(*args, cwd):
@@ -82,7 +82,7 @@ def test_an_out_buffer_is_stubbed_as_an_ndarray_only(project, shape):
     anns = _ann(pyi, name)
     # Armed: the parameter is in the stub at all.
     assert anns, f"{shape}: no annotation for {name!r} in {rel}"
-    assert all(a == "NDArray[np.uint8]" for a in anns), (shape, anns)
+    assert all(a == "npt.NDArray[np.uint8]" for a in anns), (shape, anns)
 
 
 @pytest.mark.parametrize("rel", ["fld.pyi", "m/m.pyi"])
@@ -95,14 +95,12 @@ def test_an_input_byte_array_stays_widened(project, rel):
 def test_the_runtime_doc_says_the_same(project):
     """The generated ``__doc__`` is rendered from the same parameter list."""
     ext = (project / "native" / "src" / "fld" / "fld_ext.c").read_text()
-    assert '"o : NDArray[np.uint8]\\n"' in ext
+    assert '"o : npt.NDArray[np.uint8]\\n"' in ext
     assert f'"b : {_WIDE}\\n"' in ext
 
 
 @pytest.mark.parametrize("key", ["out", "mutable"])
 def test_the_predicate_is_param_writable(key):
     p = {"name": "o", "type": "uint8_t[]", key: True}
-    ann = T.py_param_annotation(
-        "NDArray[np.uint8]", p["type"], "", writable=T.param_writable(p)
-    )
-    assert ann == "NDArray[np.uint8]"
+    ann = T.array_param_annotation(p["type"], writable=T.param_writable(p))
+    assert ann == "npt.NDArray[np.uint8]"

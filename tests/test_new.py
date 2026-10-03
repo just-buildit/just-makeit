@@ -827,7 +827,9 @@ class TestArrayArgType:
 
     def test_pyi_step_annotation(self, arr_obj):
         pyi = (arr_obj / "src/proc/filt.pyi").read_text(encoding="utf-8")
-        assert "def step(self, x: NDArray[np.complex64]) -> complex:" in pyi
+        assert (
+            "def step(self, x: npt.NDArray[np.complex64]) -> complex:" in pyi
+        )
 
     def test_pyi_no_steps(self, arr_obj):
         pyi = (arr_obj / "src/proc/filt.pyi").read_text(encoding="utf-8")

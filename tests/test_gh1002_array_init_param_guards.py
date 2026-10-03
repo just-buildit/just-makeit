@@ -201,7 +201,10 @@ class TestTheWorkingSpellingStillWorks:
         root = _apply(tmp_path, self._OMITTABLE)
         pyi = (root / "src/proj/frame.pyi").read_text(encoding="utf-8")
         for n in ("preamble", "sync", "payload"):
-            assert f"{n}: npt.ArrayLike = ..." in pyi
+            assert (
+                f"{n}: npt.NDArray[np.uint8] | bytes | bytearray | memoryview"
+                " = ..."
+            ) in pyi
 
     def test_single_optional_with_create_fn_is_untouched(self, tmp_path):
         """Dispatch itself is sound and stays supported — one array, one

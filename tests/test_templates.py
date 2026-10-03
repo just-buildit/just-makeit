@@ -435,7 +435,7 @@ class TestMakeStateCtxArrays:
         assert "def get_coeffs(self) -> NDArray[np.float32]:" in stubs
         assert "def get_coeffs_view(self) -> NDArray[np.float32]:" in stubs
         assert (
-            "def set_coeffs(self, value: NDArray[np.float32]) -> None:"
+            "def set_coeffs(self, value: npt.NDArray[np.float32]) -> None:"
             in stubs
         )
 

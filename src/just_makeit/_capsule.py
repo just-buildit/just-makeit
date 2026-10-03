@@ -559,6 +559,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         "from typing import Any",
         "",
         "import numpy as np",
+        "import numpy.typing as npt",
         "from numpy.typing import NDArray",
         "",
     ]
@@ -583,10 +584,16 @@ def render_pyi(cfg: dict, module: str) -> str:
     for m in C.module_methods(cfg, module):
         name = m["name"]
         if m.get("arg_type"):
+            _out_ann = T.array_param_annotation(
+                m["return_type"], writable=True
+            )
             _def(
                 f"{backing}_{name}",
+                # gh-1724: the declared dtypes, by the one helper; the
+                # return is the ndarray view of `out`.
                 f"def {backing}_{name}(state: {state_t}, "
-                "x: NDArray[Any], out: NDArray[Any]) -> NDArray[Any]:",
+                f"x: {T.array_param_annotation(m['arg_type'])}, "
+                f"out: {_out_ann}) -> NDArray[Any]:",
             )
         else:
             _def(

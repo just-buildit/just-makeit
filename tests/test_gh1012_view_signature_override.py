@@ -120,11 +120,11 @@ def override_project(tmp_path):
 class TestSignatureOverride:
     def test_view_face_takes_its_own_dtype(self, override_project):
         _, view = _faces(override_project)
-        assert "x: NDArray[np.float32]" in view
+        assert "x: npt.NDArray[np.float32]" in view
 
     def test_parent_face_is_untouched(self, override_project):
         parent, _ = _faces(override_project)
-        assert "x: NDArray[np.complex64]" in parent
+        assert "x: npt.NDArray[np.complex64]" in parent
         assert "np.float32" not in parent
 
     def test_both_faces_keep_the_same_python_name(self, override_project):
@@ -309,7 +309,7 @@ class TestDocOnlyOverrideStillWorks:
 
     def test_the_view_keeps_the_parents_dtype(self, doc_override):
         _, view = _faces(doc_override)
-        assert "x: NDArray[np.complex64]" in view
+        assert "x: npt.NDArray[np.complex64]" in view
 
     def test_an_omitted_key_is_not_a_difference(self, tmp_path):
         """The trap this fix had to avoid, and nearly did not.
@@ -364,7 +364,7 @@ class TestHandWrittenManifest:
         _, view = _faces(dest)
         assert "Block, on a real IF." in view
         # ...and the signature it never mentioned is the parent's.
-        assert "x: NDArray[np.complex64]" in view
+        assert "x: npt.NDArray[np.complex64]" in view
 
     def test_signature_override_from_a_hand_written_block(self, tmp_path):
         dest = _base(tmp_path)
@@ -380,7 +380,7 @@ class TestHandWrittenManifest:
 
         _apply.run(dest)
         _, view = _faces(dest)
-        assert "x: NDArray[np.float32]" in view
+        assert "x: npt.NDArray[np.float32]" in view
 
     def test_a_differing_signature_without_fn_still_refuses(self, tmp_path):
         dest = _base(tmp_path)
@@ -427,7 +427,7 @@ class TestCliPath:
         )
         _, view = _faces(dest)
         assert "Block, real IF." in view
-        assert "x: NDArray[np.complex64]" in view
+        assert "x: npt.NDArray[np.complex64]" in view
 
     def test_a_stated_signature_without_fn_is_still_refused(
         self, tmp_path, monkeypatch
@@ -473,7 +473,7 @@ class TestCliPath:
             ]
         )
         _, view = _faces(dest)
-        assert "x: NDArray[np.float32]" in view
+        assert "x: npt.NDArray[np.float32]" in view
 
 
 # ── the gate: a new signature key cannot go uncompared ──────────────────────
