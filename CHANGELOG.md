@@ -1,5 +1,182 @@
 ## [Unreleased]
 
+## [0.98.0] — 2026-10-02
+
+### Added
+
+- **`jm bench` takes a run budget, and a timeout costs one benchmark, not
+    the run** (gh-1687). Every benchmark run had a hard-coded 600 s, and a
+    `bench_<comp>_core` that took longer -- normal on a Cortex-A53-class
+    board, where the same binary runs 10-20x slower than on a desktop core --
+    raised a traceback that discarded every result already collected, so
+    `benchmarks/history/` came out empty. The budget is now
+    `[project.bench] timeout = <seconds>` in `just-makeit.toml`, overridden
+    for one run by `jm bench --timeout S`; `0` is no limit, and unset keeps
+    600 s. A run past it is killed and reported as `timeout`, the other
+    benchmarks still run and are saved (the snapshot lists what timed out),
+    and `jm bench` then exits 1 naming it; under `--check` it fails the gate.
+    The builds `jm bench` drives are no longer timed at all: a cold build on
+    the same board took 603 s, and slow is not failed.
+
+### Changed
+
+- **Every array parameter's stub states exactly its declared type, from one
+    helper** (gh-1724, gh-1819). An array argument's `.pyi` annotation is now
+    `npt.NDArray[np.<dtype>]` of the dtype the manifest declares, on every
+    face and in both stub generators: a constructor argument (required,
+    `default = "[]"`, `--array-arg`, and `| None` for optional dispatch), a
+    method or module-function parameter, a variable-output method's `x` and
+    `out=`, the `steps()` input and its `out=`, an array property's setter, a
+    handle or capsule method's arrays, and a composer stream field. A
+    dtype-dispatch (`real_type`) array names both dtypes. A 1-D one-byte
+    integer INPUT also admits `bytes | bytearray | memoryview`, the byte
+    buffer jm reads directly (gh-1700); a writable (`out` / `mutable`) array
+    stays exactly the ndarray (gh-1733). Before this each face spelled its
+    own, and they disagreed: a standalone constructor said `npt.ArrayLike`
+    where the module stub of the same object said `NDArray[...]`, a module
+    stub dropped an `--array-arg` from the signature altogether, `steps()`
+    left a byte array without its byte-buffer widening (gh-1819), a handle
+    method said `NDArray[Any]` whatever it declared, and a standalone
+    variable-output method over a scalar element said `x: float` for an
+    argument its binding reads as an array. **This deliberately narrows the
+    static type below the runtime:** a list, a tuple, a byte buffer or an
+    ndarray of another safely castable dtype still works when run, but a type
+    checker now asks for the declared ndarray (gh-1821, which asked to admit
+    a list, is closed by this decision). The helper is
+    `_types.array_param_annotation`; `tests/test_gh1724_array_init_stub.py`
+    reads every array parameter of a project scaffolded with each face, plus
+    the handle, capsule and composer stubs, and refuses any not spelled by
+    it, and runs mypy over them.
+
+- **The nco_tone example's comments name the CI that runs it** (gh-1782).
+    They pointed at jm's `nco_tone_ci.yml`, which was folded into the
+    required `examples` job and the nightly; the example's own code and
+    behaviour are unchanged.
+
+- **An array argument refuses a `str` only when its param declares
+    `str_hint`** (gh-1824). gh-1700 made every generated array argument
+    refuse a `str`, a policy jm imposed on every project. Now a param
+    without the key converts a `str` the way numpy does
+    (`np.asarray("0101", dtype=np.uint8)` is the one element 101), and a
+    param declaring `str_hint` opts in: it refuses a `str` with the hint
+    appended, exactly as before. A `uint8_t[]` / `int8_t[]` param still
+    reads `bytes`, `bytearray` or `memoryview` as its bytes. A project
+    picks it up when `apply` re-renders the extension glue that carries
+    the helper. `apply`'s advisory for a fragment
+    predating `jm_array_arg` now names only a `uint8_t[]` / `int8_t[]`
+    argument, the one element type where the old bare conversion still
+    differs.
+
+### Fixed
+
+- **`jm status` UNWIRED no longer promises an `apply` that wires nothing**
+    (gh-1626). A `no_generate` module's or a c_dep's OBJECT core gets only
+    an `add_subdirectory()` from `jm apply`, yet the listing said apply
+    writes the missing `target_sources()` line, so `--check` stayed red
+    however often it was re-run. The advice is now per core and read from
+    the replay `status` already runs: apply wires it, apply renders it but
+    cannot place it (a missing anchor, see UNANCHORED), or apply writes no
+    line -- then it prints the lines to add to the root `CMakeLists.txt`
+    yourself. `--json` carries the same answer as `apply_wires`.
+
+- **`jm status` mentions `_core.c` only when one is stale** (gh-1628). The
+    closing "Your `_core.c` is yours -- apply only ADDS ..." sentence ended
+    every drift report, so a tree whose only drift was a regenerated glue
+    file finished with a sentence about a file the report did not name. It
+    is now printed by the same list as the "STALE -- yours" section.
+
+- **A Windows checkout of a jm project is no longer drift** (gh-1641). jm
+    writes LF everywhere, Git for Windows checks text out CRLF, and jm
+    scaffolded no `.gitattributes`, so a fresh Windows clone read every
+    regenerated file as `STALE` and every create-only one as `OUTDATED`, and
+    `jm status --check` failed its CI over line endings. `jm new` now writes
+    a `.gitattributes` (`* text=auto eol=lf`) that keeps a checkout LF, and
+    `jm apply` adds it to an existing project -- which `jm status --check`
+    lists as `MISSING` until it does. A file that differs from jm's render
+    only in CRLF versus LF is now its own uncounted `LINE ENDINGS` row, a real
+    change under a CRLF checkout is still `STALE` and diffs as that change
+    alone, and `apply` lists its rewrite to LF as `eol` rather than `update`.
+    See [Windows](docs/windows.md#line-endings).
+
+- **A benchmark that records through its own helper is no longer reported
+    as `SILENT`** (gh-1691). `jm status` / `jm apply` called a benchmark
+    silent when no line of it opened with `jm_bench_add(`, so a project
+    recording through a helper that wraps it -- doppler's
+    `dp_bench_record(&_bench, ...)` -- was told every such benchmark
+    "measures nothing" while it wrote 4-7 entries. The source scan now looks
+    only at the `jm_bench_t` accumulator handed to `jm_bench_write_json`:
+    a benchmark is silent when that accumulator is declared in the file and
+    touched by nothing else. Passing it to any call, in the file or a
+    header, keeps the scan quiet, since jm cannot see where that code ends.
+    And `jm bench`, which has the JSON, now names a binary that ran and
+    recorded nothing as `silent`, whatever its source looks like.
+
+- **A status message naming a float slot raises the exception it declares**
+    (gh-1785). A `status_errors` row whose message named a float param or
+    property -- on a borrow (gh-1426) or a `check_return` function
+    (gh-1614) -- compiled, then raised
+    `SystemError: invalid format string` when it fired, because
+    `PyErr_Format` has no float conversion. The value is now written as
+    Python's `repr` of it (`gain 1.1 is out of range`), and jm refuses at
+    generation time any conversion `PyErr_Format` would reject.
+
+- **A stalled apt mirror errors and retries instead of hanging the job**
+    (gh-1792). `jm-install-deps`, the `install.sh` one-liner,
+    `jm-docker-e2e` and the generated `.woodpecker.yml` (from
+    `jm ci --provider woodpecker`) called `apt-get` with at most
+    `-o Acquire::Retries=3`. Retries cover only a request that errors, and a
+    connection that stalls mid-transfer never does, so one stalled mirror
+    held a CI job until its `timeout-minutes` cancelled it (29 minutes on
+    2026-10-01). Every `apt-get` jm ships or generates now also passes
+    `-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30`, on both
+    `update` and `install`, so a stall becomes an error the retries cover.
+    jm's own workflows do the same, and a test refuses any `apt-get` in a
+    shipped script, template, workflow, Dockerfile or makefile without all
+    three options. A project that already ran `jm ci` keeps its
+    `.woodpecker.yml`; `--force` rewrites it from the template.
+
+- **dtype dispatch beside a defaulted array compiles** (gh-1825). An object
+    whose `real_type` / `real_create_fn` array was followed by a
+    `default = "[]"` array did not build, standalone or in a module: the
+    dispatch called its constructor inside its own block, before the later
+    array declared `<name>_arr` / `<name>_len`. The dispatched array is now
+    acquired like every other one, and the constructor call comes after all
+    of them. Two per-call constructor choices on one object (two dispatched
+    arrays, or one beside an `optional` array) and a 2-D dispatched array
+    are refused when the manifest is read; each generated C that overwrote
+    the first constructor's result or did not compile.
+
+- **A dispatched array takes `None` and other ranks as a plain one does**
+    (gh-1826). `None` or a 2-D array passed to a `real_type`-dispatched init
+    param raised `SystemError: ... returned a result with an exception set`:
+    the dtype probe failed, left its error set, and construction carried
+    on. The probe now only chooses the constructor; its failure is cleared,
+    and the array is then acquired exactly as a plain array param of its
+    declared type, so numpy decides what converts. Only a float32
+    (`real_type`) 1-D ndarray reaches `real_create_fn`; a list of floats,
+    and any input the probe cannot read, takes the default constructor.
+
+- **A scaffold declares and stubs every constructor its binding calls**
+    (gh-1827). An `optional` array's `create_fn` and a dtype dispatch's
+    `real_create_fn` were called by the generated binding but neither
+    declared in `<comp>_core.h` nor stubbed in `<comp>_core.c`, so an
+    untouched tree failed on an implicit declaration. The scaffold now writes
+    a prototype (with its `@param` docs) beside `create()` and a stub body
+    after it, both from the argument list the binding passes, on both
+    faces and under `header_only`. Declared later in the manifest, `apply`
+    adds the missing stub, as it does for a method (gh-1294).
+
+### Docs
+
+- **No code span on the docs site shows a run of spaces** (gh-1779). Nine
+    spans, seven under `docs/` plus one each in `CLAUDE.md` and the
+    ring_buffer example's README, held one: a span wrapped across an indented
+    line break keeps the indent, so `make_window` rendered with three spaces
+    before `*out`. They now read with single spaces, and the definition-list
+    syntax in the zensical notes moved into a fenced block, where its spacing
+    is meant. `make lint` now refuses such a span in any tracked Markdown file
+    (`code-span-check`).
+
 ## [0.97.0] — 2026-10-01
 
 ### Added
