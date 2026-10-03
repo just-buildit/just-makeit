@@ -909,3 +909,53 @@ class TestADocsOnlyDiffIsClassified:
             _payload(*_OTHERS),
             outputs={"code": "true"},
         )
+
+
+# ── Every path writes the whole contract (canonical #103) ───────────────────
+#
+# A job gated on `code` alone -- doppler has twelve -- reads whatever the step
+# wrote. So src, docs and code are written on EVERY path, exactly once, and
+# src=false implies code=false: before, a bump wrote code=true (those jobs ran
+# on every release) and the nightly wrote no code= at all (they skipped it).
+
+
+class TestEveryPathWritesTheWholeContract:
+    def test_a_pushed_bump_has_no_code_to_test(self, checkouts):
+        payload = _payload(*_OTHERS, ("CI passed", "completed", "success"))
+        _decide(
+            checkouts,
+            "bump",
+            "push",
+            payload,
+            outputs={"src": "false", "code": "false"},
+        )
+
+    def test_a_bump_pr_has_no_code_to_test(self, checkouts):
+        _decide(
+            checkouts,
+            "bump",
+            "pull_request",
+            _payload(*_OTHERS),
+            outputs={"src": "false", "code": "false"},
+        )
+
+    def test_the_nightly_writes_every_output_true(self, checkouts):
+        _decide(
+            checkouts,
+            "source",
+            "schedule",
+            None,
+            want_tested="",
+            outputs={"src": "true", "docs": "true", "code": "true"},
+        )
+
+    def test_a_tested_tree_writes_every_output_false(self, checkouts):
+        _decide(
+            checkouts,
+            "source",
+            "push",
+            _pr_checks("success"),
+            tree_api=_tree_api(_head_tree(checkouts, "source")),
+            want_tested="true",
+            outputs={"src": "false", "docs": "false", "code": "false"},
+        )
