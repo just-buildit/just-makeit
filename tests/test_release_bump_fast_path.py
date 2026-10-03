@@ -285,15 +285,34 @@ def _workflows_a_release_reaches() -> "list[tuple[str, dict]]":
     return out
 
 
+def _aggregator(jobs: dict) -> "str | None":
+    """The id of the job named CI_CHECK_NAME (``make ci-check-name``)."""
+    name = subprocess.run(
+        ["make", "-s", "ci-check-name"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return next((k for k, j in jobs.items() if j.get("name") == name), None)
+
+
 def _ungated(jobs: dict) -> "list[str]":
     """Jobs that would run on a bump alone.
 
     A job is gated when it reads `needs.changes.outputs.src` itself, or needs
     a gated job without an `if` that runs it anyway (`always()`,
     `!cancelled()`), since a skipped need skips its dependents.
+
+    A job AFTER CI -- it needs the CI_CHECK_NAME aggregator and requires its
+    result to be success -- is not a bump leak: it must run after an
+    already-tested merge too (the mirror trigger did not, until it said
+    always(); canonical's ci-changes-wiring-check now requires that), and it
+    runs only when CI passed. Canonical's gate governs it, not this one.
     """
     import json
 
+    agg = _aggregator(jobs)
     gated: "set[str]" = {"changes"}
     changed = True
     while changed:
@@ -306,9 +325,18 @@ def _ungated(jobs: dict) -> "list[str]":
             needs = [needs] if isinstance(needs, str) else needs
             cond = str(job.get("if", ""))
             forced = "always()" in cond or "cancelled()" in cond
-            if "needs.changes.outputs.src" in body or (
-                any(n in gated and n != "changes" for n in needs)
-                and not forced
+            after_ci = (
+                agg is not None
+                and agg in needs
+                and f"needs.{agg}.result == 'success'" in cond
+            )
+            if (
+                after_ci
+                or "needs.changes.outputs.src" in body
+                or (
+                    any(n in gated and n != "changes" for n in needs)
+                    and not forced
+                )
             ):
                 gated.add(name)
                 changed = True
