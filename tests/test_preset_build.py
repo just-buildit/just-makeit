@@ -12,6 +12,7 @@ Skipped when the C toolchain is unavailable (matches test_examples.py).
 from _jminc import INC_ROOT  # noqa: E402
 import os
 import shutil
+import re
 import subprocess
 
 import pytest
@@ -139,14 +140,17 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
 # included -- with those flags on, by gcc (the stringop and set-but-unused
 # findings are gcc's) and by clang.
 #
-# The three -Wno- flags are CPython's ABI shape, not defects: METH_NOARGS's
-# unused `args`, the PyCFunction cast, the `{NULL}` sentinel (gh-1745 lists
-# them as "not asks").
+# No -Wno- flag: the unused `args` / `kwds`, the PyCFunction cast and the
+# `{NULL}` sentinel were once waved through as CPython's ABI shape (gh-1745),
+# and a downstream building its own C with -Wall -Wextra could not fix them in
+# generated files (gh-1856).
 
-_WARN_FLAGS = (
-    "-Wall -Wextra -Werror -Wno-unused-parameter -Wno-cast-function-type"
-    " -Wno-missing-field-initializers"
-)
+# `-Wno-error=unused-parameter`: a scaffolded `_core.c` / `_core.h` stub body
+# is the author's to write and its placeholder parameters go unread until they
+# do (carved out as gh-1857). The CPython glue has no such excuse, so
+# `_glue_findings` fails the build on any unused parameter reported from an
+# `_ext*.c`.
+_WARN_FLAGS = "-Wall -Wextra -Werror -Wno-error=unused-parameter"
 
 _ENUM = '\n[[enum]]\nname = "mode"\nvalues = ["a", "b", "c"]\n'
 # gh-1748: an enum bound to C constants (gh-1450), which adds the
@@ -199,6 +203,13 @@ _WARN_SHAPES = {
         ["apply"],
     ],
     "no_state": [["object", "ns", "--no-state"]],
+    # gh-1856: a `--batch` method is `METH_KEYWORDS`, a three-argument
+    # PyCFunctionWithKeywords the table must cast through `void (*)(void)`.
+    "batch_method": [
+        ["object", "bm"],
+        ["method", "bm", "blk", "--arg-type", "float"]
+        + ["--return-type", "float", "--batch"],
+    ],
     # gh-1716: the returned-count guard (`_coerce.returned_count_c`) on
     # every path that builds with no author C -- a module function's ndarray
     # and `str` outputs, and a method's allocated and `out=` paths.
@@ -300,6 +311,22 @@ _WARN_SHAPES = {
 _WARN_KNOWN: "dict[tuple[str, str], str]" = {}
 
 
+def _glue_findings(output: str) -> "list[str]":
+    """Warning lines the build reports from a generated `*_ext*.c`.
+
+    `_WARN_FLAGS` demotes unused-parameter from an error (see there), so
+    this is what keeps it an error for the one place jm owns outright: the
+    glue a downstream project cannot edit without `jm apply` reverting it.
+    """
+    return sorted(
+        {
+            line.strip()
+            for line in output.splitlines()
+            if "warning:" in line and re.search(r"_ext\w*\.c:\d", line)
+        }
+    )
+
+
 def _compiler_family(cc: str) -> str:
     """``"clang"`` or ``"gcc"``, by what the compiler says it is.
 
@@ -368,6 +395,23 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
             for line in (bld.stdout + bld.stderr).splitlines()
             if "error:" in line
         }
+    )
+    # clang's -Wmissing-field-initializers fires on a one-field `{NULL}`
+    # sentinel, gcc's does not -- so read it off the text, where both
+    # compilers' legs (and a box with only gcc) see it.
+    short = sorted(
+        f"{f.relative_to(root)}: {m.group().strip()}"
+        for f in root.glob("native/src/**/*_ext*.c")
+        for m in re.finditer(r"^\s*\{\s*NULL\s*\}\s*$", f.read_text(), re.M)
+    )
+    assert not short, (
+        f"{shape}: a one-field table sentinel (gh-1856); CPython documents"
+        f" the full-width form:\n" + "\n".join(short)
+    )
+    glue = _glue_findings(bld.stdout + bld.stderr)
+    assert not glue, (
+        f"{shape} with {cc}: warnings in the CPython glue (gh-1856):\n"
+        + "\n".join(glue)
     )
     known = _WARN_KNOWN.get((shape, _compiler_family(cc)))
     if known is None:

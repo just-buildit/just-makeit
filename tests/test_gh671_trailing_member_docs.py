@@ -147,7 +147,9 @@ def _project(tmp_path: Path, *, manifest_doc: str = "") -> Path:
 
 def _getset(root: Path) -> str:
     ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
-    return ext[ext.index("Osc_getset[]") : ext.index("{ NULL }")]
+    return ext[
+        ext.index("Osc_getset[]") : ext.index("{NULL, NULL, NULL, NULL, NULL}")
+    ]
 
 
 class TestGeneratedProject:

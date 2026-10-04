@@ -99,8 +99,9 @@ def test_transplant_preserves_hand_binding(tmp_path):
     # A hand-written, non-manifest method row + stub the manifest can't express.
     orig = frag.read_text()
     t = orig.replace(
-        "{NULL}",
-        '{"secret", (PyCFunction)Mix_secret, METH_NOARGS, "hand"},\n  {NULL}',
+        "{NULL, NULL, 0, NULL}",
+        '{"secret", (PyCFunction)Mix_secret, METH_NOARGS, "hand"},\n'
+        "  {NULL, NULL, 0, NULL}",
         1,
     )
     assert t != orig  # the replace landed

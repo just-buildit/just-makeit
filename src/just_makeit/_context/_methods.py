@@ -2206,7 +2206,8 @@ def make_methods_ctx(
                 *_demo(_batch_demo),
             ]
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
+                f'    {{"{name}", (PyCFunction)(void (*)(void))'
+                f"{wrapper_prefix}_{name},"
                 f" METH_VARARGS | METH_KEYWORDS,\n"
                 f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
             )
@@ -4979,7 +4980,7 @@ def make_properties_ctx(
         f"{getset_body}\n\n"
         f"static PyGetSetDef {Component}_getset[] = {{\n"
         f"{entries_str}\n"
-        f"    {{ NULL }}\n"
+        f"    {{NULL, NULL, NULL, NULL, NULL}}\n"
         f"}};\n"
     )
     tp_getset_decl = f"\n    .tp_getset    = {Component}_getset,"
