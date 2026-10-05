@@ -23,6 +23,11 @@ ALL of these hold, and says which one did not:
    something) and red AFTER it;
 4. the red run names at least one FAILED test and reports no collection
    error -- "errored in collection" proves nothing about any assertion.
+   That holds whether pytest stopped at the error (its default) or went on
+   past it to run the rest (under pytest-xdist, as ``make test`` runs it,
+   and ``--continue-on-collection-errors``; gh-1933), where a FAILED named
+   beside it is no proof either: the module that did not import ran none
+   of its tests, and the gate may be one of them.
    Both are read with the run's colour escapes removed, so a caller whose
    pytest colours its output is answered like one whose does not;
 5. the file is restored byte-identical afterwards, and every ``__pycache__``
@@ -57,9 +62,33 @@ ROOT = Path(__file__).resolve().parent.parent
 #: failing test's report can quote another run's output (this helper's tests
 #: do), and an unanchored "errors during collection" matched inside that
 #: quote and refused a sabotage that had gone red for the right reason.
+#:
+#: Which spellings a run prints depends on how pytest ran (pytest 9.1,
+#: xdist 3.8, measured; gh-1933):
+#:
+#: - ``!!! Interrupted: 1 error during collection !!!`` -- default mode
+#:   only, which stops before any test runs.
+#: - ``ERROR test_a.py - RuntimeError: boom`` -- the short summary's line
+#:   for a node id with no ``::``: a module, or a directory whose conftest
+#:   failed (``ERROR sub``). A test's id always has one, so a fixture that
+#:   raised (``ERROR x.py::test_y``) is not this. Under pytest-xdist
+#:   (``make test`` runs ``-n auto``) and ``--continue-on-collection-errors``
+#:   the run goes on, names the FAILED tests beside it, prints no
+#:   ``Interrupted:``, and this line and the header below are ALL it says
+#:   -- so a sabotage that only broke an import was accepted. The id holds
+#:   no whitespace, so a captured log line (``ERROR    x:a.py:3 broke``) is
+#:   not read as one. ``-r`` without ``E`` drops this line.
+#: - ``____ ERROR collecting test_a.py ____`` -- the ERRORS section header,
+#:   which only a collection error gets (a fixture's reads ``ERROR at setup
+#:   of``); ``--tb=no`` drops it. It was spelled ``^ERROR collecting ``,
+#:   which pytest never prints at column 0, so it never matched.
+#: - ``ImportError while ...`` -- the body under that header for an
+#:   ImportError, and pytest's line for a conftest that cannot import.
 _FAILED = re.compile(r"^FAILED (\S+)", re.M)
 _COLLECTION = re.compile(
-    r"^(?:ERROR collecting |!+ Interrupted: \d+ errors? during collection"
+    r"^(?:!+ Interrupted: \d+ errors? during collection"
+    r"|ERROR (?:(?!::)\S)+(?: - |$)"
+    r"|_+ ERROR collecting "
     r"|ImportError while)",
     re.M,
 )
