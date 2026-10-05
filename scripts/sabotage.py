@@ -77,7 +77,9 @@ ROOT = Path(__file__).resolve().parent.parent
 #:   ``Interrupted:``, and this line and the header below are ALL it says
 #:   -- so a sabotage that only broke an import was accepted. The id holds
 #:   no whitespace, so a captured log line (``ERROR    x:a.py:3 broke``) is
-#:   not read as one. ``-r`` without ``E`` drops this line.
+#:   not read as one; a test that PRINTS ``ERROR x.py`` at column 0 still
+#:   is, a loud refusal where the miss was silent. ``-r`` without ``E``
+#:   drops this line.
 #: - ``____ ERROR collecting test_a.py ____`` -- the ERRORS section header,
 #:   which only a collection error gets (a fixture's reads ``ERROR at setup
 #:   of``); ``--tb=no`` drops it. It was spelled ``^ERROR collecting ``,
