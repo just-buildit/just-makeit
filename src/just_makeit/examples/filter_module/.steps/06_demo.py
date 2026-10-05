@@ -54,7 +54,7 @@ hi = np.cos(2 * math.pi * 0.40 * n)  # 0.40*fs — stopband
 out_lo = Biquad(**lowpass).steps(lo)
 out_hi = Biquad(**lowpass).steps(hi)
 
-print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ≈ 0.5)")
+print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ~0.5)")
 print(f"Biquad stopband power:  {np.mean(out_hi**2):.5f} (expect << 0.5)")
 
 # ── Both types from one import ───────────────────────────────────────────────

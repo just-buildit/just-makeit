@@ -89,7 +89,7 @@ class StandardMA:
 def demo_burst():
     print("=" * 68)
     print("Demo 1: Power tracking on a burst signal")
-    print(f"  Window N={N}  (response time = N/2 ≈ {N // 2} samples)")
+    print(f"  Window N={N}  (response time = N/2 ~ {N // 2} samples)")
     print("=" * 68)
 
     rec = RecursiveNoCal()
@@ -126,7 +126,7 @@ def demo_burst():
 
     print()
     print(
-        "  → Recursive and standard MA produce identical output (same window sum)."
+        "  -> Recursive and standard MA produce identical output (same window sum)."
     )
     print()
 
@@ -166,7 +166,7 @@ def demo_drift_f32(n_samples=5_000_000, print_every=500_000):
 
     print()
     print(
-        "  → Float32 accumulator drifts measurably. Calibration corrects it."
+        "  -> Float32 accumulator drifts measurably. Calibration corrects it."
     )
     print()
 
@@ -202,7 +202,7 @@ def demo_drift_f64(n_samples=5_000_000, print_every=500_000):
 
     print()
     print(
-        "  → Double accumulator: error stays at float32 quantization noise floor."
+        "  -> Double accumulator: error stays at float32 quantization noise floor."
     )
     print(
         "    Calibration is still useful as insurance, not a necessity here."
