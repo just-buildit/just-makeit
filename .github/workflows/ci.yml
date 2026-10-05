@@ -607,7 +607,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -646,6 +646,18 @@ jobs:
       - name: Install and consume by the official instructions
         env:
           CONSUMER_SMOKE_DEFAULT_PREFIX: "1"
+          CONSUMER_CMAKE_VERSION: ${{ matrix.cmake }}
+        run: make consumer-smoke
+
+      # gh-1869: the same, installed to a NON-default prefix and consumed with
+      # the two documented search hints and NO loader path. The step above
+      # cannot see a library that fails to find its own dependencies:
+      # `ldconfig` puts /usr/local/lib in the loader's cache, and the old
+      # local mode exported LD_LIBRARY_PATH, which GNU ld also reads at link
+      # time. On macOS this is what proves the absolute install name (gh-1594)
+      # needs nothing from the consumer.
+      - name: Install to a non-default prefix and consume with no loader path
+        env:
           CONSUMER_CMAKE_VERSION: ${{ matrix.cmake }}
         run: make consumer-smoke
 

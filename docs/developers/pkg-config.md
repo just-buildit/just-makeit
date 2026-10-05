@@ -355,7 +355,8 @@ pkg-config --libs mylib
 
 # headers and library files
 test -f "${PREFIX}/include/mylib.h"
-ls "${PREFIX}/lib/libmylib"*
+LIBDIR=$(pkg-config --variable=libdir mylib)   # lib, lib64 or lib/<multiarch>
+ls "${LIBDIR}/libmylib"*
 
 # CMake config files
 test -f "${PREFIX}/lib/cmake/mylib/mylibConfig.cmake"
@@ -368,8 +369,8 @@ int main(void) { return 0; }
 EOF
 gcc -o /tmp/smoke /tmp/smoke.c \
     $(pkg-config --cflags --libs mylib) \
-    "-Wl,-rpath,${PREFIX}/lib"
-/tmp/smoke
+    "-Wl,-rpath,${LIBDIR}"
+/tmp/smoke   # with no LD_LIBRARY_PATH: that would hide a missing rpath
 ```
 
 Run it as `bash test_install.sh "$HOME/.local"` for non-root installs.
@@ -395,6 +396,13 @@ cmake -DCMAKE_PREFIX_PATH="$HOME/.local" ..
 
 Or at install/configure time, pass `--prefix` or `-DCMAKE_INSTALL_PREFIX`.
 
+Those two find the package; neither makes a program LOAD its shared library.
+A program needs an rpath to the libraries it links (and each installed library
+needs one to the libraries it links: jm installs its libraries with RUNPATH
+`$ORIGIN` plus the directory of any dependency elsewhere). What a consumer
+writes, per platform and prefix, is in
+[C library — Runtime loading](../c-library.md#runtime-loading-rpath).
+
 ### Debian / Ubuntu (multiarch)
 
 `GNUInstallDirs` sets `CMAKE_INSTALL_LIBDIR` to `lib/x86_64-linux-gnu`
@@ -411,6 +419,8 @@ PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib/$(gcc -dumpmachine)/pkgco
 
 - Intel: prefix `/usr/local`, Apple Silicon: `/opt/homebrew`
 - No multiarch — `CMAKE_INSTALL_LIBDIR` is just `lib`
+- A jm library's install name is its absolute path (gh-1594), so a program
+    loads it from any prefix with no rpath and no `DYLD_LIBRARY_PATH`
 - CMake's `find_package` searches `$(brew --prefix)/lib/cmake` automatically
 
 ______________________________________________________________________

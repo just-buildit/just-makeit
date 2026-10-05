@@ -463,6 +463,50 @@ ______________________________________________________________________
 
 ## Runtime loading (rpath)
 
+Where the loader finds the installed shared library depends on where it went.
+
+**A system prefix (`/usr`)** needs nothing. That is where a distribution
+package installs.
+
+**`/usr/local`**, CMake's default prefix: on Debian, Ubuntu and openSUSE run
+`sudo ldconfig` once after installing. They list `/usr/local/lib` in
+`/etc/ld.so.conf.d/`, but the loader reads those directories only through its
+cache, which `ldconfig` rebuilds. Fedora, RHEL and Arch do not list it at all
+(and on Fedora-family hosts the library lands in `/usr/local/lib64`), so there
+`/usr/local` is any other prefix: either use the recipe below, or add the
+directory to a file under `/etc/ld.so.conf.d/` and run `ldconfig`.
+
+**Any other prefix** (`~/.local`, `/opt/…`, an unpacked tarball): give the
+program an rpath to the libraries it links, at link time. That is all it
+needs: each installed library finds the libraries *it* needs by itself, through
+the RUNPATH jm installs it with -- `$ORIGIN` for the libraries beside it, plus
+the directory of any dependency installed in another prefix. So a program
+names only what it links, even when that library depends on another package.
+
+With pkg-config, one `-Wl,-rpath` per package the program names:
+
+```sh
+gcc consumer.c $(pkg-config --cflags --libs my_project) \
+    -Wl,-rpath,"$(pkg-config --variable=libdir my_project)" \
+    -o consumer
+```
+
+With `find_package`, CMake already gives a program in your build tree an rpath
+to every imported library it links, so it runs from there as built. To
+install the program as well, keep that path in the installed binary:
+
+```cmake
+set_target_properties(consumer PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+```
+
+To try a program without relinking it, `LD_LIBRARY_PATH="$HOME/.local/lib" ./consumer` also works; it is for a quick test, not for deployment.
+
+The path lives in the library, not in the `.pc`. An rpath in a `.pc` goes
+wrong in a cross build (pkgconf 1.x and 2.x prefix the sysroot onto it) and
+ends up in every consumer's installed binary. A packager who wants a different
+policy passes CMake's own `-DCMAKE_INSTALL_RPATH=...` or
+`-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF`, which replace jm's defaults.
+
 **macOS needs nothing.** The installed `.dylib` names itself by its absolute
 path (its install name is `<prefix>/lib/lib<pkg>.<ABI>.dylib`, as Homebrew's
 libraries are), so a program linked by pkg-config, `find_package`, a Makefile
@@ -470,43 +514,9 @@ or Xcode loads it wherever the prefix is. If you move the installed tree
 afterwards, point `DYLD_LIBRARY_PATH` at its new `lib/`, or rewrite the name
 with `install_name_tool`.
 
-**Linux:** the installed `.so` is not automatically on the dynamic linker's
-search path unless you installed to `/usr/local` (or ran `ldconfig` after a
-system-wide install).
-
-For a custom prefix, embed the library path in the binary at link time:
-
-**pkg-config:**
-
-```sh
-LIB_DIR=$(pkg-config --variable=libdir my_project)
-gcc $(pkg-config --cflags my_project) \
-    consumer.c \
-    $(pkg-config --libs my_project) \
-    -Wl,-rpath,"$LIB_DIR" \
-    -o consumer
-```
-
-**CMake:** set `INSTALL_RPATH_USE_LINK_PATH` or `CMAKE_BUILD_RPATH`:
-
-```cmake
-set_target_properties(consumer PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
-```
-
-Or pass it on the command line:
-
-```sh
-cmake -B build \
-    -DCMAKE_PREFIX_PATH="$HOME/.local" \
-    -DCMAKE_BUILD_RPATH="$HOME/.local/lib"
-```
-
-Alternatively, set `LD_LIBRARY_PATH` at runtime (useful for quick testing,
-not for deployment):
-
-```sh
-LD_LIBRARY_PATH="$HOME/.local/lib" ./consumer
-```
+**Windows** has no rpath: a program finds a DLL in its own directory or on
+`PATH`. The library's DLL is installed to the prefix's `bin/`; put that on
+`PATH`, or copy the DLL beside the program.
 
 ______________________________________________________________________
 
