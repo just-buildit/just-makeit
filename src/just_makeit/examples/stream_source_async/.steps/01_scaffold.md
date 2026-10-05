@@ -18,7 +18,8 @@ example is `--async-stream` in place of `--streamable`:
 
 `--async-stream` adds, on top of the synchronous iterator, a `PyAsyncMethods`
 slot (`__aiter__` / `__anext__`) on the `RampStreamIter` type and an
-`__aiter__` on the object — all in C. The manifest records one extra key:
+`__aiter__` on the object — all in C. The object's manifest fragment,
+`objects/ramp.toml`, records one extra key:
 
 ```toml
 [ramp]

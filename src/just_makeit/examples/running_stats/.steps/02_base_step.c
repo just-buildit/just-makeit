@@ -1,6 +1,6 @@
 // base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
-// Output: real = current mean, imag = sample variance (0 until n > 1)
+// Output: real = current mean, imag = population variance (m2 / n)
 static inline float _Complex my_stats_running_stats_step (
     my_stats_running_stats_state_t *state, float _Complex x)
 {

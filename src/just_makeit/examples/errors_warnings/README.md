@@ -12,8 +12,10 @@ report them on.
 | a call fails, but usually returns a value | an `int` that is a value unless negative | an exception, or the `int` | `--error-negative --error` |
 
 The first two are `create()`'s problem and the last two are a method's. All
-four are pure glue — **no sacred file is touched by declaring them**, which is
-the point: they are a translation layer over signals your C already emits.
+four translations are pure glue — `error` and `warning` touch no sacred file
+at all, and the two method flags change only the binding (`jm method` still
+appends the method's C stub and prototype, as it always does), which is the
+point: they are a translation layer over signals your C already emits.
 
 ## TL;DR — see it work first
 
@@ -35,7 +37,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -58,6 +62,21 @@ just-makeit object allocator \
     --state "degraded:bool:false" \
     --arg-type size_t \
     --return-type size_t
+
+# Seed valid constructor arguments for jm's generated tests (gh-1105).
+# `example_value` is TOML-only, and the generated tests are create-only, so
+# regenerate the component to write them with it.
+python3 - <<'EOF'
+from pathlib import Path
+p = Path("objects/allocator.toml")
+s = p.read_text(encoding="utf-8")
+for name, value in (("capacity", "1024"), ("slots", "4")):
+    old = f'name = "{name}"\ntype = "size_t"\nrequired = true\n'
+    assert old in s, name
+    s = s.replace(old, old + f'example_value = "{value}"\n', 1)
+p.write_text(s, encoding="utf-8")
+EOF
+just-makeit regenerate allocator --force
 ```
 
 `capacity` and `slots` are `--init-param`s: they are what the caller passes,
@@ -65,6 +84,10 @@ and `create()` consumes them without storing them. The three `--state` fields
 are what the object *derives* and keeps — declaring init-params is what keeps
 them out of the constructor signature, so `Allocator(capacity=9, slots=3)` is
 the whole public API.
+
+`example_value` is not a default: the params stay required. It only gives
+jm's generated C and Python tests a valid `create(1024, 4)` to construct
+with, instead of a zero-seeded call this constructor refuses.
 
 `degraded` is the one to watch. It is an ordinary `bool` on the state struct
 that `create()` sets, and in step 3 it becomes the entire mechanism behind a
@@ -222,7 +245,7 @@ budget_allocator_peek(budget_allocator_state_t *state, size_t x)
 # seed, so jm emitted `create(0, 0)` behind a skip-and-bail it did not trust —
 # the zero being precisely what this ctor refuses — and the patch had to
 # replace that whole block plus a `get_remaining(obj) == 0` line that a
-# deriving create() makes false. Declaring `example_value` (see test.py) fixed
+# deriving create() makes false. Declaring `example_value` (step 1) fixed
 # both at the source: jm now constructs with valid arguments, and the accessor
 # test no longer asserts a post-construction value it cannot know. So all that
 # is left here is ADDING the refusal cases, which is the part that was ever
@@ -252,14 +275,16 @@ def _replace(text: str, old: str, new: str, what: str) -> str:
 
 
 def main() -> None:
+    # Every anchor is checked before either file is written, so a missed
+    # anchor leaves the tree exactly as it was rather than half-patched.
     s = CORE.read_text(encoding="utf-8")
     s = _replace(s, CREATE_OLD, CREATE_NEW, "create()")
     s = _replace(s, TAKE_OLD, TAKE_NEW, "take()")
     s = _replace(s, PEEK_OLD, PEEK_NEW, "peek()")
-    CORE.write_text(s, encoding="utf-8")
-
     t = CTEST.read_text(encoding="utf-8")
     t = _replace(t, CTEST_OLD, CTEST_NEW, "C test construction")
+
+    CORE.write_text(s, encoding="utf-8")
     CTEST.write_text(t, encoding="utf-8")
 
 
@@ -270,8 +295,7 @@ if __name__ == "__main__":
 Nothing in this file mentions Python. `create()` returns `NULL` or sets a
 `bool`; the two methods return an `int`. Every exception and warning the next
 step shows is jm's glue reading those, which is why none of this needed a
-`#include <Python.h>` and why the declarations in step 2 touched no sacred
-file.
+`#include <Python.h>` and why step 2 put no Python into a sacred file.
 
 ---
 

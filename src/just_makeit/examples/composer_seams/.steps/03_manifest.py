@@ -1,8 +1,8 @@
 """Declare the composer module. There is no `jm composer` command.
 
 A composer is manifest-only: this table plus `just-makeit apply` is the whole
-interface. `c_deps` goes on `[project]`; everything else describes the four
-OO types jm will emit.
+interface. `c_deps` goes on `[project]`; everything else describes the OO
+types jm will emit.
 """
 
 from pathlib import Path

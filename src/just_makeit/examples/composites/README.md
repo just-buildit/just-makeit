@@ -274,12 +274,16 @@ doctest:
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if the
-ring buffer's capacity handling ever drifts from its documented example the
-build fails. Pass `-v` to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the ring buffer's capacity handling drifts from its documented
+example. A generated project's `make test` does not run `.pyi` doctests (this
+example's own test does), so to make it a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. Pass `-v` to watch every `>>>` line execute:
 
 ```termynal
-$ python -m doctest -v src/composites/ring.pyi
+$ PYTHONPATH=src python -m doctest -v src/composites/ring.pyi
+{d}...{/d}
 {d}Trying:{/d}
     r = Ring(capacity=4)
 {d}Expecting nothing{/d}
@@ -289,11 +293,13 @@ $ python -m doctest -v src/composites/ring.pyi
 {d}Expecting:{/d}
     4
 {g}ok{/g}
-{g}5 passed and 0 failed.{/g}
+{d}...{/d}
+{g}4 passed and 0 failed.{/g}
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with `pytest --doctest-glob='*.pyi'`.
+This example's own test drives the whole stub at once with
+`pytest --doctest-glob='*.pyi'`.
 
 **Not every surface comes from the header.** A **multi-field** getter carries a
 single struct `@brief` that cannot name each field it decodes, so the

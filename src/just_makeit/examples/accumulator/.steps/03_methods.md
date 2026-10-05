@@ -22,6 +22,9 @@ Each array param expands to two C arguments — a `const elem_t *name` pointer
 and a `size_t name_len` length — and a matching NumPy buffer acquisition in
 the Python glue.
 
-After these ten commands, `accumulator_ext.c` contains `AccF32Object` and
-`AccCf64Object` with fully generated Python argument parsing and NumPy buffer
-protocol for all array parameters.
+After these ten commands, the module's per-object binding fragments
+`native/src/accumulator/accumulator_ext_acc_f32.c` and
+`accumulator_ext_acc_cf64.c` hold `AccF32Object` and `AccCf64Object`, with
+fully generated Python argument parsing and NumPy buffer protocol for all
+array parameters. `accumulator_ext.c` `#include`s both and registers the two
+types in its one `PyInit_accumulator`.

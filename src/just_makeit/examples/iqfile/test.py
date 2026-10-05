@@ -117,7 +117,7 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj)
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)
 
-    # 7. Round-trip demo (module objects don't generate Python tests; demo is our integration check)
+    # 7. Round-trip demo: the README's own integration check, run verbatim
     _cmd([sys.executable, str(STEPS / "07_demo.py")], cwd=proj)
 
     # 8. Verify module-level type stub (named conv.pyi, not __init__.pyi)

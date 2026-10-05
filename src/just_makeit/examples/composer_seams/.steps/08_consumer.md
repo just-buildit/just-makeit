@@ -1,5 +1,7 @@
 ## 8. The point: a C consumer needs only the generated header
 
+`native/tests/test_bridge.c`:
+
 ```{08_consumer.c}
 ```
 

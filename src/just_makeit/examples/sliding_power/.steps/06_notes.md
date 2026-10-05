@@ -25,17 +25,18 @@ rounding residuals.  Over 5 million noise samples the error stays at
 
 **When the SIMD recompute earns its keep:**
 If the accumulator were `float` (e.g., for an embedded target with no FPU
-double path), drift grows to ~10⁻⁵ by 5M samples and keeps climbing.  A
-full recompute every 1000 samples — the one call that fits a single SIMD
-vector of 16 float32 lanes — resets the error to zero.
+double path), drift reaches ~7×10⁻⁵ by 5M samples and keeps climbing.  A
+full recompute every 1000 samples (4 AVX-512 vectors over the 64-sample
+line) resets the error to zero.
 
-You can reproduce these numbers yourself:
+You can reproduce these numbers yourself (pure Python, no build needed;
+`STEPS` as set in section 2):
 
 ```sh
-python3 .steps/06_compare.py
+python3 "$STEPS/06_compare.py"
 ```
 
-Output (5M noise samples):
+Output (excerpt; 5M noise samples):
 
 ```
 Demo 2: float32 accumulator

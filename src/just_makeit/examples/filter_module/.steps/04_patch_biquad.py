@@ -20,13 +20,15 @@ if not m:
     )
     sys.exit(1)
 
+# The body the README shows: double state and arithmetic, narrowed to float
+# only on return.
 impl = (
     "my_filters_biquad_step(my_filters_biquad_state_t *state, float x)\n"
     "{\n"
-    "    float y  = state->b0 * x + state->w1;\n"
-    "    state->w1 = state->b1 * x - state->a1 * y + state->w2;\n"
-    "    state->w2 = state->b2 * x - state->a2 * y;\n"
-    "    return y;\n"
+    "    double y   = state->b0 * (double)x + state->w1;\n"
+    "    state->w1  = state->b1 * (double)x - state->a1 * y + state->w2;\n"
+    "    state->w2  = state->b2 * (double)x - state->a2 * y;\n"
+    "    return (float)y;\n"
     "}"
 )
 replacement = m.group(1) + " float\n" + impl

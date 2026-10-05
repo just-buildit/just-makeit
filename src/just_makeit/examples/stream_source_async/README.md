@@ -33,7 +33,9 @@ just-makeit example stream_source_async
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -73,7 +75,8 @@ example is `--async-stream` in place of `--streamable`:
 
 `--async-stream` adds, on top of the synchronous iterator, a `PyAsyncMethods`
 slot (`__aiter__` / `__anext__`) on the `RampStreamIter` type and an
-`__aiter__` on the object — all in C. The manifest records one extra key:
+`__aiter__` on the object — all in C. The object's manifest fragment,
+`objects/ramp.toml`, records one extra key:
 
 ```toml
 [ramp]
@@ -115,12 +118,23 @@ That is the only C you write. `steps(n)`, the sync `stream()` / `__iter__`, and
 the async `__aiter__` / `__anext__` are all generated around this one `step()`
 — `__anext__` just calls it from the event loop's executor.
 
+One more edit gives the generated class a real docstring instead of the
+generic `Ramp component.` fallback. In the same header, replace the
+scaffold's `@brief Create a ramp instance.` above
+`stream_source_async_demo_ramp_create()` with your own sentence, then re-derive the
+stub from it:
+
+```sh
+just-makeit apply      # ramp.pyi's class docstring now reads your @brief
+```
+
 ---
 
 ## 3. Build and stream from `asyncio`
 
 ```sh
-just-makeit build      # cmake configure + build + wheel
+make              # build; the .so lands in src/stream_source_async_demo/
+pip install -e .  # editable install: points Python at src/ (compiles nothing)
 ```
 
 Now drive the generated iterator under an event loop:
@@ -190,10 +204,6 @@ What `--async-stream` adds on top of the sync iterator:
   kernel **only if the producer releases the GIL** — i.e. a `nogil` method (jm
   supports `jm method --nogil`). For a plain producer, `async for` still works
   and yields control between blocks; it just doesn't overlap the kernel itself.
-
-The generated `ramp.pyi` class docstring is hand-authored in the header's
-`create()` `@brief`, so `help(Ramp)` reads as a real sentence rather than the
-generic `Ramp component.` fallback.
 
 The sync `for blk in obj.stream(...)` / `for blk in obj` forms are untouched and
 work on the same object — `--async-stream` only *adds* the async surface. See

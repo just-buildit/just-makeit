@@ -1,20 +1,27 @@
 """End-to-end test: array processing scaffold → method → variable-output.
 
-Exercises all six array processing patterns described in the README:
+Exercises the five array processing patterns the README walks through, its
+section-6 header documentation, and one shape it only links to:
   1. Auto-generated steps() on a stateful object
-  2. just-makeit method (scalar stub, batch companion hand-written)
+  2. just-makeit method (scalar stub) + its `--batch` companion
   3. just-makeit method --variable-output
   4. just-makeit method --variable-output --multi-output
   5. --arg-type type[] (array-buffer primary arg)
   6. just-makeit method --out-type (per-call typed output array)
+
+The C bodies the README shows for patterns 2-4 are its .steps/*.c files;
+they are spliced into the generated stubs and built, so a README kernel
+that no longer fits jm's prototypes fails here.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/array_processing/test.py
 """
 
 import os
+import re
 import subprocess
 import sys
+from just_makeit import _impl
 from just_makeit import _incpath as INC
 from pathlib import Path
 
@@ -36,6 +43,50 @@ def _cmd(args, cwd, **kw):
             f"stderr:\n{r.stderr}"
         )
     return r
+
+
+def _params(c_text: str, fn: str) -> str:
+    """*fn*'s parameters in *c_text*, comments dropped, spaces collapsed."""
+    m = re.search(r"\b" + re.escape(fn) + r"\s*\(([^)]*)\)", c_text)
+    assert m, f"{fn} not found"
+    return " ".join(re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S).split())
+
+
+def _implement_from_readme(proj: Path, comp: str, shown: Path, fns) -> None:
+    """Fill the generated stubs for *fns* with the README's own C (*shown*).
+
+    Bodies go in through ``--impl``'s primitives, so they compile against
+    the prototypes jm generated; the parameter check refuses a README that
+    shows a different signature -- the drift that left a one-argument
+    ``execute_max_out(state)`` in the README after jm added ``n_in``.
+    """
+    header = (INC.header_root(proj) / comp / f"{comp}_core.h").read_text(
+        encoding="utf-8"
+    )
+    core = proj / "native" / "src" / comp / f"{comp}_core.c"
+    text = core.read_text(encoding="utf-8")
+    shown_text = shown.read_text(encoding="utf-8")
+    for fn in fns:
+        assert _params(shown_text, fn) == _params(header, fn), (
+            f"{shown.name}: {fn}() parameters differ from the generated"
+            f" prototype:\n  README:    {_params(shown_text, fn)}"
+            f"\n  generated: {_params(header, fn)}"
+        )
+        patched = _impl.patch_function_body(
+            text, fn, _impl.extract_body(shown, fn)
+        )
+        assert patched != text, f"{fn}() stub not found in {core}"
+        text = patched
+    core.write_text(text, encoding="utf-8")
+
+
+def _py(proj: Path, code: str) -> None:
+    """Run *code* against *proj*'s built extension."""
+    _cmd(
+        [sys.executable, "-c", code],
+        cwd=proj,
+        env={**os.environ, "PYTHONPATH": str(proj / "src")},
+    )
 
 
 def run(root: Path) -> None:
@@ -68,6 +119,25 @@ def run(root: Path) -> None:
         return_type="uint32_t",
         variable_output=False,
         multi_output=[],
+    )
+    # ...and its 1:1-rate batch companion, bound by jm (`--batch`) and
+    # implemented with the README's loop.
+    jm_method(
+        root=proj_ema,
+        object_name="ema",
+        method_name="quantize_steps",
+        module=None,
+        arg_type="float",
+        return_type="uint32_t",
+        variable_output=False,
+        multi_output=[],
+        batch=True,
+    )
+    _implement_from_readme(
+        proj_ema,
+        "ema",
+        STEPS / "02_method_scalar_batch.c",
+        ["my_arrays_ema_quantize_steps"],
     )
 
     # Implement quantize + enrich the sacred header with Doxygen, then let
@@ -133,6 +203,20 @@ def run(root: Path) -> None:
         f"{doctest_res.stdout}\n{doctest_res.stderr}"
     )
 
+    # Pattern 2's batch method, out= included, as the README describes it.
+    _py(
+        proj_ema,
+        "import numpy as np\n"
+        "from my_arrays import Ema\n"
+        "f = Ema()\n"
+        "x = np.array([-1.0, 0.4, 3.4, 3.6], dtype=np.float32)\n"
+        "q = f.quantize_steps(x)\n"
+        "assert q.dtype == np.uint32 and q.tolist() == [0, 0, 3, 4], q\n"
+        "buf = np.empty(4, dtype=np.uint32)\n"
+        "assert f.quantize_steps(x, buf) is buf\n"
+        "assert buf.tolist() == [0, 0, 3, 4], buf\n",
+    )
+
     # ── Patterns 3 & 4: hbdecim object with --variable-output ─────────────────
 
     jm_new(
@@ -170,6 +254,21 @@ def run(root: Path) -> None:
         variable_output=True,
         multi_output=["uint8_t"],
     )
+    _implement_from_readme(
+        proj_decim,
+        "hbdecim",
+        STEPS / "03_max_out.c",
+        ["my_decim_hbdecim_execute_max_out", "my_decim_hbdecim_execute"],
+    )
+    _implement_from_readme(
+        proj_decim,
+        "hbdecim",
+        STEPS / "04_execute_ovf.c",
+        [
+            "my_decim_hbdecim_execute_ovf_max_out",
+            "my_decim_hbdecim_execute_ovf",
+        ],
+    )
 
     _cmd(
         [
@@ -186,6 +285,23 @@ def run(root: Path) -> None:
     _cmd(["cmake", "--build", "build", "--parallel", "4"], cwd=proj_decim)
     _cmd(
         ["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj_decim
+    )
+    # Patterns 3 and 4 as the README describes them: per call, NumPy-owned,
+    # trimmed to the kernel's count, independent of every other result.
+    _py(
+        proj_decim,
+        "import numpy as np\n"
+        "from my_decim import Hbdecim\n"
+        "d = Hbdecim()\n"
+        "block = np.ones(1024, dtype=np.complex64)\n"
+        "assert d.execute_max_out(1024) == 512\n"
+        "a = d.execute(block)\n"
+        "b = d.execute(block)\n"
+        "assert a.shape == (512,) and a.flags.owndata, a.shape\n"
+        "assert not np.shares_memory(a, b)\n"
+        "samples, flags = d.execute_ovf(block)\n"
+        "assert samples.shape == flags.shape == (512,)\n"
+        "assert flags.dtype == np.uint8 and not flags.any(), flags\n",
     )
 
     # ── Pattern 5: --arg-type type[] (array-buffer primary arg) ───────────────

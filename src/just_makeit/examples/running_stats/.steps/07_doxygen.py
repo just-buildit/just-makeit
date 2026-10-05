@@ -14,7 +14,9 @@ state accessors (``get_mean`` / ``get_min_val`` / ...), no hand-written named
 method, so there is nothing to hang a runnable ``@code`` doctest on — the class
 summary is the whole win.
 
-Usage:  python3 .steps/07_doxygen.py     # run from the project root
+Usage, from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/07_doxygen.py"
 """
 
 from __future__ import annotations

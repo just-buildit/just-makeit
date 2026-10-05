@@ -14,7 +14,18 @@ The producer — emit up to `n` samples, advance `pos`, and return the count:
 ```{02_run.c}
 ```
 
-That is all the C. The output buffer, the zero-copy numpy view, and the
+That is all the C. The NumPy-owned array each `run()` returns and the
 `stream()` / `__iter__` iterator are generated around these two functions.
 (Both are spliced into the build and run by the example's test, so what you
 read here is exactly what compiles.)
+
+One more edit gives the generated class a real docstring instead of the
+generic `Drainer component.` fallback. In the sacred
+`native/inc/stream_blockwise_demo/drainer/drainer_core.h`, replace the
+scaffold's `@brief Create a drainer instance.` above
+`stream_blockwise_demo_drainer_create()` with your own sentence, then
+re-derive the stub from it:
+
+```sh
+just-makeit apply      # drainer.pyi's class docstring now reads your @brief
+```

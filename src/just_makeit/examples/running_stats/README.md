@@ -26,7 +26,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -53,7 +55,8 @@ Three state variables — all zero by default, so `RunningStats()` needs no argu
 | `mean` | `double`  | Running mean (Welford)              |
 | `m2`   | `double`  | Sum of squared deviations (Welford) |
 
-Variance = `m2 / (n - 1)` once `n > 1`.
+Variance = `m2 / n` (population variance; `m2 / (n - 1)` is the sample
+variance).
 
 ---
 
@@ -62,7 +65,7 @@ Variance = `m2 / (n - 1)` once `n > 1`.
 Open `native/inc/my_stats/running_stats/running_stats_core.h` and replace the stub.
 The algorithm mutates state, so the signature changes from `const` to mutable.
 The real part of the input is the sample value; the return packs `mean` into
-the real part and sample variance into the imaginary part:
+the real part and population variance into the imaginary part:
 
 ```c
 // before
@@ -70,14 +73,14 @@ static inline float _Complex my_stats_running_stats_step (
     const my_stats_running_stats_state_t *state, float _Complex x)
 {
   (void)state; /* TODO: implement using state variables */
-  return x;
+  return (float _Complex)x;
 }
 ```
 
 ```c
 // base — Welford's online algorithm (mean + variance only)
 // Input:  real part = new sample (imaginary part ignored)
-// Output: real = current mean, imag = sample variance (0 until n > 1)
+// Output: real = current mean, imag = population variance (m2 / n)
 static inline float _Complex my_stats_running_stats_step (
     my_stats_running_stats_state_t *state, float _Complex x)
 {
@@ -182,20 +185,22 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
 Track the min and max alongside the running statistics:
 
 ```sh
-just-makeit add --state "min_val:double:0.0" --state "max_val:double:0.0"
+just-makeit add --force --state "min_val:double:0.0" --state "max_val:double:0.0"
 make test
 ```
 
 State is *structural*: `add` rewrites the `my_stats_running_stats_state_t` struct and
 the `create()` / `reset()` lifecycle, so it rebuilds the object from the
-manifest rather than splicing into your sources. That rebuild resets
-`my_stats_running_stats_step()` back to a fresh stub, so re-run the implement step to
-restore the algorithm — now on top of the new `min_val` / `max_val` fields:
+manifest rather than splicing into your sources. `add` asks before it deletes
+and regenerates the object's files; `--force` skips the prompt. That rebuild
+resets `my_stats_running_stats_step()` back to a fresh stub, so re-run the
+implement step to restore the algorithm — now on top of the new `min_val` /
+`max_val` fields:
 
 ```c
 // after — Welford's online algorithm + running min/max
 // Input:  real part = new sample (imaginary part ignored)
-// Output: real = current mean, imag = sample variance (0 until n > 1)
+// Output: real = current mean, imag = population variance (m2 / n)
 // State:  min_val / max_val track the smallest / largest sample seen so far.
 static inline float _Complex my_stats_running_stats_step (
     my_stats_running_stats_state_t *state, float _Complex x)
@@ -241,7 +246,9 @@ state accessors (``get_mean`` / ``get_min_val`` / ...), no hand-written named
 method, so there is nothing to hang a runnable ``@code`` doctest on — the class
 summary is the whole win.
 
-Usage:  python3 .steps/07_doxygen.py     # run from the project root
+Usage, from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/07_doxygen.py"
 """
 
 from __future__ import annotations
@@ -290,4 +297,12 @@ if __name__ == "__main__":
     _enrich()
 ```
 
-Run it, then `jm apply` re-derives the `.pyi` from the edited header.
+The script ships with just-makeit, in this example's `.steps/` directory.
+Run it from the project root by that path; `jm apply` then re-derives the
+`.pyi` from the edited header:
+
+```sh
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples/running_stats/.steps")')"
+python3 "$STEPS/07_doxygen.py"
+just-makeit apply
+```

@@ -9,9 +9,9 @@ One command adds three things to the project:
 
 | Added | Effect |
 | ----- | ------ |
-| `native/inc/jm_perf.h` | `JM_FORCEINLINE`, `JM_HOT`, `JM_RESTRICT`, `JM_LIKELY`, ... |
-| `native/inc/jm_simd.h` | `JM_VEC_F32`, `JM_ADD_F32`, `JM_LOAD_F32`, `JM_HSUM_F32`, `JM_SIMD_WIDTH_F32` |
-| `#include "jm_perf.h"` inserted in each `_core.h` | Makes all macros available to every `.c` that includes the header |
+| `native/inc/my_acc/jm_perf.h` | `JM_FORCEINLINE`, `JM_HOT`, `JM_RESTRICT`, `JM_LIKELY`, ... |
+| `native/inc/my_acc/jm_simd.h` | `JM_VEC_F32`, `JM_ADD_F32`, `JM_LOAD_F32`, `JM_HSUM_F32`, `JM_SIMD_WIDTH_F32` |
+| `#include "my_acc/jm_perf.h"` inserted in each `_core.h` | Makes all macros available to every `.c` that includes the header |
 
 `just-makeit.toml` gains `perf = "true"` and each object's `step()` qualifier is
 upgraded from `static inline` to `JM_FORCEINLINE JM_HOT`.
@@ -23,25 +23,33 @@ Save this as `bench.py` in `my_acc/`:
 ```{07_bench.py}
 ```
 
-Build and measure across three stages:
+Build and measure across three stages (stage 3 runs the patch script from
+this example's `.steps/` directory in the installed package, the same
+`$STEPS` as section 4):
 
 ```{07_bench.sh}
 ```
 
 ### 7.3 Results
 
-Measured on x86-64 (AVX2), AMD Ryzen 9, `BLOCK = 100_000`:
+Measured on x86-64 (AVX-512), AMD Ryzen AI 9 465, `BLOCK = 100_000`; the
+script's output with the CMake build lines omitted:
 
 ```
-=== Stage 1: Release -O3, JM_FORCEINLINE JM_HOT on step(), scalar steps() ===
-AccF32  100,000 samples  1.66 G samples/sec   1.0×
-
-=== Stage 2: ENABLE_SIMD=ON (-ffast-math -march=native) ===
-AccF32  100,000 samples  1.65 G samples/sec   ≈1.0×
-
-=== Stage 3: explicit JM_VEC_F32 + JM_RESTRICT, ENABLE_SIMD=ON ===
-AccF32  100,000 samples  18.11 G samples/sec  10.9×
+=== baseline (scalar) ===
+AccF32  100,000 samples  1.43 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
+=== ENABLE_SIMD=ON (auto-vectorised) ===
+AccF32  100,000 samples  1.43 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
+patched native/src/acc_f32/acc_f32_core.c
+=== explicit SIMD (JM_ADD_F32 + JM_HSUM_F32) ===
+AccF32  100,000 samples  22.46 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
 ```
+
+Stage 3 runs `AccF32.steps()` about 16x faster than stage 1; stage 2 moves
+nothing.
 
 ### 7.4 Why stage 2 does not improve
 
@@ -74,8 +82,8 @@ explicit SIMD version.  Two things happen simultaneously:
 2. The inner loop is written explicitly using `JM_VEC_F32`, `JM_ADD_F32`,
    `JM_LOAD_F32`, and `JM_HSUM_F32`.
 
-```python
-python3 .steps/07_patch_perf.py
+```sh
+python3 "$STEPS/07_patch_perf.py"   # stage 3 above already ran it
 ```
 
 The replacement in `native/src/acc_f32/acc_f32_core.c`:
@@ -113,22 +121,22 @@ my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
 | --------- | ------------------- | ------------ | ------------ |
 | AVX-512F  | 16                  | `__m512`     | `_mm512_add_ps` |
 | AVX2+FMA  | 8                   | `__m256`     | `_mm256_add_ps` |
+| AArch64 NEON | 4                | `float32x4_t` | `vaddq_f32`  |
 | Scalar    | 1                   | `float`      | `+`          |
 
-The same source compiles to the widest available tier with no `#ifdef` in user
-code.  On scalar targets `JM_SIMD_WIDTH_F32 == 1` so `i + 1 <= n` is always
-true in the vector loop — it degenerates to a single-element loop identical to
-the `#else` branch, and `JM_HSUM_F32` is a no-op identity.
-
-The `#if / #else / #endif` guard is a safety net: on scalar targets the
-`#else` branch compiles instead, keeping the generated `.so` valid even on a
-machine with no SIMD support.
+The same macros compile to the widest tier the target and compiler flags
+enable; on x86-64 the AVX tiers need `ENABLE_SIMD=ON` (`-march=native`), while
+NEON is always on for AArch64. With the `#if JM_SIMD_WIDTH_F32 > 1` guard the
+vector loop is compiled only where a SIMD tier exists; on scalar targets the
+`#else` branch compiles instead, keeping the generated `.so` valid on a target
+with no SIMD support.
 
 ### 7.7 `AccCf64` and complex SIMD
 
-The `AccCf64` benchmarks show no improvement because the same aliasing problem
-applies to `my_acc_acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
-`JM_RESTRICT` there follows the same pattern.  Explicit SIMD for `double
-_Complex` is more involved: the storage is two consecutive doubles (real then
-imaginary), so you need `JM_VEC_F64` with stride-2 access or interleaved
-accumulation — left as an exercise once the `AccF32` workflow is understood.
+The `AccCf64` lines show no improvement in any stage because the same
+aliasing problem applies to `my_acc_acc_cf64_steps()` and the patch only
+covers `acc_f32`.  Adding `JM_RESTRICT` there follows the same pattern.
+Explicit SIMD for `double _Complex` is more involved: the storage is two
+consecutive doubles (real then imaginary), so you need `JM_VEC_F64` with
+stride-2 access or interleaved accumulation — left as an exercise once the
+`AccF32` workflow is understood.

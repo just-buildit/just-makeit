@@ -20,8 +20,8 @@ for block in decoder.stream(4096):
 
 This example builds a finite "drainer" — a source of exactly `total` complex
 samples that empties as you pull it — marks it streamable, and shows the drain,
-`count`, `on_block`, and `__iter__`, plus the one gotcha that comes with
-zero-copy output: **copy each block before the next call.**
+`count`, `on_block`, and `__iter__`, and why collecting the blocks needs no
+copy.
 
 ## TL;DR — see it work first
 
@@ -37,7 +37,9 @@ just-makeit example stream_blockwise
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -130,17 +132,29 @@ stream_blockwise_demo_drainer_run (
 }
 ```
 
-That is all the C. The output buffer, the zero-copy numpy view, and the
+That is all the C. The NumPy-owned array each `run()` returns and the
 `stream()` / `__iter__` iterator are generated around these two functions.
 (Both are spliced into the build and run by the example's test, so what you
 read here is exactly what compiles.)
+
+One more edit gives the generated class a real docstring instead of the
+generic `Drainer component.` fallback. In the sacred
+`native/inc/stream_blockwise_demo/drainer/drainer_core.h`, replace the
+scaffold's `@brief Create a drainer instance.` above
+`stream_blockwise_demo_drainer_create()` with your own sentence, then
+re-derive the stub from it:
+
+```sh
+just-makeit apply      # drainer.pyi's class docstring now reads your @brief
+```
 
 ---
 
 ## 3. Build and stream from Python
 
 ```sh
-just-makeit build      # cmake configure + build + wheel
+make              # build; the .so lands in src/stream_blockwise_demo/
+pip install -e .  # editable install: points Python at src/ (compiles nothing)
 ```
 
 Now drive the generated iterator:
@@ -214,11 +228,6 @@ whole = np.concatenate(chunks)
     N times. That reuse was removed in gh-604 — see [Array memory
     ownership](../memory-ownership.md).
 
-This is exactly why `on_block` fires *after* the yield: by then the consumer
-has already used (or copied) the block, so the buffer is free to be refilled on
-the next pull. A *source* producer (`steps`) has no such rule — see the
+`on_block` fires *after* the yield, so a pacing hook can account for the
+consumer's time. A *source* producer (`steps`) behaves the same — see the
 `stream_source` example.
-
-The hand-written Doxygen `@brief` on `stream_blockwise_demo_drainer_create()` in the sacred
-`native/inc/stream_blockwise_demo/drainer/drainer_core.h` header drives the generated `drainer.pyi`
-class docstring — `jm apply` re-derives the stub from that comment.

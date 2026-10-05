@@ -1,4 +1,4 @@
-"""Drive the four generated OO types, and both seams."""
+"""Drive the three generated OO types, and both seams."""
 
 import sys
 

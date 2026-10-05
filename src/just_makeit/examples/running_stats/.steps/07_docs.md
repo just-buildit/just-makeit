@@ -8,4 +8,12 @@ turns the generated `.pyi` class summary from the generic
 ```{07_doxygen.py}
 ```
 
-Run it, then `jm apply` re-derives the `.pyi` from the edited header.
+The script ships with just-makeit, in this example's `.steps/` directory.
+Run it from the project root by that path; `jm apply` then re-derives the
+`.pyi` from the edited header:
+
+```sh
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples/running_stats/.steps")')"
+python3 "$STEPS/07_doxygen.py"
+just-makeit apply
+```

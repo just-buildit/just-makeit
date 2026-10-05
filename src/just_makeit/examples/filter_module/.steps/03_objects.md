@@ -7,23 +7,32 @@
 
 **Per-object C library** (same as `just-makeit object`, no Python module target):
 
-| File                                 | Purpose                                            |
-| ------------------------------------ | -------------------------------------------------- |
-| `native/inc/my_filters/fir/fir_core.h`          | Header: struct, inline `my_filters_fir_step`, getters/setters |
-| `native/src/fir/fir_core.c`          | Source: create/destroy/reset/steps                 |
-| `native/src/fir/CMakeLists.txt`      | OBJECT library + C test + bench (no `.so`)         |
-| `native/tests/test_fir_core.c`       | C test with `CHECK` macro counter                  |
-| `native/benchmarks/bench_fir_core.c` | C benchmark                                        |
+| File                                   | Purpose                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `native/inc/my_filters/fir/fir_core.h` | Header: struct, inline `my_filters_fir_step`, getters/setters                                                 |
+| `native/src/fir/fir_core.c`            | Source: create/destroy/reset/steps                                                                            |
+| `native/src/fir/CMakeLists.txt`        | OBJECT library + C test + bench (no `.so`)                                                                    |
+| `native/tests/test_fir_core.c`         | C test with `CHECK` macro counter                                                                             |
+| `native/benchmarks/bench_fir_core.c`   | C benchmark                                                                                                   |
+| `native/tests/test_fir_symbols.c`      | Links the address of every C function the binding calls (fails at link time if one is declared but undefined) |
 
-**Module regeneration** — after each `just-makeit object`, these are fully rewritten:
+It also writes the object's Python test and benchmark
+(`src/my_filters/filter/tests/test_fir.py`,
+`src/my_filters/filter/benchmarks/bench_fir.py`) and its manifest fragment,
+`objects/fir.toml`.
 
-| File                                | What changes                                          |
-| ----------------------------------- | ----------------------------------------------------- |
-| `native/src/filter/filter_ext.c`    | `FirObject` type added; `PyMODINIT_FUNC` registers it |
-| `native/src/filter/CMakeLists.txt`  | `fir_core` added to link list                         |
-| `src/my_filters/filter/__init__.py` | `from .filter import Fir` added                       |
+**Module wiring** — each `just-makeit object` then writes or updates:
 
-After both objects:
+| File                                                   | What changes                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `native/src/filter/filter_ext_fir.c`                   | Created: the `FirObject` type and its methods                                   |
+| `native/src/filter/filter_ext.c`                       | `#include "filter_ext_fir.c"` added, and `PyInit_filter` registers `Fir`        |
+| `native/src/filter/CMakeLists.txt`                     | `fir_core` added to the link list                                               |
+| `src/my_filters/filter/__init__.py`                    | `from .filter import Fir` added                                                 |
+| `src/my_filters/filter/filter.pyi`                     | `class Fir` added                                                               |
+| `CMakeLists.txt`, `native/inc/my_filters/my_filters.h` | `native/src/fir` added as a subdirectory, and its header to the umbrella header |
+
+After both objects, `modules/filter.toml`:
 
 ```toml
 [module.filter]
@@ -31,14 +40,16 @@ objects = ["fir", "biquad"]
 ```
 
 ```python
-# src/my_filters/filter/__init__.py — generated
-from .filter import Fir, Biquad
+# src/my_filters/filter/__init__.py — generated (Windows DLL-directory shim
+# above this line omitted)
+from .filter import Fir, Biquad  # noqa: E402
 
 __all__ = ["Fir", "Biquad"]
 ```
 
-`filter_ext.c` contains both `FirObject` and `BiquadObject` type definitions
-followed by a single `PyInit_filter` that registers both.
+`filter_ext.c` `#include`s `filter_ext_fir.c` and `filter_ext_biquad.c` (one
+`FirObject` / `BiquadObject` each), then a single `PyInit_filter` registers
+both.
 
 ### Fir state
 

@@ -1,7 +1,8 @@
 ## 3. Build and stream from Python
 
 ```sh
-just-makeit build      # cmake configure + build + wheel
+make              # build; the .so lands in src/stream_source_demo/
+pip install -e .  # editable install: points Python at src/ (compiles nothing)
 ```
 
 Now drive the generated iterator:

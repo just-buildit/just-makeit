@@ -1,7 +1,8 @@
 ## 3. Build and stream from Python
 
 ```sh
-just-makeit build      # cmake configure + build + wheel
+make              # build; the .so lands in src/stream_blockwise_demo/
+pip install -e .  # editable install: points Python at src/ (compiles nothing)
 ```
 
 Now drive the generated iterator:
@@ -35,11 +36,6 @@ whole = np.concatenate(chunks)
     N times. That reuse was removed in gh-604 — see [Array memory
     ownership](../memory-ownership.md).
 
-This is exactly why `on_block` fires *after* the yield: by then the consumer
-has already used (or copied) the block, so the buffer is free to be refilled on
-the next pull. A *source* producer (`steps`) has no such rule — see the
+`on_block` fires *after* the yield, so a pacing hook can account for the
+consumer's time. A *source* producer (`steps`) behaves the same — see the
 `stream_source` example.
-
-The hand-written Doxygen `@brief` on `stream_blockwise_demo_drainer_create()` in the sacred
-`native/inc/stream_blockwise_demo/drainer/drainer_core.h` header drives the generated `drainer.pyi`
-class docstring — `jm apply` re-derives the stub from that comment.

@@ -9,7 +9,9 @@ here makes the stub read like documentation. Run this after ``jm perf`` /
 ``jm add`` have settled the header; a follow-up ``jm apply`` re-derives the
 ``.pyi`` from the edited comment.
 
-Usage:  python3 .steps/08_doxygen.py     # run from the project root
+Usage, from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/08_doxygen.py"
 """
 
 from __future__ import annotations

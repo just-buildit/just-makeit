@@ -18,7 +18,9 @@ just-makeit example declarative_scaffold
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -97,8 +99,10 @@ just-makeit apply ../agc.toml
 
 1. Copies `agc.toml` into `objects/agc.toml` — the project becomes
     self-contained and the external fragment is no longer needed
-1. Adds `include = ["objects/*.toml"]` to `just-makeit.toml`
-1. Materialises `native/inc/demo/agc/agc_core.h`, `native/src/agc/agc_core.c`,
+1. Picks it up through the `include = ["objects/*.toml", "modules/*.toml"]`
+    glob `jm new` already wrote (a `--no-fragments` project gets
+    `include = ["objects/*.toml"]` added)
+1. Materialises `native/inc/agc_demo/agc/agc_core.h`, `native/src/agc/agc_core.c`,
     `native/src/agc/agc_ext.c`, tests, type stub, CMake wiring
 
 The `step()` body from `impl` is injected into `agc_core.h` at materialise
@@ -184,6 +188,7 @@ commands that come after it.
 - [Declarative scaffolding](../declarative-scaffolding.md) — full reference for
     the fragment format, placeholder table, and lifecycle body keys
 - [Declarative scaffolding — three layouts](../declarative-scaffolding.md#three-layouts)
-- [`jm apply` and `jm migrate-to-fragments` reference](../commands/build.md)
+- [`jm apply` reference](../commands/build.md#just-makeit-apply)
+- [`jm migrate-to-fragments`](../declarative-scaffolding.md#migrating-an-existing-project)
 - [Declarative scaffolding design](../developers/declarative-scaffolding.md) —
     the design rationale behind the fragment format

@@ -3,4 +3,5 @@
 ```{03_build.sh}
 ```
 
-The generated C test exercises `create`, `reset`, `step`, and `steps`.
+The generated C test exercises `create`, the state accessors, `step`,
+`reset`, and `destroy`.

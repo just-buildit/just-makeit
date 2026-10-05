@@ -42,7 +42,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -86,8 +88,9 @@ Two types, one `.so`.
 ### Cf32ToQ15 — writer
 
 Takes a `float _Complex` sample, scales it, clamps it, and packs the
-I and Q parts as two `int16_t` values.  Returns the number of bytes written
-(`int32_t`, 4 on success, −1 on error) so the caller can detect short writes.
+I and Q parts as two `int16_t` values.  Returns both packed into one
+`int32_t` (I in the low 16 bits, Q in the high 16 bits), so `steps()` output
+viewed as `np.int16` is the interleaved q15 stream.
 
 `--arg-type float _Complex` and `--return-type int32_t` generate:
 
@@ -134,10 +137,12 @@ os.close(fd)
 
 ```sh
 just-makeit property cf32_to_q15 samples_written \
-    --module conv --type uint32_t --field
+    --module conv --type uint32_t --field \
+    --doc "Total complex samples written since construction."
 
 just-makeit property q15_to_cf32 samples_read \
-    --module conv --type uint32_t --field
+    --module conv --type uint32_t --field \
+    --doc "Total complex samples read since construction."
 
 just-makeit property q15_to_cf32 eof \
     --module conv --type int32_t
@@ -145,22 +150,29 @@ just-makeit property q15_to_cf32 eof \
 
 Three properties across the two types:
 
-| Object      | Property          | Kind      | Type       | Notes                               |
-| ----------- | ----------------- | --------- | ---------- | ----------------------------------- |
-| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `step()`             |
-| `Q15ToCf32` | `samples_read`    | `--field` | `uint32_t` | incremented by `step()`             |
-| `Q15ToCf32` | `eof`             | computed  | `int32_t`  | implement via `read()` return value |
+| Object      | Property          | Kind      | Type       | Notes                                    |
+| ----------- | ----------------- | --------- | ---------- | ---------------------------------------- |
+| `Cf32ToQ15` | `samples_written` | `--field` | `uint32_t` | incremented by `steps()`                 |
+| `Q15ToCf32` | `samples_read`    | `--field` | `uint32_t` | incremented by `steps()`                 |
+| `Q15ToCf32` | `eof`             | computed  | `int32_t`  | implement by comparing `lseek` positions |
 
 **Field-backed** (`--field`): adds `uint32_t samples_written;` to the state
 struct and auto-implements the getter as `return state->samples_written` — no
-`<<IMPLEMENT>>` stub needed.
+`<<IMPLEMENT>>` stub needed. That getter has no header declaration to carry
+a Doxygen `@brief`, so `--doc` is where its docstring lives (see step 4).
 
 **Computed** (`eof`, no `--field`): getter stub calls `iqfile_q15_to_cf32_get_eof()`
-which you implement — returning 1 when the last `read()` returned 0 bytes.
+which you implement — returning 1 when the file position is at end of file
+(or `fd < 0`).
 
 ---
 
 ## 4. Implement the C kernels
+
+Two scripts write the kernels into the scaffold. Save each in the project
+root under the name shown; the commands that run them close this step.
+
+`04_patch_writer.py`:
 
 ```python
 """Implement iqfile_cf32_to_q15_step() and add the samples_written counter."""
@@ -216,6 +228,8 @@ assert OLD_LOOP in text, "steps() loop not found"
 core_c.write_text(text.replace(OLD_LOOP, NEW_LOOP, 1), encoding="utf-8")
 print(f"patched  {core_c.relative_to(root)}")
 ```
+
+`04_patch_reader.py`:
 
 ```python
 """Implement iqfile_q15_to_cf32_step(), samples_read counter, and eof getter."""
@@ -340,11 +354,11 @@ static inline int32_t
 iqfile_cf32_to_q15_step (const iqfile_cf32_to_q15_state_t *state,
                          float _Complex x)
 {
-  float   scale   = state->scale;
-  int16_t i       = (int16_t)(crealf (x) * scale);
-  int16_t q       = (int16_t)(cimagf (x) * scale);
-  int16_t pair[2] = { i, q };
-  return (int32_t)sizeof (pair);
+  float   s = state->scale;
+  int16_t i = (int16_t)fmaxf (-s, fminf (s, crealf (x) * s));
+  int16_t q = (int16_t)fmaxf (-s, fminf (s, cimagf (x) * s));
+  /* Pack I in the low 16 bits, Q in the high 16 bits. */
+  return (int32_t)((uint32_t)(uint16_t)i | ((uint32_t)(uint16_t)q << 16));
 }
 ```
 
@@ -368,10 +382,9 @@ static inline float _Complex iqfile_q15_to_cf32_step (
     const iqfile_q15_to_cf32_state_t *state)
 {
   int16_t pair[2] = { 0, 0 };
-  ssize_t n       = read ((int)state->fd, pair, sizeof (pair));
-  (void)n;
-  return (crealf (0.0f) + cimagf (0.0f) * I)
-         + ((float)pair[0] + (float)pair[1] * I) / state->scale;
+  if (state->fd >= 0)
+    read ((int)state->fd, pair, sizeof (pair));
+  return ((float)pair[0] + (float)pair[1] * I) / state->scale;
 }
 ```
 
@@ -464,8 +477,8 @@ properties — and a property getter renders as prose, not as a runnable
 `accumulator` and `views_module` examples, whose named methods carry `@code`
 blocks that execute against the built extension.
 
-The enrichment for both types is scripted — run it after the kernels are
-implemented, then re-derive the glue:
+The enrichment for both types is scripted too. Save it in the project root
+as `04b_doxygen.py`:
 
 ```python
 """Enrich the sacred ``<obj>_core.h`` headers with Doxygen so the generated
@@ -497,7 +510,7 @@ properties), and a property getter's docstring renders as prose only — a
 example ships rich class summaries and property docs, but no runnable method
 doctest (like the other "light" examples).
 
-Usage:  python3 .steps/04b_doxygen.py     # run from the project root
+Usage:  python3 04b_doxygen.py     # saved in, and run from, the project root
 """
 
 from __future__ import annotations
@@ -572,8 +585,13 @@ if __name__ == "__main__":
     main()
 ```
 
+Run the three scripts from the project root, kernels first, with the Python
+that has just-makeit installed (`04b_doxygen.py` imports it), then re-derive
+the glue:
+
 ```sh
-python3 .steps/04b_doxygen.py
+python3 04_patch_writer.py && python3 04_patch_reader.py
+python3 04b_doxygen.py
 just-makeit apply
 ```
 
@@ -587,7 +605,7 @@ make test
 ```
 
 `make` configures CMake and builds the `conv` extension module.
-`make test` runs CTest (C lifecycle tests) and pytest (Python API tests)
+`make test` runs CTest (C lifecycle tests) and unittest (Python API tests)
 for both `Cf32ToQ15` and `Q15ToCf32`.
 
 ---
@@ -666,14 +684,14 @@ os.unlink(q15_path)
 ```
 
 The demo generates 4096 complex samples, writes them to a temporary `.q15`
-file, reads them back, and verifies the round-trip error stays within one
-quantisation step (~1/32767 ≈ −90 dBFS):
+file, reads them back, and verifies the round-trip error stays within two
+quantisation steps (2/32767; truncating I and Q each loses up to one step):
 
 ```
 wrote    4096 complex samples -> /tmp/tmpXXXXXX.q15  (16384 bytes)
 written: 4096 samples
 read:    4096 samples,  eof=1
-max err: 0.000031  (floor ~0.000031)
+max err: 0.000043  (floor ~0.000031)
 PASSED
 ```
 
@@ -684,15 +702,30 @@ half the 32 768 bytes a cf32 file would use for the same signal.
 
 ## 8. Build a wheel
 
+`just-makeit build` imports just-buildit from just-makeit's own environment
+and, on Linux, repairs the wheel with `uvx auditwheel repair`, which needs
+`uv` and `patchelf` on `PATH`. Neither install route above installs
+just-buildit or uv, and only the `pip` route's `install-deps` installs
+patchelf, so add what is missing first (with the venv from Prerequisites
+active):
+
+```sh
+pip install just-buildit uv     # into the environment just-makeit runs from
+sudo apt install patchelf       # Linux, if absent (dnf/pacman/zypper: patchelf)
+```
+
+Then:
+
 ```sh
 just-makeit build
 ```
 
-`just-makeit build` runs CMake in release mode, packages the `.so` and Python
-sources into a PEP 427 wheel, and writes it to `dist/`:
+It builds the extension with CMake (reusing `build/` from step 5), packages
+the `.so` and Python sources into a PEP 427 wheel, repairs it, and writes it
+to `dist/` -- on Linux x86-64 with CPython 3.12, for example:
 
 ```
-dist/iqfile-0.1.0-cp312-cp312-linux_x86_64.whl
+dist/iqfile-0.1.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl
 ```
 
 Install it anywhere:

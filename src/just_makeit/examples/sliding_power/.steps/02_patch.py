@@ -1,6 +1,8 @@
 """Patch my_power_power_est_step stub with the recursive implementation.
 
-Run from the project root: python3 .steps/02_patch.py
+Run from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/02_patch.py"
 """
 
 import pathlib

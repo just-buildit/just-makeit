@@ -1,7 +1,14 @@
 ## 4. Implement the C kernels
 
+Two scripts write the kernels into the scaffold. Save each in the project
+root under the name shown; the commands that run them close this step.
+
+`04_patch_writer.py`:
+
 ```{04_patch_writer.py}
 ```
+
+`04_patch_reader.py`:
 
 ```{04_patch_reader.py}
 ```
@@ -122,13 +129,18 @@ properties — and a property getter renders as prose, not as a runnable
 `accumulator` and `views_module` examples, whose named methods carry `@code`
 blocks that execute against the built extension.
 
-The enrichment for both types is scripted — run it after the kernels are
-implemented, then re-derive the glue:
+The enrichment for both types is scripted too. Save it in the project root
+as `04b_doxygen.py`:
 
 ```{04b_doxygen.py}
 ```
 
+Run the three scripts from the project root, kernels first, with the Python
+that has just-makeit installed (`04b_doxygen.py` imports it), then re-derive
+the glue:
+
 ```sh
-python3 .steps/04b_doxygen.py
+python3 04_patch_writer.py && python3 04_patch_reader.py
+python3 04b_doxygen.py
 just-makeit apply
 ```

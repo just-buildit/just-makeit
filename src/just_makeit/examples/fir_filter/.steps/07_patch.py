@@ -1,6 +1,8 @@
 """Patch fir_filter_core.h and fir_filter_core.c for the scratch-buffer kernel.
 
-Run from the project root: python3 .steps/07_patch.py
+Run from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/07_patch.py"
 
 Header: inserts my_fir_fir_filter_step_batch() after my_fir_fir_filter_step().
 Source: replaces my_fir_fir_filter_steps() with JM_DEFINE_STEPS(...).

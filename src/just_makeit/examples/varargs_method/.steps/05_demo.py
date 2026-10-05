@@ -1,7 +1,7 @@
 import sys
 
 sys.path.insert(0, "src")
-from my_filter import Filter
+from va_filter import Filter
 
 f = Filter(gain=1.0)
 assert f.step(2.0) == 2.0

@@ -3,7 +3,7 @@
 Open `native/inc/my_stats/running_stats/running_stats_core.h` and replace the stub.
 The algorithm mutates state, so the signature changes from `const` to mutable.
 The real part of the input is the sample value; the return packs `mean` into
-the real part and sample variance into the imaginary part:
+the real part and population variance into the imaginary part:
 
 ```{02_step_before.c}
 ```

@@ -10,7 +10,7 @@ gh-998's generated bridge header had none at all.
   4. `jm apply`, and assert the bridge header is what a consumer can use.
   5. Write the two seam bodies -- straight C, including jm's header.
   6. cmake configure + build.
-  7. Drive the four OO types and both seams from Python.
+  7. Drive the three OO types and both seams from Python.
   8. Compile and RUN a C consumer that includes only the bridge header.
 
 Called by tests/test_examples.py via run(root).

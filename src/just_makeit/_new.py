@@ -55,6 +55,52 @@ def _write(path: Path, content: str) -> None:
     print(f"  create  {path}")
 
 
+#: The generated README's backend-specific text, one row per build backend,
+#: filled into the slots of the ONE ``templates/doc/README.md``. Everything
+#: else in the README is the same for both backends -- the dependency install,
+#: Quickstart, Package -- and a second template copied all of it, so a fix to
+#: one would have missed the other (the gh-1860 shape). `run` picks the row
+#: beside the Makefile it describes.
+README_BY_BACKEND = {
+    "cmake": {
+        "readme_requirements": (
+            "- CMake ≥ 3.16\n"
+            "- A C99 compiler — GCC or Clang on Linux and macOS. On\n"
+            "  Windows, **clang-cl** (Visual Studio Build Tools' C++\n"
+            "  workload plus LLVM), run from a Developer PowerShell; the\n"
+            "  `Makefile` selects it with Ninja. Not MSVC's own `cl.exe`:\n"
+            "  it has no C99 `float _Complex`. To use the `Makefile`,\n"
+            "  install GNU make (`winget install ezwinports.make`); or open\n"
+            "  the folder in Visual Studio, which configures through the\n"
+            "  generated `CMakePresets.json`\n"
+            "  ([Building on Windows]"
+            "(https://just-buildit.github.io/just-makeit/windows/))."
+        ),
+        "readme_make_builds": "cmake configure + build",
+        "readme_c_tests": "CTest",
+        "readme_jm_build": (
+            " `just-makeit build`\n"
+            "does the same when just-buildit is installed in the environment\n"
+            "just-makeit runs from (`pip install just-makeit just-buildit`)."
+        ),
+        "readme_repair_windows": ", `delvewheel` on Windows",
+    },
+    # The make backend drives `cc` directly: no CMake, no Windows build
+    # (its Makefile `$(error)`s there, gh-1368), no `make docs`, and
+    # `just-makeit build` always configures with CMake.
+    "make": {
+        "readme_requirements": (
+            "- A C99 compiler (GCC or Clang) and GNU make, on Linux or\n"
+            "  macOS. The `make` build backend does not build on Windows."
+        ),
+        "readme_make_builds": "build the extension(s)",
+        "readme_c_tests": "C tests",
+        "readme_jm_build": "",
+        "readme_repair_windows": "",
+    },
+}
+
+
 #: `run`'s ``c_prefix`` when the caller says nothing: the project's name.
 #: A sentinel, not None, because None is a real answer -- "no prefix" -- that
 #: `--no-c-prefix` and the replay of an unprefixed project both give.
@@ -141,8 +187,13 @@ def run(
         # root dir falls back to whatever interpreter CMake finds when the
         # venv is absent -- the wrong-numpy configure gh-814 refuses.
         _write(root / "CMakePresets.json", T.CMAKE_PRESETS_JSON)
+        ctx.update(README_BY_BACKEND["cmake"])
     else:
         _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
+        # The README describes the build its own Makefile runs: one README
+        # for both backends advertised CMake, a Windows build and
+        # `make docs` to a make-backend project, which has none of them.
+        ctx.update(README_BY_BACKEND["make"])
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
     _write(root / "README.md", r(T.README_MD))
     _write(root / ".gitignore", r(T.GITIGNORE))

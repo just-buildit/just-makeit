@@ -36,7 +36,7 @@ alpha = math.sin(w0) / (2 * Q)
 c = math.cos(w0)
 a0 = 1 + alpha
 
-bq = Biquad(
+lowpass = dict(
     b0=(1 - c) / 2 / a0,
     b1=(1 - c) / a0,
     b2=(1 - c) / 2 / a0,
@@ -44,15 +44,17 @@ bq = Biquad(
     a2=(1 - alpha) / a0,
 )
 
-t = np.arange(512, dtype=np.float32) / 512
-lo = np.cos(2 * math.pi * 0.05 * t)  # 0.05*fs — passband
-hi = np.cos(2 * math.pi * 0.40 * t)  # 0.40*fs — stopband
+n = np.arange(512, dtype=np.float32)  # sample index: tones in cycles/sample
+lo = np.cos(2 * math.pi * 0.05 * n)  # 0.05*fs — passband
+hi = np.cos(2 * math.pi * 0.40 * n)  # 0.40*fs — stopband
 
-out_lo = bq.steps(lo)
-bq.reset()
-out_hi = bq.steps(hi)
+# One fresh filter per tone. reset() would not do here: it restores EVERY
+# state field to its declared default, the coefficients included, which
+# turns this low-pass back into the b0 = 1 passthrough.
+out_lo = Biquad(**lowpass).steps(lo)
+out_hi = Biquad(**lowpass).steps(hi)
 
-print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ≈ 0.5)")
+print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ~0.5)")
 print(f"Biquad stopband power:  {np.mean(out_hi**2):.5f} (expect << 0.5)")
 
 # ── Both types from one import ───────────────────────────────────────────────

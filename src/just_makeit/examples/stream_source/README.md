@@ -40,7 +40,9 @@ just-makeit example stream_source
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -79,7 +81,8 @@ The flags that matter:
 
 `--streamable` adds a C iterator type (`RampStreamIter`) and a `stream()`
 method to the generated extension — nothing else about the object changes.
-The manifest records it as a single key:
+The object's manifest fragment, `objects/ramp.toml`, records it as a single
+key:
 
 ```toml
 [ramp]
@@ -120,12 +123,23 @@ That is the only C you write. `steps(n)` (the per-sample loop) and the entire
 `step()` for you. (This very function is spliced into the build and run by the
 example's test, so what you read here is exactly what compiles.)
 
+One more edit gives the generated class a real docstring instead of the
+generic `Ramp component.` fallback. In the same header, replace the
+scaffold's `@brief Create a ramp instance.` above
+`stream_source_demo_ramp_create()` with your own sentence, then re-derive the
+stub from it:
+
+```sh
+just-makeit apply      # ramp.pyi's class docstring now reads your @brief
+```
+
 ---
 
 ## 3. Build and stream from Python
 
 ```sh
-just-makeit build      # cmake configure + build + wheel
+make              # build; the .so lands in src/stream_source_demo/
+pip install -e .  # editable install: points Python at src/ (compiles nothing)
 ```
 
 Now drive the generated iterator:

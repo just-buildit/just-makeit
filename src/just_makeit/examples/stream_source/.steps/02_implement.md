@@ -11,3 +11,13 @@ That is the only C you write. `steps(n)` (the per-sample loop) and the entire
 `stream()` / `__iter__` machinery are generated around it — they call this
 `step()` for you. (This very function is spliced into the build and run by the
 example's test, so what you read here is exactly what compiles.)
+
+One more edit gives the generated class a real docstring instead of the
+generic `Ramp component.` fallback. In the same header, replace the
+scaffold's `@brief Create a ramp instance.` above
+`stream_source_demo_ramp_create()` with your own sentence, then re-derive the
+stub from it:
+
+```sh
+just-makeit apply      # ramp.pyi's class docstring now reads your @brief
+```

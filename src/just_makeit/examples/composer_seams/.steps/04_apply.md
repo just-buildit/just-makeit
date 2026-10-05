@@ -18,6 +18,11 @@ module emits:
 /* Build the composed generator from a source config (source -> generator). */
 studio_clip_state_t *clip_from_source(const clip_t *, double);
 
+/* Why clip_from_source() refused: a reason raised as ValueError, or NULL
+ * for none (RuntimeError). Same arguments; called only after it returned
+ * NULL (gh-1307). */
+const char *clip_why_not(const clip_t *, double);
+
 /* Computed read-only property `duration`. */
 double clip_duration(const clip_t *);
 ```
@@ -25,4 +30,4 @@ double clip_duration(const clip_t *);
 Self-contained on purpose — it pulls in the backing header and the
 generator's, so a consumer does not have to work out what to include first. It
 is emitted **only** when the source declares at least one seam; a composer
-with neither gets no header at all, because there would be nothing to say.
+with none gets no header at all, because there would be nothing to say.

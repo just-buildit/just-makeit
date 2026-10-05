@@ -1,4 +1,4 @@
-"""End-to-end test: jm method --varargs and jm app --argc-argv.
+"""End-to-end test: jm method --varargs, and a jm app C face.
 
 Exercises:
   1. Scaffold a filter project (float step, gain state var).
@@ -7,9 +7,10 @@ Exercises:
   4. Patch step, configure, and current_gain implementations from .steps/.
   4b. Enrich the header with Doxygen; regenerate the .pyi via jm apply.
   5. cmake configure + build + CTest.
-  6. Python smoke test: Filter.step(), configure(gain=...), current_gain().
+  6. Run the README's demo (.steps/05_demo.py): Filter.step(),
+     configure(gain=...), configure(), current_gain().
   6b. Run the header-authored .pyi doctest against the built extension.
-  7. jm app --argc-argv: verify generated main has if (argc > 1).
+  7. jm app --target c: a working read -> step -> write tool over the core.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/varargs_method/test.py
@@ -50,8 +51,8 @@ def run(root: Path) -> None:
     from just_makeit._apply import run as apply_run
 
     # ── 1. Scaffold ───────────────────────────────────────────────────────
-    # Use "va_filter" as the project name to avoid colliding with
-    # bench_upgrade, which also creates "my_filter" in the shared dest dir.
+    # "va_filter", as in the README -- not "my_filter", which bench_upgrade
+    # also creates in the shared dest dir.
     jm_new(
         "va_filter",
         root / "va_filter",
@@ -167,24 +168,9 @@ def run(root: Path) -> None:
         cwd=proj,
     )
 
-    # ── 6. Python smoke test ──────────────────────────────────────────────
-    # Run inline rather than calling 05_demo.py (which imports "my_filter")
-    # because the test project is named "va_filter" to avoid collisions with
-    # bench_upgrade in the shared Docker dest directory.
-    smoke = (
-        "import sys; sys.path.insert(0, 'src');"
-        "from va_filter import Filter;"
-        "f = Filter(gain=1.0);"
-        "assert f.step(2.0) == 2.0;"
-        "f.configure(gain=0.5);"
-        "assert f.step(2.0) == 1.0;"
-        "f.configure(2.0);"
-        "assert f.step(1.0) == 2.0;"
-        "f.configure(gain=6.0);"
-        "assert f.current_gain() == 6.0;"
-        "print('configure: PASSED')"
-    )
-    _cmd([sys.executable, "-c", smoke], cwd=proj)
+    # ── 6. Python smoke test: the README's demo, as written ───────────────
+    demo = _cmd([sys.executable, str(STEPS / "05_demo.py")], cwd=proj)
+    assert "configure: PASSED" in demo.stdout, demo.stdout
 
     # ── 6b. The header-authored doctest runs against the built .so ────────
     # `pytest --doctest-glob='*.pyi'` imports the compiled extension and

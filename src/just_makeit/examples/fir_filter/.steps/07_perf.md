@@ -15,14 +15,18 @@ Build baseline, measure, rebuild with SIMD, measure again:
 ```{07_bench.sh}
 ```
 
+The numbers below were measured on one AVX-512 machine (`bench.py` reports
+the best of five timed repeats). Yours will differ; the ratios are what
+carries over.
+
 ### Round 1 — flags alone
 
-The scaffold's default implementation shifts the delay line with `memmove`.
+The section 2 kernel shifts the delay line with `memmove`.
 Adding `-march=native -ffast-math` via `ENABLE_SIMD=ON` gives a modest gain:
 
 ```
-baseline:  106.8 M complex samples/sec
-with SIMD: 154.1 M complex samples/sec   (1.4×)
+baseline:  65.1 M complex samples/sec
+with SIMD: 90.6 M complex samples/sec   (1.4×)
 ```
 
 The ceiling is the `memmove` of 120 bytes (15 `float _Complex`) that runs every
@@ -44,14 +48,14 @@ Three named constants make each concern explicit:
 
 | constant    | concern     | meaning                                            |
 | ----------- | ----------- | -------------------------------------------------- |
-| `FIR_TAPS`  | algorithm   | filter length (set at codegen time)                |
+| `FIR_TAPS`  | algorithm   | filter length (a compile-time constant you define) |
 | `FIR_BATCH` | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
 | `FIR_CHUNK` | tuning      | samples per scratch-buffer fill                    |
 
-`FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2),
-so the same source compiles to 8 or 4 complex samples per batch without any
-`#ifdef`.  On scalar targets `JM_SIMD_WIDTH_F32 = 1`, `_JM_STEPS_SIMD_` is a
-no-op, and `step_batch()` is never called.
+`FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2,
+4 on AArch64 NEON), so the same source compiles to 8, 4 or 2 complex samples
+per batch without any `#ifdef`.  On scalar targets `JM_SIMD_WIDTH_F32 = 1`,
+`JM_STEPS_SIMD_IMPL` is a no-op, and `step_batch()` is never called.
 
 `step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
 but you never write `steps()`.
@@ -66,13 +70,16 @@ it owns the scratch buffer, the chunked fill, and the scalar tail.  You write
 `step()`.  You write `step_batch()`.  The rest is infrastructure.
 
 ```
-baseline:   475 M complex samples/sec
-with SIMD: 1745 M complex samples/sec   (3.7×)
+baseline:    64.7 M complex samples/sec   (unchanged: the batch path is compiled out)
+with SIMD: 1315.1 M complex samples/sec   (20× the baseline)
 ```
 
-The scalar baseline is already 4.5× faster than the `memmove` version because
-sequential scratch accesses are hardware-prefetcher-friendly; the L1-resident
-chunk eliminates the circular-buffer index arithmetic entirely.  Adding
-`ENABLE_SIMD=ON` delivers the full speedup from AVX-512's 16-wide float FMA
-(3.7×) or AVX2's 8-wide FMA — `jm_simd.h` selects the best tier at compile
-time, no source changes needed.
+The baseline does not move.  Without `ENABLE_SIMD=ON` an x86-64 build has no
+AVX tier, so `JM_SIMD_WIDTH_F32` is 1, `JM_STEPS_SIMD_IMPL` expands to
+nothing, and `steps()` is the same scalar loop over the `memmove` `step()`
+as round 1.  With `ENABLE_SIMD=ON` the scratch-buffer path runs:
+`step_batch()` handles `FIR_BATCH` complex samples per call (8 on AVX-512,
+4 on AVX2) over an L1-resident chunk, with no per-sample `memmove`.
+`jm_simd.h` selects the tier at compile time, no source changes needed.  On
+AArch64, NEON is always available, so even the baseline build takes the
+batch path there (2 complex samples per call).

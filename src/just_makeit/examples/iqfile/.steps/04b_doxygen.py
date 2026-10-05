@@ -27,7 +27,7 @@ properties), and a property getter's docstring renders as prose only — a
 example ships rich class summaries and property docs, but no runnable method
 doctest (like the other "light" examples).
 
-Usage:  python3 .steps/04b_doxygen.py     # run from the project root
+Usage:  python3 04b_doxygen.py     # saved in, and run from, the project root
 """
 
 from __future__ import annotations

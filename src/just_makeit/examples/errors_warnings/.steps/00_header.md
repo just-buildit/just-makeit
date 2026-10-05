@@ -12,8 +12,10 @@ report them on.
 | a call fails, but usually returns a value | an `int` that is a value unless negative | an exception, or the `int` | `--error-negative --error` |
 
 The first two are `create()`'s problem and the last two are a method's. All
-four are pure glue — **no sacred file is touched by declaring them**, which is
-the point: they are a translation layer over signals your C already emits.
+four translations are pure glue — `error` and `warning` touch no sacred file
+at all, and the two method flags change only the binding (`jm method` still
+appends the method's C stub and prototype, as it always does), which is the
+point: they are a translation layer over signals your C already emits.
 
 ## TL;DR — see it work first
 
@@ -35,7 +37,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps

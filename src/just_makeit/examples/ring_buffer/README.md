@@ -57,9 +57,9 @@ ______________________________________________________________________
     `wait({n}) can never be satisfied: the ring holds {capacity}` resolves
     `{n}` from the method's param and `{capacity}` from a declared property,
     through `PyErr_Format`.
-- **`--none-on-empty`** — `peek()` shares one table with `wait()` and
-    declines only the "not yet" row, so it answers `None` where `wait()`
-    would raise. One table, two readings.
+- **`--none-on-empty`** — `peek()` shares one status function with `wait()`
+    but writes no `CF32_PENDING` or `CF32_WRAPS` row, so it answers `None`
+    where `wait()` would raise. One vocabulary, two readings.
 - **`--releases`** — `consume()` defaults its count to whatever the last read
     lent, so `view = r.wait(512); r.consume()` writes the number once.
     `close()` is a second release that takes no count and simply invalidates
@@ -89,7 +89,8 @@ just-makeit module rings
 
 just-makeit object cf32_ring --module rings --header-only --no-step \
     --arg-type void --return-type "float _Complex" \
-    --state 'data:float _Complex[64]' --state head:size_t:0 --state tail:size_t:0
+    --state 'data:float _Complex[64]' --state head:size_t:0 --state tail:size_t:0 \
+    --state closed:int:0
 
 just-makeit property cf32_ring capacity --module rings --type size_t \
     --expr 'sizeof(self->handle->data) / sizeof(self->handle->data[0])'
@@ -131,18 +132,29 @@ typedef enum {
 through it to `--none-on-empty` and answers `None`, while `wait()` has no
 such fallback and raises. One vocabulary, two readings.
 
-The integer ring is the same, plus the record its view hands back. The struct
-is the **author's** and goes in the component's own header before the method
-that names it:
+The integer ring is the same, plus the record its view hands back. The
+record's columns are declared once, with `record`, and both directions
+reference it by name: `write` takes rows of it and `wait` lends them back.
+
+```sh
+just-makeit object iq16_ring --module rings --header-only --no-step \
+    --arg-type void --return-type "float _Complex" \
+    --state 'data:int16_t[128]' --state head:size_t:0 --state tail:size_t:0
+
+just-makeit record iq16_ring iq16_t --field i:int16_t --field q:int16_t
+just-makeit method iq16_ring write --arg-type 'iq16_t[]' --return-type size_t
+just-makeit method iq16_ring wait --borrow --param n:size_t --record-dtype iq16_t
+just-makeit method iq16_ring consume --param n:size_t --arg-type void \
+    --return-type void
+```
+
+The struct itself is the **author's**, like the status enum: jm names it and
+never defines it. It goes in the component's own header, above the method
+prototypes that name it:
 
 ```c
 /* native/inc/ringdemo/iq16_ring/iq16_ring_core.h */
 typedef struct { int16_t i; int16_t q; } iq16_t;
-```
-
-```sh
-just-makeit method iq16_ring wait --borrow --param n:size_t \
-    --record-dtype iq16_t --result-field i:int16_t --result-field q:int16_t
 ```
 
 ## 2. Implement — in the header
@@ -181,7 +193,8 @@ r.consume(4)
 
 ```python
 q = Iq16Ring()
-q.write(np.array([1, 100, 2, 101, 3, 102], dtype=np.int16))  # interleaved
+iq = np.dtype([("i", "<i2"), ("q", "<i2")])
+q.write(np.array([(1, 100), (2, 101), (3, 102)], dtype=iq))  # rows of iq16_t
 w = q.wait(3)
 w.dtype          # dtype([('i', '<i2'), ('q', '<i2')])
 w.itemsize       # 4  == sizeof(iq16_t)

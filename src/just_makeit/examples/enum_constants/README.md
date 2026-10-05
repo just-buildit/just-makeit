@@ -92,8 +92,8 @@ The enum goes in the sacred header, above the state struct. The kernels go in
 `native/src/gate/gate_core.c`:
 
 ```c
-gate_state_t *
-gate_create(int level)
+levels_gate_state_t *
+levels_gate_create(int level)
 {
     ...
     obj->threshold = level == LVL_AUTO ? LVL_INFO : level;
@@ -101,7 +101,7 @@ gate_create(int level)
 }
 
 int
-gate_passes(gate_state_t *state, int level)
+levels_gate_passes(levels_gate_state_t *state, int level)
 {
     return level >= state->threshold;
 }
@@ -127,6 +127,7 @@ level : Literal["auto", "debug", "info", "warn"], default "auto"
 
 ```sh
 cmake -B build -S . && cmake --build build && ctest --test-dir build
+pip install -e .   # points Python at src/, where the build put the extension
 ```
 
 ```python

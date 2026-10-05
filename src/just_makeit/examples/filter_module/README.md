@@ -43,7 +43,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -73,13 +75,17 @@ just-makeit module filter
 
 `just-makeit module filter` scaffolds the grouping unit:
 
-| Created                             | Purpose                                   |
-| ----------------------------------- | ----------------------------------------- |
-| `native/src/filter/filter_ext.c`    | C extension — empty, no types yet         |
-| `native/src/filter/CMakeLists.txt`  | Python module target (no object libs yet) |
-| `src/my_filters/filter/__init__.py` | Subpackage init — empty exports           |
+| Created                                      | Purpose                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| `native/src/filter/filter_ext.c`             | C extension — empty, no types yet                                        |
+| `native/src/filter/CMakeLists.txt`           | Python module target, plus the module's own `filter_core` OBJECT library |
+| `native/inc/my_filters/filter/filter_core.h` | Module-level C API (for `just-makeit function`)                          |
+| `native/src/filter/filter_core.c`            | Module-level C implementation                                            |
+| `src/my_filters/filter/__init__.py`          | Subpackage init — empty exports                                          |
+| `src/my_filters/filter/filter.pyi`           | Subpackage type stub — no classes yet                                    |
+| `modules/filter.toml`                        | The module's manifest fragment                                           |
 
-`just-makeit.toml` gains:
+`modules/filter.toml` (pulled in by `just-makeit.toml`'s `include`) holds:
 
 ```toml
 [module.filter]
@@ -116,23 +122,32 @@ just-makeit object biquad \
 
 **Per-object C library** (same as `just-makeit object`, no Python module target):
 
-| File                                 | Purpose                                            |
-| ------------------------------------ | -------------------------------------------------- |
-| `native/inc/my_filters/fir/fir_core.h`          | Header: struct, inline `my_filters_fir_step`, getters/setters |
-| `native/src/fir/fir_core.c`          | Source: create/destroy/reset/steps                 |
-| `native/src/fir/CMakeLists.txt`      | OBJECT library + C test + bench (no `.so`)         |
-| `native/tests/test_fir_core.c`       | C test with `CHECK` macro counter                  |
-| `native/benchmarks/bench_fir_core.c` | C benchmark                                        |
+| File                                   | Purpose                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `native/inc/my_filters/fir/fir_core.h` | Header: struct, inline `my_filters_fir_step`, getters/setters                                                 |
+| `native/src/fir/fir_core.c`            | Source: create/destroy/reset/steps                                                                            |
+| `native/src/fir/CMakeLists.txt`        | OBJECT library + C test + bench (no `.so`)                                                                    |
+| `native/tests/test_fir_core.c`         | C test with `CHECK` macro counter                                                                             |
+| `native/benchmarks/bench_fir_core.c`   | C benchmark                                                                                                   |
+| `native/tests/test_fir_symbols.c`      | Links the address of every C function the binding calls (fails at link time if one is declared but undefined) |
 
-**Module regeneration** — after each `just-makeit object`, these are fully rewritten:
+It also writes the object's Python test and benchmark
+(`src/my_filters/filter/tests/test_fir.py`,
+`src/my_filters/filter/benchmarks/bench_fir.py`) and its manifest fragment,
+`objects/fir.toml`.
 
-| File                                | What changes                                          |
-| ----------------------------------- | ----------------------------------------------------- |
-| `native/src/filter/filter_ext.c`    | `FirObject` type added; `PyMODINIT_FUNC` registers it |
-| `native/src/filter/CMakeLists.txt`  | `fir_core` added to link list                         |
-| `src/my_filters/filter/__init__.py` | `from .filter import Fir` added                       |
+**Module wiring** — each `just-makeit object` then writes or updates:
 
-After both objects:
+| File                                                   | What changes                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `native/src/filter/filter_ext_fir.c`                   | Created: the `FirObject` type and its methods                                   |
+| `native/src/filter/filter_ext.c`                       | `#include "filter_ext_fir.c"` added, and `PyInit_filter` registers `Fir`        |
+| `native/src/filter/CMakeLists.txt`                     | `fir_core` added to the link list                                               |
+| `src/my_filters/filter/__init__.py`                    | `from .filter import Fir` added                                                 |
+| `src/my_filters/filter/filter.pyi`                     | `class Fir` added                                                               |
+| `CMakeLists.txt`, `native/inc/my_filters/my_filters.h` | `native/src/fir` added as a subdirectory, and its header to the umbrella header |
+
+After both objects, `modules/filter.toml`:
 
 ```toml
 [module.filter]
@@ -140,14 +155,16 @@ objects = ["fir", "biquad"]
 ```
 
 ```python
-# src/my_filters/filter/__init__.py — generated
-from .filter import Fir, Biquad
+# src/my_filters/filter/__init__.py — generated (Windows DLL-directory shim
+# above this line omitted)
+from .filter import Fir, Biquad  # noqa: E402
 
 __all__ = ["Fir", "Biquad"]
 ```
 
-`filter_ext.c` contains both `FirObject` and `BiquadObject` type definitions
-followed by a single `PyInit_filter` that registers both.
+`filter_ext.c` `#include`s `filter_ext_fir.c` and `filter_ext_biquad.c` (one
+`FirObject` / `BiquadObject` each), then a single `PyInit_filter` registers
+both.
 
 ### Fir state
 
@@ -239,14 +256,17 @@ pip install -e .
 ```
 
 CMake builds one Python extension module (`filter.cpython-*.so`) inside the
-`src/my_filters/filter/` subpackage directory.  It links `fir_core` and
-`biquad_core` OBJECT libraries — no separate `fir.so` or `biquad.so` anywhere.
+`src/my_filters/filter/` subpackage directory.  It links the `filter_core`,
+`fir_core` and `biquad_core` OBJECT libraries — no separate `fir.so` or
+`biquad.so` anywhere.
 
 CTest runs the two C tests:
 
 ```
-test_fir_core    PASSED
-test_biquad_core PASSED
+1/2 Test #1: test_biquad_core .................   Passed    0.00 sec
+2/2 Test #2: test_fir_core ....................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 2
 ```
 
 Both use the `CHECK` macro counter — failures print file/line and exit nonzero
@@ -258,8 +278,11 @@ The installed package layout:
 src/my_filters/
   __init__.py
   filter/
-    __init__.py                              ← from .filter import Fir, Biquad
+    __init__.py                             ← from .filter import Fir, Biquad
     filter.cpython-312-x86_64-linux-gnu.so  ← both types in one .so
+    filter.pyi                              ← stubs for both types
+    tests/                                  ← test_fir.py, test_biquad.py
+    benchmarks/                             ← bench_fir.py, bench_biquad.py
 ```
 
 ---
@@ -305,7 +328,7 @@ alpha = math.sin(w0) / (2 * Q)
 c = math.cos(w0)
 a0 = 1 + alpha
 
-bq = Biquad(
+lowpass = dict(
     b0=(1 - c) / 2 / a0,
     b1=(1 - c) / a0,
     b2=(1 - c) / 2 / a0,
@@ -313,15 +336,17 @@ bq = Biquad(
     a2=(1 - alpha) / a0,
 )
 
-t = np.arange(512, dtype=np.float32) / 512
-lo = np.cos(2 * math.pi * 0.05 * t)  # 0.05*fs — passband
-hi = np.cos(2 * math.pi * 0.40 * t)  # 0.40*fs — stopband
+n = np.arange(512, dtype=np.float32)  # sample index: tones in cycles/sample
+lo = np.cos(2 * math.pi * 0.05 * n)  # 0.05*fs — passband
+hi = np.cos(2 * math.pi * 0.40 * n)  # 0.40*fs — stopband
 
-out_lo = bq.steps(lo)
-bq.reset()
-out_hi = bq.steps(hi)
+# One fresh filter per tone. reset() would not do here: it restores EVERY
+# state field to its declared default, the coefficients included, which
+# turns this low-pass back into the b0 = 1 passthrough.
+out_lo = Biquad(**lowpass).steps(lo)
+out_hi = Biquad(**lowpass).steps(hi)
 
-print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ≈ 0.5)")
+print(f"Biquad passband power:  {np.mean(out_lo**2):.3f}  (expect ~0.5)")
 print(f"Biquad stopband power:  {np.mean(out_hi**2):.5f} (expect << 0.5)")
 
 # ── Both types from one import ───────────────────────────────────────────────

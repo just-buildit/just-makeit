@@ -6,7 +6,8 @@ none of which had example coverage.
 
   1. Scaffold an allocator whose ctor args are init-params, so the three
      derived state fields stay out of the constructor signature.
-  2. Declare all four channels. None of them touches a sacred file.
+  2. Declare all four channels. None of them puts Python into a sacred
+     file.
   3. Assert each one reached BOTH faces -- the generated glue and the .pyi --
      since a declaration that reaches only one is the recurring defect class
      here (gh-1060, gh-1064, gh-1066).
@@ -208,7 +209,7 @@ def run(root: Path) -> None:
     for token in ("ValueError", "RuntimeWarning", "IndexError"):
         assert token in pyi, f"{token} is not documented in the stub"
 
-    # No sacred file was touched by any of the four declarations.
+    # None of the four declarations put Python into a sacred file.
     core_c = (
         proj / "native" / "src" / "allocator" / "allocator_core.c"
     ).read_text(encoding="utf-8")

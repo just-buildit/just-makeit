@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._new import run
+from just_makeit._new import README_BY_BACKEND, run
 
 _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
@@ -445,6 +445,88 @@ class TestMakeTestRunner:
     def test_make_default_no_orphan_tab_line(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
         assert "\n\t\n" not in mk
+
+
+class TestReadmeDescribesItsMakefile:
+    """The generated README advertises only the build its Makefile runs.
+
+    One README text served both backends, so a `--build-system make` project
+    was told to install CMake, run `make docs` and `just-makeit build` (all
+    CMake-only), and a default project that tests with unittest was told
+    `make test` ran pytest. Both claims are read off the Makefile written
+    beside the README, never restated here. The fix is backend slots in the
+    ONE template, not a second template: two copies of the shared sections
+    drift (gh-1860), and the last test refuses anything else differing.
+    """
+
+    #: A `make <target>` command line in a fenced block; a bare `make` is the
+    #: default goal and names no target.
+    _MAKE_CMD = re.compile(r"^make +([a-z][\w-]*)", re.M)
+    #: A rule's target at the start of a line (`test: build`, `docs:`).
+    _RULE = re.compile(r"^([a-z][\w-]*) *:(?!=)", re.M)
+    #: The `make test` line of the Makefile's own `help`.
+    _HELP_TEST = re.compile(r'@echo "  make test +Run (.+)"')
+
+    def _scaffold(self, tmp_path, **kwargs) -> tuple[str, str]:
+        dest = tmp_path / "proj"
+        run("proj", dest, **kwargs, c_prefix=None)
+        return (
+            (dest / "Makefile").read_text(encoding="utf-8"),
+            (dest / "README.md").read_text(encoding="utf-8"),
+        )
+
+    @pytest.mark.parametrize("build_system", ["cmake", "make"])
+    def test_every_make_target_the_readme_names_exists(
+        self, tmp_path, build_system
+    ):
+        mk, readme = self._scaffold(tmp_path, build_system=build_system)
+        named = set(self._MAKE_CMD.findall(readme))
+        assert named, "the README names no `make <target>` command"
+        missing = named - set(self._RULE.findall(mk))
+        assert not missing, (
+            f"the {build_system} README advertises `make` targets its"
+            f" Makefile does not define: {sorted(missing)}"
+        )
+
+    @pytest.mark.parametrize("build_system", ["cmake", "make"])
+    @pytest.mark.parametrize("pytest_", [False, True])
+    def test_make_test_says_what_the_makefile_runs(
+        self, tmp_path, build_system, pytest_
+    ):
+        mk, readme = self._scaffold(
+            tmp_path, build_system=build_system, pytest_=pytest_
+        )
+        runs = self._HELP_TEST.search(mk)
+        assert runs, "the Makefile's help has no `make test` line"
+        line = next(
+            ln for ln in readme.splitlines() if ln.startswith("make test")
+        )
+        assert line.endswith(f"# {runs.group(1)}"), (line, runs.group(1))
+
+    def test_make_backend_readme_has_no_cmake_steps(self, tmp_path):
+        _, readme = self._scaffold(tmp_path, build_system="make")
+        assert "CMake ≥" not in readme
+        assert "just-makeit build" not in readme
+        assert "CMakePresets.json" not in readme
+
+    def test_the_backends_differ_only_in_their_slots(self, tmp_path):
+        """Take each backend's `README_BY_BACKEND` values back out and the two
+        READMEs are one text, so the dependency install, Quickstart and
+        Package sections cannot be dropped or reworded for one backend
+        alone."""
+
+        def unslotted(build_system: str) -> str:
+            _, readme = self._scaffold(
+                tmp_path / build_system, build_system=build_system
+            )
+            row = README_BY_BACKEND[build_system].values()
+            for value in sorted(row, key=len, reverse=True):
+                if value:
+                    assert value in readme, f"slot value not rendered: {value}"
+                    readme = readme.replace(value, "", 1)
+            return readme
+
+        assert unslotted("cmake") == unslotted("make")
 
 
 class TestNewStateVars:

@@ -16,7 +16,9 @@ just-makeit example delay_line
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -79,7 +81,7 @@ Key points:
 | -------- | ------ | --------------- | ---------------------------- | ------------------------- |
 | `taps`   | opaque | —               | No                           | Zeroed in place           |
 | `length` | scalar | `64`            | Yes                          | Preserved by `reset_impl` |
-| `idx`    | scalar | `0`             | No (generated ctor skips it) | Zeroed by `reset_impl`    |
+| `idx`    | scalar | `0`             | Yes (`idx=0`)                | Zeroed by `reset_impl`    |
 
 `reset_impl` runs **instead of** the auto-generated field-assignment body, so
 it is responsible for everything — zeroing `taps` and resetting `idx`, but
@@ -102,19 +104,16 @@ ______________________________________________________________________
 ## 3. Implement step()
 
 ```c
-/* native/inc/delay_line_demo/delay_line/delay_line_core.h */
+/* native/inc/delay_demo/delay_line/delay_line_core.h */
 static inline float
-delay_line_demo_delay_line_step(delay_line_demo_delay_line_state_t *state, float x)
+delay_demo_delay_line_step(delay_demo_delay_line_state_t *state, float x)
 {
-    /* Write new sample into ring buffer */
+    /* Read the sample written `length` steps ago, then overwrite it */
+    const float y = state->taps[state->idx];
     state->taps[state->idx] = x;
 
-    /* Tap at full delay distance */
-    uint32_t out_idx = (state->idx + 1) % state->length;
-    float y = state->taps[out_idx];
-
     /* Advance write pointer */
-    state->idx = out_idx;
+    state->idx = (state->idx + 1U) % state->length;
     return y;
 }
 ```
@@ -124,7 +123,8 @@ ______________________________________________________________________
 ## 4. Use from Python
 
 ```sh
-pip install -e .
+cmake --build build   # rebuild with the step() from section 3
+pip install -e .      # points Python at src/; compiles nothing
 ```
 
 ```python

@@ -4,14 +4,14 @@
 ```
 
 The demo generates 4096 complex samples, writes them to a temporary `.q15`
-file, reads them back, and verifies the round-trip error stays within one
-quantisation step (~1/32767 ≈ −90 dBFS):
+file, reads them back, and verifies the round-trip error stays within two
+quantisation steps (2/32767; truncating I and Q each loses up to one step):
 
 ```
 wrote    4096 complex samples -> /tmp/tmpXXXXXX.q15  (16384 bytes)
 written: 4096 samples
 read:    4096 samples,  eof=1
-max err: 0.000031  (floor ~0.000031)
+max err: 0.000043  (floor ~0.000031)
 PASSED
 ```
 

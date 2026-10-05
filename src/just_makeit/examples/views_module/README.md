@@ -104,14 +104,25 @@ ______________________________________________________________________
 
 ## The C you write
 
-Two bodies, both in the shared core. `step()`:
+Three bodies, all in the shared core. `step()`, in `acc_core.h`:
 
 ```c
 state->sum += x;
 return state->sum;
 ```
 
-and the view's alternate constructor, which reuses the parent's:
+`total()`, in `acc_core.c`, which reads the sum without changing it:
+
+```c
+double
+acc_bank_acc_total(acc_bank_acc_state_t *state)
+{
+    return state->sum;
+}
+```
+
+and the view's alternate constructor, also in `acc_core.c`, which reuses the
+parent's:
 
 ```c
 acc_bank_acc_state_t *
@@ -182,12 +193,17 @@ doctest:
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-`step()` or `total()` ever drifts from its documented example the build fails.
-Pass `-v` to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment `step()` or `total()` drifts from its documented example. A
+generated project's `make test` does not run `.pyi` doctests (this example's
+own test does), so to make them a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. Pass `-v` to watch every `>>>` line execute (the elided ones are the
+scaffold's own examples on `Acc` and `SeededAcc`):
 
 ```termynal
-$ python -m doctest -v src/acc_bank/bank/bank.pyi
+$ PYTHONPATH=src python -m doctest -v src/acc_bank/bank/bank.pyi
+{d}...{/d}
 {d}Trying:{/d}
     a.step(1.0)
 {d}Expecting:{/d}
@@ -203,11 +219,13 @@ $ python -m doctest -v src/acc_bank/bank/bank.pyi
 {d}Expecting:{/d}
     3.5
 {g}ok{/g}
-{g}5 passed and 0 failed.{/g}
+{d}...{/d}
+{g}13 passed and 0 failed.{/g}
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with `pytest --doctest-glob='*.pyi'`.
+This example's test drives the whole stub at once with
+`pytest --doctest-glob='*.pyi'`.
 
 **A view is documented differently.** `acc_bank_acc_create()`'s `@brief` becomes the
 parent `Acc` summary, but the view's summary keys off its own `<obj>_create`

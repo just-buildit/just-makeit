@@ -17,7 +17,8 @@ The flags that matter:
 
 `--streamable` adds a C iterator type (`RampStreamIter`) and a `stream()`
 method to the generated extension — nothing else about the object changes.
-The manifest records it as a single key:
+The object's manifest fragment, `objects/ramp.toml`, records it as a single
+key:
 
 ```toml
 [ramp]

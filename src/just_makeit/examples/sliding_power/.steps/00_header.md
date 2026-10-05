@@ -13,8 +13,9 @@ Two update strategies are shown:
   `JM_HSUM_F32` from `jm_simd.h`; used for periodic recalibration and as a
   clean demonstration of the `jm_simd.h` macro set.
 
-The generated `.pyi` also carries a hand-authored class summary lifted from
-the `@brief` on `my_power_power_est_create()` in the sacred header.
+The generated `.pyi` class docstring is lifted from the `@brief` on
+`my_power_power_est_create()` in the sacred header; section 2 replaces the
+scaffold's generic one with a real sentence.
 
 ## TL;DR — see it work first
 
@@ -36,7 +37,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps

@@ -1,2 +1,2 @@
-cd my_filter
+cd va_filter
 just-makeit method filter configure --varargs

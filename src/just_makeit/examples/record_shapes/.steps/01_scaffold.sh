@@ -5,3 +5,4 @@ just-makeit new evlog \
     --state "v:double[64]" \
     --arg-type double \
     --return-type void
+cd evlog

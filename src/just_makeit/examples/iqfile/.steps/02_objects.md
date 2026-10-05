@@ -8,8 +8,9 @@ Two types, one `.so`.
 ### Cf32ToQ15 — writer
 
 Takes a `float _Complex` sample, scales it, clamps it, and packs the
-I and Q parts as two `int16_t` values.  Returns the number of bytes written
-(`int32_t`, 4 on success, −1 on error) so the caller can detect short writes.
+I and Q parts as two `int16_t` values.  Returns both packed into one
+`int32_t` (I in the low 16 bits, Q in the high 16 bits), so `steps()` output
+viewed as `np.int16` is the interleaved q15 stream.
 
 `--arg-type float _Complex` and `--return-type int32_t` generate:
 

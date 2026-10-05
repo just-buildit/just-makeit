@@ -1,5 +1,3 @@
-cd evlog
-
 # ── shape 1: ONE record, by value ───────────────────────────────────────────
 just-makeit method collector summary \
     --arg-type void \
