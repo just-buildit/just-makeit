@@ -26,9 +26,8 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
-needs 3.11+). It installs just-makeit, then builds the toolchain venv at
-`/tmp/jm-venv`:
+Or with `pip`, which installs just-makeit and then builds the toolchain
+venv at `/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps

@@ -96,8 +96,7 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the
     commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`. Both take
     `--check` to report what is missing without installing anything; the curl
-    installer also takes `--force` to reinstall just-makeit, and needs
-    Python 3.11+.
+    installer also takes `--force` to reinstall just-makeit.
 
 !!! info
 
@@ -151,8 +150,7 @@ ______________________________________________________________________
 
 ## Requirements
 
-- Python 3.9+ (the curl installer needs 3.11+; on 3.9 or 3.10, install with
-    pip or uv)
+- Python 3.9+
 - CMake ≥ 3.16
 - A C99 compiler: GCC or Clang, or on Windows **clang-cl** — see
     [Does it work on Windows?](faq.md#does-it-work-on-windows)

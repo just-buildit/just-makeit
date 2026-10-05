@@ -37,8 +37,7 @@ system package manager (only when cmake or a C compiler is missing), then
 numpy and just-makeit into a Python venv (default `/tmp/jm-venv`, or pass your
 own path). Run `just-makeit install-deps --help` for the full reference.
 
-**curl (auto-installs dependencies, creates and activates venv; needs Python
-3.11+):**
+**curl (auto-installs dependencies, creates and activates venv):**
 
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) [-- path]
@@ -169,8 +168,7 @@ ______________________________________________________________________
 
 ## Requirements
 
-- Python 3.9+ (the curl installer needs 3.11+; on 3.9 or 3.10, install with
-    pip or uv)
+- Python 3.9+
 - CMake ≥ 3.16
 - A C99 compiler (GCC or Clang; on Windows, clang-cl — not MSVC's `cl.exe`)
 - NumPy (runtime, for generated projects)
