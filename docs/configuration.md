@@ -1300,14 +1300,14 @@ still checked -- see [`status`](commands/build.md#just-makeit-status).
 One section per standalone object or module-member object. The section name
 is whatever you passed to `just-makeit object <name>`.
 
-| Key           | Type                     | Default            | Set by          |
-| ------------- | ------------------------ | ------------------ | --------------- |
-| `arg_type`    | string                   | `"float _Complex"` | `--arg-type`    |
-| `return_type` | string                   | same as `arg_type` | `--return-type` |
-| `mutable`     | `"true"` or `"false"`    | `"false"`          | `--mutable`     |
-| `no_state`    | `"true"` or `"false"`    | `"false"`          | `--no-state`    |
-| `no_step`     | `"true"` or `"false"`    | `"false"`          | `--no-step`     |
-| `no_reset`    | `"true"` (only when set) | _(absent)_         | `--no-reset`    |
+| Key           | Type                     | Default                                                       | Set by          |
+| ------------- | ------------------------ | ------------------------------------------------------------- | --------------- |
+| `arg_type`    | string                   | `"float _Complex"`                                            | `--arg-type`    |
+| `return_type` | string                   | as [`--return-type`](commands/scaffold.md#just-makeit-object) | `--return-type` |
+| `mutable`     | `"true"` or `"false"`    | `"false"`                                                     | `--mutable`     |
+| `no_state`    | `"true"` or `"false"`    | `"false"`                                                     | `--no-state`    |
+| `no_step`     | `"true"` or `"false"`    | `"false"`                                                     | `--no-step`     |
+| `no_reset`    | `"true"` (only when set) | _(absent)_                                                    | `--no-reset`    |
 
 These are the keys every object carries. The full list, with the CLI flag for
 each, is [`[<component>]` keys](#component-keys) above.

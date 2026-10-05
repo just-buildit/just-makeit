@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _context as Ctx
 
 
 # Characters that make a bare shell word mean something other than itself.
@@ -291,11 +292,13 @@ def _object_flags(
     if at != "float _Complex":
         parts.append(_flag("--arg-type", at))
 
-    # Only omit --return-type when it matches the CLI default for this arg-type:
-    #   array arg  → void;  any other → same as arg-type.
+    # Only omit --return-type when it matches the CLI default for this
+    # arg-type, which is the resolver's. This kept a copy without its void
+    # branch (gh-1880); once the manifest writer used the resolver, a
+    # deliberate `--arg-type void --return-type void` object would have
+    # scripted without its --return-type and replayed as a generator.
     rt = C.return_type(cfg, comp)
-    implicit_rt = "void" if at.endswith("[]") else at
-    if rt != implicit_rt:
+    if rt != Ctx.resolve_return_type(at, None):
         parts.append(_flag("--return-type", rt))
 
     if C.is_perf(cfg):
