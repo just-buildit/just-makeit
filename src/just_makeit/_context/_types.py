@@ -50,6 +50,48 @@ def _c_set_val(ctype: str) -> str:
     return _SET_VAL.get(ctype, _SET_VAL_DEFAULT)[0]
 
 
+#: The kinds whose field may hold a declared default only approximately: a
+#: decimal literal rounds to the field's precision when it is assigned
+#: (gh-1883). Every generated test that restates a default asks this one
+#: question, the C face and the Python face alike.
+_ROUNDING_KINDS = ("float", "complex")
+
+
+def _c_held_default(ctype: str, default: str) -> str:
+    """The value a *ctype* field holds once *default* is assigned, as C.
+
+    gh-1883. ``--state a:float:0.1`` scaffolds ``state->a = 0.1;``, which
+    stores ``(float)0.1`` -- and the generated C test then asserted
+    ``get_a(obj) == 0.1``, comparing that float against the DOUBLE ``0.1``.
+    The two differ for every value a float cannot represent, so the scaffold
+    failed its own test on the first ``make test``: gh-1067's shape, an
+    assertion that cannot hold, for a float rather than a bool.
+
+    The cast is the conversion the create and reset assignments apply, so the
+    check stays exact -- it asserts precisely what jm stored, with no
+    tolerance to choose. It is a no-op where the literal already has the
+    field's type (``0.1`` into a ``double``, ``0.1f`` into a ``float``), and
+    it covers every spelling that does not: a ``float _Complex`` given
+    ``0.1 + 0.2 * I``, a ``double`` given ``0.1L``, a header constant such as
+    ``M_PI``. Integer kinds are returned unchanged; a default an integer
+    field cannot hold is out of range, not rounded.
+
+    Examples
+    --------
+    >>> _c_held_default("float", "0.1")
+    '(float)(0.1)'
+    >>> _c_held_default("float _Complex", "0.1 + 0.2 * I")
+    '(float _Complex)(0.1 + 0.2 * I)'
+    >>> _c_held_default("double", "M_PI")
+    '(double)(M_PI)'
+    >>> _c_held_default("uint8_t", "3"), _c_held_default("bool", "true")
+    ('3', 'true')
+    """
+    if _CTYPE_META[ctype]["kind"] in _ROUNDING_KINDS:
+        return f"({ctype})({default})"
+    return default
+
+
 def _py_default(ctype: str, default: str) -> str:
     """Convert a C default literal to a valid Python literal.
 

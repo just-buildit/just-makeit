@@ -41,6 +41,8 @@ from .._types import (
 )
 from ._types import (
     _NP_DTYPE_ENUM,
+    _ROUNDING_KINDS,
+    _c_held_default,
     _c_set_val,
     _py_default,
     _py_eq,
@@ -3478,7 +3480,10 @@ def make_state_ctx(
         # gh-1488: a header constant has no Python value to compare against.
         # `test_reset` still pins it, by reading it back from the object.
         _known = _assert_initial and not T.is_c_only_default(ct, dflt)
-        if meta["kind"] == "float":
+        # gh-1883: a `float _Complex` holds `0.1 + 0.2j` as rounded as a
+        # `float` holds `0.1`, so both compare within `_approx`; Python has
+        # no spelling of the C cast `_c_held_default` uses.
+        if meta["kind"] in _ROUNDING_KINDS:
             gs_lines += (
                 [f"        assert obj.get_{name}() == _approx({iv})"]
                 if _known
@@ -3539,7 +3544,7 @@ def make_state_ctx(
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
         iv = f"_{name}0" if name in _c_only else _py_default(ct, dflt)
-        if meta["kind"] == "float":
+        if meta["kind"] in _ROUNDING_KINDS:
             rs_lines.append(
                 f"        assert obj.get_{name}() == _approx({iv})"
             )
@@ -3562,8 +3567,11 @@ def make_state_ctx(
         # one is the peer-drift this repo keeps paying for.
         cgs_lines.append(f"    /* {name}: getter / setter */")
         if _assert_initial:
+            # gh-1883: what the field HOLDS, not the literal: a float given
+            # `0.1` stores `(float)0.1`, never equal to the double `0.1`.
+            held = _c_held_default(ct, dflt)
             cgs_lines.append(
-                f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {dflt});"
+                f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {held});"
             )
         cgs_lines += [
             f"    {csym}_set_{name}(obj, {sv});",
@@ -3600,9 +3608,11 @@ def make_state_ctx(
             "    }",
         ]
     rst_lines.append(f"    {csym}_reset(obj);")
-    for name, _, dflt in scalar_vars:
+    for name, ct, dflt in scalar_vars:
+        # gh-1883: the reset assignment rounds exactly as create's did.
         rst_lines.append(
-            f"    CHECK({CSYM.property_getter(csym, name)}(obj) == {dflt});"
+            f"    CHECK({CSYM.property_getter(csym, name)}(obj)"
+            f" == {_c_held_default(ct, dflt)});"
         )
     for name, elem_ct, size in array_info:
         zero = _CTYPE_META[elem_ct]["zero"]

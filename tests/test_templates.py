@@ -217,7 +217,8 @@ class TestMakeStateCtx:
         ctx = self._ctx([("gain", "double", "1.5")])
         assert "set_gain" in ctx["reset_test_c"]
         assert "_reset(" in ctx["reset_test_c"]
-        assert "== 1.5" in ctx["reset_test_c"]
+        # gh-1883: the value the field holds, the default cast to its type.
+        assert "== (double)(1.5)" in ctx["reset_test_c"]
 
     def test_invalid_type_raises(self):
         import pytest

@@ -118,7 +118,7 @@ int main(void)
     REQUIRE(obj != NULL);
 
     /* gain: getter / setter */
-    CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
+    CHECK(my_dsp_my_filter_get_gain(obj) == (float)(1.0f));
     my_dsp_my_filter_set_gain(obj, 2.0f);
     CHECK(my_dsp_my_filter_get_gain(obj) == 2.0f);
 
@@ -128,7 +128,7 @@ int main(void)
     /* reset restores defaults */
     my_dsp_my_filter_set_gain(obj, 2.0f);
     my_dsp_my_filter_reset(obj);
-    CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
+    CHECK(my_dsp_my_filter_get_gain(obj) == (float)(1.0f));
 
     my_dsp_my_filter_destroy(obj);
     JM_TEST_EPILOGUE();
