@@ -486,7 +486,15 @@ say "beta in a second prefix, alpha in the first"
 P2="$WORK/prefix2"
 xp="$WORK/use-beta-xprefix"
 mkdir -p "$xp/fp"
-cmake --install "$WORK/beta/build" --prefix "$P2" >/dev/null
+# As the runtime + dev pair (gh-1601: together, a plain install), never a
+# plain `cmake --install`: that rewrites the build tree's
+# install_manifest.txt, which the first install (with sudo, in CI) left
+# root-owned, and which disjoint_installs reads as beta's FIRST-prefix
+# manifest. A component install writes install_manifest_<comp>.txt instead.
+for comp in runtime dev; do
+    cmake --install "$WORK/beta/build" --component "$comp" --prefix "$P2" \
+        >/dev/null
+done
 # beta from the second prefix FIRST, so pkg-config and find_package take that
 # copy rather than the one beside alpha.
 pc2="$P2/lib/pkgconfig:$P2/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
