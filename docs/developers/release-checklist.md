@@ -53,8 +53,16 @@ declaration.
 `make version-check` probes the two that declare a literal version
 (`pyproject.toml`, `bootstrap.toml`), so a missed one is a red gate rather
 than a number nobody reads. `uv.lock` is not probed and does not need to be:
-`uv lock` regenerates it, and the `uv-lock` pre-commit hook fails on a lock
-that has drifted from the manifest.
+the bump writes its version line and then runs `uv lock --check`, and the
+`uv-lock` pre-commit hook fails on a lock that has drifted from the manifest.
+
+The bump never lets uv rewrite the lock (gh-1866). Every `uv lock` write
+stamps the running uv's lockfile `revision` (3 up to uv 0.12.21, 5 from
+0.12.22). A release cut with a newer uv used to change that line too, so the
+release commit was no longer a version bump alone and its CI ran the full
+matrix. If the lock needs more than the version (a dependency moved),
+`release-branch` stops and says the lock "needs more than its version line".
+Re-lock in a PR of its own, then cut the release again.
 
 ## 3. Review the promoted changelog
 

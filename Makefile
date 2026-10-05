@@ -155,7 +155,15 @@ CMAKE_FORMAT = $(DEV_RUN) cmake-format
 
 LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
 LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
-LINT_sync-version = $(DEV_RUN) python scripts/sync_version.py
+# `--no-sync`: sync_version writes uv.lock's version line, so the uv that
+# runs it must not re-lock first. A plain `uv run` re-locks a lock that is
+# behind pyproject.toml's version -- rewriting the whole file and stamping
+# the running uv's lockfile `revision` on it -- before the script starts
+# (gh-1866, measured on uv 0.11.28, 0.12.21 and 0.12.23). `--no-sync`
+# neither locks nor syncs: the script needs only the stdlib (tomli below
+# 3.11), so the env as it stands is enough, and the gate can run this exact
+# line offline. `make bump-version` runs it too.
+LINT_sync-version = $(UV) run --no-sync python scripts/sync_version.py
 # Re-locks, as astral's upstream hook did; pre-commit fails the commit when
 # that rewrites uv.lock, so CI's `make lint` refuses a stale lock. Not in
 # FORMAT_TOOLS: re-resolving is not formatting.
@@ -465,12 +473,31 @@ endef
 #
 # `--exit-zero` on sync_version keeps the write and drops the pre-commit
 # convention of exiting 1 on change; the hook still calls it without the flag,
-# so the gate is unchanged. `uv lock` is idempotent when the version already
-# matches, so re-running the bump is free.
-BUMP_VERSION_CMD = sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' \
-                       pyproject.toml && \
-                   $(DEV_RUN) python scripts/sync_version.py --exit-zero && \
-                   $(UV) lock --quiet
+# so the gate is unchanged.
+#
+# uv.lock's version line is sync_version's to write, and uv only CHECKS
+# (gh-1866). The bump ran sync_version under a plain `uv run` and then
+# `uv lock`, and both re-lock: they rewrite the whole file and stamp the
+# running uv's lockfile `revision` on it, so uv 0.12.22+ wrote 5 over this
+# repo's 3. The release commit then changed more than the version string,
+# `make ci-changes` said src=true, and the release ran the full matrix -- and
+# nothing said so until CI did. Now sync_version runs as the hook runs it
+# (`LINT_sync-version`, under `--no-sync`), the lock's diff is the version
+# line under any uv, and a lock that needs more (a dependency moving) is
+# refused HERE, where it can be re-locked in a PR of its own. Every step is
+# idempotent, so re-running the bump is free. `-i.bak` is the in-place
+# spelling BSD sed accepts too: a bare `-i` reads the expression as a backup
+# suffix on macOS.
+BUMP_VERSION_CMD = sed -i.bak \
+                       's/^version = "[^"]*"/version = "$(VERSION)"/' \
+                       pyproject.toml && rm -f pyproject.toml.bak && \
+                   $(LINT_sync-version) --exit-zero && \
+                   { $(UV) lock --check --quiet || { \
+                       echo "bump-version: uv.lock needs more than its" \
+                            "version line (above). A release commit is" \
+                            "a version bump alone (gh-1866): re-lock in" \
+                            "a PR of its own, then bump again."; \
+                       exit 1; }; }
 # Autonomously watch release.yml: stream job outcomes, auto-rerun ONE
 # pre-publish flake (safe — publish is gated behind smoke), and verify the real
 # artifacts (PyPI per-version then latest, GitHub Release) at the end.
