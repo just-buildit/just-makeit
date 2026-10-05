@@ -36,7 +36,7 @@ just-makeit scaffolds, builds, tests, benchmarks, and distributes a Python C
 extension today — and the same C compiles once into a standalone library for
 C, C++, and Rust. The full I/O matrix (scalar, array, void, real, complex),
 multi-type modules, shape presets, performance scaffolding (portable SIMD
-macros — AVX-512, AVX2, and NEON on aarch64 Linux), and the sacred/glue edit
+macros — AVX-512, AVX2, and NEON on aarch64), and the sacred/glue edit
 lifecycle are all shipped. Also shipped:
 `jm status` (drift report), `jm ci` (CI workflow generation), the
 per-component fragment layout
@@ -62,13 +62,13 @@ hit, we'd like to hear about it.
 
 Many people already have the C. For them the fastest path isn't a manifest at
 all — it's "point at my header and give me the Python." `jm bind` reads a
-hand-written `_core.h` and synthesises the binding; today it handles the
-simple processor shape. The work is to make it handle everything else:
+hand-written `_core.h` and synthesises the binding: scalar or opaque state,
+constructor params, getter/setter properties, custom verbs with zero or one
+scalar argument, and variable-output methods paired with a `_max_out` sibling
+— and `jm bind --check` is already a CI drift gate. The work is to make it
+handle everything else:
 
-- Parse every shape — methods, constructor params, opaque state,
-    variable-output, result-structs — not just scalar-in/scalar-out.
-- `jm bind --check` as a CI gate, so a binding can never silently drift from
-    the header it came from.
+- Methods with several or array parameters, and result-struct returns.
 - Bind a real third-party single-header library unchanged; fall back to
     libclang when the fast regex parser can't keep up.
 

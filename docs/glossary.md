@@ -7,39 +7,52 @@ ______________________________________________________________________
 **OBJECT library**
 A CMake library type (`add_library(foo OBJECT ...)`) that compiles source files
 to object files without linking them into an archive or shared library. Each
-component in a just-makeit project is an OBJECT library so its compiled code
-can be linked into *both* the Python extension and the combined C shared
-library without being compiled twice.
+component in a just-makeit project is an OBJECT library (an INTERFACE library
+under `--header-only`) so its compiled code can be linked into *both* the
+Python extension and the combined C shared library without being compiled
+twice.
+
+______________________________________________________________________
+
+**C symbol stem**
+`<c_prefix>_<comp>` — the prefix of every C identifier jm derives for a
+component (`<pkg>_<comp>_create`, `<pkg>_<comp>_state_t`, …). `jm new <pkg>`
+sets `c_prefix` to the package name, so the stem is `<pkg>_<comp>` (or just
+`<comp>` when the name already starts `<pkg>_`); `jm new --no-c-prefix` leaves
+it bare (`<comp>`). File names, CMake targets and Python names keep the plain
+component name.
 
 ______________________________________________________________________
 
 **dispatch loop**
 The outer loop that drives a DSP object over a block of samples — calling
 `step()` once per sample and managing any scratch buffer or SIMD stride. In
-generated projects this is `<obj>_steps()` (hand-written) or the body produced
-by `JM_DEFINE_STEPS` (macro-generated).
+generated projects this is `<pkg>_<comp>_steps()` (scaffolded, yours to edit)
+or the body produced by `JM_DEFINE_STEPS` (macro-generated).
 
 ______________________________________________________________________
 
 **stateful object**
 An object with persistent state between calls: delay lines, coefficient arrays,
 running accumulators. The default `just-makeit object` shape. State lives in
-a heap-allocated `<obj>_state_t` struct; the Python type holds a pointer to it.
-See [Stateful vs Pure](pure.md).
+a heap-allocated `<pkg>_<comp>_state_t` struct; the Python type holds a pointer
+to it. See [Stateful vs Pure](pure.md).
 
 ______________________________________________________________________
 
 **pure function**
-An object shape with no persistent state. Every call is independent; the C
-function takes only its input parameters and returns a result. Scaffolded with
-`--no-state` or other flags that suppress state generation.
+A C function with no persistent state, exposed as a module-level Python
+function with `just-makeit function NAME --module M`. Every call is
+independent; the C function takes only its input parameters and returns a
+result. (`just-makeit object --no-state` is different: it scaffolds an *empty*
+state struct you fill yourself — see [Stateful vs Pure](pure.md).)
 
 ______________________________________________________________________
 
 **step function**
-The per-sample inner function — `<obj>_step(state, x)` — implemented by the
-user in `<obj>_core.h` as a `static inline` for maximum inlining opportunity.
-`step()` is the algorithm; the dispatch loop calls it.
+The per-sample inner function — `<pkg>_<comp>_step(state, x)` — implemented by
+the user in `<comp>_core.h` as a `static inline` for maximum inlining
+opportunity. `step()` is the algorithm; the dispatch loop calls it.
 
 ______________________________________________________________________
 
@@ -65,44 +78,54 @@ ______________________________________________________________________
 
 **perf tier**
 The SIMD instruction set selected when building with `-DENABLE_SIMD=ON`.
-`jm_simd.h` supports four tiers: AVX-512F (16 floats/cycle), AVX2+FMA (8
-floats/cycle), NEON on aarch64 (4 floats/cycle — always active there, since
-NEON is part of the mandatory ARMv8-A baseline rather than an opt-in flag like
-AVX2/AVX-512), and scalar (1 float/cycle, compiler-autovectorisable). The tier
-is detected at compile time; no runtime dispatch.
+`jm_simd.h` supports four tiers: AVX-512F (16 float lanes), AVX2+FMA (8 float
+lanes), NEON on aarch64 (4 float lanes — always active there, since NEON is
+part of the mandatory ARMv8-A baseline rather than an opt-in flag like
+AVX2/AVX-512), and scalar (1 lane, compiler-autovectorisable). The tier is
+detected at compile time; no runtime dispatch.
 
 ______________________________________________________________________
 
 **property**
-A Python accessor pair (`get_<name>` / `set_<name>`) added to a generated type
-with `just-makeit property`. Can be backed by a struct field (`--field`, auto-
-implemented) or implemented manually in the C extension.
+A Python attribute (`obj.name`; read-only unless `--writable`) added to a
+generated type with `just-makeit property`. By default it is backed by C
+accessors `<pkg>_<comp>_get_<name>` / `<pkg>_<comp>_set_<name>` that you
+implement in `<comp>_core.c`; it can instead be backed by a struct field
+(`--field`, auto-implemented), a C expression (`--expr`), a buffer view
+(`--buf-field`), an `[[enum]]` (`--enum`), or a container (`--value-type`).
 
 ______________________________________________________________________
 
 **method**
 An arbitrary C function exposed as a Python method on a generated type,
-added with `just-makeit method`. Supports scalar and array parameters, and
-void or scalar return types.
+added with `just-makeit method`. Parameters may be scalars, arrays or writable
+`--out-param` buffers; results may be a scalar, `None`, a per-call or
+variable-length array (`--out-type`, `--variable-output`, `--multi-output`),
+records (`--result-field`, `--single`, `--record-dtype`) or a zero-copy view
+(`--borrow`). See [Extend commands](commands/extend.md#just-makeit-method).
 
 ______________________________________________________________________
 
 **`just-makeit.toml`**
 The project manifest — the source of truth for all subsequent commands.
-Records the project name, version, all declared objects and modules, and every
-flag (`--perf`, `--arg-type`, `--return-type`, etc.) so that `just-makeit add`
-and `just-makeit apply` regenerate files consistently with the original
-scaffold.
+`just-makeit.toml` holds `[project]` (name, version, `c_prefix`, schema) and
+top-level tables such as `[[enum]]`; each object's and module's sections live
+in the `objects/<name>.toml` / `modules/<name>.toml` fragments it includes
+(`jm new --no-fragments` keeps everything in one file). Every flag (`--perf`,
+`--arg-type`, `--return-type`, etc.) is recorded so that `just-makeit add` and
+`just-makeit apply` regenerate files consistently with the original scaffold.
 
 ______________________________________________________________________
 
 **glue file**
 A generated file that is rebuilt from the manifest on every `just-makeit apply`:
-`<comp>_ext.c` (CPython binding), `<comp>.pyi` (type stub), and `CMakeLists.txt`.
-Editing the TOML propagates straight into the glue. `<comp>_core.h` is
-*mixed*: `apply` injects a missing method/property declaration, but the inline
-`step()` body and the state struct are sacred — never re-rendered (a new state
-field reaches the struct via a rebuild: `jm add` / `jm regenerate`).
+`<comp>_ext.c` (CPython binding), `<comp>.pyi` (type stub), the umbrella
+`<pkg>.h`, and the component `CMakeLists.txt` (reconciled, keeping your riders;
+your own CMake goes in `<comp>_extra.cmake`). Editing the TOML propagates
+straight into the glue. `<comp>_core.h` is *mixed*: `apply` injects a missing
+method/property declaration, but the inline `step()` body and the state struct
+are sacred — never re-rendered (a new state field reaches the struct via a
+rebuild: `jm add` / `jm regenerate`).
 
 ______________________________________________________________________
 
@@ -119,9 +142,9 @@ ______________________________________________________________________
 **bind**
 The `jm bind` command reads a hand-written `<comp>_core.h` and synthesises the
 CPython binding (`<comp>_ext.c` and `<comp>.pyi`) from it — the "point at your
-C, get Python" path. The current MVP handles the simple processor shape (scalar
-state struct, scalar-in/scalar-out `step()`). See
-[`just-makeit bind`](commands/build.md#just-makeit-bind-component) for usage
-and `--check` (CI gate). Expansion to methods, init_params, opaque state, and
-variable-output is the active work on the
+C, get Python" path. It handles scalar or opaque state, constructor params,
+getter/setter properties, single-argument custom verbs and variable-output
+methods; see [`just-makeit bind`](commands/build.md#just-makeit-bind-component)
+for usage and `--check` (CI gate). Multi-parameter methods, result structs and
+a libclang fallback are the remaining work on the
 [roadmap](roadmap.md#now-write-it-in-c-get-python-jm-bind).

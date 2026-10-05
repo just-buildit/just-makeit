@@ -26,8 +26,12 @@ passed to C as `const T *` (or `T *` for an `--out-param`).
 
 `T[N]` is a fixed-length C array embedded in the state struct — one
 allocation for the whole object, no pointer chasing, no separate
-free. There is **no auto getter/setter for fixed-length state arrays**;
-access them in C as `state->name[i]`.
+free. It gets array accessors: `<pkg>_<comp>_get_<name>(state, dest)`
+(copy out), `<pkg>_<comp>_get_<name>_view(state)` (read-only pointer)
+and `<pkg>_<comp>_set_<name>(state, src)`. In Python these are
+`get_<name>()` (an ndarray copy), `get_<name>_view()` (a read-only
+view) and `set_<name>(ndarray)`. In C you can also index
+`state->name[i]` directly.
 
 The element type `T` must be one of the
 [array-element types](#array-element-types) — a strict subset of the
@@ -61,8 +65,10 @@ When a state field is opaque, the renderer:
 
 - Emits the type into the struct verbatim.
 - Generates **no auto-getter, setter, ctor kwarg, or reset assignment**.
-- Leaves `/* TODO */` markers in the lifecycle bodies so you can fill
-    them in.
+- Leaves the field zeroed by `create()`'s `calloc` and untouched by
+    `destroy()` / `reset()` — the acquire / release code is yours, as
+    `create_impl` / `destroy_impl` in the manifest or by hand in
+    `_core.c`.
 
 This is the escape hatch for types just-makeit can't introspect. You
 take over; the renderer steps aside.
@@ -71,7 +77,9 @@ take over; the renderer steps aside.
 > Today, marking a state field as opaque requires one line in
 > `just-makeit.toml` (`opaque = true` on the entry). Because `_core.c`
 > is sacred — `jm apply` never overwrites it — your hand-written
-> lifecycle bodies survive every later edit. See the
+> lifecycle bodies survive later edits, except `jm add`, which rebuilds
+> the component from the manifest (keep the bodies in `create_impl` /
+> `destroy_impl`, or `git stash` first). See the
 > [vendor plan pattern](#vendor-plan-in-opaque-state) below for the
 > full recipe.
 
@@ -94,18 +102,18 @@ opaque. Slot legality:
 | `bool`                 | `np.bool_`       | ✓   | ✓   | ✓   | ✓   |     | `0`                   |
 | `int8_t`               | `np.int8`        | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
 | `int16_t`              | `np.int16`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `int32_t`              | `np.int32`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0L`                  |
-| `int64_t`              | `np.int64`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0LL`                 |
+| `int32_t`              | `np.int32`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `int64_t`              | `np.int64`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
 | `uint8_t`              | `np.uint8`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
 | `uint16_t`             | `np.uint16`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
-| `uint32_t`             | `np.uint32`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0UL`                 |
-| `uint64_t`             | `np.uint64`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0ULL`                |
-| `size_t`               | `np.uintp`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0ULL` (parsed)       |
-| `ptrdiff_t`            | `np.intp`        | ✓   | ✓   | ✓   | ✓   | ✓   | `0LL` (parsed)        |
+| `uint32_t`             | `np.uint32`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `uint64_t`             | `np.uint64`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `size_t`               | `np.uintp`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `ptrdiff_t`            | `np.intp`        | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
 | `float _Complex`       | `np.complex64`   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0f + 0.0f * I`     |
 | `double _Complex`      | `np.complex128`  | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0 + 0.0 * I`       |
 | `long double _Complex` | `np.clongdouble` | ✓   | ✓   | ✓   | ✓   |     | `0.0L + 0.0L * I`     |
-| `const char *`         | `str`            |     |     | ✓   |     |     | `NULL`                |
+| `const char *`         | `str`            |     |     | ✓   | ✓   |     | `NULL`                |
 | `void`                 | (none)           |     | ✓   |     |     |     | — (`--arg-type void`) |
 | `T[N]` (fixed array)   | (none — C-only)  | ✓   |     |     |     |     | `{0}`                 |
 | `T[]` (variable array) | (T's dtype)      |     | ✓   | ✓   | ✓   |     | numpy-owned           |
@@ -117,9 +125,10 @@ Notes:
     the numpy parse path (use `uint8_t` for byte arrays); `int` has
     platform-dependent width (use `int32_t`).
 
-- `const char *` is only legal as an init-param — strings can't be
-    state fields (no lifetime story) or step inputs (no per-sample
-    semantics). If you need a string in state, declare an opaque
+- `const char *` can't be a state field (no lifetime story) or a step
+    input / output (no per-sample semantics). It is legal as an
+    init-param and as a method / module-function `--param`, where Python
+    passes a `str`. If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
     it, as a scalar and as a `T[N]` element, and say so.
@@ -182,8 +191,8 @@ jm object my_fir --state "coeffs:float[64]" --state "n_taps:uint8_t:0"
 ```
 
 `coeffs[64]` lives in the struct; one alloc; populate inside
-`<pkg>_my_fir_create()` in `_core.c`, or via a custom setter method. Access
-in C as `state->coeffs[i]`.
+`<pkg>_my_fir_create()` in `_core.c`, or from Python with the generated
+`set_coeffs(ndarray)`. Access in C as `state->coeffs[i]`.
 
 #### Vendor plan in opaque state
 
@@ -231,13 +240,13 @@ ______________________________________________________________________
 
 ## Type slots — per-slot detail
 
-| Slot                                                      | CLI flags                                | TOML field                       |
-| --------------------------------------------------------- | ---------------------------------------- | -------------------------------- |
-| [State variable](#state-variable-types)                   | `--state name:T:D`                       | `[[obj.state]] type = "T"`       |
-| [Step input / output](#step-input-output-types)           | `--arg-type T`, `--return-type T`        | `arg_type`, `return_type`        |
-| [Constructor / init param](#constructor-init-param-types) | `--init-param name:T[:D]`                | `[[obj.init_params]] type = "T"` |
-| [Module function param](#module-function-param-types)     | `--param name:T`, `--out-param name:T[]` | `[[fn.params]] type = "T"`       |
-| [Method param](#method-param-types)                       | *(TOML only today)*                      | `[[method.params]] type = "T"`   |
+| Slot                                                      | CLI flags                                | TOML field                                     |
+| --------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------- |
+| [State variable](#state-variable-types)                   | `--state name:T:D`                       | `[[obj.state]] type = "T"`                     |
+| [Step input / output](#step-input-output-types)           | `--arg-type T`, `--return-type T`        | `arg_type`, `return_type`                      |
+| [Constructor / init param](#constructor-init-param-types) | `--init-param name:T[:D]`                | `[[obj.init_params]] type = "T"`               |
+| [Module function param](#module-function-param-types)     | `--param name:T`, `--out-param name:T[]` | `[[module.<mod>.functions.params]] type = "T"` |
+| [Method param](#method-param-types)                       | `--param name:T`, `--out-param name:T[]` | `[[<obj>.methods.params]] type = "T"`          |
 
 Templates in the [gallery](templates/index.md) list their concrete type
 choices per slot at the bottom of each page, with links back into the
@@ -250,7 +259,7 @@ ______________________________________________________________________
 State variables are declared with `--state name:type[:default]`.
 
 The type determines the C struct field, the `PyArg_ParseTuple` format code, the
-NumPy dtype in the generated stub, and the default zero value used when no
+Python type in the generated stub, and the default zero value used when no
 default is supplied.
 
 ## Supported types
@@ -316,9 +325,11 @@ delay lines, coefficient tables, and circular buffers whose length is known at
 code-generation time.
 
 Array fields do not support explicit defaults — they are always
-zero-initialized at construction. There are no auto-generated getter/setter
-methods for array fields; access them directly in your C implementation via
-`state->coeffs[i]`.
+zero-initialized at construction. Each gets array accessors:
+`<pkg>_<comp>_get_<name>(state, dest)`, `<pkg>_<comp>_get_<name>_view(state)`
+and `<pkg>_<comp>_set_<name>(state, src)` in C, and `get_<name>()`,
+`get_<name>_view()` and `set_<name>(ndarray)` in Python. Your C implementation
+can also index `state->coeffs[i]` directly.
 
 Array fields work with `--state` (standalone objects and `object --module`)
 and are recorded verbatim in `just-makeit.toml`, so `jm add` and `jm config`
@@ -357,14 +368,13 @@ Explicit defaults must be valid C literals for the type:
 --state mask:uint8_t:255
 ```
 
-> **Note:** Custom defaults for complex types are not supported via the CLI.
-> Complex state always initialises to zero; set a non-zero default directly in
-> the generated `_core.c` after scaffolding.
+> **Note:** Complex defaults are C complex literals:
+> `--state 'pole:double _Complex:1.0+2.0*I'` (the stub shows `(1+2j)`).
 
-## C to NumPy mapping
+## C to Python mapping
 
-Getters return the exact NumPy scalar for the declared C type; setters accept
-the same type:
+Getters return the matching Python scalar (`float`, `int`, `complex`, `bool`);
+setters accept the same:
 
 ```c
 double <pkg>_engine_get_gain(const <pkg>_engine_state_t *state);
@@ -375,27 +385,30 @@ void    <pkg>_engine_set_channel(<pkg>_engine_state_t *state, uint8_t val);
 ```
 
 ```python
-def get_gain(self) -> np.float64: ...
-def set_gain(self, value: np.float64) -> None: ...
+def get_gain(self) -> float: ...
+def set_gain(self, value: float) -> None: ...
 
-def get_channel(self) -> np.uint8: ...
-def set_channel(self, value: np.uint8) -> None: ...
+def get_channel(self) -> int: ...
+def set_channel(self, value: int) -> None: ...
 ```
 
 ## Notes
 
-- All state variables appear as optional keyword arguments to `__init__` —
-    `Component()` with no arguments is always valid.
+- Without `--init-param`, every state variable is an optional keyword argument
+    to `__init__`, so `Component()` with no arguments is valid. Once
+    init-params are declared they alone form the constructor, and a
+    `:required` one must be passed.
 - `reset()` restores every field to its declared default, not the zero literal.
-- The C struct is opaque — always access fields through the generated
-    getter/setter API.
+- The state struct is public in `<comp>_core.h` unless `--opaque-state`; from
+    Python, reach fields through the generated `get_<name>()` / `set_<name>()`.
 
 ______________________________________________________________________
 
 ## Step input / output types
 
-The `--arg-type` and `--return-type` flags set the C signature of `<comp>_step`
-and `<comp>_steps`. Both accept the same allowlist plus a few shape forms.
+The `--arg-type` and `--return-type` flags set the C signature of
+`<pkg>_<comp>_step` and `<pkg>_<comp>_steps`. Both accept the same allowlist
+plus a few shape forms.
 
 ### Scalar shapes
 
@@ -418,11 +431,11 @@ jm object xform --arg-type "float[]" --return-type "float[]"
 
 Pass `void` to either flag to omit that side of the signature:
 
-| Combination                       | What it produces                     | Preset                              |
-| --------------------------------- | ------------------------------------ | ----------------------------------- |
-| `--arg-type void --return-type T` | Generator: `step()` takes no input.  | [generator](templates/generator.md) |
-| `--arg-type T --return-type void` | Consumer: `step()` returns nothing.  | [consumer](templates/consumer.md)   |
-| `--arg-type void` + `--no-step`   | Custom verbs only; no auto `step()`. | [reader](templates/reader.md)       |
+| Combination                       | What it produces                                 | Preset                                                       |
+| --------------------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
+| `--arg-type void --return-type T` | Generator: `step()` takes no input.              | [generator](templates/generator.md)                          |
+| `--arg-type T --return-type void` | Consumer: `step()` returns nothing.              | [consumer](templates/consumer.md)                            |
+| `--no-step`                       | Custom verbs only; no auto `step()` / `steps()`. | [reader](templates/reader.md) (adds a `filepath` init-param) |
 
 ### Element types accepted in the array form { #array-element-types }
 
@@ -451,7 +464,7 @@ ______________________________________________________________________
 
 ## Constructor / init-param types
 
-Constructor parameters are the broadest slot. They feed `<comp>_create`
+Constructor parameters are the broadest slot. They feed `<pkg>_<comp>_create`
 and the Python `__init__`, and they need to accept things the DSP hot
 path doesn't — filepaths, format names, optional buffers.
 
@@ -526,18 +539,21 @@ ______________________________________________________________________
 
 ## Module-function param types
 
-Module-level functions (`jm function FN --module MOD`) accept the
-narrowest slot — no string enums, no 2-D arrays.
+Module-level functions (`jm function FN --module MOD`) accept scalars,
+`T[]` arrays, `path`, and a named `[[enum]]`
+(`--param name:enum:<ename>[=default]`) — not inline `string_enum:`
+choices or 2-D arrays.
 
-| Param flag             | Legal types                                                                                                                                |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--param name:T`       | Any [scalar](#state-variable-types) except `const char *`, or any `T[]` [array shape](#array-element-types). Arrays are `const`-qualified. |
-| `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                        |
+| Param flag             | Legal types                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--param name:T`       | Any [scalar](#state-variable-types), including `const char *` (Python `str`), or any `T[]` [array shape](#array-element-types). Arrays are `const`-qualified. |
+| `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                                           |
 
-The whole-function `--out-type T` flag (currently TOML only) makes the
-function return a fresh ndarray sized from the first array param's
-length, or — when no array param is present — from the first integer
-scalar param (gh-65).
+`jm function --out-type T` makes the function return a fresh ndarray sized
+from the first array param's length, or — when no array param is present —
+from the first integer scalar param (gh-65). With `--variable-output`,
+`--out-size EXPR` sizes it with a C expression over the arguments instead,
+and the C function returns how many elements it wrote.
 
 ______________________________________________________________________
 
@@ -545,14 +561,14 @@ ______________________________________________________________________
 
 Methods on stateful objects (`jm method OBJ METHOD`) accept the same
 set as module-function params (`--param` plus `--out-param` semantics),
-extended with four TOML-only knobs that don't yet have CLI flags:
+extended with these knobs:
 
-| TOML field                          | Effect                                                                                                                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `variable_output = true`            | Method returns up to `max(<comp>_<verb>_max_out(state, n), n)` samples; the binding allocates a NumPy-owned array per call. See [Array memory ownership](memory-ownership.md). |
-| `out_type = "T"`                    | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                                                |
-| `result_fields = [{name, type}, …]` | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist.                   |
-| `enum = "<name>"`                   | The param is `int` in C and the choice **string** in Python, validated against a top-level `[[enum]]` (gh-1021). Same spelling as a module-function param.                     |
+| TOML field                          | CLI                                                                                        | Effect                                                                                                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `variable_output = true`            | `--variable-output`                                                                        | Method returns up to `max(<pkg>_<comp>_<verb>_max_out(state, n), n)` samples; the binding allocates a NumPy-owned array per call. See [Array memory ownership](memory-ownership.md). |
+| `out_type = "T"`                    | `--out-type T`                                                                             | The method writes a fresh `T[]` buffer sized from an array param length (or a scalar integer param, per gh-65).                                                                      |
+| `result_fields = [{name, type}, …]` | `--result-field name:type` (repeatable)                                                    | The method emits a list of records; each tuple becomes a row in the returned list. Field types follow the [state variable](#state-variable-types) allowlist.                         |
+| `enum = "<name>"`                   | TOML only on a method (`jm function --param name:enum:<ename>` is the function's spelling) | The param is `int` in C and the choice **string** in Python, validated against a top-level `[[enum]]` (gh-1021). Same spelling as a module-function param.                           |
 
 ### Enum params: which spelling goes where
 
@@ -606,8 +622,10 @@ The manifest (`just-makeit.toml`) is the source of truth, but not every
 generated file is rewritten the same way when you re-run `jm apply`:
 
 - **Glue — regenerated every apply.** `<comp>_ext.c`,
-    `src/<pkg>/<comp>.pyi`, and `CMakeLists.txt` are derived purely
-    from the manifest. Edit the TOML and they refresh on the next apply.
+    `src/<pkg>/<comp>.pyi` and the umbrella `<pkg>.h` are derived from the
+    manifest, and the component `CMakeLists.txt` is reconciled against it,
+    keeping your riders (your own CMake goes in `<comp>_extra.cmake`). Edit
+    the TOML and they refresh on the next apply.
 - **`<comp>_core.h` — mixed.** `apply` injects a missing method/property
     *declaration*, but the inline `step()` body and the state struct are
     **sacred** — never re-rendered. A new state field reaches the struct via a
@@ -624,9 +642,10 @@ declaration and append a fresh stub.
 `jm regenerate <component>` is the deliberate-refresh half: it deletes
 every file the component owns and re-runs `jm apply`, rebuilding a clean
 scaffold from the manifest (the manifest itself is untouched, unlike
-`jm remove`). It discards hand-written `_core.c` bodies, so `git stash`
-first. `--force` skips the single confirmation. Works for both
-standalone and module objects.
+`jm remove`). By default it lifts hand-written `_core.c` / `_core.h` bodies
+and splices them back into the fresh scaffold (best-effort); `--discard`
+drops them for a clean reset. `git stash` first either way. `--force` skips
+the single confirmation. Works for both standalone and module objects.
 
 ______________________________________________________________________
 
