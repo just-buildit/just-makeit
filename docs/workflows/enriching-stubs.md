@@ -44,6 +44,7 @@ through; a plain `--state` object documents its state fields generically. The
 read-backs and a reset round-trip) and runs as a doctest out of the box:
 
 ```python
+@final
 class Gain:
     """Construct a scalar gain stage.
 
@@ -57,7 +58,7 @@ class Gain:
     Create with defaults:
 
     >>> from my_dsp import Gain
-    >>> obj = Gain(1.0)
+    >>> obj = Gain(gain=1.0)
     >>> obj.get_gain()
     1.0
 
@@ -103,7 +104,7 @@ Regenerate and `gain.pyi` carries:
 
         Parameters
         ----------
-        x
+        x : float
             Input sample.
 
         Returns
@@ -146,28 +147,36 @@ for a `@brief` or `@code`.
 
 ## Which Doxygen tags jm reads
 
-| Tag                    | On `create()`              | On a method / property / free function |
-| ---------------------- | -------------------------- | -------------------------------------- |
-| `@brief`               | Class summary              | Docstring summary                      |
-| `@param <name> <doc>`  | `Parameters` (init-params) | `Parameters` entry                     |
-| `@return` / `@returns` | — (not rendered)           | `Returns` entry                        |
-| `@code` … `@endcode`   | — (not rendered)           | Runnable `Examples` doctest            |
+| Tag                                               | On `create()`              | On a method / property / free function |
+| ------------------------------------------------- | -------------------------- | -------------------------------------- |
+| `@brief`                                          | Class summary              | Docstring summary                      |
+| `@param <name> <doc>`                             | `Parameters` (init-params) | `Parameters` entry                     |
+| `@return` / `@returns`                            | — (not rendered)           | `Returns` entry                        |
+| `@code` … `@endcode`                              | — (not rendered)           | Runnable `Examples` doctest            |
+| `@note`, `@remark`, `@pre`, `@post`, `@invariant` | — (not rendered)           | `Notes`                                |
+| `@warning`                                        | — (not rendered)           | `Warnings`                             |
+| `@see` / `@sa`                                    | — (not rendered)           | `See Also`                             |
+| `@throws` / `@exception`                          | — (not rendered)           | `Raises`                               |
+| `@retval`                                         | — (not rendered)           | rows joined to `Returns`               |
 
 Inline word-references — `@p name`, `@c name`, `@a`/`@e`/`@b name`, and
 `@ref name` — are reduced to the bare word so the prose reads cleanly in
-Python. Tags with no numpy equivalent (`@note`, `@warning`, `@see`) are
-dropped.
+Python. C-only metadata (`@todo`, `@bug`, `@since`, `@version`, `@author`,
+`@file`, …) is dropped.
 
 Three things worth knowing when your docs don't seem to "take":
 
 - **Your `@brief` must say more than the function name.** A brief that merely
-    restates the name (jm's own `@brief <pkg>_gain_create.` scaffold shape) is treated
-    as empty, and jm keeps the name-based fallback until you write something
-    real.
-- **`@code` examples are executed in CI.** They run against the *built* C
-    extension via `pytest --doctest-glob='*.pyi'`, so a `>>>` that expects `3.0`
-    fails the build if the C returns `3.1`. Write examples with deterministic,
-    printable output (whole-number results avoid floating-point noise).
+    restates the name (jm's own scaffold brief, `Create a gain instance.`, or
+    one that only names the function) is treated as empty, and jm keeps the
+    name-based fallback until you write something real.
+- **`@code` examples are runnable, not run for you.** `make test` and the
+    `jm ci` workflow do not execute them; run them against the built
+    extension with `python -m pytest --doctest-glob='*.pyi' src/` (or, once
+    installed, `python -m doctest -v src/<pkg>/<obj>.pyi`), and add that line
+    to your CI if a `>>>` expecting `3.0` should fail the build when the C
+    returns `3.1`. Write examples with deterministic, printable output
+    (whole-number results avoid floating-point noise).
 - **Stubs are glue — regenerate, don't hand-edit.** After editing a header,
     run `just-makeit apply` and commit the updated `.pyi` alongside it;
     `just-makeit status --check` fails the manifest-drift gate if they diverge.

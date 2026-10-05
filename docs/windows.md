@@ -2,8 +2,8 @@
 
 A generated project builds, tests and imports on Windows exactly as generated,
 with **clang-cl** and no flag or manifest key (gh-1368). CI builds every
-bundled example with clang-cl on `windows-latest` on every pull request, and
-that job gates the merge.
+bundled example with clang-cl on `windows-latest` on every pull request that
+changes code, and that job gates the merge.
 
 There are two ways in: **PowerShell**, from a terminal, and the **Visual Studio
 IDE**, opening the project folder. Both configure through the same generated

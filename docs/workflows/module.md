@@ -50,14 +50,25 @@ just-makeit object biquad \
 
 Each `just-makeit object` call:
 
-- Creates the C library (`_core.h`, `_core.c`, C test, C benchmark)
-- Fully regenerates the module's `filter_ext.c`, `CMakeLists.txt`, and `__init__.py`
+- Creates the object's C library (`_core.h`, `_core.c`, C test, C
+    benchmark), its binding fragment `native/src/filter/filter_ext_<obj>.c`
+    (shared: later `apply`s only add missing members), and its Python test
+    and benchmark under `src/my_filters/filter/tests/` and `benchmarks/`
+- Re-renders the module's `filter_ext.c` aggregator and `CMakeLists.txt`,
+    and splices the new class into `filter/__init__.py`
 
 After both objects:
 
 ```python
-# src/my_filters/filter/__init__.py — generated
-from .filter import Fir, Biquad
+# filter/__init__.py — re-export all types from the C extension.
+import os as _os
+import sys as _sys
+
+if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+    _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
+del _os, _sys
+
+from .filter import Fir, Biquad  # noqa: E402
 
 __all__ = ["Fir", "Biquad"]
 ```
@@ -109,8 +120,9 @@ each with its own `step`, `steps`, `reset`, and context manager support.
 just-makeit object iir --module filter --state "gain:float:1.0"
 ```
 
-`filter_ext.c`, `CMakeLists.txt`, and `__init__.py` are all regenerated from
-the complete object list. `Fir` and `Biquad` are unaffected.
+`filter_ext.c` and `CMakeLists.txt` are re-rendered from the complete object
+list, and `Iir` is spliced into `__init__.py`. `Fir` and `Biquad` — and their
+binding fragments — are unaffected.
 
 ## 8. Install
 
