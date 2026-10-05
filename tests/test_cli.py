@@ -1835,10 +1835,17 @@ class TestScriptCLI:
         r = _cli("script", cwd=dest)
         assert "--mutable" in r.stdout
 
-    def test_script_return_type_emitted_when_differs_from_arg_type(
+    def test_script_return_type_emitted_when_differs_from_default(
         self, tmp_path
     ):
-        """--arg-type void --return-type 'float _Complex' must appear explicitly."""
+        """A void-arg object's non-default --return-type appears explicitly.
+
+        Its default is `float _Complex`, not `void` (gh-1880): this asserted
+        that `--return-type "float _Complex"` was spelled out, which was true
+        only under `_script`'s private copy of the default. The default is
+        omitted like any other, and every return type still replays --
+        `tests/test_gh1880_default_return_type.py` round-trips them all.
+        """
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest))
         _cli(
@@ -1847,11 +1854,11 @@ class TestScriptCLI:
             "--arg-type",
             "void",
             "--return-type",
-            "float _Complex",
+            "double",
             cwd=dest,
         )
         r = _cli("script", cwd=dest)
-        assert '--return-type "float _Complex"' in r.stdout
+        assert "--return-type double" in r.stdout
 
     def test_script_return_type_omitted_when_matches_arg_type(self, tmp_path):
         dest = tmp_path / "proj"
