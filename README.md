@@ -116,6 +116,10 @@ my_project/
 └── bootstrap.toml            # tool + system-dep manifest (jbx install-deps)
 ```
 
+`bootstrap.toml` lists the system packages a build needs, per package manager.
+[jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
+installs them: `jbx install-deps -g dev` picks your OS's package manager.
+
 ______________________________________________________________________
 
 ## C API

@@ -12,7 +12,9 @@ TODO: describe your project.
   `cl.exe`: it has no C99 `float _Complex`.
 - NumPy (installed automatically by `make` if missing)
 
-Install system build dependencies (detects OS/distro automatically):
+Install the system build dependencies `bootstrap.toml` lists with
+[jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
+(one `curl` installs it), which picks your OS's package manager:
 
 ```bash
 jbx install-deps -g dev
