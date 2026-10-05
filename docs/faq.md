@@ -49,12 +49,22 @@ ______________________________________________________________________
 
 ## How do I link an external C library (FFTW, libsndfile, …)?
 
-In the component's `CMakeLists.txt`, add:
+Declare it in the manifest, so every face — this build, the installed CMake
+package and the `.pc` — gets it:
 
-```cmake
-find_package(FFTW3f REQUIRED)
-target_link_libraries(my_filter_core PRIVATE FFTW3::fftw3f)
+```toml
+[project]
+pkg_modules = ["fftw3f"]
+
+[my_filter]
+extra_link_libs = ["PkgConfig::FFTW3F"]
 ```
+
+then `jm apply`. See
+[When your library depends on another package](c-library.md#when-your-library-depends-on-another-package).
+CMake the manifest cannot express goes in
+`native/src/<comp>/<comp>_extra.cmake`, never the generated `CMakeLists.txt`,
+which the next `jm apply` rewrites.
 
 For Python runtime dependencies, add to `pyproject.toml`:
 
@@ -63,8 +73,7 @@ For Python runtime dependencies, add to `pyproject.toml`:
 dependencies = ["numpy", "scipy"]
 ```
 
-The generated project's C code and Python binding don't need to change —
-just wire the library into the CMake target.
+The generated project's C code and Python binding don't need to change.
 
 ______________________________________________________________________
 
@@ -178,8 +187,9 @@ complete table. In short:
     `CMakeLists.txt`) and injects any missing method/property *declaration*
     into `*_core.h`; the state struct and inline `step()` body stay sacred.
 - **`jm method` / computed `jm property` / `jm function`** are additive: they
-    inject one declaration and append a fresh stub, leaving your existing
-    bodies intact.
+    inject one declaration and append a fresh stub (for `jm function`, a new
+    `native/src/<mod>/<fn>.c` unless `--functions-in-core`), leaving your
+    existing bodies intact.
 - **`jm add`** is structural — it rebuilds the object from the manifest, which
     re-stubs the sacred `_core.c`. Keep your algorithm in the TOML
     `impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first.

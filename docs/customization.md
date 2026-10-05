@@ -9,31 +9,36 @@ ______________________________________________________________________
 
 just-makeit follows a **sacred/glue contract**: glue files are rebuilt from
 the manifest on every mutating command (`method`, `property`, `function`,
-`apply`), while sacred files — your algorithm — are never spliced or
-re-rendered once they exist.
+`apply`), while sacred files — your algorithm — are never re-rendered once
+they exist; `apply` only appends a definition the manifest declares and the
+file lacks. Every file and kind is in the canonical table,
+[Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file); the ones
+you edit most:
 
-| File                                  | Class      | Notes                                                                                                                                  |
-| ------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `native/src/<obj>/<obj>_core.c`       | **sacred** | implement `step()` / `steps()` / lifecycle here; never spliced, only rebuilt                                                           |
-| `native/inc/<pkg>/<obj>/<obj>_core.h` | **mixed**  | the state struct + inline `step()` are sacred; method/property decls refresh                                                           |
-| `native/src/<obj>/<obj>_ext.c`        | **glue**   | Python binding — regenerated, don't edit                                                                                               |
-| `native/src/<module>/<module>_ext.c`  | **glue**   | module binding — fully rewritten on each `object --module`                                                                             |
-| `native/src/<obj>/CMakeLists.txt`     | **glue**   | OBJECT library + test + bench targets                                                                                                  |
-| `native/tests/test_<obj>_core.c`      | **yours**  | add assertions here; not overwritten                                                                                                   |
-| `native/tests/test_<obj>_symbols.c`   | **glue**   | the address of every function the binding calls, linked into the C test so one declared and never defined fails at link time (gh-1361) |
-| `src/<pkg>/<obj>.pyi`                 | **glue**   | type stub — matches generated binding                                                                                                  |
-| `src/<pkg>/tests/test_<obj>.py`       | **yours**  | add pytest cases here; not overwritten                                                                                                 |
+| File                                                                   | Class                                    | Notes                                                                                                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `native/src/<obj>/<obj>_core.c`                                        | **yours**                                | `steps()`, lifecycle and method bodies; `apply` only appends a definition the manifest declares and the file lacks                     |
+| `native/inc/<pkg>/<obj>/<obj>_core.h`                                  | **yours**                                | the state struct + inline `step()` are sacred; method/property decls follow the manifest                                               |
+| `native/src/<obj>/<obj>_ext.c`                                         | **jm's**                                 | Python binding — regenerated, don't edit                                                                                               |
+| `native/src/<module>/<module>_ext.c`                                   | **jm's**                                 | module aggregator — rewritten on every `apply` and `object --module`                                                                   |
+| `native/src/<module>/<module>_ext_<obj>.c`                             | **shared**                               | a module object's binding: `apply` adds missing members, never re-renders one you changed; `jm adopt <obj>` makes it jm's              |
+| `native/src/<obj>/CMakeLists.txt`                                      | **jm's**                                 | OBJECT library + test + bench targets                                                                                                  |
+| `native/tests/test_<obj>_core.c`                                       | **yours**                                | add assertions here; not overwritten                                                                                                   |
+| `native/tests/test_<obj>_symbols.c`                                    | **derived**                              | the address of every function the binding calls, linked into the C test so one declared and never defined fails at link time (gh-1361) |
+| `src/<pkg>/<obj>.pyi`                                                  | **jm's**                                 | type stub — matches generated binding                                                                                                  |
+| `src/<pkg>/tests/test_<obj>.py`, `src/<pkg>/benchmarks/bench_<obj>.py` | **jm's until you delete its first line** | rewritten on `apply` while it starts `# jm:generated`; delete that line before adding cases                                            |
 
-**Rule of thumb:** `_ext.c`, `.pyi`, and `CMakeLists.txt` are glue (owned by
-the generator). `_core.c` and the test files are yours. In `_core.h` the
-state struct and inline `step()` are sacred; only the method/property
-*declarations* follow the manifest.
+**Rule of thumb:** `_ext.c`, `.pyi`, and a component's `CMakeLists.txt` are
+glue (owned by the generator). `_core.c` and the C tests are yours. In
+`_core.h` the state struct and inline `step()` are sacred; only the
+method/property *declarations* follow the manifest.
 
 The additive verbs (`jm method`, computed `jm property`, `jm function`) are
 splice-free — they inject one declaration into `_core.h` and append a fresh
-stub to `_core.c`; they never re-render an existing body. Adding state with
-`jm add` is **structural**: it rebuilds the object from the manifest (see
-below). The two commands that rebuild the sacred `_core.c` are `jm add` and
+stub to `_core.c` (for `jm function`, the module's `<mod>_core.h` and a new
+`native/src/<mod>/<fn>.c` unless `--functions-in-core`); they never
+re-render an existing body. Adding state with `jm add` is **structural**: it
+rebuilds the object from the manifest (see below). The two commands that rebuild the sacred `_core.c` are `jm add` and
 `jm regenerate <obj>`, but they don't treat your hand-written bodies the same
 way: `jm regenerate` lifts create/destroy/reset/`step()`/getter/setter/method
 bodies out by function name before deleting the files and splices them back
@@ -92,7 +97,7 @@ ______________________________________________________________________
 
 ## Hand-owning one member of a generated stub
 
-The table above calls `.pyi` **glue**, and by default it is — regenerated in
+The table above calls `.pyi` **jm's**, and by default it is — regenerated in
 full on every mutating command. But there is an escape hatch for a single
 member, which matters when the runtime has something the manifest cannot
 describe.
@@ -150,7 +155,7 @@ ______________________________________________________________________
 ## Typical workflow after scaffolding
 
 1. Scaffold with state variables: `just-makeit new my_filter --object fir --state "coeffs:float[16]" --state "delay:float[16]"`
-1. Open `native/src/fir/fir_core.c` — implement `my_filter_fir_step()`.
+1. Open `native/inc/my_filter/fir/fir_core.h` — implement the inline `my_filter_fir_step()`.
 1. Build and test: `make && make test`.
 1. Add more state: `just-makeit add --object fir --state gain:float:1.0f` → **rebuilds** the object from the manifest, so keep your algorithm in the TOML `impl`/`create_impl` (or `git stash` first); the new field lands in the struct, constructor, getter/setter, and reset.
 1. If you need a struct field that isn't a state variable (e.g. a scratch buffer), add it manually to the struct in `native/inc/my_filter/fir/fir_core.h` — the struct is sacred, so `jm apply` never re-renders it and your extra fields survive (a `jm add`/`jm regenerate` rebuild does re-stub the struct from the manifest, so re-add them after).
@@ -159,11 +164,12 @@ ______________________________________________________________________
 
 ## 1. Declare your state variables upfront
 
-Use `--state name:type[:default]` when running `new` or `object` so the
-scaffolding matches your object from the start:
+Use `--state name:type[:default]` with `new --object` or with `object` so the
+scaffolding matches your object from the start (`--state` describes the
+object being created):
 
 ```sh
-just-makeit new my_filter \
+just-makeit new my_filter --object fir \
     --state cutoff_freq:float:440.0f \
     --state num_taps:int32_t:32
 ```
@@ -176,10 +182,10 @@ ______________________________________________________________________
 ## 2. Add state variables to an existing object
 
 ```sh
-just-makeit add --object my_filter --state drive:float:1.0f
+just-makeit add --object fir --state drive:float:1.0f
 ```
 
-Adding state is **structural**: `add` writes the new `[[my_filter.state]]`
+Adding state is **structural**: `add` writes the new `[[fir.state]]`
 entry to `just-makeit.toml`, then rebuilds the object from the manifest (a
 delete-then-apply). The new field reaches the struct, constructor,
 getter/setter, reset, and Python stub in one shot. Unlike `jm regenerate`
@@ -189,9 +195,10 @@ nothing safe to splice back. Keep your algorithm in the TOML
 `impl`/`create_impl` (the rebuild re-asserts it) or `git stash` first. `add`
 prompts once before rebuilding; `--force` skips it.
 
-Use this for any scalar state variable that follows the standard lifecycle
-(constructor parameter, getter/setter, reset target). For non-scalar fields
-(arrays, pointers, structs) add them manually as described below.
+Use this for any state variable that follows the standard lifecycle
+(constructor parameter, getter/setter, reset target). Fixed-length arrays are
+state too (`--state coeffs:float[64]`). For heap allocations, pointers or
+nested structs, add them manually as described below.
 
 ______________________________________________________________________
 
@@ -212,14 +219,15 @@ ______________________________________________________________________
 
 ## 4. Implement `step`
 
-Open `<component>/src/<component>_core.c` and replace the pass-through stub:
+Open `native/inc/<pkg>/<component>/<component>_core.h` (here
+`native/inc/my_filter/fir/fir_core.h`) and replace the pass-through stub:
 
 ```c
 static inline float _Complex
-my_filter_step(const my_filter_state_t *state, float _Complex x)
+my_filter_fir_step(const my_filter_fir_state_t *state, float _Complex x)
 {
-    (void)state; /* TODO: implement DSP using state variables */
-    return x;
+    (void)state; /* TODO: implement using state variables */
+    return (float _Complex)x;
 }
 ```
 
@@ -231,80 +239,78 @@ ______________________________________________________________________
 
 ## 5. Add non-scalar state manually
 
-For fields that don't fit the scalar pattern (fixed-size arrays, heap
-allocations, nested structs), add them directly to the struct in
-`<component>/inc/<component>/<component>_core.h` — the struct is sacred, so
+For fields that don't fit the state pattern (heap allocations, pointers,
+nested structs), add them directly to the struct in
+`native/inc/<pkg>/<component>/<component>_core.h` — the struct is sacred, so
 `jm apply` never re-renders it and your manual fields survive (a `jm add` /
 `jm regenerate` rebuild re-stubs the struct from the manifest, so re-add them
 after one):
 
 ```c
 typedef struct {
-    float    cutoff_freq;
-    int32_t  num_taps;
-    float  coeffs[64];       /* add manually */
-    float  delay_line[64];   /* add manually */
-} my_filter_state_t;
+    float cutoff_freq;
+    int32_t num_taps;
+    float *delay_line; /* add manually: allocated in create() */
+} my_filter_fir_state_t;
 ```
 
-Then implement any corresponding logic in `<component>_core.c` and expose
-new getters/setters in `<component>_ext.c` if needed.
+Then implement any corresponding logic in `<component>_core.c`, and expose
+new getters/setters with `jm property`.
 
 ______________________________________________________________________
 
 ## 6. Expose new Python methods
 
-Add new C functions to the header, implement them in the `.c` file, then
-expose them in `<component>_ext.c`. Each Python method follows this skeleton:
+Declare the method and let jm write the binding and the stub:
 
-```c
-static PyObject *
-MyFilter_my_method(MyFilterObject *self, PyObject *args)
-{
-    if (!self->handle) {
-        PyErr_SetString(PyExc_RuntimeError, "destroyed");
-        return NULL;
-    }
-    /* parse args, call C function, return result */
-}
+```sh
+just-makeit method fir gain_db --param db:float --return-type float
 ```
 
-Add an entry to `MyFilter_methods[]`:
-
-```c
-{"my_method", (PyCFunction)MyFilter_my_method, METH_VARARGS,
- "Brief description."},
-```
-
-Update the type stub `src/<package>/<component>.pyi` to match.
+(or a `[[fir.methods]]` table and `jm apply`). jm injects the declaration
+into `_core.h` and appends a stub to `_core.c` for you to fill in. A
+property: `just-makeit property fir <name> --type float [--writable]`. A
+binding the manifest cannot express belongs in a hook jm never writes —
+`<component>_ext_extra.c` (standalone) or `<module>_ext_<obj>_extra.c`
+(module), with `--manual-stub` and a `# jm:hand` stub member (see above).
 
 ______________________________________________________________________
 
 ## 7. Add CTest tests
 
-`<component>/tests/test_<component>_core.c` already has a template test.
-Add more assertions inline, or register additional executables in the
-component's `CMakeLists.txt`:
+`native/tests/test_<component>_core.c` already has a template test. Add more
+assertions inline, or register additional executables in
+`native/src/<component>/<component>_extra.cmake`, which the generated
+`CMakeLists.txt` includes and jm never writes (see
+[Your own CMake](#your-own-cmake-dir_extracmake)):
 
 ```cmake
-add_executable(test_my_filter_edge tests/test_edge_cases.c)
-target_link_libraries(test_my_filter_edge PRIVATE my_filter_core)
-target_include_directories(test_my_filter_edge PRIVATE
-    inc ${CMAKE_SOURCE_DIR}/inc)
-add_test(NAME test_my_filter_edge COMMAND test_my_filter_edge)
+add_executable(test_fir_edge ${CMAKE_SOURCE_DIR}/native/tests/test_edge_cases.c)
+target_link_libraries(test_fir_edge PRIVATE fir_core)
+add_test(NAME test_fir_edge COMMAND test_fir_edge)
 ```
 
 ______________________________________________________________________
 
 ## 8. Add dependencies
 
-Link a third-party library (FFTW, libsndfile, etc.) in the component's
-`CMakeLists.txt`:
+Link a third-party library (FFTW, libsndfile, etc.) by declaring it in the
+manifest, so every face — this build, the installed CMake package and the
+`.pc` — gets it:
 
-```cmake
-find_package(FFTW3f REQUIRED)
-target_link_libraries(my_filter_core PRIVATE FFTW3::fftw3f)
+```toml
+[project]
+pkg_modules = ["fftw3f"]
+
+[fir]
+extra_link_libs = ["PkgConfig::FFTW3F"]
 ```
+
+then `jm apply`. See
+[When your library depends on another package](c-library.md#when-your-library-depends-on-another-package).
+CMake the manifest cannot express goes in
+`native/src/<component>/<component>_extra.cmake`, never the generated
+`CMakeLists.txt`.
 
 For Python runtime dependencies, add them to `pyproject.toml`:
 

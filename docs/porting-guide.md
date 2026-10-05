@@ -29,7 +29,7 @@ Map your step/process function signature to a just-makeit shape:
 List every field in your state struct. For each field determine:
 
 - Is it a supported scalar type? (see [Type mapping](#type-mapping-reference))
-- Is it a fixed-length array? (`float buf[256]` → `float _Complex[256]`)
+- Is it a fixed-length array? (`float buf[256]` → `float[256]`)
 - Is it an opaque pointer to internal memory? (use `opaque = true` in TOML)
 - Is it a constructor-only parameter that doesn't live in the struct?
 
@@ -71,17 +71,21 @@ every shape that just-makeit can represent.
 
 ### What the parser handles
 
-| Header construct                                                            | Becomes in Python         |
-| --------------------------------------------------------------------------- | ------------------------- |
-| `T comp_step(comp_t *s, T in)`                                              | `.step(x)` method         |
-| `void comp_step(comp_t *s, T in)` (consumer)                                | `.step(x)` → None         |
-| `T comp_step(comp_t *s)` (generator)                                        | `.step()` → T             |
-| `void comp_steps(s, const T *in, n, U *out)` (blockwise)                    | `.steps(in)` → ndarray    |
-| `T comp_get_field(const comp_t *s)` / `void comp_set_field(comp_t *s, T v)` | property                  |
-| `T comp_verb(comp_t *s, T in)` (custom verb)                                | `.verb(x)` method         |
-| `size_t comp_verb(s, T *out, n)` + `comp_verb_max_out(s, n)`                | variable-output `.verb()` |
-| `typedef struct comp_t comp_t;` (opaque forward decl)                       | opaque state              |
-| constructor params not in the struct body                                   | `__init__` keyword args   |
+Below, `S` is the state type `<pkg>_<comp>_state_t`: every symbol carries the
+C stem `<pkg>_<comp>`, the project's `c_prefix` (which `jm new` sets to the
+package name) joined to the component name.
+
+| Header construct                                                                  | Becomes in Python         |
+| --------------------------------------------------------------------------------- | ------------------------- |
+| `T <pkg>_<comp>_step(S *s, T in)`                                                 | `.step(x)` method         |
+| `void <pkg>_<comp>_step(S *s, T in)` (consumer)                                   | `.step(x)` → None         |
+| `T <pkg>_<comp>_step(S *s)` (generator)                                           | `.step()` → T             |
+| `void <pkg>_<comp>_steps(s, const T *in, n, U *out)` (blockwise)                  | `.steps(in)` → ndarray    |
+| `T <pkg>_<comp>_get_field(const S *s)` / `void <pkg>_<comp>_set_field(S *s, T v)` | property                  |
+| `T <pkg>_<comp>_verb(S *s, T in)` (custom verb)                                   | `.verb(x)` method         |
+| `size_t <pkg>_<comp>_verb(s, T *out, n)` + `<pkg>_<comp>_verb_max_out(s, n)`      | variable-output `.verb()` |
+| `typedef struct <pkg>_<comp>_state_t <pkg>_<comp>_state_t;` (opaque forward decl) | opaque state              |
+| constructor params not in the struct body                                         | `__init__` keyword args   |
 
 Declarations the parser cannot handle are skipped with a warning — add
 those by hand via `[[comp.methods]]` in TOML after binding.
@@ -152,14 +156,16 @@ just-makeit object gain \
 # Rename identifiers while lifting (repeatable)
 just-makeit object gain \
     --impl legacy/dsp.c::apply_gain \
-    --replace apply_gain_state::gain_t \
+    --replace apply_gain_state::myproject_gain_state_t \
     --replace apply_gain::myproject_gain_step
 ```
 
 `--impl` extracts the body between the outermost braces of the target
-function and injects it into the `/* <<IMPLEMENT>> */` placeholder in
-`_core.c`. `--replace old::new` applies word-boundary substitutions before
-injection.
+function and injects it into the stub: the inline `step()` in `_core.h`, or,
+for the `create::`/`reset::`/`destroy::` slots and methods, the
+`/* <<IMPLEMENT>> */` placeholder in `_core.c`. `--replace old::new`
+substitutes before injection: as a whole word when `old` is letters and
+digits only, otherwise as a literal substring.
 
 ### Lift lifecycle bodies
 
@@ -181,7 +187,7 @@ arg_type        = "float"
 return_type     = "float"
 impl_file       = "legacy/dsp.c::apply_gain"
 create_impl_file = "legacy/dsp.c::gain_init"
-replace         = { "apply_gain_state" = "gain_t" }
+replace         = { "apply_gain_state" = "myproject_gain_state_t" }
 
 [[gain.state]]
 name    = "gain"
@@ -197,14 +203,21 @@ Write the body inline in TOML using these interpolated placeholders:
 | --------------- | ----------------------------------- |
 | `{component}`   | component name, exactly as declared |
 | `{Component}`   | title-cased component name          |
+| `{module}`      | module name (empty when standalone) |
+| `{Module}`      | title-cased module name             |
 | `{arg_type}`    | C type of `step()` argument         |
 | `{return_type}` | C type of `step()` return value     |
 | `{method}`      | method name (in `[[methods]]`)      |
 
+`{component}` is the name as declared, not the C symbol stem: under
+`[project] c_prefix` the derived names are `<c_prefix>_<component>_…`, which
+no placeholder spells. The body sees `step()`'s own parameters, `state` and
+`x`:
+
 ```toml
 [gain]
 impl = """
-    return s->gain * in;
+    return state->gain * x;
 """
 ```
 
@@ -225,9 +238,9 @@ just-makeit object engine \
 make -C /path/to/myproject && make -C /path/to/myproject test
 ```
 
-Open `native/src/engine/engine_core.c`, fill in the `step()` body, and
-run the tests again. The scaffold already passes CTest — you're implementing
-into green.
+Open `native/inc/myproject/engine/engine_core.h`, fill in the inline
+`myproject_engine_step()` body, and run the tests again. The scaffold
+already passes CTest — you're implementing into green.
 
 ______________________________________________________________________
 
@@ -240,19 +253,25 @@ ______________________________________________________________________
 | `native/inc/<pkg>/<c>/<c>_core.h` | state struct body + inline `step()` body |
 | `native/src/<c>/<c>_core.c`       | all function bodies (steps, lifecycle)   |
 | `native/src/<mod>/<fn>.c`         | module-level function bodies             |
+| `native/tests/test_<c>_core.c`    | your C tests (the scaffold is a seed)    |
 
 `_core.h` is hybrid: `jm apply` may inject new method/property declarations,
 but the struct body and `step()` inline body are never touched.
 
 ### Glue files (always regenerated — never hand-edit)
 
-| File                           | Regenerated by         |
-| ------------------------------ | ---------------------- |
-| `native/src/<c>/<c>_ext.c`     | `jm apply` / `jm bind` |
-| `src/<pkg>/<c>.pyi`            | every mutating command |
-| `native/tests/test_<c>_core.c` | `jm apply`             |
-| `src/<pkg>/tests/test_<c>.py`  | `jm apply`             |
-| `CMakeLists.txt`               | `jm apply`             |
+| File                              | Regenerated by                                        |
+| --------------------------------- | ----------------------------------------------------- |
+| `native/src/<c>/<c>_ext.c`        | `jm apply` / `jm bind`                                |
+| `src/<pkg>/<c>.pyi`               | every mutating command                                |
+| `native/src/<c>/CMakeLists.txt`   | `jm apply` (your own CMake goes in `<c>_extra.cmake`) |
+| `native/tests/test_<c>_symbols.c` | `jm apply`, derived from your header and binding      |
+
+`src/<pkg>/tests/test_<c>.py` and `src/<pkg>/benchmarks/bench_<c>.py` are
+jm's while their first line is `# jm:generated`; delete that line to make
+them yours. The root `CMakeLists.txt` is shared: jm splices only its marked
+blocks. Every file, by owner:
+[Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file).
 
 ### The three maintenance commands
 
@@ -260,7 +279,7 @@ but the struct body and `step()` inline body are never touched.
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `jm apply`           | Additive — injects missing declarations, regenerates glue, never deletes                                                                  |
 | `jm regenerate COMP` | Delete all COMP files and rebuild from manifest; by default splices hand-written `_core.c` bodies back in (`--discard` for a clean reset) |
-| `jm status`          | Read-only drift table: OK / MISSING / STALE per file                                                                                      |
+| `jm status`          | Read-only: what `apply` would create (MISSING) or rewrite (STALE), plus jm's create-only files a newer jm renders differently (OUTDATED)  |
 
 Use `jm apply` for day-to-day additions. Use `jm regenerate` when a component
 needs to be rebuilt cleanly from its manifest — after a sweeping signature
@@ -274,20 +293,20 @@ ______________________________________________________________________
 
 ### Supported scalar types
 
-| C type                 | NumPy dtype  | Notes                       |
-| ---------------------- | ------------ | --------------------------- |
-| `float`                | `float32`    |                             |
-| `double`               | `float64`    |                             |
-| `float _Complex`       | `complex64`  |                             |
-| `double _Complex`      | `complex128` |                             |
-| `long double _Complex` | —            | No NumPy equiv; Python only |
-| `int`                  | `int32`      |                             |
-| `int8_t` … `int64_t`   | `int8` …     |                             |
-| `uint8_t` … `uint64_t` | `uint8` …    |                             |
-| `size_t`               | `uint64`     |                             |
-| `ptrdiff_t`            | `int64`      |                             |
-| `bool`                 | `bool`       |                             |
-| `const char *`         | str          | Return type only            |
+| C type                 | NumPy dtype   | Notes                            |
+| ---------------------- | ------------- | -------------------------------- |
+| `float`                | `float32`     |                                  |
+| `double`               | `float64`     |                                  |
+| `float _Complex`       | `complex64`   |                                  |
+| `double _Complex`      | `complex128`  |                                  |
+| `long double _Complex` | `clongdouble` | platform width                   |
+| `int`                  | `int32`       |                                  |
+| `int8_t` … `int64_t`   | `int8` …      |                                  |
+| `uint8_t` … `uint64_t` | `uint8` …     |                                  |
+| `size_t`               | `uintp`       | pointer width (64-bit: `uint64`) |
+| `ptrdiff_t`            | `intp`        | pointer width (64-bit: `int64`)  |
+| `bool`                 | `bool`        |                                  |
+| `const char *`         | `str`         | return, param and init-param     |
 
 ### Array types
 
@@ -305,13 +324,13 @@ default = "0.0"
 
 ### Unsupported constructs and workarounds
 
-| C construct         | Workaround                                     |
-| ------------------- | ---------------------------------------------- |
-| Struct return value | Return pointer; expose fields via properties   |
-| `void *` pointer    | Mark state field `opaque = true` in TOML       |
-| Multi-scalar in/out | Use blockwise (`T[]` / `U[]`) or extra methods |
-| Nested structs      | Opaque pointer + accessor methods              |
-| Variadic args       | Not supported — wrap in a fixed-signature fn   |
+| C construct         | Workaround                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| Struct return value | `--single --result-field …` (one record, by value) or `--variable-output --record-dtype STRUCT` (rows) |
+| `void *` pointer    | Mark state field `opaque = true` in TOML                                                               |
+| Multi-scalar in/out | Use blockwise (`T[]` / `U[]`) or extra methods                                                         |
+| Nested structs      | Opaque pointer + accessor methods                                                                      |
+| Variadic args       | Not supported — wrap in a fixed-signature fn                                                           |
 
 ______________________________________________________________________
 
@@ -338,7 +357,8 @@ just-makeit method engine execute_ctrl \
 
 just-makeit property engine gain --type float --writable
 
-just-makeit function mymod normalize --arg-type float --return-type float
+just-makeit module mymod     # a function lives in a module
+just-makeit function normalize --module mymod --param x:float --return-type float
 ```
 
 If a method needs extra scalar control parameters beyond the standard `x`
@@ -415,7 +435,7 @@ ______________________________________________________________________
 ```toml
 [project]
 # pkg-config libraries
-pkg_modules   = ["libfftw3f", "libsamplerate"]
+pkg_modules   = ["fftw3f", "samplerate"]
 
 # CMake find_package() packages, each with its pkg-config module name --
 # the two differ, and only you know the second
@@ -457,18 +477,20 @@ make && make test
 python -c "from myproject import Engine; e = Engine(1.0); print(e.step(0.5))"
 ```
 
-`jm status` column meanings:
+The `jm status` sections you meet first when porting:
 
-| Status  | Meaning                                                              |
-| ------- | -------------------------------------------------------------------- |
-| OK      | File exists and matches what `apply` would generate                  |
-| MISSING | File declared in manifest but not on disk — run `jm apply`           |
-| STALE   | File differs from what the manifest would generate; `apply` rewrites |
+| Status        | Meaning                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| OK            | File exists and matches what `apply` would generate                                       |
+| MISSING       | File declared in manifest but not on disk — run `jm apply`                                |
+| STALE         | File differs from what the manifest would generate; `apply` rewrites                      |
+| STALE — yours | `_core.c` / `_core.h` lacks a definition the manifest declares; `apply` appends it        |
+| OUTDATED      | A create-only file of jm's (`Makefile`, `clib_common.h`, …) behind this jm; never counted |
 
-`jm status` only reports glue files (`_ext.c`, `.pyi`, `CMakeLists.txt`); your
-sacred `_core.c` is never compared. A STALE glue file means a manual edit that
-will be overwritten on the next `jm apply` — move the change into the manifest
-instead.
+The rest are in [`just-makeit status`](commands/build.md#just-makeit-status).
+Your `_core.c` is never rewritten, so its algorithm never shows as drift. A
+STALE glue file means a manual edit that will be overwritten on the next
+`jm apply` — move the change into the manifest instead.
 
 ______________________________________________________________________
 
@@ -479,14 +501,19 @@ ______________________________________________________________________
 The regex parser couldn't handle those signatures. For each:
 
 - Simplify the C signature where possible, or
-- Add a `[[comp.methods]]` TOML block with the correct types and an
-    `impl_file` pointing at the existing implementation.
+- Add a `[[comp.methods]]` TOML block with the correct types. A definition
+    already in the component's `_core.c` is kept as it is; one that lives
+    elsewhere is lifted with an `impl_file` pointing at it.
 
 ### `jm apply` regenerated `_ext.c` and lost my hand edits
 
 `_ext.c` is glue — never hand-edit it. Move any customisation into a
 `[[comp.methods]]` or `[[comp.properties]]` TOML entry, or into the
-sacred `_core.c`.
+sacred `_core.c`. A binding the manifest cannot express goes in
+`native/src/<comp>/<comp>_ext_extra.c`, which the generated `_ext.c`
+`#include`s and jm never writes (a module object's is
+`<mod>_ext_<obj>_extra.c`; see
+[Hand-written C in a module's binding](customization.md#hand-written-c-in-a-modules-binding)).
 
 ### `jm regenerate` lost my `step()` body
 
@@ -494,14 +521,17 @@ By default `jm regenerate` splices hand-written bodies back in by function
 name, but the splice is best-effort text matching: it loses if you passed
 `--discard`, or if a changed signature defeats the name match. Record the
 implementation in TOML so `apply`/`regenerate` can always re-derive it,
-regardless of the splice outcome:
+regardless of the splice outcome — inline as `impl = """…"""`, or in a file
+outside the component's own:
 
 ```toml
 [engine]
-impl_file = "native/src/engine/engine_core.c::myproject_engine_step"
+impl_file = "legacy/engine.c::my_process"
 ```
 
-`jm regenerate` will then re-inject it automatically.
+`jm apply` and `jm regenerate` will then re-inject it automatically. The file
+must not be the component's own `_core.c` / `_core.h`: those are the files
+`regenerate` rebuilds.
 
 ### CMake can't find my external library
 
@@ -522,7 +552,7 @@ just-makeit object engine \
     --arg-type "float _Complex" \
     --impl legacy.c::my_process \
     --replace my_complex_t::"float _Complex" \
-    --replace my_state_t::engine_t
+    --replace my_state_t::myproject_engine_state_t
 ```
 
 ______________________________________________________________________
@@ -551,7 +581,7 @@ just-makeit object COMP --replace old::new       # rename identifiers on lift
 # Extend
 just-makeit method COMP VERB                     # add named method
 just-makeit property COMP FIELD                  # add getter/setter property
-just-makeit function MOD FUNC                    # add module-level function
+just-makeit function FUNC --module MOD           # add module-level function
 just-makeit add --object COMP --state N:T:D      # add state field (structural)
 
 # Maintain

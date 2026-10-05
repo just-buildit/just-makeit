@@ -42,10 +42,10 @@ ______________________________________________________________________
 ## Generated tests and benchmarks
 
 Every object also gets a Python test file and a benchmark file, placed in
-`tests/` and `benchmarks/` directories next to the package. Both are ready
-to run immediately after `pip install .`. Both start with a
-`# jm:generated` line: while it is there, jm keeps the file in step with
-the object's constructor on every `apply`. Delete it to make the file
+`src/<pkg>/tests/` and `src/<pkg>/benchmarks/` (a module object's under
+`src/<pkg>/<mod>/`). Both are ready to run immediately after
+`pip install .`. Both start with a `# jm:generated` line: while it is there,
+jm keeps the file in step with the object's constructor on every `apply`. Delete it to make the file
 yours ([Who owns what](edit-lifecycle.md)).
 
 For the same `Gain` example, `src/my_dsp/tests/test_gain.py` contains:
@@ -164,6 +164,6 @@ correctness tests are yours to write.
 Run them with:
 
 ```sh
-make test        # CTest + pytest (all tests)
+make test        # CTest + unittest (all tests; pytest under --pytest)
 make bench       # C timing loop + Python perf_counter suite
 ```

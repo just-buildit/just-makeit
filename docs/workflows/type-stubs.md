@@ -14,10 +14,12 @@ just-makeit new my_dsp --object gain --arg-type float --return-type float \
 the generated `src/my_dsp/gain.pyi` looks like:
 
 ```python
+from typing import final
 import numpy as np
 import numpy.typing as npt
 from numpy.typing import NDArray
 
+@final
 class Gain:
     """Gain component.
 
@@ -31,7 +33,7 @@ class Gain:
     Create with defaults:
 
     >>> from my_dsp import Gain
-    >>> obj = Gain(1.0)
+    >>> obj = Gain(gain=1.0)
     >>> obj.get_gain()
     1.0
 
@@ -44,17 +46,41 @@ class Gain:
 
     """
 
-    def __init__(self, gain: float = ...) -> None: ...
-
+    def __init__(self, gain: float = 1.0) -> None: ...
     def reset(self) -> None:
         """Reset state to post-create defaults."""
 
     def step(self, x: float) -> float:
-        """Process one input sample."""
+        """Process one input sample.
 
-    def steps(self, x: npt.NDArray[np.float32],
-              out: npt.NDArray[np.float32] | None = None) -> NDArray[np.float32]:
-        """Process a samples array. Returns ndarray, or fills out= if supplied."""
+        Parameters
+        ----------
+        x : float
+            Input sample.
+
+        Returns
+        -------
+        float
+            Output sample.
+        """
+
+    def steps(
+        self,
+        x: npt.NDArray[np.float32],
+        out: npt.NDArray[np.float32] | None = None,
+    ) -> NDArray[np.float32]:
+        """Process a samples array. Returns ndarray, or fills out= if supplied.
+
+        Parameters
+        ----------
+        x : npt.NDArray[np.float32]
+            Input sample.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Output sample.
+        """
 
     def get_gain(self) -> float:
         """Return current gain."""
@@ -62,12 +88,7 @@ class Gain:
     def set_gain(self, value: float) -> None:
         """Set gain."""
 
-    def destroy(self) -> None:
-        """Release C resources immediately."""
-
-    def __enter__(self) -> "Gain": ...
-
-    def __exit__(self, *args: object) -> None: ...
+    # destroy(), __enter__() and __exit__() follow, each with a docstring
 ```
 
 ## Running the doctests
@@ -84,7 +105,7 @@ Trying:
 Expecting nothing
 ok
 Trying:
-    obj = Gain(1.0)
+    obj = Gain(gain=1.0)
 Expecting nothing
 ok
 Trying:
@@ -93,9 +114,7 @@ Expecting:
     1.0
 ok
 ...
-3 items passed all tests:
-   2 tests in gain.Gain
-...
+Test passed.
 ```
 
 The doctest exercises the real C extension — construction, a getter read-back,
@@ -111,9 +130,11 @@ is generated and passes automatically. Non-round-trip defaults (e.g.
 | Standalone object (`just-makeit object`)      | `src/<pkg>/<obj>.pyi`             |
 | Module object (`just-makeit object --module`) | `src/<pkg>/<module>/<module>.pyi` |
 
-The stub is regenerated on every `just-makeit object`, `method`, `property`,
-and `function` call. Manual edits to the generated file are overwritten —
-put any extra annotations in a separate `py.typed` marker or alongside file.
+The stub is regenerated on every mutating command (`object`, `method`,
+`property`, `function`, …) and on `jm apply`, so an edit to a generated
+member is overwritten. To keep one, put `# jm:hand` directly above it — see
+[Hand-owning one member of a generated stub](../customization.md#hand-owning-one-member-of-a-generated-stub).
+`jm status` reports a hand-added member that would be lost as DROPPED.
 
 ## How an array parameter is annotated
 

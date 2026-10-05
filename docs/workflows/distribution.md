@@ -21,7 +21,7 @@ into both artifacts.
 ```sh
 cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --install build
-gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
+gcc $(pkg-config --cflags my_dsp) main.c $(pkg-config --libs my_dsp) -o main
 ```
 
 > **Linux linker note:** `--cflags` and `--libs` must be split with the
@@ -32,7 +32,7 @@ gcc $(pkg-config --cflags my-dsp) main.c $(pkg-config --libs my-dsp) -lm -o main
 
 ```cmake
 find_package(my_dsp REQUIRED)
-target_link_libraries(my_app PRIVATE my_dsp::my_dsp m)
+target_link_libraries(my_app PRIVATE my_dsp::my_dsp)
 ```
 
 See [Installing your C library for end users](../c-library.md) for the full

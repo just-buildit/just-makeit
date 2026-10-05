@@ -39,7 +39,8 @@ sudo apt-get install cmake gcc pkg-config
 
 ```sh
 brew install cmake pkg-config
-# gcc ships with Xcode Command Line Tools: xcode-select --install
+# the C compiler (Apple clang; `gcc` is an alias for it) ships with the
+# Xcode Command Line Tools: xcode-select --install
 ```
 
 **Windows:** Visual Studio Build Tools (C++ workload) plus LLVM for
@@ -153,6 +154,11 @@ Under `0.x` a minor release may break compatibility (semver), which is why
 `0.1` does not accept `0.2`. The version is `project(... VERSION)` in the root
 `CMakeLists.txt`. The `.pc`'s `Description:` and `URL:` come from that same
 `project()` call's `DESCRIPTION` and `HOMEPAGE_URL`.
+
+That version is written from `[project] version` when the project is created
+and is not rewritten after, like `pyproject.toml` and `<pkg>_version()` in
+`native/src/<pkg>_lib.c`: bump each with the manifest. `jm status` names any
+copy that disagrees with it.
 
 ______________________________________________________________________
 
@@ -282,8 +288,9 @@ face, and names nothing but your project:
 
 "Compiling your headers" matters whenever a header of yours includes one of
 the dependency's, as nco_tone's `tone_core.h` includes doppler's
-`nco/nco_core.h`. The consumer still needs the dependency *installed*: put its
-prefix on `CMAKE_PREFIX_PATH` or `PKG_CONFIG_PATH` beside yours.
+`doppler/nco/nco_core.h`. The consumer still needs the dependency
+*installed*: put its prefix on `CMAKE_PREFIX_PATH` or `PKG_CONFIG_PATH`
+beside yours.
 
 A bare string entry (`find_packages = ["Doppler"]`) still works through
 `find_package`, but the `.pc` cannot name it: a pkg-config consumer then gets

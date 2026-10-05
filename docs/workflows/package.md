@@ -39,10 +39,17 @@ just-makeit object ema \
 After adding `ema`, `__init__.py` looks like:
 
 ```python
-"""dsp_toolkit — Gain."""
+"""dsp_toolkit package."""
 
-from .gain import Gain
-from .ema import Ema
+import os as _os
+import sys as _sys
+
+if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+    _os.add_dll_directory(_os.path.dirname(_os.path.abspath(__file__)))
+del _os, _sys
+
+from .gain import Gain  # noqa: E402
+from .ema import Ema  # noqa: E402
 
 __all__ = ["Gain", "Ema"]
 ```
@@ -80,8 +87,8 @@ dsp_toolkit_ema_step(dsp_toolkit_ema_state_t *state, float x)
 make && make test
 ```
 
-CTest runs `test_gain_core` and `test_ema_core`. pytest runs the full
-generated suite for both objects.
+CTest runs `test_gain_core` and `test_ema_core`. unittest (pytest-compatible)
+runs the full generated suite for both objects.
 
 ## 5. Install
 

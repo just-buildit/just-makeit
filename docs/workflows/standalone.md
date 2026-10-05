@@ -50,7 +50,7 @@ make test   # CTest (C lifecycle) + unittest (Python API)
 
 ```sh
 python3 -m pip install .          # build wheel + install
-python3 -m pip install -e .       # editable install (Python-only edits take effect immediately)
+make && python3 -m pip install -e .   # editable: builds no C; rerun make after C edits
 ```
 
 ## 5. Use from Python

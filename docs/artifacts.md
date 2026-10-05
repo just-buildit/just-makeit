@@ -5,9 +5,10 @@ the exact commands that produce the layout, then the complete file tree with
 one-line annotations.
 
 Files omitted from all trees for brevity: `README.md`, `.gitignore`,
-`benchmarks/history/.gitkeep`, `Doxyfile`, `zensical.toml`, `docs/index.md`,
-`docs/api.md`, `bootstrap.toml`, `cmake/<project>-config.cmake.in`. Every project
-also defaults to the split-fragment layout (see
+`.gitattributes`, `benchmarks/history/.gitkeep`, `Doxyfile`,
+`zensical.toml`, `docs/index.md`, `docs/api.md`, `bootstrap.toml`,
+`cmake/<project>-config.cmake.in`. Every project also defaults to the
+split-fragment layout (see
 [Declarative scaffolding](declarative-scaffolding.md)): each object/module
 gets its own `objects/<name>.toml` / `modules/<name>.toml` fragment file
 alongside `just-makeit.toml`, also omitted below.
@@ -28,14 +29,16 @@ just-makeit function compute --module dsp \
 ```
 mylib/
 ├── native/
-│   ├── benchmarks/                 # empty; add bench_compute.c here if needed
+│   ├── benchmarks/
+│   │   ├── bench_dsp_core.c        # C benchmark for the module's functions
+│   │   └── jm_bench.h
 │   ├── inc/
 │   │   └── mylib/
 │   │       ├── clib_common.h       # shared C99 type aliases
 │   │       ├── pyex_common.h       # Python/NumPy includes
 │   │       ├── mylib.h             # umbrella header
 │   │       └── dsp/
-│   │           └── dsp_core.h      # declare compute() here
+│   │           └── dsp_core.h      # jm declares mylib_compute() here
 │   ├── src/
 │   │   ├── mylib_lib.c             # version symbol
 │   │   └── dsp/
@@ -43,7 +46,9 @@ mylib/
 │   │       ├── dsp_core.c          # module boilerplate; #includes dsp_core.h
 │   │       ├── compute.c           # C implementation ← write compute() here
 │   │       └── dsp_ext.c           # Python binding (auto-generated)
-│   └── tests/                      # empty; add test_compute.c here if needed
+│   └── tests/
+│       ├── jm_test.h
+│       └── test_dsp_core.c         # CTest
 ├── cmake/
 │   └── mylib.pc.in                 # pkg-config template
 ├── src/
@@ -97,7 +102,8 @@ mylib/
 │   │       └── engine_ext.c        # thin Python binding (auto-regenerated)
 │   └── tests/
 │       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
-│       └── test_engine_core.c      # CTest — exercises C API directly
+│       ├── test_engine_core.c      # CTest — exercises C API directly
+│       └── test_engine_symbols.c   # derived link check
 ├── cmake/
 │   └── mylib.pc.in
 ├── src/
@@ -109,7 +115,7 @@ mylib/
 │       │   └── bench_engine.py     # Python benchmark
 │       └── tests/
 │           ├── __init__.py
-│           └── test_engine.py      # pytest
+│           └── test_engine.py      # unittest (runs under pytest too)
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── CMakePresets.json           # IDE configure presets (see Building on Windows)
@@ -118,16 +124,17 @@ mylib/
 └── just-makeit.toml
 ```
 
-Two C sources per object, always: `engine_core.c` (algorithm) and
-`engine_ext.c` (Python glue). Adding methods with `just-makeit method`
-appends stubs to `engine_core.c` — no third file is ever created.
+Two C sources per object: `engine_core.c` (algorithm) and `engine_ext.c`
+(Python glue); a `--header-only` object has only the `_ext.c`. Adding
+methods with `just-makeit method` appends stubs to `engine_core.c` — no third
+file is ever created.
 
 ______________________________________________________________________
 
 ## 3. Module with one object
 
-One object inside a shared module `.so`. The module's `_ext.c` is generated
-and owned by the build system; only `_core.c` is yours to edit.
+One object inside a shared module `.so`. The module's `_ext.c` aggregator is
+generated; the object's binding fragment and `_core.c` are yours to edit.
 
 ```sh
 just-makeit new mylib --module dsp
@@ -146,19 +153,24 @@ mylib/
 │   │       ├── clib_common.h
 │   │       ├── pyex_common.h
 │   │       ├── mylib.h
+│   │       ├── dsp/
+│   │       │   └── dsp_core.h      # module-level declarations
 │   │       └── filt/
 │   │           └── filt_core.h     # public C API + inline step()
 │   ├── src/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/
 │   │   │   ├── CMakeLists.txt
-│   │   │   └── dsp_ext.c           # module binding — wraps all objects in dsp
+│   │   │   ├── dsp_core.c          # module boilerplate
+│   │   │   ├── dsp_ext.c           # aggregator: includes each fragment
+│   │   │   └── dsp_ext_filt.c      # Filt's binding fragment
 │   │   └── filt/
 │   │       ├── CMakeLists.txt
 │   │       └── filt_core.c         # algorithm ← implement here
 │   └── tests/
 │       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
-│       └── test_filt_core.c        # CTest
+│       ├── test_filt_core.c        # CTest
+│       └── test_filt_symbols.c     # derived link check
 ├── cmake/
 │   └── mylib.pc.in
 ├── src/
@@ -166,7 +178,13 @@ mylib/
 │       ├── __init__.py
 │       └── dsp/
 │           ├── __init__.py         # from .dsp import Filt
-│           └── dsp.pyi             # type stub for dsp.so
+│           ├── dsp.pyi             # type stub for dsp.so
+│           ├── benchmarks/
+│           │   ├── __init__.py
+│           │   └── bench_filt.py
+│           └── tests/
+│               ├── __init__.py
+│               └── test_filt.py
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── CMakePresets.json           # IDE configure presets (see Building on Windows)
@@ -175,16 +193,19 @@ mylib/
 └── just-makeit.toml
 ```
 
-The object directory (`filt/`) holds only `_core.c` — there is no
-`filt_ext.c`. The module-level `dsp_ext.c` is the shared Python binding for
-every object in `dsp`.
+The object directory (`filt/`) holds its `_core.c` — there is no
+`filt_ext.c`. Its Python binding is `native/src/dsp/dsp_ext_filt.c`, a
+per-object fragment that `dsp_ext.c` (jm's aggregator) `#include`s. The
+fragment is shared: `apply` adds missing members but never re-renders one
+that exists
+([Who owns a module's binding fragment](configuration.md#who-owns-a-modules-binding-fragment)).
 
 ______________________________________________________________________
 
 ## 4. Module with two objects
 
-Two types in one `.so`. Each object gets its own `_core.c`/`_core.h` subtree;
-`dsp_ext.c` and `dsp.pyi` cover both.
+Two types in one `.so`. Each object gets its own `_core.c`/`_core.h` subtree
+and binding fragment; `dsp_ext.c` and `dsp.pyi` cover both.
 
 ```sh
 just-makeit new mylib --module dsp
@@ -205,6 +226,8 @@ mylib/
 │   │       ├── clib_common.h
 │   │       ├── pyex_common.h
 │   │       ├── mylib.h
+│   │       ├── dsp/
+│   │       │   └── dsp_core.h      # module-level declarations
 │   │       ├── fir/
 │   │       │   └── fir_core.h      # public C API + inline step()
 │   │       └── biquad/
@@ -213,7 +236,10 @@ mylib/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/
 │   │   │   ├── CMakeLists.txt
-│   │   │   └── dsp_ext.c           # one binding for both Fir and Biquad
+│   │   │   ├── dsp_core.c          # module boilerplate
+│   │   │   ├── dsp_ext.c           # aggregator — one .so for Fir and Biquad
+│   │   │   ├── dsp_ext_fir.c       # Fir's binding fragment
+│   │   │   └── dsp_ext_biquad.c    # Biquad's binding fragment
 │   │   ├── fir/
 │   │   │   ├── CMakeLists.txt
 │   │   │   └── fir_core.c
@@ -223,7 +249,9 @@ mylib/
 │   └── tests/
 │       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       ├── test_fir_core.c
-│       └── test_biquad_core.c
+│       ├── test_fir_symbols.c
+│       ├── test_biquad_core.c
+│       └── test_biquad_symbols.c
 ├── cmake/
 │   └── mylib.pc.in
 ├── src/
@@ -231,7 +259,15 @@ mylib/
 │       ├── __init__.py
 │       └── dsp/
 │           ├── __init__.py         # from .dsp import Fir, Biquad
-│           └── dsp.pyi             # one stub for both types
+│           ├── dsp.pyi             # one stub for both types
+│           ├── benchmarks/
+│           │   ├── __init__.py
+│           │   ├── bench_fir.py
+│           │   └── bench_biquad.py
+│           └── tests/
+│               ├── __init__.py
+│               ├── test_fir.py
+│               └── test_biquad.py
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── CMakePresets.json           # IDE configure presets (see Building on Windows)
@@ -241,8 +277,8 @@ mylib/
 ```
 
 One `.so`, one `.pyi`, one `__init__.py` — regardless of how many objects the
-module contains. `dsp_ext.c` is regenerated in full each time an object,
-method, or property is added.
+module contains. `dsp_ext.c` is re-rendered on every change; each object's
+`dsp_ext_<obj>.c` fragment only gains missing members.
 
 ______________________________________________________________________
 
@@ -270,6 +306,10 @@ mylib/
 │   │       ├── clib_common.h
 │   │       ├── pyex_common.h
 │   │       ├── mylib.h
+│   │       ├── dsp/
+│   │       │   └── dsp_core.h
+│   │       ├── io/
+│   │       │   └── io_core.h
 │   │       ├── fir/
 │   │       │   └── fir_core.h      # public C API + inline step()
 │   │       └── reader/
@@ -278,20 +318,26 @@ mylib/
 │   │   ├── mylib_lib.c
 │   │   ├── dsp/
 │   │   │   ├── CMakeLists.txt
-│   │   │   └── dsp_ext.c           # Python binding for dsp.so
+│   │   │   ├── dsp_core.c
+│   │   │   ├── dsp_ext.c           # Python binding for dsp.so (aggregator)
+│   │   │   └── dsp_ext_fir.c       # Fir's binding fragment
 │   │   ├── fir/
 │   │   │   ├── CMakeLists.txt
 │   │   │   └── fir_core.c
 │   │   ├── io/
 │   │   │   ├── CMakeLists.txt
-│   │   │   └── io_ext.c            # Python binding for io.so
+│   │   │   ├── io_core.c
+│   │   │   ├── io_ext.c            # Python binding for io.so (aggregator)
+│   │   │   └── io_ext_reader.c     # Reader's binding fragment
 │   │   └── reader/
 │   │       ├── CMakeLists.txt
 │   │       └── reader_core.c
 │   └── tests/
 │       ├── jm_test.h               # shared CHECK/REQUIRE + epilogue
 │       ├── test_fir_core.c
-│       └── test_reader_core.c
+│       ├── test_fir_symbols.c
+│       ├── test_reader_core.c
+│       └── test_reader_symbols.c
 ├── cmake/
 │   └── mylib.pc.in
 ├── src/
@@ -299,10 +345,14 @@ mylib/
 │       ├── __init__.py
 │       ├── dsp/
 │       │   ├── __init__.py         # from .dsp import Fir
-│       │   └── dsp.pyi
+│       │   ├── dsp.pyi
+│       │   ├── benchmarks/         # __init__.py, bench_fir.py
+│       │   └── tests/              # __init__.py, test_fir.py
 │       └── io/
 │           ├── __init__.py         # from .io import Reader
-│           └── io.pyi
+│           ├── io.pyi
+│           ├── benchmarks/         # __init__.py, bench_reader.py
+│           └── tests/              # __init__.py, test_reader.py
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── CMakePresets.json           # IDE configure presets (see Building on Windows)
@@ -319,16 +369,16 @@ ______________________________________________________________________
 
 ## Summary
 
-| Pattern                   | Command                            | `.so` files  | `_ext.c` files    | `_core.c` files                   |
-| ------------------------- | ---------------------------------- | ------------ | ----------------- | --------------------------------- |
-| Module function           | `new --module` + `function`        | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`)                |
-| Standalone object         | `new --object`                     | 1 per object | 1 per object      | 1 per object                      |
-| Module, 1 object          | `new --module` + `object --module` | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + 1 per object |
-| Module, N objects         | same, repeated                     | 1            | 1 (`<mod>_ext.c`) | 1 (`<mod>_core.c`) + N objects    |
-| M modules, N objects each | same                               | M            | M                 | M (`<mod>_core.c`) + N objects    |
+| Pattern                   | Command                            | `.so` files  | `_ext.c` files                                       | `_core.c` files                              |
+| ------------------------- | ---------------------------------- | ------------ | ---------------------------------------------------- | -------------------------------------------- |
+| Module function           | `new --module` + `function`        | 1            | 1 (`<mod>_ext.c`)                                    | 1 (`<mod>_core.c`) + 1 `<fn>.c` per function |
+| Standalone object         | `new --object`                     | 1 per object | 1 per object                                         | 1 per object                                 |
+| Module, 1 object          | `new --module` + `object --module` | 1            | 1 (`<mod>_ext.c`) + 1 `<mod>_ext_<obj>.c`            | 1 (`<mod>_core.c`) + 1 per object            |
+| Module, N objects         | same, repeated                     | 1            | 1 (`<mod>_ext.c`) + N `<mod>_ext_<obj>.c`            | 1 (`<mod>_core.c`) + N objects               |
+| M modules, N objects each | same                               | M            | M (`<mod>_ext.c`) + 1 `<mod>_ext_<obj>.c` per object | M (`<mod>_core.c`) + N objects               |
 
-**Invariant**: every unit (object or module) has exactly one `_core.c` (user
-code) and one `_ext.c` (auto-generated Python binding). For standalone
-objects, the ext is per-object `<obj>_ext.c`. For module objects and
-module-level functions, they share `<mod>_core.c` (user code) and
-`<mod>_ext.c` (auto-generated).
+**Invariant**: every standalone object has one `_core.c` (user code) and one
+`_ext.c` (auto-generated Python binding); a `--header-only` object has no
+`_core.c`. A module has one `<mod>_core.c`, one `<mod>_ext.c` aggregator and
+one `<mod>_ext_<obj>.c` binding fragment per object, and each module function
+its own `<fn>.c` (unless `--functions-in-core`).

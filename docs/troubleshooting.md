@@ -31,13 +31,17 @@ ______________________________________________________________________
 
 ## NumPy headers missing
 
-**Symptom:** `fatal error: 'numpy/arrayobject.h' file not found` during
-`cmake --build`.
+**Symptom:** CMake's configure step stops with
+`Could NOT find Python3 (missing: Python3_NumPy_INCLUDE_DIRS NumPy)`, or
+`make` prints
+`error: numpy is installed but its C headers are missing from <dir>`.
 
-**Cause:** NumPy is installed but CMake can't find its headers. Typically
-happens when the venv's site-packages isn't on `CMAKE_PREFIX_PATH`.
+**Cause:** CMake asks the interpreter it was given (`Python3_EXECUTABLE`,
+which `make` sets to the active `python3`) for `numpy.get_include()`. That
+interpreter has no NumPy, or its headers are missing.
 
-**Fix:** Make sure you're building inside the activated venv:
+**Fix:** Build through `make` inside the activated venv. It reinstalls NumPy
+when its headers are missing, then configures with that interpreter:
 
 ```sh
 source .venv/bin/activate   # or the path printed by install.sh
@@ -50,19 +54,22 @@ If the venv is active and the error persists, confirm NumPy is installed:
 python -c "import numpy; print(numpy.get_include())"
 ```
 
-Pass the output as the include path if CMake still can't find it:
+Configuring by hand, name the interpreter that has NumPy:
 
 ```sh
-cmake -B build -DNUMPY_INCLUDE_DIR=$(python -c "import numpy; print(numpy.get_include())")
+cmake -B build -DPython3_EXECUTABLE="$(command -v python)"
 cmake --build build
 ```
 
+`-DPython3_NumPy_INCLUDE_DIR=<dir>` names the header directory directly.
+
 ______________________________________________________________________
 
-## Linker drops the extension module (`--as-needed`)
+## C consumer fails to link (`--as-needed`)
 
-**Symptom:** `make test` passes but `import my_project` raises
-`ImportError: undefined symbol` or `cannot open shared object file`.
+**Symptom:** linking a C program against the installed library fails with
+`undefined reference to 'my_project_<comp>_create'`, although
+`pkg-config --libs my_project` names the library.
 
 **Cause:** GNU ld on Debian/Ubuntu uses `--as-needed` by default. If the
 library appears on the command line *before* the object files that reference
@@ -77,12 +84,11 @@ gcc $(pkg-config --cflags --libs my_project) consumer.c -o consumer
 
 # CORRECT
 gcc $(pkg-config --cflags my_project) consumer.c \
-    $(pkg-config --libs my_project) -lm -o consumer
+    $(pkg-config --libs my_project) -o consumer
 ```
 
-For `make && make test` on the generated project itself, the generated
-`CMakeLists.txt` handles link order correctly — this issue only bites external
-C consumers.
+The generated project's own CMake build and its Python extensions are
+unaffected — only an external C consumer's command line is.
 
 ______________________________________________________________________
 
@@ -102,34 +108,6 @@ pkg-config --modversion my_project   # should print the version
 ```
 
 Add the `export` line to your shell profile to persist it.
-
-______________________________________________________________________
-
-## Extension not importable after build (rpath / `LD_LIBRARY_PATH`)
-
-**Symptom:** `python -c "import my_project"` fails with
-`libmy_project.so: cannot open shared object file`.
-
-**Cause:** The `.so` was installed to a non-standard prefix and the dynamic
-linker can't find it.
-
-**Fix (quick — testing only):**
-
-```sh
-export LD_LIBRARY_PATH="$HOME/.local/lib:$LD_LIBRARY_PATH"
-python -c "import my_project"
-```
-
-**Fix (deployment — embed rpath at link time):**
-
-```cmake
-set_target_properties(consumer PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
-```
-
-Or pass `-DCMAKE_BUILD_RPATH="$HOME/.local/lib"` when configuring.
-
-See [C library — Runtime loading](c-library.md#runtime-loading-rpath) for
-the full explanation.
 
 ______________________________________________________________________
 
@@ -202,14 +180,15 @@ ______________________________________________________________________
 
 **Symptom:** you added a `param` to an existing `[[<obj>.methods]]` entry (or
 changed a param's type), ran `jm apply`, and the generated binding in
-`native/src/<mod>/<mod>_ext_<obj>.c` still has the old signature. No error, no
-warning — it just quietly keeps generating the previous shape.
+`native/src/<mod>/<mod>_ext_<obj>.c` still has the old signature. `jm apply`
+prints `warning ~: … binding no longer matches the manifest [...]` and
+`jm status` lists the file under UNRECONCILED, but the old binding stays.
 
-**Cause:** the per-object ext fragment is **sacred**, same contract as
-`_core.c` above. `jm apply` is additive: it materializes files and methods
-that are *missing*, and reconciles wiring — it does not re-render a binding
-that already exists. So the shape frozen at the method's first `apply` is the
-one you keep.
+**Cause:** a module object's binding fragment is **shared**
+([who owns each file](workflows/edit-lifecycle.md#who-owns-each-file)):
+`jm apply` materializes files and methods that are *missing*, and reconciles
+wiring — it does not re-render a binding that already exists. So the shape
+frozen at the method's first `apply` is the one you keep.
 
 The asymmetry is easy to trip over, because adding a *new* method to the
 manifest does work on the next `apply` — only re-shaping an existing one is a
@@ -224,9 +203,11 @@ rm native/src/<mod>/<mod>_ext_<obj>.c
 just-makeit apply
 ```
 
-For a standalone (non-module) object the file is
-`native/src/<obj>/<obj>_ext.c`. Your `_core.c` algorithm is untouched either
-way — only the generated glue is rebuilt.
+Your `_core.c` algorithm is untouched — only the binding is rebuilt. To stop
+maintaining the fragment by hand, make it jm's, so every `apply` re-renders
+it: `jm adopt <obj>` (`jm adopt --check` previews; it refuses a unit that
+would lose code until you `--accept` it by name). A standalone object's
+`<obj>_ext.c` is already jm's, and `apply` re-renders it.
 
 ______________________________________________________________________
 
@@ -258,8 +239,8 @@ name = "beta"
 type = "float"
 ```
 
-For a module function, use `--out-param w:float[]` on the CLI (`--out-param`
-is `jm function`-only; `jm method` has no equivalent flag):
+On the CLI, `--out-param w:float[]` declares it, on `jm function` and on
+`jm method` alike:
 
 ```sh
 just-makeit function kaiser_window --module spectral --out-param w:float[] --param beta:float
@@ -311,7 +292,8 @@ value the binding has to convert.)
 **Cause:** the manifest declares a `return_type` that is not one of jm's
 registered types. Common causes are a natural C spelling whose width is
 platform-dependent (`long`, `unsigned`, `ssize_t`), the *display* form of a
-complex type (`float _Complex` — jm stores `float _Complex`), or a plain typo.
+complex type (the `<complex.h>` macro `complex`, where jm stores `_Complex`),
+or a plain typo.
 
 Before jm 0.33.14 this was accepted silently: the generated binding called
 the C function, discarded its return value and emitted `Py_RETURN_NONE`. It
