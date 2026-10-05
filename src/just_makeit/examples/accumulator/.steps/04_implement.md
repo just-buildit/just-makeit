@@ -135,11 +135,14 @@ my_acc_acc_cf64_madd2d(
 }
 ```
 
-The patch scripts automate these edits:
+The patch scripts automate these edits. They live in this example's `.steps/`
+directory, which ships inside the installed just-makeit package; from
+`my_acc/`, run them by their path:
 
 ```sh
-python3 .steps/04_patch_f32.py
-python3 .steps/04_patch_cf64.py
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent)')/examples/accumulator/.steps"
+python3 "$STEPS/04_patch_f32.py"
+python3 "$STEPS/04_patch_cf64.py"
 ```
 
 ### Document once, in C — rich stubs and runnable doctests
@@ -188,12 +191,17 @@ now carries the full numpy-style docstring — including the `@code` block as an
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-the kernel ever drifts from its documented example the build fails. Pass `-v`
-to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the kernel drifts from its documented example. A generated
+project's `make test` does not run `.pyi` doctests (this example's own test
+does), so to make it a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. Once section 5's `make` has built the extension, pass `-v` to watch
+every `>>>` line execute:
 
 ```termynal
-$ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
+$ PYTHONPATH=src python -m doctest -v src/my_acc/accumulator/accumulator.pyi
+{d}...{/d}
 {d}Trying:{/d}
     a.step(1.0); a.step(2.0); a.step(3.0)
 {d}Expecting nothing{/d}
@@ -203,6 +211,7 @@ $ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
 {d}Expecting:{/d}
     6.0
 {g}ok{/g}
+{d}...{/d}
 {d}Trying:{/d}
     a.step(1 + 2j); a.step(3 + 4j)
 {d}Expecting nothing{/d}
@@ -217,12 +226,12 @@ $ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with
+This example's own test drives the whole stub at once with
 `pytest --doctest-glob='*.pyi'`.
 
-The enrichment for both types is scripted:
+The enrichment for both types is scripted (`$STEPS` as above):
 
 ```sh
-python3 .steps/04b_doxygen.py
+python3 "$STEPS/04b_doxygen.py"
 just-makeit apply
 ```

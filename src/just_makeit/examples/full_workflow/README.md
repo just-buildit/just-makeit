@@ -36,14 +36,15 @@ just-makeit example full_workflow
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Install the tooling for coverage and docs:
+Install the tooling for the pytest styles, coverage and docs:
 
 ```sh
-sudo apt-get install lcov          # Debian/Ubuntu
-brew install lcov                  # macOS
-sudo pacman -S lcov                # Arch/CachyOS
+sudo apt-get install lcov doxygen          # Debian/Ubuntu
+brew install lcov doxygen                  # macOS
+sudo pacman -S lcov doxygen                # Arch/CachyOS
 
-uv add --dev pytest-cov mkdocstrings-python zensical
+# into the venv `make` uses (the active one):
+pip install pytest pytest-benchmark pytest-cov mkdocstrings-python zensical
 ```
 
 ---
@@ -62,20 +63,25 @@ just-makeit new my_dsp \
     --state gain:float:1.0
 cd my_dsp
 
-# The test style is a project setting, and `--pytest` below switches it.
-# gain's scaffolded test is jm's while its first line is
-# `# jm:generated test_gain.py`, so it would follow the switch. Delete that
-# line to make the file yours, and it stays unittest.
-sed -i '1d' src/my_dsp/tests/test_gain.py
+# The test and benchmark styles are project settings, and the next step
+# switches both. gain's scaffolded test and benchmark are jm's while their
+# first line is a `# jm:generated` token, so `jm apply` would rewrite them in
+# the new style. Delete that line from both to make them yours, and they stay
+# unittest / timeit.
+sed -i.bak '1d' src/my_dsp/tests/test_gain.py src/my_dsp/benchmarks/bench_gain.py
+rm src/my_dsp/tests/test_gain.py.bak src/my_dsp/benchmarks/bench_gain.py.bak
 
-# Component 2: ema — pytest tests, pytest-benchmark benchmarks
+# Component 2: ema — pytest tests, pytest-benchmark benchmarks. The style is
+# a [project] setting with no `object` flag: switch it in the manifest, then
+# scaffold. `--mutable` because ema's step() writes state->prev.
+sed -i.bak 's/^pytest = "false"/pytest = "true"/; s/^pytest_benchmark = "false"/pytest_benchmark = "true"/' just-makeit.toml
+rm just-makeit.toml.bak
 just-makeit object ema \
     --arg-type float \
     --return-type float \
-    --state alpha:float:0.1 \
+    --state alpha:float:0.1f \
     --state prev:float:0.0 \
-    --pytest \
-    --pytest-benchmark
+    --mutable
 
 # A named method on gain. `step()`/`steps()` carry jm's own docstrings, so a
 # named method is the only place your own `@code` example can become a doctest.
@@ -107,8 +113,11 @@ The two components demonstrate the two styles you can mix:
 
 ## 2. Implement
 
+Each `step()` is a `static inline` in its sacred header; replace the
+scaffold's two-line body. The named method's stub is in `gain_core.c`:
+
 ```c
-/* native/src/gain/gain_core.c */
+/* native/inc/my_dsp/gain/gain_core.h */
 static inline float
 my_dsp_gain_step(const my_dsp_gain_state_t *state, float x)
 {
@@ -122,7 +131,7 @@ my_dsp_gain_scale(my_dsp_gain_state_t *state, float x)
     return x * state->gain;
 }
 
-/* native/src/ema/ema_core.c */
+/* native/inc/my_dsp/ema/ema_core.h */
 static inline float
 my_dsp_ema_step(my_dsp_ema_state_t *state, float x)
 {
@@ -137,34 +146,45 @@ my_dsp_ema_step(my_dsp_ema_state_t *state, float x)
 ## 3. Build and test
 
 ```sh
-make        # cmake configure + build (Release)
-make test   # CTest (C) + unittest (gain) + pytest (ema)
+make          # cmake configure + build (Release)
+make test     # CTest (C) + unittest (gain)
+pytest src/   # ema's pytest tests (pytest also runs gain's unittest TestCase)
 ```
 
-`make test` runs all three test layers:
+`make test` runs CTest and unittest; `pytest src/` runs ema's tests:
 
 ```
 Test project .../my_dsp/build
-    Start 1: test_gain_core
-    Start 2: test_ema_core
-1/2 Test #1: test_gain_core ............. Passed  0.00s
-2/2 Test #2: test_ema_core .............. Passed  0.00s
+    Start 1: test_ema_core
+1/2 Test #1: test_ema_core ....................   Passed    0.00 sec
+    Start 2: test_gain_core
+2/2 Test #2: test_gain_core ...................   Passed    0.00 sec
 
-2/2 tests passed
+100% tests passed, 0 tests failed out of 2
 
 # unittest (gain)
-test_reset (my_dsp.tests.test_gain.TestGain) ... ok
-test_step  (my_dsp.tests.test_gain.TestGain) ... ok
+test_context_manager (my_dsp.tests.test_gain.TestGain.test_context_manager) ... ok
+test_create (my_dsp.tests.test_gain.TestGain.test_create) ... ok
+...
+test_step_runs (my_dsp.tests.test_gain.TestGain.test_step_runs) ... ok
+...
+Ran 8 tests in 0.012s
 
-# pytest (ema)
-src/my_dsp/tests/test_ema.py ........ 8 passed
+OK
+
+# pytest src/ (ema, plus gain's TestCase)
+src/my_dsp/tests/test_ema.py ........                                    [ 50%]
+src/my_dsp/tests/test_gain.py ........                                   [100%]
+
+============================== 16 passed in 0.09s ==============================
 ```
 
 ---
 
 ## 4. Executable documentation — `@code` becomes a doctest
 
-The sacred `native/inc/<obj>/<obj>_core.h` is the single source of truth for
+The sacred `native/inc/<pkg>/<obj>/<obj>_core.h` (here
+`native/inc/my_dsp/gain/gain_core.h`) is the single source of truth for
 documentation. jm reads its Doxygen and renders a numpy-style Python docstring
 into the generated `.pyi` — and a `@code` block becomes a **runnable
 `Examples` doctest**, executed against the compiled extension.
@@ -229,12 +249,12 @@ just-makeit apply
 The doctests import the **built** `.so` and execute every `>>>`:
 
 ```sh
-pytest --doctest-glob='*.pyi' src/my_dsp/gain.pyi
+PYTHONPATH=src python -m pytest -q --doctest-glob='*.pyi' src/my_dsp/gain.pyi
 ```
 
 ```
 .                                                                        [100%]
-1 passed
+1 passed in 0.12s
 ```
 
 This is the part that makes `@code` a test rather than a rendered snippet. If
@@ -248,16 +268,18 @@ Got:
     4.0
 ```
 
-So a kernel cannot quietly drift away from the example that documents it.
+So a kernel cannot quietly drift away from the example that documents it, as
+long as something runs the doctests (next section).
 
 ### Wiring it into your own test run
 
-`make test` runs CTest plus your unittest/pytest suites; it does **not** sweep
-the stubs, and `just-makeit ci` does not add it either. Point your own test
-command at them to make the examples a gate:
+`make test` runs CTest plus unittest discovery; it does **not** sweep the
+stubs, and `just-makeit ci` does not add it either. This example's own test
+runs them; to make them a gate in your project, add this to your test step
+(it runs the `test_*.py` suites too):
 
 ```sh
-pytest --doctest-glob='*.pyi' src/
+PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/
 ```
 
 ### Two rules worth knowing
@@ -278,22 +300,24 @@ pytest --doctest-glob='*.pyi' src/
 make bench
 ```
 
-The `bench` Makefile target automatically dispatches to the right runner for
-each component.
+`make bench` runs `just-makeit bench`: the C `bench_*_core` binaries, then
+pytest-benchmark over `src/`, and saves a dated snapshot to
+`benchmarks/history/`. The timeit script (gain) is standalone, and each
+Python style also runs directly, as shown below.
 
 ### timeit / perf_counter style (gain)
 
 `bench_gain.py` is a **standalone script** — runnable with plain `python`:
 
 ```sh
-python src/my_dsp/benchmarks/bench_gain.py
+PYTHONPATH=src python src/my_dsp/benchmarks/bench_gain.py
 ```
 
 ```
-step    1k:       2.3 µs  (434.8 MSa/s)
-steps   1k:       1.8 µs  (555.6 MSa/s)
-step   64k:     118.0 µs  (542.4 MSa/s)
-steps  64k:     110.5 µs  (579.2 MSa/s)
+gain
+  step                        50.5 ns/call
+  steps 1k                   0.378 µs  (2707.5 MSa/s)
+  steps 64k                  0.010 ms  (6805.4 MSa/s)
 ```
 
 This style has **no dependencies** beyond numpy — ideal for quick checks in
@@ -306,25 +330,34 @@ directly executable.
 pytest reporting infrastructure:
 
 ```sh
-pytest src/my_dsp/benchmarks/bench_ema.py --benchmark-only -v
+pytest src/my_dsp/benchmarks/bench_ema.py --benchmark-only -v \
+    --benchmark-columns=min,max,mean,stddev,median
 ```
 
 ```
-benchmark: 3 tests, min 5 rounds (of min 200.00us), 5.00s max time
-Name                     Min       Max      Mean  StdDev   Median
----------------------------------------------------------------------
-test_bench_step        1.2µs     1.8µs     1.3µs   0.1µs    1.3µs
-test_bench_steps_1k    1.1µs     1.5µs     1.2µs   0.1µs    1.2µs
-test_bench_steps_64k  49.8µs    52.0µs    50.5µs   0.6µs   50.3µs
+src/my_dsp/benchmarks/bench_ema.py::test_bench_step PASSED               [ 33%]
+src/my_dsp/benchmarks/bench_ema.py::test_bench_steps_1k PASSED           [ 66%]
+src/my_dsp/benchmarks/bench_ema.py::test_bench_steps_64k PASSED          [100%]
+
+
+-------------------------------------------------------------- benchmark: 3 tests --------------------------------------------------------------
+Name (time in ns)                 Min                       Max                    Mean                 StdDev                  Median
+------------------------------------------------------------------------------------------------------------------------------------------------
+test_bench_step               27.7500 (1.0)         40,425.3300 (1.0)           38.9840 (1.0)         205.4482 (1.0)           28.9500 (1.0)
+test_bench_steps_1k        3,777.0005 (136.11)      51,887.0002 (1.28)       3,849.9872 (98.76)       366.4622 (1.78)       3,827.0009 (132.19)
+test_bench_steps_64k     229,288.0017 (>1000.0)  4,240,941.9984 (104.91)   236,731.8573 (>1000.0)  98,554.6178 (479.71)   229,759.0036 (>1000.0)
+------------------------------------------------------------------------------------------------------------------------------------------------
 ```
 
-This style integrates with CI — results are stored in `.benchmarks/` for
-regression tracking with `--benchmark-compare`.
+Add `--benchmark-autosave` to store each run in `.benchmarks/` and compare
+later with `--benchmark-compare`; `make bench` keeps its own dated snapshots
+in `benchmarks/history/`.
 
 ### Choosing a style
 
-Use `--pytest-benchmark` when you want CI regression tracking and rich
-reporting. Use the default (timeit/perf_counter) when you want zero extra
+Use pytest-benchmark (`jm new --pytest-benchmark`, or `pytest_benchmark =
+"true"` in `[project]` as in step 1) when you want CI regression tracking and
+rich reporting. Use the default (timeit/perf_counter) when you want zero extra
 dependencies and simple printout benchmarks.
 
 ---
@@ -340,17 +373,24 @@ collects C coverage via **lcov/genhtml** and Python coverage via
 **pytest-cov**:
 
 ```
-C coverage:      docs/coverage/c/index.html
-Python coverage: docs/coverage/python/index.html
+C coverage: docs/coverage/c/index.html
+...
+_______________ coverage: platform linux, python 3.12.15-final-0 _______________
 
----------- coverage: platform linux ----------
-Name                                  Stmts   Miss  Cover
-----------------------------------------------------------
-src/my_dsp/__init__.py                    2      0   100%
-src/my_dsp/tests/test_gain.py            18      0   100%
-src/my_dsp/tests/test_ema.py             22      0   100%
-----------------------------------------------------------
-TOTAL                                    42      0   100%
+Name                                  Stmts   Miss  Cover   Missing
+-------------------------------------------------------------------
+src/my_dsp/__init__.py                    8      1    88%   7
+src/my_dsp/benchmarks/__init__.py         0      0   100%
+src/my_dsp/benchmarks/bench_ema.py       16     16     0%   9-34
+src/my_dsp/benchmarks/bench_gain.py      28     28     0%   9-45
+src/my_dsp/tests/__init__.py              0      0   100%
+src/my_dsp/tests/test_ema.py             48      0   100%
+src/my_dsp/tests/test_gain.py            69     21    70%   17-49
+-------------------------------------------------------------------
+TOTAL                                   169     66    61%
+Coverage HTML written to dir docs/coverage/python
+...
+Python coverage: docs/coverage/python/index.html
 ```
 
 ### How coverage is wired
@@ -393,11 +433,12 @@ renders JavaDoc-style comments, and writes a full HTML site to
 - Optimise output for C (no class hierarchy noise)
 
 Add `/** @brief ... */` comments above your functions and structs and they
-appear automatically in the rendered output. This example already does exactly
-that: the `@brief` on each `<obj>_create()` in `native/inc/<obj>/<obj>_core.h`
-is a real one-sentence class summary (`gain`, `ema`), which `jm apply` also
-flows through into the generated Python docstrings — so the same comment feeds
-both the Doxygen C site and the Zensical Python pages.
+appear automatically in the rendered output. This example's test does exactly
+that: it replaces the scaffold's `@brief Create a <obj> instance.` above each
+`my_dsp_<obj>_create()` in `native/inc/my_dsp/<obj>/<obj>_core.h` with a real
+one-sentence class summary (`gain`, `ema`), and `jm apply` flows it into the
+generated Python class docstring — so the same comment feeds both the Doxygen
+C site and the Zensical Python pages.
 
 The same is true of the `my_dsp_gain_scale()` block from section 4 above: one comment
 renders on the Doxygen C site, becomes the Python docstring the Zensical pages
@@ -458,9 +499,9 @@ zensical serve
 
 ```sh
 make              # configure + build (Release)
-make test         # CTest + unittest (gain) + pytest (ema)
-pytest --doctest-glob='*.pyi' src/   # the header's @code examples (see 4)
-make bench        # C benchmarks + timeit (gain) + pytest-bm (ema)
+make test         # CTest + unittest (gain); pytest src/ for ema
+PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/   # @code examples (see 4)
+make bench        # C benchmarks + pytest-benchmark; run bench_gain.py directly
 make coverage     # C (lcov) + Python (pytest-cov) HTML reports
 make docs         # Doxygen (C API) + Zensical (Python API)
 make clean        # remove build/, site/, docs/coverage/, docs/doxygen/

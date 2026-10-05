@@ -2,7 +2,8 @@
 #define FIR_LENGTH                                                            \
   (FIR_TAPS - 1) /* history:     samples held in delay[]      */
 /* JM_SIMD_WIDTH_F32 floats = JM_SIMD_WIDTH_F32/2 complex samples per batch.
- * On scalar targets (width=1) this is 0; _JM_STEPS_SIMD_ is a no-op there. */
+ * On scalar targets (width=1) this is 0, and JM_STEPS_SIMD_IMPL is a no-op
+ * there. */
 #define FIR_BATCH (JM_SIMD_WIDTH_F32 / 2)
 
 #if JM_SIMD_WIDTH_F32 > 1

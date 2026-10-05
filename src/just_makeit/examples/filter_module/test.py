@@ -9,6 +9,7 @@ Exercises:
   - C tests pass for both objects (CHECK macro, not assert)
   - Python: both types importable from the same subpackage
   - Python: basic correctness of Fir (impulse response) and Biquad (passband/stopband)
+  - the README's demo (.steps/06_demo.py) runs against the built module
 """
 
 from __future__ import annotations
@@ -87,19 +88,21 @@ def run(root: Path) -> None:
     assert "Fir" in init_py
     assert "Biquad" not in init_py
 
-    # ── 3b. Add Biquad object (real float, different arg/return type) ─────────
+    # ── 3b. Add Biquad object (real float I/O, double state) ──────────────────
+    # The same state the README's 03_objects.sh declares, so the double
+    # kernel 04_patch_biquad.py writes is the one the README shows.
     object_run(
         dest,
         "biquad",
         module="filter",
         state_vars=[
-            ("b0", "float", "1.0f"),
-            ("b1", "float", "0.0f"),
-            ("b2", "float", "0.0f"),
-            ("a1", "float", "0.0f"),
-            ("a2", "float", "0.0f"),
-            ("w1", "float", "0.0f"),
-            ("w2", "float", "0.0f"),
+            ("b0", "double", "1.0"),
+            ("b1", "double", "0.0"),
+            ("b2", "double", "0.0"),
+            ("a1", "double", "0.0"),
+            ("a2", "double", "0.0"),
+            ("w1", "double", "0.0"),
+            ("w2", "double", "0.0"),
         ],
         arg_type="float",
         return_type="float",
@@ -224,6 +227,10 @@ print("filter_module: all checks passed")
             f"Python smoke test failed:\n{result.stdout}\n{result.stderr}"
         )
     print(result.stdout.strip())
+
+    # The README's own demo (step 6), as written: it must run against the
+    # built module, not just read well.
+    _cmd([sys.executable, str(STEPS / "06_demo.py")], cwd=dest)
 
     # Verify module-level type stub (named filter.pyi, not __init__.pyi)
     # gh-744: signatures are wrapped to 79 cols when they do not fit,

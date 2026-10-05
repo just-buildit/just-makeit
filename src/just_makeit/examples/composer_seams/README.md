@@ -1,27 +1,32 @@
 # composer_seams example
 
 A `kind = "composer"` module — the third and largest of the object-of-objects
-generators — and specifically **the two seams where it hands work back to you
-as plain C** (gh-998).
+generators — and specifically **the seams where it hands work back to you as
+plain C** (gh-998).
 
-A composer emits four CPython types into one `.so`: a *source* (`Clip`), a
-*segment* (`Track`), a *timeline*, and the *composer* itself (`Mix`). All of
-that binding is jm's. Two things are not, and they are the interesting part:
+A composer emits its CPython types into one `.so`: a *source* (`Clip`), a
+*segment* (`Track`) and the *composer* itself (`Mix`), plus a *timeline* type
+when `[module.X.timeline] type_name` is declared, which this example does not.
+All of that binding is jm's. The seams are not, and they are the interesting
+part:
 
 | seam | declared by | what you write |
 | --- | --- | --- |
-| build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<gen>_state_t *fn(const <struct> *, double)` |
+| build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<c_prefix>_<gen>_state_t *fn(const <struct> *, double)` (here `studio_clip_state_t`) |
 | say why that build refused (optional) | `[module.X.source.generates] bridge_error_fn` | `const char *fn(const <struct> *, double)` |
 | derive a read-only property | `[[module.X.source.computed]] fn` | `<type> fn(const <struct> *)` |
 
-Both are **straight C with no CPython in them**. jm knows their signatures
-exactly, so it publishes them in a generated header —
-`native/inc/<mod>/<mod>_bridge.h` — and the binding includes that rather than
-re-declaring them. Before gh-998 they were `extern` lines buried inside the
-generated `_ext.c`, so a C test or benchmark could reach a signature jm owns
-only by writing a second copy of it.
+All of them are **straight C with no CPython in them**. jm knows their
+signatures exactly, so it publishes them in a generated header —
+`native/inc/<pkg>/<mod>/<mod>_bridge.h` — and the binding includes that
+rather than re-declaring them. Before gh-998 they were `extern` lines buried
+inside the generated `_ext.c`, so a C test or benchmark could reach a
+signature jm owns only by writing a second copy of it. The same header also
+carries a `bit_pattern` field's `coerce_str_fn` (gh-1709) and an owned-pointer
+field's `copy_fn` / `free_fn` / `parse_fn` / `format_fn` (gh-1711); this
+example uses only the three above.
 
-That header is the one file this example is really about, and step 7 uses it
+That header is the one file this example is really about, and step 8 uses it
 the way it is meant to be used: from a translation unit that includes nothing
 else.
 
@@ -48,7 +53,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -74,13 +81,25 @@ just-makeit object clip \
 Nothing composer-specific yet — this is a plain `jm object`. It matters
 because the composer's defaults are named after it: declaring
 `generator = "clip"` makes jm expect `studio_clip_state_t`, `studio_clip_step`,
-`studio_clip_steps`, `studio_clip_reset`, `studio_clip_destroy` and `clip/clip_core.h`, all of
+`studio_clip_steps`, `studio_clip_reset`, `studio_clip_destroy` and `studio/clip/clip_core.h`, all of
 which `jm object` has just produced. Every one is overridable in the manifest;
 none of them needs to be here.
 
 `--arg-type void --return-type "float _Complex"` is what makes it a *source*:
 `studio_clip_step(state)` takes no input and returns a sample, and
 `studio_clip_steps(state, out, n)` fills a block.
+
+Give the generator a body. A constant-level source keeps the composed output
+checkable by eye: in `native/inc/studio/clip/clip_core.h`, replace the two
+lines of the `studio_clip_step` stub's body so that it reads:
+
+```c
+static inline float _Complex
+studio_clip_step(const studio_clip_state_t *state)
+{
+    return (float _Complex)state->level;
+}
+```
 
 ---
 
@@ -264,8 +283,8 @@ target_include_directories(backing_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc)
 """Declare the composer module. There is no `jm composer` command.
 
 A composer is manifest-only: this table plus `just-makeit apply` is the whole
-interface. `c_deps` goes on `[project]`; everything else describes the four
-OO types jm will emit.
+interface. `c_deps` goes on `[project]`; everything else describes the OO
+types jm will emit.
 """
 
 from pathlib import Path
@@ -376,6 +395,11 @@ module emits:
 /* Build the composed generator from a source config (source -> generator). */
 studio_clip_state_t *clip_from_source(const clip_t *, double);
 
+/* Why clip_from_source() refused: a reason raised as ValueError, or NULL
+ * for none (RuntimeError). Same arguments; called only after it returned
+ * NULL (gh-1307). */
+const char *clip_why_not(const clip_t *, double);
+
 /* Computed read-only property `duration`. */
 double clip_duration(const clip_t *);
 ```
@@ -383,7 +407,7 @@ double clip_duration(const clip_t *);
 Self-contained on purpose — it pulls in the backing header and the
 generator's, so a consumer does not have to work out what to include first. It
 is emitted **only** when the source declares at least one seam; a composer
-with neither gets no header at all, because there would be nothing to say.
+with none gets no header at all, because there would be nothing to say.
 
 ---
 
@@ -498,7 +522,7 @@ Mix_total_samples (PyObject *self, PyObject *Py_UNUSED (ignored))
 }
 ```
 
-jm `#include`s the file after the four generated types, so the body can use
+jm `#include`s the file after the generated types, so the body can use
 anything they define. It also forward-declares `Mix_total_samples` above the
 method table that names it, with the signature `METH_NOARGS` implies: write
 that exact signature, or the file does not compile.
@@ -512,7 +536,8 @@ is missing, the build fails naming `playlist_ext_extra.c`.
 ## 6. Build
 
 ```sh
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+    -DPython3_EXECUTABLE="$(command -v python3)"
 cmake --build build --parallel 4
 ```
 
@@ -526,7 +551,7 @@ named in the manifest rather than left to propagate.
 ## 7. Drive it from Python
 
 ```python
-"""Drive the four generated OO types, and both seams."""
+"""Drive the three generated OO types, and both seams."""
 
 import sys
 
@@ -630,6 +655,8 @@ produce samples at all.
 ---
 
 ## 8. The point: a C consumer needs only the generated header
+
+`native/tests/test_bridge.c`:
 
 ```c
 /* A C consumer of the composer's seams.

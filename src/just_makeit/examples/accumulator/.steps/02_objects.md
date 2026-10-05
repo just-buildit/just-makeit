@@ -15,7 +15,8 @@ Before reaching for named methods, notice what jm scaffolds automatically:
 
 `step(x) -> void` with `--mutable` and `--return-type void` is exactly a push
 operation.  `steps()` is the auto-generated batch loop that calls `step()` in a
-tight loop — it is add.  You do not need to implement these; jm writes them.
+tight loop — it is add.  `steps()` and `reset()` are complete as generated;
+`step()`'s one-line body is yours (section 4).
 
 `--mutable` drops the `const` qualifier from the state pointer in `step()` so
 the implementation can write to `state->acc`.
@@ -29,7 +30,7 @@ Both types follow the same layout.  The only difference is the C type:
 | `acc_f32` | `acc` | `float`         | `0.0f`           |
 | `acc_cf64`| `acc` | `double _Complex`| `0.0 + 0.0 * I` |
 
-After both commands `just-makeit.toml` contains:
+After both commands `modules/accumulator.toml` contains:
 
 ```toml
 [module.accumulator]

@@ -6,8 +6,10 @@ Three demonstrations:
      by keeping sum_sq as double)
   3. Same long run with a double accumulator — shows why the C code uses double
 
-Run from anywhere — no C build required:
-    python3 examples/sliding_power/.steps/06_compare.py
+Run from anywhere -- no C build required (STEPS is this example's .steps/
+directory inside the installed just-makeit; the README shows how to set
+it):
+    python3 "$STEPS/06_compare.py"
 """
 
 import math

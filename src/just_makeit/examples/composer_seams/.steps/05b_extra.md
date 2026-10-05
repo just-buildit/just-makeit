@@ -10,7 +10,7 @@ is plain CPython in a file jm never touches.
 ```{05b_playlist_ext_extra.c}
 ```
 
-jm `#include`s the file after the four generated types, so the body can use
+jm `#include`s the file after the generated types, so the body can use
 anything they define. It also forward-declares `Mix_total_samples` above the
 method table that names it, with the signature `METH_NOARGS` implies: write
 that exact signature, or the file does not compile.

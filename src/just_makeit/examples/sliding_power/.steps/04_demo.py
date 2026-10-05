@@ -1,7 +1,8 @@
 """Power estimator demo.
 
-Run from the project root after `pip install -e .`:
-    python3 .steps/04_demo.py
+Run after `pip install -e .` (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/04_demo.py"
 """
 
 import math

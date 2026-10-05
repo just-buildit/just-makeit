@@ -1,8 +1,9 @@
 """Patch my_stats_running_stats_step stub with an implementation.
 
-Run from the project root:
-    python3 .steps/02_patch.py                  # base body (mean/var only)
-    python3 .steps/02_patch.py 02_step_after.c  # full body (+ min/max state)
+Run from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/02_patch.py"                  # base body (mean/var only)
+    python3 "$STEPS/02_patch.py" 02_step_after.c  # full body (+ min/max)
 
 The implementation file is resolved next to this script. It is applied by
 replacing the generated `my_stats_running_stats_step()` stub in the public header. The

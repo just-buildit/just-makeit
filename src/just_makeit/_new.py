@@ -141,10 +141,15 @@ def run(
         # root dir falls back to whatever interpreter CMake finds when the
         # venv is absent -- the wrong-numpy configure gh-814 refuses.
         _write(root / "CMakePresets.json", T.CMAKE_PRESETS_JSON)
+        readme = T.README_MD
     else:
         _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
+        # The README describes the build its own Makefile runs: this one has
+        # no CMake, no Windows build and no `make docs`, and the CMake README
+        # advertised all three to a make-backend project.
+        readme = T.README_MD_SIMPLE
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
-    _write(root / "README.md", r(T.README_MD))
+    _write(root / "README.md", r(readme))
     _write(root / ".gitignore", r(T.GITIGNORE))
     # gh-1641: jm renders LF everywhere (gh-1368), and Git for Windows
     # checks text out CRLF unless the project says otherwise -- which read

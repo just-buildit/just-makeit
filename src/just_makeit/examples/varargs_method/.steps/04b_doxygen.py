@@ -3,8 +3,8 @@ carries rich docstrings and a runnable doctest.
 
 The header is the single source of truth for documentation: ``jm`` parses these
 ``/** ... */`` comments and turns them into numpy-style Python docstrings. A
-``@code`` block on a *typed named method* becomes a runnable doctest that CI
-executes against the built extension (``pytest --doctest-glob='*.pyi'``).
+``@code`` block on a *typed named method* becomes a runnable doctest, which
+``pytest --doctest-glob='*.pyi'`` executes against the built extension.
 
 Note the split of responsibilities here (varargs vs. typed):
 
@@ -21,7 +21,8 @@ Note the split of responsibilities here (varargs vs. typed):
 Run this after the methods are declared and their bodies patched; a follow-up
 ``jm apply`` regenerates the ``.pyi`` from these comments.
 
-Usage:  python3 .steps/04b_doxygen.py     # run from the project root
+Usage (saved in the directory above the project, run from its root):
+    python3 ../04b_doxygen.py
 """
 
 from __future__ import annotations

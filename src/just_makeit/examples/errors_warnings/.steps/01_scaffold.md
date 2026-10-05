@@ -9,6 +9,10 @@ are what the object *derives* and keeps — declaring init-params is what keeps
 them out of the constructor signature, so `Allocator(capacity=9, slots=3)` is
 the whole public API.
 
+`example_value` is not a default: the params stay required. It only gives
+jm's generated C and Python tests a valid `create(1024, 4)` to construct
+with, instead of a zero-seeded call this constructor refuses.
+
 `degraded` is the one to watch. It is an ordinary `bool` on the state struct
 that `create()` sets, and in step 3 it becomes the entire mechanism behind a
 Python warning.

@@ -4,10 +4,10 @@
 ```
 
 ```
-summary()  -> Summary(n=4, mean=1.25)
+summary()  -> evlog.collector.Summary(n=4, mean=1.25)
              type=Summary  n=4  mean=1.2500
 read()     -> array([(0, 0.5 ), (1, 2.5 ), (2, 0.25), (3, 1.75)],
-                    dtype=[('t', '<u8'), ('v', '<f8')])
+      dtype=[('t', '<u8'), ('v', '<f8')])
              dtype=[('t', '<u8'), ('v', '<f8')]
 peaks()    -> [(1, 2.5), (3, 1.75)]
 record_shapes demo: PASSED

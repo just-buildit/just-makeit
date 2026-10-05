@@ -89,7 +89,7 @@ budget_allocator_peek(budget_allocator_state_t *state, size_t x)
 # seed, so jm emitted `create(0, 0)` behind a skip-and-bail it did not trust —
 # the zero being precisely what this ctor refuses — and the patch had to
 # replace that whole block plus a `get_remaining(obj) == 0` line that a
-# deriving create() makes false. Declaring `example_value` (see test.py) fixed
+# deriving create() makes false. Declaring `example_value` (step 1) fixed
 # both at the source: jm now constructs with valid arguments, and the accessor
 # test no longer asserts a post-construction value it cannot know. So all that
 # is left here is ADDING the refusal cases, which is the part that was ever
@@ -119,14 +119,16 @@ def _replace(text: str, old: str, new: str, what: str) -> str:
 
 
 def main() -> None:
+    # Every anchor is checked before either file is written, so a missed
+    # anchor leaves the tree exactly as it was rather than half-patched.
     s = CORE.read_text(encoding="utf-8")
     s = _replace(s, CREATE_OLD, CREATE_NEW, "create()")
     s = _replace(s, TAKE_OLD, TAKE_NEW, "take()")
     s = _replace(s, PEEK_OLD, PEEK_NEW, "peek()")
-    CORE.write_text(s, encoding="utf-8")
-
     t = CTEST.read_text(encoding="utf-8")
     t = _replace(t, CTEST_OLD, CTEST_NEW, "C test construction")
+
+    CORE.write_text(s, encoding="utf-8")
     CTEST.write_text(t, encoding="utf-8")
 
 

@@ -13,8 +13,9 @@ Two update strategies are shown:
   `JM_HSUM_F32` from `jm_simd.h`; used for periodic recalibration and as a
   clean demonstration of the `jm_simd.h` macro set.
 
-The generated `.pyi` also carries a hand-authored class summary lifted from
-the `@brief` on `my_power_power_est_create()` in the sacred header.
+The generated `.pyi` class docstring is lifted from the `@brief` on
+`my_power_power_est_create()` in the sacred header; section 2 replaces the
+scaffold's generic one with a real sentence.
 
 ## TL;DR — see it work first
 
@@ -36,7 +37,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -49,12 +52,14 @@ source /tmp/jm-venv/bin/activate
 
 The state has three fields: a 64-element float ring buffer (`delay`) that
 stores |x|² for the last 64 samples, a running double accumulator (`sum_sq`),
-and a write-head index (`pos`).  `--perf` generates `jm_perf.h` and
-`jm_simd.h` alongside the scaffold.
+and a write-head index (`pos`).  `--return-type float` makes `step()` return
+the power as a real number (the input stays `float _Complex`).  `--perf`
+generates `jm_perf.h` and `jm_simd.h` alongside the scaffold.
 
 ```sh
 just-makeit new my_power \
     --object power_est \
+    --return-type float \
     --state "delay:float[64]" \
     --state "sum_sq:double:0.0" \
     --state "pos:int:0" \
@@ -85,10 +90,24 @@ my_power_power_est_step (my_power_power_est_state_t *state, float _Complex x)
 }
 ```
 
-Apply the patch:
+Apply it with the patch script that ships with just-makeit, in this
+example's `.steps/` directory. Run it from the project root by that path
+(the later sections reuse `STEPS`):
 
 ```sh
-python3 .steps/02_patch.py
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples/sliding_power/.steps")')"
+python3 "$STEPS/02_patch.py"
+```
+
+While the header is open, give the Python class a real docstring: replace
+the scaffold's `@brief Create a power_est instance.` above
+`my_power_power_est_create()` with your own sentence (for example
+`@brief Create a sliding-window signal-power estimator over a 64-sample
+window, zeroed.`), then re-derive the `.pyi` from it. `apply` leaves your
+`step()` body alone:
+
+```sh
+just-makeit apply
 ```
 
 ---
@@ -99,19 +118,27 @@ python3 .steps/02_patch.py
 make && make test
 ```
 
-The generated C test exercises `create`, `reset`, `step`, and `steps`.
+The generated C test exercises `create`, the state accessors, `step`,
+`reset`, and `destroy`.
 
 ---
 
 ## 4. Python demo
 
-After `pip install -e .`:
+`make` built the extension into `src/my_power/`; an editable install points
+Python there (it compiles nothing). Then run the demo below:
+
+```sh
+pip install -e .
+python3 "$STEPS/04_demo.py"
+```
 
 ```python
 """Power estimator demo.
 
-Run from the project root after `pip install -e .`:
-    python3 .steps/04_demo.py
+Run after `pip install -e .` (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/04_demo.py"
 """
 
 import math
@@ -152,10 +179,14 @@ Expected output:
 
 ```
 sine   power (expect ~0.500): 0.5000
-noise  power (expect ~1.000): 0.9844
-silence power (expect 0.000): 0.0000
+noise  power (expect ~1.000): 0.9135
+silence power (expect 0.000): -0.0000
 steps() final power (expect ~0.500): 0.5000
 ```
+
+The silence line reads `-0.0000`: subtracting the samples back out of the
+running sum leaves a rounding residue just below zero. Section 5 and the
+numerical notes cover that drift.
 
 ---
 
@@ -172,7 +203,8 @@ Add this function to `native/src/power_est/power_est_core.c` (it needs
 /* Add to power_est_core.c — SIMD recompute from delay line.
  *
  * Uses jm_simd.h macros: JM_ADD_F32, JM_LOAD_F32, JM_HSUM_F32, JM_UNROLL.
- * Compiles to AVX-512, AVX2, or scalar depending on -march flags.
+ * Compiles to AVX-512, AVX2, NEON (AArch64) or scalar, depending on the
+ * target and -march flags.
  *
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */
@@ -193,19 +225,20 @@ power_est_recompute (my_power_power_est_state_t *state)
 
 **What each macro does on each ISA:**
 
-| Macro             | AVX-512                   | AVX2                 | Scalar           |
-| ----------------- | ------------------------- | -------------------- | ---------------- |
-| `JM_VEC_F32`      | `__m512` (16 lanes)       | `__m256` (8 lanes)   | `float` (1 lane) |
-| `JM_LOAD_F32(p)`  | `_mm512_loadu_ps(p)`      | `_mm256_loadu_ps(p)` | `*(p)`           |
-| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)`      | `_mm256_add_ps(a,b)` | `(a)+(b)`        |
-| `JM_HSUM_F32(v)`  | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)`   | `(v)`            |
-| `JM_UNROLL(4)`    | `#pragma GCC unroll 4`    | same                 | same             |
+| Macro             | AVX-512                   | AVX2                 | AArch64 NEON             | Scalar           |
+| ----------------- | ------------------------- | -------------------- | ------------------------ | ---------------- |
+| `JM_VEC_F32`      | `__m512` (16 lanes)       | `__m256` (8 lanes)   | `float32x4_t` (4 lanes)  | `float` (1 lane) |
+| `JM_LOAD_F32(p)`  | `_mm512_loadu_ps(p)`      | `_mm256_loadu_ps(p)` | `vld1q_f32(p)`           | `*(p)`           |
+| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)`      | `_mm256_add_ps(a,b)` | `vaddq_f32(a,b)`         | `(a)+(b)`        |
+| `JM_HSUM_F32(v)`  | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)`   | `vaddvq_f32(v)`          | `(v)`            |
+| `JM_UNROLL(4)`    | `#pragma GCC unroll 4`    | same                 | same                     | same             |
 
-The loop body is identical across all three tiers.  `JM_SIMD_WIDTH_F32`
-(16, 8, or 1) controls the stride; the 64-element delay line is always
+The loop body is identical across all four tiers.  `JM_SIMD_WIDTH_F32`
+(16, 8, 4, or 1) controls the stride; the 64-element delay line is always
 an exact multiple of any supported width, so there is no scalar tail.
 
-Build with `-DENABLE_SIMD=ON` to activate AVX-512 or AVX2 paths:
+On x86-64, build with `-DENABLE_SIMD=ON` to activate the AVX-512 or AVX2
+path (AArch64 needs no flag: NEON is always on there):
 
 ```sh
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON
@@ -241,17 +274,18 @@ rounding residuals.  Over 5 million noise samples the error stays at
 
 **When the SIMD recompute earns its keep:**
 If the accumulator were `float` (e.g., for an embedded target with no FPU
-double path), drift grows to ~10⁻⁵ by 5M samples and keeps climbing.  A
-full recompute every 1000 samples — the one call that fits a single SIMD
-vector of 16 float32 lanes — resets the error to zero.
+double path), drift reaches ~7×10⁻⁵ by 5M samples and keeps climbing.  A
+full recompute every 1000 samples (4 AVX-512 vectors over the 64-sample
+line) resets the error to zero.
 
-You can reproduce these numbers yourself:
+You can reproduce these numbers yourself (pure Python, no build needed;
+`STEPS` as set in section 2):
 
 ```sh
-python3 .steps/06_compare.py
+python3 "$STEPS/06_compare.py"
 ```
 
-Output (5M noise samples):
+Output (excerpt; 5M noise samples):
 
 ```
 Demo 2: float32 accumulator

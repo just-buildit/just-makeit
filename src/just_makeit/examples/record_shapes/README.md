@@ -38,7 +38,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -57,6 +59,7 @@ just-makeit new evlog \
     --state "v:double[64]" \
     --arg-type double \
     --return-type void
+cd evlog
 ```
 
 `step()` takes a `double` and returns nothing — it records. The two fixed
@@ -72,8 +75,8 @@ of that ring.
 """Declare the two record structs in the sacred header.
 
 They are the author's, not jm's: jm writes prototypes that mention them and
-never reads a field. Adding them BEFORE declaring the methods is what lets
-`--return-type evlog_summary_t` and `--record-dtype evlog_rec_t` resolve.
+never reads a field, so only the compiler needs them -- ahead of those
+prototypes, which is why they go above the generated state struct.
 """
 
 from pathlib import Path
@@ -121,17 +124,16 @@ if __name__ == "__main__":
     main()
 ```
 
-This has to happen first. `--return-type evlog_summary_t` and
-`--record-dtype evlog_rec_t` name types that must already exist in the sacred
-header; jm puts them in prototypes and never looks inside them.
+Declare them before you build: `--return-type evlog_summary_t` and
+`--record-dtype evlog_rec_t` only name these types. jm writes them into
+prototypes and never checks or reads them, so the compiler is the first to
+need them, ahead of those prototypes in the header.
 
 ---
 
 ## 3. Declare the same data three ways
 
 ```sh
-cd evlog
-
 # ── shape 1: ONE record, by value ───────────────────────────────────────────
 just-makeit method collector summary \
     --arg-type void \
@@ -163,9 +165,11 @@ Three things to notice, because each one is a trap if you meet it later:
 
 - **Every shape takes YOUR struct as the return type**, not a scalar. A
     scalar there is the mistake worth naming: `--single` with
-    `--return-type double` emits a binding that reads `_r.n` off a `double`,
-    and the plain shape emits `results[i].index` off one. Both are accepted
-    by the CLI and neither compiles (gh-1064).
+    `--return-type double` would emit a binding that reads `_r.n` off a
+    `double`, and the plain shape would emit `results[i].index` off one.
+    Neither could compile, so the CLI refuses both (gh-1064), naming the fix:
+    for `--single`,
+    `--return-type must be the C struct that the --single record of the result is, not 'double'`.
 - **`--record-name` / `--record-doc` only apply to `--single`.** They name and
     document the record *type*, and the other two shapes have no type to name:
     one hands back an `ndarray`, the other a plain `list`.
@@ -173,7 +177,8 @@ Three things to notice, because each one is a trap if you meet it later:
     return value of the kernel, which is what `size_t` + `max_results` is for.
     The flag belongs to the `record_dtype` shape, whose kernel fills a caller
     sized `out` buffer and needs a `read_max_out()` companion to size it.
-    Passing it here also emits code that does not compile (gh-1064).
+    Passing it here is refused by the CLI (gh-1064): with a plain
+    `result_fields` kernel there is nothing for it to size.
 
 `--single` and `--record-dtype` are mutually exclusive; the CLI rejects the
 pair.
@@ -419,10 +424,10 @@ print("record_shapes demo: PASSED")
 ```
 
 ```
-summary()  -> Summary(n=4, mean=1.25)
+summary()  -> evlog.collector.Summary(n=4, mean=1.25)
              type=Summary  n=4  mean=1.2500
 read()     -> array([(0, 0.5 ), (1, 2.5 ), (2, 0.25), (3, 1.75)],
-                    dtype=[('t', '<u8'), ('v', '<f8')])
+      dtype=[('t', '<u8'), ('v', '<f8')])
              dtype=[('t', '<u8'), ('v', '<f8')]
 peaks()    -> [(1, 2.5), (3, 1.75)]
 record_shapes demo: PASSED

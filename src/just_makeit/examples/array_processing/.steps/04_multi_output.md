@@ -7,18 +7,20 @@ three or more streams.
 ```{04_multi_output.sh}
 ```
 
-Generated stubs appended to `hbdecim_core.c`:
+The command declares two more C functions in `hbdecim_core.h` and appends
+their stubs to `hbdecim_core.c`:
 
 ```c
-size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state);
-size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t    *state,
-                           const float _Complex *in, size_t n_in,
-                           float _Complex       *out,
-                           uint8_t             *ovf);
+size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state,
+                                            size_t n_in);
+size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t *state,
+                                    const float _Complex *in, size_t n_in,
+                                    float _Complex *out, uint8_t *out1);
 ```
 
-Both `out` and `ovf` are pre-allocated to `_max_out()` elements and owned by
-the object.  Your implementation fills both and returns the count:
+Both `out` and the secondary array `out1` are allocated by the ext on every
+call, NumPy-owned, `max(execute_ovf_max_out(n_in), n_in)` elements each. Your
+implementation fills both and returns the count:
 
 ```{04_execute_ovf.c}
 ```
@@ -32,33 +34,23 @@ from my_decim import Hbdecim
 d = Hbdecim()
 
 block    = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
-samples, flags = d.execute_ovf(block)   # tuple of two zero-copy views
+samples, flags = d.execute_ovf(block)   # tuple of two new, independently owned arrays
 ```
 
 ### Array ownership for multi-output
 
 ```
-d = Hbdecim()
-│
-└─ ext mallocs float _Complex[512]  → d._out_buf
-   ext mallocs uint8_t[512]        → d._ovf_buf
-   both stored in the object
-
 samples, flags = d.execute_ovf(block)
 │
-├─ calls my_decim_hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
+├─ ext allocates complex64[max(execute_ovf_max_out(1024), 1024)]
+│  and uint8[same], both NumPy-owned
 │
-├─ returns (view into d._out_buf[:512],
-│           view into d._ovf_buf[:512])
+├─ calls my_decim_hbdecim_execute_ovf(state, block.data, 1024, out, out1)  → returns 512
 │
-│  ownership: object retains both buffers
-│  lifetime:  both views stale after next call to execute_ovf()
-│             — copy before calling again
-
-n_ovf = int(flags.sum())           # safe — flags is still valid here
-samples_copy = samples.copy()      # independent; survives next call
+└─ returns (out, out1), each trimmed to 512
+   ownership: the caller owns both arrays
+   lifetime:  independent of the object and of every other result
 ```
 
-The same "stale after next call" rule applies to every buffer produced by
-`--variable-output`.  The zero-copy design makes the steady-state path
-allocation-free; the copy obligation is the trade-off.
+As in §3, every result is independent; nothing needs copying before the next
+call. Unlike `execute()`, a multi-output method takes no `out=` buffer.

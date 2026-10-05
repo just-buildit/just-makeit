@@ -1,7 +1,8 @@
 /* Add to power_est_core.c — SIMD recompute from delay line.
  *
  * Uses jm_simd.h macros: JM_ADD_F32, JM_LOAD_F32, JM_HSUM_F32, JM_UNROLL.
- * Compiles to AVX-512, AVX2, or scalar depending on -march flags.
+ * Compiles to AVX-512, AVX2, NEON (AArch64) or scalar, depending on the
+ * target and -march flags.
  *
  * Call every ~1000 samples to correct floating-point drift in sum_sq.
  */

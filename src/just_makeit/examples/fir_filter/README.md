@@ -23,7 +23,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -64,8 +66,8 @@ The filter must update the delay line, so the signature changes from `const` to 
 static inline float _Complex my_fir_fir_filter_step (
     const my_fir_fir_filter_state_t *state, float _Complex x)
 {
-  (void)state; /* TODO: implement DSP using state variables */
-  return x;
+  (void)state; /* TODO: implement using state variables */
+  return (float _Complex)x;
 }
 ```
 
@@ -102,7 +104,8 @@ make test
 
 The generated tests cover getter/setter round-trips, reset behaviour, the
 context manager, and destroy. After implementing the filter you can add
-signal-level tests (see step 5).
+signal-level tests (the impulse responses in sections 4 and 5 are ready-made
+assertions).
 
 ---
 
@@ -204,18 +207,19 @@ gcc -O2 -std=c99 -Inative/inc demo.c \
 ## 6. Add more state
 
 ```sh
-just-makeit add --state n_taps:int32_t:16
+just-makeit add --force --state n_taps:int32_t:16
 make test
 ```
 
 State is structural, so `add` rebuilds the object from the manifest: the
 `my_fir_fir_filter_state_t` struct and lifecycle are regenerated and your
-`my_fir_fir_filter_step()` body is reset to a fresh stub. Re-run the implement step
-(section 2) to restore the kernel on top of the new state. The same applies
-when you swap in a longer delay line:
+`my_fir_fir_filter_step()` body is reset to a fresh stub. `add` asks before
+it deletes and regenerates the object's files; `--force` skips the prompt.
+Re-run the implement step (section 2) to restore the kernel on top of the
+new state. The same applies when you swap in a longer delay line:
 
 ```sh
-just-makeit add --state "coeffs64:double _Complex[64]"
+just-makeit add --force --state "coeffs64:double _Complex[64]"
 ```
 
 ---
@@ -253,8 +257,9 @@ print(f"{RUNS * BLOCK / elapsed / 1e6:.1f} M complex samples/sec")
 Build baseline, measure, rebuild with SIMD, measure again:
 
 ```sh
-# Baseline build (no SIMD)
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+# Baseline build (no SIMD). ENABLE_SIMD is a cached option, so say OFF
+# explicitly: a configure that omits it keeps the last run's ON.
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=OFF \
     -DPython3_EXECUTABLE=$(python3 -c "import sys; print(sys.executable)")
 cmake --build build --parallel
 pip install -e . --force-reinstall
@@ -268,14 +273,18 @@ pip install -e . --force-reinstall
 python3 bench.py
 ```
 
+The numbers below were measured on one AVX-512 machine (`bench.py` reports
+the best of five timed repeats). Yours will differ; the ratios are what
+carries over.
+
 ### Round 1 — flags alone
 
-The scaffold's default implementation shifts the delay line with `memmove`.
+The section 2 kernel shifts the delay line with `memmove`.
 Adding `-march=native -ffast-math` via `ENABLE_SIMD=ON` gives a modest gain:
 
 ```
-baseline:  106.8 M complex samples/sec
-with SIMD: 154.1 M complex samples/sec   (1.4×)
+baseline:  65.1 M complex samples/sec
+with SIMD: 90.6 M complex samples/sec   (1.4×)
 ```
 
 The ceiling is the `memmove` of 120 bytes (15 `float _Complex`) that runs every
@@ -295,7 +304,8 @@ that stamps out the outer dispatch loop so you never write it by hand.
 #define FIR_LENGTH                                                            \
   (FIR_TAPS - 1) /* history:     samples held in delay[]      */
 /* JM_SIMD_WIDTH_F32 floats = JM_SIMD_WIDTH_F32/2 complex samples per batch.
- * On scalar targets (width=1) this is 0; _JM_STEPS_SIMD_ is a no-op there. */
+ * On scalar targets (width=1) this is 0, and JM_STEPS_SIMD_IMPL is a no-op
+ * there. */
 #define FIR_BATCH (JM_SIMD_WIDTH_F32 / 2)
 
 #if JM_SIMD_WIDTH_F32 > 1
@@ -317,14 +327,14 @@ Three named constants make each concern explicit:
 
 | constant    | concern     | meaning                                            |
 | ----------- | ----------- | -------------------------------------------------- |
-| `FIR_TAPS`  | algorithm   | filter length (set at codegen time)                |
+| `FIR_TAPS`  | algorithm   | filter length (a compile-time constant you define) |
 | `FIR_BATCH` | parallelism | complex samples per call (`JM_SIMD_WIDTH_F32 / 2`) |
 | `FIR_CHUNK` | tuning      | samples per scratch-buffer fill                    |
 
-`FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2),
-so the same source compiles to 8 or 4 complex samples per batch without any
-`#ifdef`.  On scalar targets `JM_SIMD_WIDTH_F32 = 1`, `_JM_STEPS_SIMD_` is a
-no-op, and `step_batch()` is never called.
+`FIR_BATCH` is derived from `JM_SIMD_WIDTH_F32` (16 on AVX-512, 8 on AVX2,
+4 on AArch64 NEON), so the same source compiles to 8, 4 or 2 complex samples
+per batch without any `#ifdef`.  On scalar targets `JM_SIMD_WIDTH_F32 = 1`,
+`JM_STEPS_SIMD_IMPL` is a no-op, and `step_batch()` is never called.
 
 `step_batch()` uses `FIR_TAPS` and `FIR_BATCH`.  `steps()` uses all three —
 but you never write `steps()`.
@@ -343,16 +353,19 @@ it owns the scratch buffer, the chunked fill, and the scalar tail.  You write
 `step()`.  You write `step_batch()`.  The rest is infrastructure.
 
 ```
-baseline:   475 M complex samples/sec
-with SIMD: 1745 M complex samples/sec   (3.7×)
+baseline:    64.7 M complex samples/sec   (unchanged: the batch path is compiled out)
+with SIMD: 1315.1 M complex samples/sec   (20× the baseline)
 ```
 
-The scalar baseline is already 4.5× faster than the `memmove` version because
-sequential scratch accesses are hardware-prefetcher-friendly; the L1-resident
-chunk eliminates the circular-buffer index arithmetic entirely.  Adding
-`ENABLE_SIMD=ON` delivers the full speedup from AVX-512's 16-wide float FMA
-(3.7×) or AVX2's 8-wide FMA — `jm_simd.h` selects the best tier at compile
-time, no source changes needed.
+The baseline does not move.  Without `ENABLE_SIMD=ON` an x86-64 build has no
+AVX tier, so `JM_SIMD_WIDTH_F32` is 1, `JM_STEPS_SIMD_IMPL` expands to
+nothing, and `steps()` is the same scalar loop over the `memmove` `step()`
+as round 1.  With `ENABLE_SIMD=ON` the scratch-buffer path runs:
+`step_batch()` handles `FIR_BATCH` complex samples per call (8 on AVX-512,
+4 on AVX2) over an L1-resident chunk, with no per-sample `memmove`.
+`jm_simd.h` selects the tier at compile time, no source changes needed.  On
+AArch64, NEON is always available, so even the baseline build takes the
+batch path there (2 complex samples per call).
 
 ---
 
@@ -375,7 +388,9 @@ here makes the stub read like documentation. Run this after ``jm perf`` /
 ``jm add`` have settled the header; a follow-up ``jm apply`` re-derives the
 ``.pyi`` from the edited comment.
 
-Usage:  python3 .steps/08_doxygen.py     # run from the project root
+Usage, from the project root (STEPS is this example's .steps/ directory
+inside the installed just-makeit; the README shows how to set it):
+    python3 "$STEPS/08_doxygen.py"
 """
 
 from __future__ import annotations
@@ -417,4 +432,13 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+```
+
+The script ships with just-makeit, in this example's `.steps/` directory.
+Run it from the project root by that path, then `jm apply`:
+
+```sh
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples/fir_filter/.steps")')"
+python3 "$STEPS/08_doxygen.py"
+just-makeit apply
 ```

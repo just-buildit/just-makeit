@@ -1,6 +1,6 @@
 # A half-band decimator: input block of N complex samples, output ≤ N/2 samples.
-# Because the maximum output is known at init time (ceil(block_size / 2)),
-# --variable-output pre-allocates the output buffer once and returns a view.
+# The output count is bounded by the input length (ceil(n_in / 2)), so
+# --variable-output sizes each call's output array from _max_out(n_in).
 cd ..
 just-makeit new my_decim \
     --object hbdecim \

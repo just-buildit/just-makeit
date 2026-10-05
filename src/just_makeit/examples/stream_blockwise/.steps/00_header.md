@@ -20,8 +20,8 @@ for block in decoder.stream(4096):
 
 This example builds a finite "drainer" — a source of exactly `total` complex
 samples that empties as you pull it — marks it streamable, and shows the drain,
-`count`, `on_block`, and `__iter__`, plus the one gotcha that comes with
-zero-copy output: **copy each block before the next call.**
+`count`, `on_block`, and `__iter__`, and why collecting the blocks needs no
+copy.
 
 ## TL;DR — see it work first
 
@@ -37,7 +37,9 @@ just-makeit example stream_blockwise
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps

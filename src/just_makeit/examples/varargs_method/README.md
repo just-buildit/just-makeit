@@ -25,7 +25,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -37,7 +39,7 @@ source /tmp/jm-venv/bin/activate
 ## 1. Scaffold
 
 ```sh
-just-makeit new my_filter \
+just-makeit new va_filter \
     --object filter \
     --state "gain:double:1.0" \
     --arg-type float \
@@ -53,13 +55,13 @@ share.
 ## 2. Add a `--varargs` method
 
 ```sh
-cd my_filter
+cd va_filter
 just-makeit method filter configure --varargs
 ```
 
-Three files carry the interesting changes — `just-makeit.toml`, the `.pyi`
-stub, and the benchmark harness are also regenerated, as they are after every
-mutating command:
+Three files carry the interesting changes — the manifest fragment
+`objects/filter.toml`, the `.pyi` stub, and the benchmark harness are also
+updated, as they are after every mutating command:
 
 | File | Role |
 | ---- | ---- |
@@ -109,7 +111,6 @@ header declaration to attach docs to and the `.pyi` stub stays the bare
 `filter_core.h` — so we have something the header can fully document:
 
 ```sh
-cd my_filter
 just-makeit method filter current_gain --return-type double
 ```
 
@@ -128,11 +129,79 @@ Three stubs need bodies:
 - `va_filter_filter_current_gain` in `native/src/filter/filter_core.c` — return
   `state->gain`.
 
-```python
-"""Patch va_filter_filter_step and va_filter_filter_configure stubs with implementations.
+`va_filter_filter_step` — one multiply:
 
-Run from the project root (my_filter/):
-    python3 .steps/03_patch.py
+```c
+static inline float
+va_filter_filter_step (const va_filter_filter_state_t *state, float x)
+{
+  return (float)(state->gain * x);
+}
+```
+
+`va_filter_filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`
+(this is the whole of `filter_configure_core.c`):
+
+```c
+/*
+ * filter_configure_core.c — varargs Python binding for filter.configure().
+ *
+ * Compiled into the Python extension DSO, not the pure-C core.
+ * To access the C state inside this function:
+ *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
+ *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
+ */
+#define PY_SSIZE_T_CLEAN
+#include "va_filter/filter/filter_core.h"
+#include <Python.h>
+
+PyObject *
+va_filter_filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
+{
+  typedef struct
+  {
+    PyObject_HEAD;
+    va_filter_filter_state_t *handle;
+  } Obj;
+  va_filter_filter_state_t *state = ((Obj *)self)->handle;
+  if (!state)
+    {
+      PyErr_SetString (PyExc_RuntimeError, "destroyed");
+      return NULL;
+    }
+  double       gain     = state->gain;
+  static char *kwlist[] = { "gain", NULL };
+  if (!PyArg_ParseTupleAndKeywords (args, kwargs, "|d", kwlist, &gain))
+    return NULL;
+  state->gain = gain;
+  Py_RETURN_NONE;
+}
+```
+
+`PyArg_ParseTupleAndKeywords` accepts the same format characters as
+`PyArg_ParseTuple`.  The `|` marks everything that follows as optional, so
+`f.configure()` with no arguments is valid and leaves the gain unchanged.
+The static `kwlist` array controls which keyword names are accepted and
+enables `TypeError` on unknown keywords.
+
+Paste those bodies in by hand, or let the script below do it; it is the one
+this example's own test runs. It reads the two C snippets from its own
+directory, so save all three files — `03_patch.py`, `03_step.c` and
+`03_configure.c` — in the directory you ran `just-makeit new` from, next to
+`va_filter/` rather than inside it: `just-makeit apply` reads every `.c` file
+under the project, and refuses a second definition of a name it derives, such
+as `va_filter_filter_step`. Then, from the project root:
+
+```sh
+python3 ../03_patch.py
+```
+
+```python
+"""Patch the step, configure and current_gain stubs with implementations.
+
+Save this script, 03_step.c and 03_configure.c together in the directory
+above the project, then run it from the project root (va_filter/):
+    python3 ../03_patch.py
 """
 
 import pathlib
@@ -188,60 +257,6 @@ else:
     )
 ```
 
-`va_filter_filter_step` — one multiply:
-
-```c
-static inline float
-va_filter_filter_step (const va_filter_filter_state_t *state, float x)
-{
-  return (float)(state->gain * x);
-}
-```
-
-`va_filter_filter_configure` — parse `gain=` with `PyArg_ParseTupleAndKeywords`:
-
-```c
-/*
- * filter_configure_core.c — varargs Python binding for filter.configure().
- *
- * Compiled into the Python extension DSO, not the pure-C core.
- * To access the C state inside this function:
- *   typedef struct { PyObject_HEAD; va_filter_filter_state_t *handle; } Obj;
- *   va_filter_filter_state_t *state = ((Obj *)self)->handle;
- */
-#define PY_SSIZE_T_CLEAN
-#include "va_filter/filter/filter_core.h"
-#include <Python.h>
-
-PyObject *
-va_filter_filter_configure (PyObject *self, PyObject *args, PyObject *kwargs)
-{
-  typedef struct
-  {
-    PyObject_HEAD;
-    va_filter_filter_state_t *handle;
-  } Obj;
-  va_filter_filter_state_t *state = ((Obj *)self)->handle;
-  if (!state)
-    {
-      PyErr_SetString (PyExc_RuntimeError, "destroyed");
-      return NULL;
-    }
-  double       gain     = state->gain;
-  static char *kwlist[] = { "gain", NULL };
-  if (!PyArg_ParseTupleAndKeywords (args, kwargs, "|d", kwlist, &gain))
-    return NULL;
-  state->gain = gain;
-  Py_RETURN_NONE;
-}
-```
-
-`PyArg_ParseTupleAndKeywords` accepts the same format characters as
-`PyArg_ParseTuple`.  The `|` marks everything that follows as optional, so
-`f.configure()` with no arguments is valid and leaves the gain unchanged.
-The static `kwlist` array controls which keyword names are accepted and
-enables `TypeError` on unknown keywords.
-
 ### Document once, in C — rich stubs and a runnable doctest
 
 The sacred header is also the single source of truth for **documentation**. A
@@ -266,7 +281,7 @@ exercised from one example:
  * back.
  * @return The gain most recently set by the constructor or configure().
  * @code
- * >>> from my_filter import Filter
+ * >>> from va_filter import Filter
  * >>> f = Filter(gain=1.0)
  * >>> f.configure(gain=6.0)
  * >>> f.current_gain()
@@ -276,13 +291,158 @@ exercised from one example:
 double va_filter_filter_current_gain(va_filter_filter_state_t *state);
 ```
 
-`just-makeit apply` re-derives the stub, and `src/my_filter/filter.pyi` now
+The enrichment is scripted. The script also replaces the scaffold `@brief` on
+`va_filter_filter_create()`, which becomes the class docstring, and stamps the
+project's package name into the doctest import. Save it as `04b_doxygen.py`
+next to `va_filter/`, as above:
+
+```python
+"""Enrich the sacred ``filter_core.h`` with Doxygen so the generated ``.pyi``
+carries rich docstrings and a runnable doctest.
+
+The header is the single source of truth for documentation: ``jm`` parses these
+``/** ... */`` comments and turns them into numpy-style Python docstrings. A
+``@code`` block on a *typed named method* becomes a runnable doctest, which
+``pytest --doctest-glob='*.pyi'`` executes against the built extension.
+
+Note the split of responsibilities here (varargs vs. typed):
+
+* ``configure()`` is a ``--varargs`` method — its binding lives in the sacred
+  ``filter_configure_core.c`` (a ``PyObject *`` file), *not* in the header, so
+  ``jm`` cannot attribute a Doxygen block to it and its ``.pyi`` stub stays the
+  flexible ``(*args, **kwargs) -> Any``. That is the trade-off of ``--varargs``:
+  an open-ended signature, but no header-derived docs or doctest.
+* ``current_gain()`` is a plain typed method declared *in the header*, so its
+  ``@brief``/``@return``/``@code`` flow straight into a numpy-style docstring
+  with a runnable ``Examples`` block. The doctest deliberately exercises the
+  varargs ``configure()`` too, tying both faces of the object together.
+
+Run this after the methods are declared and their bodies patched; a follow-up
+``jm apply`` regenerates the ``.pyi`` from these comments.
+
+Usage (saved in the directory above the project, run from its root):
+    python3 ../04b_doxygen.py
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+HEADER = pathlib.Path("native/inc/va_filter/filter/filter_core.h")
+
+
+def _project_name() -> str:
+    """Read ``[project] name`` from just-makeit.toml (the Python package name).
+
+    The doctest imports ``from <package> import Filter``; deriving the name
+    here keeps the enrichment correct whatever the project was scaffolded as.
+    """
+    toml = pathlib.Path("just-makeit.toml").read_text(encoding="utf-8")
+    m = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', toml)
+    if not m:
+        print("ERROR: [project] name not found in just-makeit.toml")
+        sys.exit(1)
+    return m.group(1)
+
+
+# A real one-line @brief on create() replaces jm's trivial scaffold brief and
+# becomes the class docstring summary. (@param/@return are kept for C readers;
+# gain is a plain state var, so its description is documented generically in the
+# .pyi Parameters regardless — the summary is what changes.)
+CREATE_BLOCK = (
+    "/**\n"
+    " * @brief A single-tap gain stage, retunable at runtime via configure().\n"
+    " *\n"
+    " * step() multiplies each input sample by the current gain; configure()\n"
+    " * retunes that gain in place through a flexible **kwargs binding.\n"
+    " * @param gain  Initial gain (default: 1.0).\n"
+    " * @return Heap-allocated state, or NULL on allocation failure.\n"
+    " * @note Caller must call va_filter_filter_destroy() when done.\n"
+    " */\n"
+)
+
+# Doxygen for the typed named method. The @code block becomes a runnable
+# Examples doctest in the .pyi; its output must match the built extension.
+# ``<<PKG>>`` is filled from the project name so the import line is correct
+# whatever the project was scaffolded as.
+CURRENT_GAIN_BLOCK = (
+    "/**\n"
+    " * @brief Return the filter's current gain coefficient.\n"
+    " *\n"
+    " * The typed, self-documenting companion to the flexible varargs\n"
+    " * configure(): configure() writes the gain, current_gain() reads it\n"
+    " * back.\n"
+    " * @return The gain most recently set by the constructor or configure().\n"
+    " * @code\n"
+    " * >>> from <<PKG>> import Filter\n"
+    " * >>> f = Filter(gain=1.0)\n"
+    " * >>> f.configure(gain=6.0)\n"
+    " * >>> f.current_gain()\n"
+    " * 6.0\n"
+    " * @endcode\n"
+    " */\n"
+)
+
+CURRENT_GAIN_DECL = (
+    "double va_filter_filter_current_gain(va_filter_filter_state_t *state);"
+)
+
+
+def main() -> None:
+    text = HEADER.read_text(encoding="utf-8")
+
+    # 1. Swap the scaffold create() brief for a real one.
+    scaffold_re = re.compile(
+        r"/\*\*\n \* @brief Create a filter instance\..*?"
+        r"(?=va_filter_filter_state_t \*va_filter_filter_create)",
+        re.DOTALL,
+    )
+    text, n = scaffold_re.subn(CREATE_BLOCK, text, count=1)
+    if n != 1:
+        print(
+            "ERROR: va_filter_filter_create scaffold brief not found",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Prepend the Doxygen block above the bare current_gain declaration,
+    #    stamping the real package name into the doctest import line.
+    if CURRENT_GAIN_DECL not in text:
+        print(
+            f"ERROR: declaration not found: {CURRENT_GAIN_DECL!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    block = CURRENT_GAIN_BLOCK.replace("<<PKG>>", _project_name())
+    text = text.replace(CURRENT_GAIN_DECL, block + CURRENT_GAIN_DECL, 1)
+
+    HEADER.write_text(text, encoding="utf-8")
+    print(f"enriched {HEADER}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Then, from the project root:
+
+```sh
+python3 ../04b_doxygen.py
+just-makeit apply
+```
+
+`just-makeit apply` re-derives the stub, and `src/va_filter/filter.pyi` now
 carries the full numpy-style docstring — including the `@code` block as an
 `Examples` doctest:
 
 ```python
     def current_gain(self) -> float:
         """Return the filter's current gain coefficient.
+
+        The typed, self-documenting companion to the flexible varargs
+        configure(): configure() writes the gain, current_gain() reads it back.
 
         Returns
         -------
@@ -291,7 +451,7 @@ carries the full numpy-style docstring — including the `@code` block as an
 
         Examples
         --------
-        >>> from my_filter import Filter
+        >>> from va_filter import Filter
         >>> f = Filter(gain=1.0)
         >>> f.configure(gain=6.0)
         >>> f.current_gain()
@@ -300,12 +460,17 @@ carries the full numpy-style docstring — including the `@code` block as an
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-the kernel ever drifts from its documented example the build fails. Pass `-v`
-to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the kernel drifts from its documented example. A generated
+project's `make test` does not run `.pyi` doctests (this example's own test
+does, with `pytest --doctest-glob='*.pyi'`), so to make it a gate in your
+project add `PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to
+your test step. Once step 4 has built the extension, pass `-v` to watch every
+`>>>` line execute:
 
 ```termynal
-$ python -m doctest -v src/my_filter/filter.pyi
+$ PYTHONPATH=src python -m doctest -v src/va_filter/filter.pyi
+{d}...{/d}
 {d}Trying:{/d}
     f = Filter(gain=1.0)
 {d}Expecting nothing{/d}
@@ -323,23 +488,11 @@ $ python -m doctest -v src/my_filter/filter.pyi
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with
-`pytest --doctest-glob='*.pyi'`.
-
-The enrichment is scripted (it stamps the project's package name into the
-doctest import automatically):
-
-```sh
-python3 .steps/04b_doxygen.py
-just-makeit apply
-```
-
 ---
 
 ## 4. Build and test
 
 ```sh
-cd my_filter
 make && make test
 ```
 
@@ -356,7 +509,7 @@ library, Python-aware binding compiled directly into the DSO.
 import sys
 
 sys.path.insert(0, "src")
-from my_filter import Filter
+from va_filter import Filter
 
 f = Filter(gain=1.0)
 assert f.step(2.0) == 2.0
@@ -377,6 +530,14 @@ f.configure(gain=6.0)
 assert f.current_gain() == 6.0
 
 print("configure: PASSED")
+```
+
+Save it as `05_demo.py` next to `va_filter/`, like the step 3 scripts, and run
+it from the project root (it imports the extension from `src/`):
+
+```sh
+python3 ../05_demo.py
+# configure: PASSED
 ```
 
 `configure()` accepts `gain=` as a keyword or as a positional — both work

@@ -17,7 +17,9 @@ just-makeit example jm_function
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -80,9 +82,9 @@ native/inc/my_utils/utils/utils_core.h      ← declaration injected automatical
 /* native/src/utils/linear_to_db.c */
 #include "my_utils/utils/utils_core.h"
 
-/* <<IMPLEMENT: linear_to_db>> */
+/* <<IMPLEMENT: my_utils_linear_to_db>> */
 float
-linear_to_db(float x)
+my_utils_linear_to_db(float x)
 {
     (void)x;
     return (float)0.0f; /* placeholder */
@@ -93,8 +95,9 @@ linear_to_db(float x)
 
 ```c
 /* native/inc/my_utils/utils/utils_core.h — injected inline */
+/* <<IMPLEMENT: my_utils_clamp>> */
 static inline float
-clamp(float x, float lo, float hi)
+my_utils_clamp(float x, float lo, float hi)
 {
     (void)x; (void)lo; (void)hi;
     return (float)0.0f; /* placeholder */
@@ -109,7 +112,7 @@ ______________________________________________________________________
 
 ```c
 float
-linear_to_db(float x)
+my_utils_linear_to_db(float x)
 {
     return 20.0f * log10f(x > 0.0f ? x : 1e-10f);
 }
@@ -119,7 +122,7 @@ linear_to_db(float x)
 
 ```c
 static inline float
-clamp(float x, float lo, float hi)
+my_utils_clamp(float x, float lo, float hi)
 {
     if (x < lo) return lo;
     if (x > hi) return hi;
@@ -157,7 +160,7 @@ Doxygen `/** ... */` comment on a function's declaration flows straight into
 the generated `.pyi` docstring, and a `@code` block becomes a **runnable
 doctest**. Free functions are an ideal home for doctests — they take plain
 scalars and return plain scalars, so the `>>>` lines read like ordinary
-Python. Add a comment above the `linear_to_db` declaration in
+Python. Add a comment above the `my_utils_linear_to_db` declaration in
 `native/inc/my_utils/utils/utils_core.h`:
 
 ```c
@@ -173,7 +176,7 @@ Python. Add a comment above the `linear_to_db` declaration in
  * 20.0
  * @endcode
  */
-float linear_to_db(float x);
+float my_utils_linear_to_db(float x);
 ```
 
 `jm apply` re-derives the stub, and `src/my_utils/utils/utils.pyi` now carries
@@ -205,12 +208,17 @@ def linear_to_db(x: float) -> float:
     """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-the kernel ever drifts from its documented example the build fails. Pass `-v`
-to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the kernel drifts from its documented example. A generated
+project's `make test` does not run `.pyi` doctests (this example's own test
+does), so to make them a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. Pass `-v` to watch every `>>>` line execute (the first six are the
+scaffold's own examples on `Gain`):
 
 ```termynal
-$ python -m doctest -v src/my_utils/utils/utils.pyi
+$ PYTHONPATH=src python -m doctest -v src/my_utils/utils/utils.pyi
+{d}...{/d}
 {d}Trying:{/d}
     linear_to_db(1.0)
 {d}Expecting:{/d}
@@ -227,13 +235,13 @@ $ python -m doctest -v src/my_utils/utils/utils.pyi
     3.0
 {g}ok{/g}
 {d}...{/d}
-{g}5 passed and 0 failed.{/g}
+{g}13 passed and 0 failed.{/g}
 {g}Test passed.{/g}
 ```
 
 The same treatment applies to the inline `clamp` — the Doxygen sits above its
-`static inline` definition. In CI the whole suite is driven at once with
-`pytest --doctest-glob='*.pyi'`.
+`static inline` definition. This example's test drives the whole stub at once
+with `pytest --doctest-glob='*.pyi'`.
 
 ______________________________________________________________________
 
@@ -248,8 +256,10 @@ runs. With `--inline`, the body lives in the module header as a `static inline`
 **Document once, in C.** A Doxygen comment on the function declaration is the
 single source of truth for its Python docstring: `@brief`/`@param`/`@return`
 render as numpy-style prose and a `@code` block becomes a runnable doctest.
-`jm apply` re-derives the `.pyi` from the header, and CI executes every `>>>`
-against the built extension via `pytest --doctest-glob='*.pyi'`.
+`jm apply` re-derives the `.pyi` from the header, and
+`pytest --doctest-glob='*.pyi'` executes every `>>>` against the built
+extension. This example's test runs it; a generated project does not by
+default.
 
 **Functions are module-level, not class methods.** They appear as bare callables
 (`utils.clamp(...)`, not `obj.clamp(...)`). For per-instance behaviour, use

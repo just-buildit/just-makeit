@@ -297,22 +297,27 @@ def run(root: Path) -> None:
     )
     proj = root / "my_dsp"
 
-    # 1b. The test style is a PROJECT setting, and step 2 switches it to
-    # pytest. A scaffolded test is jm's while it carries its
-    # `# jm:generated` line (gh-1489), so gain's would follow the switch.
-    # Deleting that line makes it ours, and it stays unittest.
-    gain_test_py = proj / "src" / "my_dsp" / "tests" / "test_gain.py"
-    lines = gain_test_py.read_text(encoding="utf-8").splitlines(True)
-    assert lines[0] == "# jm:generated test_gain.py\n", lines[0]
-    gain_test_py.write_text("".join(lines[1:]), encoding="utf-8")
+    # 1b. The test and benchmark styles are PROJECT settings, and step 2
+    # switches both. A scaffolded test or benchmark is jm's while it carries
+    # its `# jm:generated` line (gh-1489, gh-1528), so `jm apply` would
+    # rewrite gain's in the new style. Deleting that line makes each ours,
+    # and they stay unittest / timeit -- the README's step 1 does the same.
+    for rel in ("tests/test_gain.py", "benchmarks/bench_gain.py"):
+        path = proj / "src" / "my_dsp" / rel
+        lines = path.read_text(encoding="utf-8").splitlines(True)
+        token = f"# jm:generated {path.name}\n"
+        assert lines[0] == token, (rel, lines[0])
+        path.write_text("".join(lines[1:]), encoding="utf-8")
 
-    # 2. Add ema component with pytest + pytest-benchmark style
+    # 2. Add ema component with pytest + pytest-benchmark style. Mutable,
+    # because its step() writes state->prev.
     jm_init(
         proj,
         "ema",
         state_vars=[("alpha", "float", "0.1f"), ("prev", "float", "0.0f")],
         arg_type="float",
         return_type="float",
+        mutable=True,
         pytest_=True,
         pytest_benchmark_=True,
     )
@@ -377,38 +382,40 @@ def run(root: Path) -> None:
     assert "import pytest" in ema_test
     assert "import unittest" not in ema_test
 
-    # 4. Implement my_dsp_gain_step and my_dsp_ema_step
-    _cmd(
-        [
-            sys.executable,
-            "-c",
-            r"""
-import pathlib
-
-p = pathlib.Path('native/src/gain/gain_core.c')
-src = p.read_text()
-src = src.replace('return (float)0;', 'return x * state->gain;')
-# my_dsp_gain_scale's stub -- the doctest in the header asserts this kernel, so a
-# wrong body here fails `pytest --doctest-glob='*.pyi'` in step 9b.
-src = src.replace(
-    '    (void)state; (void)x;\n    return (float)0.0f;',
-    '    return x * state->gain;'
-)
-p.write_text(src)
-
-p = pathlib.Path('native/src/ema/ema_core.c')
-src = p.read_text()
-src = src.replace(
-    'return (float)0;',
-    'float y = state->alpha * x + (1.0f - state->alpha) * state->prev;\n'
-    '    state->prev = y;\n'
-    '    return y;'
-)
-p.write_text(src)
-""",
-        ],
-        cwd=proj,
+    # 4. Implement the README's kernels. Each step() is a static inline in its
+    # sacred header; the named method's stub is in gain_core.c. Every
+    # replacement must land exactly once: a patch that matches nothing leaves
+    # the scaffold's identity step() in place, and the example still passes.
+    step_stub = (
+        "    (void)state; /* TODO: implement using state variables */\n"
+        "    return (float)x;"
     )
+    kernels = (
+        (
+            INC.header_root(proj) / "gain" / "gain_core.h",
+            step_stub,
+            "    return x * state->gain;",
+        ),
+        (
+            INC.header_root(proj) / "ema" / "ema_core.h",
+            step_stub,
+            "    float y = state->alpha * x + (1.0f - state->alpha)"
+            " * state->prev;\n"
+            "    state->prev = y;\n"
+            "    return y;",
+        ),
+        # my_dsp_gain_scale's stub -- the doctest in the header asserts this
+        # kernel, so a wrong body here fails `--doctest-glob='*.pyi'` in 8b.
+        (
+            proj / "native" / "src" / "gain" / "gain_core.c",
+            "    (void)state; (void)x;\n    return (float)0.0f;",
+            "    return x * state->gain;",
+        ),
+    )
+    for path, stub, body in kernels:
+        text = path.read_text(encoding="utf-8")
+        assert text.count(stub) == 1, f"stub not found once in {path}"
+        path.write_text(text.replace(stub, body), encoding="utf-8")
 
     # 4b. Enrich the sacred headers with real Doxygen, then regenerate the
     # glue. The hand-written `@brief` on each `<obj>_create` becomes the
@@ -425,6 +432,15 @@ p.write_text(src)
     assert CLASS_SUMMARIES["gain"] in gain_pyi, "gain class @brief missing"
     assert CLASS_SUMMARIES["ema"] in ema_pyi, "ema class @brief missing"
 
+    # The apply above ran with the project in pytest-benchmark style; gain's
+    # bench is the author's (step 1b), so it is still the timeit script.
+    gain_bench = (
+        proj / "src" / "my_dsp" / "benchmarks" / "bench_gain.py"
+    ).read_text(encoding="utf-8")
+    assert 'if __name__ == "__main__"' in gain_bench, (
+        "jm apply rewrote gain's timeit bench in pytest-benchmark style"
+    )
+
     # The method block reached the stub as a full numpy docstring: prose from
     # `@brief`, a `Parameters` entry from `@param`, `Returns` from `@return`,
     # and the `@code` lines as an `Examples` doctest.
@@ -439,6 +455,22 @@ p.write_text(src)
 
     # 5. Build
     _cmake_build(proj)
+
+    # 5b. The built kernels are the README's, not the scaffold's identity
+    # step(): gain scales, and ema's first output from rest is alpha * x.
+    _cmd(
+        [
+            sys.executable,
+            "-c",
+            "from my_dsp import Ema, Gain\n"
+            "assert Gain(2.0).step(1.5) == 3.0\n"
+            "e = Ema()\n"
+            "y0, y1 = e.step(1.0), e.step(1.0)\n"
+            "assert abs(y0 - 0.1) < 1e-6 and abs(y1 - 0.19) < 1e-6, (y0, y1)\n",
+        ],
+        cwd=proj,
+        env={**child_pytest_env(), "PYTHONPATH": str(proj / "src")},
+    )
 
     # 6. CTest
     _cmd(["ctest", "--test-dir", "build", "--output-on-failure"], cwd=proj)

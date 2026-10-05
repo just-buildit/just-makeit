@@ -8,15 +8,18 @@ always eliminate.  Pass `[]` on the arg type to express this directly.
 ```{05_array_arg.sh}
 ```
 
-The generated `step()` takes a numpy array and a length:
+The generated `step()` takes a pointer and a length; Python passes it a numpy
+array:
 
 ```c
-int my_buf_buf_proc_step(my_buf_buf_proc_state_t *state,
-                  const float _Complex *x, size_t x_len)
+/* native/inc/my_buf/buf_proc/buf_proc_core.h */
+static inline int
+my_buf_buf_proc_step(
+    my_buf_buf_proc_state_t *state,
+    const float _Complex *x, size_t x_len)
 {
-    (void)x;
-    (void)x_len;
-    return 0; /* TODO: implement */
+    (void)state; (void)x; (void)x_len; /* TODO: implement */
+    return (int)0;
 }
 ```
 
@@ -37,9 +40,9 @@ n = proc.step(block)   # passes the whole array; returns int
 
 ```python
 class BufProc:
-    def __init__(self, count: np.int32 = 0) -> None: ...
+    def __init__(self, count: int = 0) -> None: ...
     def step(self, x: npt.NDArray[np.complex64]) -> int:
-        """Process one sample."""
+        """Process one input sample."""
     # no steps() — the primary op already takes a buffer
 ```
 
@@ -49,9 +52,9 @@ class BufProc:
 Does output count equal input count?
 ├─ Yes, and input is one sample → use step() + auto steps()          (§1)
 │
-├─ Yes, but a method has a different return type → use jm method      (§2)
+├─ Yes, but a method has a different return type → jm method --batch (§2)
 │
-├─ No → is the maximum output count knowable at init time?
+├─ No → can the output count be bounded from the input length?
 │       ├─ Yes, one stream  → --variable-output                       (§3)
 │       └─ Yes, N streams   → --variable-output --multi-output        (§4)
 │

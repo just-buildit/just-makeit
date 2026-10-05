@@ -35,7 +35,7 @@ just-makeit example nco_tone
     `macos-arm64`; Windows is `doppler-$VER-windows-x86_64.zip`):
 
     ```sh
-    VER=0.55.0; PLAT=linux-x86_64
+    VER=0.58.0; PLAT=linux-x86_64   # >= 0.58.0: the doppler/ include path and dp_ symbols
     curl -fsSL -o /tmp/doppler.tar.gz \
         "https://github.com/doppler-dsp/doppler/releases/download/v$VER/doppler-$VER-$PLAT.tar.gz"
     mkdir -p ~/.local/doppler
@@ -53,7 +53,7 @@ just-makeit example nco_tone
     Then run the example against it:
 
     ```sh
-    python src/just_makeit/examples/nco_tone/test.py \
+    python "$(python -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent / "examples/nco_tone/test.py")')" \
         --doppler-prefix ~/.local/doppler
     ```
 
@@ -66,7 +66,9 @@ just-makeit example nco_tone
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -77,8 +79,9 @@ ______________________________________________________________________
 
 ## What it demonstrates
 
-- **`find_package` integration** — `jm new --find-package Doppler` wires
-    `find_package(Doppler REQUIRED)` into the root `CMakeLists.txt`
+- **`find_package` integration** — `jm new --find-package Doppler` records
+    the dependency and `jm apply` wires `find_package(Doppler REQUIRED)` into
+    the root `CMakeLists.txt`
 - **`extra_link_libs`** — link the component's OBJECT library against a
     `find_package`-resolved target (`doppler::doppler-static`)
 - **Opaque state holding a library handle** — `dp_nco_state_t *` from Doppler is
@@ -129,19 +132,48 @@ ______________________________________________________________________
 just-makeit new tone_demo \
     --find-package Doppler
 cd tone_demo
+```
+
+`--find-package Doppler` records `find_packages = ["Doppler"]` in the
+`[project]` table of `just-makeit.toml`. That string form names only the CMake
+package; so that the installed `tone_demo.pc` also names doppler's pkg-config
+module (`Requires.private: doppler`), change the line to the table form:
+
+```toml
+find_packages = [{ name = "Doppler", pkg_config = "doppler" }]
+```
+
+Then apply the fragment:
+
+```sh
 just-makeit apply ../tone.toml
 ```
 
-`--find-package Doppler` writes `find_package(Doppler REQUIRED)` and a
-`-DDoppler_DIR` hint comment into the root `CMakeLists.txt`.
+`jm apply` writes `find_package(Doppler REQUIRED)` into the managed
+`# ── External deps` block of the root `CMakeLists.txt`, plus the matching
+`find_dependency(Doppler)` for the installed CMake config.
 
 ______________________________________________________________________
 
 ## 3. Build (with Doppler installed)
 
+The state struct names Doppler's `dp_nco_state_t`, so the header must see
+Doppler's NCO declarations before anything compiles. Add them, and the
+`<math.h>` that `step()` uses in section 4, after the always-present
+`clib_common.h` include:
+
+```c
+/* native/inc/tone_demo/tone/tone_core.h */
+#include "tone_demo/clib_common.h"
+#include "doppler/nco/nco_core.h"
+#include <math.h>
+```
+
+Then configure, build and test:
+
 ```sh
 cmake -B build \
-    -DDoppler_DIR=/path/to/doppler/lib/cmake/Doppler \
+    -DDoppler_DIR=/path/to/doppler/lib/cmake/doppler \
     && cmake --build build
 ctest --test-dir build
 ```
@@ -153,25 +185,15 @@ ______________________________________________________________________
 
 ## 4. Implement step()
 
-First make Doppler's NCO header and `<math.h>` visible by adding them after
-the always-present `clib_common.h` include:
-
-```c
-/* native/inc/nco_tone_demo/tone/tone_core.h */
-#include "nco_tone_demo/clib_common.h"
-#include "doppler/nco/nco_core.h"
-#include <math.h>
-```
-
-Then fill in `step()` — advance the NCO one sample and map its phase
-accumulator to a unit-magnitude complex exponential:
+Fill in `step()` in the same header — advance the NCO one sample and map its
+phase accumulator to a unit-magnitude complex exponential:
 
 ```c
 static inline float _Complex
-nco_tone_demo_tone_step(nco_tone_demo_tone_state_t *state)
+tone_demo_tone_step(tone_demo_tone_state_t *state)
 {
     uint32_t phase;
-    /* n samples, then the capacity of `out` (doppler >= 0.39) */
+    /* n samples, then the capacity of `out` (doppler >= 0.58: dp_ names) */
     dp_nco_steps_u32(state->nco, 1, &phase, 1);
     /* phase in [0, 2^32) maps to angle in [0, 2*pi) */
     float angle = (float)phase
@@ -188,7 +210,8 @@ ______________________________________________________________________
 ## 5. Use from Python
 
 ```sh
-pip install -e .
+cmake --build build   # rebuild with the step() from section 4
+pip install -e .      # points Python at src/; compiles nothing
 ```
 
 ```python
@@ -233,5 +256,5 @@ bridge. Python never sees the handle.
 
 - [C library distribution](../c-library.md) — how the generated combined library
     and pkg-config file let C consumers link the same code
-- [Declarative scaffolding — `c_deps` and `find_packages`](../declarative-scaffolding.md#integrating-hand-written-c-libraries-c_deps-no_generate-depends_on)
+- [Module dependencies & external libraries — `extra_link_libs`](../configuration.md#module-dependencies-external-libraries)
 - [Scaffold commands — `--find-package`](../commands/scaffold.md)

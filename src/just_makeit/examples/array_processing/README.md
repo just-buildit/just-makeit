@@ -1,22 +1,23 @@
 # Array processing example
 
 Every object just-makeit generates can process a block of samples in one call.
-This example walks through every way the CLI exposes that capability, from the
-free `steps()` that comes with every object to `--variable-output` batch methods
-with multiple output streams.
+This example walks through the main ways the CLI exposes that capability, from
+the free `steps()` that comes with every object to `--variable-output` batch
+methods with multiple output streams.
 
 Along the way, each section explains **who owns the memory**, **when it is
 allocated**, and **what the Python caller can safely do with the returned array**.
 
-Five patterns, five sections:
+Five patterns, five sections, then a sixth on documenting them. `--out-type`
+and `--borrow` are covered in [Array memory ownership](../memory-ownership.md).
 
-| #   | Pattern                                        | Output allocation                     | Who owns it             |
-| --- | ---------------------------------------------- | ------------------------------------- | ----------------------- |
-| 1   | Auto-generated `steps()`                       | Per call (or zero if `out=` supplied) | Caller (numpy)          |
-| 2   | `method` scalar stub + hand-written `_steps()` | Per call (or zero if `out=` supplied) | Caller (numpy)          |
-| 3   | `method --variable-output`                     | Allocated at `__init__`, re-used      | Object (zero-copy view) |
-| 4   | `method --variable-output --multi-output`      | Same — one buffer per stream          | Object (tuple of views) |
-| 5   | `--arg-type type[]` (buffer primary arg)       | Caller supplies input buffer          | Caller (input)          |
+| #   | Pattern                                   | Output allocation                                                | Who owns it              |
+| --- | ----------------------------------------- | ---------------------------------------------------------------- | ------------------------ |
+| 1   | Auto-generated `steps()`                  | Per call (or zero if `out=` supplied)                            | Caller (numpy)           |
+| 2   | `method` scalar stub + `method --batch`   | Per call (or zero if `out=` supplied)                            | Caller (numpy)           |
+| 3   | `method --variable-output`                | Per call, sized by `_max_out(n_in)` (or zero if `out=` supplied) | Caller (numpy)           |
+| 4   | `method --variable-output --multi-output` | Per call, one array per stream                                   | Caller (tuple of arrays) |
+| 5   | `--arg-type type[]` (buffer primary arg)  | Caller supplies input buffer                                     | Caller (input)           |
 
 All five patterns share a common rule: **inline `float[N]` state arrays in the
 C struct require no heap allocation** — they are part of the struct itself.
@@ -42,7 +43,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -65,13 +68,15 @@ cd my_arrays
 
 Every `just-makeit object` generates both `step()` and `steps()`:
 
-| C function  | Signature                                                               |
-| ----------- | ----------------------------------------------------------------------- |
-| `my_arrays_ema_step`  | `float my_arrays_ema_step(my_arrays_ema_state_t *s, float x)`                               |
+| C function            | Signature                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| `my_arrays_ema_step`  | `static inline float my_arrays_ema_step(const my_arrays_ema_state_t *s, float x)`           |
 | `my_arrays_ema_steps` | `void my_arrays_ema_steps(my_arrays_ema_state_t *s, const float *in, float *out, size_t n)` |
 
-`steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`
-once per sample. You implement `step()`; `steps()` comes for free.
+`step()` is a `static inline` function in the sacred header
+`native/inc/my_arrays/ema/ema_core.h`; `steps()` is a thin loop in
+`native/src/ema/ema_core.c` that calls it once per sample. You implement
+`step()`; `steps()` comes for free.
 
 ### What Python sees
 
@@ -125,8 +130,8 @@ call f.steps(block)
 ```
 
 Successive calls are independent: the previous result is never overwritten.
-This is the opposite of `--variable-output` (§3), where the object owns a
-fixed buffer and reuses it each call.
+`--variable-output` (§3) behaves the same way: each call returns a new,
+independently owned array.
 
 ### Eliminating the per-call malloc with `out=`
 
@@ -142,7 +147,7 @@ for block in stream:
 
 The returned object is the same array you passed in (`ret is buf`), so you
 can ignore the return value or use it for chaining. The buffer must be
-C-contiguous, the correct dtype, and at least as long as the input.
+writable, C-contiguous, the correct dtype, and exactly as long as the input.
 
 ```
 call f.steps(block, buf)
@@ -183,7 +188,7 @@ is fixed at code-generation time.
 
 ---
 
-## 2. `method` — scalar stub + hand-written `_steps()`
+## 2. `method` — scalar stub + `--batch` companion
 
 Use `just-makeit method` when you need an execute path with **different
 input or output types** than the primary `step()`.
@@ -196,35 +201,46 @@ just-makeit method ema quantize \
     --return-type uint32_t
 ```
 
-The command appends a scalar C stub to `native/src/ema/ema_core.c`:
+The command declares it in `native/inc/my_arrays/ema/ema_core.h` and appends a
+stub to `native/src/ema/ema_core.c`:
 
 ```c
 uint32_t my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x);
 ```
 
-For **1:1-rate batch work** (output count equals input count), write the
-`_steps()` companion by hand in the same file:
+For **1:1-rate batch work** (output count equals input count), declare a batch
+method and let jm generate its binding. `native/src/ema/ema_ext.c` is jm's
+glue, rewritten by every `jm apply`, so never edit it by hand:
+
+```sh
+just-makeit method ema quantize_steps \
+    --arg-type float \
+    --return-type uint32_t \
+    --batch
+```
+
+That declares
+`void my_arrays_ema_quantize_steps(my_arrays_ema_state_t *state, const float *in, size_t n, uint32_t *out);`
+and appends its stub to `native/src/ema/ema_core.c`. Implement it as a loop
+over the scalar method:
 
 ```c
-/* Hand-written batch companion for my_arrays_ema_quantize().
- * Add this to native/src/ema/ema_core.c after implementing the scalar stub.
- * The Python ext allocates out[] via PyArray_SimpleNew before calling this;
- * the Python caller only passes the input array.
+/* Batch companion for my_arrays_ema_quantize(): the body of the stub that
+ * `just-makeit method ... --batch` appended to native/src/ema/ema_core.c.
+ * The Python ext allocates out[] (or takes the caller's out= array) before
+ * calling this; the Python caller only passes the input array.
  * This is the right pattern when output count == input count (1:1 rate).
  */
 void
-ema_quantize_steps (my_arrays_ema_state_t *state, const float *in,
-                    uint32_t *out, size_t n)
+my_arrays_ema_quantize_steps (my_arrays_ema_state_t *state, const float *in,
+                              size_t n, uint32_t *out)
 {
   for (size_t i = 0; i < n; i++)
     out[i] = my_arrays_ema_quantize (state, in[i]);
 }
 ```
 
-Then wire it into `native/src/ema/ema_ext.c` following the `my_arrays_ema_steps`
-pattern already there.
-
-### Array ownership for hand-written `_steps()`
+### Array ownership for a `--batch` method
 
 The Python caller's experience is identical to the auto-generated `steps()`:
 pass one input array, get back a new numpy array.
@@ -234,7 +250,7 @@ call f.quantize_steps(block)
 │
 ├─ ext calls PyArray_SimpleNew(n, uint32)   ← one malloc, every call
 │
-├─ calls ema_quantize_steps(state, block.data, out.data, n)
+├─ calls my_arrays_ema_quantize_steps(state, block.data, n, out.data)
 │    └─ loop: out[i] = my_arrays_ema_quantize(state, block[i])
 │
 └─ returns ndarray to caller
@@ -242,33 +258,35 @@ call f.quantize_steps(block)
    lifetime:  indefinite — object holds no reference to it
 ```
 
-The C function `ema_quantize_steps` takes both pointers, but the ext owns
-that allocation — the Python caller never passes or manages an output buffer.
+The C function `my_arrays_ema_quantize_steps` takes both pointers, but the ext
+owns that allocation. As with `steps()`, a caller that wants to reuse a buffer
+passes it as `out=` (`f.quantize_steps(block, buf)`) and the ext writes into it
+instead.
 
 **When to use this pattern**
 
 - You need a different input or output type than the primary `step()`.
 - Output count equals input count (1:1 rate).
-- Straightforward; no infrastructure beyond the loop.
+- jm generates the binding, `out=` included; you write only the loop.
 
 **When not to use it**
 
-If the maximum output count depends on object state and is knowable at init
-time (e.g. a decimator), `--variable-output` is more ergonomic — it removes
-the per-call allocation from the caller's responsibility. See §3.
+If the output count differs from the input count (e.g. a decimator), use
+`--variable-output`. See §3.
 
 ---
 
 ## 3. `method --variable-output` — self-sizing batch
 
-Use this when the **maximum output count is bounded by state and knowable at
-init time**.  The classic case is a rate-changing block: a 2× decimator with
-block size `B` can produce at most `ceil(B / 2)` outputs per call.
+Use this when the **output count differs from the input count but can be
+bounded from the state and the call's input length**. The classic case is a
+rate-changing block: a 2× decimator fed `n_in` samples produces at most
+`ceil(n_in / 2)`.
 
 ```sh
 # A half-band decimator: input block of N complex samples, output ≤ N/2 samples.
-# Because the maximum output is known at init time (ceil(block_size / 2)),
-# --variable-output pre-allocates the output buffer once and returns a view.
+# The output count is bounded by the input length (ceil(n_in / 2)), so
+# --variable-output sizes each call's output array from _max_out(n_in).
 cd ..
 just-makeit new my_decim \
     --object hbdecim \
@@ -283,34 +301,38 @@ just-makeit method hbdecim execute \
     --variable-output
 ```
 
-The command appends two C stubs to `native/src/hbdecim/hbdecim_core.c`:
+The command declares two C functions in
+`native/inc/my_decim/hbdecim/hbdecim_core.h` and appends their stubs to
+`native/src/hbdecim/hbdecim_core.c`:
 
-| Stub                                    | When called               | Your job                        |
-| --------------------------------------- | ------------------------- | ------------------------------- |
-| `my_decim_hbdecim_execute_max_out(state)`        | Once at Python `__init__` | Return the output bound         |
-| `my_decim_hbdecim_execute(state, in, n_in, out)` | Every Python call         | Fill `out`, return actual count |
+| Stub                                             | When called                         | Your job                                  |
+| ------------------------------------------------ | ----------------------------------- | ----------------------------------------- |
+| `my_decim_hbdecim_execute_max_out(state, n_in)`  | Every Python call, before `execute` | Return the output bound for `n_in` inputs |
+| `my_decim_hbdecim_execute(state, in, n_in, out)` | Every Python call                   | Fill `out`, return actual count           |
+
+The bound is also callable from Python, as `d.execute_max_out(n_in)`.
 
 Implement both:
 
 ```c
 /* Implement in native/src/hbdecim/hbdecim_core.c.
  *
- * The Python ext calls this once at __init__ to size the pre-allocated
- * output buffer.  Return the largest n_out that execute() can ever produce
- * for any valid call.  Here: block_size / 2, rounded up.
+ * The Python ext calls this on every execute() call, with that call's input
+ * length, to size the output array.  Return the largest n_out that execute()
+ * can produce for n_in inputs.  Here: n_in / 2, rounded up.
  *
- * Must be positive.  Returning 0 causes malloc(0), which is implementation-
- * defined and will likely produce a silent bug.
+ * Without --exact-max-out the binding never allocates fewer than n_in
+ * elements: a smaller bound, 0 included, falls back to n_in.
  */
 size_t
-my_decim_hbdecim_execute_max_out (my_decim_hbdecim_state_t *state)
+my_decim_hbdecim_execute_max_out (my_decim_hbdecim_state_t *state, size_t n_in)
 {
-  /* state->block_size is a constructor parameter (add with just-makeit add) */
-  return (state->block_size + 1) / 2;
+  (void)state;
+  return (n_in + 1) / 2;
 }
 
-/* Process n_in samples; write actual output count to *out; return n_out.
- * The caller (Python ext) supplies the pre-allocated output buffer.
+/* Process n_in samples into out[]; return n_out, the count written.
+ * The caller (Python ext) supplies out[], sized from execute_max_out(n_in).
  */
 size_t
 my_decim_hbdecim_execute (my_decim_hbdecim_state_t *state,
@@ -318,6 +340,7 @@ my_decim_hbdecim_execute (my_decim_hbdecim_state_t *state,
                           float _Complex *out)
 {
   size_t n_out = 0;
+  (void)state;
   for (size_t i = 0; i + 1 < n_in; i += 2)
     {
       /* TODO: polyphase half-band implementation */
@@ -340,14 +363,14 @@ out = d.execute(block)   # a new array, shape (≤512,)
 ```
 
 `d.execute(block)` returns a **NumPy-owned array**, sized
-`max(execute_max_out(), n)` and trimmed to the count the kernel reported.
+`max(execute_max_out(n), n)` and trimmed to the count the kernel reported.
 
 ### Array ownership for `--variable-output`
 
 ```
 out = d.execute(block)
 │
-├─ ext allocates a NumPy array of max(execute_max_out(), 1024)
+├─ ext allocates a NumPy array of max(execute_max_out(1024), 1024)
 │  └─ the kernel writes straight into it — no copy
 │
 ├─ calls my_decim_hbdecim_execute(state, block.data, 1024, out.data)  → returns 512
@@ -384,11 +407,11 @@ To write into your own buffer instead, pass `out=` — see
 
 | Use case                         | `_max_out` returns | Appropriate?                                      |
 | -------------------------------- | ------------------ | ------------------------------------------------- |
-| Decimator, ratio R, block size B | `ceil(B / R)`      | Yes                                               |
+| Decimator, ratio R               | `ceil(n_in / R)`   | Yes                                               |
 | FIFO with fixed capacity C       | `C`                | Yes                                               |
-| FIR filter, 1:1 rate             | unknown at init    | No — output size = input size; use auto `steps()` |
+| FIR filter, 1:1 rate             | `n_in`             | No — output size = input size; use auto `steps()` |
 | Integrator / accumulator         | 1 per sample       | No — use scalar `step()`                          |
-| Overflow detector, 1:1 rate      | unknown at init    | No — use scalar method + hand-written `_steps()`  |
+| Overflow detector, 1:1 rate      | `n_in`             | No — use `jm method ... --batch` (§2)             |
 
 ---
 
@@ -409,44 +432,49 @@ just-makeit method hbdecim execute_ovf \
     --multi-output uint8_t
 ```
 
-Generated stubs appended to `hbdecim_core.c`:
+The command declares two more C functions in `hbdecim_core.h` and appends
+their stubs to `hbdecim_core.c`:
 
 ```c
-size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state);
-size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t    *state,
-                           const float _Complex *in, size_t n_in,
-                           float _Complex       *out,
-                           uint8_t             *ovf);
+size_t my_decim_hbdecim_execute_ovf_max_out(my_decim_hbdecim_state_t *state,
+                                            size_t n_in);
+size_t my_decim_hbdecim_execute_ovf(my_decim_hbdecim_state_t *state,
+                                    const float _Complex *in, size_t n_in,
+                                    float _Complex *out, uint8_t *out1);
 ```
 
-Both `out` and `ovf` are pre-allocated to `_max_out()` elements and owned by
-the object.  Your implementation fills both and returns the count:
+Both `out` and the secondary array `out1` are allocated by the ext on every
+call, NumPy-owned, `max(execute_ovf_max_out(n_in), n_in)` elements each. Your
+implementation fills both and returns the count:
 
 ```c
 /* Implement in native/src/hbdecim/hbdecim_core.c.
  *
  * Two output arrays: primary (filtered samples) and secondary (overflow
- * flags). Both are pre-allocated by the ext to execute_ovf_max_out() elements.
- * Return the actual count written to both arrays.
+ * flags). Both are allocated per call by the ext, NumPy-owned, sized from
+ * execute_ovf_max_out(n_in). Return the actual count written to both arrays.
  */
 size_t
-my_decim_hbdecim_execute_ovf_max_out (my_decim_hbdecim_state_t *state)
+my_decim_hbdecim_execute_ovf_max_out (my_decim_hbdecim_state_t *state,
+                                      size_t                    n_in)
 {
-  return (state->block_size + 1) / 2;
+  (void)state;
+  return (n_in + 1) / 2;
 }
 
 size_t
 my_decim_hbdecim_execute_ovf (my_decim_hbdecim_state_t *state,
                               const float _Complex *in, size_t n_in,
-                              float _Complex *out, /* primary */
-                              uint8_t        *ovf) /* secondary */
+                              float _Complex *out,  /* primary */
+                              uint8_t        *out1) /* secondary: overflow */
 {
   size_t n_out = 0;
+  (void)state;
   for (size_t i = 0; i + 1 < n_in; i += 2)
     {
       float _Complex y = (in[i] + in[i + 1]) * 0.5f;
       out[n_out]       = y;
-      ovf[n_out]       = (cabsf (y) > 1.0f) ? 1 : 0;
+      out1[n_out]      = (cabsf (y) > 1.0f) ? 1 : 0;
       n_out++;
     }
   return n_out;
@@ -462,36 +490,26 @@ from my_decim import Hbdecim
 d = Hbdecim()
 
 block    = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
-samples, flags = d.execute_ovf(block)   # tuple of two zero-copy views
+samples, flags = d.execute_ovf(block)   # tuple of two new, independently owned arrays
 ```
 
 ### Array ownership for multi-output
 
 ```
-d = Hbdecim()
-│
-└─ ext mallocs float _Complex[512]  → d._out_buf
-   ext mallocs uint8_t[512]        → d._ovf_buf
-   both stored in the object
-
 samples, flags = d.execute_ovf(block)
 │
-├─ calls my_decim_hbdecim_execute_ovf(..., d._out_buf, d._ovf_buf) → returns 512
+├─ ext allocates complex64[max(execute_ovf_max_out(1024), 1024)]
+│  and uint8[same], both NumPy-owned
 │
-├─ returns (view into d._out_buf[:512],
-│           view into d._ovf_buf[:512])
+├─ calls my_decim_hbdecim_execute_ovf(state, block.data, 1024, out, out1)  → returns 512
 │
-│  ownership: object retains both buffers
-│  lifetime:  both views stale after next call to execute_ovf()
-│             — copy before calling again
-
-n_ovf = int(flags.sum())           # safe — flags is still valid here
-samples_copy = samples.copy()      # independent; survives next call
+└─ returns (out, out1), each trimmed to 512
+   ownership: the caller owns both arrays
+   lifetime:  independent of the object and of every other result
 ```
 
-The same "stale after next call" rule applies to every buffer produced by
-`--variable-output`.  The zero-copy design makes the steady-state path
-allocation-free; the copy obligation is the trade-off.
+As in §3, every result is independent; nothing needs copying before the next
+call. Unlike `execute()`, a multi-output method takes no `out=` buffer.
 
 ---
 
@@ -510,15 +528,18 @@ just-makeit new my_buf \
     --state "count:int32_t:0"
 ```
 
-The generated `step()` takes a numpy array and a length:
+The generated `step()` takes a pointer and a length; Python passes it a numpy
+array:
 
 ```c
-int my_buf_buf_proc_step(my_buf_buf_proc_state_t *state,
-                  const float _Complex *x, size_t x_len)
+/* native/inc/my_buf/buf_proc/buf_proc_core.h */
+static inline int
+my_buf_buf_proc_step(
+    my_buf_buf_proc_state_t *state,
+    const float _Complex *x, size_t x_len)
 {
-    (void)x;
-    (void)x_len;
-    return 0; /* TODO: implement */
+    (void)state; (void)x; (void)x_len; /* TODO: implement */
+    return (int)0;
 }
 ```
 
@@ -539,9 +560,9 @@ n = proc.step(block)   # passes the whole array; returns int
 
 ```python
 class BufProc:
-    def __init__(self, count: np.int32 = 0) -> None: ...
+    def __init__(self, count: int = 0) -> None: ...
     def step(self, x: npt.NDArray[np.complex64]) -> int:
-        """Process one sample."""
+        """Process one input sample."""
     # no steps() — the primary op already takes a buffer
 ```
 
@@ -551,9 +572,9 @@ class BufProc:
 Does output count equal input count?
 ├─ Yes, and input is one sample → use step() + auto steps()          (§1)
 │
-├─ Yes, but a method has a different return type → use jm method      (§2)
+├─ Yes, but a method has a different return type → jm method --batch (§2)
 │
-├─ No → is the maximum output count knowable at init time?
+├─ No → can the output count be bounded from the input length?
 │       ├─ Yes, one stream  → --variable-output                       (§3)
 │       └─ Yes, N streams   → --variable-output --multi-output        (§4)
 │
@@ -568,7 +589,21 @@ Does output count equal input count?
 The sacred header is also the single source of truth for **documentation**. A
 Doxygen `/** ... */` comment on `create()` or a named method flows straight into
 the generated `.pyi` docstring, and a `@code` block on a method becomes a
-**runnable doctest**. Give `my_arrays_ema_quantize` a real body and a comment:
+**runnable doctest**. Give `my_arrays_ema_quantize` a real body in
+`native/src/ema/ema_core.c`:
+
+```c
+uint32_t
+my_arrays_ema_quantize(my_arrays_ema_state_t *state, float x)
+{
+    (void)state;
+    if (x <= 0.0f)
+        return 0U;
+    return (uint32_t)(x + 0.5f);
+}
+```
+
+and a comment above its declaration in `native/inc/my_arrays/ema/ema_core.h`:
 
 ```c
 /**
@@ -596,7 +631,7 @@ numpy-style docstring — including the `@code` block as an `Examples` doctest:
 
         Parameters
         ----------
-        x
+        x : float
             Input sample; values <= 0 map to 0.
 
         Returns
@@ -616,12 +651,16 @@ numpy-style docstring — including the `@code` block as an `Examples` doctest:
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-the kernel ever drifts from its documented example the build fails. Pass `-v`
-to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the kernel drifts from its documented example. A generated
+project's `make test` does not run `.pyi` doctests (this example's own test
+does), so to make it a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. To watch every `>>>` line execute, run `doctest -v` after `make`:
 
 ```termynal
-$ python -m doctest -v src/my_arrays/ema.pyi
+$ PYTHONPATH=src python -m doctest -v src/my_arrays/ema.pyi
+{d}...{/d}
 {d}Trying:{/d}
     e = Ema()
 {d}Expecting nothing{/d}
@@ -641,4 +680,6 @@ $ python -m doctest -v src/my_arrays/ema.pyi
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with `pytest --doctest-glob='*.pyi'`.
+That summary is Python 3.12's; 3.13 and later print `10 passed.` instead.
+jm's own CI runs this stub's doctests with `pytest --doctest-glob='*.pyi'`,
+the same command as above.

@@ -40,7 +40,9 @@ Pass a custom path to keep the venv somewhere persistent:
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) -- ~/my-venv
 ```
 
-Or with `pip` if just-makeit is already installed:
+Or with `pip`, which also works on Python 3.9 and 3.10 (the installer
+needs 3.11+). It installs just-makeit, then builds the toolchain venv at
+`/tmp/jm-venv`:
 
 ```sh
 pip install just-makeit && just-makeit install-deps
@@ -63,13 +65,18 @@ directory tree.  No component yet.
 
 `just-makeit module accumulator` adds a named module slot:
 
-| Created                                   | Purpose                       |
-| ----------------------------------------- | ----------------------------- |
-| `native/src/accumulator/accumulator_ext.c`| C extension (empty, no types) |
-| `native/src/accumulator/CMakeLists.txt`   | Python module target          |
-| `src/my_acc/accumulator/__init__.py`      | Subpackage init (empty)       |
+| Created                                            | Purpose                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| `native/inc/my_acc/accumulator/accumulator_core.h` | Module-level C API (for `just-makeit function`)               |
+| `native/src/accumulator/accumulator_core.c`        | Module-level C implementation                                 |
+| `native/src/accumulator/accumulator_ext.c`         | C extension (empty, no types)                                 |
+| `native/src/accumulator/CMakeLists.txt`            | Python module target, plus the `accumulator_core` OBJECT lib  |
+| `src/my_acc/accumulator/__init__.py`               | Subpackage init (no types yet)                                |
+| `src/my_acc/accumulator/accumulator.pyi`           | Type stub                                                     |
+| `modules/accumulator.toml`                         | The module's manifest fragment                                |
 
-`just-makeit.toml` gains:
+`modules/accumulator.toml` (pulled in by the `include` line in
+`just-makeit.toml`) gains:
 
 ```toml
 [module.accumulator]
@@ -110,7 +117,8 @@ Before reaching for named methods, notice what jm scaffolds automatically:
 
 `step(x) -> void` with `--mutable` and `--return-type void` is exactly a push
 operation.  `steps()` is the auto-generated batch loop that calls `step()` in a
-tight loop — it is add.  You do not need to implement these; jm writes them.
+tight loop — it is add.  `steps()` and `reset()` are complete as generated;
+`step()`'s one-line body is yours (section 4).
 
 `--mutable` drops the `const` qualifier from the state pointer in `step()` so
 the implementation can write to `state->acc`.
@@ -124,7 +132,7 @@ Both types follow the same layout.  The only difference is the C type:
 | `acc_f32` | `acc` | `float`         | `0.0f`           |
 | `acc_cf64`| `acc` | `double _Complex`| `0.0 + 0.0 * I` |
 
-After both commands `just-makeit.toml` contains:
+After both commands `modules/accumulator.toml` contains:
 
 ```toml
 [module.accumulator]
@@ -226,9 +234,12 @@ Each array param expands to two C arguments — a `const elem_t *name` pointer
 and a `size_t name_len` length — and a matching NumPy buffer acquisition in
 the Python glue.
 
-After these ten commands, `accumulator_ext.c` contains `AccF32Object` and
-`AccCf64Object` with fully generated Python argument parsing and NumPy buffer
-protocol for all array parameters.
+After these ten commands, the module's per-object binding fragments
+`native/src/accumulator/accumulator_ext_acc_f32.c` and
+`accumulator_ext_acc_cf64.c` hold `AccF32Object` and `AccCf64Object`, with
+fully generated Python argument parsing and NumPy buffer protocol for all
+array parameters. `accumulator_ext.c` `#include`s both and registers the two
+types in its one `PyInit_accumulator`.
 
 ---
 
@@ -369,11 +380,14 @@ my_acc_acc_cf64_madd2d(
 }
 ```
 
-The patch scripts automate these edits:
+The patch scripts automate these edits. They live in this example's `.steps/`
+directory, which ships inside the installed just-makeit package; from
+`my_acc/`, run them by their path:
 
 ```sh
-python3 .steps/04_patch_f32.py
-python3 .steps/04_patch_cf64.py
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent)')/examples/accumulator/.steps"
+python3 "$STEPS/04_patch_f32.py"
+python3 "$STEPS/04_patch_cf64.py"
 ```
 
 ### Document once, in C — rich stubs and runnable doctests
@@ -422,12 +436,17 @@ now carries the full numpy-style docstring — including the `@code` block as an
         """
 ```
 
-That doctest is not decoration: it runs against the *built* extension, so if
-the kernel ever drifts from its documented example the build fails. Pass `-v`
-to watch every `>>>` line execute:
+That doctest is not decoration: run against the *built* extension, it fails
+the moment the kernel drifts from its documented example. A generated
+project's `make test` does not run `.pyi` doctests (this example's own test
+does), so to make it a gate in your project add
+`PYTHONPATH=src python -m pytest --doctest-glob='*.pyi' src/` to your test
+step. Once section 5's `make` has built the extension, pass `-v` to watch
+every `>>>` line execute:
 
 ```termynal
-$ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
+$ PYTHONPATH=src python -m doctest -v src/my_acc/accumulator/accumulator.pyi
+{d}...{/d}
 {d}Trying:{/d}
     a.step(1.0); a.step(2.0); a.step(3.0)
 {d}Expecting nothing{/d}
@@ -437,6 +456,7 @@ $ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
 {d}Expecting:{/d}
     6.0
 {g}ok{/g}
+{d}...{/d}
 {d}Trying:{/d}
     a.step(1 + 2j); a.step(3 + 4j)
 {d}Expecting nothing{/d}
@@ -451,13 +471,13 @@ $ python -m doctest -v src/my_acc/accumulator/accumulator.pyi
 {g}Test passed.{/g}
 ```
 
-In CI the whole suite is driven at once with
+This example's own test drives the whole stub at once with
 `pytest --doctest-glob='*.pyi'`.
 
-The enrichment for both types is scripted:
+The enrichment for both types is scripted (`$STEPS` as above):
 
 ```sh
-python3 .steps/04b_doxygen.py
+python3 "$STEPS/04b_doxygen.py"
 just-makeit apply
 ```
 
@@ -474,18 +494,18 @@ make test
 tests) and then the auto-generated Python integration tests.
 
 The generated C tests in `native/tests/test_acc_f32_core.c` and
-`native/tests/test_acc_cf64_core.c` exercise `create`, `reset`, and the
-`step`/`steps` round-trip using the `CHECK` macro.
+`native/tests/test_acc_cf64_core.c` exercise `create`, the `acc` state
+accessors, `step`, `reset` and `destroy` using the `CHECK` macro.
 
 Expected output:
 
 ```
 [100%] Built target accumulator
 Test project /tmp/.../my_acc/build
-    Start 1: test_acc_f32_core
-1/2 Test #1: test_acc_f32_core ............   Passed
-    Start 2: test_acc_cf64_core
-2/2 Test #2: test_acc_cf64_core ............   Passed
+    Start 1: test_acc_cf64_core
+1/2 Test #1: test_acc_cf64_core ...............   Passed
+    Start 2: test_acc_f32_core
+2/2 Test #2: test_acc_f32_core ................   Passed
 
 100% tests passed, 0 tests failed out of 2
 ```
@@ -560,10 +580,10 @@ dumped = c.dump()
 print(f"AccCf64 dump() = {dumped}, get() after = {c.get()}")
 ```
 
-Run it from `my_acc/`:
+Save it as `demo.py` in `my_acc/` and run it from there:
 
 ```sh
-python3 .steps/06_demo.py
+python3 demo.py
 ```
 
 Expected output:
@@ -576,7 +596,7 @@ AccF32 madd([1,2,3,4], [0.25]*4): get() = 2.5
 AccF32 add2d(3x4 arange): get() = 66.0
 AccCf64 after push (1+2j)+(3+4j): get() = (4+6j)
 AccCf64 madd: get() = (2.75+2.75j)
-AccCf64 dump() = (5+6j), get() after = 0
+AccCf64 dump() = (5+6j), get() after = 0j
 ```
 
 All operations go through the C extension with no Python arithmetic.  The
@@ -598,9 +618,9 @@ One command adds three things to the project:
 
 | Added | Effect |
 | ----- | ------ |
-| `native/inc/jm_perf.h` | `JM_FORCEINLINE`, `JM_HOT`, `JM_RESTRICT`, `JM_LIKELY`, ... |
-| `native/inc/jm_simd.h` | `JM_VEC_F32`, `JM_ADD_F32`, `JM_LOAD_F32`, `JM_HSUM_F32`, `JM_SIMD_WIDTH_F32` |
-| `#include "jm_perf.h"` inserted in each `_core.h` | Makes all macros available to every `.c` that includes the header |
+| `native/inc/my_acc/jm_perf.h` | `JM_FORCEINLINE`, `JM_HOT`, `JM_RESTRICT`, `JM_LIKELY`, ... |
+| `native/inc/my_acc/jm_simd.h` | `JM_VEC_F32`, `JM_ADD_F32`, `JM_LOAD_F32`, `JM_HSUM_F32`, `JM_SIMD_WIDTH_F32` |
+| `#include "my_acc/jm_perf.h"` inserted in each `_core.h` | Makes all macros available to every `.c` that includes the header |
 
 `just-makeit.toml` gains `perf = "true"` and each object's `step()` qualifier is
 upgraded from `static inline` to `JM_FORCEINLINE JM_HOT`.
@@ -642,49 +662,58 @@ print(
 )
 ```
 
-Build and measure across three stages:
+Build and measure across three stages (stage 3 runs the patch script from
+this example's `.steps/` directory in the installed package, the same
+`$STEPS` as section 4):
 
 ```sh
 PY=$(python3 -c "import sys; print(sys.executable)")
+STEPS="$(python3 -c 'import just_makeit, pathlib; print(pathlib.Path(just_makeit.__file__).parent)')/examples/accumulator/.steps"
 
 # Stage 1 — Release build, no SIMD flags (scalar reduction)
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE="$PY" \
-    -DCMAKE_VERBOSE_MAKEFILE=OFF -Wno-dev -q
-cmake --build build --parallel -q
+    -DCMAKE_VERBOSE_MAKEFILE=OFF -Wno-dev
+cmake --build build --parallel
 echo "=== baseline (scalar) ==="
-python3 .steps/07_bench.py
+python3 bench.py
 
 # Stage 2 — ENABLE_SIMD=ON: adds -march=native -ffast-math
 #           -ffast-math allows the compiler to reassociate the reduction
 #           and auto-vectorise steps() using AVX2 / AVX-512 lanes.
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON \
-    -DPython3_EXECUTABLE="$PY" -Wno-dev -q
-cmake --build build --parallel -q
+    -DPython3_EXECUTABLE="$PY" -Wno-dev
+cmake --build build --parallel
 echo "=== ENABLE_SIMD=ON (auto-vectorised) ==="
-python3 .steps/07_bench.py
+python3 bench.py
 
 # Stage 3 — Explicit SIMD: replace steps() with JM_ADD_F32 + JM_HSUM_F32,
 #           rebuild with ENABLE_SIMD=ON still active.
-python3 .steps/07_patch_perf.py
-cmake --build build --parallel -q
+python3 "$STEPS/07_patch_perf.py"
+cmake --build build --parallel
 echo "=== explicit SIMD (JM_ADD_F32 + JM_HSUM_F32) ==="
-python3 .steps/07_bench.py
+python3 bench.py
 ```
 
 ### 7.3 Results
 
-Measured on x86-64 (AVX2), AMD Ryzen 9, `BLOCK = 100_000`:
+Measured on x86-64 (AVX-512), AMD Ryzen AI 9 465, `BLOCK = 100_000`; the
+script's output with the CMake build lines omitted:
 
 ```
-=== Stage 1: Release -O3, JM_FORCEINLINE JM_HOT on step(), scalar steps() ===
-AccF32  100,000 samples  1.66 G samples/sec   1.0×
-
-=== Stage 2: ENABLE_SIMD=ON (-ffast-math -march=native) ===
-AccF32  100,000 samples  1.65 G samples/sec   ≈1.0×
-
-=== Stage 3: explicit JM_VEC_F32 + JM_RESTRICT, ENABLE_SIMD=ON ===
-AccF32  100,000 samples  18.11 G samples/sec  10.9×
+=== baseline (scalar) ===
+AccF32  100,000 samples  1.43 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
+=== ENABLE_SIMD=ON (auto-vectorised) ===
+AccF32  100,000 samples  1.43 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
+patched native/src/acc_f32/acc_f32_core.c
+=== explicit SIMD (JM_ADD_F32 + JM_HSUM_F32) ===
+AccF32  100,000 samples  22.46 G samples/sec
+AccCf64 100,000 samples  1.42 G samples/sec
 ```
+
+Stage 3 runs `AccF32.steps()` about 16x faster than stage 1; stage 2 moves
+nothing.
 
 ### 7.4 Why stage 2 does not improve
 
@@ -717,8 +746,8 @@ explicit SIMD version.  Two things happen simultaneously:
 2. The inner loop is written explicitly using `JM_VEC_F32`, `JM_ADD_F32`,
    `JM_LOAD_F32`, and `JM_HSUM_F32`.
 
-```python
-python3 .steps/07_patch_perf.py
+```sh
+python3 "$STEPS/07_patch_perf.py"   # stage 3 above already ran it
 ```
 
 The replacement in `native/src/acc_f32/acc_f32_core.c`:
@@ -756,25 +785,25 @@ my_acc_acc_f32_steps(my_acc_acc_f32_state_t *JM_RESTRICT state,
 | --------- | ------------------- | ------------ | ------------ |
 | AVX-512F  | 16                  | `__m512`     | `_mm512_add_ps` |
 | AVX2+FMA  | 8                   | `__m256`     | `_mm256_add_ps` |
+| AArch64 NEON | 4                | `float32x4_t` | `vaddq_f32`  |
 | Scalar    | 1                   | `float`      | `+`          |
 
-The same source compiles to the widest available tier with no `#ifdef` in user
-code.  On scalar targets `JM_SIMD_WIDTH_F32 == 1` so `i + 1 <= n` is always
-true in the vector loop — it degenerates to a single-element loop identical to
-the `#else` branch, and `JM_HSUM_F32` is a no-op identity.
-
-The `#if / #else / #endif` guard is a safety net: on scalar targets the
-`#else` branch compiles instead, keeping the generated `.so` valid even on a
-machine with no SIMD support.
+The same macros compile to the widest tier the target and compiler flags
+enable; on x86-64 the AVX tiers need `ENABLE_SIMD=ON` (`-march=native`), while
+NEON is always on for AArch64. With the `#if JM_SIMD_WIDTH_F32 > 1` guard the
+vector loop is compiled only where a SIMD tier exists; on scalar targets the
+`#else` branch compiles instead, keeping the generated `.so` valid on a target
+with no SIMD support.
 
 ### 7.7 `AccCf64` and complex SIMD
 
-The `AccCf64` benchmarks show no improvement because the same aliasing problem
-applies to `my_acc_acc_cf64_steps()` and the patch only covers `acc_f32`.  Adding
-`JM_RESTRICT` there follows the same pattern.  Explicit SIMD for `double
-_Complex` is more involved: the storage is two consecutive doubles (real then
-imaginary), so you need `JM_VEC_F64` with stride-2 access or interleaved
-accumulation — left as an exercise once the `AccF32` workflow is understood.
+The `AccCf64` lines show no improvement in any stage because the same
+aliasing problem applies to `my_acc_acc_cf64_steps()` and the patch only
+covers `acc_f32`.  Adding `JM_RESTRICT` there follows the same pattern.
+Explicit SIMD for `double _Complex` is more involved: the storage is two
+consecutive doubles (real then imaginary), so you need `JM_VEC_F64` with
+stride-2 access or interleaved accumulation — left as an exercise once the
+`AccF32` workflow is understood.
 
 ---
 

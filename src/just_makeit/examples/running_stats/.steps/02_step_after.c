@@ -1,6 +1,6 @@
 // after — Welford's online algorithm + running min/max
 // Input:  real part = new sample (imaginary part ignored)
-// Output: real = current mean, imag = sample variance (0 until n > 1)
+// Output: real = current mean, imag = population variance (m2 / n)
 // State:  min_val / max_val track the smallest / largest sample seen so far.
 static inline float _Complex my_stats_running_stats_step (
     my_stats_running_stats_state_t *state, float _Complex x)

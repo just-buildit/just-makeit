@@ -11,4 +11,5 @@ Three state variables — all zero by default, so `RunningStats()` needs no argu
 | `mean` | `double`  | Running mean (Welford)              |
 | `m2`   | `double`  | Sum of squared deviations (Welford) |
 
-Variance = `m2 / (n - 1)` once `n > 1`.
+Variance = `m2 / n` (population variance; `m2 / (n - 1)` is the sample
+variance).

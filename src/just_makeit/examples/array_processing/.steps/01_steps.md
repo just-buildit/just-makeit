@@ -5,13 +5,15 @@
 
 Every `just-makeit object` generates both `step()` and `steps()`:
 
-| C function  | Signature                                                               |
-| ----------- | ----------------------------------------------------------------------- |
-| `my_arrays_ema_step`  | `float my_arrays_ema_step(my_arrays_ema_state_t *s, float x)`                               |
+| C function            | Signature                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| `my_arrays_ema_step`  | `static inline float my_arrays_ema_step(const my_arrays_ema_state_t *s, float x)`           |
 | `my_arrays_ema_steps` | `void my_arrays_ema_steps(my_arrays_ema_state_t *s, const float *in, float *out, size_t n)` |
 
-`steps()` is a thin loop in `native/src/ema/ema_core.c` — it calls `step()`
-once per sample. You implement `step()`; `steps()` comes for free.
+`step()` is a `static inline` function in the sacred header
+`native/inc/my_arrays/ema/ema_core.h`; `steps()` is a thin loop in
+`native/src/ema/ema_core.c` that calls it once per sample. You implement
+`step()`; `steps()` comes for free.
 
 ### What Python sees
 
@@ -65,8 +67,8 @@ call f.steps(block)
 ```
 
 Successive calls are independent: the previous result is never overwritten.
-This is the opposite of `--variable-output` (§3), where the object owns a
-fixed buffer and reuses it each call.
+`--variable-output` (§3) behaves the same way: each call returns a new,
+independently owned array.
 
 ### Eliminating the per-call malloc with `out=`
 
@@ -82,7 +84,7 @@ for block in stream:
 
 The returned object is the same array you passed in (`ret is buf`), so you
 can ignore the return value or use it for chaining. The buffer must be
-C-contiguous, the correct dtype, and at least as long as the input.
+writable, C-contiguous, the correct dtype, and exactly as long as the input.
 
 ```
 call f.steps(block, buf)

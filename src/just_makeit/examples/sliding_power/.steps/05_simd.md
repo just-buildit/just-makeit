@@ -12,19 +12,20 @@ Add this function to `native/src/power_est/power_est_core.c` (it needs
 
 **What each macro does on each ISA:**
 
-| Macro             | AVX-512                   | AVX2                 | Scalar           |
-| ----------------- | ------------------------- | -------------------- | ---------------- |
-| `JM_VEC_F32`      | `__m512` (16 lanes)       | `__m256` (8 lanes)   | `float` (1 lane) |
-| `JM_LOAD_F32(p)`  | `_mm512_loadu_ps(p)`      | `_mm256_loadu_ps(p)` | `*(p)`           |
-| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)`      | `_mm256_add_ps(a,b)` | `(a)+(b)`        |
-| `JM_HSUM_F32(v)`  | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)`   | `(v)`            |
-| `JM_UNROLL(4)`    | `#pragma GCC unroll 4`    | same                 | same             |
+| Macro             | AVX-512                   | AVX2                 | AArch64 NEON             | Scalar           |
+| ----------------- | ------------------------- | -------------------- | ------------------------ | ---------------- |
+| `JM_VEC_F32`      | `__m512` (16 lanes)       | `__m256` (8 lanes)   | `float32x4_t` (4 lanes)  | `float` (1 lane) |
+| `JM_LOAD_F32(p)`  | `_mm512_loadu_ps(p)`      | `_mm256_loadu_ps(p)` | `vld1q_f32(p)`           | `*(p)`           |
+| `JM_ADD_F32(a,b)` | `_mm512_add_ps(a,b)`      | `_mm256_add_ps(a,b)` | `vaddq_f32(a,b)`         | `(a)+(b)`        |
+| `JM_HSUM_F32(v)`  | `_mm512_reduce_add_ps(v)` | `_mm_hadd_ps(...)`   | `vaddvq_f32(v)`          | `(v)`            |
+| `JM_UNROLL(4)`    | `#pragma GCC unroll 4`    | same                 | same                     | same             |
 
-The loop body is identical across all three tiers.  `JM_SIMD_WIDTH_F32`
-(16, 8, or 1) controls the stride; the 64-element delay line is always
+The loop body is identical across all four tiers.  `JM_SIMD_WIDTH_F32`
+(16, 8, 4, or 1) controls the stride; the 64-element delay line is always
 an exact multiple of any supported width, so there is no scalar tail.
 
-Build with `-DENABLE_SIMD=ON` to activate AVX-512 or AVX2 paths:
+On x86-64, build with `-DENABLE_SIMD=ON` to activate the AVX-512 or AVX2
+path (AArch64 needs no flag: NEON is always on there):
 
 ```sh
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON

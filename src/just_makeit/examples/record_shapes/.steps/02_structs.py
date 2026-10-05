@@ -1,8 +1,8 @@
 """Declare the two record structs in the sacred header.
 
 They are the author's, not jm's: jm writes prototypes that mention them and
-never reads a field. Adding them BEFORE declaring the methods is what lets
-`--return-type evlog_summary_t` and `--record-dtype evlog_rec_t` resolve.
+never reads a field, so only the compiler needs them -- ahead of those
+prototypes, which is why they go above the generated state struct.
 """
 
 from pathlib import Path

@@ -7,9 +7,9 @@ hand-written `no_generate` sibling module, an app face, and every object
 flavor.
 
 Integration bugs hide in the *combinations* — a feature that works alone breaks
-when used with another. (Building this example is what surfaced jm gh-174: a
-`depends_on` object whose C test failed to link its dependency.) Running it in
-CI guards that surface on every push.
+when used with another. (Building this example is what surfaced the jm gh-174
+follow-up: a `depends_on` object whose C test failed to link its dependency.)
+Running it in CI guards that surface on every push.
 
 It is deliberately not exhaustive: it covers the features that touch the build
 and link graph. Composites, streaming, and declarative diagnostics have their

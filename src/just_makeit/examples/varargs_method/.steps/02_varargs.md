@@ -3,9 +3,9 @@
 ```{02_varargs.sh}
 ```
 
-Three files carry the interesting changes — `just-makeit.toml`, the `.pyi`
-stub, and the benchmark harness are also regenerated, as they are after every
-mutating command:
+Three files carry the interesting changes — the manifest fragment
+`objects/filter.toml`, the `.pyi` stub, and the benchmark harness are also
+updated, as they are after every mutating command:
 
 | File | Role |
 | ---- | ---- |
@@ -55,7 +55,6 @@ header declaration to attach docs to and the `.pyi` stub stays the bare
 `filter_core.h` — so we have something the header can fully document:
 
 ```sh
-cd my_filter
 just-makeit method filter current_gain --return-type double
 ```
 

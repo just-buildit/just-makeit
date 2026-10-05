@@ -5,9 +5,10 @@
 
 State is structural, so `add` rebuilds the object from the manifest: the
 `my_fir_fir_filter_state_t` struct and lifecycle are regenerated and your
-`my_fir_fir_filter_step()` body is reset to a fresh stub. Re-run the implement step
-(section 2) to restore the kernel on top of the new state. The same applies
-when you swap in a longer delay line:
+`my_fir_fir_filter_step()` body is reset to a fresh stub. `add` asks before
+it deletes and regenerates the object's files; `--force` skips the prompt.
+Re-run the implement step (section 2) to restore the kernel on top of the
+new state. The same applies when you swap in a longer delay line:
 
 ```{06_add_coeffs64.sh}
 ```

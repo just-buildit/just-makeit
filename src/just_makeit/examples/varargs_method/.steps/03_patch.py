@@ -1,7 +1,8 @@
-"""Patch va_filter_filter_step and va_filter_filter_configure stubs with implementations.
+"""Patch the step, configure and current_gain stubs with implementations.
 
-Run from the project root (my_filter/):
-    python3 .steps/03_patch.py
+Save this script, 03_step.c and 03_configure.c together in the directory
+above the project, then run it from the project root (va_filter/):
+    python3 ../03_patch.py
 """
 
 import pathlib
