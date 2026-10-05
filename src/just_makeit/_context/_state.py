@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from .. import _coerce
+from .. import _coerce, _ctorsig
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import ctor_demo_label as _ctor_demo_label
@@ -170,6 +170,30 @@ def state_accessor_stubs(
 # ---------------------------------------------------------------------------
 # _build_no_state_init_ctx
 # ---------------------------------------------------------------------------
+
+
+def _stub_body(
+    body: str, params: str, read: "set[str] | frozenset[str]" = frozenset()
+) -> str:
+    """*body*, then the line silencing each parameter it leaves unread.
+
+    gh-1857: the body of a scaffolded constructor -- its ``<<IMPLEMENT>>``
+    marker, or the state assignments jm can make on its own -- reads only
+    the parameters in *read*; the rest wait for the author, and say so with
+    `_ctorsig.suppress_unread` rather than warn under ``-Wextra``.
+
+    Examples
+    --------
+    >>> print(_stub_body("    obj->k = k;", "const float *h, size_t n, int k",
+    ...                  {"k"}))
+        obj->k = k;
+        (void)h; (void)n;
+    >>> _stub_body("    obj->k = k;", "int k", {"k"})
+    '    obj->k = k;'
+    """
+    return "\n".join(
+        x for x in (body, _ctorsig.suppress_unread(params, read)) if x
+    )
 
 
 def _two_dispatches(component: str, first: str, second: str) -> str:
@@ -1127,9 +1151,10 @@ def _build_no_state_init_ctx(
         f"    {csym}_state_t *obj = calloc(1, sizeof(*obj));\n"
         f"    if (!obj)\n"
         f"        return NULL;\n"
-        f"    /* <<IMPLEMENT: initialise state when {when} >> */\n"
-        f"    return obj;\n"
-        f"}}"
+        + _stub_body(
+            f"    /* <<IMPLEMENT: initialise state when {when} >> */", sig
+        )
+        + "\n    return obj;\n}"
         for fn, (sig, _, when, __) in alt_ctors.items()
     )
 
@@ -2271,12 +2296,15 @@ def apply_header_only(
         return ctx
     if family is not None:
         return _apply_core_family(ctx, family)
+    # On its own line, as `_core.c`'s template puts the slot: glued to the
+    # `return` that follows, a body was `(void)k;    return obj;`.
+    create_body = ctx.get("create_assignments", "")
     lifecycle = (
         f"{L}static inline {csym}_state_t *{L}"
         f"{cname}({ctx.get('create_params', '')}){L}{{{L}"
         f"    {csym}_state_t *obj = calloc(1, sizeof(*obj));{L}"
         f"    if (!obj){L}        return NULL;{L}"
-        f"{ctx.get('create_assignments', '')}"
+        f"{create_body + L if create_body else ''}"
         f"    return obj;{L}}}"
         # gh-1827: the dispatch / optional-array constructors, where
         # `_core.c` puts them -- right after create().
@@ -2744,7 +2772,11 @@ def make_state_ctx(
             "alt_create_impls": "",
             "getter_setter_decls": "",
             "create_assignments": "    /* <<IMPLEMENT: initialise state >> */",
-            "reset_assignments": "    /* <<IMPLEMENT: restore defaults >> */",
+            # gh-1857: `state` waits for the author like every other
+            # parameter of a stub, and says so rather than warn.
+            "reset_assignments": (
+                "    /* <<IMPLEMENT: restore defaults >> */\n    (void)state;"
+            ),
             "destroy_impl": "    /* <<IMPLEMENT: free resources >> */\n",
             "getter_setter_impls": "",
             "init_kwlist": "NULL",
@@ -2846,6 +2878,10 @@ def make_state_ctx(
                     csym=csym,
                 )
             )
+        # gh-1857: nothing in the stub's body reads a constructor parameter.
+        base["create_assignments"] = _stub_body(
+            base["create_assignments"], base["create_params"]
+        )
         base.update(_reset_wrapper_slots(component, csym=csym))
         if opaque_fields:
             base["state_struct_fields"] = "\n".join(
@@ -3001,6 +3037,7 @@ def make_state_ctx(
     create_assignments = "\n".join(create_assign_lines)
 
     reset_assign_lines = []
+    restores = False
     for n, _, dflt in scalar_vars:
         if roles.get(n, "state") == "config":
             reset_assign_lines.append(
@@ -3008,6 +3045,7 @@ def make_state_ctx(
             )
         else:
             reset_assign_lines.append(f"    state->{n} = {dflt};")
+            restores = True
     for name, _, size in array_info:
         if roles.get(name, "state") == "config":
             reset_assign_lines.append(
@@ -3017,6 +3055,11 @@ def make_state_ctx(
             reset_assign_lines.append(
                 f"    memset(state->{name}, 0, sizeof(state->{name}));"
             )
+            restores = True
+    # gh-1857: with nothing to restore (every field `config`, or none at
+    # all) the body never reads `state`, and says so rather than warn.
+    if not restores:
+        reset_assign_lines.append("    (void)state;")
     reset_assignments = "\n".join(reset_assign_lines)
 
     # ── CORE_C: getter_setter_impls ─────────────────────────────────────
@@ -3839,6 +3882,15 @@ def make_state_ctx(
             _stale = f"{_ind}obj = {Component}()"
             if _v.startswith(_stale):
                 result[_k] = f"{_ind}obj = {_ctor_call}" + _v[len(_stale) :]
+    # gh-1857: the stub reads only the state-field parameters it assigns
+    # (`obj->k = k;`). Under init_params there are none -- `ctor_scalars` is
+    # empty -- and an --array-arg is never assigned, so every other
+    # parameter of the final prototype waits for the author.
+    result["create_assignments"] = _stub_body(
+        result["create_assignments"],
+        result["create_params"],
+        {n for n, _, _ in ctor_scalars},
+    )
     result.update(
         _ctor_seed_slots(
             component,

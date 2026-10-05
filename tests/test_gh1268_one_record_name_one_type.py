@@ -150,12 +150,16 @@ def _implement(root: Path) -> None:
         "    acc_summary_t _r = {0};\n    return _r; /* placeholder */",
         "    acc_summary_t _r = {1, state->sum};\n    return _r;",
     )
-    text = re.sub(
+    # Asserted: a pattern that stops matching leaves the stub returning
+    # NULL, and the failure then surfaces as a MemoryError far from here.
+    text, n = re.subn(
         r"/\* <<IMPLEMENT>>: build the state for the SeededAcc view\. \*/\n"
+        r"    \(void\)seed;\n"
         r"    return NULL;",
         "return acc_create (seed);",
         text,
     )
+    assert n == 1, text
     core.write_text(text, encoding="utf-8")
 
 

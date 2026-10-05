@@ -137,6 +137,65 @@ def split_params(params: str) -> list[str]:
     return [] if items == ["void"] else items
 
 
+def param_decls(params: str) -> "list[tuple[str, str]]":
+    """``(type, name)`` for each parameter a C parameter list declares.
+
+    The inverse of `_types.c_param_list`, over :func:`split_params`: the
+    name is the trailing identifier and everything before it, ``*``
+    included, is the type. A list that is ``void`` or empty declares
+    nothing.
+
+    Examples
+    --------
+    >>> param_decls("const float *h, size_t h_len, int level")
+    [('const float *', 'h'), ('size_t', 'h_len'), ('int', 'level')]
+    >>> param_decls("void")
+    []
+    """
+    decls = []
+    for p in split_params(params):
+        m = re.fullmatch(r"(.*?[\s*])(\w+)", p)
+        decls.append((m.group(1).rstrip(), m.group(2)))
+    return decls
+
+
+def suppress_unread(
+    params: str, read: "set[str] | frozenset[str]" = frozenset()
+) -> str:
+    """The line a stub body needs for each parameter it does not read.
+
+    gh-1857: a scaffolded constructor or ``reset()`` is the author's to
+    write, and until they do its parameters go unread -- which
+    ``-Wall -Wextra`` reports as ``-Wunused-parameter``, an error under
+    ``-Werror``. Every other stub jm writes already says ``(void)name;``
+    for each parameter (`_types.c_param_suppress`); this is the same
+    statement for a stub whose parameter list exists only as rendered
+    text, minus the names in *read*, which the generated body already
+    uses. The author's body replaces the stub's, and the line with it.
+
+    Parameters
+    ----------
+    params : str
+        The rendered C parameter list, as the prototype carries it.
+    read : set of str
+        Parameters the generated body already reads (``obj->k = k;``).
+
+    Returns
+    -------
+    str
+        One indented line, or ``""`` when every parameter is read.
+
+    Examples
+    --------
+    >>> suppress_unread("const float *h, size_t h_len, int k", {"k"})
+    '    (void)h; (void)h_len;'
+    >>> suppress_unread("void")
+    ''
+    """
+    names = [n for _, n in param_decls(params) if n not in read]
+    return "    " + " ".join(f"(void){n};" for n in names) if names else ""
+
+
 def _header_text(root: Path, component: str) -> str | None:
     """``<comp>_core.h`` as text, or ``None`` when it cannot be read."""
     path = INC.core_h(root, component)

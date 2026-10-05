@@ -173,6 +173,7 @@ def run(root: Path) -> None:
     _patch(
         core_c,
         "    /* <<IMPLEMENT>>: build the state for the SeededAcc view. */\n"
+        "    (void)seed;\n"
         "    return NULL;",
         "    acc_bank_acc_state_t *s = acc_bank_acc_create(seed);\n    return s;",
     )
