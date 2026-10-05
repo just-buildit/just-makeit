@@ -32,15 +32,20 @@ ______________________________________________________________________
 
 ## Quickstart
 
-`install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
-into a Python venv (default `/tmp/jm-venv`, or pass your own path). Run
-`just-makeit install-deps --help` for the full reference.
+`install-deps` installs cmake, a C compiler and pkg-config through your
+system package manager (only when cmake or a C compiler is missing), then
+numpy and just-makeit into a Python venv (default `/tmp/jm-venv`, or pass your
+own path). Run `just-makeit install-deps --help` for the full reference.
 
-**curl (auto-installs dependencies, creates and activates venv):**
+**curl (auto-installs dependencies, creates and activates venv; needs Python
+3.11+):**
 
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh) [-- path]
 ```
+
+Append `--check` to report what would change without installing anything, or
+`--force` to reinstall just-makeit even when it is current.
 
 **pip:**
 
@@ -95,7 +100,7 @@ ______________________________________________________________________
 ```
 my_project/
 ├── native/
-│   ├── inc/engine/engine_core.h   # public C API + inline step()
+│   ├── inc/my_project/engine/engine_core.h   # public C API + inline step()
 │   ├── src/engine/
 │   │   ├── engine_core.c          # block processor + lifecycle
 │   │   └── engine_ext.c           # thin Python binding
@@ -107,6 +112,7 @@ my_project/
 ├── CMakeLists.txt
 ├── Makefile
 ├── just-makeit.toml
+├── objects/engine.toml            # engine's manifest fragment
 └── bootstrap.toml            # tool + system-dep manifest (jbx install-deps)
 ```
 
@@ -115,19 +121,24 @@ ______________________________________________________________________
 ## C API
 
 ```c
-engine_state_t *engine_create(double gain);
-void            engine_destroy(engine_state_t *state);
-void            engine_reset(engine_state_t *state);
+my_project_engine_state_t *my_project_engine_create(double gain);
+void my_project_engine_destroy(my_project_engine_state_t *state);
+void my_project_engine_reset(my_project_engine_state_t *state);
 
 static inline float _Complex
-engine_step(const engine_state_t *state, float _Complex x);
+my_project_engine_step(const my_project_engine_state_t *state,
+                       float _Complex x);
 
-void engine_steps(engine_state_t *state,
-                  const float _Complex *in, float _Complex *out, size_t n);
+void my_project_engine_steps(my_project_engine_state_t *state,
+                             const float _Complex *input,
+                             float _Complex *output, size_t n);
 
-double engine_get_gain(const engine_state_t *state);
-void   engine_set_gain(engine_state_t *state, double gain);
+double my_project_engine_get_gain(const my_project_engine_state_t *state);
+void my_project_engine_set_gain(my_project_engine_state_t *state, double val);
 ```
+
+Every C symbol jm derives carries `[project] c_prefix`, which `jm new` sets to
+the project name; `jm new --no-c-prefix` gives bare `engine_create`.
 
 ## Python API
 
@@ -154,7 +165,8 @@ ______________________________________________________________________
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9+ (the curl installer needs 3.11+; on 3.9 or 3.10, install with
+    pip or uv)
 - CMake ≥ 3.16
 - A C99 compiler (GCC or Clang; on Windows, clang-cl — not MSVC's `cl.exe`)
 - NumPy (runtime, for generated projects)
