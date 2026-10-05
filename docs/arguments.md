@@ -7,13 +7,14 @@ and when it isn't.
 
 ## The rule
 
-> **Positional-only** for the per-sample hot path (`step()`, `steps()`);
-> **positional-or-keyword** everywhere a human writes the call by name —
+> **Positional-only** for the per-sample `step()`; **positional-or-keyword**
+> for the per-block `steps()` and everywhere a human writes the call by name —
 > constructors, named methods, and module-level functions.
 
 | Generated binding                | Parsing                             | Callable by keyword?   | Why                                                                                                               |
 | -------------------------------- | ----------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `step(x)` / `steps(n)`           | `PyArg_ParseTuple` (`METH_VARARGS`) | No (positional)        | Per-sample / per-block hot loop; single arg, so keywords add no clarity and the loop runs millions of times       |
+| `step(x)`                        | `PyArg_ParseTuple` (`METH_VARARGS`) | No (positional)        | Per-sample hot loop; single arg, so keywords add no clarity and the loop runs millions of times                   |
+| `steps(x, out=)` / `steps(n)`    | `PyArg_ParseTupleAndKeywords`       | **Yes**                | Per-block: one parse amortises over the whole block                                                               |
 | Constructor (`__init__`)         | `PyArg_ParseTupleAndKeywords`       | **Yes**                | Called once per object — cost is irrelevant, and multi-`init_param` ctors read far better by name                 |
 | Named methods (`jm method`)      | `PyArg_ParseTupleAndKeywords`       | **Yes**                | Usually not the innermost loop; keyword clarity wins                                                              |
 | Module functions (`jm function`) | `PyArg_ParseTupleAndKeywords`       | **Yes** (since 0.19.5) | Often multi-param (and `out=`-param); named args are clearer and the cost is ~free when callers pass positionally |
@@ -28,11 +29,12 @@ dsp.scale_add(x=x, out=out, gain=2.0, bias=1.0)  # keyword — self-documenting
 dsp.scale_add(x, out, gain=2.0, bias=1.0)         # mixed — fine
 ```
 
-while the hot path stays positional:
+while the per-sample hot path stays positional:
 
 ```python
-y = filt.step(x)          # positional only
-ys = filt.steps(block)    # positional only
+y = filt.step(x)              # positional only
+ys = filt.steps(block)        # positional — fastest
+filt.steps(block, out=buf)    # keyword — the parse amortises over the block
 ```
 
 ## The cost behind it
@@ -139,9 +141,11 @@ free, no keyword tax.
 `jm function fn --param gain:double=1.0` and
 `jm method obj m --param gain:double=1.0` both make `gain` an optional
 keyword/positional arg: `fn(x)` uses `1.0`, while `fn(x, 2.0)` or
-`fn(x, gain=2.0)` overrides. (Adding a defaulted param also makes named methods
-keyword-capable, the same as functions.) Defaulted params must come after
-required ones, and (for now) only plain scalars take defaults.
+`fn(x, gain=2.0)` overrides. Defaulted params must come after required ones.
+Only scalars take defaults — numbers, `bool`, a `const char *` (as a C string
+literal: `--param 's:const char *="hi"'`) and a named enum
+(`--param mode:enum:<ename>=fast` on a function) — never arrays, out-params or
+complex scalars.
 
 **`steps()` overrides** are state-backed rather than compile-time constants. Flag
 a state field `controllable = true` in the manifest and it becomes an optional,
@@ -158,9 +162,9 @@ controllable = true   # -> steps(x, gain=...) overrides self->gain for the block
 `amp.steps(x)` reads the current `gain`; `amp.steps(x, gain=10.0)` (or
 positionally, `amp.steps(x, None, 10.0)`) overrides it for that call only — the
 override never mutates the field, so `get_gain()` is unchanged afterwards. The
-override threads into the C `<pkg>_amp_steps(state, in, n, out, gain)` signature (the
-one declared, intentional change to the sacred core), and the binding sources it
-`arg-if-provided else self->gain`.
+override threads into the C `<pkg>_amp_steps(state, input, output, n, gain)`
+signature (the one declared, intentional change to the sacred core), and the
+binding sources it `arg-if-provided else self->gain`.
 
 The same `controllable = true` flag also reaches **`step()`** — but there
 `step()` keeps its positional-only binding (`step(x, gain)`, never a keyword
@@ -196,13 +200,15 @@ Supported on **every step/steps shape** — scalar→scalar, scalar→void sinks
 void-arg generators and ticks, array-input `step()`, and blockwise array→array —
 with real-scalar (float/int) fields. Complex scalars and `--no-step` are rejected
 at generation with a clear error. Because a controllable field changes the
-*sacred* `comp_step()`/`comp_steps()` signature, retrofitting it onto an existing
-object needs **`jm regenerate`** (which rebuilds `_core.c`/`_core.h`), not
-`jm apply` (which only re-materialises the binding fragment). Under `--perf` the
-generated plain-loop `steps()` threads the override fine; if you hand-swap it for
-the SIMD `JM_DEFINE_STEPS` macro, use the `JM_DEFINE_STEPS_EX(…, (, float gain), (, gain))` form, which threads the control through `comp_steps()`'s signature,
-the scalar tail call, and the `comp_step_batch()` SIMD call (plain
-`JM_DEFINE_STEPS` is just the empty-suffix case).
+*sacred* `<pkg>_<comp>_step()`/`<pkg>_<comp>_steps()` signature, retrofitting
+it onto an existing object needs **`jm regenerate`** (which rebuilds
+`_core.c`/`_core.h`), not `jm apply` (which only re-materialises the binding
+fragment). Under `--perf` the generated plain-loop `steps()` threads the
+override fine; if you hand-swap it for the SIMD `JM_DEFINE_STEPS` macro, use
+the `JM_DEFINE_STEPS_EX(…, (, float gain), (, gain))` form, which threads the
+control through `<pkg>_<comp>_steps()`'s signature, the scalar tail call, and
+the `<pkg>_<comp>_step_batch()` SIMD call (plain `JM_DEFINE_STEPS` is just the
+empty-suffix case).
 
 ## Going faster than both
 
