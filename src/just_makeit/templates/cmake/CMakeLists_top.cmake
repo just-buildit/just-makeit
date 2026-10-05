@@ -153,6 +153,35 @@ else()
   set(JM_INSTALL_NAME_DIR "$<INSTALL_PREFIX>/${CMAKE_INSTALL_LIBDIR}")
 endif()
 
+# gh-1869: an installed shared library finds the libraries it needs itself. A
+# program's RUNPATH reaches only the program's DIRECT dependencies (glibc and
+# FreeBSD; `-rpath` writes RUNPATH on every current distro but RHEL), so a
+# library needing another in the same non-system prefix failed to load -- and
+# GNU ld, resolving that NEEDED at link time the same way, failed to link a
+# program that named only the first. `$ORIGIN`, literal and FIRST (Fedora's
+# check-rpaths accepts it only there; lintian exempts it), finds the libraries
+# installed beside this one wherever the prefix is moved. The link path adds
+# the directory of each dependency outside the compiler's implicit link
+# directories, so one in another prefix is found too; a build into /usr adds
+# nothing. Defaults of CMake's own variables, so a packager's
+# -DCMAKE_INSTALL_RPATH=... or -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF still
+# wins. ELF only: Apple's libraries name themselves absolutely (gh-1594), and
+# Windows has no rpath.
+if(NOT APPLE
+   AND NOT WIN32
+   AND NOT CYGWIN)
+  if(DEFINED CMAKE_INSTALL_RPATH)
+    set(JM_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}")
+  else()
+    set(JM_INSTALL_RPATH "$ORIGIN")
+  endif()
+  if(DEFINED CMAKE_INSTALL_RPATH_USE_LINK_PATH)
+    set(JM_INSTALL_RPATH_USE_LINK_PATH ${CMAKE_INSTALL_RPATH_USE_LINK_PATH})
+  else()
+    set(JM_INSTALL_RPATH_USE_LINK_PATH ON)
+  endif()
+endif()
+
 # gh-1600: every library this project installs, one row each as `<target
 # stem>:<exported name>` -- lib<<project_underscore>> first, then each
 # [project.libraries.<name>] -- and every per-library packaging rule below runs
@@ -196,6 +225,12 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
                INSTALL_NAME_DIR "${JM_INSTALL_NAME_DIR}"
                EXPORT_NAME ${_jm_export}
                WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  if(DEFINED JM_INSTALL_RPATH_USE_LINK_PATH)
+    set_target_properties(
+      ${_jm_lib}_lib
+      PROPERTIES INSTALL_RPATH "${JM_INSTALL_RPATH}"
+                 INSTALL_RPATH_USE_LINK_PATH ${JM_INSTALL_RPATH_USE_LINK_PATH})
+  endif()
   set_target_properties(
     ${_jm_lib}_lib_static PROPERTIES OUTPUT_NAME ${_jm_lib}
                                      EXPORT_NAME ${_jm_export}-static)

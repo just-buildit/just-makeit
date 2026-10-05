@@ -16,10 +16,16 @@
 #   prefix (/usr/local), with sudo when it is not writable, and consume with
 #   NO hints at all -- no PKG_CONFIG_PATH, no CMAKE_PREFIX_PATH. That is the
 #   standard layout, and the only honest test of it is a throwaway machine.
-# Otherwise (a developer's box, `make gates`): install to PREFIX, default a
-#   fresh temp dir, and add exactly the hints the official docs prescribe for
-#   a non-default prefix -- printed, never silent. Nothing outside WORK and
-#   PREFIX is touched.
+# Otherwise (a developer's box, `make gates`, and CI's second step): install
+#   to PREFIX, default a fresh temp dir, and add exactly the hints the official
+#   docs prescribe for a non-default prefix -- the two SEARCH paths, printed,
+#   and the documented rpath on a pkg-config program's link line. Never a
+#   loader path: that is what hid gh-1869. Nothing outside WORK and PREFIX is
+#   touched.
+#
+# Either way it also installs one package into a SECOND prefix with its
+# dependency left in the first, and runs a program that calls a library which
+# alone calls another: the two layouts a program's own rpath cannot reach.
 #
 # CONSUMER_CMAKE_VERSION=3.16.3 runs everything with Kitware's release binary
 #   of that version: the floor every generated project declares.
@@ -73,8 +79,11 @@ fi
 say "$(cmake --version | head -1); pkg-config $(pkg-config --version)"
 
 # A hint already in the environment would make this pass for the wrong
-# reason: the point is what works WITHOUT one.
-unset PKG_CONFIG_PATH CMAKE_PREFIX_PATH
+# reason: the point is what works WITHOUT one. The loader path too (gh-1869):
+# GNU ld reads LD_LIBRARY_PATH at LINK time as well, to find a library's own
+# dependencies, so an inherited one hid a link failure, not only a load one.
+unset PKG_CONFIG_PATH CMAKE_PREFIX_PATH LD_LIBRARY_PATH DYLD_LIBRARY_PATH \
+    DYLD_FALLBACK_LIBRARY_PATH
 
 SUDO=
 if [[ ${CONSUMER_SMOKE_DEFAULT_PREFIX:-} == 1 ]]; then
@@ -86,13 +95,14 @@ else
     PREFIX=${PREFIX:-$WORK/prefix}
     CONFIGURE_PREFIX=("-DCMAKE_INSTALL_PREFIX=$PREFIX")
     # The official instructions for a non-default prefix: pkg-config's guide
-    # (PKG_CONFIG_PATH), cmake-packages(7) (CMAKE_PREFIX_PATH), and the
-    # loader for a shared library outside its search path.
-    # lib64 too: GNUInstallDirs picks it on Fedora-family hosts.
+    # (PKG_CONFIG_PATH) and cmake-packages(7) (CMAKE_PREFIX_PATH). lib64 too:
+    # GNUInstallDirs picks it on Fedora-family hosts. NO loader path
+    # (gh-1869): a pkg-config program finds its direct dependencies through
+    # the rpath the docs prescribe (pc_rpath below), a find_package program
+    # through the build rpath CMake gives it, and every library finds its own
+    # dependencies through the RUNPATH jm installs it with.
     export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig"
     export CMAKE_PREFIX_PATH="$PREFIX"
-    export LD_LIBRARY_PATH="$PREFIX/lib:$PREFIX/lib64"
-    export DYLD_LIBRARY_PATH="$PREFIX/lib"
     say "non-default prefix $PREFIX: PKG_CONFIG_PATH, CMAKE_PREFIX_PATH set"
 fi
 
@@ -109,6 +119,19 @@ install_project() {
     if [[ -z ${PREFIX:-} && $(uname -s) == Linux ]]; then  # default prefix only
         $SUDO ldconfig
     fi
+}
+
+# The documented recipe (c-library.md, "Runtime loading") for a pkg-config
+# program whose libraries are outside the loader's search path: one rpath per
+# library the program names. Linux only -- a macOS library names itself by its
+# absolute path (gh-1594), so the docs say a Mac program needs nothing, and
+# this proves it. Nothing for the default prefix, where `ldconfig` applies.
+pc_rpath() { # pkg-config module...
+    [[ -n ${PREFIX:-} && $(uname -s) == Linux ]] || return 0
+    local m
+    for m in "$@"; do
+        printf -- '-Wl,-rpath,%s ' "$(pkg-config --variable=libdir "$m")"
+    done
 }
 
 # Append a line to a table of a TOML file, directly under its header.
@@ -211,7 +234,7 @@ dependent gamma gcore 'pkg_modules = ["alpha >= 0.1"]' 'PkgConfig::ALPHA'
 #           (pkg-config guide; cmake-packages(7)). It prints "1,2": alpha's
 #           counter bumped through the dependent, then directly -- one copy.
 consume() { # name
-    local name=$1 dir="$WORK/use-$1" static kind link p
+    local name=$1 dir="$WORK/use-$1" static kind link p rp
     mkdir -p "$dir"
     cat >"$dir/only.c" <<EOF
 #include <stdio.h>
@@ -276,14 +299,17 @@ EOF
         # libc, so there the leg checks the flags resolve and link.
         link=
         [[ -n $static && $(uname -s) == Linux ]] && link=-static
+        rp=
+        [[ -z $static ]] && rp=$(pc_rpath "$name")
         # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
         $CC "$dir/only.c" $link $(pkg-config $static --cflags --libs "$name") \
-            -o "$dir/only-pc$static"
+            $rp -o "$dir/only-pc$static"
         check "pkg-config $static $link: $name alone" "$dir/only-pc$static" 3
+        [[ -z $static ]] && rp=$(pc_rpath "$name" alpha)
         # shellcheck disable=SC2046,SC2086
         $CC "$dir/both.c" $link \
             $(pkg-config $static --cflags --libs "$name" alpha) \
-            -o "$dir/both-pc$static"
+            $rp -o "$dir/both-pc$static"
         check "pkg-config $static $link: $name + alpha" \
             "$dir/both-pc$static" 1,2
     done
@@ -388,13 +414,45 @@ for static in "" --static; do
     [[ -n $static && $(uname -s) == Linux ]] && link=-static
     # The program names only the additional libraries; libdelta arrives
     # through their `Requires: delta`, which is the point of saying it there.
+    rp=
+    [[ -z $static ]] && rp=$(pc_rpath delta_ext delta_twin)
     # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
     $CC "$delta_use/use.c" $link \
         $(pkg-config $static --cflags --libs delta_ext delta_twin) \
-        -o "$delta_use/use-pc$static"
+        $rp -o "$delta_use/use-pc$static"
     expect - "delta  pkg-config $static $link: delta_ext delta_twin" \
         delta_runs "$delta_use/use-pc$static"
 done
+
+# gh-1869: a program that calls only libdelta_ext, which itself calls libdelta.
+# Under --as-needed (Debian's and Ubuntu's gcc default) the program records no
+# NEEDED libdelta, so libdelta is found through libdelta_ext's own RUNPATH or
+# not at all: a program's RUNPATH does not reach its dependencies' dependencies.
+# This is what `$ORIGIN` on the installed library is for -- without it the
+# program does not load, and GNU ld does not even link it.
+cat >"$delta_use/ext_only.c" <<'EOF'
+#include <stdio.h>
+#include "delta/ext/ext.h"
+int main (void)
+{
+  int e = delta_ext (2);
+  printf ("%d\n", e);
+  return !(e == 30);
+}
+EOF
+ext_only_runs() { # program
+    local out
+    out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+    [[ $out == "30" ]] || { echo "  printed '$out', not 30"; return 1; }
+}
+ext_only_pc() {
+    # shellcheck disable=SC2046 # splitting the flags IS the usage
+    $CC "$delta_use/ext_only.c" $(pkg-config --cflags --libs delta_ext) \
+        $(pc_rpath delta_ext) -o "$delta_use/ext-only-pc" \
+        && ext_only_runs "$delta_use/ext-only-pc"
+}
+expect - "delta  pkg-config: delta_ext alone, libdelta reached through it" \
+    ext_only_pc
 cat >"$delta_use/fp/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.16)
 project(use_delta C)
@@ -407,6 +465,8 @@ add_executable(use_shared ../use.c)
 target_link_libraries(use_shared PRIVATE delta::ext delta::twin)
 add_executable(use_static ../use.c)
 target_link_libraries(use_static PRIVATE delta::ext-static delta::twin-static)
+add_executable(ext_only ../ext_only.c)
+target_link_libraries(ext_only PRIVATE delta::ext)
 EOF
 cmake -S "$delta_use/fp" -B "$delta_use/fp/build" >/dev/null
 cmake --build "$delta_use/fp/build" >/dev/null
@@ -414,6 +474,53 @@ for kind in shared static; do
     expect - "delta  find_package COMPONENTS ext twin, $kind" \
         delta_runs "$delta_use/fp/build/use_$kind"
 done
+expect - "delta  find_package: delta::ext alone, libdelta reached through it" \
+    ext_only_runs "$delta_use/fp/build/ext_only"
+
+# ── one package in a second prefix, its dependency in the first (gh-1869) ───
+# beta is installed again, into its own prefix, while alpha stays where it
+# is: the layout of two packages installed separately. libbeta finds libalpha
+# only through the absolute entry INSTALL_RPATH_USE_LINK_PATH records (`$ORIGIN`
+# is beta's own directory), so this is the check that entry is there.
+say "beta in a second prefix, alpha in the first"
+P2="$WORK/prefix2"
+xp="$WORK/use-beta-xprefix"
+mkdir -p "$xp/fp"
+# As the runtime + dev pair (gh-1601: together, a plain install), never a
+# plain `cmake --install`: that rewrites the build tree's
+# install_manifest.txt, which the first install (with sudo, in CI) left
+# root-owned, and which disjoint_installs reads as beta's FIRST-prefix
+# manifest. A component install writes install_manifest_<comp>.txt instead.
+for comp in runtime dev; do
+    cmake --install "$WORK/beta/build" --component "$comp" --prefix "$P2" \
+        >/dev/null
+done
+# beta from the second prefix FIRST, so pkg-config and find_package take that
+# copy rather than the one beside alpha.
+pc2="$P2/lib/pkgconfig:$P2/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+xprefix_pc() {
+    local rp=
+    [[ $(uname -s) == Linux ]] \
+        && rp="-Wl,-rpath,$(PKG_CONFIG_PATH=$pc2 pkg-config --variable=libdir beta)"
+    # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
+    $CC "$WORK/use-beta/only.c" \
+        $(PKG_CONFIG_PATH=$pc2 pkg-config --cflags --libs beta) $rp \
+        -o "$xp/only-pc" && runs "$xp/only-pc" 3
+}
+expect - "beta  pkg-config: beta in its own prefix, alpha in another" \
+    xprefix_pc
+cat >"$xp/fp/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.16)
+project(only_beta_xprefix C)
+find_package(beta REQUIRED)
+add_executable(only_shared ../../use-beta/only.c)
+target_link_libraries(only_shared PRIVATE beta::beta)
+EOF
+cmake -S "$xp/fp" -B "$xp/fp/build" \
+    "-DCMAKE_PREFIX_PATH=$P2${CMAKE_PREFIX_PATH:+;$CMAKE_PREFIX_PATH}" >/dev/null
+cmake --build "$xp/fp/build" >/dev/null
+expect - "beta  find_package: beta in its own prefix, alpha in another" \
+    runs "$xp/fp/build/only_shared" 3
 
 # `winonly` is not built here, so nothing of it may be installed.
 no_winonly() {
@@ -537,7 +644,7 @@ whole_archive() { # the two static libraries, every member pulled in
 }
 # shellcheck disable=SC2046
 expect twofir-shared "pa + pb, one TU, shared: each fir is its own" \
-    twofir shared $(pkg-config --cflags --libs pa pb)
+    twofir shared $(pkg-config --cflags --libs pa pb) $(pc_rpath pa pb)
 static_link=
 [[ $(uname -s) == Linux ]] && static_link=-static
 # shellcheck disable=SC2046,SC2086

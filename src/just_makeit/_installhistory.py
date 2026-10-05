@@ -67,6 +67,9 @@ CALLS: frozenset = frozenset(
             ),
         ),
         ("foreach", ("jm_row", "IN", "LISTS", "JM_LIBRARIES")),
+        ("if", ("DEFINED", "CMAKE_INSTALL_RPATH")),
+        ("if", ("DEFINED", "CMAKE_INSTALL_RPATH_USE_LINK_PATH")),
+        ("if", ("DEFINED", "JM_INSTALL_RPATH_USE_LINK_PATH")),
         ("if", ("IS_ABSOLUTE", "${CMAKE_INSTALL_INCLUDEDIR}")),
         ("if", ("IS_ABSOLUTE", "${CMAKE_INSTALL_LIBDIR}")),
         ("if", ("JM_MATH_LIBRARY",)),
@@ -74,6 +77,10 @@ CALLS: frozenset = frozenset(
         ("if", ("JM_PUBLIC_LINK_LIBS",)),
         ("if", ("NOT", "${JM_PC_LIBS_PRIVATE}", "STREQUAL", "")),
         ("if", ("NOT", "${JM_PC_REQUIRES_PRIVATE}", "STREQUAL", "")),
+        (
+            "if",
+            ("NOT", "APPLE", "AND", "NOT", "WIN32", "AND", "NOT", "CYGWIN"),
+        ),
         ("if", ("NOT", "PROJECT_HOMEPAGE_URL", "STREQUAL", "")),
         ("if", ("PROJECT_VERSION_MAJOR", "EQUAL", "0")),
         ("if", ("WIN32",)),
@@ -382,6 +389,16 @@ CALLS: frozenset = frozenset(
         ),
         ("set", ("JM_INSTALL_NAME_DIR", "${CMAKE_INSTALL_FULL_LIBDIR}")),
         ("set", ("JM_INSTALL_NAME_DIR", "${CMAKE_INSTALL_LIBDIR}")),
+        ("set", ("JM_INSTALL_RPATH", "$ORIGIN")),
+        ("set", ("JM_INSTALL_RPATH", "${CMAKE_INSTALL_RPATH}")),
+        (
+            "set",
+            (
+                "JM_INSTALL_RPATH_USE_LINK_PATH",
+                "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}",
+            ),
+        ),
+        ("set", ("JM_INSTALL_RPATH_USE_LINK_PATH", "ON")),
         (
             "set",
             ("JM_LIBRARIES", "<<project_underscore>>:<<project_underscore>>"),
@@ -411,6 +428,17 @@ CALLS: frozenset = frozenset(
         ("set", ("JM_PC_ROW_LIBS", "${JM_PC_LIBM}")),
         ("set", ("JM_VERSION_COMPATIBILITY", "SameMajorVersion")),
         ("set", ("JM_VERSION_COMPATIBILITY", "SameMinorVersion")),
+        (
+            "set_target_properties",
+            (
+                "${_jm_lib}_lib",
+                "PROPERTIES",
+                "INSTALL_RPATH",
+                "${JM_INSTALL_RPATH}",
+                "INSTALL_RPATH_USE_LINK_PATH",
+                "${JM_INSTALL_RPATH_USE_LINK_PATH}",
+            ),
+        ),
         (
             "set_target_properties",
             (
