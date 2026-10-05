@@ -165,14 +165,21 @@ CLANG_FORMAT = $(DEV_RUN) clang-format
 #                 env had pyyaml only by accident, through pre-commit.
 #
 # The version is the dev group's pin, read from pyproject.toml, never restated
-# here. The tests get CMAKE_LINT from the recipe that runs them
-# (PYTEST_EXAMPLES), so they run this command, not a second spelling of it.
+# here: its quoted list entry, `"cmakelang==X",`, so prose naming the tool
+# cannot match. Taken apart by make's own functions, leaving the one $(shell)
+# with no quote, backslash or glob in it: GNU make on Windows hands $(shell)
+# to sh through a Windows command line, and a sed program arrived there
+# mangled (`multiple p options`, on the clang-cl job). The tests get
+# CMAKE_LINT from the recipe that runs them (PYTEST_EXAMPLES), so they run
+# this command, not a second spelling of it.
 # tests/test_gh1930_cmakelang_pinned_python.py holds all of it.
+comma            := ,
 CMAKELANG_PYTHON  = 3.14
-CMAKELANG_VERSION = $(shell sed -n \
-    's/^[[:space:]]*"cmakelang==\([^"]*\)".*/\1/p' pyproject.toml)
+CMAKELANG_PIN     = $(subst ",,$(subst $(comma),,$(filter "cmakelang==%, \
+                        $(shell grep -F cmakelang== pyproject.toml))))
+CMAKELANG_REQ     = $(subst cmakelang,cmakelang[yaml],$(CMAKELANG_PIN))
 CMAKELANG         = $(UV) run -q --no-project --python $(CMAKELANG_PYTHON) \
-                    --with "cmakelang[yaml]==$(CMAKELANG_VERSION)"
+                    --with "$(CMAKELANG_REQ)"
 CMAKE_FORMAT      = $(CMAKELANG) cmake-format
 CMAKE_LINT        = $(CMAKELANG) cmake-lint
 
