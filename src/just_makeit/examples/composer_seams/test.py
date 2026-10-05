@@ -123,6 +123,15 @@ def run(root: Path) -> None:
     )
 
     # ── 6. Build ─────────────────────────────────────────────────────────
+    # gh-1863: warning-clean, as a downstream building with -Werror needs.
+    # This is the only bundled composer module, and the -Wall sweep in
+    # tests/test_preset_build.py cannot scaffold one (a composer needs a
+    # hand-written backing core), so the composer glue is held here: the
+    # `_enum_index` and `_attach_bytes` jm emitted with no caller failed
+    # this build. Step 8 reuses these flags for the bridge consumer. Not on
+    # Windows, where clang-cl reads `-Wall` as `/Wall` (every warning clang
+    # has), which is not the contract a downstream builds to.
+    warn = [] if os.name == "nt" else ["-DCMAKE_C_FLAGS=-Wall -Wextra -Werror"]
     _cmd(
         [
             "cmake",
@@ -132,6 +141,7 @@ def run(root: Path) -> None:
             ".",
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython3_EXECUTABLE={sys.executable}",
+            *warn,
         ],
         cwd=proj,
     )

@@ -751,8 +751,78 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
 _ENUM_INDEX_FN = _enumc.INDEX_FN
 
 
+def _drop_uncalled(
+    text: str, definition: str, fn: str, replacement: str = ""
+) -> str:
+    r"""*text* without *definition* when nothing else in it calls *fn*.
+
+    gh-1863. A composer translation unit carries a few ``static`` helpers
+    that only some shapes call -- the enum lookup, ``_attach_bytes`` -- and
+    an uncalled ``static`` function is ``-Wunused-function``, an error under
+    ``-Werror``. Whether a shape calls one is decided by eight emit sites
+    under different conditions, so a predicate restating them would be a
+    second copy of those conditions, drifting the first time a ninth is
+    added. Instead the finished text is asked, which cannot disagree with
+    what it contains: the helper stays exactly when ``fn(`` appears outside
+    its own definition.
+
+    A hand-written ``*_ext_extra.c`` is ``#include``d into the same unit
+    but is not in *text*, so it cannot keep a helper alive. That is the
+    rule the module and handle faces already follow for the lookup (gh-1745):
+    these helpers are jm's private glue, not API an extra may rely on.
+
+    Parameters
+    ----------
+    text : str
+        The rendered translation unit (or the part of it holding both the
+        definition and every possible caller).
+    definition : str
+        The helper's rendered definition, exactly as it occurs in *text*.
+        It must occur exactly once: zero means the caller passed a stale
+        rendering, and two would make "elsewhere" ambiguous.
+    fn : str
+        The helper's name; a call is ``fn(`` anywhere outside *definition*.
+    replacement : str, optional
+        What stands in for a dropped definition (the enum tables keep their
+        tables and drop only the lookup). A dropped definition with no
+        replacement takes its trailing blank line with it.
+
+    Returns
+    -------
+    str
+
+    Examples
+    --------
+    >>> d = "static int f(void) { return 0; }\n"
+    >>> _drop_uncalled("a\n" + d + "\nb\n", d, "f")
+    'a\nb\n'
+    >>> called = "a\n" + d + "int x = f();\n"
+    >>> _drop_uncalled(called, d, "f") == called
+    True
+    """
+    if not fn.isidentifier():
+        # A snippet passed as the name is never found followed by "(", so
+        # every helper would be dropped, called or not -- measured, when the
+        # lookup's source text was passed here instead of its name.
+        raise AssertionError(f"_drop_uncalled: {fn[:40]!r} is not a name")
+    if text.count(definition) != 1:
+        raise AssertionError(
+            f"_drop_uncalled: {fn}'s definition occurs "
+            f"{text.count(definition)} times, expected exactly once"
+        )
+    if f"{fn}(" in text.replace(definition, ""):
+        return text
+    if not replacement and definition + "\n" in text:
+        definition += "\n"
+    return text.replace(definition, replacement)
+
+
 def render_enum_tables(
-    cfg: dict, module: str, *, decoded: "list[str] | None" = None
+    cfg: dict,
+    module: str,
+    *,
+    decoded: "list[str] | None" = None,
+    looked_up: "list[str] | None" = None,
 ) -> str:
     """The lookup plus one table per enum this module references.
 
@@ -764,11 +834,34 @@ def render_enum_tables(
     *decoded* is the set a translation unit decodes (gh-1748); ``None`` is
     the extension's, :func:`_decoded_enums`. The generated CLI only
     validates flags, so it passes an empty list.
+
+    *looked_up* is `_enumc.render_tables`'s (gh-1745); a caller passes
+    ``[]`` for the lookup-free rendering :func:`_drop_lookup_if_uncalled`
+    swaps in.
     """
     return _enumc.render_tables(
         _enums_used(cfg, module),
         C.enums(cfg),
         decoded=_decoded_enums(cfg, module) if decoded is None else decoded,
+        looked_up=looked_up,
+    )
+
+
+def _drop_lookup_if_uncalled(
+    text: str, cfg: dict, module: str, *, decoded: "list[str] | None" = None
+) -> str:
+    """*text* with the enum lookup removed when nothing in it calls it.
+
+    gh-1863: *text* holds :func:`render_enum_tables` rendered with the same
+    *decoded*; the tables stay either way, only the lookup goes.
+    """
+    return _drop_uncalled(
+        text,
+        render_enum_tables(cfg, module, decoded=decoded),
+        # The NAME, from the one place that spells it -- `_ENUM_INDEX_FN`
+        # is the lookup's source text, and no text contains it plus "(".
+        _enumc.symbols("", "")[0],
+        render_enum_tables(cfg, module, decoded=decoded, looked_up=[]),
     )
 
 
@@ -1632,7 +1725,7 @@ _attach_{cn}({struct} *src, PyObject *obj)
     # comment, which every compiler warns on (-Wcomment) because that is what
     # an unterminated comment looks like; and `attach_doc` runs to 59 columns,
     # so it only fits under 80 on a line of its own.
-    parts.append(f"""/* {attach_doc}
+    attach_bytes_c = f"""/* {attach_doc}
  * into an owned *dst and *n_dst (one shared coercer; each bytes field
  * passes its own struct destination). */
 static int
@@ -1645,7 +1738,10 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
         return 1;
 {attach_body}
 }}
-{host_attach}
+"""
+    parts.append(
+        attach_bytes_c
+        + f"""{host_attach}
 static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -1660,7 +1756,8 @@ static int
 {(f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
     return 0;
 }}
-""")
+"""
+    )
 
     # getset table.
     getset_fns: list[str] = []
@@ -2014,7 +2111,9 @@ _factory_{fac}(PyObject *mod, PyObject *args, PyObject *kwds)
 }}
 """)
 
-    return "\n".join(parts)
+    # gh-1863: every caller -- a bytes field's init and setter, a host
+    # coercer's hand-off -- is in this text, so it decides.
+    return _drop_uncalled("\n".join(parts), attach_bytes_c, "_attach_bytes")
 
 
 def factory_method_rows(cfg: dict, module: str) -> list[str]:
@@ -4341,7 +4440,8 @@ PyInit_{leaf}(void)
 {_procglobal.rendezvous_c(cfg, module)}    return m;
 }}
 """)
-    return "\n".join(parts)
+    # gh-1863: the lookup only where some emitted call site uses it.
+    return _drop_lookup_if_uncalled("\n".join(parts), cfg, module)
 
 
 def render_cmake(cfg: dict, module: str) -> str:
@@ -5797,7 +5897,7 @@ def render_cli(cfg: dict, module: str) -> str:
         first=" * ",
         close=False,
     )
-    return f"""/*
+    text = f"""/*
 {banner}
  *
  * Build a composer from source/segment-field flags or a JSON spec
@@ -5889,3 +5989,5 @@ main(int argc, char **argv)
     return 0;
 }}
 """
+    # gh-1863: the lookup only where some emitted flag parser uses it.
+    return _drop_lookup_if_uncalled(text, cfg, module, decoded=[])
