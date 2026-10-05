@@ -11,6 +11,7 @@ test_claude_md_drift
 test_cli_flag_docs
 test_example_scratch_dir
 test_face_parity_gate
+test_fn_emitters_one_signature
 test_gates_index
 test_generated_ci_pins
 test_gh1141_version_copies

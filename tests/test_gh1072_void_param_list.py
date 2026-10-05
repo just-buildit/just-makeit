@@ -186,7 +186,9 @@ _SHAPE_VALUES: dict[str, tuple] = {
 }
 
 #: Keyword parameters every emitter has that say nothing about the shape.
-_NON_SHAPE = {"fn_name", "params", "return_type"}
+#: `storage` is how the inline stub differs from the out-of-line one (a
+#: `static inline` prefix on the return type), never the parameter list.
+_NON_SHAPE = {"fn_name", "params", "return_type", "storage"}
 
 
 def _emitters() -> dict:

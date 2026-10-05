@@ -215,6 +215,11 @@ def _inject_inline_into_core_h(
     params: list[FnParam],
     return_type: str,
     cname: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
+    variable_output: bool = False,
+    impl_body: str | None = None,
     why: bool = False,
     *,
     c_name: str,
@@ -224,9 +229,24 @@ def _inject_inline_into_core_h(
 
     Used when ``inline=True``: the full definition goes into the header so
     every translation unit that includes it sees the body and the compiler can
-    inline at call sites.  No entry is written to ``_core.c``.
+    inline at call sites.  No entry is written to ``_core.c``. It takes the
+    same shape, and the same ``--impl`` body, as the out-of-line stub: the
+    binding does not know which of the two it is calling.
     """
-    stub = T.fn_c_inline_stub(c_name, params, return_type, why=why)
+    stub = T.fn_c_inline_stub(
+        c_name,
+        params,
+        return_type,
+        out_type=out_type,
+        result_fields=result_fields,
+        max_results_param=max_results_param,
+        variable_output=variable_output,
+        why=why,
+    )
+    if impl_body is not None:
+        from . import _impl as I
+
+        stub = I.inject_body_into_stub(stub, impl_body)
     existing = path.read_text(encoding="utf-8")
     cplusplus_end = "#ifdef __cplusplus\n}\n#endif"
     if cplusplus_end in existing:
@@ -470,6 +490,11 @@ def run(
             params,
             return_type,
             cname,
+            out_type=out_type,
+            result_fields=result_fields,
+            max_results_param=max_results_param,
+            variable_output=variable_output,
+            impl_body=impl_body,
             why=why,
             c_name=c_name,
             csym=csym,

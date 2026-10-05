@@ -210,6 +210,14 @@ _WARN_SHAPES = {
         ["method", "bm", "blk", "--arg-type", "float"]
         + ["--return-type", "float", "--batch"],
     ],
+    # The feature tour's `magnitude_db`: an inline module function with an
+    # array param and an allocated output. Its header stub had no `out` while
+    # the binding passed one, so the scaffold did not compile at all.
+    "inline_out_type_function": [
+        ["module", "m"],
+        ["function", "mag", "--module", "m", "--param", "x:float _Complex[]"]
+        + ["--out-type", "float", "--inline"],
+    ],
     # gh-1716: the returned-count guard (`_coerce.returned_count_c`) on
     # every path that builds with no author C -- a module function's ndarray
     # and `str` outputs, and a method's allocated and `out=` paths.

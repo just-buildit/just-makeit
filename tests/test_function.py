@@ -914,6 +914,28 @@ class TestInlineFunction:
         )
         assert "f32_to_i16" not in c
 
+    def test_impl_body_lands_in_the_inline_stub(self, tmp_path):
+        """`--impl` with `--inline` puts the lifted body in the header.
+
+        The inline path used to render its own stub and never look at the
+        body, so the function shipped returning the placeholder 0 while the
+        command reported success.
+        """
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["cvt"], c_prefix=None)
+        function_run(
+            root,
+            "clip",
+            "cvt",
+            params=[("x", "float")],
+            return_type="float",
+            inline=True,
+            impl_body="    return x > 1.0f ? 1.0f : x;",
+        )
+        h = (root / INC_ROOT / "cvt/cvt_core.h").read_text(encoding="utf-8")
+        assert "return x > 1.0f ? 1.0f : x;" in h
+        assert "placeholder" not in h
+
     def test_core_h_has_no_bare_declaration(self, inline_fn):
         h = (inline_fn / INC_ROOT / "cvt/cvt_core.h").read_text(
             encoding="utf-8"
