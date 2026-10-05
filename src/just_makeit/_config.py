@@ -5201,6 +5201,24 @@ def method_c_symbol(stem: str, entry: dict) -> str:
     return entry.get("fn") or f"{stem}_{entry['name']}"
 
 
+def varargs_core_c(object_name: str, method_name: str) -> str:
+    """The FILE a varargs method's body lives in: ``<obj>_<method>_core.c``.
+
+    A file stem stays the object's NAME, never its C symbol stem (gh-1591):
+    under ``c_prefix = "p"`` the binder inside it is ``p_g_configure`` while
+    the file is still ``g_configure_core.c``. One spelling for both
+    directions -- the writer that creates the file and every reader that
+    names it (the ``_ext.c`` comment, a module's ``Python3_add_library``
+    sources, a standalone object's CMake splice). The module reader once
+    built the name from the C symbol instead, and a prefixed module could
+    not configure (gh-1881).
+
+    >>> varargs_core_c("fir", "mix")
+    'fir_mix_core.c'
+    """
+    return f"{object_name}_{method_name}_core.c"
+
+
 def view_signature_override_members(
     cfg: dict, component: str, view: dict
 ) -> "list[str]":

@@ -1437,7 +1437,11 @@ def make_methods_ctx(
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
         if m.get("varargs"):
-            binding_file = f"{c_fn}_core.c"
+            # gh-1881: the file `_method` WRITES, named by the one helper.
+            # It was `f"{c_fn}_core.c"` -- the C symbol, which a `c_prefix`
+            # moves and a file name never follows -- so a prefixed module's
+            # `Python3_add_library` listed a file that does not exist.
+            binding_file = C.varargs_core_c(component, name)
             varargs_binding_files.append(binding_file)
             extern_decl = (
                 f"/* varargs binding — body in {binding_file} */\n"

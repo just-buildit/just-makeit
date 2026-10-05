@@ -22,7 +22,7 @@ from _jmrun import run_cli
 #: params, state, methods (plain, array, batch, varargs, borrow, record,
 #: single), properties (plain, writable, field), a streamable object, the
 #: stateless and step-less shapes, perf, a module with objects, a method,
-#: a property, a view and functions, and a dotted module.
+#: a varargs method, a property, a view and functions, and a dotted module.
 PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
     "std": (
         ("std",),
@@ -168,6 +168,11 @@ PROJECTS: "dict[str, tuple[tuple[str, ...], list[tuple[str, ...]]]]" = {
                 "--return-type",
                 "double",
             ),
+            # gh-1881: a module lists a varargs binder's FILE in its
+            # `Python3_add_library`, and named it after the C symbol, so a
+            # prefixed module did not configure. `test_gh1591_c_prefix_nm`
+            # builds this row.
+            ("method", "o", "configure", "--module", "m", "--varargs"),
             ("property", "o", "lvl", "--module", "m", "--type", "double"),
             ("view", "o", "Peek", "--module", "m", "--create-fn", "o_open"),
             (
