@@ -6129,7 +6129,31 @@ def arg_type(cfg: dict, component: str) -> str:
 
 
 def return_type(cfg: dict, component: str) -> str:
-    return cfg.get(component, {}).get("return_type", "float _Complex")
+    """The component's step() return type, defaulted when the key is absent.
+
+    An absent ``return_type`` means what omitting ``--return-type`` means:
+    `resolve_return_type`'s default for the component's ``arg_type``. This
+    read a constant ``float _Complex`` instead, so a hand-written
+    ``arg_type = "double"`` with no ``return_type`` rendered a complex step()
+    (gh-1880).
+
+    Examples
+    --------
+    >>> return_type({"o": {"arg_type": "double"}}, "o")
+    'double'
+    >>> return_type({"o": {"arg_type": "double[]"}}, "o")
+    'void'
+    >>> return_type({"o": {"arg_type": "void"}}, "o")
+    'float _Complex'
+    >>> return_type({"o": {"arg_type": "void", "return_type": "void"}}, "o")
+    'void'
+    """
+    from ._context import resolve_return_type
+
+    return resolve_return_type(
+        arg_type(cfg, component),
+        cfg.get(component, {}).get("return_type"),
+    )
 
 
 def class_name(cfg: dict, component: str) -> str | None:
@@ -6362,13 +6386,14 @@ def add_component(
     create_fn_: str | None = None,
     doc_: str = "",
 ) -> dict:
-    rt = (
-        return_type_
-        if return_type_ is not None
-        else "void"
-        if arg_type_.endswith("[]")
-        else arg_type_
-    )
+    # gh-1880: the renderer's own default, from its one owner. A copy here
+    # lacked the `void -> float _Complex` branch, so a generator's manifest
+    # said `void` while its header returned a sample: STALE at once, and
+    # `jm apply` re-rendered the binding from the manifest and broke the
+    # build. Imported here because `_context` imports this module.
+    from ._context import resolve_return_type
+
+    rt = resolve_return_type(arg_type_, return_type_)
     state_entries = [
         {
             "name": n,
