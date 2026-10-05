@@ -22,7 +22,9 @@ ALL of these hold, and says which one did not:
 3. *command* is green BEFORE the sabotage (a baseline, so a red result means
    something) and red AFTER it;
 4. the red run names at least one FAILED test and reports no collection
-   error -- "errored in collection" proves nothing about any assertion;
+   error -- "errored in collection" proves nothing about any assertion.
+   Both are read with the run's colour escapes removed, so a caller whose
+   pytest colours its output is answered like one whose does not;
 5. the file is restored byte-identical afterwards, and every ``__pycache__``
    under the repo is cleared, before and after, so neither the sabotaged run
    nor the NEXT one reads a stale ``.pyc``.
@@ -61,6 +63,20 @@ _COLLECTION = re.compile(
     r"|ImportError while)",
     re.M,
 )
+#: An SGR escape (``\x1b[31m``, ``\x1b[0m``), removed from every run's output
+#: before either pattern above reads it (gh-1845). A coloured pytest puts one
+#: at column 0 -- ``\x1b[31mFAILED\x1b[0m test_mod.py::\x1b[1mtest_one`` --
+#: so under FORCE_COLOR ``^FAILED`` matched nothing and EVERY red sabotage
+#: was refused as naming no test; ``^ImportError while`` misses the same way.
+#:
+#: Read colour-blind rather than run the command with colour forced off.
+#: The command is the caller's, and a proof is about the run its gate makes,
+#: so the helper does not edit its environment (jm's own CLI reads NO_COLOR).
+#: Nor could it: pytest obeys ``--color=yes``, on the command line or in
+#: PYTEST_ADDOPTS, over NO_COLOR=1 and PY_COLORS=0 alike, and FORCE_COLOR=0
+#: turns colour ON (pytest 9.1, measured). gh-1456 read a child pytest's
+#: summary line the same way.
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class Refused(Exception):
@@ -84,7 +100,7 @@ def _run(cmd: "list[str]", root: Path) -> "tuple[int, str]":
     r = subprocess.run(
         cmd, cwd=root, capture_output=True, text=True, env=os.environ.copy()
     )
-    return r.returncode, r.stdout + r.stderr
+    return r.returncode, _SGR.sub("", r.stdout + r.stderr)
 
 
 def sabotage(
