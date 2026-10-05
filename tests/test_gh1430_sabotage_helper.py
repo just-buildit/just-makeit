@@ -12,11 +12,15 @@ GATE: a sabotage is accepted only if its anchor occurs once, the edit lands,
       collection error, and the file is restored byte-identical.
 GATE: a run whose pytest colours its output is read like one that does not
       (gh-1845), whatever turned the colour on.
+GATE: a collection error is refused when pytest goes on past it and names a
+      FAILED test beside it -- under xdist, as ``make test`` runs, and
+      ``--continue-on-collection-errors`` (gh-1933).
 """
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -87,6 +91,108 @@ def test_a_sabotage_the_gate_does_not_see_is_refused(proj):
 def test_a_sabotage_that_breaks_collection_is_refused(proj):
     with pytest.raises(sab.Refused, match="COLLECTION"):
         _run(proj, "def one():", "def one(:")
+
+
+#: A gate that reads the module's SOURCE, beside the test that imports it --
+#: the shape of many of jm's own gates. One sabotage that breaks the
+#: module's syntax fails this by assertion and errors ``test_mod.py`` in
+#: collection, in the same run: gh-1933's repro.
+_SRC_TEST = (
+    "from pathlib import Path\n\n\n"
+    "def test_one_is_spelled():\n"
+    "    src = Path(__file__).with_name('mod.py').read_text('utf-8')\n"
+    "    assert 'def one():' in src\n"
+)
+
+#: Each way pytest goes ON past a module that did not collect, so the run
+#: names a FAILED test beside it and prints no ``Interrupted:`` (pytest 9.1,
+#: xdist 3.8, measured). ``make test`` runs ``-n auto``; ``-n 2`` is the
+#: same shape on fewer cores. ``--tb=no`` leaves only the summary's
+#: ``ERROR test_mod.py`` line and ``-rf`` only the ``ERROR collecting``
+#: header, so each of the two readings has a case no other one covers.
+_GOES_ON = {
+    "xdist": ["-n", "2"],
+    "continue-on-collection-errors": ["--continue-on-collection-errors"],
+    "xdist-summary-line-only": ["-n", "2", "--tb=no"],
+    "xdist-header-only": ["-n", "2", "-rf"],
+}
+
+
+@pytest.mark.parametrize("mode", list(_GOES_ON))
+def test_a_collection_error_beside_a_failure_is_refused(
+    proj, mode, monkeypatch
+):
+    """gh-1933: under xdist and ``--continue-on-collection-errors`` a module
+    that fails to import is one column-0 ``ERROR test_mod.py`` line and a
+    section header, beside a FAILED test the run went on to name. The helper
+    read neither and accepted the sabotage, though the module's own tests
+    never ran."""
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    (proj / "test_src.py").write_text(_SRC_TEST, encoding="utf-8")
+    cmd = _cmd() + _GOES_ON[mode] + ["test_src.py"]
+    with pytest.raises(sab.Refused, match="COLLECTION"):
+        _run(proj, "def one():", "def one(:", cmd)
+    # Arm the case: with the collection reading switched off, the same
+    # sabotage is ACCEPTED, naming the source gate. So the run really went
+    # on past the error (an interrupted one names no FAILED test), and it is
+    # the collection reading, nothing else, that refuses it.
+    monkeypatch.setattr(sab, "_COLLECTION", re.compile(r"(?!)"))
+    failed = _run(proj, "def one():", "def one(:", cmd)
+    assert failed == ["test_src.py::test_one_is_spelled"]
+
+
+#: Column-0 ``ERROR `` lines that are NOT a module failing to collect, each
+#: printed beside ``test_mod.py::test_one`` failing for real, as
+#: (test file, its text, the tests the helper must name). A sabotage that
+#: goes red like this went red for the right reason; refusing it is the
+#: false refusal column-0 anchoring was introduced to stop.
+_NOT_COLLECTION = {
+    # A fixture that raised: the summary line's id names a TEST, ``::``
+    # and all -- ``ERROR test_fix.py::test_two - RuntimeError: sabotaged``.
+    "fixture-error": (
+        "test_fix.py",
+        "import pytest\n\nfrom mod import untested\n\n\n"
+        "@pytest.fixture\ndef two():\n    return untested()\n\n\n"
+        "def test_two(two):\n    assert two == 2\n",
+        ["test_mod.py::test_one"],
+    ),
+    # A captured log record, in pytest's default log format:
+    # ``ERROR    gate:test_log.py:7 mod.py broke``.
+    "captured-log": (
+        "test_log.py",
+        "import logging\n\nfrom mod import one\n\n\n"
+        "def test_logged():\n"
+        "    logging.getLogger('gate').error('mod.py broke')\n"
+        "    assert one() == 1\n",
+        ["test_mod.py::test_one", "test_log.py::test_logged"],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_NOT_COLLECTION))
+def test_an_error_line_that_is_not_a_module_is_accepted(
+    proj, case, monkeypatch
+):
+    """gh-1933 reads ``ERROR <id>`` as a collection error only for an id
+    with no ``::`` and no whitespace. Each case here is one of those two
+    exclusions; without it, the sabotage is refused as a COLLECTION error
+    that never happened."""
+    name, text, expected = _NOT_COLLECTION[case]
+    (proj / name).write_text(text, encoding="utf-8")
+    args = (
+        proj,
+        "    return 1\n\n\ndef untested():\n    return 2\n",
+        "    return 0\n\n\ndef untested():\n"
+        "    raise RuntimeError('sabotaged')\n",
+        _cmd() + [name],
+    )
+    assert sorted(_run(*args)) == sorted(expected)
+    # Arm the case: read EVERY column-0 ``ERROR `` as a collection error and
+    # the same sabotage is refused -- so the run does print the line the
+    # real reading had to tell apart from a module.
+    monkeypatch.setattr(sab, "_COLLECTION", re.compile(r"^ERROR ", re.M))
+    with pytest.raises(sab.Refused, match="COLLECTION"):
+        _run(*args)
 
 
 def test_a_command_red_before_the_sabotage_is_refused(proj):
@@ -181,3 +287,17 @@ def test_a_coloured_collection_error_is_still_refused(proj, coloured):
             "    return 0\n\n\ndef renamed():\n",
             cmd,
         )
+
+
+def test_a_coloured_collection_error_under_xdist_is_still_refused(
+    proj, coloured
+):
+    """gh-1933's shape, coloured: under xdist the summary line reads
+    ``\\x1b[31mERROR\\x1b[0m test_mod.py - ...`` and the header starts with
+    an escape, so both are found only in the colour-blind reading -- the
+    combination a developer with FORCE_COLOR set gets from ``make test``."""
+    (proj / "test_src.py").write_text(_SRC_TEST, encoding="utf-8")
+    cmd = _cmd() + coloured + _GOES_ON["xdist"] + ["test_src.py"]
+    _assert_colour_arrives(proj, cmd)
+    with pytest.raises(sab.Refused, match="COLLECTION"):
+        _run(proj, "def one():", "def one(:", cmd)
