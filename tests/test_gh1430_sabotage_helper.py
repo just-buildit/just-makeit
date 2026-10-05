@@ -10,11 +10,14 @@ every case, refused or not, the file must be back byte for byte.
 GATE: a sabotage is accepted only if its anchor occurs once, the edit lands,
       the command goes from green to red naming a FAILED test without a
       collection error, and the file is restored byte-identical.
+GATE: a run whose pytest colours its output is read like one that does not
+      (gh-1845), whatever turned the colour on.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,11 +46,13 @@ def _cmd():
             "test_mod.py"]  # fmt: skip
 
 
-def _run(proj: Path, anchor: str, replacement: str):
+def _run(proj: Path, anchor: str, replacement: str, cmd=None):
     target = proj / "mod.py"
     before = target.read_bytes()
     try:
-        return sab.sabotage(target, anchor, replacement, _cmd(), root=proj)
+        return sab.sabotage(
+            target, anchor, replacement, cmd or _cmd(), root=proj
+        )
     finally:
         assert target.read_bytes() == before, "not restored byte-identical"
 
@@ -104,3 +109,75 @@ def test_a_red_that_names_no_failed_test_is_refused(proj):
             sab.sabotage(target, "    return 1\n", "    return 0\n", cmd, proj)
         finally:
             assert target.read_bytes() == before
+
+
+#: Each way a caller's pytest comes to colour its output, as (environment,
+#: extra argv) -- measured against pytest 9.1. FORCE_COLOR is the issue's
+#: (gh-1845); PY_COLORS=1 wins over NO_COLOR; ``--color=yes`` wins over every
+#: variable, which is why the helper strips the colour rather than trying to
+#: turn it off.
+_COLOURED = {
+    "FORCE_COLOR": ({"FORCE_COLOR": "3"}, []),
+    "PY_COLORS": ({"PY_COLORS": "1"}, []),
+    "--color=yes": ({}, ["--color=yes"]),
+}
+
+
+@pytest.fixture(params=list(_COLOURED))
+def coloured(request, monkeypatch) -> "list[str]":
+    """Colour on, by one route, with every other route cleared first -- so a
+    developer's own NO_COLOR cannot switch the case off. Returns the argv to
+    append to the command."""
+    env, argv = _COLOURED[request.param]
+    for var in ("FORCE_COLOR", "PY_COLORS", "NO_COLOR", "PYTEST_ADDOPTS"):
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    return argv
+
+
+def _assert_colour_arrives(proj: Path, cmd: "list[str]") -> None:
+    """Arm the case: this pytest really does colour under this setting.
+
+    A run the colour never reached is read correctly by the unfixed helper
+    too, so without this a case could pass on the bug and gate nothing --
+    the way gh-1845 hid, since CI sets no colour.
+    """
+    r = subprocess.run(cmd, cwd=proj, capture_output=True, text=True)
+    assert r.returncode == 0 and "\x1b[" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_coloured_red_run_still_names_the_failure(proj, coloured):
+    """gh-1845: a coloured run's summary reads ``\\x1b[31mFAILED\\x1b[0m
+    test_mod.py::\\x1b[1mtest_one``, so ``^FAILED`` matched nothing and the
+    helper refused every sabotage that had gone red for the right reason.
+    The name must come back clean too: one with escapes left inside it
+    would not equal the test the caller is checking for."""
+    cmd = _cmd() + coloured
+    _assert_colour_arrives(proj, cmd)
+    failed = _run(proj, "    return 1\n", "    return 0\n", cmd)
+    assert failed == ["test_mod.py::test_one"]
+
+
+def test_a_coloured_collection_error_is_still_refused(proj, coloured):
+    """The other reader of the same output. Under
+    ``--continue-on-collection-errors`` the run goes on to name a FAILED
+    test, and the one line saying a module never imported is
+    ``ImportError while importing test module`` -- coloured, at column 0.
+    A fix that let only ``FAILED`` through the colour would ACCEPT this
+    sabotage, which proves nothing about the module that did not import."""
+    (proj / "test_imp.py").write_text(
+        "from mod import untested\n\n\ndef test_untested():\n"
+        "    assert untested() == 2\n",
+        encoding="utf-8",
+    )
+    cmd = _cmd() + coloured
+    cmd += ["--continue-on-collection-errors", "test_imp.py"]
+    _assert_colour_arrives(proj, cmd)
+    with pytest.raises(sab.Refused, match="COLLECTION"):
+        _run(
+            proj,
+            "    return 1\n\n\ndef untested():\n",
+            "    return 0\n\n\ndef renamed():\n",
+            cmd,
+        )
