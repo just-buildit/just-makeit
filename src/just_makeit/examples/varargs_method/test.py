@@ -17,6 +17,7 @@ Also runnable directly: python3 examples/varargs_method/test.py
 """
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -106,12 +107,16 @@ def run(root: Path) -> None:
     assert "extern PyObject *" in et
     assert "va_filter_filter_configure(" in et
     assert "METH_VARARGS | METH_KEYWORDS" in et
-    assert "filter_configure_core.c" in et
+    # gh-1881: the whole file name, anchored. The C symbol's spelling,
+    # `va_filter_filter_configure_core.c`, names a file that does not exist
+    # and CONTAINS the bare name, so an unanchored `in` passed on the bug.
+    binding_name = re.compile(r"(?<![\w.])filter_configure_core\.c(?![\w.])")
+    assert binding_name.search(et), "the _ext.c names the wrong binding file"
 
     cmake_t = (
         proj / "native" / "src" / "filter" / "CMakeLists.txt"
     ).read_text(encoding="utf-8")
-    assert "filter_configure_core.c" in cmake_t
+    assert binding_name.search(cmake_t), cmake_t
 
     pyi_t = (proj / "src" / "va_filter" / "filter.pyi").read_text(
         encoding="utf-8"

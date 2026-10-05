@@ -169,7 +169,7 @@ EXEMPT_FUNCS: "dict[tuple[str, str], str]" = {
     ("_composer.py", "arg_scopes"): (
         "names the static binder whose locals gh-1512 checks, not a symbol"
     ),
-    ("_method.py", "_varargs_core_c"): (
+    ("_config.py", "varargs_core_c"): (
         "a FILE name (`<obj>_<method>_core.c`), which stays the object's"
     ),
 }
