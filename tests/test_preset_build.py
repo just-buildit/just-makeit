@@ -143,14 +143,11 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
 # No -Wno- flag: the unused `args` / `kwds`, the PyCFunction cast and the
 # `{NULL}` sentinel were once waved through as CPython's ABI shape (gh-1745),
 # and a downstream building its own C with -Wall -Wextra could not fix them in
-# generated files (gh-1856).
-
-# `-Wno-error=unused-parameter`: a scaffolded `_core.c` / `_core.h` stub body
-# is the author's to write and its placeholder parameters go unread until they
-# do (carved out as gh-1857). The CPython glue has no such excuse, so
-# `_glue_findings` fails the build on any unused parameter reported from an
-# `_ext*.c`.
-_WARN_FLAGS = "-Wall -Wextra -Werror -Wno-error=unused-parameter"
+# generated files (gh-1856). Nor for the author's own files: a scaffolded
+# `_core.c` / `_core.h` stub whose parameters wait for the author says so with
+# `(void)name;`, as every method stub always did (gh-1857), so a new project
+# builds clean before a line of it is written.
+_WARN_FLAGS = "-Wall -Wextra -Werror"
 
 _ENUM = '\n[[enum]]\nname = "mode"\nvalues = ["a", "b", "c"]\n'
 # gh-1748: an enum bound to C constants (gh-1450), which adds the
@@ -309,6 +306,30 @@ _WARN_SHAPES = {
         ["module", "m"],
         ["object", "disp", "--module", "m", *_OPTIONAL],
     ],
+    # gh-1857: the constructor stubs whose parameters reach the body unread
+    # -- an --array-arg beside the state fields create() does assign, init
+    # params in place of those fields (on both faces of the core), and a
+    # view's own constructor, appended to `_core.c` by `jm view`.
+    "array_arg_with_state": [["object", "st", "--array-arg", "h:float32"]],
+    "init_params_with_state": [
+        ["object", "si", "--init-param", "taps:float[]"]
+        + ["--init-param", "n:int:4"]
+    ],
+    "header_only_init_params": [
+        ["object", "hi", "--header-only", "--init-param", "n:int:4"]
+    ],
+    # ... and reset() with nothing to restore: an object declared without
+    # `no_state` and without a state field (no CLI spelling).
+    "no_state_fields": [
+        '\n[nf]\narg_type = "float"\nreturn_type = "float"\n',
+        ["apply"],
+    ],
+    "view_create_fn": [
+        ["module", "m"],
+        ["object", "vw", "--module", "m", "--state", "k:int:0"],
+        ["view", "vw", "Burst", "--module", "m", "--create-fn"]
+        + ["vw_create_burst", "--init-param", "n:int:2"],
+    ],
 }
 
 #: (shape, compiler family) -> the one error that shape is KNOWN to still
@@ -319,20 +340,77 @@ _WARN_SHAPES = {
 _WARN_KNOWN: "dict[tuple[str, str], str]" = {}
 
 
-def _glue_findings(output: str) -> "list[str]":
-    """Warning lines the build reports from a generated `*_ext*.c`.
+def find_compiler(name: str) -> "str | None":
+    """The path of compiler *name* on PATH, bare or versioned, else None.
 
-    `_WARN_FLAGS` demotes unused-parameter from an error (see there), so
-    this is what keeps it an error for the one place jm owns outright: the
-    glue a downstream project cannot edit without `jm apply` reverting it.
+    ``shutil.which(name)`` first; failing that, the newest ``<name>-<N>``
+    on PATH (gh-1861). Debian installs clang only as ``clang-18`` (its
+    ``clang`` is a separate package), so a bare lookup reported clang
+    missing on a box that has it, and the sweep's clang leg skipped there
+    -- which the skip gate rightly turns into a red ``make test``. Among
+    several versions the highest number wins, and among one version's
+    copies the first on PATH, which is the one a shell would run.
+
+    Only an absent compiler is None: then the caller's skip names what is
+    missing, and the skip gate holds it red, because installing a compiler
+    is a fix a maintainer can make.
+
+    `test_find_compiler_takes_the_newest_versioned_name` holds each of
+    these on a PATH it builds.
+
+    Examples
+    --------
+    >>> find_compiler("no-such-cc") is None
+    True
     """
-    return sorted(
-        {
-            line.strip()
-            for line in output.splitlines()
-            if "warning:" in line and re.search(r"_ext\w*\.c:\d", line)
-        }
-    )
+    exe = shutil.which(name)
+    if exe:
+        return exe
+    versioned = re.compile(re.escape(name) + r"-(\d+)")
+    best: "tuple[int, str] | None" = None
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            entries = os.listdir(d or os.curdir)
+        except OSError:
+            continue
+        for entry in entries:
+            m = versioned.fullmatch(entry)
+            hit = m and shutil.which(entry, path=d or os.curdir)
+            if hit and (best is None or int(m.group(1)) > best[0]):
+                best = (int(m.group(1)), hit)
+    return best[1] if best else None
+
+
+def test_find_compiler_takes_the_newest_versioned_name(tmp_path, monkeypatch):
+    """gh-1861: a box with only ``clang-NN`` still runs the clang leg.
+
+    Built on a PATH this test owns, so it holds on every box whatever
+    compilers it has. The decoys are what a Debian ``/usr/bin`` carries
+    beside ``clang-18``: other tools sharing the prefix, and a file that is
+    not executable.
+    """
+
+    def put(d, *names, mode=0o755):
+        d.mkdir(exist_ok=True)
+        for n in names:
+            (d / n).write_text("#!/bin/sh\n")
+            (d / n).chmod(mode)
+        return d
+
+    first = put(tmp_path / "a", "clang-17", "clang-18", "clang-format-19")
+    second = put(tmp_path / "b", "clang-9", "clang-18", "clang-tidy")
+    put(second, "clang-20", mode=0o644)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(first), str(second)]))
+    # Highest version, and of its two copies the one a shell would run.
+    assert find_compiler("clang") == str(first / "clang-18")
+
+    # A bare name wins outright: it is the compiler the box calls `clang`.
+    put(second, "clang")
+    assert find_compiler("clang") == str(second / "clang")
+
+    # Neither: the caller skips, naming what is missing.
+    monkeypatch.setenv("PATH", str(put(tmp_path / "c", "clang-format")))
+    assert find_compiler("clang") is None
 
 
 def _compiler_family(cc: str) -> str:
@@ -357,14 +435,16 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
     all. gh-1745: a dead `_enum_index` lookup (-Wunused-function), a bench
     sink stored and never read (-Wunused-but-set-variable), and
     `jm_bench.h`'s strncpy (-Wstringop-truncation) each failed a -Werror
-    build.
+    build. gh-1857: a constructor or reset() stub left the parameters it
+    does not read unsuppressed (-Wunused-parameter).
     """
     from _jmrun import run_cli
 
     if _SKIP:
         pytest.skip(_SKIP)
-    if not shutil.which(cc):
-        pytest.skip(f"{cc} not on PATH")
+    exe = find_compiler(cc)
+    if exe is None:
+        pytest.skip(f"{cc} not on PATH, bare or as {cc}-<N>")
 
     root = tmp_path / "wp"
     r = run_cli("new", "wp", str(root))
@@ -382,7 +462,7 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
     build = root / "build"
     cfg = subprocess.run(
         ["cmake", "-S", str(root), "-B", str(build)]
-        + [f"-DCMAKE_C_COMPILER={cc}", f"-DCMAKE_C_FLAGS={_WARN_FLAGS}"],
+        + [f"-DCMAKE_C_COMPILER={exe}", f"-DCMAKE_C_FLAGS={_WARN_FLAGS}"],
         capture_output=True,
         text=True,
         timeout=600,
@@ -416,12 +496,7 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
         f"{shape}: a one-field table sentinel (gh-1856); CPython documents"
         f" the full-width form:\n" + "\n".join(short)
     )
-    glue = _glue_findings(bld.stdout + bld.stderr)
-    assert not glue, (
-        f"{shape} with {cc}: warnings in the CPython glue (gh-1856):\n"
-        + "\n".join(glue)
-    )
-    known = _WARN_KNOWN.get((shape, _compiler_family(cc)))
+    known = _WARN_KNOWN.get((shape, _compiler_family(exe)))
     if known is None:
         assert bld.returncode == 0, (
             f"{shape} does not build warning-clean with {cc} "

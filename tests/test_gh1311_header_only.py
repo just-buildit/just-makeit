@@ -151,6 +151,22 @@ class TestTheHeaderCarriesDefinitions:
         assert "static inline static" not in h
         assert "static static" not in h
 
+    def test_the_create_body_is_on_its_own_line(self, tmp_path):
+        """The header's create() is laid out as `_core.c`'s is (gh-1857).
+
+        Its body slot was glued to the `return` after it, so the scaffold
+        read `obj->g = g;    return obj;` -- and once a stub's body grew a
+        `(void)name;` line, that line too.
+        """
+        root = _project(tmp_path / "p")
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        glued = [
+            ln
+            for ln in h.splitlines()
+            if "return obj;" in ln and ln.strip() != "return obj;"
+        ]
+        assert not glued, glued
+
 
 @pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
 class TestTheHeaderHasNoExternalLinkage:

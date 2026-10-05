@@ -22,6 +22,7 @@ from . import _config as C
 from . import _context as Ctx
 from . import _incpath as INC
 from . import _csym as CSYM
+from . import _ctorsig
 from ._init import _inject_decls_into_core_h
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
@@ -198,12 +199,15 @@ def run(
         # Idempotent: _append_to_core_c blindly appends, so only add the stub
         # when this constructor is not already defined (re-run / apply replay).
         if not re.search(r"\b" + re.escape(create_fn) + r"\s*\(", core_text):
+            # gh-1857: every parameter waits for the author, and says so.
+            unread = _ctorsig.suppress_unread(create_params)
             stub = (
                 f"{csym}_state_t *\n"
                 f"{create_fn}({create_params})\n"
                 f"{{\n"
                 f"    /* <<IMPLEMENT>>: build the state for the "
                 f"{class_name} view. */\n"
+                f"{unread + chr(10) if unread else ''}"
                 f"    return NULL;\n"
                 f"}}\n"
             )

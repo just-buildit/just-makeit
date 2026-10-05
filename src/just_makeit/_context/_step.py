@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from .. import _coerce, _ctorsig
 from .. import _types as T
 from .. import _csym as CSYM
@@ -262,13 +260,11 @@ def _header_example(
     # one. A local named for its parameter reads as the declaration it
     # mirrors; `jm status` reports (advisory) a call whose argument count
     # later stops matching the prototype. The locals come from the same
-    # `create_params` the prototype renders from, split by the same
-    # `_ctorsig.split_params` that counts them back.
+    # `create_params` the prototype renders from, read by
+    # `_ctorsig.param_decls` over the `split_params` that counts them back.
     decls: list[str] = []
     names: list[str] = []
-    for p in _ctorsig.split_params(ctx.get("create_params", "")):
-        m = re.fullmatch(r"(.*?[\s*])(\w+)", p)
-        ctype, pname = m.group(1).rstrip(), m.group(2)
+    for ctype, pname in _ctorsig.param_decls(ctx.get("create_params", "")):
         sep = "" if ctype.endswith("*") else " "
         zero = "NULL" if ctype.endswith("*") else "0"
         decls.append(f"{ctype}{sep}{pname} = {zero}; // your value")
