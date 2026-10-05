@@ -1072,6 +1072,10 @@ def fn_c_inline_stub(
     fn_name: str,
     params: list[tuple],
     return_type: str,
+    out_type: str = "",
+    result_fields: list[dict] | None = None,
+    max_results_param: str = "",
+    variable_output: bool = False,
     why: bool = False,
 ) -> str:
     """C body stub for embedding in ``_core.h`` as ``static inline``.
@@ -1080,15 +1084,22 @@ def fn_c_inline_stub(
     compile time.  No entry is written to ``_core.c``.  Intended for pure,
     stateless functions that benefit from inlining at every call site.
 
+    It is :func:`fn_c_stub` with a storage class, not a second rendering of
+    the signature: the binding calls an inline function exactly as it calls
+    any other, so the two must agree on every shape. A separate copy kept
+    the scalar shape only, and ``--inline --out-type`` scaffolded a stub with
+    no ``out`` that the binding called with one, which does not compile.
+
     Parameters
     ----------
     fn_name : str
         C function name (without module prefix).
     params : list of (name, type)
-        Scalar parameters only — array params and out_type are not supported
-        for inline functions.
+        The function's parameters, scalar or array.
     return_type : str
         C return type string (e.g. ``"int16_t"``, ``"float"``).
+    out_type, result_fields, max_results_param, variable_output, why
+        As for :func:`fn_c_decl`, whose signature this matches.
 
     Returns
     -------
@@ -1106,24 +1117,25 @@ def fn_c_inline_stub(
         return (float)0.0f; /* placeholder */
     }
     <BLANKLINE>
+    >>> print(fn_c_inline_stub("mag", [("x", "float[]")], "void", out_type="float"))
+    /* <<IMPLEMENT: mag>> */
+    static inline void
+    mag(const float *x, size_t x_len, float *out)
+    {
+        (void)x; (void)x_len; (void)out;
+    }
+    <BLANKLINE>
     """
-    ret_disp = return_type
-    ret_meta = _CTYPE_META.get(return_type)
-    c_parts, suppress = _fn_c_params(params)
-    c_parts, suppress = _with_why(c_parts, suppress, why)
-    c_ret_line = (
-        f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
-        if ret_meta
-        else ""
-    )
-    return (
-        f"/* <<IMPLEMENT: {fn_name}>> */\n"
-        f"static inline {ret_disp}\n"
-        f"{fn_name}({c_param_list(c_parts)})\n"
-        f"{{\n"
-        + (suppress + "\n" if suppress else "")
-        + (c_ret_line + "\n" if c_ret_line else "")
-        + "}\n"
+    return fn_c_stub(
+        fn_name,
+        params,
+        return_type,
+        out_type=out_type,
+        result_fields=result_fields,
+        max_results_param=max_results_param,
+        variable_output=variable_output,
+        why=why,
+        storage="static inline ",
     )
 
 
@@ -1196,12 +1208,14 @@ def fn_c_stub(
     max_results_param: str = "",
     variable_output: bool = False,
     why: bool = False,
+    storage: str = "",
 ) -> str:
     """C implementation stub for <module>_core.c (public, no _impl suffix).
 
     out_type, variable_output, result_fields and why extend the signature in
     the same way as fn_c_decl; see that function's docstring for the
-    semantics.
+    semantics. *storage* prefixes the return type (``"static inline "`` for
+    :func:`fn_c_inline_stub`); it is the only way the two stubs differ.
     """
     result_fields = result_fields or []
     if result_fields:
@@ -1225,7 +1239,7 @@ def fn_c_stub(
         )
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
-            f"size_t\n"
+            f"{storage}size_t\n"
             f"{fn_name}({c_param_list(c_parts)})\n"
             f"{{\n"
             + suppress_line
@@ -1275,7 +1289,7 @@ def fn_c_stub(
         )
         return (
             f"/* <<IMPLEMENT: {fn_name}>> */\n"
-            f"{_stub_ret}\n"
+            f"{storage}{_stub_ret}\n"
             f"{fn_name}({c_param_list(c_parts)})\n"
             f"{{\n"
             + (suppress + "\n" if suppress else "")
@@ -1293,7 +1307,7 @@ def fn_c_stub(
     )
     return (
         f"/* <<IMPLEMENT: {fn_name}>> */\n"
-        f"{ret_disp}\n"
+        f"{storage}{ret_disp}\n"
         f"{fn_name}({c_param_list(c_parts)})\n"
         f"{{\n"
         + (suppress + "\n" if suppress else "")
