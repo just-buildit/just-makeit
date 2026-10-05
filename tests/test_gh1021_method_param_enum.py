@@ -175,7 +175,7 @@ class TestSlotOrder:
 
     This is the defect gh-1021 actually turned on: gh-519 put the tables in
     `getset_def`, and `extra_methods_c` — where a method parameter's lookup
-    lands — is emitted BEFORE it. Asserted against the templates themselves
+    lands — is emitted BEFORE it. Asserted against the template itself
     so moving the slot back fails here rather than in a user's compiler.
     """
 
@@ -185,21 +185,10 @@ class TestSlotOrder:
         "getset_def",
     )
 
-    @pytest.mark.parametrize(
-        "text",
-        [
-            (
-                Path(_render.__file__).parent
-                / "templates"
-                / "c"
-                / "src"
-                / "component_ext.c"
-            ).read_text(encoding="utf-8"),
-            Path(_render.__file__).read_text(encoding="utf-8"),
-        ],
-        ids=["component_ext.c", "_render.py"],
-    )
-    def test_enum_tables_precedes_every_consumer(self, text):
+    def test_enum_tables_precedes_every_consumer(self):
+        # The one type section both a standalone and a module object render
+        # from (gh-1860), so there is no second copy to check.
+        text = _render.COMPONENT_TYPE_SECTION
         where = text.index("<<enum_tables>>")
         for slot in self.CONSUMERS:
             assert where < text.index(f"<<{slot}>>"), (

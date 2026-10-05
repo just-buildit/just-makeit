@@ -55,7 +55,41 @@ UMBRELLA_H = _load("c/inc/umbrella.h")
 CLANG_FORMAT = _load("c/.clang-format")
 # ── C source ─────────────────────────────────────────────────────────────────
 COMPONENT_CORE_C = _load("c/src/component_core.c")
-COMPONENT_EXT_C = _load("c/src/component_ext.c")
+
+
+def _splice(template: str, token: str, text: str) -> str:
+    """Replace the one ``/*<<token>>*/`` line in *template* with *text*.
+
+    Used only at import, to build one template out of another. Exactly one
+    match is required: a missing token would ship the composed file without
+    the spliced part, and a doubled one would ship it twice, and either one
+    renders and compiles without complaint.
+    """
+    marker = f"/*<<{token}>>*/\n"
+    if template.count(marker) != 1:
+        raise AssertionError(
+            f"_splice: expected exactly one {marker!r} line in the template"
+        )
+    return template.replace(marker, text)
+
+
+# The per-object type section (struct, lifecycle, PyMethodDef, PyTypeObject)
+# is ONE file that every object's binding reads. A standalone object's
+# `_ext.c` splices it in here, and a module object's section and fragment
+# render it through `render_type_section`. Two copies of it drifted (gh-1860).
+#
+# The two shapes differ only in where the object's `_core.h` include goes:
+# a standalone `_ext.c` includes it in the file head, before
+# `jm_array_arg_c`, and a module includes each object's header just after
+# that object's banner. The section carries a `<<type_core_include>>` slot
+# for it, which the standalone composition empties here and
+# `render_type_section` fills.
+COMPONENT_TYPE_SECTION = _load("c/src/component_type.c")
+COMPONENT_EXT_C = _splice(
+    _load("c/src/component_ext.c"),
+    "component_type_section",
+    COMPONENT_TYPE_SECTION.replace("/*<<type_core_include>>*/", ""),
+)
 COMPONENT_TEST_C = _load("c/src/component_test.c")
 COMPONENT_BENCH_C = _load("c/src/component_bench.c")
 NO_STEP_BENCH_C = _load("c/src/no_step_bench.c")
@@ -770,99 +804,47 @@ def render_component_test_c(ctx: dict) -> str:
 # ── Multi-object module support ──────────────────────────────────────────────
 #
 # A "module" is a single .so that hosts multiple Python types ("objects").
-# COMPONENT_TYPE_SECTION is the per-object block (struct + methods +
-# PyTypeObject) without file headers or PyMODINIT_FUNC.
-# MODULE_EXT_C is the full file: header + <<type_sections>> + PyMODINIT_FUNC.
-# render_module_ext_c() assembles the two from a list of component contexts.
+# COMPONENT_TYPE_SECTION (loaded above, shared with the standalone
+# `_ext.c`) is the per-object block (struct + methods + PyTypeObject) without
+# file headers or PyMODINIT_FUNC; `render_type_section` renders it for a
+# module. MODULE_EXT_C is the full file: header + one section per object +
+# PyMODINIT_FUNC. render_module_ext_c() assembles them from a list of
+# component contexts.
 #
 # <<module>> must be in the ctx passed to COMPONENT_TYPE_SECTION; it equals
 # the component name for standalone components, or the module name otherwise.
 
-COMPONENT_TYPE_SECTION = """\
-/* ======================================================== */
-/* <<Component>>Object — wraps <<csym>>_state_t *       */
-/* ======================================================== */
+# The `_core.h` include a module object's section opens with, after its banner.
+_TYPE_CORE_INCLUDE = (
+    '#include "<<inc_prefix>><<component>>/<<component>>_core.h"\n\n'
+)
 
-#include "<<inc_prefix>><<component>>/<<component>>_core.h"
 
-typedef struct {
-    PyObject_HEAD
-    <<csym>>_state_t *handle;
-<<extra_buf_fields>><<capsule_owner_fields>>} <<Component>>Object;
+def render_type_section(ctx: dict) -> str:
+    """Render one module object's type section from ``COMPONENT_TYPE_SECTION``.
 
-static void
-<<ComponentW>>_dealloc(<<Component>>Object *self)
-{
-<<destroy_dealloc_call>><<extra_buf_free>><<capsule_owner_free>>    Py_TYPE(self)->tp_free((PyObject *)self);
-}
+    The section is the same file a standalone object's ``_ext.c`` splices in
+    at import; what a module adds is the object's own ``_core.h`` include,
+    placed after the object's banner (a module's file head includes only the
+    module's headers, never each object's). Every module path -- the
+    aggregated ``_ext.c`` and the per-object fragment -- renders the section
+    through here, so none can forget the include.
 
-static PyObject *
-<<ComponentW>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
-{
-    /* tp_new allocates only; __init__ reads the arguments. */
-    (void)args;
-    (void)kwds;
-    <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
-    if (self)
-        self->handle = NULL;
-    return (PyObject *)self;
-}
+    Parameters
+    ----------
+    ctx : dict
+        The object's component context, as for ``COMPONENT_EXT_C``.
 
-static int
-<<ComponentW>>_init(<<Component>>Object *self, PyObject *args, PyObject *kwds)
-{
-<<init_parse_block>><<array_args_parse_block>><<create_line>><<array_args_decref>><<create_fail_block>><<extra_buf_alloc>><<init_warn_block>>    return 0;
-}
+    Returns
+    -------
+    str
+        The rendered section, ending in the ``PyTypeObject``'s ``};``.
+    """
+    return render(
+        COMPONENT_TYPE_SECTION,
+        {**ctx, "type_core_include": _TYPE_CORE_INCLUDE},
+    )
 
-<<builtin_reset_c>>
-
-<<step_ext_fn>>
-
-<<steps_ext_fn>>
-
-<<enum_tables>>
-<<getter_setter_methods_c>>
-<<extra_methods_c>>
-<<getset_def>>
-static PyObject *
-<<ComponentW>>_destroy(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
-{
-<<destroy_method_body>>}
-
-static PyObject *
-<<ComponentW>>_enter(<<Component>>Object *self, PyObject *Py_UNUSED(ignored))
-{
-    Py_INCREF(self);
-    return (PyObject *)self;
-}
-
-static PyObject *
-<<ComponentW>>_exit(<<Component>>Object *self, PyObject *args)
-{
-    (void)args;
-<<destroy_exit_body>>}
-
-<<stream_iter_block>>static PyMethodDef <<ComponentW>>_methods[] = {
-<<builtin_reset_pmd>><<step_pymethoddef_entry>><<steps_def_entry>>
-<<getter_setter_pymethoddef>><<extra_methods_pymethoddef>><<stream_def_entry>><<destroy_pymethoddef>>    {"__enter__", (PyCFunction)<<ComponentW>>_enter,   METH_NOARGS,
-     <<cm_enter_doc>>},
-    {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS,
-     <<cm_exit_doc>>},
-    {NULL, NULL, 0, NULL}
-};
-
-static PyTypeObject <<ComponentW>>Type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "<<module_tp>>.<<Component>>",
-    .tp_basicsize = sizeof(<<Component>>Object),
-    .tp_dealloc   = (destructor)<<ComponentW>>_dealloc,
-    .tp_flags     = Py_TPFLAGS_DEFAULT,
-    .tp_doc       = <<tp_doc>>,
-    .tp_methods   = <<ComponentW>>_methods,<<tp_getset_decl>><<stream_tp_iter>><<stream_tp_async>>
-    .tp_new       = <<ComponentW>>_new,
-    .tp_init      = (initproc)<<ComponentW>>_init,
-};
-"""
 
 MODULE_EXT_C_HEADER = """\
 /*
@@ -2415,7 +2397,7 @@ def render_module_ext_c(
         parts.append(fn_ctx["function_wrappers"] + "\n")
 
     for ctx in comp_ctxs:
-        parts.append(render(COMPONENT_TYPE_SECTION, ctx))
+        parts.append(render_type_section(ctx))
 
     type_ready_lines: list[str] = []
     add_object_calls_lines: list[str] = []
@@ -2650,7 +2632,7 @@ def render_module_ext_fragment(comp_ctx: dict) -> str:
     if _kind == "generated":
         _fname = f"{ctx['module']}_ext_{ctx['frag_id']}.c"
         header = owned_token(_fname) + "\n" + header
-    return header + render(COMPONENT_TYPE_SECTION, ctx)
+    return header + render_type_section(ctx)
 
 
 def render_module_ext_aggregator(
