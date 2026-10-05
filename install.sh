@@ -79,16 +79,27 @@ _spin() {
 
 # ── 1. Python version check ───────────────────────────────────────────────────
 
+# The oldest Python just-makeit supports: pyproject.toml's `requires-python`.
+# This script usually runs from a curl pipe, with no pyproject.toml to read,
+# so the floor is written here once and every check and message below reads
+# it. tests/test_gh1916_install_sh_floor.py runs this script at the floor and
+# just below it, so the two cannot drift apart (gh-1916).
+PY_FLOOR="3.9"
+PY_FLOOR_MAJOR="${PY_FLOOR%%.*}"
+PY_FLOOR_MINOR="${PY_FLOOR#*.}"
+
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
-    die "Python not found. Install Python 3.11+ and re-run."
+    die "Python not found. Install Python ${PY_FLOOR}+ and re-run."
 fi
 
 PY_VERSION=$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 PY_MINOR=$("$PYTHON"   -c 'import sys; print(sys.version_info[1])')
 PY_MAJOR=$("$PYTHON"   -c 'import sys; print(sys.version_info[0])')
 
-if [[ "$PY_MAJOR" -lt 3 || ("$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 11) ]]; then
-    die "Python $PY_VERSION found, but 3.11+ is required."
+if [[ "$PY_MAJOR" -lt "$PY_FLOOR_MAJOR" \
+        || ("$PY_MAJOR" -eq "$PY_FLOOR_MAJOR" \
+            && "$PY_MINOR" -lt "$PY_FLOOR_MINOR") ]]; then
+    die "Python $PY_VERSION found, but ${PY_FLOOR}+ is required."
 fi
 
 ok "Python $PY_VERSION"
