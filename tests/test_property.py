@@ -77,7 +77,7 @@ class TestPropertyUpdatesExtC:
         ext = (project / "native" / "src" / "buf" / "buf_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "{ NULL }" in ext
+        assert "{NULL, NULL, NULL, NULL, NULL}" in ext
 
     def test_ext_c_multiple_properties(self, project):
         property_run(project, "buf", "dropped", None, "size_t", False)

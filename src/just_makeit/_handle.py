@@ -1693,8 +1693,15 @@ static PyObject *
         else:
             _lines = [f"{_face.doc_call} -> {_face.ann}"]
         _ml = _build_ml_doc(_lines)
+        # A METH_KEYWORDS function is a PyCFunctionWithKeywords: a direct
+        # `(PyCFunction)` cast is -Wcast-function-type (gh-1856).
+        _cast = (
+            "(PyCFunction)(void (*)(void))"
+            if "METH_KEYWORDS" in flags
+            else "(PyCFunction)"
+        )
         method_rows.append(
-            f'    {{"{m["name"]}", (PyCFunction){tname}_{m["name"]}, '
+            f'    {{"{m["name"]}", {_cast}{tname}_{m["name"]}, '
             f"{flags},\n     {_ml}}},"
         )
     method_rows.append(

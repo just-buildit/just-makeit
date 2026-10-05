@@ -130,7 +130,7 @@ static PyObject *
 static PyMethodDef {iter_t}_methods[] = {{
     {{"_anext_blocking", (PyCFunction){iter_t}_anext_blocking, METH_NOARGS,
      NULL}},
-    {{NULL}}
+    {{NULL, NULL, 0, NULL}}
 }};
 
 static PyObject *

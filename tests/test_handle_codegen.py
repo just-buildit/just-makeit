@@ -1122,9 +1122,11 @@ class TestMethodKwargs:
         # the method table registers keywords so on= works. gh-1113 replaced
         # the trailing NULL with a real `ml_doc`, so the assertion stops at
         # the flags -- which is what this test was ever about.
+        # gh-1856: a three-argument PyCFunctionWithKeywords cast straight to
+        # PyCFunction is -Wcast-function-type; it goes through `void (*)(void)`.
         assert (
-            '{"track_clipping", (PyCFunction)W_track_clipping, '
-            "METH_VARARGS | METH_KEYWORDS," in s
+            '{"track_clipping", (PyCFunction)(void (*)(void))'
+            "W_track_clipping, METH_VARARGS | METH_KEYWORDS," in s
         )
 
 

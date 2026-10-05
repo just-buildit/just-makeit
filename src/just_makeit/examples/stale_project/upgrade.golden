@@ -27,8 +27,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 12 identical, 6 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_shape, fn:Fir_steps, table:PyMethodDef
+        units: 10 identical, 8 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_shape, fn:Fir_steps, +2 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -126,8 +126,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 12 identical, 6 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_shape, fn:Fir_steps, table:PyMethodDef
+        units: 10 identical, 8 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_shape, fn:Fir_steps, +2 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -240,8 +240,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 12 identical, 6 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_shape, fn:Fir_steps, table:PyMethodDef
+        units: 10 identical, 8 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_shape, fn:Fir_steps, +2 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -369,8 +369,10 @@ adopt --check — would `fragment = "generated"` be safe?
         differs:   fn:Fir_dealloc
         differs:   fn:Fir_decimate
         differs:   fn:Fir_init
+        adds only: fn:Fir_new
         differs:   fn:Fir_shape
         differs:   fn:Fir_steps
+        adds only: table:PyGetSetDef
         adds only: table:PyMethodDef
 
   0 of 1 object(s) could flip

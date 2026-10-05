@@ -799,6 +799,9 @@ static void
 static PyObject *
 <<ComponentW>>_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
+    /* tp_new allocates only; __init__ reads the arguments. */
+    (void)args;
+    (void)kwds;
     <<Component>>Object *self = (<<Component>>Object *)type->tp_alloc(type, 0);
     if (self)
         self->handle = NULL;
@@ -845,7 +848,7 @@ static PyObject *
      <<cm_enter_doc>>},
     {"__exit__",  (PyCFunction)<<ComponentW>>_exit,    METH_VARARGS,
      <<cm_exit_doc>>},
-    {NULL}
+    {NULL, NULL, 0, NULL}
 };
 
 static PyTypeObject <<ComponentW>>Type = {
