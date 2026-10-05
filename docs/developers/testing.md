@@ -183,6 +183,15 @@ list; in the isolated env it would only ever skip (gh-1442). `make test` also
 runs the `stale_project` example, whose golden records what an upgrading
 project sees.
 
+cmake-lint is the exception to "visible in the project env". cmakelang runs
+under its own pinned Python whatever Python the suite uses, because the
+newest Python it works on is older than the newest one jm is tested on
+(gh-1930). The Makefile's `CMAKE_LINT` is that command, and the recipe hands it
+to the tests. A test that lints generated CMake therefore fails when run
+outside make: run it with
+`make test-examples PROJECT_ENV_TESTS=tests/test_cmake_lint.py`, or narrow
+the examples with `EXAMPLES_K=`.
+
 ### Skips are failures
 
 `tests/conftest.py` fails the run on any skip whose reason is not in

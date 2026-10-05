@@ -11,27 +11,17 @@ Skip conditions (checked once, applied to all examples):
 """
 
 import importlib.util
-import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
+import _cmakelint
 import _downstream_gates
 from just_makeit._build import run_generated_pytest
 from test_gh1287_nested_block_comment import (
     assert_no_nested_block_comments,
 )
-
-# Formatting rules are cmake-format's responsibility.
-_CMAKE_LINT_DISABLED = ["C0301", "C0307"]
-# gh-1368: C0327 (line ending) is not checked on Windows. There an example's
-# OWN CMakeLists -- written by its test with Path.write_text, as a user's
-# would be -- is CRLF, which is correct for that platform. jm's generated
-# files are held to LF separately, in source, by test_gh1368_lf_writes.py.
-if os.name == "nt":
-    _CMAKE_LINT_DISABLED.append("C0327")
 
 EXAMPLES_DIR = (
     Path(__file__).parent.parent / "src" / "just_makeit" / "examples"
@@ -98,7 +88,9 @@ def test_example(example_dir, tmp_path):
         pytest.skip(_SKIP)
     run = _load_run(example_dir)
     run(tmp_path)
-    _cmake_lint_check(tmp_path)
+    # gh-1930: through the Makefile's CMAKE_LINT -- cmakelang under its
+    # pinned Python -- and a crash is reported as one, not as findings.
+    _cmakelint.check(tmp_path.rglob("CMakeLists.txt"), "generated project")
     # gh-1287: the widest corpus jm has for a property of the C it renders.
     # The scanner lives with its own sabotage tests next to the bug it was
     # written for; this is the second corpus it runs over, not a second
@@ -132,24 +124,3 @@ def _generated_pytest_check(root: Path) -> None:
             f"the generated project at {proj.relative_to(root)} does not pass"
             " its own pytest suite"
         )
-
-
-def _cmake_lint_check(root: Path) -> None:
-    """Run cmake-lint on all CMakeLists.txt under *root*, skip if not on PATH."""
-    if not shutil.which("cmake-lint"):
-        return
-    cmake_files = list(root.rglob("CMakeLists.txt"))
-    if not cmake_files:
-        return
-    r = subprocess.run(
-        ["cmake-lint", "--disabled-codes"]
-        + _CMAKE_LINT_DISABLED
-        + ["--"]
-        + [str(f) for f in cmake_files],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert r.returncode == 0, (
-        f"cmake-lint found violations in generated project:\n{r.stdout}"
-    )

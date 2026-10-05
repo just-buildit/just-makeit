@@ -151,7 +151,30 @@ FORMAT_TOOLS = ruff-format ruff mdformat clang-format cmake-format \
                assemble-examples
 
 CLANG_FORMAT = $(DEV_RUN) clang-format
-CMAKE_FORMAT = $(DEV_RUN) cmake-format
+
+# cmakelang -- cmake-format here, cmake-lint in the tests -- runs under a
+# PINNED interpreter, never the Python under test (gh-1930). Its last release
+# (2020) builds its lexer from an `re.Scanner` with capturing groups, which
+# CPython 3.15 refuses, so under 3.15 every entry point dies on its first
+# file. 3.14 still accepts them.
+#
+#   --no-project  keeps the project env out: a `--python` in project mode
+#                 REPLACES .venv with that interpreter's.
+#   --python      wins over the UV_PYTHON a CI leg's setup-uv exports.
+#   [yaml]        cmake-format reads .cmake-format.yaml only with it; the dev
+#                 env had pyyaml only by accident, through pre-commit.
+#
+# The version is the dev group's pin, read from pyproject.toml, never restated
+# here. The tests get CMAKE_LINT from the recipe that runs them
+# (PYTEST_EXAMPLES), so they run this command, not a second spelling of it.
+# tests/test_gh1930_cmakelang_pinned_python.py holds all of it.
+CMAKELANG_PYTHON  = 3.14
+CMAKELANG_VERSION = $(shell sed -n \
+    's/^[[:space:]]*"cmakelang==\([^"]*\)".*/\1/p' pyproject.toml)
+CMAKELANG         = $(UV) run -q --no-project --python $(CMAKELANG_PYTHON) \
+                    --with "cmakelang[yaml]==$(CMAKELANG_VERSION)"
+CMAKE_FORMAT      = $(CMAKELANG) cmake-format
+CMAKE_LINT        = $(CMAKELANG) cmake-lint
 
 LINT_ruff        = $(RUFF) check --fix --unsafe-fixes $(RUFF_PATHS)
 LINT_ruff-format = $(RUFF) format $(RUFF_PATHS)
@@ -220,7 +243,9 @@ endef
 #   PYTEST_EXAMPLES example builds — deliberately WITHOUT `--no-project`, since
 #                   these need `just-makeit` itself importable from the project
 #                   env (just-buildit arrives transitively as its build dep), so
-#                   its runtime deps arrive with it.
+#                   its runtime deps arrive with it. Handed CMAKE_LINT, the
+#                   one cmake-lint command, as consumer-smoke is handed JM
+#                   (gh-1930): the tests' helper refuses to run without it.
 # pyyaml: gh-851's pre-publish artifact gate READS `.github/workflows/`,
 # and skipped itself without it -- one of the green skips gh-1442 turned
 # up. It belongs here rather than in the dev group: this is test
@@ -232,7 +257,7 @@ PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit \
                   --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
-PYTEST_EXAMPLES = $(UV) run $(PYTEST_DEPS) pytest
+PYTEST_EXAMPLES = CMAKE_LINT='$(CMAKE_LINT)' $(UV) run $(PYTEST_DEPS) pytest
 
 # pytest-xdist. Measured on an 8-core box, 2026-08-02: the unit suite went
 # 299s -> 134s and coverage 419s -> 136s, so instrumentation is nearly free
