@@ -27,9 +27,10 @@ C/Python content, naming regressions.
 real compile.
 
 **Auto-updated?** No. When you add a flag or change template output, you must
-add or update assertions here. The `test_no_unreplaced_placeholders` test is
-the only fully automatic safety net — it rejects any `<<…>>` that survived
-template rendering.
+add or update assertions here. Two safety nets are automatic: the
+`test_no_unreplaced_placeholders` tests reject any `<<…>>` that survived
+template rendering, and `_init._write` — the one function every generator
+writes a file through — refuses to write a bare `<<slot>>` at all (gh-1199).
 
 ### Layer 2 — TOML round-trip (`test_toml_roundtrip.py`)
 
@@ -38,9 +39,8 @@ emitted commands into a fresh directory, compare the two `just-makeit.toml`
 files byte-for-byte.
 
 **What they catch:** flags that are stored in TOML but not re-emitted by
-`script` (or vice versa). A new flag that is wired into `_config.py` and
-`_script.py` is automatically exercised here — but only if a corresponding
-`TestXxxRoundTrip` test actually exercises that flag.
+`script` (or vice versa) — for a flag a `TestXxxRoundTrip` test actually
+exercises, and only in the file the comparison reads.
 
 **What they miss:** flags that were never added to `_config.py` in the first
 place (can't round-trip what was never stored).
@@ -50,14 +50,16 @@ the flag. Adding a new flag requires a new `test_<flag>_round_trip` method.
 
 ### Layer 3 — CLI dispatch (`test_cli.py`)
 
-Subprocess calls to the real CLI entry point. Tests every command, flag
-spelling, error message, and exit code.
+In-process calls to `_cli.main()` through `tests/_jmrun.run_cli`, which
+isolates argv, cwd and `SystemExit` per call (gh-1374). Tests every command,
+flag spelling, error message, and exit code.
 
 **What they catch:** CLI parsing bugs, flag name typos, wrong error messages.
 
-**Auto-updated?** No. New flags need new test methods. The help-text tests
-(`test_help_command`) are a weak canary — they assert known commands appear
-but do not assert that new flags appear.
+**Auto-updated?** Partly. New flags need new test methods here, but
+documenting them does not: `tests/test_cli_flag_docs.py` derives the flag set
+from the parsers and fails on any flag missing from `jm --help` or from the
+reference docs.
 
 ### Layer 4 — Example end-to-end (`test_examples.py`, parametrized)
 
@@ -75,9 +77,11 @@ compiles and runs correctly.
 `test_all_examples_have_test_py` enforces that every example has one. The
 _content_ of `test.py` is written by hand.
 
-**Skip conditions:** cmake, a C compiler, and numpy must be on PATH. In CI
-(`jm-install-deps` runs before the test suite) these are always present, so
-examples never skip in CI.
+**Runs under:** `make test-examples`, not `make test` (see
+[Running the suite](#running-the-suite)). cmake, a C compiler and numpy must be
+available; without one the test skips, and a skip the suite has not agreed to
+fails the run (see [Skips are failures](#skips-are-failures)) — locally as
+well as in CI.
 
 ### Layer 5 — Framework-specific behaviour (`test_pytest_framework.py`)
 
@@ -99,7 +103,7 @@ ______________________________________________________________________
 | New flag added to CLI but not to `_config.py`             | Flag silently dropped on `jm script` replay | Add a round-trip test                                                                  |
 | New flag added but Makefile/template content not asserted | Wrong content ships                         | Add a content assertion in the relevant `test_*.py`                                    |
 | `make test` runner choice                                 | Shipped wrong once (v0.11.0)                | `TestMakeTestRunner` in `test_new.py` now covers both Makefile variants and both modes |
-| Help text completeness                                    | New flags invisible in `--help`             | `test_help_mentions_flag` in `test_cli.py` (parametrized, covers every flag)           |
+| Help text completeness                                    | New flags invisible in `--help`             | `tests/test_cli_flag_docs.py`, derived from the parsers                                |
 | Windows-specific template paths                           | Wrong on Windows only                       | `Examples (windows-latest, clang-cl)` in `ci.yml`, which feeds `CI passed` (gh-1368)   |
 | `--impl` / `--replace`                                    | Intentionally not stored in TOML            | Tested in `TestImplCLI` in `test_cli.py`                                               |
 
@@ -118,15 +122,19 @@ ______________________________________________________________________
 
 ### Adding a new example
 
-1. Create `src/just_makeit/examples/<name>/assemble.py` and `README.md`.
+1. Create `src/just_makeit/examples/<name>/.steps/` and `assemble.py`. The
+    `README.md` is generated from `.steps/` by `assemble.py`, never written by
+    hand (`make format` and the commit hook re-assemble it).
 1. Create `src/just_makeit/examples/<name>/test.py` with `run(root: Path)`.
     The parametrized runner in `test_examples.py` picks it up automatically.
 1. `test_all_examples_have_test_py` will fail until `test.py` exists — this
     is intentional.
+1. Add the example to `GALLERY` in `scripts/copy_examples.py` and to the
+    `nav:` in `mkdocs.yml`; the docs build fails until both agree.
 
 ### Changing a template
 
-1. Run the full suite (`uv run pytest tests/ -v`).
+1. Run the full suite (`make test`, then `make test-examples`).
 1. The `test_no_unreplaced_placeholders` test catches stray `<<…>>`.
 1. Add or update content assertions for any new/changed output strings.
 
@@ -145,16 +153,46 @@ ______________________________________________________________________
 
 ## Running the suite
 
+Through `make`, which is the single source of truth for how the suite runs
+(`make help` lists the targets; `make -n <target>` shows the command):
+
 ```sh
-# All tests (fast — no cmake required for most)
-uv run pytest tests/ -v
-
-# Only the make-test regression
-uv run pytest tests/test_new.py::TestMakeTestRunner -v
-
-# Only example end-to-end (requires cmake + C compiler + numpy)
-uv run pytest tests/test_examples.py -v
-
-# One specific example
-uv run pytest tests/test_examples.py -k running_stats -v
+make test               # the default suite
+make test-fast          # stops at the first failure; not test's file set
+make test-examples      # every example end to end, plus PROJECT_ENV_TESTS
+make test-examples EXAMPLES_K=running_stats   # narrow with pytest -k
+make test-all           # both
 ```
+
+For one test node, activate the project venv and call pytest on it:
+
+```sh
+source .venv/bin/activate
+pytest tests/test_new.py::TestMakeTestRunner
+```
+
+### Two environments
+
+`make test` runs pytest under `uv run --no-project`, so the suite exercises the
+installed-package path, and it ignores every file in the Makefile's
+`PROJECT_ENV_TESTS`. Those are the tests that need the project's dev tools
+(ruff, mypy, clang-format, cmake-lint, …) or a real build — the examples among
+them — and `make test-examples` runs them in the project env, where those tools
+are visible. A test that asks the environment for a dev tool belongs on that
+list; in the isolated env it would only ever skip (gh-1442). `make test` also
+runs the `stale_project` example, whose golden records what an upgrading
+project sees.
+
+### Skips are failures
+
+`tests/conftest.py` fails the run on any skip whose reason is not in
+`_ALLOWED_SKIPS` — a short list of things no maintainer can fix (missing
+hardware, a platform's linker). A missing tool is not on it: install the tool,
+or move the test onto `PROJECT_ENV_TESTS`.
+
+### Proving a new test
+
+A test is proven by sabotaging the fix it guards and watching it go red,
+through `scripts/sabotage.py` rather than a hand edit — it refuses a sabotage
+that proves nothing and restores the file afterwards. Usage and the reasons
+for each refusal: `CLAUDE.md`, "Proving a gate", and the script's docstring.

@@ -34,6 +34,15 @@ them. If your project uses subdirectories (e.g. a `c/` subdirectory for the
 library), put `cmake/` there — CMake resolves the path relative to the
 `CMakeLists.txt` that calls `configure_file`.
 
+**In a jm project these are jm's files.** `cmake/<pkg>.pc.in` and
+`cmake/<pkg>-config.cmake.in` are re-rendered whole by `jm apply` while their
+first line is `# jm:generated` (`_createonly.RULES`; deleting that line makes
+the template yours), and so is the root `CMakeLists.txt` from
+`# ── Install` down to `# ── End install` (gh-1589) — put install rules of your
+own below that block. A project scaffolded before gh-1589 has templates
+without the token; `jm status` reports them, and `jm adopt --packaging` hands
+them to jm.
+
 ______________________________________________________________________
 
 ## The pkg-config Template (`mylib.pc.in`)
@@ -80,6 +89,15 @@ Cflags: -I${includedir}
     usually belong here, not in `Libs` -- unless a public header calls into
     them inline. jm's headers do (`step()` is `static inline`), so jm puts
     `-lm` in `Libs` (gh-1452).
+
+**What jm generates.** A manifest dependency with a `.pc` (a `pkg_modules`
+entry, or a `find_packages` entry naming its `pkg_config`) goes in
+`Requires.private` — its `Cflags` always apply (a jm header may include the
+dependency's), its `Libs` only under `--static`. One without a `.pc` goes in
+`Libs.private`, as the `libs_private` its entry states. The project's
+`public_link_libs` and `public_defines` — what the installed headers need of
+every consumer — go on `Libs:` and `Cflags:` (gh-1573, gh-1576, gh-1599; the
+mapping is in `_apply.py`).
 
 ### Common Pitfalls
 
@@ -283,6 +301,16 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mylib.pc
 )
 ```
 
+jm's root template differs from this sample in two ways. It installs the
+whole header tree, `install(DIRECTORY native/inc/ ...)`, with a
+`PATTERN "pyex_common.h" EXCLUDE` so the Python-only header stays behind. And
+it tags every rule with an install component (gh-1601): the shared library a
+program loads is `COMPONENT runtime`; everything a build needs -- headers, the
+static library, the unversioned `lib<pkg>.so` link (`NAMELINK_COMPONENT dev`),
+the CMake package and the `.pc` -- is `dev`. `cmake --install --component`
+with `runtime` or `dev` installs one half, which is what a distribution's
+split packages are built from; a plain `cmake --install` installs both.
+
 ### Version Compatibility Modes
 
 `write_basic_package_version_file` takes a `COMPATIBILITY` argument:
@@ -317,23 +345,32 @@ ______________________________________________________________________
 
 ## What Gets Installed Where
 
-After `cmake --install build --prefix /usr/local`:
+A jm project `<pkg>` with one object `<comp>`, after
+`cmake --install build --prefix <prefix>` (on a configure whose
+`CMAKE_INSTALL_LIBDIR` is `lib`; see the Debian note below):
 
 ```
-/usr/local/
-├── include/
-│   └── mylib.h
-├── lib/
-│   ├── libmylib.so
-│   ├── libmylib.a
-│   ├── cmake/mylib/
-│   │   ├── mylibConfig.cmake
-│   │   ├── mylibConfigVersion.cmake
-│   │   ├── mylibTargets.cmake
-│   │   └── mylibTargets-release.cmake
-│   └── pkgconfig/
-│       └── mylib.pc
+<prefix>/
+├── include/<pkg>/
+│   ├── <pkg>.h                         # the umbrella header
+│   ├── clib_common.h
+│   └── <comp>/<comp>_core.h
+└── lib/
+    ├── lib<pkg>.so -> lib<pkg>.so.0.1  # the namelink (dev)
+    ├── lib<pkg>.so.0.1 -> lib<pkg>.so.0.1.0
+    ├── lib<pkg>.so.0.1.0
+    ├── lib<pkg>.a
+    ├── cmake/<pkg>/
+    │   ├── <pkg>-config.cmake
+    │   ├── <pkg>-config-version.cmake
+    │   ├── <pkg>-targets.cmake
+    │   └── <pkg>-targets-release.cmake
+    └── pkgconfig/
+        └── <pkg>.pc                    # Libs: -L${libdir} -l<pkg> -lm
 ```
+
+The `0.1` in the library's names is the soname rule above, for a project at
+version `0.1.0`.
 
 ______________________________________________________________________
 
@@ -397,8 +434,11 @@ Or at install/configure time, pass `--prefix` or `-DCMAKE_INSTALL_PREFIX`.
 
 ### Debian / Ubuntu (multiarch)
 
-`GNUInstallDirs` sets `CMAKE_INSTALL_LIBDIR` to `lib/x86_64-linux-gnu`
-on Debian/Ubuntu. This is correct — pkg-config scans that path
+`GNUInstallDirs` sets `CMAKE_INSTALL_LIBDIR` to `lib/<multiarch>` (e.g.
+`lib/x86_64-linux-gnu`) on Debian/Ubuntu when `CMAKE_INSTALL_PREFIX` is `/usr`
+at configure time, and to `lib` otherwise. The value is fixed at configure
+time, so `cmake --install --prefix /usr` does not change it: pass the prefix
+when configuring if you want the multiarch dir. pkg-config scans that path
 automatically. Do not hardcode `lib`; always use `${CMAKE_INSTALL_LIBDIR}`.
 
 The smoke test above should probe both paths:

@@ -38,16 +38,14 @@ ______________________________________________________________________
 ## Building and serving
 
 ```sh
-# one-off build into site/
-uv run --group dev zensical build --clean
-
-# live-reload dev server (hot-reload on save)
-uv run --group dev zensical serve
+make docs         # one-off strict build into site/
+make docs-serve   # build and serve with live reload
+make docs-check   # the merge gate: strict build + tests/test_docs.py
 ```
 
-Or just `make docs` / `make docs-serve` — the Makefile targets set
-`ZENSICAL_RUN = uv run --group dev` and run `scripts/copy_examples.py` first to
-pull example READMEs into `docs/examples/`.
+Run them through `make`: `make docs` first runs `scripts/copy_examples.py` to
+generate `docs/examples/`, then the strict build, then copies `install.sh`
+into `site/` — `make -n docs` prints the exact commands.
 
 ## Dev dependencies
 
@@ -62,12 +60,9 @@ dev-dep floor stays resolvable.
 
 ## CI
 
-`.github/workflows/docs.yml` runs:
-
-```yaml
-- name: Build docs site
-  run: uv run --group dev zensical build --clean
-```
+`ci.yml`'s `docs` job runs `make docs-check` (the strict build plus
+`tests/test_docs.py`) and feeds `CI passed`, so a broken build cannot merge.
+`docs.yml` runs `make docs` on a push to `main` and deploys the result.
 
 No `PYTHONPATH` needed — just-makeit is installed editably into the venv so
 `just_makeit._termynal_fence` is importable like any other package module.
@@ -316,6 +311,10 @@ ______________________________________________________________________
 Fenced blocks with ```` ```termynal ```` (or `~~~termynal`) are rendered as animated
 terminal widgets by `src/just_makeit/_termynal_fence.py`.
 
+The token `{jm_version}` anywhere in a block is replaced with the installed
+`just_makeit.__version__` at build time, so an install transcript never shows
+a hand-typed version going stale.
+
 ### Line types
 
 Prefixes are written quoted below because the **trailing space is part of the
@@ -366,8 +365,9 @@ $ cd my_dsp && make && make test
 
 - The widget auto-plays when it scrolls into view (via `IntersectionObserver`
     inside `termynal.js`).
-- `data-ty-typeDelay="40"` controls ms per character (typed lines).
-- `data-ty-lineDelay="400"` controls the pause between lines.
+- `data-ty-typeDelay` controls ms per character (typed lines); the fence
+    emits `65`.
+- `data-ty-lineDelay` controls the pause between lines; the fence emits `35`.
 - `data-ty-macos` adds the macOS traffic-light button chrome above the terminal.
 
 ### Why `jm-termy` and not `termy`
@@ -418,6 +418,7 @@ ______________________________________________________________________
 1. If it lives under a section with an `index.md`, the section page is that
     `index.md` — do not create a duplicate.
 1. Run `make docs-serve` and check the sidebar.
+1. Run `make docs-check` — the strict build and docs tests CI gates on.
 
 Pages not in `nav` build successfully but are unreachable from navigation; pages
 in `nav` without a matching file fail the build.
@@ -435,6 +436,8 @@ ______________________________________________________________________
 | `docs/assets/mermaid-zoom.css`    | hand-written       | Click-to-zoom overlay for mermaid diagrams                          |
 | `docs/assets/mermaid-zoom.js`     | hand-written       | Zoom overlay logic                                                  |
 | `docs/assets/logo.svg`            | hand-drawn         | Site logo and favicon                                               |
+| `docs/assets/logo-wordmark.png`   | hand-drawn         | Header image of `README.md` and `docs/index.md` (by raw GitHub URL) |
+| `docs/assets/logo-wordmark.svg`   | hand-drawn         | Vector form of the wordmark; nothing references it                  |
 
 To update `termynal.css` / `termynal.js` to a newer `termynal.py` release:
 

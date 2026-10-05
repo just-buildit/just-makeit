@@ -17,10 +17,10 @@ ______________________________________________________________________
 - [ ] All intended changes are merged to `main`, and CI on `main` is green
 - [ ] `make test` passes locally
 - [ ] `make lint` passes locally
-- [ ] `python3 -c "from just_makeit._example import _EXAMPLES; print('\n'.join(_EXAMPLES))"`
-    — visually confirm the examples pass locally. This catches
-    environment-sensitive failures (a missing `pytest`, `cmake`) that CI does
-    not surface, because CI always has them
+- [ ] `make test-examples` passes locally — every bundled example end to
+    end, plus the tests that need the project env. A skip the suite has not
+    agreed to (a missing `cmake`, say) fails the run rather than passing it
+    quietly (`_ALLOWED_SKIPS` in `tests/conftest.py`)
 
 ______________________________________________________________________
 
@@ -83,10 +83,10 @@ git push -u origin HEAD
 gh pr create --fill
 ```
 
-`main` is protected: the ruleset requires a pull request, the status checks,
-and linear history, and allows **rebase** merges only. Merge once every
-required check is green — that merge is what makes the release safe, because
-the tag will point at it.
+`main` is protected: the ruleset requires a pull request, the `CI passed`
+check, resolved review threads and linear history — squash or rebase, never a
+merge commit. Merge once `CI passed` is green — that merge is what makes the
+release safe, because the tag will point at it.
 
 ## 5. Ship
 
@@ -107,11 +107,15 @@ artifacts — PyPI per-version and `latest`, and the GitHub Release. The
 `github-release` job writes the release notes from the CHANGELOG section, so
 there is no manual step.
 
-After publish, `artifact.yml` fires automatically and installs
-`just-makeit==X.Y.Z` from PyPI (retrying up to 10 min for CDN propagation),
-scaffolds the `fir_filter` standalone and `filter_module` workflows end to
-end, and verifies the C library via pkg-config and CMake `find_package`. If it
-fails for anything other than CDN lag, investigate before the next release.
+`artifact.yml` — scaffold real projects from the installed tool, build and
+test them, verify the installed C library through pkg-config and CMake
+`find_package` — has already run twice by now: on every PR (`quick`, one leg
+per job) and, before publish, on the wheel this release built (`publish`
+waits on it), Windows clang-cl leg included. After publish it fires once more
+and installs `just-makeit==X.Y.Z` from PyPI (retrying up to 10 min for CDN
+propagation); the only new thing that run can tell you is that PyPI serves
+the version. If it fails for anything other than CDN lag, investigate before
+the next release.
 
 ## 6. Post-release
 
@@ -123,16 +127,18 @@ ______________________________________________________________________
 
 ## When it goes wrong
 
-Four of the old pitfalls are gone because `tag-release` refuses them: a tag
+Six of the old pitfalls are gone because `tag-release` refuses them: a tag
 without the `v` prefix, a tag on a local commit that is not on `main`, a tag
-while local `main` is behind, and a version mismatch between the tag and the
-manifests. They are listed nowhere below because they can no longer happen.
+while local `main` is behind, a version mismatch between the tag and the
+manifests, a commit whose `CI passed` already concluded failure, and a
+`VERSION` that came from the environment rather than the command line (where
+nothing shows you meant it). They are listed nowhere below because they can no
+longer happen.
 
 | Mistake                                                                 | Fix                                                                                                         |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Want to "redo" a release after publish succeeded                        | You can't — PyPI rejects a duplicate version. Bump to the next patch and release that                       |
 | PyPI CDN lag fails `artifact.yml`                                       | Wait — the retry loop runs for 10 min; if it still fails, read the logs                                     |
-| `artifact.yml` uses old CLI flags                                       | Keep it in sync with any CLI rename                                                                         |
 | An example's `test.py` calls a tool absent from the release environment | Guard optional tools with an availability check and skip gracefully — `full_workflow` step 7 is the pattern |
 | GitHub still shows the old version                                      | The `github-release` job failed — read the Actions log and re-run, or `gh release create vX.Y.Z --latest`   |
 
