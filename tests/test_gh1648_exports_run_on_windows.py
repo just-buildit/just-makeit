@@ -45,11 +45,15 @@ def _job_block(text: str, job: str) -> str:
 
 
 def windows_tests() -> "set[str]":
-    """The test paths the Windows job's ``PROJECT_ENV_TESTS`` names."""
+    """The test paths the Windows job's ``PROJECT_ENV_TESTS`` lines name.
+
+    Every step's, not one: gh-1839 runs one file in a step of its own, with
+    the runner's git configuration, and a file either step runs is run.
+    """
     block = _job_block(CI_YML.read_text(encoding="utf-8"), JOB)
     m = re.findall(r'PROJECT_ENV_TESTS="([^"]*)"', block)
-    assert len(m) == 1, f'{JOB}: PROJECT_ENV_TESTS="..." occurs {len(m)}x'
-    names = set(m[0].split())
+    assert m, f'{JOB}: no PROJECT_ENV_TESTS="..." line'
+    names = {name for line in m for name in line.split()}
     assert names, f"{JOB}: PROJECT_ENV_TESTS is empty"
     return names
 

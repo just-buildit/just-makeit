@@ -400,6 +400,23 @@ jobs:
           make tool-install
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
 
+      # gh-1839: gh-1641's line-ending gates against a REAL Windows clone.
+      # Every other leg runs tests/test_gh1641_crlf_checkout.py with the
+      # host's git configuration isolated and core.autocrlf=true forced --
+      # a model of Git for Windows. JM_CRLF_HOST_GIT=1 makes its clones
+      # with this runner's own configuration instead, the default a user's
+      # clone gets: a fresh scaffold must clone LF, read clean and leave
+      # `apply` nothing to rewrite, while one committed without its
+      # .gitattributes must clone CRLF -- or the LF proved nothing -- and
+      # read clean once given the file. -rP prints what each clone held.
+      # That test file refuses this step going away.
+      - name: A real autocrlf clone reads clean
+        env:
+          JM_CRLF_HOST_GIT: "1"
+          PYTEST_ADDOPTS: -rP
+        run: make test-examples
+          PROJECT_ENV_TESTS="tests/test_gh1641_crlf_checkout.py"
+
       - name: Run example tests
         # PROJECT_ENV_TESTS is narrowed to the example builds alone.
         # gh-1442 moved five tool-gated files onto this path; running
