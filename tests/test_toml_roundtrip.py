@@ -2,80 +2,33 @@
 CLI → TOML → jm script round-trip tests.
 
 Strategy: build a project via CLI, run `jm script`, replay every emitted
-command into a fresh directory, then compare the two just-makeit.toml files.
-If a flag is correctly stored in TOML and correctly emitted by `jm script`,
-the replayed TOML will be identical to the original.
+command into a fresh directory, then compare the two MERGED manifests
+(`_jmrun.script_round_trip`). If a flag is correctly stored in TOML and
+correctly emitted by `jm script`, the replayed manifest will be identical to
+the original.
+
+Merged, not the root ``just-makeit.toml`` alone (gh-1923): `jm new` defaults
+to the fragment layout, so every component lives in ``objects/`` and every
+module in ``modules/``, and a root-only comparison saw ``[project]`` and
+``include`` and nothing else. Every component-level test here passed whether
+the replay kept its flag or not.
 
 Known intentional gap:
   - --impl / --replace: intentionally not stored in TOML; tested separately
     in TestImplCLI in test_cli.py.
+
+GATE: every flag a test here declares survives `jm script` and a replay of
+      it, compared over the manifest `_config.load` merges.
 """
 
 from __future__ import annotations
 
-import re
-import shlex
-from pathlib import Path
-
-from _jmrun import JmRun, run_cli
+from _jmrun import JmRun, run_cli, script_round_trip
 
 
 def _cli(*args, cwd=None) -> JmRun:
     # gh-1374: in THIS process -- the child bought isolation only.
     return run_cli(*args, cwd=cwd)
-
-
-def _run_script_and_replay(
-    source_dir: Path, replay_base: Path
-) -> tuple[str, str]:
-    """
-    Run `jm script` in source_dir, replay every command into replay_base,
-    and return (original_toml_text, replayed_toml_text).
-
-    The project name is extracted from the script's `cd` line so the correct
-    subdirectory is found after replay.
-    """
-    r = _cli("script", cwd=source_dir)
-    assert r.returncode == 0, f"jm script failed:\n{r.stderr}"
-
-    script = r.stdout
-
-    # Extract project name from "cd <name>" line
-    cd_match = re.search(r"^cd (\S+)$", script, re.MULTILINE)
-    assert cd_match, f"No 'cd <project>' line found in script:\n{script}"
-    project_name = cd_match.group(1)
-
-    # Parse commands: join continuation lines, split into argv lists
-    joined = re.sub(r"\\\n\s*", " ", script)
-    commands: list[list[str]] = []
-    for line in joined.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("cd "):
-            continue
-        if line.startswith("just-makeit "):
-            parts = shlex.split(line[len("just-makeit ") :])
-            commands.append(parts)
-
-    # Replay in a subdirectory named after the project so `cd` would land here
-    replay_root = replay_base / project_name
-    replay_root.mkdir(parents=True, exist_ok=True)
-
-    # First command is always `new <project>` — run from replay_base
-    assert commands[0][0] == "new"
-    r2 = _cli(*commands[0], str(replay_root), cwd=replay_base)
-    assert r2.returncode == 0, f"Replay 'new' failed:\n{r2.stderr}"
-
-    for cmd in commands[1:]:
-        r2 = _cli(*cmd, cwd=replay_root)
-        assert r2.returncode == 0, (
-            f"Replay command failed: just-makeit {' '.join(cmd)}\n{r2.stderr}"
-        )
-
-    orig_toml = (source_dir / "just-makeit.toml").read_text(encoding="utf-8")
-    replay_toml = (replay_root / "just-makeit.toml").read_text(
-        encoding="utf-8"
-    )
-    return orig_toml, replay_toml
 
 
 # ── Object flag round-trips ───────────────────────────────────────────────────
@@ -94,7 +47,7 @@ class TestObjectFlagsRoundTrip:
             "float _Complex",
             cwd=dest,
         )
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_return_type_void_sink(self, tmp_path):
@@ -109,7 +62,7 @@ class TestObjectFlagsRoundTrip:
             "void",
             cwd=dest,
         )
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_arg_and_return_same_non_default(self, tmp_path):
@@ -127,7 +80,7 @@ class TestObjectFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         # same as arg-type so --return-type should be omitted
         assert "--return-type float" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_default_types_no_type_flags(self, tmp_path):
@@ -137,7 +90,7 @@ class TestObjectFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--arg-type" not in r.stdout
         assert "--return-type" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_no_state_round_trip(self, tmp_path):
@@ -146,7 +99,7 @@ class TestObjectFlagsRoundTrip:
         _cli("object", "gen", "--no-state", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--no-state" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_no_step_round_trip(self, tmp_path):
@@ -155,7 +108,7 @@ class TestObjectFlagsRoundTrip:
         _cli("object", "sink", "--no-step", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--no-step" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_mutable_round_trip(self, tmp_path):
@@ -173,7 +126,7 @@ class TestObjectFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--mutable" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_init_param_single(self, tmp_path):
@@ -184,7 +137,7 @@ class TestObjectFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--init-param n:int:16" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_init_param_multiple(self, tmp_path):
@@ -203,7 +156,7 @@ class TestObjectFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--init-param rate:float:1.0" in r.stdout
         assert "--init-param order:int:4" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_state_var_with_default(self, tmp_path):
@@ -221,7 +174,7 @@ class TestObjectFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--state cutoff:double:440.0" in r.stdout
         assert "--state order:int:4" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_array_arg_round_trip(self, tmp_path):
@@ -240,7 +193,7 @@ class TestObjectFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--array-arg coeffs:float32" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_array_arg_ctype_normalizes_to_dtype(self, tmp_path):
@@ -260,7 +213,7 @@ class TestObjectFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--array-arg coeffs:float32" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
 
@@ -273,7 +226,7 @@ class TestProjectFlagsRoundTrip:
         _cli("new", "proj", str(dest), "--perf")
         r = _cli("script", cwd=dest)
         assert "--perf" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_build_system_make_persisted_and_replayed(self, tmp_path):
@@ -281,7 +234,7 @@ class TestProjectFlagsRoundTrip:
         _cli("new", "proj", str(dest), "--build-system", "make")
         r = _cli("script", cwd=dest)
         assert "--build-system make" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_non_default_version(self, tmp_path):
@@ -290,7 +243,7 @@ class TestProjectFlagsRoundTrip:
         _cli("config", "version", "0.3.0", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "config version 0.3.0" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
 
@@ -320,7 +273,7 @@ class TestMethodFlagsRoundTrip:
             "--variable-output",
             cwd=dest,
         )
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_multi_output(self, tmp_path):
@@ -342,7 +295,7 @@ class TestMethodFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--multi-output uint8_t" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_scalar_params(self, tmp_path):
@@ -364,7 +317,7 @@ class TestMethodFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--param freq:float" in r.stdout
         assert "--param mode:int32_t" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_out_type(self, tmp_path):
@@ -385,7 +338,7 @@ class TestMethodFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--out-type float" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_out_divisor(self, tmp_path):
@@ -408,7 +361,7 @@ class TestMethodFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--out-divisor 2" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_out_divisor_1_not_emitted(self, tmp_path):
@@ -431,7 +384,7 @@ class TestMethodFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--out-divisor" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_batch_round_trip(self, tmp_path):
@@ -451,7 +404,7 @@ class TestMethodFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--batch" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
 
@@ -480,7 +433,7 @@ class TestPropertyFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--type uint32_t" in r.stdout
         assert "--writable" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_read_only_no_writable_flag(self, tmp_path):
@@ -488,7 +441,7 @@ class TestPropertyFlagsRoundTrip:
         _cli("property", "nco", "dropped", "--type", "size_t", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--writable" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_field(self, tmp_path):
@@ -504,7 +457,7 @@ class TestPropertyFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_field_and_writable(self, tmp_path):
@@ -522,7 +475,7 @@ class TestPropertyFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--field" in r.stdout
         assert "--writable" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
 
@@ -549,7 +502,7 @@ class TestFunctionFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--doc" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_non_void_return_type(self, tmp_path):
@@ -565,7 +518,7 @@ class TestFunctionFlagsRoundTrip:
         )
         r = _cli("script", cwd=dest)
         assert "--return-type int32_t" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_void_return_not_emitted(self, tmp_path):
@@ -573,7 +526,7 @@ class TestFunctionFlagsRoundTrip:
         _cli("function", "do_setup", "--module", "dsp", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--return-type" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_params(self, tmp_path):
@@ -594,7 +547,7 @@ class TestFunctionFlagsRoundTrip:
         r = _cli("script", cwd=dest)
         assert "--param n:size_t" in r.stdout
         assert "--param beta:float" in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_no_doc_not_emitted(self, tmp_path):
@@ -602,5 +555,5 @@ class TestFunctionFlagsRoundTrip:
         _cli("function", "init", "--module", "dsp", cwd=dest)
         r = _cli("script", cwd=dest)
         assert "--doc" not in r.stdout
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
