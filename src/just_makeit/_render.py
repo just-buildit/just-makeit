@@ -506,7 +506,6 @@ DOXYFILE = _load("doc/Doxyfile")
 DOCS_INDEX_MD = _load("doc/docs_index.md")
 DOCS_API_MD = _load("doc/docs_api.md")
 README_MD = _load("doc/README.md")
-README_MD_SIMPLE = _load("doc/README_simple.md")
 # ── TOML / config ────────────────────────────────────────────────────────────
 ZENSICAL_TOML = _load("toml/zensical.toml")
 PYPROJECT_TOML = _load("toml/pyproject.toml")

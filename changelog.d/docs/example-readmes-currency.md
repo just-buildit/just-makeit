@@ -11,6 +11,6 @@
     and array_processing, filter_module, full_workflow and varargs_method now
     build the C their READMEs show. A new project's README no longer says
     `pip install -e .` builds the extension or `make test` runs pytest when
-    it runs unittest, and a `--build-system make` project gets its own README
-    instead of the CMake one, with no `make docs`, CMake or Windows build it
-    cannot run.
+    it runs unittest, and a `--build-system make` project's README describes
+    its own build -- no `make docs`, CMake or Windows build it cannot run --
+    from backend slots in the one README template.

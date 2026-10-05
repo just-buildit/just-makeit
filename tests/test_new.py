@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._new import run
+from just_makeit._new import README_BY_BACKEND, run
 
 _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
@@ -450,11 +450,13 @@ class TestMakeTestRunner:
 class TestReadmeDescribesItsMakefile:
     """The generated README advertises only the build its Makefile runs.
 
-    One README template served both backends, so a `--build-system make`
-    project was told to install CMake, run `make docs` and `just-makeit
-    build` (all CMake-only), and a default project that tests with unittest
-    was told `make test` ran pytest. Both claims are read off the Makefile
-    written beside the README, never restated here.
+    One README text served both backends, so a `--build-system make` project
+    was told to install CMake, run `make docs` and `just-makeit build` (all
+    CMake-only), and a default project that tests with unittest was told
+    `make test` ran pytest. Both claims are read off the Makefile written
+    beside the README, never restated here. The fix is backend slots in the
+    ONE template, not a second template: two copies of the shared sections
+    drift (gh-1860), and the last test refuses anything else differing.
     """
 
     #: A `make <target>` command line in a fenced block; a bare `make` is the
@@ -506,6 +508,25 @@ class TestReadmeDescribesItsMakefile:
         assert "CMake ≥" not in readme
         assert "just-makeit build" not in readme
         assert "CMakePresets.json" not in readme
+
+    def test_the_backends_differ_only_in_their_slots(self, tmp_path):
+        """Take each backend's `README_BY_BACKEND` values back out and the two
+        READMEs are one text, so the dependency install, Quickstart and
+        Package sections cannot be dropped or reworded for one backend
+        alone."""
+
+        def unslotted(build_system: str) -> str:
+            _, readme = self._scaffold(
+                tmp_path / build_system, build_system=build_system
+            )
+            row = README_BY_BACKEND[build_system].values()
+            for value in sorted(row, key=len, reverse=True):
+                if value:
+                    assert value in readme, f"slot value not rendered: {value}"
+                    readme = readme.replace(value, "", 1)
+            return readme
+
+        assert unslotted("cmake") == unslotted("make")
 
 
 class TestNewStateVars:
