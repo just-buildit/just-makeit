@@ -3,7 +3,7 @@
 `jm` generates Python type stubs (`.pyi` files) with docstrings derived
 directly from the Doxygen comments in your project's
 `<component>_core.h` headers. This page explains how that pipeline works,
-what Doxygen tags are supported, and how CI keeps the stubs in sync.
+what Doxygen tags are supported, and how the stubs are kept in sync.
 
 ______________________________________________________________________
 
@@ -25,12 +25,20 @@ just_makeit/_docstring.py:parse_doxygen_block()  → DoxyBlock
         │  @return → Returns section
         │  @code   → Examples section (runnable doctests)
         ▼
-just_makeit/_docstring.py:render_numpy_method_doc()
+just_makeit/_docstring.py:render_numpy_doc()
         │
-        │  called from _stubs.py; emits numpy-style docstring inside the
-        │  .pyi method body
+        │  the member renderer _stubs.py calls; emits a numpy-style
+        │  docstring inside the .pyi body
         ▼
 src/<pkg>/<obj>.pyi   ← committed glue file; owned by the manifest-drift gate
+
+the same DoxyBlock → _docstring.py:render_runtime_doc()
+        │
+        │  the same numpy block minus what only means something in a
+        │  stub; spliced into the binding as a C string
+        ▼
+native/src/<obj>/<obj>_ext.c   ← runtime __doc__ (.tp_doc, method docs);
+                                  refreshed by `jm apply` (_docsync)
 ```
 
 **jm does not run Doxygen.** It parses the raw C header text with a
@@ -50,10 +58,9 @@ may be declared in the sacred header or in any project header it includes
 where the owning struct is silent, the member gets the name-based stub, not a
 stranger's sentence. A property that forwards a sub-object's value is
 documented with the manifest `doc =` or an `@brief` on its getter.
-Enumerators are looked up by name, since C makes them unique. The Doxygen XML pipeline (`doxygen Doxyfile`
-→ `xml/` output) exists independently — CI uses it to validate zero
-warnings and mkdoxy uses it to generate HTML C API docs. Neither touches
-`.pyi` generation.
+Enumerators are looked up by name, since C makes them unique. Running
+Doxygen itself is a separate pipeline (see
+[below](#what-doxygen-itself-is-for)) and never touches `.pyi` generation.
 
 ______________________________________________________________________
 
@@ -78,20 +85,21 @@ Every other recognized command has a numpy destination (gh-652). numpy's
 docstring standard already has a section for nearly all of them, so this is a
 mapping table rather than a design:
 
-| Doxygen                                                            | numpy destination             |
-| ------------------------------------------------------------------ | ----------------------------- |
-| `@note` `@attention` `@remark` `@pre` `@post` `@invariant` `@par`  | `Notes`                       |
-| `@warning`                                                         | `Warnings`                    |
-| `@see` `@sa`                                                       | `See Also`                    |
-| `@throws` `@exception`                                             | `Raises`                      |
-| `@retval <v> <doc>`                                                | additional `Returns` entries  |
-| `@deprecated <doc>`                                                | a `.. deprecated::` directive |
-| `@f$ … @f$`                                                        | `:math:` role                 |
-| `@todo` `@bug` `@since` `@version` `@ingroup` `@tparam` `@copydoc` | dropped — C-side metadata     |
+| Doxygen                                                                                           | numpy destination             |
+| ------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `@note` `@attention` `@remark` `@pre` `@post` `@invariant` `@par`                                 | `Notes`                       |
+| `@warning`                                                                                        | `Warnings`                    |
+| `@see` `@sa`                                                                                      | `See Also`                    |
+| `@throws` `@exception`                                                                            | `Raises`                      |
+| `@retval <v> <doc>`                                                                               | additional `Returns` entries  |
+| `@deprecated <doc>`                                                                               | a `.. deprecated::` directive |
+| `@f$ … @f$`                                                                                       | `:math:` role                 |
+| `@todo` `@bug` `@since` `@version` `@ingroup` `@tparam` `@copydoc` `@copybrief` `@file` `@author` | dropped — C-side metadata     |
 
 Sections are emitted in numpydoc's order — `Parameters`, `Returns`, `Raises`,
-`See Also`, `Notes`, `Warnings`, `Examples` — because tooling that parses by
-section (griffe, numpydoc's validator) mis-associates prose otherwise.
+`Warns`, `See Also`, `Notes`, `Warnings`, `Examples` — because tooling that
+parses by section (griffe, numpydoc's validator) mis-associates prose
+otherwise.
 
 Two calls worth stating outright:
 
@@ -209,10 +217,10 @@ does jm — a hand-written block placed above the skeleton wins.
 <pkg>_agc_state_t *<pkg>_agc_create(double ref_db, double loop_bw);
 ```
 
-**Generated `.pyi`** (`src/doppler/agc/agc.pyi`):
+**Generated `.pyi`** (`src/<pkg>/agc.pyi`):
 
 ```python
-class AGC:
+class Agc:
     """Construct a log-domain feedback AGC.
 
     Parameters
@@ -226,16 +234,14 @@ class AGC:
     --------
     Create with defaults:
 
-    >>> from doppler.agc import AGC
-    >>> obj = AGC(ref_db=0.0, loop_bw=0.0)
+    >>> from <pkg> import Agc
+    >>> obj = Agc(ref_db=0.0, loop_bw=0.0)
     >>> obj.get_gain()
     0.0
 
     """
 
-    def __init__(
-        self, ref_db: float = ..., loop_bw: float = ...
-    ) -> None: ...
+    def __init__(self, ref_db: float = 0.0, loop_bw: float = 0.0) -> None: ...
 ```
 
 The class docstring is **summary + `Parameters` + a synthesized `Examples`
@@ -253,14 +259,16 @@ ______________________________________________________________________
 
 A `@code` / `@endcode` block on a **method** declaration (a
 `just-makeit method`, a property getter, or a free function) lands in that
-member's numpy `Examples` section as a runnable doctest. CI exercises these:
+member's numpy `Examples` section as a runnable doctest. They run when you
+point a test command at the stubs:
 
 ```sh
-uv run pytest --doctest-glob='*.pyi' -q $(find src/<pkg> -name '*.pyi')
+pytest --doctest-glob='*.pyi' src/
 ```
 
-So the examples in your C Doxygen comments are *actually run* against the built
-C extension every CI pass. If a method comment says
+jm wires this into neither the generated `make test` nor `jm ci`; add it to
+your CI and the examples in your C Doxygen comments are *actually run* against
+the built C extension on every pass. If a method comment says
 
 ```c
 /**
@@ -274,9 +282,9 @@ C extension every CI pass. If a method comment says
 float <pkg>_widget_scale(const <pkg>_widget_state_t *state, float x);
 ```
 
-…and the C implementation returns `0.6`, CI will catch it. Write your `@code`
-examples so they produce deterministic, printable output. (`@code` on the
-built-in `step()`/`steps()` or on `create()` is not surfaced — use a named
+…and the C implementation returns `0.6`, that run will catch it. Write your
+`@code` examples so they produce deterministic, printable output. (`@code` on
+the built-in `step()`/`steps()` or on `create()` is not surfaced — use a named
 method.)
 
 ______________________________________________________________________
@@ -288,24 +296,21 @@ gate, not by hand. After you edit a `_core.h` docstring:
 
 1. Run `jm apply` — regenerates all glue files from the updated headers.
 1. Commit the updated `.pyi` stubs alongside the header change.
-1. CI runs `jm status --check`, which re-parses the headers and diffs
-    the regenerated output against the committed stubs. Any mismatch
-    fails the gate.
+1. Run `jm status --check` in your CI (jm does not add it): it re-parses
+    the headers and fails when the committed glue differs from what
+    `jm apply` would write.
 
 The gate ensures stubs never drift from the C source of truth.
 
 ______________________________________________________________________
 
-## What the Doxygen XML pipeline is for
+## What Doxygen itself is for
 
-Doxygen is run separately in CI for two purposes unrelated to `.pyi` generation:
+`make docs` in a generated project runs `doxygen Doxyfile` — HTML C API docs
+into `docs/doxygen/html`, with `WARN_NO_PARAMDOC = YES` — and then
+`zensical build` for the Python docs. A project may add more downstream (a
+warnings gate, an XML-driven C API site); jm generates neither.
 
-- **Zero-warnings gate** (`ci.yml`): `doxygen Doxyfile 2>&1 | tee doxygen.log`
-    followed by `grep -q 'warning:'` — ensures the C API comments are clean.
-- **HTML C API docs** (`docs.yml`): mkdoxy reads the Doxygen XML (at
-    `.mkdoxy/doppler/xml/`) to generate `docs/c-api/` Markdown, which the
-    docs site builds into browsable HTML.
-
-Neither of these touches `.pyi` generation. The two pipelines are
-completely independent — jm reads header text directly; Doxygen reads
-the same headers but for documentation output.
+None of it touches `.pyi` generation. The two pipelines are completely
+independent — jm reads header text directly; Doxygen reads the same headers
+but for documentation output.

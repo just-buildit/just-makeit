@@ -27,63 +27,22 @@ ______________________________________________________________________
 
 ## Repository layout
 
-```
-just-makeit/
-├── src/just_makeit/          # the CLI package
-│   ├── _cli.py               # argument parsing and dispatch
-│   ├── _cli_*.py             # per-command argument parsers
-│   ├── _new.py               # `new` command — project scaffold
-│   ├── _object.py            # `object` command — add a type (standalone or in-module)
-│   ├── _init.py              # internal: standalone object file generation
-│   ├── _module.py            # `module` command — scaffold empty extension module
-│   ├── _method.py            # `method` command — named execute variants
-│   ├── _property.py          # `property` command — Python properties
-│   ├── _function.py          # `function` command — module-level C functions
-│   ├── _add.py               # `add` command — append state vars to existing object
-│   ├── _perf.py              # `perf` command — add performance annotations
-│   ├── _impl.py              # `--impl` body lifting (funcname or line range)
-│   ├── _apply.py             # `apply` command — sacred/glue materialize from TOML
-│   ├── _regenerate.py        # `regenerate` command — rebuild a component's files
-│   ├── _remove.py            # `remove` command — delete + strip TOML/CMake wiring
-│   ├── _bind.py              # `bind` command — synthesise _ext.c from a _core.h
-│   ├── _build.py             # `build`/`test`/`dry-run` commands
-│   ├── _config.py            # just-makeit.toml read/write
-│   ├── _render.py            # render engine + template constants loaded from templates/
-│   ├── _context/             # make_*_ctx() context builders
-│   ├── templates/            # the real template files (c/, cmake/, py/, make/, toml/, …)
-│   ├── _scripts.py           # entry points: jm-install-deps, jm-run-tests, jm-docker-e2e
-│   └── scripts/              # bundled shell utilities (shipped in wheel)
-│       ├── install-deps.sh   # OS-aware dep installer + venv setup
-│       └── docker-e2e.sh     # Docker end-to-end smoke test
-├── tests/                    # pytest suite
-│   ├── test_new.py           # `new` command integration tests
-│   ├── test_init.py          # internal `_init.run()` tests (standalone path)
-│   ├── test_cli.py           # CLI dispatch tests (subprocess)
-│   ├── test_add.py           # `add` command tests
-│   ├── test_perf.py          # `perf` command tests
-│   ├── test_templates.py     # template rendering unit tests
-│   ├── test_config.py        # config load/save tests
-│   ├── test_example_*.py     # end-to-end example tests (cmake + build)
-│   └── bench_scaffold.py     # pytest-benchmark for scaffold generation speed
-├── docs/                     # MkDocs source
-│   ├── developers/           # this directory
-│   ├── examples/             # per-example walkthroughs
-│   └── *.md                  # commands, workflow, types, perf, c-library
-├── examples/                 # repo-root README only; the worked examples
-│                             #   now live in src/just_makeit/examples/ (dozens,
-│                             #   bundled in the wheel as package data)
-├── scripts/
-│   ├── copy_examples.py      # copies example sources into docs/
-│   └── sync_version.py       # keeps version strings in sync across files
-├── .github/workflows/
-│   ├── ci.yml                # runs tests on every push to main / PR
-│   ├── release.yml           # triggered by v* tag: test → build → publish to PyPI
-│   ├── artifact.yml          # post-release smoke test: installs from PyPI, builds real projects
-│   └── docs.yml              # builds and deploys MkDocs site
-├── CHANGELOG.md
-├── pyproject.toml
-└── uv.lock
-```
+`git ls-files` is the tree, and the module table in the repo's `CLAUDE.md`
+says what each file under `src/just_makeit/` owns. What the listing does not
+tell you:
+
+| Path                        | What to know                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/just_makeit/`          | The package. `templates/` holds the real template files; `examples/` holds every bundled example, shipped in the wheel                     |
+| `src/just_makeit/scripts/`  | Shell utilities shipped in the wheel (`jm-install-deps`, `jm-docker-e2e`), unlike the repo's own `scripts/`                                |
+| `scripts/`                  | Repo tooling, run by make targets; never shipped                                                                                           |
+| `tests/`                    | The pytest suite; the Makefile's `PROJECT_ENV_TESTS` names the files that run in the project env (see [testing.md](testing.md))            |
+| `docs/`                     | The site source. `docs/examples/` is generated by `scripts/copy_examples.py` and gitignored                                                |
+| `Makefile` / `standard.mk`  | This repo's configuration / the vendored cross-org targets (see [below](#where-the-targets-come-from)); `local.mk` holds repo-only targets |
+| `changelog.d/`              | Pending changelog fragments; absent while none is pending                                                                                  |
+| `bootstrap.toml`, `docker/` | System dependencies (`make install-deps`) and the container images                                                                         |
+| `install.sh`                | The curl installer, published at the docs site's root by `make docs`                                                                       |
+| `.github/workflows/`        | See [CI overview](#ci-overview)                                                                                                            |
 
 ______________________________________________________________________
 
@@ -100,7 +59,7 @@ owns:
 just-makeit <cmd>  →  _cli.py:main()
   scaffold     new → _new · object → _object · module → _module
                function → _function · view → _view · app → _app
-               bind → _bind (derive a manifest from a C header)
+               bind → _bind (derive the binding from a C header)
   extend       method → _method · property → _property · add → _add
                record → _recorddecl · error → _error · warning → _warning
                perf → _perf · remove → _remove
@@ -138,8 +97,8 @@ UNRECONCILED and OUTDATED sections exist for exactly those files).
 ### Templates and rendering
 
 Generated file content lives as real files under
-`src/just_makeit/templates/` (`c/`, `cmake/`, `py/`, `make/`, `toml/`,
-`doc/`, `misc/`). `_render.py` loads each at import time and substitutes
+`src/just_makeit/templates/`, one directory per kind of file (`ls` it).
+`_render.py` loads each at import time and substitutes
 `<<placeholder>>` tokens (C/H templates wrap them as `/*<<token>>*/` so
 clang-format can still parse the file). The context dict is built by the
 `make_*_ctx()` functions in `_context/`.
@@ -173,8 +132,8 @@ make setup
 ```
 
 `make setup` syncs the `dev` dependency group and installs the git hook. Plain
-`uv sync` does neither, which leaves you without ruff, mypy or pre-commit and
-with lint failing for the first time in CI.
+`uv sync` gets you the tools (uv syncs `dev` by default) but not the hook, so
+the hooks would run for the first time in CI.
 
 Then run `make start-here`. It is a signpost rather than a summary: it links to
 whichever source owns each answer, and reports what *this* clone still needs —
@@ -216,9 +175,9 @@ ______________________________________________________________________
 
 ## Git workflow
 
-All non-trivial changes — new features, bug fixes, refactors, docs — go through
-a branch and a PR. Direct pushes to `main` are reserved for release mechanics
-(version bump + CHANGELOG commit, see [release-checklist.md](release-checklist.md)).
+Every change to `main` is a PR: the `main` ruleset requires one and has no
+bypass. A release is a PR too (`make release-branch VERSION=X.Y.Z`, see
+[release-checklist.md](release-checklist.md)).
 
 ### Branch naming
 
@@ -238,24 +197,21 @@ gh pr create --fill
 ### PR rules
 
 - CI must be green before a PR merges: the `main` ruleset requires the
-    `CI passed` check, which `ci.yml` reports on every PR.
+    `CI passed` check, which `ci.yml` reports on every PR, and every review
+    thread resolved.
 - Keep PRs focused — one logical change per PR makes bisect and revert easy.
-- The PR title becomes the CHANGELOG entry; write it accordingly
-    (`fix: jm apply drops extra_link_libs on regeneration`).
+- A branch that changes `src/just_makeit/` adds its CHANGELOG entry as a
+    file, `changelog.d/<section>/<slug>.md` (a single list item); `make lint`
+    (`changelog-check`) refuses the branch otherwise, and its message says
+    where the file goes. `make release-branch` promotes the fragments.
 
 ### Merging
 
 PRs land by auto-merge. Arm it (`gh pr merge --auto --squash`) and
 the PR squash-merges as soon as `CI passed` is green. The branch does not have
 to be up to date with `main`, so independent PRs never wait on each other. The
-branch is deleted on merge; history stays linear.
-
-### What goes directly on `main`
-
-Only two things skip the PR process:
-
-1. **Release bump** — `chore: bump to X.Y.Z` (pyproject.toml + CHANGELOG only).
-1. **Hotfix** — a one-liner fix that is urgent and trivially correct (rare).
+branch is deleted on merge; history stays linear (squash or rebase, never a
+merge commit).
 
 ______________________________________________________________________
 
@@ -264,28 +220,41 @@ ______________________________________________________________________
 1. Add or edit the template file under `src/just_makeit/templates/`.
 1. Update the context builder in `_context/` if new placeholder keys are needed.
 1. Wire the new file into the relevant `run()` function (`_new.py`, `_object.py`, `_init.py`).
-1. Add tests in `tests/test_new.py` or `tests/test_init.py`.
+1. A new generated file needs a row in `_createonly.RULES` saying who owns it;
+    `tests/test_gh949_outdated.py` fails on a file with none.
+1. Add tests in `tests/test_new.py` or `tests/test_init.py`, and prove each
+    one is armed with `scripts/sabotage.py` (see `CLAUDE.md`, "Proving a
+    gate").
 1. Update the relevant page in `docs/commands/` and any relevant workflow docs.
 
 ______________________________________________________________________
 
 ## CI overview
 
-| Workflow       | Trigger                            | What it does                                                                                                                                               |
-| -------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | push to `main`, PRs                | `pytest` on Ubuntu + macOS × Python 3.9–3.14; separate `coverage` job uploads to Codecov                                                                   |
-| `release.yml`  | push of `v*` tag                   | Same tests → build wheel → publish to PyPI                                                                                                                 |
-| `artifact.yml` | after Release succeeds             | Installs from PyPI, scaffolds real projects, cmake build + test, C library install + pkg-config/find_package verification                                  |
-| `docs.yml`     | push to `main`                     | Builds MkDocs site and deploys to GitHub Pages                                                                                                             |
-| `ci-image.yml` | weekly cron, dispatch, branch push | The org standard's CI toolchain image (vendored, `HAS_CI_IMAGE`): repins `.github/ci-images.env` when its packages or sources move (`make help`: CI-image) |
+The workflow files are the record — each opens with a comment on why it is
+shaped the way it is. The one required check is **`CI passed`**, a job in
+`ci.yml` that waits on every other job there and fails on any that neither
+succeeded nor skipped itself.
 
-**CI must be green on `main` before tagging a release.**
+| Workflow       | Trigger                                      | What it does                                                                                                                                                                                     |
+| -------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ci.yml`       | PRs, push to `main`, nightly, dispatch       | The test matrix, the examples (Windows clang-cl included), lint, coverage, docs, wheel, bench, the install and consumer smoke jobs, artifact smoke and the Docker image, all feeding `CI passed` |
+| `changes.yml`  | called by the others                         | Decides what a change needs: a version bump alone, a tree already tested as a merged PR, or a docs-only diff skips most of `ci.yml`                                                              |
+| `release.yml`  | `v*` tag, dispatch                           | Does not re-run the matrix: requires `CI passed` on the tagged commit → `make wheel` → wheel smoke + `artifact.yml` (pre-publish) → PyPI → GitHub Release → Docker images                        |
+| `artifact.yml` | called; after Release; dispatch              | Scaffolds real projects from the installed tool, builds and tests them, verifies the installed C library: per PR (`quick`), before publish on the built wheel, and after it from PyPI            |
+| `docs.yml`     | push to `main`, dispatch                     | Deploy only (`make docs`). The strict build that gates a merge is `ci.yml`'s `docs` job (`make docs-check`)                                                                                      |
+| `docker.yml`   | called by `ci.yml` / `release.yml`; dispatch | Builds the examples image; publishes it on a push to `main` and on a release                                                                                                                     |
+| `ci-image.yml` | weekly cron, dispatch, branch push           | The org standard's CI toolchain image (vendored, `HAS_CI_IMAGE`): repins `.github/ci-images.env` when its packages or sources move (`make help`: CI-image)                                       |
+
+`tag-release` refuses a commit whose `CI passed` failed, and `release.yml`
+publishes nothing CI did not certify.
 
 ______________________________________________________________________
 
 ## Contributing
 
-**`main` is always working code.** Never commit directly to `main`.
+**`main` is always working code.** Never commit directly to `main` — the
+ruleset refuses it anyway.
 
 ### Branch workflow
 

@@ -1,7 +1,7 @@
 # Declarative scaffolding — design
 
 Status: **shipped.** Split per-object TOMLs and `jm remove` landed in
-v0.13.5 (schema 6); the sacred/glue `jm apply` contract and
+v0.13.4 (schema 6); the sacred/glue `jm apply` contract and
 `jm regenerate` landed in v0.14. For the user-facing walkthrough with
 diagrams, see
 [../declarative-scaffolding.md](../declarative-scaffolding.md). The
@@ -12,16 +12,16 @@ ______________________________________________________________________
 
 ## Motivation
 
-Today every just-makeit command is *additive and imperative*:
+Before v0.13.4, every just-makeit command was *additive and imperative*:
 
-- `object`, `module`, `method`, `property`, `function`, `add` each mutate
-    `just-makeit.toml` and generate files as a side effect.
-- There is **no way to remove** anything — you hand-edit the TOML and
-    delete files yourself.
-- There is **no way to batch-scaffold** a complex object — you run one
+- `object`, `module`, `method`, `property`, `function`, `add` each mutated
+    `just-makeit.toml` and generated files as a side effect.
+- There was **no way to remove** anything — you hand-edited the TOML and
+    deleted files yourself.
+- There was **no way to batch-scaffold** a complex object — you ran one
     CLI call per state var, method, and property.
-- `just-makeit.toml` is a **single monolithic file**; a project with
-    many objects has one large, merge-conflict-prone manifest.
+- `just-makeit.toml` was a **single monolithic file**; a project with
+    many objects had one large, merge-conflict-prone manifest.
 
 `just-makeit.toml` is *already* a complete declarative description of the
 project — the CLI just writes it as a side effect. The gap is the
@@ -39,16 +39,19 @@ generated code to match.
 ### TOML layout
 
 ```toml
-# just-makeit.toml — thin manifest
+# just-makeit.toml — thin manifest. `include` is the first line: in TOML a
+# key written after a table header belongs to that table.
+include = ["objects/*.toml", "modules/*.toml"]
+
 [project]
 name = "doppler"
-schema = "7"
+# ...and the rest of [project] as `jm new` writes it (schema, c_prefix, ...)
+```
 
+```toml
+# modules/spectral.toml — one module
 [module.spectral]
 objects = ["fft", "fft2d"]
-
-# Pull object specs in from their own files.
-include = ["objects/*.toml"]
 ```
 
 ```toml
@@ -74,8 +77,10 @@ field = true
     manifest.
 - An included file holds one or more top-level object sections (and may
     hold `[[module.X.functions]]` entries for module-level functions).
-- **Backward compatible**: no `include` key → today's single-file
-    behaviour, unchanged. The split layout is opt-in.
+- **Backward compatible**: no `include` key → the single-file
+    behaviour, unchanged. `jm new` uses the split layout by default;
+    `--no-fragments` keeps a single file, and `jm migrate-to-fragments` (or
+    its objects-only subset, `jm split-objects`) moves an existing project.
 
 ### `_config.py` — the load/save split
 
@@ -94,7 +99,7 @@ mutation must route back to the file that **owns** that object. So
 file it came from — and `save()` must write each section back to its
 origin file, preserving formatting.
 
-- A mutation to `[agc]` (e.g. `jm method ... --object agc`) rewrites
+- A mutation to `[agc]` (e.g. `jm method agc <name> ...`) rewrites
     `objects/agc.toml`, not the manifest.
 - A new object (`jm object foo`) is written to a new file
     (`objects/foo.toml`) when the project uses the split layout, or
@@ -178,19 +183,34 @@ reconcile.
 ```sh
 jm remove object <name>
 jm remove module <name>
-jm remove method <name>   --object <obj>
-jm remove property <name> --object <obj>
-jm remove function <name> --module <mod>
+jm remove state <name>         --object <obj>
+jm remove method <name>        --object <obj>
+jm remove property <name>      --object <obj>
+jm remove warning <condition>  --object <obj>
+jm remove error <obj>          --object <obj>
+jm remove function <name>      --module <mod>
 ```
 
-- Syntax mirrors the additive commands.
-- **object / module** — delete the generated `native/inc/<pkg>/<x>/`,
-    `native/src/<x>/`, `src/<pkg>/<x>/`; strip `add_subdirectory` /
-    `target_sources` from the top `CMakeLists.txt`; drop the TOML section
-    (and the object's file, if split).
-- **method / property / function / state** — drop the TOML entry and
-    re-run the existing regeneration for the affected `ext.c` / `core.h` /
-    `.pyi`.
+- Syntax mirrors the additive commands. A warning is addressed by its
+    condition; `error` takes no name of its own, since an object has one.
+- **object / module** — delete what jm generated for it: the header
+    directory under `native/inc/<pkg>/`, `native/src/<x>/`, its C test,
+    symbol test and C benchmark under `native/`, and its `.pyi`, pytest and
+    Python benchmark under `src/<pkg>/` (under the module's package, for a
+    module object); strip `add_subdirectory` / `target_sources` from the top
+    `CMakeLists.txt`; drop the TOML section (and the object's file, if
+    split). A hand-written hook file (`*_extra.c`, `*_prologue.c`,
+    `*_extra.cmake`) is never deleted (gh-1216).
+- **method / property / warning / error** — drop the TOML entry and
+    regenerate the glue (`_ext.c`, `.pyi`) only. The sacred files are left
+    alone: a removed method's `<csym>_<name>()` stays in `_core.c`, and a
+    property's field or accessors stay where they were; the command's closing
+    note says what to delete by hand.
+- **state** — structural: drop the entry and rebuild the object through
+    `jm regenerate`.
+- **function** — drop the entry, delete its `.c` and declaration, and
+    regenerate the module; an inline function stays in the header, with a
+    note.
 - **Safety**: prompt for confirmation; `--force` skips the prompt.
     Warn explicitly when removal will delete a `core.c` / `core.h` that
     holds hand-written (preserved) bodies.
@@ -199,10 +219,11 @@ ______________________________________________________________________
 
 ## Migration
 
-- New schema version (6) gates the `include` key.
-- A project stays single-file until it opts in. A future
-    `jm split-objects` helper (or `jm apply --split`) could move inline
-    `[object]` sections out into `objects/<name>.toml` and add the
+- Schema 6 introduced the `include` key; `load()` resolves it whatever the
+    schema.
+- `jm new` starts split; an older single-file project stays single-file
+    until `jm migrate-to-fragments` (or `jm split-objects`, objects only)
+    moves its sections out into `objects/` / `modules/` and adds the
     `include` glob.
 - `jm upgrade` needs no destructive step here — the feature is additive
     to the schema.

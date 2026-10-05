@@ -4,14 +4,16 @@
 > how to use the shipped `jm bind` command, see the
 > [porting guide](../porting-guide.md#path-a-you-have-the-header-jm-bind).
 
-Status: **shipped (MVP + Real phases; see [Phased rollout](#phased-rollout)
-below).** `jm bind` reads a hand-written `<comp>_core.h` and synthesises
-`<comp>_ext.c` from it, with no TOML and no prior `jm` history — every
-shape below is implemented and covered by CI (`jm bind --check` runs on
-every bundled example). Only the **Robust** phase (a libclang fallback for
-headers the regex parser can't handle) remains open. This note is kept as
-the design record for why the contract is shaped the way it is, and as the
-tracking doc for that remaining phase. Sibling to the
+Status: **shipped for the processor shape (MVP + Real phases; see
+[Phased rollout](#phased-rollout) below).** `jm bind` reads a hand-written
+`<comp>_core.h` and synthesises `<comp>_ext.c` (and the `.pyi`) from it,
+never writing the manifest. It is covered by `tests/test_bind.py` and by the
+`running_stats` example's round-trip (delete `_ext.c`, rebind, byte-compare,
+rebuild, ctest). The other presets' headers, and the **Robust** phase (a
+libclang fallback for headers the regex parser can't handle), remain open —
+see [Acceptance](#acceptance). This note is kept as the design record for why
+the contract is shaped the way it is, and as the tracking doc for what is
+left. Sibling to the
 [template gallery](../templates/index.md). The sacred/glue contract that
 `jm apply` ships (see [declarative-scaffolding.md](declarative-scaffolding.md))
 is what makes this safe: `_ext.c` is a glue file, regenerated from the
@@ -30,7 +32,7 @@ left to ask.
 
 `jm bind <component>` reads `<component>_core.h`, recognises the
 template shape it follows, and writes a `<component>_ext.c` (plus a
-matching `.pyi`) that matches. No `just-makeit.toml`, no `jm new` required.
+matching `.pyi`) that matches. It never writes `just-makeit.toml`.
 Composes cleanly with hand-rolled or imported C code. It does not scaffold
 a test file — see [Open questions](#open-questions).
 
@@ -45,20 +47,20 @@ five things, all present in a well-formed header.
 | Getter / setter pairs       | `<comp>_get_<field>()` / `<comp>_set_<field>()`         |
 | Extra methods               | every other `<comp>_<verb>(...)` declared in the header |
 
-The rendering side already exists — `_render.render_module_ext_*` and
-the per-template `_core.c` skeletons. `jm bind` only needs the
-*front-end*: parse the header into the same context dict that
+The rendering side already exists — `_render.COMPONENT_EXT_C` (the
+standalone binding) and `_render.render_component_pyi`. `jm bind` only needs
+the *front-end*: parse the header into the same context dict that
 `make_state_ctx` / `make_methods_ctx` produce today.
 
 ______________________________________________________________________
 
 ## Phased rollout
 
-| Phase      | Scope                                                                                                                                                                                                                                                            | Status                 |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                                                      | **Shipped**            |
-| **Real**   | Init_params recognition (ctor args that aren't state fields); output-param detection (`out` / `output` / `dst` / `dest` naming + `_max_out` pairing); opaque state; arbitrary custom verbs. Covers the working presets (processor, generator, consumer, reader). | **Shipped** (Phase 3b) |
-| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines.                                                                                                                                                   | Open                   |
+| Phase      | Scope                                                                                                                                                                                                                                                                                       | Status                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| **MVP**    | Regex header parser; scalar state fields only; one preset per call. Emits a working `_ext.c` for any project whose `_core.h` follows the template contract.                                                                                                                                 | **Shipped**                   |
+| **Real**   | Init_params recognition (ctor args that aren't state fields); `_max_out` pairing (parsed); opaque state; custom verbs taking zero or one scalar argument. **Processor shape only** (inline `step()`, scalar in, scalar out): generator, consumer, reader and blockwise headers are refused. | **Shipped** (processor shape) |
+| **Robust** | Replace regex with libclang AST. Handles preprocessor macros, typedef chains, declarations split across lines.                                                                                                                                                                              | Open                          |
 
 `jm bind --check` (the CI-parity gate) shipped alongside MVP — it never
 needed libclang, only a deterministic re-render to diff against. Each phase
@@ -96,28 +98,26 @@ A reflectable header must:
     ```
     Bind emits one Python property per matching pair. Getter-only
     pairs bind to a read-only property.
-1. **Name output array params** `out`, `output`, `dst`, or `dest`.
-    These get `T *` (writable, allocated by Python). Every other
-    pointer param is treated as input (`const T *`).
 1. **Pair variable-output methods** with a sibling `_max_out`:
     ```c
     size_t <comp>_<verb>_max_out(<comp>_state_t *);
-    size_t <comp>_<verb>(<comp>_state_t *, ..., T *out);
+    size_t <comp>_<verb>(<comp>_state_t *[, <scalar> x], T *out);
     ```
-    The pair is recognised by name + signature; bind allocates a
-    NumPy-owned ndarray per call, sized `max(max_out(), n)`, and
-    returns it trimmed to the count the kernel reports.
+    The pair is recognised by name + signature: the trailing pointer is the
+    output whatever its name.
 
-Every other `<comp>_*` declaration in the header is treated as a
-custom method on the Python class. Module-level functions (not
-prefixed with `<comp>_`) bind as free functions on the parent module.
+Every other `<comp>_*` declaration taking the state and at most one scalar is
+treated as a custom method on the Python class. A method with any other
+pointer, or more than one argument, is not bound — declare it in TOML. Only
+`<comp>_*` declarations are read: free functions and module objects are out
+of scope (`jm function` / TOML).
 
-The `generator`, `consumer`, `reader`, and `function` template pages
-each describe the contract above by example — the formal version above
-is just the union of what those pages already require. Variable-output
-components (the event-emitter shape) follow the same contract plus a
-sibling `<comp>_<verb>_max_out()` declaration. (`blockwise` is
-excluded — array return is unsupported.)
+The template pages each describe the contract above by example — the
+formal version above is just the union of what those pages already require.
+Variable-output components (the event-emitter shape) follow the same contract
+plus a sibling `<comp>_<verb>_max_out()` declaration. Today bind reads only
+the processor shape: the other presets' headers have no inline scalar
+`step()` for it to anchor on, and are refused (see [Acceptance](#acceptance)).
 
 The **type allowlist** the parser enforces per slot is the same one
 documented in [`docs/types.md`](../types.md), referenced from the
@@ -139,20 +139,11 @@ already in `_types.py`) cover the shipped templates. False negatives
 on weird formatting are fine for an MVP — they fall through to the
 "sorry, can't parse this header; fall back to TOML" path.
 
-```
-parse_header(path: Path) -> HeaderShape:
-    text = path.read_text()
-    state = match_state_struct(text)
-    ctor  = match_ctor(text, comp=state.name)
-    step  = match_step(text, comp=state.name)
-    gs    = match_getter_setter_pairs(text, comp=state.name, fields=state.fields)
-    extra = match_remaining_decls(text, comp=state.name, claimed=...)
-    return HeaderShape(state, ctor, step, gs, extra)
-```
-
-`HeaderShape` is then translated into the same dict shape
-`make_state_ctx` / `make_methods_ctx` produce today, fed through
-`_render.render_module_ext_*`, and written to disk.
+`_bind.parse_header(path) -> dict` runs those regexes and returns the
+component, its fields, step types, properties, methods, init_params and
+whether the state is opaque. `_bind.run` translates that into the same dict
+shape `make_state_ctx` / `make_methods_ctx` produce today, renders it through
+`_render.COMPONENT_EXT_C` and `render_component_pyi`, and writes both.
 
 ### Real — convention-driven semantics
 
@@ -163,10 +154,10 @@ recognition:
     field becomes an init_param. The ctor body in `.c` is assumed to
     initialise the state via `<comp>_set_<field>()` calls (or direct
     struct assignment).
-- **Output params**: a pointer param named `out` / `output` / `dst` /
-    `dest` is writable; any other pointer param is input.
 - **Variable output**: if `<comp>_<verb>_max_out` exists alongside
-    `<comp>_<verb>`, the verb binds as a variable-output method.
+    `<comp>_<verb>`, the verb is parsed as a variable-output method, and its
+    trailing pointer is the output whatever it is named. No other pointer
+    param is read.
 - **Opaque state**: state struct present in header as forward decl
     only — no `{ ... }` body. Skip getter/setter discovery; emit a
     handle-only Python class.
@@ -175,7 +166,7 @@ recognition:
 
 When the regex pass fails (decl split across lines, macros expand to
 the return type, typedef chain hides the int width), fall back to
-libclang. Same `HeaderShape` output; the only thing that changes is
+libclang. Same `parse_header` output; the only thing that changes is
 how it's populated. libclang is added as an optional dependency
 (`extras = ["bind-robust"]`) so the MVP install stays slim.
 
@@ -220,9 +211,10 @@ ______________________________________________________________________
 
 ## Composition with the rest of the toolchain
 
-- **Decoupled from `just-makeit.toml`.** `jm bind` reads the header
-    and nothing else. It does not write to the manifest; it does not
-    require `jm new` to have run.
+- **Never writes `just-makeit.toml`.** `jm bind` reads the header,
+    `<comp>_core.c`'s `reset()` (for defaults), `pyproject.toml` (for the
+    package name), and `just-makeit.toml` when one exists — for the header
+    layout, the C symbol stem and any `manual_stub` bodies to keep.
 - **TOML is *one* front-end, header is another.** Both produce the
     same context dict; the renderer doesn't know which one emitted it.
 - **Imported libraries become bindable.** Drop a vendored
@@ -238,17 +230,20 @@ ______________________________________________________________________
 
 ## Acceptance
 
-The MVP + Real phases shipped once all three held true — and still do,
-guarded in CI:
+The bar the MVP + Real phases were set, and where each stands:
 
 1. Each working preset's generated `_core.h` can be fed to `jm bind`
     and produce an `_ext.c` byte-identical to (or semantically
-    equivalent to) what the original scaffold emitted.
+    equivalent to) what the original scaffold emitted. **Met for the
+    processor preset only** (`tests/test_bind.py`, and the
+    `running_stats` example's round-trip); the other presets' headers
+    are refused.
 1. `jm bind --check` runs in CI for every bundled example and
-    passes on every commit.
+    passes on every commit. **Not met**: only `running_stats` binds.
 1. At least one bundled example uses `jm bind` end-to-end — author
     `_core.h` and `_core.c` by hand, then `jm bind` to materialise the
-    binding.
+    binding. **Not met**: `running_stats` scaffolds with jm, deletes
+    `_ext.c` and rebinds; no example hand-authors a header.
 
 The Robust (libclang) phase remains open; its bar is the same kind of
 proof — hand-import a small third-party C library (e.g. a single header
@@ -271,8 +266,6 @@ ______________________________________________________________________
     paragraph to the contract. Versioning the contract (a comment in
     `_core.h` like `// jm-bind: contract-1`) would let `jm bind` warn
     when a header is using older conventions.
-- **`blockwise` is out of scope.** Array RETURN
-    (`T[] -> T[]`) is not yet supported by the renderer — the CLI now
-    errors cleanly on it rather than emitting a broken scaffold — so
-    there is no `blockwise` shape for bind to target. Array INPUT
-    (`arg-type T[]`) works and binds fine.
+- **`blockwise` is not read.** `blockwise` (array → array) ships as a
+    preset ([its template page](../templates/blockwise.md)), but bind does
+    not read it: its header has no inline `step()` to anchor on.
