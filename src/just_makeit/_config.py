@@ -2069,6 +2069,13 @@ def declared_names(cfg: dict) -> "list[tuple[str, str, str]]":
             for index, value in enumerate(node):
                 _walk(value, trail[:-1] + [f"{trail[-1]}[{index}]"], table_key)
 
+    # A `_`-prefixed key is runtime state that `load` or a command attaches
+    # (`_doc_blocks`, `_group`), not something the manifest declares, and
+    # `_strip_private` is where that is already decided. `_doc_blocks` maps a
+    # documented C struct member to its Doxygen text, so a member called
+    # `name` -- very common -- reads as `{"name": "e.g. ..."}` and the walk
+    # took the prose for a declared name (gh-1932).
+    cfg = _strip_private(cfg)
     comps = set(components(cfg))
     for key, value in cfg.items():
         if key in _NAME_WALK_SKIP:
