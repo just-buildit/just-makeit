@@ -118,11 +118,12 @@ All three expose opaque hand-C state rather than copying it into Python. They
 differ in the surface they present:
 
 - A **capsule module** presents *free functions*. State is a `PyCapsule` handle
-    passed as the first argument: `state = create(...); y = execute(state, x, out); destroy(state)`. This is the lift of a hand-written
+    passed as the first argument: `state = <backing>_create(...); y = <backing>_execute(state, x, out); <backing>_destroy(state)`. This is the lift of a hand-written
     "functions-over-a-capsule" extension.
 
-- A **composer module** presents *CPython types*. The capsule lives **inside**
-    the `Composer` object; the user manipulates `Synth`/`Segment`/`Timeline`
+- A **composer module** presents *CPython types*. The backing
+    `<backing>_state_t *` lives **inside** the `Composer` object (no
+    PyCapsule); the user manipulates `Synth`/`Segment`/`Timeline`
     objects and calls methods. The composer is "an object (the Composer) made of
     objects (Segments, each made of Synths)" — hence *object of objects*.
 
@@ -143,15 +144,15 @@ The dividing line is deliberate and stable:
 | Capsule mechanics + `execute`/`reset`/`destroy`/`get_`/`set_` + GIL + numpy marshal | The per-source resolution (e.g. shared noise floor)    |
 | Source/segment marshalling + a `bytes` buffer                                       | The synthesis kernels                                  |
 | The `Synth`/`Segment`/`Timeline`/`Composer` types + factories                       | The writer / socket / clock C *logic* (BLUE/SigMF/zmq) |
-| The `Writer`/`Reader`/`ZmqSink`/`SampleClock` **handle types** (over that C logic)  | —                                                      |
+| The `Plan`/`SampleClock`/`StreamSink` **handle types** (over that C logic)          | —                                                      |
 | JSON to/from, the CLI face, CMake, `.pyi`                                           | —                                                      |
 
 The rule of thumb: **jm generates everything that is a mechanical projection of
 the manifest; you hand-write only what encodes the algorithm** — the DSP kernels
 *and* the resource logic (a file writer, a socket). The handle generator moved
-the transport *binding* across the seam: the `Writer`/`Reader`/`ZmqSink`/
-`SampleClock` types are now generated, leaving only the writer/socket/clock C
-behind them hand-written.
+the transport *binding* across the seam: doppler's `SampleClock` and
+`StreamSink` types are now generated, leaving only the socket/clock C behind
+them hand-written.
 
 ### 2.3 The enum SSOT
 
@@ -166,8 +167,9 @@ values = ["tone", "noise", "pn", "bpsk", "qpsk", "chirp", "bits"]
 ```
 
 The composer generator emits one C table per referenced enum
-(`_enum_wfm_type[]`) plus a shared `_enum_index()` lookup, and **only** for the
-enums the module's fields actually reference. Every face — type-attribute
+(`_enum_wfm_type[]`), **only** for the enums the module's fields actually
+reference, plus a shared `_enum_index()` lookup whenever some face parses a
+name back to its int (gh-1863). Every face — type-attribute
 validation, JSON ser/de, CLI choice flags — resolves names↔ints through these
 tables. There is no second copy to drift against.
 
@@ -179,12 +181,13 @@ ______________________________________________________________________
 
 For a capsule module, `jm apply` materializes three glue files:
 
-- `native/src/<mod>/<mod>_ext.c` — the binding: capsule wrapper struct, a
+- `native/src/<cname>/<cname>_ext.c` — the binding (`<cname>` is the module
+    id with dots as underscores: `dsp.mix` → `dsp_mix`): capsule wrapper struct, a
     use-after-destroy guard, `<backing>_create`, a variable-output `execute`
     (exact-dtype numpy in/out, **zero-copy `out[:n]` view**, optional GIL
     release), bare void methods (`reset`), `destroy`, and `get_`/`set_`
     accessors; plus the `PyMethodDef` table and `PyInit`.
-- `native/src/<mod>/CMakeLists.txt` — a Python-extension target linking the
+- `native/src/<cname>/CMakeLists.txt` — a Python-extension target linking the
     `link = true` dependency cores.
 - `src/<pkg>/<package>/<leaf>.pyi` — a typed stub.
 
@@ -198,8 +201,8 @@ kind         = "capsule"
 backing      = "ddcr"                     # wraps ddcr_state_t, calls ddcr_*
 capsule_name = "doppler.ddc.ddcr_state"   # the PyCapsule name string
 package      = "ddc"                      # .so/.pyi land in a sibling package
-header       = "ddc/ddc_core.h"           # backing API header (override)
-depends_on   = [{ name = "ddc", link = true }, …]   # cores linked onto the .so
+header       = "doppler/ddc/ddc_core.h"   # backing API header (override)
+depends_on   = [{ name = "ddc", link = true }]   # cores linked onto the .so
 extra_link_libs = ["m"]
 
 [[module.ddc_fn.init_params]]             # -> ddcr_create(norm_freq, rate)
@@ -229,8 +232,11 @@ Key points:
     names always use `backing` as written (gh-1685). The same holds for a
     composer's `backing`.
 - `package` lets the `.so`/`.pyi` build into a *sibling* package directory
-    (doppler's `ddc_fn` builds into the `ddc` package so `doppler.ddc` can
-    `from .ddc_fn import ddcr_*`). When unset, the module's own path is used.
+    (doppler's former `ddc_fn` built into the `ddc` package so `doppler.ddc`
+    could `from .ddc_fn import ddcr_*`). When unset, the module's own path is
+    used.
+- `capsule_name` is the `PyCapsule` name string; the default is
+    `<pkg>.<module>.<backing>_state`.
 - `depends_on` entries with `link = true` add each `<name>_core` to the `.so`'s
     link line (CMake does not pull OBJECT-lib objects transitively into a final
     `.so`, so the link must be direct).
@@ -261,7 +267,8 @@ typedef struct { <backing>_state_t *state; int destroyed; } _wrap_t;
 
 ### 3.4 Worked example: `ddc_fn`
 
-doppler's `ddc_fn` (the functional DDCR down-converter) was the pilot. Migrating
+Historical: doppler's `ddc_fn` (the functional DDCR down-converter) was the
+pilot; doppler has since retired it. Migrating
 it from a 400-line hand-written `no_generate` extension to `kind = "capsule"`
 deleted the hand code; `jm apply` regenerated a byte-equivalent binding that
 compiled clean, passed all existing tests, and kept the
@@ -273,11 +280,12 @@ ______________________________________________________________________
 
 ### 4.1 Overview: the four OO types
 
-A composer module emits four CPython types **into the `.so`**:
+A composer module emits three CPython types **into the `.so`**, plus a
+fourth (`Timeline`) when `[module.X.timeline] type_name` is set:
 
-- **`Synth`** (the *source* type) — one source's configuration (waveform fields
-    - enums + an optional `bytes` pattern). Plus factory functions
-        (`tone()`/`bpsk()`/…).
+- **`Synth`** (the *source* type) — one source's configuration (waveform
+    fields, enums and an optional `bytes` pattern), plus factory functions
+    (`tone()`/`bpsk()`/…).
 - **`Segment`** — a list of sources summed over a span, plus segment scalars
     (`fs`/`num_samples`/`off_samples`). Built inline from one source's kwargs, or
     via the `Segment.sum(*sources, …)` classmethod.
@@ -292,13 +300,10 @@ A composer module emits four CPython types **into the `.so`**:
 ```toml
 [module.wfm_compose]
 kind         = "composer"
-backing      = "wfm_compose"               # wfm_compose_state_t + wfm_compose_*
-capsule_name = "doppler.wfm.compose_state"
+backing      = "wfm_compose"     # dp_wfm_compose_state_t + dp_wfm_compose_*
 package      = "wfm"
-header       = "wfm/wfm_compose.h"
-composes     = ["wfm_synth"]               # the generator source object
-sample_type  = true                        # opt into the jm-app output axes
-depends_on   = [{ name = "wfm_compose", link = true }, … ]
+header       = "doppler/wfm/wfm_compose.h"
+depends_on   = [{ name = "wfm_compose", link = true }]   # and the other cores
 extra_link_libs = ["wfm_cjson", "m"]
 
 [module.wfm_compose.source]
@@ -309,13 +314,12 @@ fields = [
   { name = "type", type = "int", enum = "wfm_type", default = "tone" },
   { name = "freq", type = "double", default = "0.0" },
   { name = "bits", type = "uint8_t*", bytes = true },
-  …
+  # ... one row per source field
 ]
 
 [module.wfm_compose.segment]
 type_name = "Segment"
 struct    = "wfm_segment_t"
-sources   = "multi"
 fields = [
   { name = "fs", type = "double", default = "1e6" },
   { name = "num_samples", type = "size_t", default = "1024" },
@@ -323,12 +327,10 @@ fields = [
 ]
 
 [module.wfm_compose.timeline]
-type_name = "Timeline"
-loop = ["once", "repeat", "continuous"]
+type_name = "Timeline"                     # set it to emit a Timeline type
 
 [module.wfm_compose.oo]
 factories          = ["tone", "noise", "pn", "bpsk", "qpsk", "chirp", "bits"]
-emit               = "ctypes"              # emit CPython types in the .so
 discriminant       = "type"                # the enum field a factory presets
 composer_type_name = "Composer"
 
@@ -355,7 +357,8 @@ returns = "list[dict[str, object]]"        # raw Python, for the .pyi
 jm forward-declares each row's `fn` above the method table that names it, with
 the signature its `flags` imply. `METH_NOARGS`, `METH_O` and `METH_VARARGS`
 take `(PyObject *self, PyObject *arg)`, and `METH_KEYWORDS` adds a
-`PyObject *kwds`. So define the function with exactly that signature, `self`
+`PyObject *kwds`; `METH_FASTCALL` rows get CPython's fastcall signature. So
+define the function with exactly that signature, `self`
 as a `PyObject *` too. A declared row always includes the file, so it can be
 written before or after the `apply` that declares it; if it is missing, the
 build fails naming it. The `composer_seams` example builds one end to end.
@@ -364,7 +367,8 @@ build fails naming it. The `composer_seams` example builds one end to end.
 spelled `methods`: on a `kind = "handle"` or `kind = "capsule"` module that
 word means "generate the wrapper from this signature", while here the wrapper
 already exists and only needs a row. A composer `methods` table is reported as
-an unknown key naming the two kinds it is valid for.
+an unknown key naming the tables it is valid on (an object, a handle module, a
+capsule module).
 
 The **`fields`** list is the keystone: one ordered list of
 `{name, type, enum?, default?, bytes?}` per source/segment determines the C
@@ -421,7 +425,7 @@ a second one from jm:
 ```
 
 ```c
-/* Declared by jm in <module>_bridge.h; written by the project. */
+/* Declared by jm in <cname>_bridge.h; written by the project. */
 size_t pat_parse(const char *text, uint8_t *out, size_t max_out,
                  const char **why);
 ```
@@ -462,7 +466,7 @@ parse_why = true   # optional: parse_fn names its refusal (gh-1735)
 ```
 
 ```c
-/* Declared by jm in <module>_bridge.h; written by the project. T is the
+/* Declared by jm in <cname>_bridge.h; written by the project. T is the
  * pointee: the member may be `const T *`, but the source owns a `T *`. */
 T    *copy_fn(const T *);     /* borrowed -> owned; NULL on failure  */
 void  free_fn(T *);           /* NULL-safe                           */
@@ -525,6 +529,31 @@ generic value that round-trips through the setter and the record.
     factory name and forward the rest (so `tone(freq=…)` is
     `Synth(type="tone", freq=…)`).
 
+#### Straight-C seams (gh-998)
+
+A source can hand work back to the project as plain C, with no CPython in it:
+
+- **`[module.X.source.generates]`** gives the source type its own
+    `step()` / `steps()` / `reset()`, delegating to a composed generator
+    object (`generator`). The project writes the bridge that builds one from
+    a source: `<state_t> *bridge_fn(const <struct> *, double fs)`. The other
+    keys (`state_type`, `steps_fn`, `step_fn`, `reset_fn`, `destroy_fn`,
+    `header`, `output_type`) default to the generator's own C stem and header,
+    and `float _Complex`. A NULL from `bridge_fn` raises `RuntimeError`,
+    unless the optional `bridge_error_fn`,
+    `const char *fn(const <struct> *, double fs)`, returns a reason, which is
+    raised as `ValueError(reason)` (gh-1307).
+- **`[[module.X.source.computed]]`** (`name`, `type`, `fn`, `doc`) is a
+    read-only property computed in C on every read:
+    `<type> fn(const <struct> *)`.
+
+jm writes the prototype of every seam (these, a field's `coerce_str_fn` and
+an owned-pointer field's four host functions) into a generated
+`native/inc/<pkg>/<cname>/<cname>_bridge.h`, which the binding includes. The
+file is written only when at least one seam exists, so a C test or benchmark
+includes it instead of re-declaring a signature jm owns. The
+[composer_seams example](examples/composer_seams.md) builds one end to end.
+
 ### 4.4 The segment type
 
 A `Segment` holds a Python list of source objects plus the segment scalars — it
@@ -557,6 +586,14 @@ the fluent face of the segment list the composer already sequences.
 - `segments` / `repeat` / `continuous` reflect the **resolved** spec back as
     rebuilt OO objects.
 - `close` / `__enter__` / `__exit__` / `dealloc` destroy the backing state.
+
+The backing provides four functions, spelled through its C stem (§3.2):
+
+- `<state_t> *<backing>_create(const <seg> *segs, size_t n, int repeat, int continuous)`
+    (or the `create_fn` below);
+- `size_t <backing>_execute(<state_t> *, float _Complex *out, size_t max)`;
+- `const <seg> *<backing>_segments(const <state_t> *, size_t *n, int *repeat, int *continuous)`;
+- `void <backing>_destroy(<state_t> *)`.
 
 A `[module.X.composer]` ergonomics table adds optional in-`.so` conveniences so
 no hand-Python wraps the composer: `stream = true` generates
@@ -632,7 +669,13 @@ With `[module.X.cli] enabled = true` the composer gets an opt-in **standalone C
 command-line tool** (`render_cli`): a pure-C `main()` — no Python — that
 
 - builds the composer from **source/segment-field flags** (`--type`, `--freq`,
-    `--num_samples`, …) or from a JSON spec via `--from-file`;
+    `--num_samples`, …) or from a JSON spec via `--from-file`, which calls the
+    project's C reader `[X.json] from_file_fn` (default
+    `<backing>_from_file(const char *path)`; under `from_file_why` it takes a
+    trailing `const char **why`). jm does not generate that reader, and the
+    generated JSON ser/de lives in the extension only, so a composer with the
+    CLI enabled supplies it;
+- takes `--out FILE`, `--repeat` and `--continuous`;
 - streams samples in the chosen wire format, reusing **`jm app`'s output axes**
     verbatim (`--sample_type` / `--file-type` / `--endian`);
 - validates enum flags against the SSOT `_enum_*` tables — no hand-written flag
@@ -644,9 +687,11 @@ guard (it is a C tool, not a Python module).
 ### 4.9 apply materialization
 
 `jm apply` routes a composer module to the composer materializer (no
-object-group scaffold). It writes `<mod>_ext.c` (the assembled module: enum
-tables + the four types + factory table + `PyInit`), `CMakeLists.txt`,
-`<leaf>.pyi`, and (when enabled) `<mod>_cli.c`, then splices the top-level
+object-group scaffold). It writes `<cname>_ext.c` (the assembled module: enum
+tables + the source, segment and composer types, the timeline type when
+declared, the factory table and `PyInit`), `CMakeLists.txt`, `<leaf>.pyi`,
+(when enabled) `<cname>_cli.c`, and (when the source declares a seam, §4.3)
+`native/inc/<pkg>/<cname>/<cname>_bridge.h`, then splices the top-level
 `add_subdirectory`. These are glue: `jm apply` reconciles them on every run and
 `jm status --check` guards them. The manifest round-trips through `save`/`load`
 so a project is reproducible from the manifest plus the hand-written kernels
@@ -665,7 +710,7 @@ an object of objects, a handle presents **one typed `PyTypeObject` over a single
 opaque resource handle**.
 
 `jm apply` materializes the same three glue files as a capsule —
-`native/src/<mod>/<mod>_ext.c`, `CMakeLists.txt`, `<leaf>.pyi` — recognized at
+`native/src/<cname>/<cname>_ext.c`, `CMakeLists.txt`, `<leaf>.pyi` — recognized at
 all **four** dispatch sites in `_apply.py` (the import block, the materialize
 dispatch, the `_mods_need_update` exclusion filter, and `_sync_aggregates` glue
 reconciliation; miss any and `jm apply` / `jm status --check` break silently).
@@ -742,11 +787,17 @@ Three variations cover the C APIs that don't fill a struct (gh-311/gh-314):
 
 ```toml
 [[module.wfm_writer.getters]]
-fn = "wfm_writer_stats"; out = "wfm_writer_stats_t"; cache = false
+fn = "wfm_writer_stats"
+out = "wfm_writer_stats_t"
+cache = false
 [[module.wfm_writer.getters.fields]]
-name = "clip_fraction"; from = "frac"; type = "double"
+name = "clip_fraction"
+from = "frac"
+type = "double"
 [[module.wfm_writer.getters.fields]]
-name = "peak_dbfs"; type = "double"; expr = "tmp.peak > 0 ? 20*log10(tmp.peak) : -INFINITY"
+name = "peak_dbfs"
+type = "double"
+expr = "tmp.peak > 0 ? 20*log10(tmp.peak) : -INFINITY"
 ```
 
 ### 5.3 RAII, optional backends & the UAF rule
@@ -768,18 +819,20 @@ array, never a dangling view.
 
 ### 5.4 Worked example: doppler's transport layer
 
-The handle generator exists to retire doppler's hand-written `wfmcompose_py.c`
+The handle generator existed to retire doppler's hand-written `wfmcompose_py.c`
 (~960 lines of CPython — the four transport types plus segment-tuple parsing and
-free functions that move to jm module functions). `Writer`, `Reader`, `ZmqSink`,
-and `SampleClock` are
+free functions that moved to jm module functions). `Writer`, `Reader`, `ZmqSink`,
+and `SampleClock` were
 **one archetype — a capsule-backed resource handle — instantiated four times**
 over the existing `wfm_writer.c` / `wfm_reader.c` / `wfm_sink.c` C API (whose
-`wfm_reader_info()` already fills a struct, ideal for the decoded-getter path).
-`Reader` uses `cache = true` info getters; `Writer` / `ZmqSink` expose their
+`wfm_reader_info()` already filled a struct, ideal for the decoded-getter path).
+`Reader` used `cache = true` info getters; `Writer` / `ZmqSink` exposed their
 stats as **per-field scalar getters** (gh-314, no `*_stats_t` shim);
-`SampleClock` is built **in place** via `init_fn` (gh-315, no create/destroy
-shim); `ZmqSink` / `SampleClock` use the weak-symbol guard (POSIX-only);
-`ZmqSink.send(iq, fs, fc)` is the array+scalar method shape. The validation was reference-first (§7): the first real compile of
+`SampleClock` was built **in place** via `init_fn` (gh-315, no create/destroy
+shim); `ZmqSink` / `SampleClock` used the weak-symbol guard (POSIX-only);
+`ZmqSink.send(iq, fs, fc)` was the array+scalar method shape. doppler has
+since moved `Writer` / `Reader` to object modules and renamed `ZmqSink` to
+`StreamSink`. The validation was reference-first (§7): the first real compile of
 generated handle output — scaffold → `jm apply` → compile + a real C backing →
 import → exercise — caught a codegen bug a string-assertion missed, and now
 guards the marshaling end-to-end in CI.
@@ -798,7 +851,7 @@ object, and frees the temp. Because the return is an owned copy there is no
 aliasing — none of the array shapes' deferred-free / view machinery applies.
 
 ```toml
-[[wfm_plan.methods]]
+[[module.wfm_plan.methods]]
 name = "save"
 fn = "wfm_plan_save"           # size_t (const h*, void *out) -> bytes written
 out_len_fn = "wfm_plan_save_bytes"   # size_t (const h*)
@@ -824,7 +877,7 @@ init_params = [{ name = "path", type = "path" }]
 ```
 
 ```python
-from wfm_plan import Plan, PlanFromBlob, PlanFromFile
+from doppler.wfm import Plan, PlanFromBlob, PlanFromFile
 
 blob = p.save()                 # bytes
 p2 = PlanFromBlob(blob)         # a fresh, independent Plan
@@ -913,15 +966,16 @@ ______________________________________________________________________
 
 **Shared (capsule, composer & handle):**
 
-| key               | meaning                                                                |
-| ----------------- | ---------------------------------------------------------------------- |
-| `kind`            | `"capsule"`, `"composer"`, or `"handle"`                               |
-| `backing`         | symbol prefix; wraps `<backing>_state_t`, calls `<backing>_*`          |
-| `capsule_name`    | the `PyCapsule` name string                                            |
-| `package`         | package dir the `.so`/`.pyi` build into (default: module path)         |
-| `header`          | backing C API header to include (default `<backing>/<backing>_core.h`) |
-| `depends_on`      | `[{name, link=true}, …]` — cores linked onto the `.so`                 |
-| `extra_link_libs` | non-core link targets (e.g. `"m"`, a vendored json lib)                |
+| key               | meaning                                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `kind`            | `"capsule"`, `"composer"`, or `"handle"`                                                                              |
+| `backing`         | symbol prefix; wraps `<backing>_state_t`, calls `<backing>_*`                                                         |
+| `package`         | package dir the `.so`/`.pyi` build into (default: module path)                                                        |
+| `header`          | backing C API header, included verbatim (default `<pkg>/<backing>/<backing>_core.h`; spell an override `"<pkg>/..."`) |
+| `depends_on`      | `[{name, link=true}, …]` — cores linked onto the `.so`                                                                |
+| `extra_link_libs` | non-core link targets (e.g. `"m"`, a vendored json lib)                                                               |
+| `doc`             | the module's docstring, on its `m_doc` and its re-export `__init__.py` (gh-645)                                       |
+| `platforms`       | the platforms the module's extension is built on (gh-1463)                                                            |
 
 Module-level `[[module.X.functions]]` are a plain module's. On any of the three
 kinds the table is refused with a warning, and `jm function --module` on one
@@ -930,31 +984,39 @@ it below; one that belongs to another face (a handle `properties`, a capsule
 `getters`, a composer `init_params`, ...) warns and names the table that face
 reads instead.
 
-**Capsule only:** `[[module.X.init_params]]` (`name`/`type`/`default?`),
-`[[module.X.methods]]` (`name`, `arg_type?`, `return_type?`, `caller_out?`,
-`nogil?`), `[[module.X.properties]]` (`name`/`type`/`writable?`).
+**Capsule only:** `capsule_name` (the `PyCapsule` name string; default
+`<pkg>.<module>.<backing>_state`), `[[module.X.init_params]]`
+(`name`/`type`), `[[module.X.methods]]` (`name`, `arg_type?`,
+`return_type?`, `caller_out?`, `nogil?`), `[[module.X.properties]]`
+(`name`/`type`/`writable?`).
 
 **Composer only:**
 
-| table / key      | meaning                                                                                                                                                                                                                                                                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `composes`       | the generator source object(s) the composer reuses                                                                                                                                                                                                                                                                                               |
-| `sample_type`    | opt into the jm-app output axes on the CLI                                                                                                                                                                                                                                                                                                       |
-| `create_fn`      | the create every face calls, `<state_t> *fn(segs, n, repeat, continuous)`; default `<backing>_create`, used as written (gh-1758)                                                                                                                                                                                                                 |
-| `create_why`     | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                    |
-| `[X.source]`     | `object`, `struct`, `type_name`, `fields[]`                                                                                                                                                                                                                                                                                                      |
-| `[X.segment]`    | `type_name`, `struct`, `sources` (`"multi"`/`"single"`), `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`)                                                                                                                                                                                                    |
-| `[X.timeline]`   | `type_name`, `loop[]`                                                                                                                                                                                                                                                                                                                            |
-| `[X.oo]`         | `factories[]`, `emit` (`"ctypes"`), `discriminant`, `composer_type_name`                                                                                                                                                                                                                                                                         |
-| `[X.json]`       | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing`/`from_json_why`/`from_file_why` (delegation), `header`/`include_dir` (generated path)                                                                                                                                                                          |
-| `[X.composer]`   | `stream`, `to_dict`; optional `realtime = {clock_create, pace, destroy, header}` to pace `stream()` in C (gh-317)                                                                                                                                                                                                                                |
-| `[[X.settings]]` | a post-construction setting `{name, setter_fn, getter_fn, type, enum?}` — a scalar the backing exposes through a setter/getter pair and that is set once, after `create_fn` returns and before the first `execute()`. Becomes a constructor kwarg AND a read/write attribute; a string-valued one resolves through its `[[enum]]` SSOT (gh-1126) |
-| `[X.cli]`        | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                |
+| table / key         | meaning                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create_fn`         | the create every face calls, `<state_t> *fn(segs, n, repeat, continuous)`; default `<backing>_create`, used as written (gh-1758)                                                                                                                                                                                                                 |
+| `create_why`        | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                    |
+| `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]` and `generates` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                     |
+| `[X.segment]`       | `type_name`, `struct`, `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`), `flat_sources` (a one-source segment proxies that source's fields as read-only attributes), `ranged`                                                                                                                                |
+| `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion                                                                                                                                                                         |
+| `[X.timeline]`      | `type_name` (the `Timeline` type is emitted only when it is set)                                                                                                                                                                                                                                                                                 |
+| `[X.oo]`            | `factories[]`, `discriminant`, `composer_type_name`                                                                                                                                                                                                                                                                                              |
+| `[[X.serializers]]` | an extra delegated serializer `{name, fn, returns?, params?[], header?}`: a `<Composer>.<name>(<params>)` method calling the project's C `fn(<params>, segs, n)` over the resolved segments, for a domain wire format jm does not generate (gh-317)                                                                                              |
+| `[X.json]`          | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing`/`from_json_why`/`from_file_why` (delegation), `header`/`include_dir` (generated path)                                                                                                                                                                          |
+| `[X.composer]`      | `stream`, `to_dict`; optional `realtime = {clock_create, pace, destroy, header}` to pace `stream()` in C (gh-317)                                                                                                                                                                                                                                |
+| `[[X.settings]]`    | a post-construction setting `{name, setter_fn, getter_fn, type, enum?}` — a scalar the backing exposes through a setter/getter pair and that is set once, after `create_fn` returns and before the first `execute()`. Becomes a constructor kwarg AND a read/write attribute; a string-valued one resolves through its `[[enum]]` SSOT (gh-1126) |
+| `[X.cli]`           | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                |
 
 A **field** entry (`source.fields`/`segment.fields`):
-`{ name, type, enum?, default?, bytes? }` — one declaration drives the
-marshalling, the type slots, the JSON shape, and the CLI flag. A source field
-may instead be an owned pointer (§4.2, gh-1711):
+`{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, aliases?, doc? }`
+— one declaration drives the marshalling, the type slots, the JSON shape, and
+the CLI flag. `complex` marks an owned complex64 array, as `bytes` marks an
+owned byte buffer; `c_ptr` / `c_len` relocate either into a nested struct
+(§4.2); `coerce = "bit_pattern"` and `coerce_str_fn` widen what a `bytes`
+field takes (§4.2); `aliases` are constructor keywords accepted in place of
+the field's name; `doc` is the fallback docstring for a member its header
+leaves undocumented. A source field may instead be an owned pointer (§4.2,
+gh-1711):
 `{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn, parse_why? }`.
 
 **Handle only:**
@@ -962,12 +1024,16 @@ may instead be an owned pointer (§4.2, gh-1711):
 | table / key                             | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `handle_type`                           | the opaque C handle type (default `<backing>_t`)                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `type_name`                             | the generated CPython class name (`Writer`)                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `create_fn`                             | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?}` (`type = "path"` → `os.fspath`)                                                                                                                                                                                                                                                                                                                                                    |
+| `type_name`                             | the generated CPython class name (`Plan`)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `create_fn`                             | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?, doc?}` (`type = "path"` → `os.fspath`)                                                                                                                                                                                                                                                                                                                                              |
 | `init_fn`                               | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                                                                                                                                                                                                                                                                                                     |
 | `[[X.create_post]]`                     | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `create_error` / `create_error_message` | exception + message raised when `create_fn` returns NULL; undeclared → `RuntimeError: "<create_fn> failed"` (gh-514)                                                                                                                                                                                                                                                                                                                                                     |
-| `[[X.methods]]`                         | `{name, fn, args[], returns?, nogil?, error?, error_message?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319)                                                                                                                                                                                                                                                             |
+| `[[X.methods]]`                         | `{name, fn, args[], returns?, nogil?, error?, error_message?, out_len_fn?, doc?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319); `out_len_fn` sizes a handle-length array or `bytes` result (§5.5)                                                                                                                                                                       |
+| `[[X.factories]]`                       | module-level alternate constructors `{name, create_fn, init_params[]}` that build a fresh handle (§5.5, gh-565)                                                                                                                                                                                                                                                                                                                                                          |
+| `close_returns`                         | `"int"`: `close()` raises `RuntimeError` on a non-zero `close_fn` return; `tp_dealloc` still ignores it                                                                                                                                                                                                                                                                                                                                                                  |
+| `serializable`                          | `true`: `state_bytes()` / `get_state()` / `set_state()` over the handle, from the backing's `<backing>_state_bytes` / `_get_state` / `_set_state` (gh-403)                                                                                                                                                                                                                                                                                                               |
+| `capsule` (or `capsule_name`)           | publish a borrowed `_capsule` property lending the handle's pointer, so another component can take it as a capsule parameter (gh-794)                                                                                                                                                                                                                                                                                                                                    |
 | `error` / `error_message` (on a method) | over an `int` `returns`, a non-zero rc raises `error` with `error_message` (the rc appended) instead of crossing as an int; undeclared message → `"<fn> failed"`. The `.pyi` says `-> None` and documents a numpy `Raises` section, from the same pair the binding raises with (gh-565/gh-1111/gh-1116). **Needs a status return**: on an array or `bytes` shape the C return is the payload length, so there is no rc to check and the declaration is refused (gh-1118) |
 | `[[X.getters]]`                         | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314)                                                                                                                                                                                                                                                                         |
 | `close_fn`                              | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                                                                                                                                                                                                                                                                                         |
@@ -1008,8 +1074,9 @@ ______________________________________________________________________
     byte-for-byte (conditional field emission, bespoke layouts) uses the
     `json.to_json_fn` delegation hatch — at the cost of keeping that one
     hand-written serializer (and its enum copy).
-- **The last enum copy.** When the CLI's `--from-file`/`--record` delegate to a
-    backing C JSON parser, that parser keeps its own enum table. Collapsing the
+- **The last enum copy.** The CLI's `--from-file` always calls a backing C
+    reader (`[X.json] from_file_fn`, default `<backing>_from_file`), and that
+    reader keeps its own enum table. Collapsing the
     final copy to zero needs a *standalone* generated C ser/de (enum tables +
     to/from JSON over the backing structs) shared by both the extension and the
     CLI — a deferrable follow-up.

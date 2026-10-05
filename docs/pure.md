@@ -1,14 +1,14 @@
 # Stateful vs Pure Objects
 
-| Shape              | Flags                       | `step()` signature                   |
-| ------------------ | --------------------------- | ------------------------------------ |
-| Stateful (default) | _(none)_                    | `step(const state_t *s, T x) → T`    |
-| Mutating           | `--mutable`                 | `step(state_t *s, T x) → T`          |
-| Generator          | `--arg-type void`           | `step(state_t *s) → T`               |
-| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T`               |
-| Sink               | `--return-type void`        | `step(const state_t *s, T x) → void` |
-| Pure function      | `--no-state`                | `step(const state_t *s, T x) → T`    |
-| Method-only        | `--no-step`                 | _(no step generated)_                |
+| Shape              | Flags                       | `step()` signature                |
+| ------------------ | --------------------------- | --------------------------------- |
+| Stateful (default) | _(none)_                    | `step(const state_t *s, T x) → T` |
+| Mutating           | `--mutable`                 | `step(state_t *s, T x) → T`       |
+| Generator          | `--arg-type void`           | `step(const state_t *s) → T`      |
+| Mutating generator | `--arg-type void --mutable` | `step(state_t *s) → T`            |
+| Sink               | `--return-type void`        | `step(state_t *s, T x) → void`    |
+| Pure function      | `--no-state`                | `step(const state_t *s, T x) → T` |
+| Method-only        | `--no-step`                 | _(no step generated)_             |
 
 The sections below explain each shape and when to reach for it. Each flag
 also works at scaffold time, e.g. `jm new my_proj --object framer --no-step`
@@ -72,7 +72,8 @@ ______________________________________________________________________
 ## Generator / source: `--arg-type void`
 
 ```sh
-just-makeit object tone_gen --arg-type void --return-type "float _Complex" --mutable
+just-makeit object tone_gen --arg-type void --return-type "float _Complex" --mutable \
+    --state freq_hz:double:1000.0
 ```
 
 A generator produces samples without consuming input. Pass `--arg-type void`
@@ -107,11 +108,12 @@ just-makeit object iq_writer --return-type void
 ```
 
 A sink consumes input but produces no output. Pass `--return-type void` to
-drop the return value from `step()` and `steps()`.
+drop the return value from `step()` and `steps()`. A sink mutates its state,
+so its `step()` is never `const`.
 
 ```c
 static inline void
-my_proj_iq_writer_step(const my_proj_iq_writer_state_t *state, float _Complex x) { … }
+my_proj_iq_writer_step(my_proj_iq_writer_state_t *state, float _Complex x) { … }
 ```
 
 Python side:
@@ -132,13 +134,14 @@ just-makeit object clipper --no-state \
 ```
 
 Some operations require no persistent state — they are pure functions of their
-inputs. `--no-state` suppresses the state struct entirely; `--init-param`
-declares constructor parameters that are passed in at creation time but not
-stored as struct fields (you implement storage yourself in the `<<IMPLEMENT>>`
-stubs).
+inputs. `--no-state` generates an *empty* state struct (a
+`<<IMPLEMENT: add fields>>` marker) instead of one field per `--state`.
+`--init-param` declares constructor parameters that are not stored
+automatically: add the fields you need and assign them in the `create()`
+stub.
 
 ```c
-/* No state struct generated.  You define storage in the create stub. */
+/* Empty state struct: add your fields; assign them in create(). */
 my_proj_clipper_state_t *my_proj_clipper_create(float threshold);
 void             my_proj_clipper_destroy(my_proj_clipper_state_t *state);
 void             my_proj_clipper_reset(my_proj_clipper_state_t *state);
@@ -158,13 +161,18 @@ ______________________________________________________________________
 just-makeit object framer --no-step \
     --state buf_len:size_t:0
 just-makeit method framer push --param data:"float _Complex[]" --return-type size_t
-just-makeit method framer flush --return-type "float _Complex[]" --variable-output
+just-makeit method framer flush --variable-output --return-type "float _Complex"
 ```
 
 When the object's interface consists entirely of named methods, suppress
 `step()` and `steps()` with `--no-step`. The lifecycle functions (`create`,
 `destroy`, `reset`) are still generated; only the generic execute pair is
 omitted.
+
+A `--variable-output` method names the *element* type; the array is the
+method's output. `flush` becomes
+`size_t my_proj_framer_flush(my_proj_framer_state_t *state, size_t n, float _Complex *out)`
+in C and `flush(count=1, out=None) -> NDArray[complex64]` in Python.
 
 Use this shape for stateful objects with non-uniform interfaces: re-framers,
 packetisers, protocol encoders.

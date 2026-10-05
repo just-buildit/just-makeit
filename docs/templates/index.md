@@ -7,8 +7,11 @@ shape that matches your work, and run the exact command shown at the top
 of the page.
 
 Each page is titled with the CLI line that materialises it. Run it
-verbatim, then open `<comp>_core.c` and replace the `/* TODO */`
-markers with your algorithm.
+verbatim, then fill in the marked body: the inline `step()` in
+`<comp>_core.h` for processor, generator and consumer; the
+`<<IMPLEMENT>>` stubs in `<comp>_core.c` for blockwise, and for the
+methods you add to a reader; and `native/src/<mod>/<fn>.c` for a
+function.
 
 Preset names describe **what the component does to data**, not what
 domain you're working in. A "processor" is any 1:1 input→output
@@ -39,9 +42,11 @@ plan-once/execute-many FFTW pattern.
 
 Need *variable-output* (zero or more outputs per call — peak detector,
 event finder, syllable boundary detector)? That's a capability flag,
-not its own preset — add `--variable-output --max-out N` to any
-preset that has output and declare per-event fields with
-repeatable `--result-field name:T`.
+not its own preset — add `--variable-output --max-out N` to `jm object`
+and it generates a `run()` method returning a variable-length array.
+For per-event records, add a method instead —
+`jm method NAME detect --result-field idx:size_t --result-field mag:float --return-type my_event_t`
+— and declare `my_event_t` in the `_core.h`.
 
 ## How to read each page
 
@@ -82,7 +87,7 @@ the additive verbs (`jm method`, computed `jm property`) only *inject* a new
 declaration and *append* a fresh stub, leaving your existing bodies intact.
 Adding state with `jm add` is the exception: it rebuilds the object from the
 manifest, so keep your body in `impl`/`create_impl` so it survives. To
-deliberately throw the scaffold away and rebuild it from the manifest, run
-`jm regenerate <component>` (`git stash` first — it discards your
-hand-written `_core.c`). See [Type slots](../types.md) for the full
-sacred/glue contract.
+rebuild a component from the manifest, run `jm regenerate <component>`. It
+splices your hand-written bodies back in by name (best-effort), and
+`--discard` throws them away for a clean scaffold; `git stash` first either
+way. See [Type slots](../types.md) for the full sacred/glue contract.

@@ -72,6 +72,12 @@ void  dp_interrupt_state_adopt(void *shared)
 and read through `g_cur` everywhere else. Adoption happens at import, before
 any of your code runs, so nothing here has to be thread-safe.
 
+The two accessors are `<stem>_state_ptr` and `<stem>_state_adopt`, where the
+stem is the component's C symbol stem: `[project] c_prefix` plus the
+component name, not doubled when the name already starts with the prefix.
+Above, the component `dp_interrupt` under `c_prefix = "dp"` keeps the stem
+`dp_interrupt`.
+
 ## 4. `jm apply`
 
 That is the whole workflow. jm generates the rendezvous into every linking
@@ -109,25 +115,28 @@ three names you need, so a hand-written binding joins the rendezvous with no
 guessing:
 
 ```c
-#include "flag_procglobal.h"
+#include "<pkg>/flag/flag_procglobal.h"
 
-PyObject *own = PyImport_ImportModule(FLAG_PG_OWNER);
-PyObject *cap = PyObject_GetAttrString(own, FLAG_PG_ATTR);
-flag_state_adopt(PyCapsule_GetPointer(cap, FLAG_PG_CAPSULE));
+PyObject *own = PyImport_ImportModule(<PKG>_FLAG_PG_OWNER);
+PyObject *cap = PyObject_GetAttrString(own, <PKG>_FLAG_PG_ATTR);
+<pkg>_flag_state_adopt(PyCapsule_GetPointer(cap, <PKG>_FLAG_PG_CAPSULE));
 ```
 
-(error handling omitted — every pointer there can be `NULL`).
+(error handling omitted — every pointer there can be `NULL`). `<pkg>_flag`
+is the component's C stem, `[project] c_prefix` plus the component name, and
+the macros are its upper case; they are bare `FLAG_` / `flag_` only under
+`jm new --no-c-prefix`.
 
 Use the macros rather than the strings they expand to. `jm apply` rewrites
 this header from the manifest on every run and `jm status --check` compares
 it, so the names follow the project: rename the owning module, move it into a
 package, and the adopt above keeps working. gh-1140 is what that sentence is
 worth — the header was written once at scaffold time and never maintained, so
-a correction to `FLAG_PG_OWNER` reached every generated binding and not the
+a correction to `<STEM>_PG_OWNER` reached every generated binding and not the
 one file a hand-written binding reads, and the `no_generate` modules this
 section is addressed to failed at import while every generated module loaded.
 
-`FLAG_PG_OWNER` names the **extension module**, not the package —
+`<STEM>_PG_OWNER` names the **extension module**, not the package —
 jm's layout is `<pkg>/<mod>/<mod>.so` behind a re-exporting
 `__init__.py`, and the capsule is published on the `.so`'s own module
 object (gh-1134).
