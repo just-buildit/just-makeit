@@ -31,9 +31,10 @@ Already have the implementation in another file? Add
 `--impl file::funcname` (e.g. `--impl /tmp/impl.c::q15_to_float`) to the
 command above and it lifts that function's body directly into the
 generated file instead of leaving a stub — no separate fill-in step. The
-function's `_core.c` is a sacred file — once written, `jm apply` never
-overwrites it — so lifting a real body in is safe and has no
-splice-into-existing-file hazard.
+function's own `native/src/<mod>/<fn>.c` (or `<mod>_core.c` under
+`jm module --functions-in-core`) is a sacred file — once written,
+`jm apply` never overwrites it — so lifting a real body in is safe and has
+no splice-into-existing-file hazard.
 
 `--impl` also takes a **line range**: `--impl file::N:M` lifts lines
 `N..M` (inclusive, 1-based) verbatim instead of a named body — handy
@@ -46,22 +47,23 @@ substitutions to the lifted text before injection.
 ### `native/inc/my_dsp/io/io_core.h` (declaration)
 
 ```c
-void q15_to_float(const int16_t *input,  size_t input_len,
-                  float         *output, size_t output_len,
-                  size_t n);
+void my_dsp_q15_to_float(const int16_t *input,  size_t input_len,
+                         float         *output, size_t output_len,
+                         size_t n);
 ```
 
 `input` is `const`; `output` is not. The header and implementation
-always match.
+always match. The C symbol carries `[project] c_prefix` (`my_dsp_`, the
+package name `jm new` defaults it to); the Python name does not.
 
 ### `native/src/io/q15_to_float.c` (stub — the function's own sacred file)
 
 ```c
-/* <<IMPLEMENT: q15_to_float>> */
+/* <<IMPLEMENT: my_dsp_q15_to_float>> */
 void
-q15_to_float(const int16_t *input,  size_t input_len,
-             float         *output, size_t output_len,
-             size_t n)
+my_dsp_q15_to_float(const int16_t *input,  size_t input_len,
+                    float         *output, size_t output_len,
+                    size_t n)
 {
     (void)input; (void)input_len;
     (void)output; (void)output_len;
@@ -70,9 +72,10 @@ q15_to_float(const int16_t *input,  size_t input_len,
 ```
 
 The Python binding (`io_ext.c`) auto-generates: numpy-array acquisition
-for `input` (read-only, C-contiguous), allocation of `output` if the
-caller didn't pass one (or write-through if they did), and the scalar
-parsing for `n`.
+for `input` (read-only, C-contiguous), validation of the caller's
+writable `output` array, and the scalar parsing for `n`. To have the
+function allocate and return its output instead, use `--out-type` (see
+[Variants](#variants)).
 
 ## What you fill in
 
@@ -80,9 +83,9 @@ The function body. For Q15 → float that's two lines:
 
 ```c
 void
-q15_to_float(const int16_t *input,  size_t input_len,
-             float         *output, size_t output_len,
-             size_t n)
+my_dsp_q15_to_float(const int16_t *input,  size_t input_len,
+                    float         *output, size_t output_len,
+                    size_t n)
 {
     for (size_t i = 0; i < n; i++)
         output[i] = (float)input[i] / 32768.0f;
@@ -117,19 +120,21 @@ positional-only).
 - **`--out-type T`** — the function allocates and returns a fresh `T[]`
     ndarray instead of writing through an `--out-param`, sized from the
     first array param's length (or the first integer scalar param, if
-    there's no array param). `jm function make_window --module win --param n:size_t --out-type float` generates `void make_window(float *out, size_t n)`, called from Python as `make_window(512)`.
+    there's no array param). `jm function make_window --module win --param n:size_t --out-type float` generates `void my_dsp_make_window(float *out, size_t n)`, called from Python as `make_window(512)`.
 - **`--result-field name:type`** — emit a list of `{name, type}` records
-    per call (repeatable).
+    per call (repeatable). Requires `--return-type <struct>` naming the C
+    struct one row is, declared in the sacred header.
 
 ## Concrete types
 
-| Slot                   | Accepts                                                                                                                                                                                                       | Rejects                                                  | Default          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------- |
-| `--param name:T`       | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`.                                                                        | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
-| `--out-param name:T[]` | Array shapes only. Drops `const`.                                                                                                                                                                             | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
-| `--return-type T`      | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                       | `const char *`, any `T[]`.                               | `void`           |
-| `--out-type T`         | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65). | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
+| Slot                   | Accepts                                                                                                                                                                                                                                                                                                            | Rejects                                                  | Default          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | ---------------- |
+| `--param name:T`       | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`. Also `name:path` (`str \| os.PathLike`, C `const char *`) and `name:enum:<name>` (a declared `[[enum]]`) — see [`jm function`](../commands/extend.md#just-makeit-function). | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
+| `--out-param name:T[]` | Array shapes only. Drops `const`.                                                                                                                                                                                                                                                                                  | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
+| `--return-type T`      | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                                                                                                                            | `const char *`, any `T[]`.                               | `void`           |
+| `--out-type T`         | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65).                                                                                                      | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
 
 The function preset has the **narrowest** slot allowlist of any
-template — no strings, no string-enums, no 2-D arrays. Need those?
-Wrap the logic in an object preset instead.
+template — no free-form strings (a filesystem path is `name:path`), no
+inline `string_enum:` (a declared `[[enum]]` is `name:enum:<name>`), no
+2-D arrays. Need those? Wrap the logic in an object preset instead.

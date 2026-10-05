@@ -117,6 +117,23 @@ Convention: `state->delay[0..LENGTH-1]` is the delay line, `delay[0]` = newest.
     explicit compiler flags) — a `LENGTH=0` object that always compiled
     fine on x86 can fail to build on aarch64 until you add the placeholder.
 
+### Controllable fields — `JM_DEFINE_STEPS_EX`
+
+When a state field is `controllable = true`, `step()` gains a trailing scalar
+argument and `steps()` must forward it. Use the `_EX` form:
+
+```c
+JM_DEFINE_STEPS_EX(fn, state_t, sample_t, LENGTH, BATCH, CHUNK,
+                   (, float gain), (, gain))
+```
+
+The two paren-wrapped suffixes are the extra parameter list and the matching
+argument list. The macro threads them into `fn_steps()`'s signature, the
+scalar tail and the `fn_step_batch()` call, so your `step_batch()` takes the
+same trailing parameter. Plain `JM_DEFINE_STEPS` is `_EX` with `()`, `()`. See
+[Arguments](arguments.md#default-optional-arguments) for what a controllable
+field is.
+
 ______________________________________________________________________
 
 ### FIR filter example
@@ -185,7 +202,8 @@ Included automatically by `jm_perf.h`; can also be included standalone.
 | NEON       | 4                   | `float32x4_t` | `float64x2_t` |
 | Scalar     | 1                   | `float`       | `double`      |
 
-`JM_SIMD_WIDTH_F64` is always half of `JM_SIMD_WIDTH_F32`.
+`JM_SIMD_WIDTH_F64` is half of `JM_SIMD_WIDTH_F32` on every SIMD tier; both
+are 1 on the scalar tier.
 
 NEON is selected on any `__aarch64__` build — unlike AVX2/AVX-512, which
 require explicit compiler flags (`-march=native` or similar) to turn on,
@@ -247,8 +265,8 @@ ______________________________________________________________________
 
 ## SIMD build flag
 
-SIMD intrinsics require `-march=native -ffast-math`. Pass `-DENABLE_SIMD=ON`
-to CMake:
+SIMD intrinsics require `-march=native -ffast-math` (on Windows clang-cl:
+`/arch:AVX2 /fp:fast`). Pass `-DENABLE_SIMD=ON` to CMake:
 
 ```sh
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON

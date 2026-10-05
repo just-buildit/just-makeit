@@ -27,51 +27,57 @@ jm object NAME --preset consumer \
 
 ### `native/inc/<pkg>/NAME/NAME_core.h`
 
+Every C symbol carries the component's C stem, `<pkg>_NAME`
+(`[project] c_prefix`, which `jm new` defaults to the package name).
+
 ```c
 typedef struct {
     uint64_t count;
     double   sum;
-} NAME_state_t;
+} <pkg>_NAME_state_t;
 
-NAME_state_t *NAME_create(uint64_t count, double sum);
-void          NAME_destroy(NAME_state_t *state);
-void          NAME_reset(NAME_state_t *state);
+<pkg>_NAME_state_t *<pkg>_NAME_create(uint64_t count, double sum);
+void <pkg>_NAME_destroy(<pkg>_NAME_state_t *state);
+void <pkg>_NAME_reset(<pkg>_NAME_state_t *state);
+
+/* Accessors to read (and set) accumulated state. */
+uint64_t <pkg>_NAME_get_count(const <pkg>_NAME_state_t *state);
+void     <pkg>_NAME_set_count(<pkg>_NAME_state_t *state, uint64_t val);
+double   <pkg>_NAME_get_sum(const <pkg>_NAME_state_t *state);
+void     <pkg>_NAME_set_sum(<pkg>_NAME_state_t *state, double val);
 
 /* Per-sample consumer. */
 static inline void
-NAME_step(NAME_state_t *state, float _Complex x);
+<pkg>_NAME_step(<pkg>_NAME_state_t *state, float _Complex x)
+{
+    (void)state; (void)x; /* TODO: implement */
+}
 
 /* Block consumer. */
-void NAME_steps(NAME_state_t *state, const float _Complex *in, size_t n);
-
-/* Generic accessor to read accumulated state. */
-double NAME_get_sum(const NAME_state_t *state);
-uint64_t NAME_get_count(const NAME_state_t *state);
+void <pkg>_NAME_steps(<pkg>_NAME_state_t *state,
+                      const float _Complex *input, size_t n);
 ```
 
 ### `native/src/NAME/NAME_core.c`
 
 ```c
-static inline void
-NAME_step(NAME_state_t *state, float _Complex x)
-{
-    (void)state; (void)x; /* TODO: implement */
-}
-
 void
-NAME_steps(NAME_state_t *state, const float _Complex *in, size_t n)
+<pkg>_NAME_steps(<pkg>_NAME_state_t *state,
+                 const float _Complex *input, size_t n)
 {
-    for (size_t i = 0; i < n; i++) NAME_step(state, in[i]);
+    for (size_t i = 0; i < n; i++)
+        <pkg>_NAME_step(state, input[i]);
 }
 ```
 
 ## What you fill in
 
-The reducer in `step()`. A running-power accumulator is typical:
+The reducer in `step()`, in `NAME_core.h`. A running-power accumulator is
+typical:
 
 ```c
 static inline void
-NAME_step(NAME_state_t *state, float _Complex x)
+<pkg>_NAME_step(<pkg>_NAME_state_t *state, float _Complex x)
 {
     state->sum += (double)(crealf(x) * crealf(x) + cimagf(x) * cimagf(x));
     state->count++;
@@ -98,11 +104,11 @@ print(acc.get_sum(), acc.get_count())
 
 ## Concrete types
 
-| Slot                | Accepts                                                                                                                                     | Rejects                                                 | Default                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------- |
-| `--arg-type`        | Any [scalar](../types.md#step-input-output-types).                                                                                          | `const char *`, `void` (use [generator](generator.md)). | `float _Complex`                   |
-| `--return-type`     | Implicit `void`; sinks produce no output.                                                                                                   | All explicit values — passing one is an error.          | `void`                             |
-| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). State carries the running aggregate, so `uint64_t`, `double`, and complex types are common. | `const char *`.                                         | `count:uint64_t:0, sum:double:0.0` |
+| Slot                | Accepts                                                                                                                                     | Rejects                                                                                                                             | Default                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `--arg-type`        | Any [scalar](../types.md#step-input-output-types).                                                                                          | `const char *`, `void` (use [generator](generator.md)).                                                                             | `float _Complex`                   |
+| `--return-type`     | Implicit `void`; sinks produce no output.                                                                                                   | Nothing is refused: an explicit `--return-type` after `--preset` overrides the preset, and the object is then no longer a consumer. | `void`                             |
+| `--state field:T:D` | Any [scalar](../types.md#state-variable-types). State carries the running aggregate, so `uint64_t`, `double`, and complex types are common. | `const char *`.                                                                                                                     | `count:uint64_t:0, sum:double:0.0` |
 
 Generated accessors (`get_sum`, `get_count`, etc.) follow the standard
 [State variable types](../types.md#state-variable-types) NumPy mapping.

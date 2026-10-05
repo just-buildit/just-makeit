@@ -13,6 +13,7 @@ for the complete, generated-file-by-file tree.
     native/
         inc/
             <project>/
+                <project>.h             # umbrella header (every component)
                 clib_common.h           # common C99 types
                 pyex_common.h           # common Python extension includes
                 <component>/
@@ -30,6 +31,8 @@ for the complete, generated-file-by-file tree.
             tests/
                 test_<component>.py     # pytest
     just-makeit.toml                    # project manifest (source of truth)
+    objects/
+        <component>.toml                # this component's manifest section
     CMakeLists.txt
     Makefile
     pyproject.toml
@@ -41,6 +44,13 @@ ______________________________________________________________________
 
 ## C conventions
 
+Every C symbol is spelled with the component's C stem,
+`<pkg>_<comp>`: `[project] c_prefix` plus the component name. `jm new`
+defaults `c_prefix` to the project name (`jm new proj` + `jm object filt`
+gives `proj_filt_create()`); `jm new --no-c-prefix` gives bare
+`filt_create()`. File names (`filt_core.c`) and CMake targets
+(`filt_core`) keep the plain component name.
+
 ### State struct
 
 One field is generated for each `--state name:type` flag.
@@ -50,7 +60,7 @@ typedef struct {
     float   gain;
     float   bandwidth;
     int32_t order;
-} <component>_state_t;
+} <pkg>_<comp>_state_t;
 ```
 
 ### Constructor
@@ -60,9 +70,9 @@ One parameter per `--state` var, in declaration order.
 ```c
 /**
  * @return Heap-allocated state, or NULL on allocation failure.
- * @note Caller must call <component>_destroy() when done.
+ * @note Caller must call <pkg>_<comp>_destroy() when done.
  */
-<component>_state_t *<component>_create(float gain, float bandwidth, int32_t order);
+<pkg>_<comp>_state_t *<pkg>_<comp>_create(float gain, float bandwidth, int32_t order);
 ```
 
 ### Destructor
@@ -71,7 +81,7 @@ One parameter per `--state` var, in declaration order.
 /**
  * @param state  May be NULL.
  */
-void <component>_destroy(<component>_state_t *state);
+void <pkg>_<comp>_destroy(<pkg>_<comp>_state_t *state);
 ```
 
 ### Reset
@@ -79,7 +89,7 @@ void <component>_destroy(<component>_state_t *state);
 Restores all state variables to their declared defaults.
 
 ```c
-void <component>_reset(<component>_state_t *state);
+void <pkg>_<comp>_reset(<pkg>_<comp>_state_t *state);
 ```
 
 ### Single-sample processor
@@ -87,12 +97,11 @@ void <component>_reset(<component>_state_t *state);
 Generated as a pass-through stub — implement your DSP here.
 
 ```c
-/** Inlined for maximum performance. */
 static inline float _Complex
-<component>_step(const <component>_state_t *state, float _Complex x)
+<pkg>_<comp>_step(const <pkg>_<comp>_state_t *state, float _Complex x)
 {
-    (void)state; /* TODO: implement DSP using state variables */
-    return x;
+    (void)state; /* TODO: implement using state variables */
+    return (float _Complex)x;
 }
 ```
 
@@ -102,8 +111,8 @@ static inline float _Complex
 /**
  * @param output  Pre-allocated by caller; may alias input for in-place.
  */
-void <component>_steps(
-    <component>_state_t *state,
+void <pkg>_<comp>_steps(
+    <pkg>_<comp>_state_t *state,
     const float _Complex  *input,
     float _Complex        *output,
     size_t                n);
@@ -112,14 +121,14 @@ void <component>_steps(
 ### Getter / setter (one pair per `--state` var)
 
 ```c
-float   <component>_get_gain(const <component>_state_t *state);
-void    <component>_set_gain(<component>_state_t *state, float val);
+float   <pkg>_<comp>_get_gain(const <pkg>_<comp>_state_t *state);
+void    <pkg>_<comp>_set_gain(<pkg>_<comp>_state_t *state, float val);
 
-float   <component>_get_bandwidth(const <component>_state_t *state);
-void    <component>_set_bandwidth(<component>_state_t *state, float val);
+float   <pkg>_<comp>_get_bandwidth(const <pkg>_<comp>_state_t *state);
+void    <pkg>_<comp>_set_bandwidth(<pkg>_<comp>_state_t *state, float val);
 
-int32_t <component>_get_order(const <component>_state_t *state);
-void    <component>_set_order(<component>_state_t *state, int32_t val);
+int32_t <pkg>_<comp>_get_order(const <pkg>_<comp>_state_t *state);
+void    <pkg>_<comp>_set_order(<pkg>_<comp>_state_t *state, int32_t val);
 ```
 
 ______________________________________________________________________
@@ -172,7 +181,7 @@ packaging.
 
 ```
 make                  →  cmake configure + build
-make test             →  ctest + pytest
+make test             →  ctest + the Python tests (unittest discovery)
 make just-build       →  build + copy to $JUST_BUILDIT_OUTPUT_DIR
 pip install .         →  just-buildit → make just-build → wheel
 pip install -e .      →  just-buildit editable (.pth pointing at src/)

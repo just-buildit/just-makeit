@@ -99,19 +99,23 @@ void  my_dsp_my_filter_set_gain(my_dsp_my_filter_state_t *state, float val) { st
 
 ### `native/src/my_filter/my_filter_ext.c`
 
-278-line CPython binding (omitted here; open the file in your project).
-Covers: object lifecycle (`tp_new`/`tp_dealloc`), arg parsing for
-`step(x)` and `steps(arr)` with numpy zero-copy contiguity checks,
-`get_gain`/`set_gain` methods, a `reset()` method, a `__repr__`. None
-of it is meant to be edited.
+The CPython binding (a few hundred lines; open the file in your project).
+Covers: object lifecycle (`tp_new`/`tp_init`/`tp_dealloc`), arg parsing
+for `step(x)` and `steps(x, out=None)` with numpy contiguity checks,
+`get_gain`/`set_gain`, `reset()`, `destroy()` and the
+`__enter__`/`__exit__` pair. None of it is meant to be edited.
 
 ### `native/tests/test_my_filter_core.c`
 
 ```c
-int main(void) {
-    int _fails = 0;
+#include "my_dsp/my_filter/my_filter_core.h"
+/* ... the JM_TEST_NAME / JM_SCAFFOLD_CHECKS defines ... */
+#include "jm_test.h"
+
+int main(void)
+{
     my_dsp_my_filter_state_t *obj = my_dsp_my_filter_create(1.0f);
-    CHECK(obj != NULL);
+    REQUIRE(obj != NULL);
 
     /* gain: getter / setter */
     CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
@@ -127,7 +131,7 @@ int main(void) {
     CHECK(my_dsp_my_filter_get_gain(obj) == 1.0f);
 
     my_dsp_my_filter_destroy(obj);
-    return _fails ? 1 : 0;
+    JM_TEST_EPILOGUE();
 }
 ```
 
@@ -135,18 +139,20 @@ int main(void) {
 
 ```python
 class MyFilter:
-    def __init__(self, gain: np.float32 = 1.0) -> None: ...
+    def __init__(self, gain: float = 1.0) -> None: ...
     def reset(self) -> None: ...
     def step(self, x: complex) -> complex: ...
     def steps(self, x: npt.NDArray[np.complex64],
               out: npt.NDArray[np.complex64] | None = None) -> NDArray[np.complex64]: ...
-    def get_gain(self) -> np.float32: ...
-    def set_gain(self, value: np.float32) -> None: ...
+    def get_gain(self) -> float: ...
+    def set_gain(self, value: float) -> None: ...
 ```
 
 ## What you fill in
 
-One line in `my_dsp_my_filter_step()`. A first-order IIR is typical:
+One line in `my_dsp_my_filter_step()`. A gain is the simplest; a
+first-order IIR also needs `--mutable` so `step()` can update its
+history:
 
 ```c
 static inline float _Complex
@@ -180,9 +186,10 @@ flt.reset()
 | `--return-type`     | Same as `--arg-type`.                                                                             | `const char *`; `void` routes to [consumer](consumer.md).   | `float _Complex`  |
 | `--state field:T:D` | Any [scalar](../types.md#state-variable-types). Fixed arrays `T[N]` also legal but skip the ctor. | `const char *`, `T[]` (use a fixed `T[N]` instead).         | `gain:float:1.0f` |
 
-`bool` is a valid scalar for any of these slots. Array *input*
-(`--arg-type "T[]"`) is accepted, but array *return* is not yet
-supported and errors cleanly.
+`bool` is a valid scalar for any of these slots. An array return
+(`T[]`) needs an array `--arg-type` too: that is the
+[blockwise](blockwise.md) shape. A scalar input with an array return is
+refused.
 
 ## When to use a different preset
 

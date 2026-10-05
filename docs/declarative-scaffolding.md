@@ -5,7 +5,8 @@ or split an existing single-file manifest into one fragment per component
 and let mutations land back in the right file. This page walks the whole
 workflow end to end.
 
-> Schema 6, available since v0.13.5. The design doc lives at
+> The `include` key arrived with manifest schema 6 (v0.13.4); `jm new`
+> writes the current schema. The design doc lives at
 > [developers/declarative-scaffolding.md](developers/declarative-scaffolding.md).
 > A runnable end-to-end demo is bundled as `just-makeit example declarative_scaffold`.
 
@@ -20,8 +21,9 @@ ______________________________________________________________________
 
 ```sh
 just-makeit new demo                      # bare project
-just-makeit apply path/to/agc.toml        # one TOML, including the C body
-cd demo && cmake -B build && cmake --build build
+cd demo
+just-makeit apply ../path/to/agc.toml     # one TOML, including the C body
+cmake -B build && cmake --build build
 ctest --test-dir build                    # green
 ```
 
@@ -77,10 +79,12 @@ ______________________________________________________________________
 
 ## The fragment
 
-A fragment file holds one or more top-level object sections. It can carry
-the C `step()` body inline via `impl` (a TOML heredoc), and unknown
-`{placeholder}` substitutions are left alone so literal C braces pass
-through untouched:
+A fragment file holds one or more top-level object sections. Set
+`module = "X"` on an object section to place it in an existing
+`[module.X]`; `jm apply <fragment>` refuses the fragment if that module is
+not declared. A section can carry the C `step()` body inline via `impl` (a
+TOML heredoc), and unknown `{placeholder}` substitutions are left alone so
+literal C braces pass through untouched:
 
 ```toml
 # objects/agc.toml
@@ -151,6 +155,11 @@ Two consequences (gh-609):
     from a deliberate change to `impl`/`impl_file` that just hasn't been
     applied yet.
 
+C symbols carry `[project] c_prefix` (default the package name;
+`jm new --no-c-prefix` turns it off), so the snippets below spell them
+`<pkg>_<comp>_…`: `buf_destroy` is `<pkg>_buf_destroy`. File and CMake
+target names keep the plain component name (`buf_core.c`, `buf_core`).
+
 ### Custom `create()` and `reset()` bodies
 
 When the generated field-assignment code is not enough — parameter
@@ -164,7 +173,7 @@ return_type = "uint8_t"
 mutable     = "true"
 no_step     = "true"    # suppress default step/steps when using custom methods
 create_impl = """
-if (initial_state == 0) return NULL;
+if (initial_state == 0) { free(obj); return NULL; }
 obj->initial_state = initial_state;
 obj->state         = initial_state;
 obj->mask          = (length == 64) ? ~0ULL : ((1ULL << length) - 1);
@@ -177,7 +186,7 @@ state->state = state->initial_state;
 name = "initial_state"
 type = "uint64_t"
 default = "0"
-...
+# ... and the other [[lfsr.state]] rows (state, mask, length)
 ```
 
 !!! warning "TOML ordering: keys before sub-table arrays"
@@ -200,7 +209,8 @@ default = "0"
     ...
     ```
 
-    **Wrong** — key after array-of-tables header (silently dropped):
+    **Wrong** — key after array-of-tables header (ignored; `jm apply` warns
+    `` unknown state key `create_impl` — it is an object key ``):
 
     ```toml
     [lfsr]
@@ -221,13 +231,13 @@ default = "0"
 
     ```c
     /* create_impl sees: */
-    lfsr_state_t *obj = calloc(1, sizeof(*obj));
+    <pkg>_lfsr_state_t *obj = calloc(1, sizeof(*obj));
     /* parameters are state field names, e.g. uint64_t initial_state */
     ```
 
     Inside a `reset_impl` body the pointer is the function parameter
     **`state`** (as in every other C function that takes a
-    `<comp>_state_t *state`).
+    `<pkg>_<comp>_state_t *state`).
 
 File-reference variants are also supported:
 
@@ -243,7 +253,7 @@ reset_impl_file  = "legacy/lfsr_core.c::lfsr_reset"
 
 Objects that allocate auxiliary resources in `create_impl` (heap buffers,
 file handles, child objects) need matching teardown. `destroy_impl` splices
-a body into `comp_destroy()` **before** the trailing `free(state)` that
+a body into `<pkg>_<comp>_destroy()` **before** the trailing `free(state)` that
 releases the struct itself:
 
 ```toml
@@ -266,7 +276,7 @@ default = "0"
 
 ```c
 void
-buf_destroy(buf_state_t *state)
+<pkg>_buf_destroy(<pkg>_buf_state_t *state)
 {
     if (state->log) fclose(state->log);
     free(state->scratch);
@@ -346,8 +356,9 @@ hole at collection — so when `[<obj>.destroy]` states no `error` or
 `error_message` of its own, both are taken from the named finalizer. Without
 that, the minimal declaration above would raise `ValueError: the capture has a hole` from `__exit__` and `RuntimeError: dp_tlm_capture_destroy reported failure` from the GC path, for the same hole.
 
-It is both keys or neither: declaring either one keeps both explicit, so a
-teardown that genuinely needs to say something different still can.
+Each key is inherited on its own (gh-864): declaring `error` alone keeps the
+finalizer's `error_message`, and vice versa, so a teardown that genuinely
+needs to say something different still can.
 
 The docstrings follow the call on **both** faces — the runtime `__doc__` and
 the `.pyi` both say the object is finalized and stays usable. That matters
@@ -357,7 +368,7 @@ doc-parity gate compares the two faces against *each other* — so both carrying
 the same wrong sentence stays green.
 
 `returns = "int"` changes the **sacred** core signature to
-`int wfm_writer_destroy(wfm_writer_state_t *state)` in both `_core.h` and
+`int <pkg>_wfm_writer_destroy(<pkg>_wfm_writer_state_t *state)` in both `_core.h` and
 `_core.c`. A freshly scaffolded component gets that from the template; an
 already-scaffolded one is patched in place by `jm apply`, which also gives the
 stub body a `return 0;` — but only when the body has no `return` yet, so a
@@ -411,10 +422,10 @@ arg_type     = "void"
 return_type  = "void"
 no_state     = "true"           # no scalar state, only opaque fields
 create_impl  = """
-obj->n = 1024;
-obj->scratch = fftwf_malloc(sizeof(float _Complex) * obj->n);
+const int n = 1024;
+obj->scratch = fftwf_malloc(sizeof(float _Complex) * n);
 if (!obj->scratch) { free(obj); return NULL; }
-obj->plan = fftwf_plan_dft_1d(obj->n, obj->scratch, obj->scratch,
+obj->plan = fftwf_plan_dft_1d(n, obj->scratch, obj->scratch,
                               FFTW_FORWARD, FFTW_ESTIMATE);
 """
 destroy_impl = """
@@ -439,7 +450,7 @@ Generates a struct like:
 typedef struct {
     float _Complex *scratch;
     fftwf_plan      plan;
-} fft_state_t;
+} <pkg>_fft_state_t;
 ```
 
 …and a constructor + destructor that run your `create_impl` / `destroy_impl`
@@ -447,26 +458,27 @@ bodies verbatim.
 
 !!! warning "Opaque fields require `create_impl`"
 
-    `jm apply` refuses to materialize a fragment that declares any opaque
-    state field without a matching `create_impl` or `create_impl_file` —
-    the auto-generated `create()` would leave the pointer uninitialized,
-    and the first read would dereference garbage. Pair every opaque field
-    with a `create_impl` that initializes it, and a `destroy_impl` that
-    releases it (the validator does not enforce `destroy_impl` because
-    some opaque fields are borrowed and shouldn't be freed, but most
-    should be).
+    `jm apply <fragment.toml>` refuses a fragment that declares an opaque
+    state field without `create_impl` or `create_impl_file`. A plain
+    `jm apply` of a fragment already under `objects/` does not check
+    this. `create()` zero-fills with `calloc`, so an uninitialized opaque
+    pointer is NULL and the first dereference crashes. Pair every opaque
+    field with a `create_impl` that initializes it, and a `destroy_impl`
+    that releases it (the validator does not enforce `destroy_impl`
+    because some opaque fields are borrowed and shouldn't be freed, but
+    most should be).
 
 Opaque fields are TOML-only — there is no `--state name:opaque:type` CLI
 syntax. The type string can be anything the compiler accepts (raw
 pointers, typedef'd handles, function-pointer typedefs); the just-makeit
 type system doesn't inspect it.
 
-See the **delay_line** bundled example for both the minimal and the
-realistic pattern — it opens with a dead-simple heap-allocated field and
-builds up to a circular delay with a runtime-sized buffer:
+See the **delay_line** bundled example: a circular delay whose ring buffer
+is sized at construction, using `create_impl`, `reset_impl` and
+`destroy_impl` together:
 
 ```sh
-just-makeit example delay_line       # heap-allocated opaque state, minimal → realistic
+just-makeit example delay_line       # heap-allocated opaque ring buffer
 ```
 
 #### Pitfalls and idioms
@@ -505,8 +517,8 @@ with the idiom that avoids it.
 
 !!! warning "Always pair `create_impl` with `destroy_impl` for owned pointers"
 
-    The validator enforces `create_impl` (otherwise the pointer is
-    uninitialized garbage), but it does **not** enforce `destroy_impl`
+    `jm apply <fragment.toml>` enforces `create_impl` (otherwise the
+    pointer is NULL), but it does **not** enforce `destroy_impl`
     — because some opaque fields are *borrowed* and must not be freed.
     For every opaque field you `malloc`/`calloc`/`fftw_malloc`/`open`/
     etc., add the matching teardown.
@@ -532,7 +544,7 @@ with the idiom that avoids it.
 
 !!! warning "Unwind partial allocations on `create_impl` failure"
 
-    `comp_destroy()` is **not** called when `comp_create()` returns
+    `<pkg>_<comp>_destroy()` is **not** called when `<pkg>_<comp>_create()` returns
     NULL, so any successful allocations made before a later failure
     must be freed inside `create_impl` itself. The pattern is
     "alloc — check — alloc — check, freeing all prior on each
@@ -584,15 +596,15 @@ with the idiom that avoids it.
 !!! warning "Scalar setters don't realloc opaque buffers"
 
     A scalar field like `length` gets an auto-generated
-    `comp_set_length()` that just writes to the struct. If the
+    `<pkg>_<comp>_set_length()` that just writes to the struct. If the
     opaque buffer was sized using that scalar, calling
     `set_length(N_NEW)` will **not** resize the buffer — subsequent
     reads/writes overflow or under-utilize. If the field genuinely
     needs to resize at runtime, expose a custom method that
     `realloc`s the buffer and updates the scalar atomically; if it
-    doesn't, treat the field as construction-only and don't expose a
-    setter at all (use `reset_impl` to preserve it across `reset()`,
-    as in the `delay_line` example).
+    doesn't, document the field as construction-only: jm has no key to
+    drop a scalar field's `set_<name>`. `delay_line` keeps `set_length`
+    and preserves `length` across `reset()` with `reset_impl`.
 
     === "Wrong — set_length() leaves taps the old size"
 
@@ -606,7 +618,7 @@ with the idiom that avoids it.
         ```toml
         [[delay.methods]]
         name        = "resize"
-        arg_type    = "uint32_t"
+        arg_type    = "void"
         return_type = "void"
         impl        = """
         float *new_taps = realloc(state->taps, n * sizeof(float));
@@ -619,6 +631,10 @@ with the idiom that avoids it.
         state->length = n;
         state->idx    = state->idx % n;
         """
+
+        [[delay.methods.params]]
+        name = "n"
+        type = "uint32_t"
         ```
 
 ______________________________________________________________________
@@ -648,12 +664,17 @@ them into the root CMake file.
 ```toml
 [module.hand_rolled]
 no_generate = "true"
+no_generate_reason = "hand-written binding (gh-NNN would let jm generate it)"
 ```
 
 `jm apply` emits `add_subdirectory(native/src/hand_rolled)` in the root
 `CMakeLists.txt` but skips every scaffolding step — no `_ext.c`, no Python
 test, no type stub, no `__init__.py` entry. Use this when the module's
 Python binding is hand-written and must not be touched by the generator.
+
+Say why with `no_generate_reason` (gh-1313): `jm status --check` fails with
+`UNEXPLAINED OPT-OUT` on a `no_generate` module without one, and on a reason
+left behind after `no_generate` is removed.
 
 ### `depends_on` — transitive OBJECT library dependencies
 
@@ -668,12 +689,23 @@ TOML; there is no `--depends-on` CLI flag), it prepends:
 
 ```cmake
 target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:resamp_core>)
+target_sources(<pkg>_lib_static PRIVATE $<TARGET_OBJECTS:resamp_core>)
 target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:fft_core>)
+target_sources(<pkg>_lib_static PRIVATE $<TARGET_OBJECTS:fft_core>)
 target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:fir_core>)
+target_sources(<pkg>_lib_static PRIVATE $<TARGET_OBJECTS:fir_core>)
 ```
 
-This ensures that `fir`'s Python extension links the transitive C objects
-it needs, without requiring a separate shared library per dependency.
+These put the dependency's objects into `lib<pkg>` (shared and static). For
+a standalone object they do not reach its `.so`; write
+`{name = "resamp", link = true}` to link `resamp_core` into it (gh-225). A
+module object already links every declared core.
+
+A `depends_on` entry may be a table instead of a bare name.
+`{name, link = true}` links the dependency into the `.so` (gh-225), and
+`{name, test_only = true}` links it into the component's C test and
+benchmark only (gh-537). jm follows the dependency graph itself (gh-280), so
+list only direct dependencies.
 
 Since **0.15.3**, `depends_on` also auto-includes each dependency's header in
 the dependent's `<comp>_core.h` — "if jm links it, it includes it":
@@ -685,7 +717,7 @@ the dependent's `<comp>_core.h` — "if jm links it, it includes it":
 #include "demo/fft/fft_core.h"
 ```
 
-So an opaque field of a dependency's type — e.g. `resamp_state_t *resamp;` —
+So an opaque field of a dependency's type — e.g. `demo_resamp_state_t *resamp;` —
 compiles with no manual `#include`. The include is generated for fresh objects
 and injected idempotently into existing headers on `jm apply`.
 
@@ -698,10 +730,11 @@ c_deps = ["resamp"]          # hand-written C; add_subdirectory only
 
 [module.legacy]
 no_generate = "true"          # existing Python binding; don't touch
+no_generate_reason = "hand-written binding, not migrated yet"
 
 [fir]
 arg_type   = "float _Complex"
-depends_on = ["resamp"]       # fir.so also links resamp_core objects
+depends_on = [{name = "resamp", link = true}]  # fir.so also links resamp_core
 ```
 
 ```sh
@@ -733,35 +766,37 @@ flowchart TD
 ### The sacred/glue contract
 
 `apply` is the half of the contract that **reconciles the manifest with
-the tree**. Each file the manifest describes falls into one of three
-classes:
+the tree**. Every file is one of five kinds — see
+[Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file). In
+short: `_ext.c`, the `.pyi` and a component `CMakeLists.txt` are rewritten
+every time. In `_core.h` the struct and inline `step()` are yours, but the
+prototypes are updated by name (gh-632). `_core.c` is never re-rendered, but
+`apply` appends a stub for a newly declared method (gh-1294) and changes
+`destroy` to return `int` when `returns = "int"` (gh-541).
 
-| File                                                           | Class      | On re-apply                                                                                                                                   |
-| -------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<comp>_ext.c`, `src/<pkg>/<comp>.pyi`, every `CMakeLists.txt` | **glue**   | regenerated from the manifest every time                                                                                                      |
-| `<comp>_core.h`                                                | **mixed**  | a TOML-declared method/property **declaration** is injected; the inline `step()` body and the state struct are **sacred** — never re-rendered |
-| `<comp>_core.c`                                                | **sacred** | never spliced or re-rendered once it exists — `steps()` and lifecycle bodies are yours                                                        |
-
-So editing the manifest always propagates to the glue, and `apply` injects any
-missing method/property declaration into `_core.h`. But the struct and inline
-`step()` stay sacred. If you change a **signature** in TOML or add a **state
-field**, that's *structural* — the glue and declarations update on `apply`, but
-the sacred `_core.c` body is left as you wrote it. Rebuild it from the manifest
-with `jm regenerate` (or `jm add`, which is `regenerate` specialized for state).
-A new method or computed property is additive instead: `jm method` /
-`jm property` inject a declaration and append a fresh stub.
+So editing the manifest always propagates to the glue and the `_core.h`
+declarations. But the struct and inline `step()` stay sacred. If you change a
+**signature** in TOML or add a **state field**, that's *structural* — the
+glue and declarations update on `apply`, but the sacred `_core.c` body is
+left as you wrote it. Rebuild it from the manifest with `jm regenerate` (or
+`jm add`, which regenerates with `--discard` behaviour: keep bodies in
+`impl`/`create_impl`, or `git stash` first). A new method or computed
+property is additive instead: `jm method` / `jm property`, or a TOML row plus
+`jm apply`, inject a declaration and append a stub.
 
 Other properties:
 
 - **Idempotent.** Re-running on a complete project is a no-op.
-- **Reproducible.** A `just-makeit.toml` + any hand-written `*_core.c` body
-    fully describe a project; `apply` materializes the rest.
+- **Reproducible.** A `just-makeit.toml` + your hand-written `*_core.c` /
+    `*_core.h` (and any `c_deps` / `no_generate` sources) fully describe a
+    project; `apply` materializes the rest.
 - **Never deletes.** `apply` only adds or refreshes files; removing a
     component is `jm remove`'s job, and wiping a component back to its
     manifest state is `jm regenerate`'s.
 - **Aggregate safety.** The top `CMakeLists.txt` preserves content outside
-    the `# ── Components` and `# ── Modules` sentinel regions; module
-    `__init__.py` keeps any wrapper classes you added below the re-exports.
+    jm's marked blocks (Components, Modules, External deps, Install,
+    Libraries); module `__init__.py` keeps any wrapper classes you added
+    below the re-exports.
 - **Bench retrofit.** `apply` also appends a missing `bench_<comp>_core`
     CMake target to any component's `CMakeLists.txt` — existing projects gain
     C benchmark targets without a manual edit.
@@ -776,6 +811,8 @@ Restricts wiring regeneration to the named component: only `fir`'s
 `_ext.c`, `CMakeLists.txt`, `.pyi`, and test file are touched. All
 aggregate files (`__init__.py`, root `CMakeLists.txt`, umbrella header)
 are still updated. Useful on large projects where a full re-apply is slow.
+`NAME` may also be a module, which reconciles that module and all its
+objects.
 
 ______________________________________________________________________
 
@@ -906,5 +943,7 @@ ______________________________________________________________________
 ## See also
 
 - [developers/declarative-scaffolding.md](developers/declarative-scaffolding.md) — the design doc behind this feature
-- [`jm apply`, `jm regenerate`, and `jm remove` reference](commands/extend.md)
+- [`jm apply`](commands/build.md#just-makeit-apply),
+    [`jm regenerate`](commands/build.md#just-makeit-regenerate-component) and
+    [`jm remove`](developers/declarative-scaffolding.md#jm-remove) reference
 - [Workflows](workflows/index.md) — the imperative CLI flow these commands sit alongside
