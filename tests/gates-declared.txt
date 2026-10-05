@@ -111,6 +111,7 @@ test_gh1792_apt_timeouts
 test_gh1860_one_type_section
 test_gh1863_composer_uncalled_helpers
 test_gh1880_default_return_type
+test_gh1916_install_sh_floor
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot
