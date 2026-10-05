@@ -174,6 +174,7 @@ CREATE_OLD = """\
     obj->n_slots = 0;
     obj->remaining = 0;
     obj->degraded = false;
+    (void)capacity; (void)slots;
     return obj;"""
 
 CREATE_NEW = """\
