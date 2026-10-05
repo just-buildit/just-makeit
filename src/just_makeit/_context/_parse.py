@@ -16,6 +16,7 @@ from .._types import (
     array_elem_ctype,
     param_fmt,
     param_writable,
+    parse_seed,
 )
 
 
@@ -676,8 +677,10 @@ def _build_params_parse(
                 # default (not parse_zero) so an omitted defaulted arg
                 # yields the default — previously only the non-parse_type
                 # branch honoured `default`, so e.g. `decim: uint32_t = 1`
-                # silently parsed as 0 when omitted.
-                _raw_init = p.get("default") or meta["parse_zero"]
+                # silently parsed as 0 when omitted. gh-1887: through the
+                # one seed, which spells a `Py_complex` default as the
+                # struct's `{re, im}`; verbatim did not compile.
+                _raw_init = parse_seed(ptype, p.get("default") or "")
                 decl_lines.append(
                     f"    {meta['parse_type']} {raw} = {_raw_init};"
                 )

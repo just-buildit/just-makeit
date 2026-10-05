@@ -2456,23 +2456,26 @@ def make_methods_ctx(
                         _fmt_char = _pt_meta.get("fmt", "d")
                         _has_parse = "parse_type" in _pt_meta
                         _parse_t = _pt_meta.get("parse_type", _pt)
-                        _parse_zero = _pt_meta.get("parse_zero", "0")
                         # gh-802: seed the local with the param's `default`
                         # (falling back to the type's zero), exactly as
                         # `_build_params_parse` does — an omitted optional arg
                         # is left untouched by PyArg_ParseTupleAndKeywords, so
                         # its declared default IS whatever this local holds.
-                        _init = _p.get("default") or _parse_zero
+                        # gh-1887: a `_raw` local through the one seed, the
+                        # same call: a `Py_complex` default is the struct's
+                        # `{re, im}`, and this copy emitted it verbatim.
+                        _dflt = _p.get("default") or ""
                         if _has_parse:
                             _raw = f"{_pn}_raw"
                             _pb_lines.append(
-                                f"    {_parse_t} {_raw} = {_init};"
+                                f"    {_parse_t} {_raw} = "
+                                f"{T.parse_seed(_pt, _dflt)};"
                             )
                             _fmt_chars.append(_fmt_char)
                             _fmt_args.append(f"&{_raw}")
                         else:
                             _pb_lines.append(
-                                f"    {_parse_t} {_pn} = {_init};"
+                                f"    {_parse_t} {_pn} = {_dflt or '0'};"
                             )
                             _fmt_chars.append(_fmt_char)
                             _fmt_args.append(f"&{_pn}")
