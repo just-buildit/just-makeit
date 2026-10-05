@@ -23,7 +23,7 @@ repos:
   - repo: local
     hooks:
       - id: sync-bootstrap-version
-        name: sync bootstrap.toml version from pyproject.toml
+        name: sync bootstrap.toml and uv.lock versions from pyproject.toml
         entry: make -s lint-sync-version
         language: system
         files: ^(pyproject\.toml|bootstrap\.toml)$
