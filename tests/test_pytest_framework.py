@@ -7,13 +7,12 @@ Covers:
 - Module objects inherit project-level flags
 - `add` regeneration preserves chosen framework
 - Default (no flags) still produces legacy files (backward compat)
-- Script round-trip: flags survive TOML → jm script → replay
+- Script round-trip: flags survive TOML → jm script → replay, compared
+  over the merged manifest (`_jmrun.script_round_trip`, gh-1923)
 """
 
 from __future__ import annotations
 
-import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -33,7 +32,7 @@ from just_makeit._config import (
 from just_makeit._init import run as init_run
 from just_makeit._new import run as new_run
 
-from _jmrun import JmRun, run_cli
+from _jmrun import JmRun, run_cli, script_round_trip
 
 
 def _cli(*args, cwd=None) -> JmRun:
@@ -484,36 +483,6 @@ class TestAddPreservesFramework:
 # ── TOML round-trip via jm script ─────────────────────────────────────────────
 
 
-def _run_script_and_replay(source_dir, replay_base):
-    r = _cli("script", cwd=source_dir)
-    assert r.returncode == 0, f"jm script failed:\n{r.stderr}"
-    script = r.stdout
-    cd_match = re.search(r"^cd (\S+)$", script, re.MULTILINE)
-    assert cd_match
-    project_name = cd_match.group(1)
-    joined = re.sub(r"\\\n\s*", " ", script)
-    commands: list[list[str]] = []
-    for line in joined.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("cd "):
-            continue
-        if line.startswith("just-makeit "):
-            commands.append(shlex.split(line[len("just-makeit ") :]))
-    replay_root = replay_base / project_name
-    replay_root.mkdir(parents=True, exist_ok=True)
-    assert commands[0][0] == "new"
-    r2 = _cli(*commands[0], str(replay_root), cwd=replay_base)
-    assert r2.returncode == 0, f"Replay 'new' failed:\n{r2.stderr}"
-    for cmd in commands[1:]:
-        r2 = _cli(*cmd, cwd=replay_root)
-        assert r2.returncode == 0, (
-            f"Replay failed: just-makeit {' '.join(cmd)}\n{r2.stderr}"
-        )
-    orig = (source_dir / "just-makeit.toml").read_text(encoding="utf-8")
-    replay = (replay_root / "just-makeit.toml").read_text(encoding="utf-8")
-    return orig, replay
-
-
 class TestScriptRoundTrip:
     def test_pytest_flag_in_script_output(self, tmp_path):
         dest = tmp_path / "proj"
@@ -531,21 +500,21 @@ class TestScriptRoundTrip:
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--pytest")
         _cli("object", "gain", cwd=dest)
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_pytest_benchmark_round_trip(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--pytest-benchmark")
         _cli("object", "gain", cwd=dest)
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_both_flags_round_trip(self, tmp_path):
         dest = tmp_path / "proj"
         _cli("new", "proj", str(dest), "--pytest", "--pytest-benchmark")
         _cli("object", "gain", cwd=dest)
-        orig, replay = _run_script_and_replay(dest, tmp_path / "replay")
+        orig, replay = script_round_trip(dest, tmp_path / "replay")
         assert orig == replay
 
     def test_no_flags_no_pytest_in_script(self, tmp_path):

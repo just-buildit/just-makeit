@@ -192,3 +192,50 @@ def replay_script(script: str, where: Path) -> Path:
         else:
             raise AssertionError(f"unreplayable script line: {line!r}")
     return cwd
+
+
+def script_round_trip(root: Path, where: Path) -> "tuple[dict, dict]":
+    """Script *root*, replay it under *where*, and read both manifests.
+
+    gh-1923. A round trip is compared over the MERGED manifest. `jm new`
+    defaults to the fragment layout, so every component, method, property
+    and module lives in ``objects/*.toml`` / ``modules/*.toml``, and the
+    root ``just-makeit.toml`` holds only ``include`` and ``[project]``. Two
+    copies of a helper that compared that one file
+    (``test_toml_roundtrip.py``, ``test_pytest_framework.py``) passed for
+    every component-level flag whether the replay kept it or not.
+
+    Each side is read by `_config.load`, the one reader every command goes
+    through, so the fragments merge exactly as jm merges them -- nothing
+    here parses a fragment. `load` consumes the root's ``include`` list,
+    which is the LAYOUT, so it is put back from `_config.load_manifest`: a
+    replay that rebuilt the project in another layout is a difference too.
+
+    Parameters
+    ----------
+    root
+        The project to run ``jm script`` in.
+    where
+        Directory to replay into, created if absent. The script makes the
+        project there and ``cd``s into it, as a user running it would.
+
+    Returns
+    -------
+    tuple of dict
+        ``(original, replayed)``. Equal when the script rebuilds the
+        project's manifest; any difference is a key the script failed to
+        replay.
+    """
+    from just_makeit import _config as C
+
+    r = run_cli("script", cwd=root)
+    assert r.returncode == 0, f"jm script failed:\n{r.stderr}"
+    where.mkdir(parents=True, exist_ok=True)
+    replayed = replay_script(r.stdout, where)
+
+    def read(tree: Path) -> dict:
+        cfg = C.load(tree)
+        cfg["include"] = C.load_manifest(tree).get("include")
+        return cfg
+
+    return read(root), read(replayed)
