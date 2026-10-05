@@ -11,7 +11,7 @@ ______________________________________________________________________
 just-makeit method <object> <method_name>
     [--module name]
     [--param name:type ...]
-    --return-type TYPE
+    [--return-type TYPE]
     [--variable-output] [--arg-type TYPE]
     [--multi-output TYPE ...]
 ```
@@ -34,8 +34,10 @@ appended, ready for you to implement.
 | `--param name:type`           | Named typed scalar parameter. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--param name:type=default`   | Optional scalar parameter (e.g. `gain:double=1.0`) — omit it for the default. Makes the method keyword-capable; optional params must follow required ones; plain scalars only (gh-240).                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `--param name:type[]`         | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `--return-type TYPE`          | C type of the return value (`void` for no return).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--arg-type TYPE`             | C type of a single array-style input. Use `void` for count-only inputs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `--extra-arg name:type`       | Synonym for `--param`. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--out-param name:type[]`     | Writable array parameter the kernel fills (`const` dropped). The caller's array must match the dtype exactly and be C-contiguous and writable, or the call raises `TypeError`. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `--return-type TYPE`          | C type of the return value (`void` for no return). Default `float _Complex`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--arg-type TYPE`             | C type of the method's input `x`: a scalar, or the element type of an input array with `--variable-output` or `--batch`. Use `void` for count-only inputs (the default).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `--variable-output`           | Self-sizing output: allocate a NumPy-owned array per call and trim to the returned count. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--multi-output TYPE`         | Add a second (or further) output array. Repeatable; produces a tuple return.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `--out-type TYPE`             | Allocate a `complex64` (or other) output array per call and pass `*out` to C. The C stub receives `(... , elem_t *out)` and the Python wrapper allocates and returns the ndarray automatically. The output length equals `in_len / out_divisor`.                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -50,10 +52,12 @@ appended, ready for you to implement.
 | `--status-fn NAME`            | C function saying WHY a `--borrow` returned NULL — `dp_f32_wait_status`. jm calls it as `fn(state, <the borrow's count param>)` on the NULL path, after `PyErr_CheckSignals()`, and matches its answer against `--status-error` rows. The count is passed because "this `n` can never be satisfied" is a property of `(state, n)`, not of the state alone. Refused without at least one row: jm would call it and discard the answer (gh-1418).                                                                                                                                                                                                                  |
 | `--status-error SPEC`         | `STATUS:ExcName[:message]` — map one answer of `--status-fn` to one exception. Repeatable; `STATUS` is the C enumerator, emitted as a `case` label. A status with **no row** falls through to `--none-on-empty` if set, else the blanket raise — which is how one ring's blocking `wait()` and non-blocking `peek()` share a table and differ only in the row `peek` declines to write. Without this a NULL borrow raised one blanket `ValueError`, turning end-of-stream into an error and a Ctrl-C into bad input (gh-1418).                                                                                                                                   |
 | `--pass-capacity`             | Emit the 5-arg `(…, out, size_t max_out)` C form for a `--variable-output` method (a bounds-checking C API receives the buffer capacity).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `--exact-max-out`             | Assert `<pkg>_<comp>_<name>_max_out()` bounds any call, so the binding allocates exactly that instead of `max(max_out, n)` (gh-920). Say it when the bound does not depend on the call.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `--max-out N`                 | The worst-case count `<pkg>_<comp>_<name>_max_out()` returns. jm writes that body, so it needs no implementing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `--nogil`                     | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet.                                                                                                                                                                                                    |
+| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet.                                                                                                                                                                       |
 | `--single`                    | With `--result-field`, return **one** named record (a `PyStructSequence`: attribute access + unpacking) instead of a `list[tuple]`. The C kernel returns the `--return-type` record struct by value (gh-244).                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--record-name NAME`          | With `--single`, the public name of the record type (e.g. `ToneMetrics`), overriding the name derived from the C `--return-type` (gh-257). Also settable per method in the manifest as `record_name = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `--record-module MOD`         | With `--single`, overrides the `__module__` of the record type (e.g. `my_pkg.dsp`). By default it is the module the object is imported from, `<pkg>.<comp>` or `<pkg>.<module>` (gh-1486), so `type(r).__module__` and `repr(r)` already name an importable path. Also settable per method in the manifest as `record_module = "…"` (gh-261).                                                                                                                                                                                                                                                                                                                    |
@@ -64,7 +68,7 @@ appended, ready for you to implement.
 | `--doc "text"`                | Python docstring for the method.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--py-return-type STR`        | Override the `.pyi` return-type annotation (the C `--return-type` still drives the C signature).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--view ClassName`            | Attach the method to a [view](#just-makeit-view) of the object instead of the object itself — adds a view-only method, or **overrides** a parent method by reusing its name. What `--fn` does or does not say decides which override it is; see [Overriding a parent method](#overriding-a-parent-method). Views are a module-object feature, so the object must live in a module.                                                                                                                                                                                                                                                                               |
-| `--fn SYMBOL`                 | C function this method binds, when it is not the derived `<comp>_<name>`. For adopting existing C under its own prefix, or binding a validating variant (`--fn dp_tlm_emit_checked`) under the plain Python name. The Python face is unchanged. On a view it also selects a **signature** override (below). Persists as `fn = "…"` on the method.                                                                                                                                                                                                                                                                                                                |
+| `--fn SYMBOL`                 | C function this method binds, when it is not the derived `<pkg>_<comp>_<name>`. For adopting existing C under its own prefix, or binding a validating variant (`--fn dp_tlm_emit_checked`) under the plain Python name. The Python face is unchanged. On a view it also selects a **signature** override (below). Persists as `fn = "…"` on the method.                                                                                                                                                                                                                                                                                                          |
 | `--error-negative`            | The `int` return is a **value** unless it is negative, in which case it is an error code and the method raises. Distinct from `--status-return`, where the int carries nothing but status. Signed integer return types only. Persists as `error_negative = "true"`.                                                                                                                                                                                                                                                                                                                                                                                              |
 | `--status-return`             | The `int` return carries **only** status (0 = ok): the binding raises on non-zero and the method returns `None`, so no status code reaches Python. Mutually exclusive with `--error-negative`, which is for an int that is both a value and an error channel. Persists as `status_return = "true"`.                                                                                                                                                                                                                                                                                                                                                              |
 | `--manual-stub`               | This method's C binding is already **hand-written** in a sacred `_ext_<obj>_extra.c` fragment. jm declares nothing for it and only preserves its `.pyi` placeholder verbatim across regeneration (gh-428). Persists as `manual_stub = "true"`.                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -186,7 +190,8 @@ size_t
 
 Python call: `resamp.execute_ctrl(np.zeros(64, dtype=np.complex64))`
 
-`--param` and `--arg-type` are mutually exclusive per method.
+`--param` composes with `--arg-type`: the `--arg-type` input comes first (as
+`x`), then each `--param` in order.
 
 ______________________________________________________________________
 
@@ -306,8 +311,8 @@ ______________________________________________________________________
 Use `--variable-output` when the method's output count is **not** simply the
 input count — decimators, FIFOs, detectors, anything that returns "however many
 it produced". The generated binding allocates a NumPy-owned array of
-`max(<method>_max_out(state), n)` per call, lets the kernel write straight into
-it, and returns it trimmed to the count the kernel reported.
+`max(<method>_max_out(state, n), n)` per call, lets the kernel write straight
+into it, and returns it trimmed to the count the kernel reported.
 
 Each result is independent: it owns its memory, survives `destroy()`, and never
 aliases another call's result. See [Array memory
@@ -323,7 +328,8 @@ Generated C stubs:
 
 ```c
 /* Return maximum output samples possible given current state. */
-size_t <pkg>_hbdecim_execute_max_out(<pkg>_hbdecim_state_t *state);
+size_t <pkg>_hbdecim_execute_max_out(<pkg>_hbdecim_state_t *state,
+                                      size_t n_in);
 
 /* Process n_in samples; write up to _max_out results; return actual count. */
 size_t <pkg>_hbdecim_execute(<pkg>_hbdecim_state_t *state,
@@ -346,7 +352,7 @@ out = decim.execute(block)   # a fresh NumPy-owned array, trimmed to n_out
 
 **`max_out()` returning 0 is legal** and means "unknown" — the binding then
 sizes the allocation from the call itself. It is a *sizing contract*, not a
-guarantee: the real bound is `n_out <= max(max_out(state), n_requested)`,
+guarantee: the real bound is `n_out <= max(max_out(state, n), n)`,
 because a generator's `steps(count)` writes exactly `count`. If your kernel
 must know the capacity it was actually given, add `pass_capacity = true` —
 which also lets the binding size the allocation from `max_out()` alone, but
@@ -372,7 +378,7 @@ delay.ptr_max_out(n=64)     # jm already derived this name from your C
 ```
 
 Say it when your C API calls the quantity something else. The paired
-`<comp>_<name>_max_out()` already takes its parameter name **from the C
+`<pkg>_<comp>_<name>_max_out()` already takes its parameter name **from the C
 signature** — deliberately, "rather than inventing a fourth name for the same
 concept" (gh-607) — so leaving the method's own kwarg hard-coded put the two
 halves of one generated pair at odds: `ptr(count=…)` beside `ptr_max_out(n=…)`,
@@ -487,7 +493,7 @@ const float _Complex *_ng0 = (const float _Complex *)PyArray_DATA(x_arr);
 size_t _ng1 = (size_t)PyArray_SIZE(x_arr);
 size_t n_out;
 Py_BEGIN_ALLOW_THREADS
-n_out = ddc_execute(self->handle, _ng0, _ng1, _d0, _cap);
+n_out = <pkg>_ddc_execute(self->handle, _ng0, _ng1, _d0, _cap);
 Py_END_ALLOW_THREADS
 ```
 
@@ -509,8 +515,10 @@ ______________________________________________________________________
 ```text
 just-makeit property <object> <prop_name>
     [--module name]
-    --type TYPE
+    [--type TYPE]
     [--writable] [--field] [--enum NAME]
+    [--buf-field name [--len-field name] [--valid-field name]]
+    [--expr "C expr"]
     [--value-type TYPE] [--count-fn FN] [--key-fn FN] [--value-fn FN]
 ```
 
@@ -540,22 +548,27 @@ directly into the state struct and auto-implements the getter as
 
 **Arguments**
 
-| Argument            | Description                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`            | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                                                                                              |
-| `prop_name`         | Snake-case property name.                                                                                                                                                                                                                                                                                                                                                                            |
-| `--module name`     | Module the object belongs to. Optional — jm reads it from the manifest (gh-963); pass it to be explicit, and it is validated.                                                                                                                                                                                                                                                                        |
-| `--type TYPE`       | C type of the property value.                                                                                                                                                                                                                                                                                                                                                                        |
-| `--writable`        | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                                                                                                                                                                 |
-| `--field`           | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. Requires the state struct to be a complete type — see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header). |
-| `--doc "text"`      | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
-| `--enum NAME`       | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
-| `--value-type TYPE` | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
-| `--count-fn FN`     | Entry-count accessor for a container property. Default `<stem>_num_<prop>`.                                                                                                                                                                                                                                                                                                                          |
-| `--key-fn FN`       | Key accessor for a `dict` property. Default `<stem>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                     |
-| `--value-fn FN`     | Value accessor for a container property. Default `<stem>_<prop>_value`.                                                                                                                                                                                                                                                                                                                              |
-| `--capsule NAME`    | With `--type capsule`: publish a **borrowed** pointer as a `PyCapsule` under that name, so a peer extension can consume it by name (gh-788). The capsule does not own the pointer and carries no liveness — the getter checks the object is alive before handing it out, and the capsule's destructor is `NULL` by contract. Persists as `capsule = "NAME"`.                                         |
-| `--view ClassName`  | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Views are a module-object feature, so the object must live in a module.                                                                                                                         |
+| Argument             | Description                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`             | Object name (must already exist in `just-makeit.toml`).                                                                                                                                                                                                                                                                                                                                              |
+| `prop_name`          | Snake-case property name.                                                                                                                                                                                                                                                                                                                                                                            |
+| `--module name`      | Module the object belongs to. Optional — jm reads it from the manifest (gh-963); pass it to be explicit, and it is validated.                                                                                                                                                                                                                                                                        |
+| `--type TYPE`        | C type of the property value. Default `size_t`.                                                                                                                                                                                                                                                                                                                                                      |
+| `--writable`         | Also generate a setter. Without this flag the property is read-only.                                                                                                                                                                                                                                                                                                                                 |
+| `--field`            | Add a `TYPE prop_name;` field to the state struct and auto-implement the getter as `return state->prop_name`. No `<<IMPLEMENT>>` stub is generated — the field is the implementation. Combine with `--writable` for a read-write struct field property. Requires the state struct to be a complete type — see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header). |
+| `--buf-field name`   | Back the property with a numpy view over the state member `name` (see [Choosing a property kind](#choosing-a-property-kind-and-what-each-costs-your-header)). Mutually exclusive with `--expr`.                                                                                                                                                                                                      |
+| `--len-field name`   | With `--buf-field`: the state member holding the buffer's element count. Default `n`.                                                                                                                                                                                                                                                                                                                |
+| `--valid-field name` | With `--buf-field`: a state member that, while zero, makes the property read `None`.                                                                                                                                                                                                                                                                                                                 |
+| `--expr "C expr"`    | Back the property with an inline C expression, emitted as written. Mutually exclusive with `--buf-field`.                                                                                                                                                                                                                                                                                            |
+| `--doc "text"`       | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
+| `--enum NAME`        | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
+| `--value-type TYPE`  | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
+| `--count-fn FN`      | Entry-count accessor for a container property. Default `<stem>_num_<prop>`.                                                                                                                                                                                                                                                                                                                          |
+| `--key-fn FN`        | Key accessor for a `dict` property. Default `<stem>_<prop>_key`.                                                                                                                                                                                                                                                                                                                                     |
+| `--value-fn FN`      | Value accessor for a container property. Default `<stem>_<prop>_value`.                                                                                                                                                                                                                                                                                                                              |
+| `--capsule NAME`     | With `--type capsule`: publish a **borrowed** pointer as a `PyCapsule` under that name, so a peer extension can consume it by name (gh-788). The capsule does not own the pointer and carries no liveness — the getter checks the object is alive before handing it out, and the capsule's destructor is `NULL` by contract. Persists as `capsule = "NAME"`.                                         |
+| `--capsule-type T`   | With `--capsule`: the C type the capsule lends, when `--expr` publishes a member rather than the object's own state (gh-1235).                                                                                                                                                                                                                                                                       |
+| `--view ClassName`   | Attach the property to a [view](#just-makeit-view) of the object instead of the object itself — adds a property the parent lacks, or overrides a parent property (e.g. its doc) by reusing its name. Views are a module-object feature, so the object must live in a module.                                                                                                                         |
 
 ### Choosing a property kind — and what each costs your header
 
@@ -563,13 +576,13 @@ A property is backed one of five ways. The flags are not variations on a
 theme: they decide **who writes the C** and, crucially, **whether your state
 struct has to be a complete type in the public header**.
 
-| Kind           | Declared with              | Who implements the read                                                              | State struct                         |
-| -------------- | -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
-| **Computed**   | *no backing flag*          | you — jm declares `<obj>_get_<prop>(const <obj>_state_t *)` for the sacred `_core.c` | may stay **opaque**                  |
-| **Field**      | `--field`                  | jm — injects `TYPE prop;` and returns `state->prop`                                  | must be **complete**                 |
-| **Expression** | `--expr "…"`               | jm — emits your C expression inline                                                  | complete, if the expr reads a member |
-| **Buffer**     | `--buf-field name`         | jm — returns a numpy view over that member                                           | must be **complete**                 |
-| **Container**  | `--type dict\|list\|tuple` | jm — generates the loop, refcounting and error paths; you supply count/key/value     | may stay **opaque**                  |
+| Kind           | Declared with              | Who implements the read                                                                          | State struct                         |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| **Computed**   | *no backing flag*          | you — jm declares `<pkg>_<obj>_get_<prop>(const <pkg>_<obj>_state_t *)` for the sacred `_core.c` | may stay **opaque**                  |
+| **Field**      | `--field`                  | jm — injects `TYPE prop;` and returns `state->prop`                                              | must be **complete**                 |
+| **Expression** | `--expr "…"`               | jm — emits your C expression inline                                                              | complete, if the expr reads a member |
+| **Buffer**     | `--buf-field name`         | jm — returns a numpy view over that member                                                       | must be **complete**                 |
+| **Container**  | `--type dict\|list\|tuple` | jm — generates the loop, refcounting and error paths; you supply count/key/value                 | may stay **opaque**                  |
 
 **Omitting `--field` is not "unsupported" — it means "you implement the
 accessor".** That is the computed kind, and it is the one to reach for when the
@@ -670,9 +683,10 @@ value_type = "object"
 All three accessor names default from the object's C symbol stem and the
 property name (`<stem>_num_<prop>`, `<stem>_<prop>_key`,
 `<stem>_<prop>_value`), so the common declaration names none of them. The stem
-is the object's name, `dp_`-prefixed under `[project] c_prefix = "dp"`
-([c-library](../c-library.md#two-packages-one-program)); a name you declare is
-used as written. `key_fn` applies to `dict` only — a `list` or
+is the object's name prefixed with `[project] c_prefix`, which `jm new`
+defaults to the package name
+([c-library](../c-library.md#two-packages-one-program)); a name you declare
+is used as written. `key_fn` applies to `dict` only — a `list` or
 `tuple` is keyed by position, and passing it there is an error rather than a
 silently ignored flag.
 
@@ -864,9 +878,9 @@ just-makeit view <object> <ViewClassName>
 ```
 
 Add a **second Python class over the same generated C core** (gh-504). The view
-shares the object's `<obj>_state_t`, its `_core.c`, and its `step()`; it differs
-only in the C constructor it calls, the constructor arguments it takes, and the
-Python surface it exposes. Use it when one algorithm has two front doors — a
+shares the object's `<pkg>_<obj>_state_t`, its `_core.c`, and its `step()`; it
+differs only in the C constructor it calls, the constructor arguments it takes,
+and the Python surface it exposes. Use it when one algorithm has two front doors — a
 continuous mode and a burst mode, an empty accumulator and a pre-seeded one —
 and a second object would mean a second copy of the C.
 
@@ -887,21 +901,22 @@ no second state struct.
 
 Views are a **module-object feature**: the multi-type module machinery is what
 registers the extra class, so `--module` is required. `--create-fn` is also
-required and must differ from the parent's `<obj>_create` — a view exists
-precisely to build from a different constructor.
+required and must differ from the parent's own constructor
+(`<pkg>_<obj>_create`, or the `--create-fn` the object declared) — a view
+exists precisely to build from a different constructor.
 
 **Arguments**
 
-| Argument                           | Description                                                                                                                                               |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `object`                           | Object the view sits over (must already exist in `just-makeit.toml`).                                                                                     |
-| `ViewClassName`                    | Python class name for the view. Must be unique across every class the module exposes — each object's class name and every existing view.                  |
-| `--module name`                    | Module the object belongs to. Required.                                                                                                                   |
-| `--create-fn fn`                   | C constructor the view's `__init__` calls (e.g. `acc_create_seeded`). Required; must differ from `<obj>_create`. Scaffolded as a stub in the shared core. |
-| `--init-param name:type[:default]` | The view's own constructor parameter. Repeatable; same syntax as `jm object --init-param`. Omit entirely to inherit the parent's constructor shape.       |
-| `--exclude-property name`          | Parent property to omit from the view's Python surface. Repeatable; must name an existing property of the parent.                                         |
-| `--exclude-method name`            | Parent method to omit. Repeatable; must name an existing `[[<obj>.methods]]` entry. The builtins `step`/`steps`/`reset` are not excludable.               |
-| `--doc "text"`                     | Docstring for the view class.                                                                                                                             |
+| Argument                           | Description                                                                                                                                                                                                          |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`                           | Object the view sits over (must already exist in `just-makeit.toml`).                                                                                                                                                |
+| `ViewClassName`                    | Python class name for the view. Must be unique across every class the module exposes — each object's class name and every existing view.                                                                             |
+| `--module name`                    | Module the object belongs to. Required.                                                                                                                                                                              |
+| `--create-fn fn`                   | C constructor the view's `__init__` calls (e.g. `acc_create_seeded`). Required; must differ from the parent's own constructor (`<pkg>_<obj>_create`, or its `--create-fn`). Scaffolded as a stub in the shared core. |
+| `--init-param name:type[:default]` | The view's own constructor parameter. Repeatable; same syntax as `jm object --init-param`. Omit entirely to inherit the parent's constructor shape.                                                                  |
+| `--exclude-property name`          | Parent property to omit from the view's Python surface. Repeatable; must name an existing property of the parent.                                                                                                    |
+| `--exclude-method name`            | Parent method to omit. Repeatable; must name an existing `[[<obj>.methods]]` entry. The builtins `step`/`steps`/`reset` are not excludable.                                                                          |
+| `--doc "text"`                     | Docstring for the view class.                                                                                                                                                                                        |
 
 ### Diverging, not only trimming
 
@@ -939,7 +954,7 @@ are two kinds. **`--fn` decides which** (gh-1012, gh-1011):
 
 | you pass                               | you get                  | the view calls                                      |
 | -------------------------------------- | ------------------------ | --------------------------------------------------- |
-| `--doc` only (or a matching signature) | a **doc-only** override  | the parent's `<obj>_<name>`                         |
+| `--doc` only (or a matching signature) | a **doc-only** override  | the parent's `<pkg>_<obj>_<name>`                   |
 | `--fn <symbol>`                        | a **signature** override | its own `<symbol>`, scaffolded into the shared core |
 
 This is not a flag standing in for a second question. The parent's C symbol
@@ -950,7 +965,8 @@ through a different symbol — which is exactly what `--fn` supplies:
 # doc-only: same signature, the view just words it differently
 just-makeit method acc plain --module bank --view SeededAcc \
     --doc "seeded plain"
-#   -> View 'SeededAcc' overrides the doc of 'plain' (shares <pkg>_acc_plain)
+#   -> View 'SeededAcc' overrides the doc of 'plain'
+#      (shares the parent's <pkg>_acc_plain)
 
 # signature override: its own arg_type, so its own C function
 just-makeit method acc scaled --module bank --view SeededAcc \
@@ -998,8 +1014,8 @@ ______________________________________________________________________
 
 **Limitation:** a view cannot yet sit over a parent whose init-params use
 per-array dtype-dispatch or optional-array forms (`real_type`, `real_create_fn`,
-`create_fn`, `optional`); those paths embed `<obj>_create` directly and would
-silently ignore the view's `create_fn`, so `jm view` rejects them with a
+`create_fn`, `optional`); those paths embed `<pkg>_<obj>_create` directly and
+would silently ignore the view's `create_fn`, so `jm view` rejects them with a
 diagnostic.
 
 The [Views example](../examples/views_module.md) builds the whole thing end to
@@ -1022,7 +1038,7 @@ constructor. The generated `__init__` glue checks the field once the object is
 built and, if set, calls `PyErr_WarnEx` with your message and category.
 
 ```sh
-just-makeit warning agc underpowered \
+just-makeit warning agc --condition underpowered \
     --message "AGC gain floor reached; output may clip" \
     --category RuntimeWarning
 ```
@@ -1089,7 +1105,7 @@ likely cause.
 | `object`           | Object name (must already exist in `just-makeit.toml`).                                                                                               |
 | `--category NAME`  | Exception class — a Python built-in exception (`ValueError`, `RuntimeError`, `OverflowError`, …). Required.                                           |
 | `--message TEXT`   | Text for the raised exception. Required.                                                                                                              |
-| `--module name`    | Module the object belongs to (required for module objects).                                                                                           |
+| `--module name`    | Module the object belongs to. Optional — jm reads it from the manifest (gh-963); pass it to be explicit, and it is validated.                         |
 | `--view ClassName` | Give a [view](#just-makeit-view) its own translation instead of the object's. Views are a module-object feature, so the object must live in a module. |
 
 Each object has a single failure translation, so re-running replaces it rather
@@ -1168,11 +1184,13 @@ capability is ~free unless keywords are actually used — see
 | `--param name:type[]`           | Named numpy array parameter. Repeatable. Generates `const elem_t *name, size_t name_len` in C.                                                                                                                                                                                                                                                    |
 | `--param name:path`             | Filesystem path parameter. Python accepts `str \| os.PathLike`; C receives `const char *` via `PyUnicode_FSConverter` (gh-353).                                                                                                                                                                                                                   |
 | `--param name:enum:<ename>[=d]` | String-choice parameter validated against the named `[[enum]]` SSOT; C receives the `int` index; optional default `d` is the string value (gh-353).                                                                                                                                                                                               |
+| `--out-param name:type[]`       | Writable output array parameter (`const` dropped). Repeatable.                                                                                                                                                                                                                                                                                    |
 | `--return-type TYPE`            | C return type (default: `void`).                                                                                                                                                                                                                                                                                                                  |
 | `--check-return`                | Treat a non-zero `int` return as failure: raises `RuntimeError(rc)`, returns `None` on success. Requires an integer `--return-type` (gh-363).                                                                                                                                                                                                     |
 | `--why`                         | Manifest `why = true`. The C function takes a trailing `const char **why`, and a refusal raises the sentence it writes there as `ValueError`; with none written the `--check-return` error is unchanged. Requires `--check-return` (gh-1706).                                                                                                     |
 | `--status-error SPEC`           | `STATUS:ExcName[:message]` — raise `ExcName` when the function returns `STATUS`, a C constant emitted as a `case` label. Repeatable; a status with no row keeps the `--check-return` error. Manifest `status_errors`, the same table a borrow method declares. Requires `--check-return` on a status-returning function (gh-1614).                |
-| `--out-type TYPE`               | Allocate a 1-D output array of this element type per call and append `out` last to the C call.                                                                                                                                                                                                                                                    |
+| `--result-field name:type`      | Return a `list` of records, one field per flag (repeatable); `--return-type` names the record's C struct, and the C function fills `<struct> *result` up to `max_results` (TOML-only, default 64).                                                                                                                                                |
+| `--out-type TYPE`               | Allocate a 1-D output array of this element type per call and pass it to C as `TYPE *out`, after the array params (before any trailing scalars). With `--variable-output` it goes last instead.                                                                                                                                                   |
 | `--variable-output`             | With `--out-type`: the function allocates its own 1-D output rather than returning a scalar — no caller buffer and no cached instance buffer. `out` is appended **last** to the C call, and the binding returns the ndarray (gh-335). A `size_t`-returning function is trimmed to the count it reports; a `void` one returns the full allocation. |
 | `--out-size EXPR`               | Length of that output, as a **verbatim C expression** over the function's own arguments — including each array param's generated `<name>_len` (e.g. `x_len * factor`, or a call like `wfm_rrc_ntaps(sps, span)`). Omit it and the length falls back to the first array parameter's length.                                                        |
 | `--inline`                      | Emit a `static inline` body in `<module>_core.h` instead of a separate `<name>.c`.                                                                                                                                                                                                                                                                |
@@ -1195,9 +1213,9 @@ just-makeit function fft_global_setup --module fft --doc "Initialize FFT tables.
  */
 #include "<pkg>/fft/fft_core.h"
 
-/* <<IMPLEMENT: fft_global_setup>> */
+/* <<IMPLEMENT: <pkg>_fft_global_setup>> */
 void
-fft_global_setup(void)
+<pkg>_fft_global_setup(void)
 {
 }
 ```
@@ -1205,7 +1223,7 @@ fft_global_setup(void)
 `fft_core.h` (declaration injected automatically):
 
 ```c
-void fft_global_setup(void);
+void <pkg>_fft_global_setup(void);
 ```
 
 **Example — with parameters:**
@@ -1226,9 +1244,9 @@ just-makeit function compute_window \
  */
 #include "<pkg>/fft/fft_core.h"
 
-/* <<IMPLEMENT: compute_window>> */
+/* <<IMPLEMENT: <pkg>_compute_window>> */
 float
-compute_window(size_t n, float beta)
+<pkg>_compute_window(size_t n, float beta)
 {
     (void)n; (void)beta;
     return (float)0.0f; /* placeholder */
@@ -1287,8 +1305,8 @@ values = ["rgb", "hsv", "lab"]
 just-makeit function convert_image \
     --module img \
     --param path:path \
-    --param src_cs:enum:color_space=rgb \
     --param dst_cs:enum:color_space \
+    --param src_cs:enum:color_space=rgb \
     --return-type int \
     --check-return
 ```
@@ -1318,7 +1336,7 @@ string, since jm reads it after the call returns and never frees it.
 
 ```c
 int
-parse_rate(const char *spec, const char **why)
+<pkg>_parse_rate(const char *spec, const char **why)
 {
     if (!*spec) {
         if (why) *why = "RATE must not be empty";
@@ -1367,10 +1385,11 @@ C stub (`native/src/img/convert_image.c` — yours to implement):
 ```c
 #include "<pkg>/img/img_core.h"
 
+/* <<IMPLEMENT: <pkg>_convert_image>> */
 int
-convert_image(const char *path, int src_cs, int dst_cs)
+<pkg>_convert_image(const char *path, int dst_cs, int src_cs)
 {
-    /* <<IMPLEMENT: convert_image>> */
-    return 0;
+    (void)path; (void)dst_cs; (void)src_cs;
+    return (int)0; /* placeholder */
 }
 ```

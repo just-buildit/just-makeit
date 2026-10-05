@@ -45,7 +45,7 @@ cd dsp_demo
 `--module signal` creates the `signal` subpackage shell immediately.
 `--pytest` generates pure pytest tests (instead of unittest).
 
-**What you get:**
+**What you get** (abridged):
 
 ```
 dsp_demo/
@@ -53,8 +53,17 @@ dsp_demo/
 ├── Makefile
 ├── pyproject.toml
 ├── just-makeit.toml
+├── modules/
+│   └── signal.toml          # the module's manifest fragment
+├── native/
+│   ├── inc/dsp_demo/signal/signal_core.h
+│   └── src/signal/
+│       ├── CMakeLists.txt
+│       ├── signal_core.c
+│       └── signal_ext.c
 └── src/
     └── dsp_demo/
+        ├── __init__.py
         └── signal/
             ├── __init__.py
             └── signal.pyi
@@ -125,8 +134,9 @@ The three init-params demonstrate the three kinds:
 | `coeff:float _Complex[]`                           | required array      | `coeff: npt.NDArray[np.complex64]`               |
 | `bank:float _Complex[][]:optional:fir_create_poly` | optional 2-D array  | `bank: npt.NDArray[np.complex64] \| None = None` |
 
-When `bank` is provided, `fir_create_poly(dim0, dim1, ptr, n_taps)` is called
-instead of the default `dsp_demo_fir_create(coeff_ptr, coeff_len, n_taps)`.
+When `bank` is provided,
+`fir_create_poly(bank_dim0, bank_dim1, bank, n_taps, coeff, coeff_len)` is
+called instead of the default `dsp_demo_fir_create(n_taps, coeff, coeff_len)`.
 
 Add a read-only `length` property and a variable-output method that returns the
 current tap values:
@@ -145,10 +155,12 @@ keep. A count larger than the buffer the kernel was given raises
 `RuntimeError` instead (gh-1716). See
 [Array memory ownership](memory-ownership.md).
 
-!!! note "String-enum params (TOML-only)"
+!!! note "String-enum params"
 
     Need a discrete choice constructor param like `mode: Literal["full", "polyphase"]`?
-    Add it directly to `just-makeit.toml` after scaffolding:
+    Add `--init-param "mode:string_enum:full,polyphase:full"` to the
+    `jm object` call, or write the equivalent row into the object's manifest
+    fragment (`objects/fir.toml`) and run `just-makeit apply`:
 
     ```toml
     [[fir.init_params]]
@@ -157,8 +169,7 @@ keep. A count larger than the buffer the kernel was given raises
     default = "full"
     ```
 
-    Then run `just-makeit apply` to regenerate the binding. The stub emits
-    `mode: Literal["full", "polyphase"] = "full"` and adds
+    The stub emits `mode: Literal["full", "polyphase"] = "full"` and adds
     `from typing import Literal` automatically.
 
 ______________________________________________________________________
@@ -196,9 +207,9 @@ Once the algorithm is written and the tests pass, retrofit hot-path hints:
 just-makeit perf
 ```
 
-This writes `native/inc/dsp_demo/jm_perf.h` (the `JM_HOT` / `JM_FORCEINLINE` macros),
-patches `step()` in every `_core.h`, and records the setting in
-`just-makeit.toml` so future objects inherit it automatically.
+This writes `native/inc/dsp_demo/jm_perf.h` (the `JM_HOT` / `JM_FORCEINLINE`
+macros) and `jm_simd.h`, patches `step()` in every `_core.h`, and records the
+setting in `just-makeit.toml` so future objects inherit it automatically.
 
 ______________________________________________________________________
 
@@ -216,7 +227,7 @@ from dsp_demo.signal import NCO, Fir, magnitude_db
 
 # Generator — no input, produces complex samples
 nco = NCO(phase=0)
-nco.set_freq(0.1)
+nco.freq = 0.1
 x = nco.steps(1024)                   # → NDArray[np.complex64]
 
 # No-state filter — coefficients set at construction
@@ -252,7 +263,7 @@ ______________________________________________________________________
 - `--init-param name:type:default` — scalar constructor parameter
 - `--init-param name:type[]` — required array constructor parameter
 - `--init-param name:type[][]:optional:fn` — optional 2-D array with alternate create fn
-- `string_enum` (TOML) — discrete-choice constructor parameter
+- `--init-param name:string_enum:a,b[:default]` — discrete-choice constructor parameter
 - `just-makeit property` — read-only and writable Python properties
 - `just-makeit method --variable-output` — runtime-length array output method
 - `just-makeit function --inline --out-type` — header-inlined module function with array output
@@ -270,5 +281,5 @@ ______________________________________________________________________
     - [`result_fields`](commands/extend.md) — typed `list[tuple[...]]` return from a method
     - [`--multi-output`](commands/extend.md) — secondary output array on a variable-output method
     - [`--batch`](commands/extend.md) — 1:1-rate array transform
-    - [`just-makeit split-objects`](commands/build.md) — move each object into its own TOML fragment
+    - [`just-makeit split-objects`](commands/build.md#just-makeit-split-objects) — move each object into its own TOML fragment
     - [`--no-step`](pure.md) — objects with only methods and properties, no primary algorithm

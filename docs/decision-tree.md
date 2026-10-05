@@ -60,7 +60,7 @@ shape, pass a `--preset` — or the flags it stands for:
 | Your `step()`             | Preset                | …the flags it stands for                                              |
 | ------------------------- | --------------------- | --------------------------------------------------------------------- |
 | input → output (1:1)      | `processor` (default) | `--arg-type "float _Complex"`                                         |
-| array → one sample        | —                     | `--arg-type "T[]"` (`steps()` not generated)                          |
+| array → one sample        | —                     | `--arg-type "T[]" --return-type T` (`steps()` not generated)          |
 | nothing in, samples out   | `generator`           | `--arg-type void` (complex return by default)                         |
 | samples in, nothing out   | `consumer`            | `--return-type void`                                                  |
 | no `step()`, custom verbs | `reader`              | `--no-step` (+ `--init-param filepath:"const char *"` to open a file) |
@@ -79,13 +79,13 @@ And what state it carries:
 
 For [`jm method`](commands/extend.md#just-makeit-method), the output shape is a TOML setting on the method:
 
-| Output                             | Setting                                                            |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| Fixed N out for N in (resampler)   | `out_type="float"`, `out_divisor=2`                                |
-| Variable count out (event emitter) | `variable_output=true` (provide `<comp>_<name>_max_out(state, n)`) |
-| A list of records (events)         | `result_fields=[{name, type}, …]`                                  |
-| Several parallel buffers           | `multi_output=["float _Complex", …]`                               |
-| Excluded from benchmarks           | `bench=false`                                                      |
+| Output                             | Setting                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| Fixed N out for N in (resampler)   | `out_type="float"`, `out_divisor=2`                                      |
+| Variable count out (event emitter) | `variable_output=true` (provide `<pkg>_<comp>_<name>_max_out(state, n)`) |
+| A list of records (events)         | `result_fields=[{name, type}, …]`                                        |
+| Several parallel buffers           | `multi_output=["float _Complex", …]`                                     |
+| Excluded from benchmarks           | `bench=false`                                                            |
 
 ## Wiring an external library
 
@@ -133,7 +133,7 @@ design:
 
 - `opaque` state fields, `no_ctor` per field, `controllable` per field
     (see [Arguments](arguments.md#default-optional-arguments))
-- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`, `create_fn`), `init_post_parse`
+- `init_params` modifiers (`default_raw`, `real_type`, `real_create_fn`), `init_post_parse`
 - `max_results` / `max_results_param` on methods and functions
 - `no_generate` modules, `extra_c` files, per-component `extra_link_libs`
 

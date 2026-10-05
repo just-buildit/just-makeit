@@ -83,25 +83,38 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
 {b}==> Venv activated — just-makeit is ready:{/b}
 
-    jm new my_project --object my_object
+    just-makeit new my_project --object my_object
 ```
 
 !!! note
 
-    `install-deps` installs the build toolchain — cmake, a C compiler, and numpy —
-    into a Python venv, creating and activating it for you. The venv is created at
+    `install-deps` installs cmake, a C compiler and pkg-config through your
+    system package manager (only when cmake or a C compiler is missing), then
+    numpy and just-makeit into a Python venv. The curl installer also activates
+    the venv in your shell; `just-makeit install-deps` prints the
+    `source <venv>/bin/activate` line to run. The venv is created at
     `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the
-    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`.
+    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`. Both take
+    `--check` to report what is missing without installing anything; the curl
+    installer also takes `--force` to reinstall just-makeit, and needs
+    Python 3.11+.
 
 !!! info
 
-    Installer detects your platform and installs system dependencies via
-    the available package manager:
+    The installer picks the package manager from your platform — on Linux,
+    from the `ID` in `/etc/os-release`:
 
-    | Platform  | Detection order                   |
-    | --------- | --------------------------------- |
-    | **Linux** | apt · dnf · pacman · zypper · apk |
-    | **macOS** | Homebrew                          |
+    | Platform  | Package manager | Distros (`ID`)                         |
+    | --------- | --------------- | -------------------------------------- |
+    | **Linux** | apt             | ubuntu, debian, linuxmint, pop         |
+    | **Linux** | dnf             | fedora, rhel, centos, rocky, almalinux |
+    | **Linux** | pacman          | arch, manjaro, endeavouros             |
+    | **Linux** | zypper          | opensuse\*, sles                       |
+    | **Linux** | apk             | alpine                                 |
+    | **macOS** | Homebrew        | —                                      |
+
+    On any other distro it installs no system packages and asks you to install
+    cmake and a C compiler yourself.
 
 ______________________________________________________________________
 
@@ -138,7 +151,8 @@ ______________________________________________________________________
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9+ (the curl installer needs 3.11+; on 3.9 or 3.10, install with
+    pip or uv)
 - CMake ≥ 3.16
 - A C99 compiler: GCC or Clang, or on Windows **clang-cl** — see
     [Does it work on Windows?](faq.md#does-it-work-on-windows)
