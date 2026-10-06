@@ -35,11 +35,11 @@ from pathlib import Path
 
 import pytest
 
+from _installers import INSTALL_DEPS, install_functions
 from _jmrun import run_cli
 from just_makeit import _config as C
 
 ROOT = Path(__file__).resolve().parent.parent
-INSTALL_DEPS = ROOT / "src" / "just_makeit" / "scripts" / "install-deps.sh"
 NCO_TONE = ROOT / "src" / "just_makeit" / "examples" / "nco_tone" / "test.py"
 
 #: just-runit's ``_JBS_BASE``. A ``just-bashit:NAME`` source is fetched from
@@ -100,28 +100,6 @@ def _retrying():
     return mod._retrying
 
 
-def _install_deps_bodies() -> dict[str, str]:
-    """``{manager: body}`` for each ``_install_<manager>()`` in install-deps.
-
-    A function runs to the line where its braces balance, so a one-line body
-    and a multi-line one are read alike; ``${MGR}`` is balanced on its own.
-    """
-    lines = INSTALL_DEPS.read_text(encoding="utf-8").splitlines()
-    out: dict[str, str] = {}
-    for i, line in enumerate(lines):
-        m = re.match(r"_install_(\w+)\(\)", line)
-        if not m:
-            continue
-        depth, body = 0, []
-        for ln in lines[i:]:
-            body.append(ln)
-            depth += ln.count("{") - ln.count("}")
-            if depth == 0 and "{" in "".join(body):
-                break
-        out[m.group(1)] = "\n".join(body)
-    return out
-
-
 def test_the_just_makeit_source_is_jms_installer(bootstrap):
     """The one the README tells a user to run, wherever the site serves it."""
     source = bootstrap["tools"]["just-makeit"]["source"]
@@ -161,7 +139,7 @@ def test_linux_dev_groups_name_patchelf(bootstrap):
     groups = bootstrap["dev"]
     needs = {
         manager
-        for manager, body in _install_deps_bodies().items()
+        for manager, body in install_functions(INSTALL_DEPS).items()
         if re.search(r"\bpatchelf\b", body)
     }
     checked = sorted(needs & set(groups))
