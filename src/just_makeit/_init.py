@@ -121,7 +121,9 @@ def _to_title(snake: str) -> str:
     return C.default_class_name(snake)
 
 
-def standalone_extra_include(root: Path, component: str) -> str:
+def standalone_extra_include(
+    root: Path, component: str, extra_methods: "list[dict]" = ()
+) -> str:
     """``#include`` for a standalone object's hand-written extra (gh-543).
 
     Mirrors what the module aggregator has always done for
@@ -129,11 +131,18 @@ def standalone_extra_include(root: Path, component: str) -> str:
     jm never creates or modifies the file; it only wires it in when it exists,
     so hand-written code survives every regeneration of the glue around it.
 
-    Returns ``""`` when there is no such file, which is the overwhelmingly
-    common case and renders byte-identically to before this slot existed.
+    gh-1997: or when *extra_methods* -- the object's
+    ``[[<obj>.extra_methods]]`` rows -- declares a function the file must
+    define, whether or not it is written yet (gh-1516's rule for a
+    composer): the build fails without it either way, and ``No such file``
+    names the fix, where an undefined function named only the symbol.
+
+    Returns ``""`` when there is no such file and no row, which is the
+    overwhelmingly common case and renders byte-identically to before this
+    slot existed.
     """
     extra = f"{component}_ext_extra.c"
-    if (root / "native" / "src" / component / extra).exists():
+    if extra_methods or (root / "native" / "src" / component / extra).exists():
         return (
             f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
         )
@@ -207,6 +216,10 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # Seeded here, the one place every component render path passes
         # through, so the five COMPONENT_EXT_C call sites resolve it unchanged.
         "extra_include": "",
+        # gh-1997: the prototypes of the object's `[[<obj>.extra_methods]]`
+        # functions, above the type whose method table names them. Seeded
+        # for the reason `extra_include` is; `make_methods_ctx` fills it.
+        "extra_method_protos": "",
         # gh-1117: the process-global rendezvous. Seeded here for the same
         # reason `extra_include` is -- the five COMPONENT_EXT_C call sites
         # each build their own ctx, and an unset slot would leave a literal
@@ -1181,6 +1194,11 @@ def run(
     # for every non-replay caller.
     _hint: bool = True,
     declared_methods: "list[dict] | None" = None,
+    # gh-1997: the object's `[[<obj>.extra_methods]]` rows. Manifest-only, so
+    # only `jm apply`'s replay passes them (`_apply._object_kwargs`), for the
+    # reason it passes `destroy`: the binding rendered here is the replay's
+    # final one for an object with no other members.
+    extra_methods: "list[dict] | None" = None,
 ) -> None:
     C.require_name(component, "component")
     # gh-910: every OTHER name this object declares, checked here because the
@@ -1336,6 +1354,7 @@ def run(
             no_state=no_state,
             serializable=serializable,
             csym=ctx["csym"],
+            extra_methods=extra_methods,  # gh-1997
         )
     )
     # gh-1509: the C triplet that binding calls, declared in the sacred
@@ -1612,7 +1631,9 @@ def run(
     # keeps the hook, and rebuilding the binding without the include would
     # leave the file present, preserved, and still compiling into nothing,
     # which is the same silence gh-1202 reports.
-    ctx["extra_include"] = standalone_extra_include(root, comp)
+    ctx["extra_include"] = standalone_extra_include(
+        root, comp, extra_methods or ()
+    )
     bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
     pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (
@@ -1851,6 +1872,8 @@ def run(
     # manifest round-trip. `jm apply` replays through this path, and a key
     # apply silently drops is the second defect gh-519 shipped.
     C.set_destroy_spec(cfg, comp, destroy or {})
+    # gh-1997: and the extra-method rows, for the same reason.
+    C.set_extra_methods(cfg, comp, extra_methods or [])
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

@@ -363,6 +363,11 @@ as a `PyObject *` too. A declared row always includes the file, so it can be
 written before or after the `apply` that declares it; if it is missing, the
 build fails naming it. The `composer_seams` example builds one end to end.
 
+An ordinary object takes the same key, row for row, minus `type` (it has one
+type): see
+[`[[<component>.extra_methods]]`](configuration.md#componentextra_methods-entries)
+(gh-1997).
+
 `extra_methods` is the composer's escape hatch, and it is deliberately **not**
 spelled `methods`: on a `kind = "handle"` or `kind = "capsule"` module that
 word means "generate the wrapper from this signature", while here the wrapper

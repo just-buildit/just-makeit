@@ -410,6 +410,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # also makes. That is why the fix belongs HERE, in the replay, and
         # not in a post-replay re-render of the one file that showed it.
         "doc": (cfg.get(comp) or {}).get("doc", ""),
+        # gh-1997: manifest-only, as `destroy` is -- a repeatable multi-key
+        # row has no CLI spelling. Dropped here, the replayed binding has no
+        # row for a method the author wrote, and `status` diffs against that.
+        "extra_methods": C.extra_methods(cfg, comp),
     }
 
 
@@ -2725,7 +2729,9 @@ def _sync_aggregates(
             # settled by the `_core.c` the replay just wrote there. The real
             # tree's own `_core.c` is not merged until after this loop.
             _ctx = _glue.component_ctx(cfg, comp, pkg, temp_root)
-            _ctx["extra_include"] = _glue.standalone_extra_include(root, comp)
+            _ctx["extra_include"] = _glue.standalone_extra_include(
+                root, comp, C.extra_methods(cfg, comp)
+            )
             # gh-744: the `.pyi` renders through `render_component_pyi` (which
             # reflows to 79 cols) on this path too. `status --check` compares
             # against what this writes, so rendering it raw here would report
@@ -3694,6 +3700,14 @@ def _apply_manifest(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-1997: an object's hand-written method rows, before anything is
+    # written -- a row shadowing a generated member, or naming no function,
+    # renders a binding that compiles and does not do what it says.
+    from . import _extramethods
+
+    _extra_errors = _extramethods.manifest_errors(root, cfg)
+    if _extra_errors:
+        C._refuse(_extra_errors)
 
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a

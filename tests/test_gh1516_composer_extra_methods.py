@@ -27,8 +27,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from just_makeit import _composer  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
+from just_makeit import _extramethods  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from test_composer_apply import _project  # noqa: E402
 
@@ -128,5 +128,8 @@ class TestTheRowHasADeclarationItCanSee:
     ],
 )
 def test_the_signature_follows_the_flags(flags: str, params: str) -> None:
-    """CPython's calling conventions, as `PyMethodDef` documents them."""
-    assert _composer._extra_method_params(flags) == params
+    """CPython's calling conventions, as `PyMethodDef` documents them.
+
+    gh-1997: the one emitter a composer and an ordinary object share.
+    """
+    assert _extramethods.params(flags) == params

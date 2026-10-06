@@ -2742,9 +2742,19 @@ def render_module_ext_aggregator(
         # gh-504: a view's fragment is keyed on its frag_id, not the shared
         # parent component; real objects have frag_id == component.
         comp = ctx.get("frag_id", ctx["component"])
+        # gh-1997: the object's `extra_methods` prototypes go HERE, above the
+        # fragment, rather than in it: a sacred fragment is never rendered
+        # whole, so its table could name a function it had no declaration
+        # for. `PyObject *` is the only type they use, so nothing the
+        # fragment defines is needed first.
+        protos = ctx.get("extra_method_protos", "")
+        if protos:
+            include_parts.append(protos.strip("\n"))
         include_parts.append(f'#include "{module}_ext_{comp}.c"')
         obj_extra = f"{module}_ext_{comp}_extra.c"
-        if obj_extra in extra_files:
+        # ...and a declared row includes the file whether or not it is
+        # written yet (gh-1516's rule): its function is defined nowhere else.
+        if obj_extra in extra_files or protos:
             include_parts.append(
                 f'#include "{obj_extra}"  /* hand-written — jm never modifies */'
             )

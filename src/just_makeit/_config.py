@@ -5268,6 +5268,61 @@ def record_names(cfg: dict, component: str) -> set[str]:
     return {str(r.get("name") or "") for r in records(cfg, component)} - {""}
 
 
+def extra_methods(cfg: dict, component: str) -> "list[dict]":
+    """The ``[[<component>.extra_methods]]`` rows, in manifest order (gh-1997).
+
+    A method whose CPython function the AUTHOR writes, in the object's
+    ``_extra.c`` (``<comp>_ext_extra.c`` standalone,
+    ``<cname>_ext_<comp>_extra.c`` in a module), and whose ``PyMethodDef``
+    row, prototype, ``#include`` and stub jm generates from the row --
+    gh-1190's composer key, for an ordinary object:
+
+    .. code-block:: toml
+
+        [[fft.extra_methods]]
+        name    = "execute_ci16"
+        fn      = "FFTObj_execute_ci16"
+        flags   = "METH_VARARGS"
+        args    = "iq: NDArray[np.int16]"
+        returns = "NDArray[np.complex64]"
+        doc     = "FFT of interleaved int16 I/Q."
+
+    Manifest-only: no CLI flag spells a repeatable multi-key row, so
+    ``jm apply``'s replay carries it explicitly (``_apply._object_kwargs``)
+    and ``jm script`` names it in a NOTE. A view does not inherit these: its
+    rows would call a function written against the parent's struct.
+
+    Examples
+    --------
+    >>> extra_methods({"o": {"extra_methods": [{"name": "h", "fn": "O_h"}]}},
+    ...               "o")
+    [{'name': 'h', 'fn': 'O_h'}]
+    >>> extra_methods({"o": {}}, "o")
+    []
+    """
+    return [
+        dict(r)
+        for r in cfg.get(component, {}).get("extra_methods", []) or []
+        if isinstance(r, dict)
+    ]
+
+
+def set_extra_methods(cfg: dict, component: str, rows: "list[dict]") -> dict:
+    """Store (or clear, when *rows* is empty) *component*'s extra methods.
+
+    The write `jm apply`'s replay makes after `add_component`, beside
+    `set_destroy_spec` and for its reason: a manifest-only table the
+    replayed object is created without (gh-1997).
+    """
+    if rows:
+        cfg.setdefault(component, {})["extra_methods"] = [
+            dict(r) for r in rows
+        ]
+    else:
+        cfg.get(component, {}).pop("extra_methods", None)
+    return cfg
+
+
 def properties(cfg: dict, component: str) -> list[dict]:
     """Return declared Python properties for component (empty list if none)."""
     return list(cfg.get(component, {}).get("properties", []))
@@ -8023,6 +8078,22 @@ def _dump(cfg: dict) -> str:
             lines += _method_dump_lines(m, f"[[{comp}.methods]]")
         for p in comp_data.get("properties", []):
             lines += _property_dump_lines(p, f"[[{comp}.properties]]")
+        # gh-1997: every key a row carries, the vocabulary's in a fixed order
+        # and any other after it, so a typo survives the save for `_keys` to
+        # report rather than vanishing here.
+        for row in extra_methods(cfg, comp):
+            lines.append(f"[[{comp}.extra_methods]]")
+            _order = ("name", "fn", "flags", "args", "returns", "doc")
+            for _k in [*_order, *sorted(set(row) - set(_order))]:
+                _v = row.get(_k)
+                if _v in (None, "", [], {}) or _k.startswith("_"):
+                    continue
+                lines.append(
+                    _str_assign(_k, _v)
+                    if isinstance(_v, str)
+                    else f"{_k} = {_toml_value(_v)}"
+                )
+            lines.append("")
         # gh-481. An explicit closed field list (the `properties` style, not
         # the `methods` generic passthrough): the grammar is deliberately small
         # and fixed, so a key that isn't one of these is an authoring error

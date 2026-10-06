@@ -1559,6 +1559,23 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-1997: a `[[<obj>.extra_methods]]` row already registers a function
+    # the author wrote under this name, so a generated wrapper would be a
+    # second row for one member. A `manual_stub` emits no row, which is the
+    # one entry that can stand beside it (`_extramethods.manifest_errors`).
+    if (
+        view_entry is None
+        and not manual_stub
+        and method_name
+        in {r.get("name") for r in C.extra_methods(cfg, object_name)}
+    ):
+        print(
+            f"error: method '{method_name}' is already a hand-written method"
+            f" on {target}: [[{object_name}.extra_methods]] registers it.\n"
+            "  Drop that row, or rename the method.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # gh-996: the same question one step wider. The check above knows about
     # other *declared* methods; these are the names the object's own generated
@@ -2200,7 +2217,9 @@ def run(
         )
 
         # gh-543: keep a hand-written extra wired through a method add.
-        ctx["extra_include"] = standalone_extra_include(root, object_name)
+        ctx["extra_include"] = standalone_extra_include(
+            root, object_name, C.extra_methods(cfg, object_name)
+        )
 
         def r(tmpl):
             return R.render(tmpl, ctx)

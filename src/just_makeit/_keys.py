@@ -110,6 +110,10 @@ OBJECT_KEYS = frozenset(
         "views",
         "warnings",
         "destroy",
+        # gh-1997: `[[<obj>.extra_methods]]` -- a row for a method whose C
+        # the author writes in the object's `_extra.c`; gh-1190's composer
+        # key, for an ordinary object.
+        "extra_methods",
     }
 )
 
@@ -694,12 +698,18 @@ KIND_TABLE_VOCAB = {
 }
 
 
-#: Keys on a `[[module.X.extra_methods]]` row (gh-1190). `fn` names the C
-#: function the project writes in `<cname>_ext_extra.c`; `type` says which of
-#: the composer's four types it attaches to, defaulting to the composer type.
-COMPOSER_EXTRA_METHOD_KEYS = frozenset(
-    {"name", "fn", "flags", "doc", "args", "returns", "type"}
+#: Keys on an object's `[[<obj>.extra_methods]]` row (gh-1997). `fn` names the
+#: C function the project writes in the object's `_extra.c`; the rest are
+#: its `PyMethodDef` flags and the stub's `args` / `returns` / `doc`.
+EXTRA_METHOD_KEYS = frozenset(
+    {"name", "fn", "flags", "doc", "args", "returns"}
 )
+
+#: Keys on a `[[module.X.extra_methods]]` row (gh-1190): an object's, plus
+#: `type`, which says which of the composer's four types the row attaches
+#: to, defaulting to the composer type. An object has one type, so `type`
+#: on its row is reported as a composer key rather than read.
+COMPOSER_EXTRA_METHOD_KEYS = EXTRA_METHOD_KEYS | {"type"}
 
 # ── composer sub-TABLES (gh-1236) ────────────────────────────────────────────
 #
@@ -844,6 +854,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "record field": RECORD_FIELD_KEYS,
     "function": FUNCTION_KEYS,
     "function param": FUNCTION_PARAM_KEYS,
+    "extra_method": EXTRA_METHOD_KEYS,  # gh-1997
     # gh-1114: the `kind`-bearing module faces. Registered here so `_check`
     # and `Unknown.valid_for` treat them exactly like every other table --
     # a key written on the wrong face is then named as belonging to the
@@ -1268,6 +1279,12 @@ def unknown_keys(cfg: dict) -> list:
             found += _check("method", where, entry)
             for p in _entries(entry, "params") + _entries(entry, "extra_args"):
                 found += _check("param", f"{where}({p.get('name', '?')})", p)
+        # gh-1997: a typo on a hand-written method's row is the one that
+        # silently drops its flags or its stub's signature.
+        for entry in _entries(section, "extra_methods"):
+            found += _check(
+                "extra_method", f"{name}.{entry.get('name', '?')}", entry
+            )
     for mod, data in (cfg.get("module") or {}).items():
         if not isinstance(data, dict):
             continue

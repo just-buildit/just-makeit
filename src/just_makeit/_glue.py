@@ -181,6 +181,7 @@ def component_ctx(
             records=C.records(cfg, object_name),  # gh-1405
             properties=C.properties(cfg, object_name),  # gh-1426
             csym=ctx["csym"],
+            extra_methods=C.extra_methods(cfg, object_name),  # gh-1997
         )
     )
     for _slot in _override_slots:
@@ -443,7 +444,9 @@ def regenerate_standalone(
     ctx = component_ctx(cfg, object_name, pkg, root)
     # gh-543: component_ctx is manifest-only by contract, so the on-disk probe
     # for a hand-written extra belongs here, in the caller that has `root`.
-    ctx["extra_include"] = standalone_extra_include(root, object_name)
+    ctx["extra_include"] = standalone_extra_include(
+        root, object_name, C.extra_methods(cfg, object_name)
+    )
 
     ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
     if ext_c.exists():

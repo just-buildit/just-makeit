@@ -33,6 +33,7 @@ from . import _codec as _codec
 from . import _coerce
 from . import _config as C
 from . import _csym as CSYM
+from . import _extramethods
 from . import _gluedoc
 from . import _outbuf
 from . import _record
@@ -826,6 +827,12 @@ def _splice_hand_owned(cfg: dict, old_text: str, new_text: str) -> str:
         start = _line_start_offset(old_text, start_lineno)
         return old_text[start:end]
 
+    new_groups = _member_groups(new_text)
+    # gh-1997: members the fresh render types for real. A `manual_stub`
+    # whose old text is still jm's own `<<MANUAL_STUB>>` placeholder has
+    # nothing of the author's to keep, so when an `extra_methods` row of the
+    # same name now renders the member, the row's stub stands.
+    rendered_for_real = set(new_groups) - _placeholder_members(new_text)
     hand_owned: dict[tuple[str, str], str] = {}
     for key, nodes in old_groups.items():
         marked = (
@@ -833,11 +840,17 @@ def _splice_hand_owned(cfg: dict, old_text: str, new_text: str) -> str:
             is not None
         )
         if key in manifest_pairs or marked:
-            hand_owned[key] = _block(key, nodes)
+            block = _block(key, nodes)
+            if (
+                not marked
+                and key in rendered_for_real
+                and _MANUAL_STUB_PLACEHOLDER in block
+            ):
+                continue
+            hand_owned[key] = block
     if not hand_owned:
         return new_text
 
-    new_groups = _member_groups(new_text)
     replacements: list[tuple[int, int, str]] = []
     append_by_class: dict[str, list[str]] = {}
     for key, block in hand_owned.items():
@@ -1570,6 +1583,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     return_type = C.return_type(cfg, obj)
     obj_methods = C.methods(cfg, obj)
     obj_props = C.properties(cfg, obj)
+    # gh-1997: the methods the author wrote in the object's `_extra.c`.
+    _extra_rows = C.extra_methods(cfg, obj)
+    _extra_names = {str(r.get("name") or "") for r in _extra_rows}
     # Doxygen blocks parsed from the sacred header, stashed on cfg by
     # _object._regenerate_module. Maps C function name -> DoxyBlock.
     doc_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
@@ -2058,6 +2074,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ]
             continue
         if m.get("manual_stub"):
+            # gh-1997: the peer of the same skip in `make_methods_ctx` -- an
+            # `extra_methods` row of this name types the member, below.
+            if m_name in _extra_names:
+                continue
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
@@ -2402,6 +2422,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         ):
             lines += ["", f"    def {_n}({_sig}:"]
             lines += _glue[_n].pyi_doc()
+
+    # gh-1997: the methods the author wrote in the object's `_extra.c`, after
+    # the generated ones as their rows are -- through the one member emitter
+    # the standalone stub and a composer's use.
+    for _row in _extra_rows:
+        lines += ["", *_extramethods.pyi_member(_row)]
 
     # State get_/set_ accessors. The module runtime emits these for every
     # non-opaque state var (via make_state_ctx, the same builder that generates
@@ -2826,6 +2852,10 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
         for p in C.properties(cfg, obj)
         if p["name"] not in excl and p["name"] not in own_prop_names
     ] + own_props
+    # gh-1997: a view does not inherit the parent's `extra_methods`. Its
+    # binding renders none (`_object._make_view_ctx`), because each row's
+    # function is written against the parent's struct.
+    overlay.pop("extra_methods", None)
     own_methods = C.view_methods(view)
     own_method_names = {m["name"] for m in own_methods}
     overlay["methods"] = [

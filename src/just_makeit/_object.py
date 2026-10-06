@@ -1528,6 +1528,8 @@ def build_component_ctxs(
                 records=C.records(cfg, obj),  # gh-1405
                 properties=C.properties(cfg, obj),  # gh-1426
                 csym=ctx["csym"],
+                # gh-1997: the object's own; a view (above) has none.
+                extra_methods=C.extra_methods(cfg, obj),
             )
         )
         for _slot in _override_slots:
@@ -2501,6 +2503,9 @@ def run(
     # the temp tree has not replayed them yet.
     *,
     declared_methods: "list[dict] | None" = None,
+    # gh-1997: the object's `[[<obj>.extra_methods]]` rows -- manifest-only,
+    # so only `jm apply`'s replay passes them, as it passes `destroy`.
+    extra_methods: "list[dict] | None" = None,
 ) -> None:
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
@@ -2614,6 +2619,7 @@ def run(
             destroy=destroy,
             doc=doc,
             _hint=_hint and not variable_output,
+            extra_methods=extra_methods,  # gh-1997
         )
         if variable_output:
             from . import _method as _M
@@ -3062,6 +3068,9 @@ def run(
     # re-render below — _regenerate_module reads it back out of this same
     # in-memory cfg to fill the object's COMPONENT_TYPE_SECTION slots.
     C.set_destroy_spec(cfg, comp, destroy or {})
+    # gh-1997: the extra-method rows, before the same re-render, which
+    # renders their table rows and the aggregator's prototypes from them.
+    C.set_extra_methods(cfg, comp, extra_methods or [])
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
