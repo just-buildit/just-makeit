@@ -23,6 +23,13 @@ verdict turns on the system alone. The interpreter that would build a venv
 builds a stub one instead, so a full run is offline and writes nothing
 outside ``tmp_path``.
 
+That verdict is what found gh-1993: install.sh read the index through
+``grep -oP``, and BSD grep (macOS) has no ``-P``, so there just-makeit was
+never current and ``--check`` could not pass. The stub PATH carries only
+the POSIX tools in `REAL_TOOLS`, and grep is not one of them, so a
+GNU-only tool in either installer fails here on every host, not only on
+the one that lacks it.
+
 The per-manager comparison runs every ``_install_<manager>()`` either
 script defines against those recorders, so a manager added to one script is
 covered the moment it is written, and a manager one script has and the
@@ -32,6 +39,8 @@ GATE: on Linux with no patchelf, each installer's ``--check`` names it and
       exits 1, and a run hands it to the package manager; on macOS neither
       asks for it; and for every manager either script knows, the two run
       the same package-manager commands, which name patchelf on Linux.
+GATE: install.sh reads just-makeit as current with no GNU-only tool, so
+      its --check passes on any host with nothing to install (gh-1993).
 """
 
 from __future__ import annotations
@@ -53,8 +62,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 #: Host tools the stub PATH links unchanged: text plumbing the installers
-#: pipe through, and ``id`` for their root check.
-REAL_TOOLS = ("awk", "cat", "grep", "head", "id")
+#: pipe through, and ``id`` for their root check. Each behaves alike on
+#: GNU, BSD and busybox for what the installers ask of it; grep is left out
+#: because ``grep -oP`` is the GNU-only spelling gh-1993 removed.
+REAL_TOOLS = ("awk", "cat", "head", "id", "sed")
 
 #: The package managers' commands, recorded rather than run. An installer
 #: that calls one not listed here finds no such command under the stub
@@ -209,16 +220,14 @@ def _names(calls: "list[str]", word: str) -> bool:
 def _check_passes(script: Path, res: "subprocess.CompletedProcess") -> None:
     """Assert that ``--check`` found nothing to install: exit 0.
 
-    install.sh's verdict also asks whether just-makeit is current, reading
-    the index through ``grep -oP``. A grep without ``-P`` (BSD, busybox)
-    never sees it current, so install.sh's ``--check`` cannot pass on such
-    a host whatever the system holds -- a fault of its own, outside
-    gh-1972, so it is skipped there rather than counted.
+    install.sh's verdict also asks whether just-makeit is current, so it
+    must have read the stub venv's and the stub index's version as one
+    (gh-1993: with ``grep -oP`` it never did on macOS).
     """
-    if script == INSTALL_SH and not _reported(res.stdout, "just-makeit", "ok"):
-        pytest.skip(
-            "this host's grep has no -P, so install.sh never reads "
-            "just-makeit as current and its --check always exits 1"
+    if script == INSTALL_SH:
+        assert _reported(res.stdout, "just-makeit", "ok"), (
+            "install.sh did not read just-makeit as current, so its --check "
+            f"cannot pass on this host (gh-1993):\n{res.stdout}{res.stderr}"
         )
     assert res.returncode == 0, (res.stdout, res.stderr)
 

@@ -168,8 +168,12 @@ JM_CURRENT=0
 if [[ $FORCE -eq 0 && -x "${VENV_DIR}/bin/python" ]]; then
     _installed=$("${VENV_DIR}/bin/python" -c \
         'from importlib.metadata import version; print(version("just-makeit"))' 2>/dev/null || true)
+    # `pip index versions` opens with `just-makeit (X.Y.Z)`. POSIX sed, not
+    # `grep -oP`: BSD grep (macOS) and busybox grep (Alpine) have no -P, so
+    # the version read back empty there and just-makeit was never current
+    # (gh-1993).
     _latest=$(pip index versions just-makeit 2>/dev/null \
-        | grep -oP '(?<=just-makeit \()[\d.]+' | head -1 || true)
+        | sed -n 's/^just-makeit (\([0-9.]*\)).*/\1/p' | head -1 || true)
     if [[ -n "$_installed" && "$_installed" == "$_latest" ]]; then
         JM_CURRENT=1
         skip "just-makeit ${_installed} in ${VENV_DIR}"
