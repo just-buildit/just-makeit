@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -33,7 +34,7 @@ sys.path.insert(0, str(SRC))
 from just_makeit._new import run as new_run  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
-    not (shutil.which("cmake") and shutil.which("cc")),
+    not (shutil.which("cmake") and default_cc()),
     reason="needs cmake and a C compiler",
 )
 

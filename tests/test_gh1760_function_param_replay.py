@@ -32,6 +32,7 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -40,9 +41,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit import _function  # noqa: E402
 from just_makeit._keys import FUNCTION_PARAM_KEYS  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 #: Accepted key -> one param row that carries it with a non-default value.
 #: Rows are ordered as they are declared: every defaulted scalar after every

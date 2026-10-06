@@ -23,19 +23,19 @@ from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from _jmrun import run_cli  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 
 #: One object per shape jm can scaffold, spanning every branch of
 #: ``make_step_ctx`` (no-step, blockwise, array-in scalar step, generator,

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -145,10 +146,7 @@ class TestRoundTrip:
 
 
 @pytest.mark.skipif(
-    not (
-        shutil.which("cmake")
-        and any(shutil.which(c) for c in ("cc", "gcc", "clang"))
-    ),
+    not (shutil.which("cmake") and default_cc() is not None),
     reason="needs cmake + C compiler",
 )
 def test_required_raises_typeerror_at_runtime(tmp_path):

@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 
@@ -38,9 +39,7 @@ INIT_PARAM = (
     '\n[[g.init_params]]\nname = "level"\ntype = "int"\ndefault = "3"\n'
 )
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 def _project(tmp_path: Path, *, module: bool = False) -> Path:

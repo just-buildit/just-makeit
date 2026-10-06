@@ -30,20 +30,20 @@ satisfy every refusal test on its own.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 _HEAD = (

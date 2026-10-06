@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -56,9 +57,7 @@ from just_makeit._object import run as object_run
 from just_makeit._script import run as script_run
 
 _SKIP = (
-    ""
-    if shutil.which("cmake") and (shutil.which("cc") or shutil.which("gcc"))
-    else "cmake/cc not available"
+    "" if shutil.which("cmake") and default_cc() else "cmake/cc not available"
 )
 
 

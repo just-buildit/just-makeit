@@ -32,13 +32,13 @@ Two gates, because they answer different questions:
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -69,7 +69,7 @@ _LINK = (
     else ["-shared"]
 )
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 
 def _cfg(pkg="pgdemo"):

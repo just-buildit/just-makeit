@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -54,9 +55,7 @@ from just_makeit._types import (  # noqa: E402
     np_dtype_name,
 )
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 #: (object, arg_type, return_type). Every branch the example builder takes:
 #: scalar passthrough, a differing return type, the two shapes with nothing to

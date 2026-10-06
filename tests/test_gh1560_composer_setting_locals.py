@@ -17,15 +17,15 @@ GATE: no two composer settings, whatever their names, declare the same C local
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sysconfig
 
 import pytest
+from _compilers import default_cc
 
 from just_makeit import _composer
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 #: Sibling pairs chosen to collide under some plausible naming scheme.
 PAIRS = [

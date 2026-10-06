@@ -24,6 +24,8 @@ import ast
 import sys
 from pathlib import Path
 
+from _pyfloor import python_floor
+
 TESTS = Path(__file__).parent
 SRC = TESTS.parent / "src"
 
@@ -65,18 +67,8 @@ def _bare_imports(tree: ast.AST) -> set:
     return out
 
 
-def _floor() -> tuple:
-    text = (SRC.parent / "pyproject.toml").read_text(encoding="utf-8")
-    line = next(
-        ln for ln in text.splitlines() if ln.startswith("requires-python")
-    )
-    # `>=3.9` -> (3, 9)
-    ver = line.split(">=")[1].strip().strip('"').strip("'")
-    return tuple(int(p) for p in ver.split("."))
-
-
 def test_no_test_imports_above_the_supported_floor():
-    floor = _floor()
+    floor = python_floor()
     offenders = []
     for f in sorted(TESTS.rglob("test_*.py")):
         tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
@@ -135,7 +127,7 @@ def test_a_guarded_import_is_not_an_offender():
 def test_the_floor_is_read_from_pyproject():
     """Keyed to `requires-python`, so raising the floor retires this on its
     own rather than leaving a check nobody can remove."""
-    assert _floor() <= tuple(sys.version_info[:2])
+    assert python_floor() <= tuple(sys.version_info[:2])
 
 
 #: Keyword arguments that exist only above jm's floor, as ``(method, kwarg)``.
@@ -171,7 +163,7 @@ def _kwargs_above_floor(
 
 
 def test_no_call_passes_a_keyword_above_the_supported_floor():
-    floor = _floor()
+    floor = python_floor()
     offenders = []
     for base in _SCANNED:
         for f in sorted(base.rglob("*.py")):

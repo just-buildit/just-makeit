@@ -36,6 +36,7 @@ from pathlib import Path
 import re
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -48,7 +49,7 @@ from just_makeit._property import run as property_run  # noqa: E402
 def _no_toolchain():
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 

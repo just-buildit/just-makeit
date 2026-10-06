@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -41,7 +42,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 _MAKE = shutil.which("make")
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 

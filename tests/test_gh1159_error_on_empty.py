@@ -38,13 +38,12 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import JmRun, run_cli
 
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 MESSAGE = "length is not a whole number of blocks"
 

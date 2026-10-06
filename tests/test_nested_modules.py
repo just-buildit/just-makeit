@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 import pytest
+from _compilers import default_cc
 
 from just_makeit import _config as C
 from just_makeit import _status
@@ -31,7 +32,7 @@ from just_makeit._remove import run as jm_remove
 def _skip_reason():
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 
