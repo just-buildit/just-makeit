@@ -760,12 +760,15 @@ just-makeit remove property phase --object nco --module dsp
 ```
 
 This regenerates the glue (`_ext.c`, `.pyi`) without the entry, so the
-binding stops exposing it. It is splice-free, so it **leaves the orphaned
-`_core.c` body** (and the `_core.h` declaration, or the field-backed struct
-member) in place with a "delete by hand" note — your code is never silently
-rewritten. Remove the stub yourself once you're sure. (Removing *state* via
-`just-makeit remove state <name> --object <obj>` is structural and rebuilds
-the object via the regenerate path instead.)
+binding stops exposing it, and the files jm derives from the binding with it:
+the link-check table `native/tests/test_<obj>_symbols.c` stops naming the
+removed function, and an element contract (`test_<obj>_invariants.py`) the
+entry was one face of goes (gh-1978). It is splice-free, so it **leaves the
+orphaned `_core.c` body** (and the `_core.h` declaration, or the field-backed
+struct member) in place with a "delete by hand" note — your code is never
+silently rewritten. Remove the stub yourself once you're sure. (Removing
+*state* via `just-makeit remove state <name> --object <obj>` is structural and
+rebuilds the object via the regenerate path instead.)
 
 ______________________________________________________________________
 

@@ -406,12 +406,28 @@ def component_ctx(
 
 def regenerate_standalone(
     root: Path, cfg: dict, object_name: str, pkg: str
-) -> None:
+) -> dict:
     """Re-render a standalone object's ``_ext.c`` and ``.pyi`` in place.
 
     Both writes are create-if-exists: a component whose files have not been
     materialised yet is left alone rather than half-written, so this is safe
     to call on a manifest-only component (``jm apply`` is what materialises).
+    The gh-1361 link-check table is rewritten from the binding just written.
+
+    Every verb that changes a standalone object's members re-renders it
+    through here -- `jm property`, `jm warning` and `jm error` on the way in,
+    and `jm remove` of any of them (or of a method) on the way out
+    (gh-1978). A second copy of this sequence in `_remove` wrote the binding
+    and never the table, so a removed method's symbol stayed in
+    ``test_<comp>_symbols.c``: `status --check` failed on the tree
+    `jm remove` had just written, and the C test stopped linking once the
+    author deleted the body as the remove told them to.
+
+    Returns
+    -------
+    dict
+        The render context, for a caller that renders a further file of the
+        same component from it (`jm remove` re-renders the benchmark).
     """
     # Seed the sacred header's create() Doxygen (filtered of jm's own scaffold
     # boilerplate) so component_ctx can enrich the class docstring — it is
@@ -449,6 +465,7 @@ def regenerate_standalone(
     from . import _linkcheck
 
     _linkcheck.write(root, cfg, object_name)
+    return ctx
 
 
 def regenerate(
