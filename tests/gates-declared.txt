@@ -113,6 +113,7 @@ test_gh1863_composer_uncalled_helpers
 test_gh1880_default_return_type
 test_gh1883_inexact_default_is_green
 test_gh1916_install_sh_floor
+test_gh1930_cmakelang_pinned_python
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot

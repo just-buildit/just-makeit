@@ -7,17 +7,20 @@ C0307 indentation) are delegated to cmake-format and suppressed here so that
 the check stays focused on naming conventions (C0103) and correctness (C0113)
 — the rules most likely to break downstream cmake-lint users.
 
-Skipped automatically when cmake-lint is not on PATH.
+cmake-lint is the Makefile's CMAKE_LINT, run through ``tests/_cmakelint.py``
+(gh-1930): cmakelang under its pinned Python, never this suite's, and a
+crash reported as one rather than as findings. Without CMAKE_LINT -- outside
+the make recipe that supplies it -- the tests FAIL; they used to skip.
 """
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+import _cmakelint
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -25,30 +28,6 @@ from just_makeit._method import run as method_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
-
-# Formatting rules are cmake-format's responsibility; suppress them here.
-_DISABLED = ["C0301", "C0307"]
-
-
-def _cmake_lint(cmake_files: list[Path]) -> subprocess.CompletedProcess:
-    """Run cmake-lint on *cmake_files*, returning the CompletedProcess."""
-    return subprocess.run(
-        ["cmake-lint", "--disabled-codes"]
-        + _DISABLED
-        + ["--"]
-        + [str(f) for f in cmake_files],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-
-
-@pytest.fixture(scope="module")
-def cmake_lint_bin():
-    path = shutil.which("cmake-lint")
-    if path is None:
-        pytest.skip("cmake-lint not on PATH")
-    return path
 
 
 @pytest.fixture
@@ -81,20 +60,12 @@ def module_proj(tmp_path):
 
 
 class TestStandaloneCmakeLint:
-    def test_no_lint_violations(self, cmake_lint_bin, standalone_proj):
-        cmake_files = list(standalone_proj.rglob("CMakeLists.txt"))
-        assert cmake_files, "no CMakeLists.txt generated"
-        r = _cmake_lint(cmake_files)
-        assert r.returncode == 0, (
-            f"cmake-lint found violations in standalone project:\n{r.stdout}"
+    def test_no_lint_violations(self, standalone_proj):
+        _cmakelint.check(
+            standalone_proj.rglob("CMakeLists.txt"), "standalone project"
         )
 
 
 class TestModuleCmakeLint:
-    def test_no_lint_violations(self, cmake_lint_bin, module_proj):
-        cmake_files = list(module_proj.rglob("CMakeLists.txt"))
-        assert cmake_files, "no CMakeLists.txt generated"
-        r = _cmake_lint(cmake_files)
-        assert r.returncode == 0, (
-            f"cmake-lint found violations in module project:\n{r.stdout}"
-        )
+    def test_no_lint_violations(self, module_proj):
+        _cmakelint.check(module_proj.rglob("CMakeLists.txt"), "module project")
