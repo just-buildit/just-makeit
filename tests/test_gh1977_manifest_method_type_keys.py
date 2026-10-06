@@ -202,6 +202,23 @@ ROWS = [
         "multi_output",
         id="issue-multi-output-void",
     ),
+    # The predicate's boundary: a registered scalar with no numpy dtype, and
+    # an array spelling of an element that has one. Both crashed on a plain
+    # method; `--out-type` refuses both.
+    pytest.param(
+        "method",
+        {"out_type": "bool"},
+        "'o' method 'm'",
+        "out_type",
+        id="out-type-registered-scalar-without-dtype",
+    ),
+    pytest.param(
+        "method",
+        {"out_type": "float[]"},
+        "'o' method 'm'",
+        "out_type",
+        id="out-type-array-spelling",
+    ),
     pytest.param(
         "method",
         {"out_type": "wat_t", "variable_output": True},
