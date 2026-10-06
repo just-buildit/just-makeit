@@ -32,6 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from _jmrun import warning_lines  # noqa: E402
 from just_makeit import _cfmt  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
@@ -182,7 +183,7 @@ class TestInvocation:
         _cfmt.format_project(root, cfg, quiet=True)  # must not raise
         err = capsys.readouterr().err
         assert "my-pinned-cf" in err, "the warning must name what was missing"
-        assert "WARNING" in err
+        assert warning_lines(err), err
 
     def test_c_style_unset_never_runs_anything(self, tmp_path, monkeypatch):
         root = self._project(tmp_path)

@@ -29,6 +29,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from _jmrun import warning_lines  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _pyfmt  # noqa: E402
 from just_makeit import _status  # noqa: E402
@@ -158,7 +159,7 @@ class TestInvocation:
         _pyfmt.format_project(root, cfg, quiet=True)  # must not raise
         err = capsys.readouterr().err
         assert "my-pinned-fmt" in err
-        assert "WARNING" in err
+        assert warning_lines(err), err
 
     def test_unset_never_runs_anything(self, tmp_path, monkeypatch):
         root = _project(tmp_path)
