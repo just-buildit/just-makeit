@@ -986,6 +986,84 @@ def _strict_acq(
     )
 
 
+def elements_per_sample(param: dict, what: str = "") -> int:
+    """A param's ``elements_per_sample``, validated: an int of at least 1.
+
+    The one reading of the key (gh-805 §C, gh-1996). Every builder that
+    turns an array's element count into the kernel's sample count asks here
+    -- the method-param and module-function-param builders, and the
+    variable-output binding, which sizes its output from the same count --
+    so they cannot read the key differently. Absent means 1, which renders
+    exactly what an undeclared param always did.
+
+    A value that is not a positive integer is refused rather than coerced:
+    ``0`` was read as 1 and a negative one rendered ``/ -2``, which C
+    converts to a huge ``size_t`` and so hands the kernel a length of 0.
+
+    Parameters
+    ----------
+    param : dict
+        The ``[[...params]]`` row.
+    what : str
+        Names the owner in a refusal, e.g. ``"method 'hb.execute'"``.
+
+    Returns
+    -------
+    int
+        The interleave factor, 1 when undeclared.
+
+    Raises
+    ------
+    Refusal
+        When the value is not an integer of at least 1.
+
+    Examples
+    --------
+    >>> elements_per_sample({"name": "x", "type": "int16_t[]"})
+    1
+    >>> elements_per_sample({"name": "x", "elements_per_sample": 2})
+    2
+    >>> elements_per_sample({"name": "x", "elements_per_sample": 0}, "f")
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: f: param 'x' declares elements_per_sample = 0; it must be an integer of at least 1.
+    """
+    raw = param.get("elements_per_sample")
+    if raw is None:
+        return 1
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+        return raw
+    from ._report import Refusal
+
+    where = f"{what}: " if what else ""
+    raise Refusal(
+        f"{where}param {param.get('name', '?')!r} declares "
+        f"elements_per_sample = {raw!r}; it must be an integer of at "
+        f"least 1."
+    )
+
+
+def array_count_c(arr_var: str, elements_per_sample: int = 1) -> str:
+    """An array's length as a C expression, in samples (gh-805 §C, gh-1996).
+
+    ``PyArray_SIZE`` counts **elements**. A kernel taking an interleaved buffer
+    counts **logical samples** — a complex pair in an ``int16_t[]`` is two
+    elements and one sample — so every count crossing the boundary is divided
+    by the interleave factor. This is the division, once: the ``<p>_len``
+    local (:func:`array_len_c`) and every count the variable-output binding
+    passes inline are this expression.
+
+    Examples
+    --------
+    >>> array_count_c("x_arr")
+    '(size_t)PyArray_SIZE(x_arr)'
+    >>> array_count_c("x_arr", 2)
+    '(size_t)PyArray_SIZE(x_arr) / 2'
+    """
+    divisor = f" / {elements_per_sample}" if elements_per_sample != 1 else ""
+    return f"(size_t)PyArray_SIZE({arr_var}){divisor}"
+
+
 def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     """The ``size_t <p>_len`` line, in the unit the C kernel counts (gh-805 §C).
 
@@ -1009,9 +1087,9 @@ def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     >>> array_len_c("x", "x_arr", 2)
     '    size_t x_len = (size_t)PyArray_SIZE(x_arr) / 2;'
     """
-    divisor = f" / {elements_per_sample}" if elements_per_sample != 1 else ""
     return (
-        f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var}){divisor};"
+        f"    size_t {pname}_len = "
+        f"{array_count_c(arr_var, elements_per_sample)};"
     )
 
 

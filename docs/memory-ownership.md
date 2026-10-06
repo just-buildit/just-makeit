@@ -226,6 +226,17 @@ point of doing so.
     with `exact_max_out = true` (below) — an assertion the prototype cannot
     make on its own.
 
+**Interleaved samples.** A kernel taking I/Q pairs in an `int16_t[]` counts
+samples, not elements: declare `elements_per_sample = 2` on that array param.
+Every count then crosses in samples — the kernel's `x_len`, the length
+`max_out` is asked about, and the capacity `pass_capacity` hands it — and the
+result comes back as `n_out * 2` elements
+([gh-1996](https://github.com/just-buildit/just-makeit/issues/1996)). The
+Python face stays in elements: `<m>_max_out(len(x))` sizes an `out=` array
+directly. The output must carry the interleaved array's element, since nothing
+declares how many elements of another type make one sample; jm refuses the
+method otherwise.
+
 ## Layer 3 — `out=` is for placement and determinism
 
 `out=` writes into an array you supply. Use it when *where* the samples land

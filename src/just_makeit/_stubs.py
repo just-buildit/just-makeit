@@ -2372,7 +2372,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # lookup the standalone path uses, so the faces cannot drift.
             _mo_blk = doc_blocks.get(_mo_key) or doc_blocks.get(_mo_fallback)
             _mo_gm = _max_out_method(
-                m_name, _stub_moc_name or "", int(m.get("max_out", 0) or 0)
+                m_name,
+                _stub_moc_name or "",
+                int(m.get("max_out", 0) or 0),
+                # gh-1996: the unit the binding answers in, read where the
+                # binding reads it.
+                _outbuf.interleave(m_arg != "void", m_params),
             )
             if _mo_blk is not None:
                 _mo_gm = _replace(_mo_gm, block=_mo_blk)
