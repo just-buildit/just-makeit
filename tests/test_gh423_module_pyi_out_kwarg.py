@@ -56,12 +56,23 @@ class TestModulePyiOutKwarg:
         assert "out:" in pyi and "| None = None" in pyi
         assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
 
-    def test_extra_param_method_gets_no_out_kwarg(self, tmp_path):
-        # Farrow.delay-shaped: variable_output with a genuine extra scalar
-        # param — stays ineligible for `out=` (gh-412).
+    def test_array_beside_a_scalar_gets_out_kwarg_and_max_out(self, tmp_path):
+        # Farrow.delay-shaped: an array param beside a scalar. gh-412 left it
+        # without `out=`; gh-1998 sizes it from the array, as the allocation
+        # already was, so the module stub publishes both.
         root = self._scaffold(
             tmp_path,
             params=[("x", "float _Complex[]"), ("mu", "double")],
+        )
+        pyi = _module_pyi(root)
+        assert "out:" in pyi and "| None = None" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
+
+    def test_params_beside_an_input_get_no_out_kwarg(self, tmp_path):
+        # An `arg_type` input plus a param: that parse drops the param
+        # (gh-1960), so there is no call to thread `out=` through.
+        root = self._scaffold(
+            tmp_path, arg_type="float _Complex", params=[("mu", "double")]
         )
         pyi = _module_pyi(root)
         assert "execute_cf32_max_out" not in pyi

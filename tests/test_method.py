@@ -593,10 +593,10 @@ class TestMethodOutKwarg:
 
 class TestVariableOutputParamsKeywords:
     """gh-412: a variable_output method with named params is positional-OR-
-    keyword (kwlist built from the param names), matching its `.pyi`. It gets
-    no `out=` buffer, but keyword parsing is independent of that feature —
+    keyword (kwlist built from the param names), matching its `.pyi` --
     previously such a method fell through to a positional-only
-    PyArg_ParseTuple, so `obj.delay(x, mu=0.3)` raised TypeError."""
+    PyArg_ParseTuple, so `obj.delay(x, mu=0.3)` raised TypeError. gh-1998
+    then gave it the `out=` buffer too, after the params."""
 
     def _ext(self, project):
         # Farrow.delay-shaped: variable_output, an array input + a scalar.
@@ -619,7 +619,7 @@ class TestVariableOutputParamsKeywords:
         ext = self._ext(project)
         assert "METH_VARARGS | METH_KEYWORDS" in ext
         assert "PyArg_ParseTupleAndKeywords(args, kwds," in ext
-        assert '{"x", "mu", NULL}' in ext
+        assert '{"x", "mu", "out", NULL}' in ext
         # positional-only parse must be gone for this method
         assert 'PyArg_ParseTuple(args, "Od"' not in ext
 
@@ -629,12 +629,12 @@ class TestVariableOutputParamsKeywords:
             "Nco_delay(NcoObject *self, PyObject *args, PyObject *kwds)" in ext
         )
 
-    def test_no_out_buffer_kwarg(self, project):
-        # keyword-capable, but a params method still gets no `out=` feature:
-        # no `<verb>_max_out()` sibling is exposed for delay (that marks the
-        # gh-219 out= buffer path, which a params method does not take).
+    def test_out_buffer_kwarg_after_the_params(self, project):
+        # gh-1998: the gh-219 out= buffer path, with the `<verb>_max_out()`
+        # sibling a caller sizes it with, and `out` the first optional arg.
         ext = self._ext(project)
-        assert '"delay_max_out"' not in ext
+        assert '"delay_max_out"' in ext
+        assert '"Od|O"' in ext
 
 
 class TestVariableOutputSingleArrayParam:
@@ -699,9 +699,8 @@ class TestVariableOutputSingleArrayParam:
         ext = self._ext(project)
         assert _pins_checked(ext, "_oview", "out_arr"), ext
 
-    def test_genuine_multi_param_method_still_excluded(self, project):
-        # Farrow.delay-shaped (x + mu): must NOT gain out= just because this
-        # fix touched the has_params branch it also uses.
+    def test_multi_param_method_gets_its_own_out(self, project):
+        # Farrow.delay-shaped (x + mu): gh-1998 gives it out= too, after mu.
         method_run(
             project,
             "nco",
@@ -716,14 +715,13 @@ class TestVariableOutputSingleArrayParam:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert '"delay_max_out"' not in ext
-        # the delay-specific kwlist (2 params) stays as-is; the assertion
-        # must be scoped to it -- nco's *default* scaffolded steps()/
-        # execute() blockwise method separately has its own unrelated
-        # {"x", "out", NULL} kwlist (gh-222's fixed 1:1 case) in this same
-        # file, so a bare substring check would false-fail here.
-        assert '_kwlist[] = {"x", "mu", NULL}' in ext
-        assert '_kwlist[] = {"x", "mu", "out", NULL}' not in ext
+        assert '"delay_max_out"' in ext
+        # Scoped to the delay-specific kwlist -- nco's *default* scaffolded
+        # steps()/execute() blockwise method separately has its own
+        # unrelated {"x", "out", NULL} kwlist (gh-222's fixed 1:1 case) in
+        # this same file, so a bare substring check would mislead here.
+        assert '_kwlist[] = {"x", "mu", "out", NULL}' in ext
+        assert '_kwlist[] = {"x", "mu", NULL}' not in ext
 
     def test_no_placeholders(self, project):
         self._ext(project)

@@ -528,6 +528,38 @@ def test_max_out_takes_and_returns_elements(shapes):
     assert checked >= 3  # one, three, nog -- and the module object's
 
 
+def test_every_count_message_names_its_unit(shapes):
+    """A message about `_cap` / `n_out` says samples when they are samples.
+
+    The overflow and returned-count guards (gh-1710, gh-1716) are emitted
+    per site with the count the site holds; under an interleave that count
+    is samples, and "wrote 5 elements into a buffer of 4" would misstate
+    both numbers by the factor.
+    """
+    src = _ext_sources(shapes)
+    for comp, m in _vo_methods(shapes):
+        e = _sizing(m)
+        unit = "elements" if e == 1 else f"samples of {e} elements"
+        for fn in (f"{comp.capitalize()}_{m['name']}", None):
+            if fn is None:
+                fn = f"{comp.capitalize()}_{m['name']}_max_out"
+                if not re.search(rf"^{fn}\(", src, re.M):
+                    continue
+            body = _function(src, fn)
+            said = re.findall(
+                r'"[^"]*: (?:wrote|output of) %zu (.+?) '
+                r"(?:into a buffer of|is too large)",
+                body,
+            )
+            if e != 1 and fn.endswith("_max_out"):
+                assert said == [unit], (fn, said)
+                continue
+            if fn.endswith("_max_out"):
+                assert not said, (fn, said)
+                continue
+            assert said and set(said) == {unit}, (fn, said)
+
+
 def test_rank_is_guarded_on_this_path_too(shapes):
     body = _function(_ext_sources(shapes), "W_ranked")
     assert body.index("PyArray_NDIM(x_arr) != 1") < body.index(

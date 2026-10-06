@@ -1096,7 +1096,7 @@ def _max_out_return_c(call: str, elements_per_sample: int, who: str) -> str:
         size_t _mo_need = (size_t)(f_max_out(s));
         if (_mo_need > (size_t)(SIZE_MAX / 2)) {
             PyErr_Format(PyExc_OverflowError,
-                "F.m_max_out: output of %zu elements is too large", _mo_need);
+                "F.m_max_out: output of %zu samples of 2 elements is too large", _mo_need);
             return NULL;
         }
         size_t _mo = (size_t)_mo_need;
@@ -1110,6 +1110,7 @@ def _max_out_return_c(call: str, elements_per_sample: int, who: str) -> str:
         who,
         ctype="size_t",
         limit=f"(SIZE_MAX / {elements_per_sample})",
+        unit=f"samples of {elements_per_sample} elements",
     ) + (f"    return PyLong_FromSize_t(_mo * {elements_per_sample});\n")
 
 
@@ -2038,19 +2039,6 @@ def make_methods_ctx(
                 param_docs=authored_param_docs(m),
             )
 
-        # gh-219 follow-up: a method's primary array input is sometimes
-        # declared as the sole entry in `params` (arg_type="void" +
-        # params=[{array}]) rather than via `arg_type` directly -- doppler's
-        # universal idiom for this shape. That's functionally the same as
-        # `has_arg` for the purposes of the optional `out=` buffer feature;
-        # only genuine *extra* params (e.g. Farrow.delay(x, mu)) should stay
-        # ineligible (gh-412 kept those positional-or-keyword, no `out=`).
-        # gh-1079: one accessor for both halves of the question. Three
-        # copies of this predicate decided whether the binding parses `out=`
-        # and whether either `.pyi` publishes it, and a stub advertising an
-        # `out=` the binding rejects is the same defect as the reverse.
-        _single_array_param = _outbuf.single_array_param(has_arg, params)
-
         # gh-1042: the binding's own arguments, decided ONCE and read by both
         # faces. They were decided several hundred lines below, where only the
         # `.pyi` could see them, so the signature listed `count`/`out=` while
@@ -2518,8 +2506,8 @@ def make_methods_ctx(
         # ── Python wrapper in ext.c ──────────────────────────────────────
         # gh-219: single-output variable_output methods accept an optional
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
-        # with blockwise steps(x, out=).  Multi-output and multi-param execute
-        # keep their positional-only signatures for now.
+        # with blockwise steps(x, out=). Multi-output keeps its signature
+        # without one; which shapes get it is `_outbuf.why_not`'s answer.
         # gh-805 §E: a structured result gets `out=` too. Three places in
         # this branch spoke in scalar NPY_ enums -- the guard, the
         # acquisition, and the trimmed view -- and each has a record form
@@ -2663,12 +2651,12 @@ def make_methods_ctx(
                 # call its own stub advertised.
                 _fmt = _join_fmt_with_optional(_fmt_chars, params)
                 if _enable_out:
-                    # gh-219 follow-up: the single-array-param case is
-                    # otherwise identical to the has_arg out= branch below —
-                    # extend the same optional out= kwarg. _fmt is exactly
-                    # "O" here (one required array param, nothing else, by
-                    # the _single_array_param definition), so "|O" makes
-                    # `out` the first optional argument.
+                    # gh-219 follow-up, widened by gh-1998: the same optional
+                    # out= kwarg as the has_arg branch, after every declared
+                    # param -- `delay(x, mu, out=None)`. It is the first
+                    # optional argument unless a param's `default` already
+                    # opened the optional group (gh-802), in which case it
+                    # joins it.
                     _pb_lines.append("    PyObject *out_obj = NULL;")
                     _fmt += "O" if "|" in _fmt else "|O"
                     _fmt_args.append("&out_obj")
@@ -2867,7 +2855,8 @@ def make_methods_ctx(
             # counts elements. `_cap` and `n_out` stay in the kernel's unit
             # throughout -- so `max_out`, the zero-bound guard and the
             # returned-count guard compare like with like -- and these are
-            # the places a count becomes a numpy length again.
+            # the places a count becomes a numpy length again. `_cap_unit`
+            # is what every message counting `_cap` / `n_out` calls them.
             _odim_c = "n_out" if _vo_e == 1 else f"(n_out * {_vo_e})"
             _cap_unit = (
                 "elements" if _vo_e == 1 else f"samples of {_vo_e} elements"
@@ -3031,6 +3020,7 @@ def make_methods_ctx(
                         f"{Component}.{name}",
                         "Py_DECREF(out_arr);",
                         indent=" " * 8,
+                        unit=_cap_unit,
                     )
                     + f"{_out_none}"
                     f"        npy_intp _odim = (npy_intp){_odim_c};\n"
@@ -3115,6 +3105,7 @@ def make_methods_ctx(
                         if _vo_e == 1
                         else f"(NPY_MAX_INTP / {_vo_e})"
                     ),
+                    unit=_cap_unit,
                 )
                 + ("" if _vo_e == 1 else f"    _adim *= {_vo_e};\n")
                 + "".join(
@@ -3272,7 +3263,11 @@ def make_methods_ctx(
                     # gh-1716: past `_cap`, PyArray_Resize below GREW the
                     # result into memory the kernel never wrote.
                     + _coerce.returned_count_c(
-                        "n_out", "_cap", f"{Component}.{name}", _decref_arrs
+                        "n_out",
+                        "_cap",
+                        f"{Component}.{name}",
+                        _decref_arrs,
+                        unit=_cap_unit,
                     )
                     + f"{_vo_empty}"
                     f"{_vo_exact}"
@@ -4134,9 +4129,9 @@ def make_methods_ctx(
         param_parts = list(_sig_parts)
         ret_ann = _ret_ann
         # gh-219: single-output variable_output methods take an optional
-        # `out=` buffer and expose a <verb>_max_out() sibling. A
-        # single-array-param method (params=[{array}], no other params) is
-        # eligible too -- see _single_array_param above.
+        # `out=` buffer and expose a <verb>_max_out() sibling. A method whose
+        # params carry an array is eligible too, beside other params since
+        # gh-1998 -- see `_outbuf.why_not`.
         # gh-805 §E: mirrors `_enable_out` above, which now offers the
         # buffer for a structured result too. Kept adjacent and kept in
         # step: a stub advertising an out= the binding rejects, or a

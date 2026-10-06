@@ -104,7 +104,9 @@ def test_no_generator_bounds_a_count_by_hand():
         if rel.parts[0] == "examples":
             continue
         text = path.read_text("utf-8")
-        n = text.count("elements into a buffer of")
+        # The unit is a parameter since gh-1998 (an interleaved kernel
+        # counts samples), so the needle is the part every spelling shares.
+        n = text.count("into a buffer of %zu")
         if n:
             found[str(rel)] = n
         clamps += [
