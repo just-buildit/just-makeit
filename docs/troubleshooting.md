@@ -289,6 +289,16 @@ The same check covers `result_fields` entries (gh-598), which report as
 (`void` is absent from a field's supported list — every record field is a
 value the binding has to convert.)
 
+A method's output-side types are checked the same way (gh-1977), each against
+what its command-line flag accepts: `out_type` must be an array element type
+(`--out-type`), each `multi_output` entry a registered scalar
+(`--multi-output`), and `extra_args` follows `params`:
+
+```
+'o' method 'm': out_type 'void' has no numpy equivalent.
+'o' method 'm': multi_output type 'wat_t' is not supported.
+```
+
 **Cause:** the manifest declares a `return_type` that is not one of jm's
 registered types. Common causes are a natural C spelling whose width is
 platform-dependent (`long`, `unsigned`, `ssize_t`), the *display* form of a

@@ -190,10 +190,10 @@ def run(args: list[str]) -> None:
             val = remaining[i]
             # Same allowlist as the function param scalar slot — must be a
             # type we can return as a numpy array element.
-            if val not in T._CTYPE_TO_NPY:
+            if not T.is_out_type(val):
                 print(
                     f"error: --out-type '{val}' must be an array-element type.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
+                    f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)

@@ -4803,14 +4803,21 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     ...     {"params": [{"name": "h", "type": "dp_plan_t *",
     ...                  "header": "dp/plan.h"}]}, "w")
     []
+    >>> _param_type_errors({"extra_args": [{"name": "k", "type": "wat_t"}]},
+    ...                    "'v' method 'run'")[0].splitlines()[0]
+    "'v' method 'run': extra_arg 'k' has unknown type 'wat_t'."
     """
     errors: list[str] = []
-    for pm in entry.get("params", []) or []:
-        err = _declared_type_error(
-            pm, f"{what}: param {pm.get('name', '?')!r}"
-        )
-        if err:
-            errors.append(err)
+    # gh-1977: `extra_args` is a method's synonym for `params`, and the
+    # replay forwards whichever is set (`_apply._replay_method`). Reading
+    # only `params` let an `extra_args` type reach `_CTYPE_META` unchecked.
+    for key, noun in (("params", "param"), ("extra_args", "extra_arg")):
+        for pm in entry.get(key, []) or []:
+            err = _declared_type_error(
+                pm, f"{what}: {noun} {pm.get('name', '?')!r}"
+            )
+            if err:
+                errors.append(err)
     return errors
 
 
@@ -4895,6 +4902,139 @@ def _arg_type_error(
     return f"{what} has unknown arg_type '{ctype}'.\n{indented}"
 
 
+def _out_type_error(entry: dict, what: str, *, function: bool = False) -> str:
+    """Validate one entry's ``out_type``; "" when the binding can use it.
+
+    gh-1977. ``out_type`` names the element of an ndarray the binding
+    allocates, so it is asked :func:`_types.is_out_type` -- the predicate
+    ``--out-type`` asks on the command line. Left unchecked, a row the CLI
+    refuses reached ``_CTYPE_TO_NPY[out_type]`` in the render, and ``status``
+    and ``apply`` died with a bare ``KeyError``.
+
+    A method's ``out_type`` is that element and nothing else. When the
+    method is an array result whose element is ``void``,
+    :func:`_outbuf.element_why_not` refuses the row at the render, in words
+    about the element; this leaves the row to it, so one row gets one
+    refusal. A module function's grammar is wider (gh-128, gh-1180): a
+    ``[param]`` suffix names the length argument, and ``"str"`` is a
+    variable-output function's text result. Its element is what
+    :func:`_types.parse_out_type` resolves.
+
+    Parameters
+    ----------
+    entry : dict
+        A ``[[<obj>.methods]]`` or ``[[module.<m>.functions]]`` table.
+    what : str
+        Human-readable location, used to open the message.
+    function : bool, optional
+        *entry* is a module function, read with the function grammar.
+
+    Returns
+    -------
+    str
+        The message, or ``""`` when ``out_type`` is absent or usable.
+
+    Examples
+    --------
+    >>> _out_type_error({"out_type": "float"}, "x")
+    ''
+    >>> _out_type_error({"out_type": "void"}, "x").splitlines()[0]
+    "x: out_type 'void' has no numpy equivalent."
+    >>> _out_type_error({"out_type": "float64[M]"}, "x", function=True)
+    ''
+    >>> _out_type_error({"out_type": "str", "variable_output": True}, "x",
+    ...                 function=True)
+    ''
+    """
+    out_type = entry.get("out_type")
+    if not out_type:
+        return ""
+    elem = str(out_type)
+    hint = ""
+    if function:
+        if elem == "str":
+            if entry.get("variable_output"):
+                return ""
+            hint = (
+                "\n  'str' is a variable-output function's text result; it"
+                " needs variable_output = true."
+            )
+        elem = _T.parse_out_type(elem)[0]
+    else:
+        from . import _outbuf
+
+        # The same coercions `_apply._replay_method` applies, so this asks
+        # about the row the render will see.
+        if _outbuf.element_why_not(
+            what,
+            variable_output=bool(entry.get("variable_output")),
+            batch=bool(entry.get("batch")),
+            record_dtype=entry.get("record_dtype", ""),
+            borrow=bool(entry.get("borrow")),
+            out_type=elem,
+            return_type=entry.get("return_type", "float _Complex"),
+        ):
+            return ""
+    if _T.is_out_type(elem):
+        return ""
+    supported = ", ".join(sorted(_T.SUPPORTED_ARRAY_CTYPES))
+    return (
+        f"{what}: out_type {out_type!r} has no numpy equivalent.\n"
+        f"  Supported: {supported}{hint}"
+    )
+
+
+def _multi_output_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``multi_output`` types; [] when all are usable.
+
+    gh-1977. Each entry is an extra ``<T> *outN`` the kernel fills, asked
+    :func:`_types.is_multi_output_type` -- the predicate ``--multi-output``
+    asks on the command line. Left unchecked, an entry the CLI refuses
+    reached ``_CTYPE_META[rt]["zero"]`` in the render as a bare
+    ``KeyError``. A bare string is refused as one message rather than read
+    character by character, which is what iterating it would do.
+
+    Parameters
+    ----------
+    entry : dict
+        A ``[[<obj>.methods]]`` table.
+    what : str
+        Human-readable location, used to open each message.
+
+    Returns
+    -------
+    list of str
+        One message per offending entry, in declaration order.
+
+    Examples
+    --------
+    >>> _multi_output_errors({"multi_output": ["uint8_t", "bool"]}, "x")
+    []
+    >>> _multi_output_errors({"multi_output": ["void"]}, "x")[0].splitlines()[0]
+    "x: multi_output type 'void' is not supported."
+    >>> print(_multi_output_errors({"multi_output": "int"}, "x")[0])
+    x: multi_output must be a list of types, e.g. multi_output = ["int"].
+    """
+    outs = entry.get("multi_output")
+    if not outs:
+        return []
+    if not isinstance(outs, list):
+        return [
+            f"{what}: multi_output must be a list of types, e.g. "
+            f'multi_output = ["{outs}"].'
+        ]
+    errors: list[str] = []
+    for rt in outs:
+        if _T.is_multi_output_type(str(rt)):
+            continue
+        help_text = _T.unsupported_return_type_help(str(rt), allow_void=False)
+        indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+        errors.append(
+            f"{what}: multi_output type {rt!r} is not supported.\n{indented}"
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -4913,7 +5053,11 @@ def manifest_type_errors(cfg: dict) -> list[str]:
 
     Covers module functions, component methods, view methods, and capsule /
     composer module methods — every table whose types reach a generated
-    binding.
+    binding. gh-1977 added the output-side keys of the first three, which
+    reached the render unchecked: ``out_type`` (methods and functions),
+    ``multi_output`` and ``extra_args`` (methods). Each is asked the
+    predicate its command-line flag asks, so a row ``jm method`` refuses is
+    one ``apply`` refuses too.
 
     Parameters
     ----------
@@ -4968,6 +5112,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         what: str,
         exempt: tuple,
         elements: "frozenset[str]" = frozenset(),
+        outputs: str = "",
     ) -> None:
         err = _return_type_error(entry, what, exempt, elements)
         if err:
@@ -4982,6 +5127,15 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         if err:
             errors.append(err)
         errors.extend(_param_type_errors(entry, what))
+        # gh-1977: the output-side keys, on the faces whose vocabulary has
+        # them (`_keys.METHOD_KEYS`, `_keys.FUNCTION_KEYS`); a capsule or
+        # composer method has neither key.
+        if outputs:
+            err = _out_type_error(entry, what, function=outputs == "function")
+            if err:
+                errors.append(err)
+        if outputs == "method":
+            errors.extend(_multi_output_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -4991,6 +5145,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 fn,
                 f"module {mod!r} function {fn.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS + ("out_type",),
+                outputs="function",
             )
         for m in module_methods(cfg, mod):
             _check(
@@ -5017,6 +5172,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 f"{comp!r} method {m.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS,
                 comp_elements,
+                outputs="method",
             )
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
@@ -5028,6 +5184,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                     f"{comp!r} view {vname!r} method {m.get('name', '?')!r}",
                     _RETURN_TYPE_EXEMPT_KEYS,
                     comp_elements,
+                    outputs="method",
                 )
     return errors
 
