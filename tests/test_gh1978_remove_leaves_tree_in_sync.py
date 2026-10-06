@@ -92,9 +92,8 @@ CASES: "dict[str, dict[str, tuple[list, list, tuple]]]" = {
         "ends-a-pair": (_writer(), [_reader()], ("wait", "--object", "o")),
         # `apply` in the add: `jm method` on a MODULE object does not write
         # the contract itself (`status --check` reports it MISSING right
-        # after the add -- an add-side gap, not this fix, reported on the
-        # gh-1978 PR), so this brings the tree to what the add should have
-        # left.
+        # after the add -- an add-side gap, not this fix, gh-1984), so this
+        # brings the tree to what the add should have left.
         "ends-a-pair-in-a-module": (
             [("module", "mod"), *_writer("o", *_M)],
             [_reader("o", *_M), ("apply",)],
