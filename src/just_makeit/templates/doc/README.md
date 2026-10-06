@@ -45,5 +45,6 @@ pip wheel . --no-deps -w dist     # wheel -> dist/
 
 The wheel is then repaired through `uvx`, so `uv` must be on `PATH`. It runs
 `delocate` on macOS<<readme_repair_windows>> and `auditwheel` on Linux, which
-also needs `patchelf` (`sudo apt install patchelf`). To skip the repair, set
+also needs `patchelf`: `bootstrap.toml` lists it in every Linux dev group, so
+`jbx install-deps -g dev` above installs it. To skip the repair, set
 `repair = false` under `[tool.just-buildit]` in `pyproject.toml`.

@@ -77,6 +77,7 @@ per-file-ignores = { "tests/*" = ["E402"], "docker/*" = ["E402"], "src/just_make
 testpaths = ["tests"]
 markers = [
     "slow: compiles a generated project (deselect with '-m \"not slow\"')",
+    "network: fetches over HTTPS, so fails offline ('-m \"not network\"')",
 ]
 
 [tool.coverage.run]
