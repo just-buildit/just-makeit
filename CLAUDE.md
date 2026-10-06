@@ -56,7 +56,8 @@ python3 scripts/sabotage.py FILE ANCHOR REPLACEMENT -- COMMAND...
 It refuses a sabotage that proves nothing: an anchor that is absent (a
 formatter rewrapped it) or ambiguous, an edit that did not land, a command
 already red before it, one that stays green, one red only from a collection
-error or with no FAILED test named. It restores the file byte-identical and
+error or with no FAILED test named, one whose output could hide a collection
+error (`-rf --tb=no`, gh-1945). It restores the file byte-identical and
 clears every `__pycache__`, before and after. Why each refusal exists:
 gh-1430, and the helper's docstring.
 
