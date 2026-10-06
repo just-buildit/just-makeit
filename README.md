@@ -32,10 +32,11 @@ ______________________________________________________________________
 
 ## Quickstart
 
-`install-deps` installs cmake, a C compiler and pkg-config through your
-system package manager (only when cmake or a C compiler is missing), then
-numpy and just-makeit into a Python venv (default `/tmp/jm-venv`, or pass your
-own path). Run `just-makeit install-deps --help` for the full reference.
+`install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
+patchelf through your system package manager (only when cmake, a C compiler
+or patchelf is missing), then numpy and just-makeit into a Python venv
+(default `/tmp/jm-venv`, or pass your own path). Run
+`just-makeit install-deps --help` for the full reference.
 
 **curl (auto-installs dependencies, creates and activates venv):**
 

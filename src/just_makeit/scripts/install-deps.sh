@@ -102,34 +102,53 @@ _detect_mgr() {
     fi
 }
 
-# ── 1. Check / install cmake + C compiler ────────────────────────────────────
+# ── 1. Check / install cmake + C compiler + patchelf ─────────────────────────
 
 MGR="$(_detect_mgr)"
-NEED_CMAKE=0; NEED_CC=0
+NEED_CMAKE=0
+
+# Every system dependency found missing, as the report names it. The install
+# step, --check's verdict and the unknown-manager hint all read this one
+# list, so a dependency checked below cannot be left out of any of them
+# (gh-1972). install.sh keeps the same list.
+MISSING=""
+_need() {
+    MISSING="${MISSING:+${MISSING}, }$1"
+    will "$1  (will install via ${MGR})"
+}
 
 if command -v cmake >/dev/null 2>&1; then
     skip "cmake $(cmake --version | head -1 | awk '{print $3}')"
 else
     NEED_CMAKE=1
-    will "cmake  (will install via ${MGR})"
+    _need cmake
 fi
 
 if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
         || command -v clang >/dev/null 2>&1; then
     skip "C compiler ($(command -v gcc || command -v clang || command -v cc))"
 else
-    NEED_CC=1
-    will "C compiler  (will install via ${MGR})"
+    _need "C compiler"
 fi
 
-if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
+# auditwheel needs patchelf to repair a Linux wheel (`just-makeit build`,
+# `pip wheel .`); delocate repairs a macOS one without it (gh-1972).
+if [[ "$(uname)" == "Linux" ]]; then
+    if command -v patchelf >/dev/null 2>&1; then
+        skip "patchelf ($(command -v patchelf))"
+    else
+        _need patchelf
+    fi
+fi
+
+if [[ -n "$MISSING" ]]; then
     will "venv at ${VENV_DIR}"
 else
     skip "no system packages needed"
 fi
 
 if [[ $CHECK -eq 1 ]]; then
-    if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
+    if [[ -n "$MISSING" ]]; then
         printf '\nRun without --check to install.\n'
         exit 1
     else
@@ -143,6 +162,10 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
+# install.sh, fetched alone by curl, cannot source these, so it carries a
+# copy; tests/test_gh1972_installers_patchelf.py runs both copies against
+# stub package managers and requires the same commands per manager.
+#
 # Retries cover only a request that ERRORS; a stalled mirror never errors, so
 # without a per-request timeout it hangs the caller's job (gh-1792).
 _install_apt()    {
@@ -171,7 +194,7 @@ _install_brew() {
     fi
 }
 
-if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
+if [[ -n "$MISSING" ]]; then
     case "$MGR" in
         apt)           _install_apt ;;
         dnf|dnf5)      _install_dnf ;;
@@ -180,7 +203,7 @@ if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
         apk)           _install_apk ;;
         brew)          _install_brew ;;
         *)
-            warn "Unknown package manager — install cmake + gcc manually."
+            warn "Unknown package manager — install these manually: ${MISSING}."
             ;;
     esac
 fi

@@ -127,21 +127,39 @@ _detect_mgr() {
 
 MGR="$(_detect_mgr)"
 NEED_CMAKE=0
-NEED_CC=0
+
+# Every system dependency found missing, as the report names it. The install
+# step, --check's verdict and the unknown-manager hint all read this one
+# list, so a dependency checked below cannot be left out of any of them
+# (gh-1972). jm's install-deps.sh keeps the same list.
+MISSING=""
+_need() {
+    MISSING="${MISSING:+${MISSING}, }$1"
+    will "$1  (via ${MGR})"
+}
 
 if command -v cmake >/dev/null 2>&1; then
     skip "cmake $(cmake --version | head -1 | awk '{print $3}')"
 else
     NEED_CMAKE=1
-    will "cmake  (via ${MGR})"
+    _need cmake
 fi
 
 if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
         || command -v clang >/dev/null 2>&1; then
     skip "C compiler ($(command -v gcc 2>/dev/null || command -v clang 2>/dev/null || command -v cc 2>/dev/null))"
 else
-    NEED_CC=1
-    will "C compiler  (via ${MGR})"
+    _need "C compiler"
+fi
+
+# auditwheel needs patchelf to repair a Linux wheel (`just-makeit build`,
+# `pip wheel .`); delocate repairs a macOS one without it (gh-1972).
+if [[ "$(uname)" == "Linux" ]]; then
+    if command -v patchelf >/dev/null 2>&1; then
+        skip "patchelf ($(command -v patchelf))"
+    else
+        _need patchelf
+    fi
 fi
 
 # ── 3. Check if just-makeit is already current in the venv ───────────────────
@@ -150,8 +168,12 @@ JM_CURRENT=0
 if [[ $FORCE -eq 0 && -x "${VENV_DIR}/bin/python" ]]; then
     _installed=$("${VENV_DIR}/bin/python" -c \
         'from importlib.metadata import version; print(version("just-makeit"))' 2>/dev/null || true)
+    # `pip index versions` opens with `just-makeit (X.Y.Z)`. POSIX sed, not
+    # `grep -oP`: BSD grep (macOS) and busybox grep (Alpine) have no -P, so
+    # the version read back empty there and just-makeit was never current
+    # (gh-1993).
     _latest=$(pip index versions just-makeit 2>/dev/null \
-        | grep -oP '(?<=just-makeit \()[\d.]+' | head -1 || true)
+        | sed -n 's/^just-makeit (\([0-9.]*\)).*/\1/p' | head -1 || true)
     if [[ -n "$_installed" && "$_installed" == "$_latest" ]]; then
         JM_CURRENT=1
         skip "just-makeit ${_installed} in ${VENV_DIR}"
@@ -165,7 +187,7 @@ fi
 # ── 4. --check: report and exit ──────────────────────────────────────────────
 
 if [[ $CHECK -eq 1 ]]; then
-    if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 || $JM_CURRENT -eq 0 ]]; then
+    if [[ -n "$MISSING" || $JM_CURRENT -eq 0 ]]; then
         printf '\nRun without --check to install.\n'
         return 1 2>/dev/null || exit 1
     else
@@ -179,6 +201,10 @@ fi
 SUDO=""
 [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
 
+# A copy of install-deps.sh's, which this script is fetched without;
+# tests/test_gh1972_installers_patchelf.py runs both copies against stub
+# package managers and requires the same commands per manager.
+#
 # Retries cover only a request that ERRORS; a stalled mirror never errors, so
 # without a per-request timeout it hangs the caller's job (gh-1792).
 _install_apt()    {
@@ -189,12 +215,12 @@ _install_apt()    {
         && $SUDO apt-get -o Acquire::Retries=3 \
         -o Acquire::http::Timeout=30 \
         -o Acquire::https::Timeout=30 \
-        install -y cmake gcc pkg-config
+        install -y cmake gcc pkg-config patchelf
 }
-_install_dnf()    { $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config; }
-_install_pacman() { $SUDO pacman -Sy --noconfirm cmake gcc pkgconf; }
-_install_zypper() { $SUDO zypper install -y cmake gcc pkgconfig; }
-_install_apk()    { $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig; }
+_install_dnf()    { $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config patchelf; }
+_install_pacman() { $SUDO pacman -Sy --noconfirm cmake gcc pkgconf patchelf; }
+_install_zypper() { $SUDO zypper install -y cmake gcc pkgconfig patchelf; }
+_install_apk()    { $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig patchelf; }
 _install_brew() {
     if command -v brew >/dev/null 2>&1; then
         [[ $NEED_CMAKE -eq 1 ]] && brew install cmake
@@ -204,7 +230,7 @@ _install_brew() {
     fi
 }
 
-if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
+if [[ -n "$MISSING" ]]; then
     case "$MGR" in
         apt)      _spin "apt" _install_apt ;;
         dnf|dnf5) _spin "${MGR}" _install_dnf ;;
@@ -212,7 +238,7 @@ if [[ $NEED_CMAKE -eq 1 || $NEED_CC -eq 1 ]]; then
         zypper)   _spin "zypper" _install_zypper ;;
         apk)      _spin "apk" _install_apk ;;
         brew)     _install_brew ;;
-        *)        warn "Unknown package manager — install cmake + gcc manually." ;;
+        *)        warn "Unknown package manager — install these manually: ${MISSING}." ;;
     esac
 fi
 
