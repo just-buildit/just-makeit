@@ -229,11 +229,8 @@ class TestJbToml:
         cfg = self._load(project)
         assert cfg["tools"]["install-deps"]["groups"] == ["dev"]
 
-    def test_just_makeit_source(self, project):
-        cfg = self._load(project)
-        assert (
-            cfg["tools"]["just-makeit"]["source"] == "just-bashit:just-makeit"
-        )
+    # The [tools.just-makeit] source is gated by
+    # tests/test_gh1897_bootstrap_bootstraps.py: jm's installer, and fetched.
 
     def test_just_makeit_config(self, project):
         cfg = self._load(project)
