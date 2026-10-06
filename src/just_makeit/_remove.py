@@ -25,12 +25,8 @@ from . import _csym as CSYM
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _render as R
-from . import _stubs as S
 from . import _incpath as INC
-from ._init import (
-    _to_title,
-    standalone_extra_include,
-)
+from ._init import _to_title
 from ._object import _regenerate_module
 
 
@@ -164,12 +160,18 @@ def _object_paths(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*."""
+    from . import _invariants
+
     paths = [
         INC.path(root, obj),
         root / "native" / "src" / obj,
         root / "native" / "tests" / f"test_{obj}_core.c",
         root / "native" / "tests" / f"test_{obj}_symbols.c",  # gh-1361
         root / "native" / "benchmarks" / f"bench_{obj}_core.c",
+        # gh-1978: jm's element contract (gh-1404). Left behind, it imported
+        # the removed class, and the project's Python tests failed to
+        # collect on a tree `status --check` called clean.
+        _invariants.file_for(root, pkg, obj, module or ""),
     ]
     if module:
         # gh-523: the module's Python artifacts may live in a `package`
@@ -826,35 +828,16 @@ def _remove_function_core_harness(
         _rm(path)
 
 
-def _object_ctx(
-    cfg: dict, obj: str, pkg: str, module: str | None, root=None
-) -> dict:
-    """Build the full render ctx for regenerating object *obj* (gh-486).
-
-    Delegates to the one assembly chain. This used to be an inline copy of it,
-    which drifted exactly as gh-446 predicted: it never learned to rebuild
-    ``pyi_examples`` with the real package name, so every ``jm remove``
-    regenerated the stub's doctest as
-    ``>>> from <<package>> import <<Component>>``.
-
-    Two keys the old copy carried are deliberately not reproduced:
-
-    - ``mutable=`` on ``make_step_ctx`` was dead. It changes exactly one slot,
-      ``step_impl_def``, which only ``COMPONENT_CORE_H`` consumes — and
-      ``_core.h`` is sacred, never re-rendered here (this function renders
-      ``_ext.c`` / ``.pyi`` / the benchmark). Passing it changed no output.
-    - the ``module``/``Module`` keys were unreachable: the only caller returns
-      early for a module object, delegating to ``_regenerate_module``, so
-      `module` is always None by the time this runs.
-    """
-    return _glue.component_ctx(cfg, obj, pkg, root)
-
-
 def _regenerate_object_bindings(
     root: Path, cfg: dict, obj: str, pkg: str, removed: str = ""
 ) -> None:
-    """Regenerate the glue (ext.c / .pyi / bench) after a method or property
-    entry was dropped from the TOML.
+    """Regenerate the glue after a member entry was dropped from the TOML.
+
+    The binding, the stub and the benchmark, and the two files jm derives
+    from them: the gh-1361 link-check table and the gh-1404 element
+    contract. Each through the call that writes it on the way in, so a
+    remove leaves exactly the tree an add of the remaining members would
+    (gh-1978).
 
     The orphaned `_core.c` body and its `_core.h` declaration are left in
     place for the user to delete — they are sacred, so removal never splices
@@ -869,7 +852,8 @@ def _regenerate_object_bindings(
     binding callable forever."""
     module = C.component_module(cfg, obj)
     if module:
-        # The module's shared ext.c / CMakeLists / __init__ / .pyi.
+        # The module's shared ext.c / CMakeLists / __init__ / .pyi, and each
+        # member's link-check table.
         _regenerate_module(
             root,
             cfg,
@@ -877,40 +861,33 @@ def _regenerate_object_bindings(
             pkg,
             frozenset([removed]) if removed else frozenset(),
         )
-        return
+    else:
+        # gh-1978: through the ONE standalone re-render the adders use (`jm
+        # property`, `jm warning` and `jm error` reach it via
+        # `_glue.regenerate`), which writes the binding, the stub and the
+        # gh-1361 link-check table. This was a copy of it that wrote the
+        # first two only, so the removed member's symbol stayed in
+        # `test_<obj>_symbols.c`.
+        ctx = _glue.regenerate_standalone(root, cfg, obj, pkg)
+        bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
+        if bench_c.exists():
+            tmpl = (
+                R.NO_STEP_BENCH_C
+                if C.is_no_step(cfg, obj)
+                else R.COMPONENT_BENCH_C
+            )
+            _textio.write_text(bench_c, R.render(tmpl, ctx))
+            print(f"  update  {bench_c}")
 
-    # Seed the header's create() Doxygen so the shared chain keeps a
-    # hand-written class @brief/@param through the regen instead of reverting to
-    # the generic stub (same reasoning as _glue.regenerate_standalone).
-    from ._object import _load_doc_blocks
+    # gh-1978: the element contract (gh-1404), through the writer `jm method`
+    # and `apply` use. Removing a pair's writer or reader ends the contract,
+    # and `write` then deletes the file -- left alone, it went on asserting a
+    # member the binding no longer has until the next `apply`.
+    from . import _invariants
 
-    cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj, cfg)
-    ctx = _object_ctx(cfg, obj, pkg, module, root)
-    # gh-543: keep a hand-written extra wired through a removal.
-    ctx["extra_include"] = standalone_extra_include(root, obj)
-    ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
-    if ext_c.exists():
-        _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
-        print(f"  update  {ext_c}")
-    pyi = root / "src" / pkg / f"{obj}.pyi"
-    if pyi.exists():
-        old_pyi = pyi.read_text(encoding="utf-8")
-        new_pyi = R.render_component_pyi(ctx)
-        # gh-428: preserve a sibling manual_stub method's hand-written text
-        # across the regen triggered by removing a different method/property.
-        _textio.write_text(
-            pyi, S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi)
-        )
-        print(f"  update  {pyi}")
-    bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
-    if bench_c.exists():
-        tmpl = (
-            R.NO_STEP_BENCH_C
-            if C.is_no_step(cfg, obj)
-            else R.COMPONENT_BENCH_C
-        )
-        _textio.write_text(bench_c, R.render(tmpl, ctx))
-        print(f"  update  {bench_c}")
+    inv = _invariants.file_for(root, pkg, obj, module or "")
+    if _invariants.write(root, cfg, obj, pkg):
+        print(f"  {'update' if inv.exists() else 'remove'}  {inv}")
 
 
 def run(
