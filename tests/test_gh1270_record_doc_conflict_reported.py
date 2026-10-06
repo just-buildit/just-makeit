@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from _jmrun import warning_lines  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
@@ -185,7 +186,7 @@ class TestModuleObjectsSharingARecord:
             result_fields=[dict(f) for f in _FIELDS],
         )
         err = capsys.readouterr().err
-        assert "warning" in err
+        assert warning_lines(err), err
         assert "A's doc." in err and "B's doc." in err
         assert "--record-name" in err
 
@@ -258,7 +259,7 @@ class TestModuleObjectsSharingARecord:
             record_name="Sum",
             result_fields=[dict(f) for f in _FIELDS],
         )
-        assert "warning" not in capsys.readouterr().err
+        assert not warning_lines(capsys.readouterr().err)
 
     def test_status_check_does_not_gate_on_it(self, tmp_path):
         """Advisory: `jm status --check` has nothing to fail on."""
@@ -332,5 +333,5 @@ class TestStandaloneObjectSharingARecord:
             result_fields=[dict(f) for f in _FIELDS],
         )
         err = capsys.readouterr().err
-        assert "warning" in err
+        assert warning_lines(err), err
         assert "First." in err and "Second." in err

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -156,6 +157,61 @@ def run_cli(
         out.seek(0)
         err.seek(0)
         return JmRun(code, out.read(), err.read())
+
+
+def _warning_line() -> "re.Pattern[str]":
+    """The pattern `warning_lines` matches, its marks read from `_report`.
+
+    Built on first use rather than at import, so importing this module does
+    not import jm -- `run_cli` defers that import for the same reason.
+    """
+    from just_makeit import _report
+
+    marks = re.escape(_report._GATE_MARK + _report._ADVISORY_MARK)
+    return re.compile(rf"[ \t]*warning(?:[ \t]+[{marks}])?[ \t]*:", re.I)
+
+
+def warning_lines(text: str) -> "list[str]":
+    r"""The lines of *text* that are jm warnings, by the form jm prints.
+
+    gh-1936. jm prints the path of every file it writes, so a test that
+    looked for the substring ``warning`` anywhere in its output went red
+    whenever the TMPDIR, the checkout or a branch name contained the word,
+    with no warning printed -- and a test asserting a warning WAS printed
+    passed on the path alone. A warning is a LINE that opens with the word:
+    optional indentation, ``warning``, the weight mark `_report.warn` adds
+    (``!`` when `jm status --check` fails on it, ``~`` when it does not),
+    then a colon. A path that merely contains the word never opens a line
+    that way.
+
+    The marks come from `_report`, the one place that decides how a warning
+    reads, and `tests/test_gh1936_warning_anchor.py` renders `_report.warn`
+    at both weights through this, so a new prefix there fails that test
+    rather than leaving every caller here blind. Case is ignored and the
+    mark is optional because the emitters that predate `_report` still
+    print a bare ``warning:`` or ``WARNING:``.
+
+    Parameters
+    ----------
+    text
+        Captured output, stdout and stderr alike; split on line breaks.
+
+    Returns
+    -------
+    list of str
+        Each warning line, as printed, in order. Empty when there is none,
+        so ``assert not warning_lines(err)`` reads as "warned about
+        nothing".
+
+    Examples
+    --------
+    >>> warning_lines("  create  /tmp/warning-dir/p/CMakeLists.txt")
+    []
+    >>> warning_lines("ok\nwarning ~: x\n  WARNING: y\n")
+    ['warning ~: x', '  WARNING: y']
+    """
+    pattern = _warning_line()
+    return [line for line in text.splitlines() if pattern.match(line)]
 
 
 def replay_script(script: str, where: Path) -> Path:

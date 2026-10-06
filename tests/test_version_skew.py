@@ -10,6 +10,7 @@ import io
 import contextlib
 from pathlib import Path
 
+from _jmrun import warning_lines
 from just_makeit import _config as C
 from just_makeit._new import run as jm_new
 from just_makeit._apply import run as jm_apply
@@ -38,7 +39,7 @@ def test_warn_on_skew(tmp_path, capsys, monkeypatch):
 
     _cli._warn_version_skew(cfg)
     err = capsys.readouterr().err
-    assert "0.15.9" in err and "9.9.9" in err and "warning" in err
+    assert "0.15.9" in err and "9.9.9" in err and warning_lines(err)
 
 
 def test_no_warn_when_matched(tmp_path, capsys, monkeypatch):

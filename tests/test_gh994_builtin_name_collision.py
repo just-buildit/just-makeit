@@ -33,6 +33,7 @@ win; adding one later, the built-in is already in a file jm must not rewrite.
 
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
+from _jmrun import warning_lines  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
 import re
@@ -343,12 +344,25 @@ class TestOneDefinitionPerName:
         which is exactly when an unexplained warning costs the most.
         """
         capsys.readouterr()
-        _via_apply(tmp_path / "proj", name, "void", "float", params, var_out)
+        # gh-1936: under a directory NAMED for what this looks for, so the
+        # trap is armed on every box. jm prints every path it writes, and
+        # a check matching the word anywhere on a line went red here with
+        # nothing reported -- whenever the TMPDIR or branch held the word.
+        _via_apply(
+            tmp_path / "warning-withdrew" / "proj",
+            name,
+            "void",
+            "float",
+            params,
+            var_out,
+        )
         out = capsys.readouterr()
-        noisy = [
-            line
-            for line in (out.out + out.err).splitlines()
-            if "warning" in line.lower() or "withdrew" in line
+        text = out.out + out.err
+        # The withdrawal is reported as a parenthetical closing an `update`
+        # line (`_builtins.withdraw_overridden_builtin`), never mid-path.
+        withdrew = re.compile(r"\(withdrew the built-in \w+\(\)\)$")
+        noisy = warning_lines(text) + [
+            line for line in text.splitlines() if withdrew.search(line)
         ]
         assert not noisy, (
             "a fresh `jm apply` reported a rewrite of files it had just "
