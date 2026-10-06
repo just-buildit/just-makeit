@@ -6,6 +6,7 @@ Contains _bench_method_block, make_methods_ctx, and make_properties_ctx.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from .. import _codec as _codec
 from .. import _config as C
@@ -295,6 +296,89 @@ def _kernel_call_block(call_expr: str, nogil: bool) -> str:
 def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
     """``<ret> _r = <call>;`` — a single record returned by value (gh-261)."""
     return _nogil_call(ret_disp, "_r", call_expr, nogil)
+
+
+class CallConvention(NamedTuple):
+    """How a method wrapper is called: its parameters, row flags and cast.
+
+    ``params`` is the parameter list without its parentheses; ``flags`` and
+    ``cast`` are what the wrapper's ``PyMethodDef`` row carries.
+    """
+
+    params: str
+    flags: str
+    cast: str
+
+
+def call_convention(
+    Component: str, *, args: bool, kwds: bool = False
+) -> CallConvention:
+    """The calling convention of a wrapper whose body reads *args* / *kwds*.
+
+    One answer for every method shape `make_methods_ctx` renders, so a
+    wrapper's signature, its ``METH_*`` flags and its row's cast are decided
+    together, from what the body reads, in this one place:
+
+    ``kwds``
+        ``(self, args, kwds)``, ``METH_VARARGS | METH_KEYWORDS``. The row
+        casts through ``void *``: a ``PyCFunctionWithKeywords`` cast
+        straight to ``PyCFunction`` is an incompatible function-pointer
+        cast, a warning today and an error under ``-Werror``.
+    ``args`` alone
+        ``(self, args)``, ``METH_VARARGS``.
+    neither
+        ``(self, Py_UNUSED(ignored))``, ``METH_NOARGS``: CPython refuses an
+        argument before the wrapper runs, and the slot it still passes is
+        marked unused -- the spelling of every no-argument wrapper jm emits.
+
+    gh-1959: a no-argument method returning one record (``single``), or a
+    list of them, took ``(self, args)`` under ``METH_VARARGS`` and never
+    read ``args``. ``-Wall -Wextra`` reported the parameter, and the call
+    accepted any positional arguments and dropped them, although its stub
+    takes none.
+
+    Parameters
+    ----------
+    Component : str
+        The Python class name; ``self`` is a ``<Component>Object *``.
+    args : bool
+        The body parses positional arguments out of ``args``.
+    kwds : bool, optional
+        The body parses keywords too (implies *args*).
+
+    Returns
+    -------
+    CallConvention
+        ``params``, ``flags`` and ``cast``.
+
+    Examples
+    --------
+    >>> none = call_convention("Meter", args=False)
+    >>> none.params
+    'MeterObject *self, PyObject *Py_UNUSED(ignored)'
+    >>> none.flags
+    'METH_NOARGS'
+    >>> call_convention("Meter", args=True).flags
+    'METH_VARARGS'
+    >>> call_convention("Meter", args=True, kwds=True).cast
+    '(PyCFunction)(void *)'
+    """
+    self_ = f"{Component}Object *self"
+    if kwds:
+        return CallConvention(
+            f"{self_}, PyObject *args, PyObject *kwds",
+            "METH_VARARGS | METH_KEYWORDS",
+            "(PyCFunction)(void *)",
+        )
+    if args:
+        return CallConvention(
+            f"{self_}, PyObject *args", "METH_VARARGS", "(PyCFunction)"
+        )
+    return CallConvention(
+        f"{self_}, PyObject *Py_UNUSED(ignored)",
+        "METH_NOARGS",
+        "(PyCFunction)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2859,20 +2943,14 @@ def make_methods_ctx(
                     f"        return _oview;\n"
                     f"    }}\n"
                 )
-                _vo_sig = (
-                    f"({Component}Object *self,"
-                    f" PyObject *args, PyObject *kwds)\n"
-                )
             else:
                 _out_branch = ""
-                # gh-412: params methods still take kwds (keyword parsing)
-                # even without the out= buffer branch.
-                _vo_sig = (
-                    f"({Component}Object *self,"
-                    f" PyObject *args, PyObject *kwds)\n"
-                    if _enable_kw
-                    else f"({Component}Object *self, PyObject *args)\n"
-                )
+            # Every parse above reads `args` (an output count is optional,
+            # never absent). gh-412: params methods take kwds (keyword
+            # parsing) even without the out= buffer branch -- though with an
+            # input as well the parse drops the params and never reads kwds
+            # (gh-1960), which the unused `kwds` is the one diagnostic for.
+            _vo_cc = call_convention(Component, args=True, kwds=_enable_kw)
 
             # ── allocate the outputs, call, trim, return ─────────────────
             _idx = range(_n_out_arrays)
@@ -3057,7 +3135,7 @@ def make_methods_ctx(
                 + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"{_vo_sig}"
+                    f"({_vo_cc.params})\n"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
@@ -3194,22 +3272,9 @@ def make_methods_ctx(
                     ]
                 ),
             ]
-            _vo_flags = (
-                "METH_VARARGS | METH_KEYWORDS"
-                if _enable_kw
-                else "METH_VARARGS"
-            )
-            # A METH_KEYWORDS wrapper is a PyCFunctionWithKeywords, so it must
-            # launder through `void *` — casting it straight to PyCFunction is
-            # an incompatible function-pointer cast (a warning today, an error
-            # under -Werror and stricter C standards). Every other keyword
-            # PyMethodDef in this generator already does this.
-            _vo_cast = (
-                "(PyCFunction)(void *)" if _enable_kw else "(PyCFunction)"
-            )
             pmd_lines.append(
-                f'    {{"{name}", {_vo_cast}{wrapper_prefix}_{name},'
-                f" {_vo_flags},\n"
+                f'    {{"{name}", {_vo_cc.cast}{wrapper_prefix}_{name},'
+                f" {_vo_cc.flags},\n"
                 f"     {_build_ml_doc(_vo_doc_lines)}}},\n"
             )
             if _enable_out:
@@ -3408,10 +3473,11 @@ def make_methods_ctx(
                 _set_lines.append(
                     f"    PyStructSequence_SET_ITEM(_o, {_i}, {_topy});\n"
                 )
-            _wrap_sig = (
-                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
-                if _has_kw
-                else f"({Component}Object *self, PyObject *args)"
+            # gh-1959: with no input and no param the body parses nothing,
+            # so the wrapper is METH_NOARGS -- it took `(self, args)`, never
+            # read `args`, and dropped whatever the caller passed.
+            _s_cc = call_convention(
+                Component, args=has_arg or _has_kw, kwds=_has_kw
             )
             wrapper = (
                 _in_dtype_helper
@@ -3419,7 +3485,7 @@ def make_methods_ctx(
                 + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"{_wrap_sig}\n"
+                    f"({_s_cc.params})\n"
                     f"{{\n"
                     f"{guard}"
                     f"{_s_parse}"
@@ -3460,13 +3526,9 @@ def make_methods_ctx(
                 *_runtime_doc(f"Returns one {_rec_name} record."),
                 *_demo(_s_demo),
             ]
-            _md_cast = "(PyCFunction)(void *)" if _has_kw else "(PyCFunction)"
-            _md_flags = (
-                "METH_VARARGS | METH_KEYWORDS" if _has_kw else "METH_VARARGS"
-            )
             pmd_lines.append(
-                f'    {{"{name}", {_md_cast}{wrapper_prefix}_{name},'
-                f" {_md_flags},\n"
+                f'    {{"{name}", {_s_cc.cast}{wrapper_prefix}_{name},'
+                f" {_s_cc.flags},\n"
                 f"     {_build_ml_doc(_s_doc_lines)}}},\n"
             )
         elif result_fields and not _record.is_record_array(
@@ -3513,12 +3575,17 @@ def make_methods_ctx(
                         nogil,
                     )
                 )
+            # gh-1959: the single-record shape's twin -- with no input the
+            # body parses nothing, so the wrapper is METH_NOARGS. A declared
+            # param still asks for `args`: this branch drops params (gh-1961)
+            # and the fix for that is parsing them, not marking them unread.
+            _rf_cc = call_convention(Component, args=has_arg or has_params)
             wrapper = (
                 _in_dtype_helper
                 + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self, PyObject *args)\n"
+                    f"({_rf_cc.params})\n"
                     f"{{\n"
                     f"{guard}"
                     f"{_rf_parse}"
@@ -3566,8 +3633,8 @@ def make_methods_ctx(
                 ),
             ]
             pmd_lines.append(
-                f'    {{"{name}", (PyCFunction){wrapper_prefix}_{name},'
-                f" METH_VARARGS,\n"
+                f'    {{"{name}", {_rf_cc.cast}{wrapper_prefix}_{name},'
+                f" {_rf_cc.flags},\n"
                 f"     {_build_ml_doc(_rf_doc_lines)}}},\n"
             )
         else:
@@ -3577,11 +3644,8 @@ def make_methods_ctx(
             # positional-OR-keyword (the parse uses PyArg_ParseTupleAndKeywords
             # + a kwlist), so their wrapper takes `kwds` and the PyMethodDef
             # entry is METH_VARARGS | METH_KEYWORDS. The bare scalar `step`-shape
-            # arg (no params) and the no-arg case stay positional / NOARGS.
-            _kw_sig = (
-                f"{Component}Object *self, PyObject *args, PyObject *kwds"
-            )
-            _kw_flags = "METH_VARARGS | METH_KEYWORDS"
+            # arg (no params) and the no-arg case stay positional / NOARGS --
+            # `call_convention` (gh-1959) spells each.
             if has_params and has_arg:
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
@@ -3589,35 +3653,28 @@ def make_methods_ctx(
                     _combined, Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = _kw_sig
-                meth_flags = _kw_flags
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     params, Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = _kw_sig
-                meth_flags = _kw_flags
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     [_x_param], Component, enums, records, _sid, strict_in
                 )
                 call_args_c = f"self->handle, {_p_call}"
-                fn_sig = _kw_sig
-                meth_flags = _kw_flags
             elif has_arg:
                 parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
                 call_args_c = "self->handle, x"
-                fn_sig = f"{Component}Object *self, PyObject *args"
-                meth_flags = "METH_VARARGS"
             else:
                 parse_block = ""
                 call_args_c = "self->handle"
-                fn_sig = (
-                    f"{Component}Object *self, PyObject *Py_UNUSED(ignored)"
-                )
-                meth_flags = "METH_NOARGS"
+            _fx_cc = call_convention(
+                Component,
+                args=has_arg or has_params,
+                kwds=has_params or (has_arg and arg_type.endswith("[]")),
+            )
 
             if borrow:
                 # gh-1312: the kernel LENDS a pointer into memory the state
@@ -3852,7 +3909,7 @@ def make_methods_ctx(
                 )
                 + (
                     f"static PyObject *\n"
-                    f"{wrapper_prefix}_{name}({fn_sig})\n"
+                    f"{wrapper_prefix}_{name}({_fx_cc.params})\n"
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
@@ -3921,16 +3978,9 @@ def make_methods_ctx(
                 *_runtime_doc(""),
                 *_demo(_fix_demo),
             ]
-            # A METH_KEYWORDS wrapper has the 3-arg PyCFunctionWithKeywords
-            # signature; cast through `(void *)` to silence -Wcast-function-type.
-            _cast = (
-                "(PyCFunction)(void *)"
-                if "KEYWORDS" in meth_flags
-                else "(PyCFunction)"
-            )
             pmd_lines.append(
-                f'    {{"{name}", {_cast}{wrapper_prefix}_{name},'
-                f" {meth_flags},\n"
+                f'    {{"{name}", {_fx_cc.cast}{wrapper_prefix}_{name},'
+                f" {_fx_cc.flags},\n"
                 f"     {_build_ml_doc(_fix_doc_lines)}}},\n"
             )
 

@@ -184,6 +184,29 @@ _FILL = ["--param", "b:uint8_t[]", "--out-param", "o:uint8_t[]"] + [
 ]
 _VOID = ["--arg-type", "void", "--return-type", "void"]
 
+
+def _no_arg_record_methods(obj: str, *module: str) -> list:
+    """gh-1959: an object whose methods take nothing and return records.
+
+    One method returns ONE record (`--single`), the other a list of them.
+    Both wrappers took ``(self, args)`` and never read ``args``. The record
+    is a struct the C library already declares -- ``div_t``, through
+    ``clib_common.h``'s ``<stdlib.h>`` -- so the shape builds with no edit
+    to the sacred header.
+    """
+    rec = ["--arg-type", "void", "--return-type", "div_t"] + [
+        "--result-field",
+        "quot:int",
+        "--result-field",
+        "rem:int",
+    ]
+    return [
+        ["object", obj, *module, "--state", "k:int:0", "--no-step", *_VOID],
+        ["method", obj, "one", *module, *rec, "--single"],
+        ["method", obj, "rows", *module, *rec],
+    ]
+
+
 #: shape id -> the CLI commands that scaffold it after `jm new wp`. A `str`
 #: entry is appended to the manifest verbatim: an `[[enum]]` has no CLI. A
 #: `(path, text)` entry appends *text* to that file under the project, for a
@@ -248,6 +271,17 @@ _WARN_SHAPES = {
     "no_step_method": [
         ["object", "nsm", "--no-step", *_VOID],
         ["method", "nsm", "fill", *_FILL],
+    ],
+    # gh-1959: no-argument record methods, on both faces. In the module, one
+    # fragment as `jm method` wrote it and one adopted (`fragment =
+    # "generated"`, as doppler's is) and so re-rendered whole by `apply`.
+    "no_arg_record_methods": _no_arg_record_methods("rec"),
+    "module_no_arg_record_methods": [
+        ["module", "m"],
+        *_no_arg_record_methods("rec", "--module", "m"),
+        *_no_arg_record_methods("gen", "--module", "m"),
+        ["adopt", "gen"],
+        ["apply"],
     ],
     # gh-1745 item 1: a module whose type only DECODES the enum (a read-only
     # property) has no call site for the lookup ...
@@ -436,7 +470,8 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
     sink stored and never read (-Wunused-but-set-variable), and
     `jm_bench.h`'s strncpy (-Wstringop-truncation) each failed a -Werror
     build. gh-1857: a constructor or reset() stub left the parameters it
-    does not read unsuppressed (-Wunused-parameter).
+    does not read unsuppressed (-Wunused-parameter). gh-1959: so did the
+    binding of a no-argument method returning records, on both faces.
     """
     from _jmrun import run_cli
 
