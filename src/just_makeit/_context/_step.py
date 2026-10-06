@@ -376,12 +376,13 @@ def make_step_ctx(
     )
     # step() positional-parse list (rebuilt by _step_parse_block per shape).
     _ctrl_parse = list(_ctrl)
-    # A steps() is keyword-capable when it already has an out= param
-    # (blockwise / scalar->scalar — unified in PR-1) OR when a control override
-    # is present (generators/sinks flip to keyword only then, so the
-    # non-controllable scaffold stays byte-identical). Drives the wrapper
-    # signature, parse, and PyMethodDef flags for the non-blockwise tail.
-    steps_kw = _scalar_scalar or bool(_ctrl)
+    # Every steps() is keyword-capable (docs/arguments.md: the parse amortises
+    # over the block). gh-1901: generators, ticks and sinks were the
+    # exception unless a field was controllable -- gh-240 kept their
+    # non-controllable scaffold byte-identical -- so `steps(n=4)` raised
+    # "takes no keyword arguments" while both .pyi writers and the runtime
+    # doc advertised the keyword. Each shape's parse below takes a kwlist,
+    # and the PyMethodDef entry is METH_VARARGS | METH_KEYWORDS for all.
 
     if no_step:
         py_create_args = ctx.get("py_create_args", "")
@@ -794,9 +795,7 @@ def make_step_ctx(
         )
         # Generator step() is METH_NOARGS by default; a control override flips
         # it to a positional-optional METH_VARARGS (step([gain]) — still no
-        # keywords on the per-sample path). Generator steps(n) gains a keyword
-        # parse only when controllable, so the non-controllable scaffold is
-        # byte-identical.
+        # keywords on the per-sample path).
         if _ctrl:
             _gen_step_sig = f"({Component}Object *self, PyObject *args)"
             _gen_step_parse = (
@@ -806,29 +805,25 @@ def make_step_ctx(
                 f"        return NULL;\n"
             )
             _gen_step_flags = "METH_VARARGS"
-            _gen_steps_sig = (
-                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
-            )
-            _gen_steps_parse = (
-                f'    static char *kwlist[] = {{"n", {ctrl_kw_entries}NULL}};\n'
-                f"    Py_ssize_t n = 1;\n"
-                f"{ctrl_field_locals}"
-                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
-                f'            "|n{ctrl_kw_fmt}", kwlist, &n{ctrl_parse_refs}))\n'
-                f"        return NULL;\n"
-            )
         else:
             _gen_step_sig = (
                 f"({Component}Object *self, PyObject *Py_UNUSED(ignored))"
             )
             _gen_step_parse = ""
             _gen_step_flags = "METH_NOARGS"
-            _gen_steps_sig = f"({Component}Object *self, PyObject *args)"
-            _gen_steps_parse = (
-                "    Py_ssize_t n = 1;\n"
-                '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
-                "        return NULL;\n"
-            )
+        # steps(n) takes its count, and any override, by keyword (gh-1901):
+        # with nothing controllable the control suffixes are all empty.
+        _gen_steps_sig = (
+            f"({Component}Object *self, PyObject *args, PyObject *kwds)"
+        )
+        _gen_steps_parse = (
+            f'    static char *kwlist[] = {{"n", {ctrl_kw_entries}NULL}};\n'
+            f"    Py_ssize_t n = 1;\n"
+            f"{ctrl_field_locals}"
+            f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
+            f'            "|n{ctrl_kw_fmt}", kwlist, &n{ctrl_parse_refs}))\n'
+            f"        return NULL;\n"
+        )
         if is_void_return:
             if delegate:
                 step_impl_def = (
@@ -1272,30 +1267,22 @@ def make_step_ctx(
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
             )
-            if _ctrl:
-                # Sink steps() has no out=, but a control override needs
-                # keyword binding (steps(x, gain=...)); flip to AndKeywords.
-                _sink_sig = (
-                    f"({Component}Object *self,"
-                    f" PyObject *args, PyObject *kwds)"
-                )
-                _sink_parse = (
-                    f'    static char *kwlist[] = {{"x",'
-                    f" {ctrl_kw_entries}NULL}};\n"
-                    f"    PyObject *in_obj = NULL;\n"
-                    f"{ctrl_field_locals}"
-                    f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
-                    f'            "O|{ctrl_kw_fmt}", kwlist,'
-                    f" &in_obj{ctrl_parse_refs}))\n"
-                    f"        return NULL;\n"
-                )
-            else:
-                _sink_sig = f"({Component}Object *self, PyObject *args)"
-                _sink_parse = (
-                    "    PyObject *in_obj = NULL;\n"
-                    '    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
-                    "        return NULL;\n"
-                )
+            # Sink steps() has no out=, but takes `x` (and any control
+            # override) by keyword like every steps() (gh-1901). The `|`
+            # opens the optional overrides, so it is spelled only with one.
+            _sink_fmt = f"O|{ctrl_kw_fmt}" if ctrl_kw_fmt else "O"
+            _sink_sig = (
+                f"({Component}Object *self, PyObject *args, PyObject *kwds)"
+            )
+            _sink_parse = (
+                f'    static char *kwlist[] = {{"x", {ctrl_kw_entries}NULL}};\n'
+                f"    PyObject *in_obj = NULL;\n"
+                f"{ctrl_field_locals}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
+                f'            "{_sink_fmt}", kwlist,'
+                f" &in_obj{ctrl_parse_refs}))\n"
+                f"        return NULL;\n"
+            )
             steps_ext_fn = (
                 f"static PyObject *\n"
                 f"{Component}_steps{_sink_sig}\n"
@@ -1720,7 +1707,13 @@ def make_step_ctx(
             )
             _steps_call = "    >>> y = obj.steps(4)"
         else:
-            _steps_sig = f"steps(x[, out{_ctrl_kw_doc}]) -> ndarray"
+            # gh-1901: a sink binds no `out=` and returns None, so its
+            # signature names neither; `steps(x, out=b)` is a TypeError.
+            _steps_sig = (
+                f"steps(x[, out{_ctrl_kw_doc}]) -> ndarray"
+                if not is_void_return
+                else f"steps(x{_ctrl_kw_doc})"
+            )
             _steps_desc = "Process a block of samples in batch."
             _steps_call = (
                 f"    >>> y = obj.steps(np.zeros(4, dtype={_in_np_str}))"
@@ -1752,21 +1745,13 @@ def make_step_ctx(
                 *np_dtype_doctest_lines(ctx.get("out_np_dtype", "")),
             ]
         _steps_doc_lines += _demo_unless_authored(_ssblk, _steps_demo)
-        # A keyword-capable steps() (out= shapes, or any controllable shape)
-        # gets METH_KEYWORDS + the void* cast; a positional one stays plain
-        # METH_VARARGS (non-controllable generators/sinks — byte-identical).
-        if steps_kw:
-            steps_def_entry = (
-                f'    {{"steps",    (PyCFunction)(void *){Component}_steps,'
-                f"    METH_VARARGS | METH_KEYWORDS,\n"
-                f"     {_build_ml_doc(_steps_doc_lines)}}},\n"
-            )
-        else:
-            steps_def_entry = (
-                f'    {{"steps",    (PyCFunction){Component}_steps,'
-                f"    METH_VARARGS,\n"
-                f"     {_build_ml_doc(_steps_doc_lines)}}},\n"
-            )
+        # Every steps() is keyword-capable (gh-1901), so every entry gets
+        # METH_KEYWORDS and the void* cast its three-argument wrapper needs.
+        steps_def_entry = (
+            f'    {{"steps",    (PyCFunction)(void *){Component}_steps,'
+            f"    METH_VARARGS | METH_KEYWORDS,\n"
+            f"     {_build_ml_doc(_steps_doc_lines)}}},\n"
+        )
     else:
         steps_def_entry = ""
 
