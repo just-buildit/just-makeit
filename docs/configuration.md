@@ -650,6 +650,7 @@ still succeeds, and *neither* tree is formatted, so they still compare equal.
 | `core_macro`, `core_args`, `core_header` | (manifest only)                                   | ✅ (gh-1310) | A template family's one C macro — see [`core_macro`](#one-c-family-core_macro).                                                                                                                |
 | `init_groups`                            | (manifest only)                                   | ✅ (gh-999)  | Instantiate a `[[group]]` of init-params under a prefix — see [below](#group-and-objectinit_groups).                                                                                           |
 | `destroy`                                | (manifest only)                                   | ✅ (gh-541)  | `[<obj>.destroy]`: the destructor's name, aliases, return and error — see [declarative scaffolding](declarative-scaffolding.md).                                                               |
+| `extra_methods`                          | (manifest only)                                   | ✅ (gh-1997) | Rows for methods whose CPython function you write in the object's `_extra.c` — see [below](#componentextra_methods-entries).                                                                   |
 | `module`                                 | (manifest only)                                   | ✅           | In a fragment passed to `jm apply <fragment>`, the module the object joins.                                                                                                                    |
 | `impl`, `create_impl`, …                 | (manifest only)                                   | ✅           | Lifecycle bodies `jm apply` re-stamps — see [below](#component-lifecycle-impl-bodies).                                                                                                         |
 | `depends_on`                             | (manifest only)                                   | ✅           | Objects this one calls into: names, or `{ name, link = true }` / `{ name, test_only = true }` tables — see [`depends_on`](#depends_on-link-and-include-a-dependency). Never set automatically. |
@@ -1080,6 +1081,56 @@ way.
 | `value_type`, `count_fn`, `key_fn`, `value_fn`                                  | `jm property --type dict\|list\|tuple --value-type T` / `--count-fn` / `--key-fn` / `--value-fn` | ✅          |
 | `capsule = "<name>"`, `capsule_type = "T *"`                                    | `jm property --type capsule --capsule NAME` / `--capsule-type T`                                 | ✅          |
 | `codec`, `entry_fn`, `entry_type`, `type_field` / `count_field` / `value_field` | (TOML only) see [Variant codecs](#variant-codecs-codecname)                                      | 🟡          |
+
+### `[[<component>.extra_methods]]` entries
+
+A method jm cannot express is written by hand, as a CPython function in the
+object's `_extra.c` — `native/src/<comp>/<comp>_ext_extra.c` for a standalone
+object, `native/src/<cname>/<cname>_ext_<comp>_extra.c` in a module — a file
+jm includes and never modifies. A row here is what makes it reachable: jm
+renders its `PyMethodDef` entry into the object's method table, a prototype
+above the table, the `#include` of the file and the `.pyi` member. It is the
+composer's [`extra_methods`](object-of-objects.md) key, for an ordinary object
+(gh-1997).
+
+```toml
+[[fft.extra_methods]]
+name    = "execute_ci16"                 # the Python method name
+fn      = "FFTObj_execute_ci16"          # the C function you write
+flags   = "METH_VARARGS"                 # default METH_NOARGS
+args    = "iq: NDArray[np.int16]"        # raw Python, for the .pyi
+returns = "NDArray[np.complex64]"        # raw Python; default None
+doc     = "FFT of interleaved int16 I/Q."
+```
+
+| TOML field                                      | CLI flag    | Status       |
+| ----------------------------------------------- | ----------- | ------------ |
+| `name`, `fn`, `flags`, `args`, `returns`, `doc` | (TOML only) | ✅ (gh-1997) |
+
+Write the function with exactly the signature its `flags` imply, `self`
+included as a `PyObject *` (cast it to the object's struct inside):
+`METH_NOARGS`, `METH_O` and `METH_VARARGS` take
+`(PyObject *self, PyObject *arg)`, `METH_KEYWORDS` adds a `PyObject *kwds`,
+and `METH_FASTCALL` rows get CPython's fastcall signature. jm declares it with
+that signature above the table, so a different one does not compile. A
+declared row always includes the file, so it can be written before or after
+the `apply` that declares it; if it is missing, the build fails naming it.
+
+In a module the prototypes go in the aggregator, before the object's
+fragment, so a row works whether the fragment is sacred or `generated` — which
+is what lets a hand-written method survive [`jm adopt`](#who-owns-a-modules-binding-fragment):
+move the function into the `_extra.c`, declare its row, and the fragment's
+table loses nothing on the flip.
+
+The rows follow the generated ones in the table, in the order declared. `apply`
+refuses a row whose `name` a member jm generates already holds (`reset`, a
+property, `__enter__`, …) or a `[[<component>.methods]]` entry declares, two
+rows of one name, one `fn` given two different `flags`, and an `fn` the
+object's `_core.h` declares (a core function, not a CPython method). A
+`manual_stub` method of the same name may stand beside the row: the row's stub
+replaces its placeholder, and a stub you wrote by hand stays yours. A view
+does not inherit the rows — each function is written against the parent's
+struct. `jm script` names the rows in a NOTE, since no flag spells them.
 
 ### `[[<component>.views]]` entries
 
@@ -1915,7 +1966,10 @@ fragment = "generated"   # absent (the default) = "sacred", today's behaviour
 
 With `fragment = "generated"`, that fragment becomes jm's content like any
 other glue file. Anything hand-written belongs in the
-`<mod>_ext_<obj>_extra.c` beside it, which jm already includes.
+`<mod>_ext_<obj>_extra.c` beside it, which jm already includes, and a
+hand-written method is registered by an
+[`[[<obj>.extra_methods]]`](#componentextra_methods-entries) row rather than a
+row typed into the fragment's table.
 
 ### Checking before you flip
 

@@ -35,6 +35,7 @@ from . import _render as R
 from ._report import Refusal
 from . import _procglobal
 from . import _enumc
+from . import _extramethods
 from . import _keys
 from . import _incpath as INC
 from . import _csym as CSYM
@@ -2825,76 +2826,27 @@ def extra_methods(cfg: dict, module: str) -> "list[dict]":
 
 
 def _extra_method_rows(cfg: dict, module: str, type_name: str) -> str:
-    """`PyMethodDef` rows for the extra methods attached to *type_name*."""
-    rows = []
-    for m in extra_methods(cfg, module):
-        if (m.get("type") or _default_extra_type(cfg, module)) != type_name:
-            continue
-        flags = m.get("flags") or "METH_NOARGS"
-        # gh-1499: laid out as written, the text the stub carries.
-        _doc_c = authored_c_doc(str(m.get("doc") or ""))
-        rows.append(
-            f'    {{"{m["name"]}", (PyCFunction)(void (*)(void)){m["fn"]},\n'
-            f"     {flags}, {_doc_c}}},\n"
-        )
-    return "".join(rows)
+    """`PyMethodDef` rows for the extra methods attached to *type_name*.
 
-
-def _extra_method_params(flags: str) -> str:
-    """The C parameter list CPython calls a method with, given its *flags*.
-
-    Only the calling-convention bits change the signature; ``METH_CLASS`` /
-    ``METH_STATIC`` / ``METH_COEXIST`` change what ``self`` is, not its C
-    type, so they fall through to the two-pointer form.
-
-    >>> _extra_method_params("METH_NOARGS")
-    'PyObject *, PyObject *'
-    >>> _extra_method_params("METH_VARARGS | METH_KEYWORDS")
-    'PyObject *, PyObject *, PyObject *'
-    >>> _extra_method_params("METH_FASTCALL")
-    'PyObject *, PyObject *const *, Py_ssize_t'
+    gh-1997: each row through `_extramethods.method_def_row`, the one
+    emitter an ordinary object's `[[<obj>.extra_methods]]` shares.
     """
-    bits = {b.strip() for b in flags.split("|")}
-    if "METH_FASTCALL" in bits:
-        if "METH_METHOD" in bits:
-            return (
-                "PyObject *, PyTypeObject *, PyObject *const *, Py_ssize_t,"
-                " PyObject *"
-            )
-        if "METH_KEYWORDS" in bits:
-            return "PyObject *, PyObject *const *, Py_ssize_t, PyObject *"
-        return "PyObject *, PyObject *const *, Py_ssize_t"
-    if "METH_KEYWORDS" in bits:
-        return "PyObject *, PyObject *, PyObject *"
-    return "PyObject *, PyObject *"
+    return "".join(
+        _extramethods.method_def_row(m)
+        for m in extra_methods(cfg, module)
+        if (m.get("type") or _default_extra_type(cfg, module)) == type_name
+    )
 
 
 def _extra_method_protos(cfg: dict, module: str) -> str:
     """Forward prototypes for every `extra_methods` row's ``fn`` (gh-1516).
 
     The rows sit in each type's ``PyMethodDef`` table, which is rendered with
-    the type -- ABOVE the ``#include`` of ``<cname>_ext_extra.c``, which has
-    to come after the types so a hand-written method can call them. Without
-    a declaration the row names a function its compiler has not seen yet.
-    The signature follows from ``flags``, so jm can declare it; ``static``
-    matches a definition written with or without the keyword.
+    the type -- ABOVE the ``#include`` of ``<cname>_ext_extra.c``. Rendered by
+    `_extramethods.prototypes` (gh-1997), which an object's rows share; the
+    comment keeps naming the hook ``_ext_extra.c`` as it always has.
     """
-    seen: list[str] = []
-    lines = []
-    for m in extra_methods(cfg, module):
-        fn = m["fn"]
-        if fn in seen:
-            continue
-        seen.append(fn)
-        params = _extra_method_params(m.get("flags") or "METH_NOARGS")
-        lines.append(f"static PyObject *{fn}({params});")
-    if not lines:
-        return ""
-    return (
-        "\n/* extra_methods (gh-1190): defined in the hand-written"
-        " _ext_extra.c,\n * included after the types; declared here for the"
-        " method tables. */\n" + "\n".join(lines) + "\n"
-    )
+    return _extramethods.prototypes(extra_methods(cfg, module), "_ext_extra.c")
 
 
 def _default_extra_type(cfg: dict, module: str) -> str:
@@ -4816,18 +4768,12 @@ def render_pyi(cfg: dict, module: str) -> str:
     # checker rejects the call that works. `args` and `returns` are raw Python
     # — the whole point of the escape hatch is that jm does not know the
     # shape, so it does not try to derive one.
+    # gh-1997: the member through `_extramethods.pyi_member`, the one stub
+    # emitter an ordinary object's `[[<obj>.extra_methods]]` shares.
     for _em in extra_methods(cfg, module):
         if (_em.get("type") or cname) != cname:
             continue
-        _sig = _em.get("args") or ""
-        _sig = f", {_sig}" if _sig else ""
-        lines.append(
-            f"    def {_em['name']}(self{_sig})"
-            f" -> {_em.get('returns') or 'None'}:"
-        )
-        # gh-1499: the whole `doc`, as written -- this kept its first line.
-        _d = authored_doc_lines(str(_em.get("doc") or ""))
-        lines.extend(authored_docstring(_d, 8) if _d else ["        ..."])
+        lines.extend(_extramethods.pyi_member(_em))
     if C.composer_stream(cfg, module).get("stream"):
         rt_arg = (
             ", realtime: float = ..."

@@ -65,6 +65,12 @@ them.
 | `<module>_ext_<obj>_extra.c` | after that object's fragment | a hand-owned binding for one object             |
 | `<module>_ext_extra.c`       | after all fragments          | a hand-written CPython type (see `extra_types`) |
 
+A method you write in `<module>_ext_<obj>_extra.c` (or a standalone object's
+`<comp>_ext_extra.c`) is reachable only through a row in the object's method
+table, and that table is jm's once the fragment is. Declare the row as an
+[`[[<obj>.extra_methods]]`](configuration.md#componentextra_methods-entries)
+entry and jm writes it, a prototype for it and the `.pyi` member (gh-1997).
+
 ### Your own CMake: `<dir>_extra.cmake`
 
 Every `native/src/<dir>/CMakeLists.txt` jm writes is glue too, and ends by
@@ -272,7 +278,9 @@ into `_core.h` and appends a stub to `_core.c` for you to fill in. A
 property: `just-makeit property fir <name> --type float [--writable]`. A
 binding the manifest cannot express belongs in a hook jm never writes —
 `<component>_ext_extra.c` (standalone) or `<module>_ext_<obj>_extra.c`
-(module), with `--manual-stub` and a `# jm:hand` stub member (see above).
+(module), registered by an
+[`[[<component>.extra_methods]]`](configuration.md#componentextra_methods-entries)
+row, which renders its method-table row and its stub.
 
 ______________________________________________________________________
 

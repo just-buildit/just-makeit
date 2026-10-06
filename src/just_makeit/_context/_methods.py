@@ -13,6 +13,7 @@ from .. import _config as C
 from .. import _coerce
 from .. import _csym as CSYM
 from .. import _enumc
+from .. import _extramethods
 from .. import _borrow
 from .. import _outbuf
 from .. import _record
@@ -1411,6 +1412,7 @@ def make_methods_ctx(
     properties: "list[dict] | None" = None,
     *,
     csym: str,
+    extra_methods: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1443,6 +1445,17 @@ def make_methods_ctx(
     tree by :func:`just_makeit._builtins.builtin_owned_members`; the default
     empty set is right for every caller with no methods to place, and for a
     project where no method names a built-in.
+
+    extra_methods (gh-1997) are the object's ``[[<obj>.extra_methods]]``
+    rows: methods whose CPython function the author writes in the object's
+    ``_extra.c``. Each gets its ``PyMethodDef`` row after the declared
+    methods' and its ``.pyi`` member, both from :mod:`._extramethods` (the
+    emitter gh-1190's composer rows use), and the forward prototypes come
+    back in ``extra_method_protos`` -- placed by the caller above the type,
+    since a module declares them in its aggregator, before the fragment, so
+    a SACRED fragment's table can name the function too. A ``manual_stub``
+    method of the same name keeps its hand-owned ``.pyi`` text; the row's
+    member replaces only its placeholder.
     """
 
     _EMPTY: dict = {
@@ -1462,9 +1475,12 @@ def make_methods_ctx(
         "bench_timer_decls": "",
         "bench_todo": _bench_todo(component, [], csym=csym),
         "varargs_binding_files": [],
+        "extra_method_protos": "",
     }
-    if not methods and not serializable:
+    if not methods and not serializable and not extra_methods:
         return _EMPTY
+    # gh-1997: the rows the author's `_extra.c` implements, by Python name.
+    _extra_names = {str(r.get("name") or "") for r in extra_methods or ()}
 
     wrapper_prefix = f"{Component}Obj" if no_state else Component
 
@@ -1621,6 +1637,12 @@ def make_methods_ctx(
         # C-side; only a placeholder .pyi entry the splice engine preserves
         # verbatim across regen — gh-428) ─────────────────────────────────
         if m.get("manual_stub"):
+            # gh-1997: an `extra_methods` row of the same name registers the
+            # binding and declares its signature, so its member stands in
+            # for the placeholder -- one member, not two. The text stays
+            # hand-owned: the splice still carries a written stub over it.
+            if name in _extra_names:
+                continue
             pyi_lines.append(
                 f"    def {name}(self, *args: Any, **kwargs: Any)"
                 f" -> Any:\n"
@@ -4243,6 +4265,18 @@ def make_methods_ctx(
         pmd_lines.append(_pmd)
         pyi_lines.append(_pyi)
 
+    # ── extra_methods: rows for functions the author wrote (gh-1997) ────────
+    # After every generated row, in declared order. The C is the author's, in
+    # the object's `_extra.c`; the prototypes go to the caller, which puts
+    # them above the type (`extra_method_protos`).
+    for _row in extra_methods or ():
+        # The whole entry from the shared emitter, whose doc is the
+        # manifest's through `authored_c_doc` (gh-1039's rule).
+        _extra_pmd = _extramethods.method_def_row(_row)
+        pmd_lines.append(_extra_pmd)
+        pyi_lines.append("\n".join(_extramethods.pyi_member(_row)) + "\n")
+    _protos = _extramethods.prototypes(list(extra_methods or ()), "_extra.c")
+
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
     _method_bench_blocks = [
@@ -4286,6 +4320,12 @@ def make_methods_ctx(
             "" if _has_timing else _bench_todo(component, methods, csym=csym)
         ),
         "varargs_binding_files": varargs_binding_files,
+        # gh-1997: the block ends in a blank line, ready to sit above the
+        # type banner in a standalone `_ext.c`; the module aggregator strips
+        # it to sit above the fragment's `#include`.
+        "extra_method_protos": (
+            _protos.strip("\n") + "\n\n" if _protos else ""
+        ),
         **(
             {
                 "builtin_reset_c": "",

@@ -1245,6 +1245,24 @@ def run(root: Path) -> None:
         lines += destroy_lines
         lines.append("\n")
 
+    # ── hand-written methods' rows (gh-1997) ──────────────────────────────────
+    # Manifest-only for the reason `destroy` is: a repeatable row of six keys
+    # is TOML's to spell, not a flag's. Named, so a replayed script does not
+    # quietly lose the methods the author's `_extra.c` defines.
+    extra_lines: list[str] = []
+    for comp in all_comps:
+        names = [str(r.get("name")) for r in C.extra_methods(cfg, comp)]
+        if not names:
+            continue
+        extra_lines.append(
+            f"# NOTE: [[{comp}.extra_methods]] ({', '.join(names)}) has no"
+            " CLI flag — copy\n# the rows into just-makeit.toml and run"
+            " `just-makeit apply`.\n"
+        )
+    if extra_lines:
+        lines += extra_lines
+        lines.append("\n")
+
     # ── module-level functions ─────────────────────────────────────────────────
     fn_lines: list[str] = []
     for mod in mods:
