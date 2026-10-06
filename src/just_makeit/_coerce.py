@@ -1102,6 +1102,7 @@ def output_size_c(
     ctype: str = "npy_intp",
     limit: str = "NPY_MAX_INTP",
     indent: str = "    ",
+    unit: str = "elements",
 ) -> str:
     """Declare ``<ctype> <var>`` from an output SIZE, refusing one too large.
 
@@ -1150,6 +1151,10 @@ def output_size_c(
         ``(PY_SSIZE_T_MAX / sizeof(T))``, so the product cannot wrap.
     indent : str
         Leading whitespace for each emitted line.
+    unit : str
+        What *size_expr* counts, for the message. A variable-output binding
+        under an interleave bounds a count of SAMPLES before scaling it to
+        elements (gh-1996), and says so: ``"samples of 2 elements"``.
 
     Examples
     --------
@@ -1172,7 +1177,7 @@ def output_size_c(
         f"{i}if ({need} > (size_t){limit}) {{\n"
         f"{rel}"
         f"{i}    PyErr_Format(PyExc_OverflowError,\n"
-        f'{i}        "{who}: output of %zu elements is too large", {need});\n'
+        f'{i}        "{who}: output of %zu {unit} is too large", {need});\n'
         f"{i}    return NULL;\n"
         f"{i}}}\n"
         f"{i}{ctype} {var} = ({ctype}){need};\n"
@@ -1186,6 +1191,7 @@ def returned_count_c(
     release: str = "",
     *,
     indent: str = "    ",
+    unit: str = "elements",
 ) -> str:
     """Refuse a COUNT the kernel returned that exceeds the buffer it was given.
 
@@ -1242,6 +1248,9 @@ def returned_count_c(
         output array, a malloc'd buffer), run before ``return NULL``.
     indent : str
         Leading whitespace for each emitted line.
+    unit : str
+        What *count* and *cap* count, for the message: a variable-output
+        kernel under an interleave returns SAMPLES (gh-1996).
 
     Examples
     --------
@@ -1264,7 +1273,7 @@ def returned_count_c(
         f"{i}if ((size_t)({count}) > (size_t)({cap})) {{\n"
         f"{rel}"
         f"{i}    PyErr_Format(PyExc_RuntimeError,\n"
-        f'{i}        "{who}: wrote %zu elements into a buffer of %zu",\n'
+        f'{i}        "{who}: wrote %zu {unit} into a buffer of %zu",\n'
         f"{i}        (size_t)({count}), (size_t)({cap}));\n"
         f"{i}    return NULL;\n"
         f"{i}}}\n"

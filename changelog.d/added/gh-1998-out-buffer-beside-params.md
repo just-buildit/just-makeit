@@ -7,7 +7,11 @@
     now, in the binding and both `.pyi` faces: `out` follows the params
     (`delay(x, mu, out=None)`), and the buffer is sized from the first array
     param, which is the length `<m>_max_out()` was already given and the
-    allocation already fell back to. A `manual_stub` entry for that
+    allocation already fell back to. An interleaved first array
+    (`elements_per_sample`, gh-1996) counts the buffer in samples, as the
+    rest of the method does, and the overflow and returned-count errors of
+    such a method now say "samples of N elements" where they used to say
+    "elements" of a count in samples. A `manual_stub` entry for that
     `<m>_max_out` is now refused, with the instruction to drop it: the stub
     it declared is jm's own. Params beside an `arg_type` input still get no
     `out=`, since that parse drops them (gh-1960).

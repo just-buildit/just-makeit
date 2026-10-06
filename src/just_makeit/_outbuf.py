@@ -26,9 +26,11 @@ What the answer is
 length jm can size:
 
 * no params at all — the *generator* shape, sized from the synthesized count;
-* params with an array among them — sized from the FIRST array param's length,
-  whether it is the only param or sits beside scalars (``Farrow.delay(x,
-  mu)``) or other arrays (``Resampler.execute_ctrl(x, ctrl)``);
+* params with an array among them — sized from the FIRST array param's length
+  (:func:`sizing_param`), in the samples its ``elements_per_sample`` declares
+  (:func:`interleave`), whether it is the only param or sits beside scalars
+  (``Farrow.delay(x, mu)``) or other arrays (``Resampler.execute_ctrl(x,
+  ctrl)``);
 * all-scalar params — sized from ``<m>_max_out(state)``, the same expression
   the internal allocation uses.
 
@@ -243,8 +245,10 @@ def why_not(
     # Every remaining shape is offered `out=`.
     #
     # gh-1998: an array param, alone or beside others -- `Farrow.delay(x,
-    # mu)`, `Resampler.execute_ctrl(x, ctrl)`. Sized from the FIRST array,
-    # which is not a choice made here: it is the count the binding already
+    # mu)`, `Resampler.execute_ctrl(x, ctrl)`. Sized from the FIRST array
+    # (`sizing_param`, in its `interleave` -- gh-1996 counts every shape's
+    # `out=` in samples), which is not a choice made here: it is the count
+    # the binding already
     # hands `<m>_max_out()` (gh-607) and the fallback it already allocates
     # (gh-421) for these shapes, with or without `out=`. gh-412 carved them
     # out of `out=` only while making them keyword-capable; the sizing was
