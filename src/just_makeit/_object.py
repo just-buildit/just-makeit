@@ -2528,6 +2528,37 @@ def run(
         )
         sys.exit(1)
     C.require_name(object_name, "object")
+    # The element type of the `--variable-output` method this command adds:
+    # the return type, else the ARG type. It is an output ELEMENT, where
+    # `T[]` stays `T[]`, so the step() default `resolve_return_type`
+    # applies is the wrong rule for it.
+    vo_return_type = return_type or arg_type
+    # gh-1885: `_method.run` refuses a variable-output method with no
+    # output element, but this command writes the whole object before it
+    # gets there. Asked up front, by the same predicate, so a refusal
+    # leaves no object behind either.
+    if variable_output:
+        from . import _outbuf
+
+        _element_why = _outbuf.element_why_not(
+            f"method '{object_name}.{method_name}'",
+            variable_output=True,
+            record_dtype="",
+            borrow=None,
+            out_type="",
+            return_type=vo_return_type,
+            remedy=(
+                "`jm object --variable-output` takes it from --return-type, "
+                "else --arg-type:\n"
+                "  pass --return-type <T> (after any --preset), or drop "
+                "--variable-output and\n"
+                f"  add the method with `jm method {object_name} "
+                f"{method_name} --variable-output\n"
+                "  --return-type <T>`."
+            ),
+        )
+        if _element_why:
+            raise _report.Refusal(_element_why)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -2587,14 +2618,13 @@ def run(
         if variable_output:
             from . import _method as _M
 
-            _rt = return_type or arg_type
             _M.run(
                 root,
                 object_name,
                 method_name,
                 module=None,
                 arg_type="void",
-                return_type=_rt,
+                return_type=vo_return_type,
                 variable_output=True,
                 multi_output=list(multi_output),
                 max_out=max_out,
@@ -3067,14 +3097,13 @@ def run(
     if variable_output:
         from . import _method as _M
 
-        _rt = return_type or arg_type
         _M.run(
             root,
             object_name,
             method_name,
             module=module,
             arg_type="void",
-            return_type=_rt,
+            return_type=vo_return_type,
             variable_output=True,
             multi_output=list(multi_output),
             max_out=max_out,

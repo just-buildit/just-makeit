@@ -206,3 +206,124 @@ def element(
         else (out_type if (variable_output and out_type) else return_type)
     )
     return src[:-2] if src.endswith("[]") else src
+
+
+#: The closing advice of :func:`element_why_not`, per array-result shape:
+#: what a ``jm method`` command line -- and, in backticks, a manifest row --
+#: changes to name the element. ``jm object`` passes its own.
+NAME_THE_ELEMENT = {
+    "variable_output": (
+        "Name the element with --return-type <T> (`return_type`),\n"
+        "  --out-type <T> (`out_type`) or --record-dtype <struct> "
+        "(`record_dtype`),\n"
+        "  or drop --variable-output (`variable_output`)."
+    ),
+    "batch": (
+        "Name the element with --return-type <T> (`return_type`), or drop "
+        "--batch\n"
+        "  (`batch`)."
+    ),
+}
+
+
+def element_why_not(
+    what: str,
+    *,
+    variable_output: bool,
+    batch: bool = False,
+    record_dtype: str,
+    borrow: object,
+    out_type: str,
+    return_type: str,
+    remedy: str = "",
+) -> str:
+    """Why an array-result method has no output element, or ``""``.
+
+    gh-1885. A ``variable_output`` method returns an ARRAY of its element
+    type -- :func:`element` names it -- and the binding allocates that array
+    from the element's numpy dtype and its ``sizeof``. ``void`` has neither,
+    so the render indexed ``_CTYPE_META["void"]`` and died with a bare
+    ``KeyError``. Two families reached it: a ``void`` return type with no
+    ``out_type`` / ``record_dtype`` (``jm method --return-type void
+    --variable-output``, a ``consumer`` preset's ``--variable-output``), and
+    ``jm object --variable-output`` on a ``void`` ``--arg-type``, whose
+    method takes its element from the arg type when no return type is given.
+    A ``batch`` method is the same array one shape over -- one element per
+    input, typed by ``return_type`` alone -- and crashed the same way. Every
+    one crashed AFTER the row was persisted, so each later ``status`` /
+    ``apply`` crashed on the manifest jm had just written.
+
+    ONE answer for every face that can meet such a row: ``jm method`` and
+    ``jm object`` ask before they write anything, and the binding asks
+    before it renders -- which is where a manifest an older jm wrote meets
+    it, under ``apply`` and ``status`` (both before writing the tree) and
+    every command that re-renders the object. ``regenerate`` refuses too,
+    but only after deleting the component it is about to rebuild: gh-1867.
+
+    ``batch`` is asked first because the binding renders it first: a batch
+    method that is also ``variable_output`` is generated as a batch, from
+    ``return_type``, whatever :func:`element` would have answered.
+
+    Parameters
+    ----------
+    what : str
+        Names the method in the message, e.g. ``"method 'o.run'"``.
+    variable_output, record_dtype, borrow, out_type, return_type
+        As :func:`element` takes them.
+    batch : bool
+        The method is a 1:1-rate array method (``--batch``).
+    remedy : str
+        The closing advice, when the face asking has different flags from
+        ``jm method`` (``jm object`` has no ``--out-type``). Empty takes
+        the shape's :data:`NAME_THE_ELEMENT`.
+
+    Returns
+    -------
+    str
+        The refusal's text, without the ``error:`` prefix the CLI adds, or
+        ``""`` when the method has an element or returns no array.
+
+    Examples
+    --------
+    >>> element_why_not("method 'o.run'", variable_output=True,
+    ...     record_dtype="", borrow=None, out_type="", return_type="float")
+    ''
+    >>> element_why_not("method 'o.run'", variable_output=False,
+    ...     record_dtype="", borrow=None, out_type="", return_type="void")
+    ''
+    >>> element_why_not("method 'o.run'", variable_output=True,
+    ...     record_dtype="rec_t", borrow=None, out_type="",
+    ...     return_type="void")
+    ''
+    >>> print(element_why_not("method 'o.run'", variable_output=True,
+    ...     record_dtype="", borrow=None, out_type="",
+    ...     return_type="void").splitlines()[0])
+    method 'o.run' is variable_output, but its output element is 'void'.
+    >>> print(element_why_not("method 'o.run'", variable_output=False,
+    ...     batch=True, record_dtype="", borrow=None, out_type="",
+    ...     return_type="void").splitlines()[0])
+    method 'o.run' is batch, but its output element is 'void'.
+    """
+    if batch:
+        shape, noun = "batch", "batch"
+        elem = return_type[:-2] if return_type.endswith("[]") else return_type
+    elif variable_output:
+        shape, noun = "variable_output", "variable-output"
+        elem = element(
+            variable_output=variable_output,
+            record_dtype=record_dtype,
+            borrow=borrow,
+            out_type=out_type,
+            return_type=return_type,
+        )
+    else:
+        return ""
+    if elem.strip() != "void":
+        return ""
+    return (
+        f"{what} is {shape}, but its output element is 'void'.\n"
+        f"  A {noun} method returns an array of its element type, and void "
+        "has\n"
+        "  none: there is no dtype to allocate and no sizeof to fill.\n"
+        f"  {remedy or NAME_THE_ELEMENT[shape]}"
+    )

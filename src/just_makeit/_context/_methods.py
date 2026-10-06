@@ -18,6 +18,7 @@ from .. import _outbuf
 from .. import _record
 from .. import _types as T
 from .._builtins import result_local
+from .._report import Refusal
 from ._types import _py_default
 from .. import _gluedoc
 from .._types import (
@@ -1809,6 +1810,24 @@ def make_methods_ctx(
             out_type=out_type or "",
             return_type=return_type,
         )
+        # gh-1885: `void` has no dtype, so the variable-output NPY-enum list
+        # and the batch dtype string below would die on
+        # `_CTYPE_META["void"]`. Both front doors refuse such a row
+        # before writing it; this is where one ALREADY in a manifest (an
+        # older jm wrote it) or built without one (`jm bind`, whose parser
+        # spells every variable-output return `void`: gh-1894) meets the
+        # render -- as the same refusal, not a traceback.
+        _element_why = _outbuf.element_why_not(
+            f"method '{component}.{name}'",
+            variable_output=variable_output,
+            batch=batch,
+            record_dtype=record_dtype,
+            borrow=borrow,
+            out_type=out_type or "",
+            return_type=return_type,
+        )
+        if _element_why:
+            raise Refusal(_element_why)
         _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
         _vo_out_np = (
