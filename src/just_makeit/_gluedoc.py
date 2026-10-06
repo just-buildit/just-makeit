@@ -415,7 +415,10 @@ def glue_methods(
 
 
 def max_out_method(
-    name: str, count_param: str = "", max_out_const: int = 0
+    name: str,
+    count_param: str = "",
+    max_out_const: int = 0,
+    elements_per_sample: int = 1,
 ) -> GlueMethod:
     """jm's fallback documentation for a ``<name>_max_out`` accessor (gh-684).
 
@@ -439,6 +442,10 @@ def max_out_method(
         The input-count parameter, when this shape takes one.
     max_out_const : int, optional
         The manifest's declared ``max_out``, when there is one.
+    elements_per_sample : int, optional
+        The method's interleave (gh-1996). The binding converts both ways,
+        so this face counts array ELEMENTS where the C function counts
+        samples, and the prose has to say which.
 
     Examples
     --------
@@ -446,27 +453,49 @@ def max_out_method(
     'Largest number of samples execute() can return for n_in inputs.'
     >>> max_out_method("execute", "n_in", 4).block.returns
     'Always 4 -- the declared worst case.'
+    >>> max_out_method("execute", "x_len", 4, 2).block.returns
+    'Always 8 -- the declared worst case of 4 samples.'
     """
+    e = elements_per_sample
+    unit = "samples" if e == 1 else "elements"
     if count_param:
         brief = (
-            f"Largest number of samples {name}() can return for "
+            f"Largest number of {unit} {name}() can return for "
             f"{count_param} inputs."
         )
         params = [
-            (count_param, f"Number of input samples {name}() will be given.")
+            (count_param, f"Number of input {unit} {name}() will be given.")
         ]
     else:
         brief = (
-            f"Largest number of samples {name}() can return in the "
+            f"Largest number of {unit} {name}() can return in the "
             f"current state."
         )
         params = []
     if max_out_const:
-        returns = f"Always {max_out_const} -- the declared worst case."
+        returns = (
+            f"Always {max_out_const} -- the declared worst case."
+            if e == 1
+            else f"Always {max_out_const * e} -- the declared worst case "
+            f"of {max_out_const} samples."
+        )
     else:
         returns = (
             "Upper bound on the output length; the actual call may return "
             "fewer."
+        )
+    body = [
+        f"Size an `out=` buffer with this before calling {name}(), "
+        f"or use it to allocate one up front. The bound is this "
+        f"object's own: "
+        f"what it depends on is a property of the algorithm, so a "
+        f"header block on {name}_max_out() replaces this text."
+    ]
+    if e != 1:
+        body.append(
+            f"Counted in array elements, {e} per sample, as {name}() "
+            f"takes and returns them; the C function this calls counts "
+            f"samples."
         )
     return GlueMethod(
         name=f"{name}_max_out",
@@ -474,13 +503,7 @@ def max_out_method(
         ret_ann="int",
         block=DoxyBlock(
             brief=brief,
-            body=[
-                f"Size an `out=` buffer with this before calling {name}(), "
-                f"or use it to allocate one up front. The bound is this "
-                f"object's own: "
-                f"what it depends on is a property of the algorithm, so a "
-                f"header block on {name}_max_out() replaces this text."
-            ],
+            body=body,
             params=params,
             returns=returns,
         ),

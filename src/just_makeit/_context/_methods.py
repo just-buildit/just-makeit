@@ -1047,6 +1047,7 @@ def _max_out_doc(
     c_fn="",
     *,
     csym: str,
+    elements_per_sample: int = 1,
 ):
     """The doc for ``<name>_max_out``: header block if authored, else jm's.
 
@@ -1063,12 +1064,53 @@ def _max_out_doc(
     blk = block_of(
         f"{C.method_c_symbol(csym, {'name': name, 'fn': c_fn})}_max_out"
     )
-    gm = max_out_method(name, count_param or "", int(max_out_const or 0))
+    gm = max_out_method(
+        name,
+        count_param or "",
+        int(max_out_const or 0),
+        elements_per_sample,
+    )
     if blk is not None:
         # gh-1052: through the constructor, which also records that this
         # body is the header's LINES rather than jm's paragraphs.
         gm = gm.with_header_block(blk)
     return gm
+
+
+def _max_out_return_c(call: str, elements_per_sample: int, who: str) -> str:
+    """The ``<m>_max_out`` binding's return, in numpy elements (gh-1996).
+
+    The C ``max_out`` answers in the kernel's samples. The Python face sizes
+    an ``out=`` array, which holds elements, so under an interleave the
+    answer is multiplied back -- bounded first through the one size emitter,
+    so a sample count past ``SIZE_MAX / E`` is an ``OverflowError`` rather
+    than a product that wraps to a small, wrong bound. With no interleave
+    this is the line the binding always returned.
+
+    Examples
+    --------
+    >>> print(_max_out_return_c("f_max_out(s)", 1, "F.m_max_out"), end="")
+        return PyLong_FromSize_t(
+            f_max_out(s));
+    >>> print(_max_out_return_c("f_max_out(s)", 2, "F.m_max_out"), end="")
+        size_t _mo_need = (size_t)(f_max_out(s));
+        if (_mo_need > (size_t)(SIZE_MAX / 2)) {
+            PyErr_Format(PyExc_OverflowError,
+                "F.m_max_out: output of %zu elements is too large", _mo_need);
+            return NULL;
+        }
+        size_t _mo = (size_t)_mo_need;
+        return PyLong_FromSize_t(_mo * 2);
+    """
+    if elements_per_sample == 1:
+        return f"    return PyLong_FromSize_t(\n        {call});\n"
+    return _coerce.output_size_c(
+        "_mo",
+        call,
+        who,
+        ctype="size_t",
+        limit=f"(SIZE_MAX / {elements_per_sample})",
+    ) + (f"    return PyLong_FromSize_t(_mo * {elements_per_sample});\n")
 
 
 def _count_default_parts(
@@ -1837,6 +1879,25 @@ def make_methods_ctx(
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
+        # gh-1996: the unit every variable-output count is in -- the sizing
+        # array's `elements_per_sample`. Read once, here, for the binding,
+        # its `<m>_max_out` and both doc faces; refused before anything
+        # renders when the output cannot be counted in it.
+        _vo_e = 1
+        if variable_output:
+            _what = f"method '{component}.{name}'"
+            _interleave_why = _outbuf.interleave_why_not(
+                _what,
+                has_arg=has_arg,
+                params=params,
+                out_elems=[_vo_out_elem]
+                + [
+                    rt[:-2] if rt.endswith("[]") else rt for rt in multi_output
+                ],
+            )
+            if _interleave_why:
+                raise Refusal(_interleave_why)
+            _vo_e = _outbuf.interleave(has_arg, params, _what)
         # gh-642: the Python-facing argument list, resolved once here so the
         # runtime PyMethodDef literal each shape branch emits below and the
         # .pyi stub built at the end of this loop document the same arguments
@@ -2550,7 +2611,14 @@ def make_methods_ctx(
                         _cd_parts.append(
                             f"({_pe_q}{_pe_disp} *)PyArray_DATA({_pn}_arr)"
                         )
-                        _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
+                        # gh-1996: in the unit the kernel counts, through the
+                        # one division every array param's length takes.
+                        _cd_parts.append(
+                            _coerce.array_count_c(
+                                f"{_pn}_arr",
+                                _coerce.elements_per_sample(_p, _what),
+                            )
+                        )
                         _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
                         if _first_arr is None:
                             _first_arr = _pn
@@ -2651,6 +2719,19 @@ def make_methods_ctx(
                             if _release
                             else f"    if (!{_pn}_arr) return NULL;",
                         ]
+                        # gh-805 §C, as the method-param builder emits it:
+                        # this acquisition is that builder's peer, and the
+                        # `rank` it was never taught was accepted and dropped
+                        # here, so a 2-D array flattened into the kernel.
+                        if _p.get("rank"):
+                            _conv_lines.append(
+                                _coerce.array_rank_guard(
+                                    _pn,
+                                    f"{_pn}_arr",
+                                    int(_p["rank"]),
+                                    _release,
+                                ).rstrip("\n")
+                            )
                         _held.append(f"{_pn}_arr")
                     elif "parse_type" in _CTYPE_META.get(_pt, {}):
                         _pm = _CTYPE_META[_pt]
@@ -2669,8 +2750,9 @@ def make_methods_ctx(
                 # raw value -- casting it as one silently mis-sizes the
                 # buffer. Fall back to the method's own <name>_max_out(),
                 # always available per the standard variable_output triplet.
+                # gh-1996: in samples, as the kernel is handed it above.
                 _lazy_fallback = (
-                    f"(size_t)PyArray_SIZE({_first_arr}_arr)"
+                    _coerce.array_count_c(f"{_first_arr}_arr", _vo_e)
                     if _first_arr is not None
                     else f"{c_fn}_max_out(self->handle)"
                 )
@@ -2781,6 +2863,15 @@ def make_methods_ctx(
                 if decref_in.strip()
                 else ""
             )
+            # gh-1996: the kernel counts samples of `_vo_e` elements, numpy
+            # counts elements. `_cap` and `n_out` stay in the kernel's unit
+            # throughout -- so `max_out`, the zero-bound guard and the
+            # returned-count guard compare like with like -- and these are
+            # the places a count becomes a numpy length again.
+            _odim_c = "n_out" if _vo_e == 1 else f"(n_out * {_vo_e})"
+            _cap_unit = (
+                "elements" if _vo_e == 1 else f"samples of {_vo_e} elements"
+            )
 
             # ── optional out= buffer (single output only) ────────────────
             if _enable_out:
@@ -2878,7 +2969,8 @@ def make_methods_ctx(
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_vo_out_guard}"
                     f"{_vo_acquire}"
-                    f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
+                    f"        size_t _cap ="
+                    f" {_coerce.array_count_c('out_arr', _vo_e)};\n"
                     f"        size_t _omax ="
                     f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
                     # Without pass_capacity, max_out() alone is not always a
@@ -2922,7 +3014,7 @@ def make_methods_ctx(
                     )
                     + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
-                    f'                "out has %zu elements,'
+                    f'                "out has %zu {_cap_unit},'
                     f' need >= %zu",\n'
                     f"                _cap, _min_cap);\n"
                     f"            Py_DECREF(out_arr);"
@@ -2941,7 +3033,7 @@ def make_methods_ctx(
                         indent=" " * 8,
                     )
                     + f"{_out_none}"
-                    f"        npy_intp _odim = (npy_intp)n_out;\n"
+                    f"        npy_intp _odim = (npy_intp){_odim_c};\n"
                     f"{_vo_view}"
                     f"        if (!_oview)"
                     f" {{ Py_DECREF(out_arr); return NULL; }}\n"
@@ -3011,8 +3103,20 @@ def make_methods_ctx(
                 # gh-1710: `_cap` is `max_out()`'s size_t; past NPY_MAX_INTP
                 # it wrapped to a negative dimension.
                 + _coerce.output_size_c(
-                    "_adim", "_cap", f"{Component}.{name}", _decref_early_vo
+                    "_adim",
+                    "_cap",
+                    f"{Component}.{name}",
+                    _decref_early_vo,
+                    # gh-1996: `_cap` is in samples and the arrays hold
+                    # elements, so the bound is the quotient and the product
+                    # is taken after it -- it cannot wrap.
+                    limit=(
+                        "NPY_MAX_INTP"
+                        if _vo_e == 1
+                        else f"(NPY_MAX_INTP / {_vo_e})"
+                    ),
                 )
+                + ("" if _vo_e == 1 else f"    _adim *= {_vo_e};\n")
                 + "".join(
                     (
                         # gh-788: the structured output. `_get_dtype()` hands
@@ -3099,14 +3203,17 @@ def make_methods_ctx(
             # retention proportional to the data instead of the cap. See
             # gh-607 for making max_out() a per-call bound, which removes the
             # over-allocation itself rather than just its retention.
-            _vo_views = "    npy_intp _odim = (npy_intp)n_out;\n" + "".join(
-                f"    PyArray_Dims _rs{i} = {{&_odim, 1}};\n"
-                f"    PyObject *v{i} = PyArray_Resize(\n"
-                f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
-                f" NPY_CORDER);\n"
-                f"    if (!v{i}) {{ {_decref_arrs} return NULL; }}\n"
-                f"    Py_DECREF(v{i});\n"
-                for i in _idx
+            _vo_views = (
+                f"    npy_intp _odim = (npy_intp){_odim_c};\n"
+                + "".join(
+                    f"    PyArray_Dims _rs{i} = {{&_odim, 1}};\n"
+                    f"    PyObject *v{i} = PyArray_Resize(\n"
+                    f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
+                    f" NPY_CORDER);\n"
+                    f"    if (!v{i}) {{ {_decref_arrs} return NULL; }}\n"
+                    f"    Py_DECREF(v{i});\n"
+                    for i in _idx
+                )
             )
             if _n_out_arrays == 1:
                 _vo_exact_return = "        return arr0;\n"
@@ -3317,6 +3424,11 @@ def make_methods_ctx(
                 # stub that disagrees with the binding beside it.
                 if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                     _pymo_decl, _pymo_name = "", None
+                # gh-1996: the caller passes `len(x)` and allocates `out=`
+                # from the answer, both in elements; the C function takes
+                # and returns samples. Converted on both sides, so the
+                # sentence above still holds under an interleave.
+                _mo_per = f" / {_vo_e}" if _vo_e != 1 else ""
                 if _pymo_name:
                     _mo_doc = _build_ml_doc(
                         [f"{name}_max_out({_pymo_name}) -> int", ""]
@@ -3328,6 +3440,7 @@ def make_methods_ctx(
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
                             csym=csym,
+                            elements_per_sample=_vo_e,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3340,10 +3453,13 @@ def make_methods_ctx(
                         f'    if (!PyArg_ParseTuple(args, "n",'
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
-                        f"    return PyLong_FromSize_t(\n"
-                        f"        {c_fn}_max_out(self->handle,"
-                        f" (size_t){_pymo_name}));\n"
-                        f"}}"
+                        + _max_out_return_c(
+                            f"{c_fn}_max_out(self->handle,"
+                            f" (size_t){_pymo_name}{_mo_per})",
+                            _vo_e,
+                            f"{Component}.{name}_max_out",
+                        )
+                        + "}"
                     )
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
@@ -3361,6 +3477,7 @@ def make_methods_ctx(
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
                             csym=csym,
+                            elements_per_sample=_vo_e,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3370,9 +3487,12 @@ def make_methods_ctx(
                         f" PyObject *Py_UNUSED(ignored))\n"
                         f"{{\n"
                         f"{guard}"
-                        f"    return PyLong_FromSize_t(\n"
-                        f"        {c_fn}_max_out(self->handle));\n"
-                        f"}}"
+                        + _max_out_return_c(
+                            f"{c_fn}_max_out(self->handle)",
+                            _vo_e,
+                            f"{Component}.{name}_max_out",
+                        )
+                        + "}"
                     )
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
@@ -4100,6 +4220,7 @@ def make_methods_ctx(
                 lambda k: (doc_blocks or {}).get(k),
                 c_fn=c_fn,
                 csym=csym,
+                elements_per_sample=_vo_e,
             ).pyi_doc()
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"

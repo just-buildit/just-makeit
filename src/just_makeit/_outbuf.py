@@ -76,6 +76,136 @@ def single_array_param(has_arg: bool, params: list[dict]) -> bool:
     )
 
 
+def sizing_param(has_arg: bool, params: list[dict]) -> "dict | None":
+    """The array param a variable-output method's output is sized from.
+
+    With an ``arg_type`` input the block input sizes it, and that is not a
+    param, so the answer is ``None``. Otherwise it is the FIRST array param:
+    the length ``<m>_max_out()`` is given (gh-607) and the fallback capacity
+    the binding allocates when ``max_out()`` answers 0. ``None`` when the
+    params are all scalars, which is the gh-1079 shape sized from
+    ``<m>_max_out(state)`` alone.
+
+    Examples
+    --------
+    >>> sizing_param(False, [{"name": "mu", "type": "double"},
+    ...                      {"name": "x", "type": "float[]"}])["name"]
+    'x'
+    >>> sizing_param(True, [{"name": "x", "type": "float[]"}]) is None
+    True
+    >>> sizing_param(False, [{"name": "n", "type": "size_t"}]) is None
+    True
+    """
+    if has_arg:
+        return None
+    return next(
+        (p for p in params if str(p.get("type", "")).endswith("[]")), None
+    )
+
+
+def interleave(has_arg: bool, params: list[dict], what: str = "") -> int:
+    """Elements per sample of a variable-output method's counts (gh-1996).
+
+    The ``elements_per_sample`` of :func:`sizing_param`, 1 when there is
+    none. A variable-output kernel counts everything in one unit -- the
+    input it is handed, the capacity ``max_out`` it is told, the ``n_out``
+    it returns -- and that unit is the sizing array's sample. So this is the
+    factor the binding converts every count by on its way between numpy
+    elements and the kernel: the input divides by it, the capacity divides
+    by it, and the output is allocated and returned as ``n_out`` times it.
+
+    It was read for the input's ``<p>_len`` local only, which the
+    variable-output binding never uses: the key was accepted and ignored,
+    so the kernel was handed element counts and, under ``pass_capacity``,
+    wrote that many SAMPLES into a buffer of that many elements.
+
+    :func:`interleave_why_not` refuses a method whose output cannot be
+    counted in that unit.
+
+    Examples
+    --------
+    >>> interleave(False, [{"name": "x", "type": "int16_t[]",
+    ...                     "elements_per_sample": 2}])
+    2
+    >>> interleave(False, [{"name": "n", "type": "size_t"}])
+    1
+    """
+    from . import _coerce
+
+    p = sizing_param(has_arg, params)
+    return _coerce.elements_per_sample(p, what) if p else 1
+
+
+def interleave_why_not(
+    what: str,
+    *,
+    has_arg: bool,
+    params: list[dict],
+    out_elems: list[str],
+) -> str:
+    """Why this method's output cannot be counted in samples, or ``""``.
+
+    gh-1996. :func:`interleave` reads the sizing array's
+    ``elements_per_sample`` as the unit of every count the kernel sees, the
+    output's included: the binding allocates and returns ``n_out * E``
+    elements. That holds when the output carries the same element as the
+    interleaved input -- ``int16_t`` I/Q in, ``int16_t`` I/Q out, the
+    half-band decimator this was filed from. When the output element
+    differs (``float _Complex`` or a record row out of ``int16_t`` I/Q in)
+    the number of output elements per sample is a fact about the output
+    that nothing declares, and a guess either way is a wrong-length result.
+    So it is refused rather than guessed, before anything is written.
+
+    Parameters
+    ----------
+    what : str
+        Names the method, e.g. ``"method 'hb.execute'"``.
+    has_arg, params
+        As :func:`sizing_param` takes them.
+    out_elems : list of str
+        The element C type of every output array the binding allocates:
+        :func:`element`'s answer, then each ``multi_output`` element.
+
+    Returns
+    -------
+    str
+        The refusal's text, or ``""`` when the output can be counted.
+
+    Examples
+    --------
+    >>> x = {"name": "x", "type": "int16_t[]", "elements_per_sample": 2}
+    >>> interleave_why_not("method 'h.run'", has_arg=False, params=[x],
+    ...                    out_elems=["int16_t"])
+    ''
+    >>> print(interleave_why_not("method 'h.run'", has_arg=False,
+    ...     params=[x], out_elems=["float _Complex"]).splitlines()[0])
+    method 'h.run' declares elements_per_sample = 2 on 'x' (int16_t), but
+    """
+    p = sizing_param(has_arg, params)
+    if p is None:
+        return ""
+    e = interleave(has_arg, params, what)
+    if e == 1:
+        return ""
+    in_elem = str(p["type"])[:-2]
+    other = [t for t in out_elems if t != in_elem]
+    if not other:
+        return ""
+    return (
+        f"{what} declares elements_per_sample = {e} on '{p['name']}' "
+        f"({in_elem}), but\n"
+        f"  its output element is '{other[0]}'. The kernel counts its "
+        f"output in the same\n"
+        f"  samples as '{p['name']}' (n_out, and max_out), so the binding "
+        f"returns n_out * {e}\n"
+        f"  elements -- which is only right when the output is "
+        f"{in_elem} too.\n"
+        f"  Return {in_elem} samples (`return_type` / `out_type`), or drop "
+        f"`elements_per_sample`\n"
+        f"  and count {in_elem} elements in the kernel."
+    )
+
+
 def why_not(
     *,
     variable_output: bool,

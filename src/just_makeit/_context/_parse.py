@@ -615,7 +615,7 @@ def _build_params_parse(
                 f"    {const_qual}{elem_disp} *{pname} = "
                 f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
                 + _coerce.array_len_c(
-                    pname, arr_var, int(p.get("elements_per_sample", 1) or 1)
+                    pname, arr_var, _coerce.elements_per_sample(p)
                 )
             )
             arr_names.append(arr_var)
