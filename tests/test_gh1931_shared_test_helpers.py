@@ -42,6 +42,9 @@ PROGRAM = "just-makeit"
 #: The key a reader of the Python floor looks up, from the one reader.
 FLOOR_KEY = _pyfloor.KEY
 
+#: The module whose `main` is jm's CLI entry point.
+CLI_MODULE = "just_makeit._cli"
+
 #: Every name the compiler lookups asked `shutil.which` about.
 COMPILERS = frozenset(_compilers.C_COMPILERS + _compilers.CXX_COMPILERS)
 
@@ -54,14 +57,12 @@ _COMPILER_RESIDUAL = {"test_new.py": 1}
 def _cli_entry_names(tree: ast.Module) -> "set[str]":
     """Names this module binds to jm's CLI entry point, plus `run_cli`.
 
-    ``from just_makeit._cli import main as cli_main`` binds ``cli_main``;
-    the private replayer called exactly that.
+    Importing `main` from `CLI_MODULE` as ``cli_main`` binds
+    ``cli_main``; the private replayer called exactly that.
     """
     names = {"run_cli"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == (
-            "just_makeit._cli"
-        ):
+        if isinstance(node, ast.ImportFrom) and node.module == CLI_MODULE:
             names |= {a.asname or a.name for a in node.names}
     return names
 
@@ -216,9 +217,11 @@ def test_every_arm_sees_the_shape_it_refuses():
     floor = ast.parse((TESTS / "_pyfloor.py").read_text(encoding="utf-8"))
     assert floor_readers(floor), "the shared reader's own key is unseen"
 
+    # The import is spelled through CLI_MODULE: a string literal holding
+    # the import itself is what test_gh1374 reads as a child process.
     private = ast.parse(
         '"""argv[0] == "just-makeit" and cli_main()"""\n'
-        "from just_makeit._cli import main as cli_main\n"
+        f"from {CLI_MODULE} import main as cli_main\n"
         "def _replay(script):\n"
         "    for argv in _commands(script):\n"
         '        assert argv[0] == "just-makeit"\n'
