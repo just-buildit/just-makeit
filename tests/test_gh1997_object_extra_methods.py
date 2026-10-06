@@ -171,14 +171,6 @@ def _python(root: Path, script: str) -> str:
     return r.stdout
 
 
-@pytest.fixture(scope="module")
-def built(declared: Path) -> Path:
-    if _SKIP_BUILD:
-        pytest.skip(_SKIP_BUILD)
-    _cmake_build(declared)
-    return declared
-
-
 # --------------------------------------------------------------------------
 # The gate: it builds, and Python can call it.
 # --------------------------------------------------------------------------
@@ -202,8 +194,13 @@ class TestItBuildsAndIsCallable:
         "    print(cls.__name__, 'OK')\n"
     )
 
-    def test_standalone_and_module_objects_call_it(self, built: Path):
-        out = _python(built, self.SCRIPT)
+    def test_standalone_and_module_objects_call_it(self, declared: Path):
+        if _SKIP_BUILD:
+            pytest.skip(_SKIP_BUILD)
+        # Built here, not in a fixture: a compile error is then this test's
+        # FAILURE, where a fixture's would be an ERROR beside it.
+        _cmake_build(declared)
+        out = _python(declared, self.SCRIPT)
         assert "Solo OK" in out and "O OK" in out, out
 
 
@@ -293,6 +290,59 @@ class TestThePrototypeAndTheInclude:
             text = (p / rel).read_text(encoding="utf-8")
             assert "extra_methods (gh-1190)" not in text, rel
             assert "_extra.c" not in text, rel
+
+
+class TestEveryRenderPathCarriesTheRows:
+    """`apply` reaches a standalone object's binding three ways -- the
+    creation render, a member's re-render through `_glue`, and the
+    post-replay re-render a manifest `doc` triggers -- and `jm method`
+    re-renders it a fourth. Each must keep the row and the include; the
+    hook file is deliberately absent, so only the row can include it."""
+
+    @pytest.fixture
+    def busy(self, tmp_path: Path) -> Path:
+        p = _scaffold(tmp_path)
+        _jm("method", "solo", "scale", "--arg-type", "double",
+            "--return-type", "double", cwd=p)  # fmt: skip
+        cfg = C.load(p)
+        cfg["solo"]["doc"] = "A documented solo."
+        C.save(p, cfg)
+        _declare(p, "solo", _rows("Solo"))
+        _declare(p, "o", _rows("O"))
+        _jm("apply", cwd=p)
+        return p
+
+    @staticmethod
+    def _carries(p: Path) -> None:
+        ext = (p / SOLO_EXT).read_text(encoding="utf-8")
+        assert '{"twice", (PyCFunction)(void (*)(void))Solo_twice' in ext
+        assert "static PyObject *Solo_twice(PyObject *" in ext, ext
+        assert '#include "solo_ext_extra.c"' in ext, ext
+        pyi = (p / "src/xm/solo.pyi").read_text(encoding="utf-8")
+        assert "    def twice(self) -> float:" in pyi, pyi
+
+    def test_apply(self, busy: Path):
+        self._carries(busy)
+
+    def test_a_later_jm_method(self, busy: Path):
+        _jm("method", "solo", "offset", "--arg-type", "double",
+            "--return-type", "double", cwd=busy)  # fmt: skip
+        self._carries(busy)
+        _jm("method", "o", "offset", "--module", "m", "--arg-type", "double",
+            "--return-type", "double", cwd=busy)  # fmt: skip
+        agg = (busy / M_EXT).read_text(encoding="utf-8")
+        assert '#include "m_ext_o_extra.c"' in agg, agg
+        assert "static PyObject *O_twice(PyObject *" in agg, agg
+
+    def test_a_later_jm_property(self, busy: Path):
+        """`jm property` / `error` / `warning` / `remove` re-render through
+        `_glue.regenerate_standalone`, not `jm method`'s own render."""
+        _jm("property", "solo", "bias", "--type", "double", cwd=busy)
+        self._carries(busy)
+
+    def test_status_agrees(self, busy: Path):
+        r = run_cli("status", "--check", cwd=busy)
+        assert r.returncode == 0, r.stdout + r.stderr
 
 
 class TestTheStubCarriesIt:
@@ -438,6 +488,54 @@ class TestManualStubOfTheSameName:
         for rel in (SOLO_EXT, O_FRAG):
             text = (both / rel).read_text(encoding="utf-8")
             assert text.count('{"twice"') == 1, text
+
+    def test_each_stub_writer_renders_one_member(self):
+        """At the writers themselves. Downstream, the manual-stub splice
+        carries an earlier stub's member over the fresh render's, which can
+        hide a doubled member on every path that has an earlier stub."""
+        from just_makeit import _stubs
+        from just_makeit._context import make_methods_ctx
+
+        row = _rows("Solo")[0]
+        standalone = make_methods_ctx(
+            "solo",
+            "Solo",
+            [{"name": "twice", "manual_stub": True}],
+            csym="solo",
+            extra_methods=[row],
+        )["pyi_extra_methods"]
+        assert standalone.count("    def twice(") == 1, standalone
+        assert "<<MANUAL_STUB>>" not in standalone, standalone
+        cfg = {
+            "project": {"name": "xm", "version": "0.1.0"},
+            "solo": {
+                "arg_type": "float",
+                "return_type": "float",
+                "methods": [{"name": "twice", "manual_stub": True}],
+                "extra_methods": [row],
+            },
+        }
+        module = _stubs._obj_stub(cfg, "solo")
+        assert module.count("    def twice(") == 1, module
+        assert "<<MANUAL_STUB>>" not in module, module
+
+    def test_a_project_built_from_its_manifest_alone(
+        self, both: Path, tmp_path: Path
+    ):
+        """No earlier stub to splice from: what the renderers emit is what
+        lands. The incremental path above hides a doubled member behind the
+        splice, which a materialize from the manifest does not have."""
+        fresh = tmp_path / "fresh"
+        fresh.mkdir()
+        shutil.copy2(both / C.FILENAME, fresh / C.FILENAME)
+        for d in ("objects", "modules"):
+            if (both / d).is_dir():
+                shutil.copytree(both / d, fresh / d)
+        _jm("apply", cwd=fresh)
+        for rel in ("src/xm/solo.pyi", "src/xm/m/m.pyi"):
+            pyi = (fresh / rel).read_text(encoding="utf-8")
+            assert pyi.count("    def twice(") == 1, pyi
+            assert "    def twice(self) -> float:" in pyi, pyi
 
 
 # --------------------------------------------------------------------------
