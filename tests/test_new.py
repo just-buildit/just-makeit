@@ -4,6 +4,7 @@
 # derived names, so its projects opt out of the prefix `jm new` now
 # defaults to; the default is gated by tests/test_gh1591_*.py.
 
+from _compilers import default_cc
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 import re
@@ -646,7 +647,7 @@ class TestNewBuild:
 
         if not shutil.which("cmake"):
             pytest.skip("cmake not found")
-        if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+        if default_cc() is None:
             pytest.skip("no C99 compiler found")
         try:
             import numpy  # noqa: F401

@@ -30,7 +30,8 @@ versioned names, would then fail each of them on the box rather than on
 jm.
 
 `tests/test_gh1931_shared_test_helpers.py` refuses a test that looks a
-compiler up by name with ``shutil.which`` instead of asking here.
+compiler up by name with ``shutil.which`` -- directly or through a local
+wrapper (gh-1976) -- instead of asking here.
 """
 
 from __future__ import annotations
