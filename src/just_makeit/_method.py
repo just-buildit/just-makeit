@@ -28,6 +28,7 @@ from pathlib import Path
 from . import _config as C
 from . import _csym as CSYM
 from . import _borrow
+from . import _outbuf
 from . import _record
 from . import _glue
 from . import _render as R
@@ -1262,6 +1263,24 @@ def run(
     if _shape_err:
         print(f"error: {_shape_err}", file=sys.stderr)
         sys.exit(1)
+    # gh-1885: an array-result method (variable-output or batch) with no
+    # output element -- a `void` return and nothing else naming one -- was
+    # persisted and then crashed the render, and so every later command
+    # that read the manifest. Asked here, before anything is written, for
+    # the CLI, `jm object --variable-output` and `apply`'s replay alike.
+    # After the record-shape gate, whose message about `--result-field` is
+    # the more specific one.
+    _element_why = _outbuf.element_why_not(
+        f"method '{object_name}.{method_name}'",
+        variable_output=variable_output,
+        batch=batch,
+        record_dtype=record_dtype,
+        borrow=borrow,
+        out_type=out_type or "",
+        return_type=return_type,
+    )
+    if _element_why:
+        raise _report.Refusal(_element_why)
     # gh-823 Ask D: `status_return` raises too, so it may name the exception
     # and carry the message. The key was never the problem — both were already
     # read from the manifest; only `error_negative`'s emitter looked at them.
