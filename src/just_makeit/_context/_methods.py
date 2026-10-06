@@ -4270,7 +4270,10 @@ def make_methods_ctx(
     # the object's `_extra.c`; the prototypes go to the caller, which puts
     # them above the type (`extra_method_protos`).
     for _row in extra_methods or ():
-        pmd_lines.append(_extramethods.method_def_row(_row))
+        # The whole entry from the shared emitter, whose doc is the
+        # manifest's through `authored_c_doc` (gh-1039's rule).
+        _extra_pmd = _extramethods.method_def_row(_row)
+        pmd_lines.append(_extra_pmd)
         pyi_lines.append("\n".join(_extramethods.pyi_member(_row)) + "\n")
     _protos = _extramethods.prototypes(list(extra_methods or ()), "_extra.c")
 
