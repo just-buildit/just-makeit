@@ -255,6 +255,15 @@ ACCEPTED = [
         "method o run --batch --return-type float",
         id="batch-remedy-return-type",
     ),
+    # The element is an OUTPUT element, so an array arg type with no
+    # return type names `float`. The step() default would answer `void`
+    # for it (`_context/_sample.resolve_return_type`) and refuse a valid
+    # declaration, which is why that rule must not be the one asked.
+    pytest.param(
+        [],
+        "object x --arg-type float[] --variable-output",
+        id="array-arg-is-its-own-element",
+    ),
 ]
 
 
