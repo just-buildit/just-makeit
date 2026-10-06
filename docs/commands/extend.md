@@ -318,6 +318,11 @@ Each result is independent: it owns its memory, survives `destroy()`, and never
 aliases another call's result. See [Array memory
 ownership](../memory-ownership.md) for the policy and the measurements.
 
+The array's element type is `--record-dtype` when given, else `--out-type`,
+else `--return-type`, so it cannot be `void`: a method with no element is
+refused before anything is written (gh-1885). A `--batch` method's element is
+its `--return-type`, under the same rule.
+
 ```sh
 just-makeit method hbdecim execute --module resample \
     --arg-type "float _Complex" --return-type "float _Complex" \
