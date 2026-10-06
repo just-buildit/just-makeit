@@ -306,10 +306,10 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             mo_val = remaining[i]
-            if mo_val not in T._CTYPE_META:
+            if not T.is_multi_output_type(mo_val):
                 print(
                     f"error: --multi-output type '{mo_val}' not supported.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                    f"Supported: {', '.join(sorted(T.SUPPORTED_TYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)

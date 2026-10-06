@@ -302,7 +302,7 @@ def run(args: list[str]) -> None:
                 print("error: --multi-output requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val not in T._CTYPE_META:
+            if not T.is_multi_output_type(val):
                 print(
                     f"error: --multi-output '{val}' is not a supported type.",
                     file=sys.stderr,
@@ -420,10 +420,10 @@ def run(args: list[str]) -> None:
                 print("error: --out-type requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val not in T._CTYPE_TO_NPY:
+            if not T.is_out_type(val):
                 print(
                     f"error: --out-type '{val}' has no numpy equivalent.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
+                    f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)

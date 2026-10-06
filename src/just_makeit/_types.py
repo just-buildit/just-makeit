@@ -1133,6 +1133,83 @@ _CTYPE_TO_NPY: dict[str, str] = {
 
 SUPPORTED_ARRAY_CTYPES: frozenset[str] = frozenset(_CTYPE_TO_NPY)
 
+
+def is_out_type(ctype: str) -> bool:
+    """True when *ctype* may be a method's or function's ``out_type``.
+
+    ``out_type`` names the element of a fresh ndarray the binding allocates
+    per call, so it needs a numpy dtype enum: exactly
+    :data:`SUPPORTED_ARRAY_CTYPES`. ``bool``, ``int``, ``const char *`` and
+    ``long double _Complex`` are registered scalars with no such enum, and
+    ``void`` is no element at all.
+
+    gh-1977: ONE predicate for ``--out-type`` on ``jm method`` and
+    ``jm function`` and for the manifest's ``out_type``, which
+    ``_config.manifest_type_errors`` checks before ``apply`` writes
+    anything. The command lines each held an inline membership test and the
+    manifest held none, so a row they refuse reached the binding's
+    ``_CTYPE_TO_NPY[out_type]`` and ``status`` / ``apply`` died with a bare
+    ``KeyError``.
+
+    A module function's ``out_type`` may also carry a length suffix
+    (``"float64[M]"``) or be ``"str"``; those are spellings of the
+    function's own grammar, read by :func:`parse_out_type`, and the element
+    they resolve to is what this predicate is asked about.
+
+    Parameters
+    ----------
+    ctype : str
+        The element C type, as the manifest or command line spells it.
+
+    Returns
+    -------
+    bool
+        True if the binding can allocate an ndarray of this element.
+
+    Examples
+    --------
+    >>> is_out_type("float"), is_out_type("uint8_t")
+    (True, True)
+    >>> is_out_type("void"), is_out_type("bool"), is_out_type("float[]")
+    (False, False, False)
+    """
+    return ctype in SUPPORTED_ARRAY_CTYPES
+
+
+def is_multi_output_type(ctype: str) -> bool:
+    """True when *ctype* may be one entry of a method's ``multi_output``.
+
+    Each entry is an extra ``<T> *outN`` scalar the C kernel fills and the
+    binding packs into the returned tuple, which needs the type's zero
+    literal and its Python conversion: a registered scalar
+    (:data:`SUPPORTED_TYPES`), never ``void`` or an array.
+
+    gh-1977: ONE predicate for ``--multi-output`` on ``jm method`` and
+    ``jm object`` and for the manifest's ``multi_output``, which
+    ``_config.manifest_type_errors`` checks before ``apply`` writes
+    anything. Unchecked there, an entry the command lines refuse reached the
+    binding's ``_CTYPE_META[rt]["zero"]`` as a bare ``KeyError``.
+
+    Parameters
+    ----------
+    ctype : str
+        One ``multi_output`` entry.
+
+    Returns
+    -------
+    bool
+        True if the binding can declare, fill and return this value.
+
+    Examples
+    --------
+    >>> is_multi_output_type("uint8_t"), is_multi_output_type("bool")
+    (True, True)
+    >>> is_multi_output_type("void"), is_multi_output_type("float[]")
+    (False, False)
+    """
+    return ctype in SUPPORTED_TYPES
+
+
 #: Element type -> NPY enum for a FIXED-length state array ``T[N]``, whose
 #: getter hands the field out as an ndarray.
 #:
