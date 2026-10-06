@@ -292,8 +292,9 @@ def _darwin_managers(tmp_path: Path) -> "set[str]":
 def _manager_calls(tmp_path: Path, script: Path) -> "dict[str, list[str]]":
     """``{manager: calls}``: what each ``_install_<manager>()`` runs.
 
-    Each function runs alone, with sudo needed and every dependency missing,
-    against recorders; the stubs' messages are silenced.
+    Each function runs alone against the recorders, with sudo needed and
+    cmake missing (``NEED_CMAKE`` is the one need a function reads, for
+    Homebrew); the scripts' own ``info`` / ``warn`` lines are silenced.
     """
     out = {}
     for mgr, text in install_functions(script).items():
