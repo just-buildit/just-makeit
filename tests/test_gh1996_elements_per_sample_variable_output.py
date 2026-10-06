@@ -593,8 +593,15 @@ _X2 = {"name": "x", "type": "int16_t[]", "elements_per_sample": 2}
         ({"return_type": "float _Complex"}, "float _Complex"),
         ({"out_type": "float"}, "float"),
         ({"multi_output": ["float"]}, "float"),
+        (
+            {
+                "record_dtype": "rec_t",
+                "result_fields": [{"name": "a", "type": "uint32_t"}],
+            },
+            "rec_t",
+        ),
     ],
-    ids=["return-type", "out-type", "multi-output"],
+    ids=["return-type", "out-type", "multi-output", "record-dtype"],
 )
 def test_an_output_of_another_element_is_refused(project, extra, other):
     err = _refused(project, _method({"name": "run", "params": [_X2], **extra}))
