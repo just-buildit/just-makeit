@@ -18,10 +18,10 @@ halves were broken, so each has a gate here.
    package manager it knows, and the template now lists it wherever that
    script does.
 
-GATE: every ``[tools.*]`` source in a scaffolded ``bootstrap.toml`` fetches
+GATE: in a scaffolded ``bootstrap.toml``, every ``[tools.*]`` source fetches
     a script from where just-runit resolves it (network: a blip is retried,
-    a 404 fails at once), and the ``just-makeit`` source is jm's installer.
-GATE: every ``[dev.<manager>]`` group names patchelf wherever jm's own
+    a 404 fails at once), the ``just-makeit`` source is jm's installer, and
+    every ``[dev.<manager>]`` group names patchelf wherever jm's own
     ``install-deps`` installs it for that manager.
 """
 
