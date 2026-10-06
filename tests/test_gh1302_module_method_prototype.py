@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import JmRun, run_cli
 
@@ -55,9 +56,7 @@ return_type = "void"
 params = [{ name = "p", type = "int" }]
 """
 
-_HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and any(
-    shutil.which(c) for c in ("cc", "gcc", "clang")
-)
+_HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
 
 def _cli(*args, cwd) -> JmRun:

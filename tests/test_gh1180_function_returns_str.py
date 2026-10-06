@@ -43,12 +43,12 @@ rather than enumerated.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -58,7 +58,7 @@ from just_makeit import _render as R  # noqa: E402
 from just_makeit import _stubs as S  # noqa: E402
 from just_makeit._types import unsupported_return_type_help  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 #: doppler's case: bits in, hex text out, length reported by the return.
 FN = dict(

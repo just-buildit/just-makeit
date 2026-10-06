@@ -24,13 +24,13 @@ be), and "does it build" is the property that actually matters.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -117,9 +117,7 @@ class TestGeneratedC:
         assert "First line of the doc." in text
         assert "Second line -- this newline is the whole bug." in text
 
-    @pytest.mark.skipif(
-        shutil.which("gcc") is None, reason="no C compiler available"
-    )
+    @pytest.mark.skipif(default_cc() is None, reason="no C compiler available")
     def test_generated_c_has_no_unterminated_literal(self, project):
         """The property that actually matters: it compiles.
 
@@ -131,7 +129,7 @@ class TestGeneratedC:
         _root, frag = project
         r = subprocess.run(
             [
-                "gcc",
+                default_cc(),
                 "-fsyntax-only",
                 "-I",
                 str(frag.parents[2] / "inc"),

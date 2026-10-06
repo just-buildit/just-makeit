@@ -43,13 +43,13 @@ from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
 import contextlib
 import io
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,7 +63,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 _LINK = (
     ["-bundle", "-undefined", "dynamic_lookup"]

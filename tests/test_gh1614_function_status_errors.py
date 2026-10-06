@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -292,7 +293,7 @@ def test_cli_refuses_rows_nothing_reads_before_writing(
 def _skip_reason() -> str | None:
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     try:
         import numpy  # noqa: F401

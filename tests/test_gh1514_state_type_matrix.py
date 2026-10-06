@@ -33,6 +33,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 from test_gh1109_seeded_construction_is_attempted import _pytest_counts
@@ -45,9 +46,7 @@ _TYPES = list(_CTYPE_META) + [f"{t}[2]" for t in _CTYPE_META]
 #: (flags, shape tag). The tag prefixes the object name.
 _SHAPES = (((), "s"), (("--module", "m"), "m"), (("--header-only",), "h"))
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 @pytest.fixture(scope="module")

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
-import shutil
 import subprocess
 import sys
 import sysconfig
@@ -20,12 +19,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._render import make_functions_ctx
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 # A function taking a path (filename), an enum (kind), and a scalar (extra). It

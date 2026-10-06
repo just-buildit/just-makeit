@@ -32,6 +32,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import JmRun, run_cli
 
@@ -60,9 +61,7 @@ def _pytest_counts(stdout: str) -> "dict[str, int]":
     return {kind: int(n) for n, kind in _COUNT.findall(body)}
 
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 def _cli(*args, cwd) -> JmRun:

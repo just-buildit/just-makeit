@@ -1541,13 +1541,13 @@ class TestPyiDocstrings:
 # ── gh-343: compile-check that the emitted serializer include resolves the
 #    fn's declaration (the gap the compiler-free unit gate above misses — this
 #    is the exact implicit-declaration miscompile doppler hit). ────────────────
-import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
 import pytest  # noqa: E402
+from _compilers import default_cc  # noqa: E402
 from just_makeit._pyfmt import flatten_signatures
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 
 @pytest.mark.skipif(_CC is None, reason="no C compiler available")

@@ -38,12 +38,11 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or not any(
-    shutil.which(c) for c in ("cc", "gcc", "clang")
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 #: The dispatch object: complex taps by default, float32 taps select
 #: `wp_disp_create_real`, and a defaulted array declared AFTER it (gh-1825).

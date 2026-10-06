@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_stdlib_floor import _floor
+from _pyfloor import python_floor
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / "install.sh"
 
@@ -86,12 +86,12 @@ def _dotted(version: tuple) -> str:
 def test_the_floor_is_a_major_minor_pair():
     # Everything below compares (major, minor); a `>=3.9.2` floor would
     # need the installer to compare a micro too.
-    floor = _floor()
+    floor = python_floor()
     assert len(floor) == 2 and floor[1] > 0, floor
 
 
 def test_install_sh_accepts_the_floor(tmp_path):
-    floor = _floor()
+    floor = python_floor()
     res = _install_check(tmp_path, _python_reporting(tmp_path, floor))
     assert "is required" not in res.stderr, (
         f"install.sh refuses Python {_dotted(floor)}, which pyproject's "
@@ -106,7 +106,7 @@ def test_install_sh_accepts_the_floor(tmp_path):
 
 
 def test_install_sh_refuses_below_the_floor_and_names_it(tmp_path):
-    floor = _floor()
+    floor = python_floor()
     below = (floor[0], floor[1] - 1)
     res = _install_check(tmp_path, _python_reporting(tmp_path, below))
     assert res.returncode == 1, (res.stdout, res.stderr)
@@ -117,5 +117,5 @@ def test_install_sh_refuses_below_the_floor_and_names_it(tmp_path):
 def test_install_sh_names_the_floor_when_python_is_missing(tmp_path):
     res = _install_check(tmp_path, tmp_path / "no-such-python")
     assert res.returncode == 1, (res.stdout, res.stderr)
-    want = f"Install Python {_dotted(_floor())}+ and re-run."
+    want = f"Install Python {_dotted(python_floor())}+ and re-run."
     assert want in res.stderr, res.stderr

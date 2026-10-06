@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -46,7 +47,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 _INCLUDED_C = re.compile(r'^\s*#\s*include\s+"([^"]+\.c)"', re.MULTILINE)
 
 _CMAKE = shutil.which("cmake")
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 _needs_build = pytest.mark.skipif(
     _CMAKE is None or _CC is None,
     reason="needs cmake and a C compiler",

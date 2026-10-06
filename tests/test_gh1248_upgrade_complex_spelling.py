@@ -32,12 +32,12 @@ from just_makeit import _incpath as INC  # noqa: E402
 import contextlib
 import io
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cxx
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -178,7 +178,7 @@ def test_clib_common_h_is_left_alone(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not shutil.which("c++") and not shutil.which("g++"),
+    default_cxx() is None,
     reason="no C++ compiler",
 )
 def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
@@ -189,7 +189,7 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
     """
     root = _project(tmp_path)
     _upgrade_out(root)
-    cxx = shutil.which("c++") or shutil.which("g++")
+    cxx = default_cxx()
     inc = root / INC_DIR
     body = (
         "int main(){ std::vector<std::complex<float> > v;"

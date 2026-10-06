@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,9 +64,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._types import c_param_list  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 def _quiet(fn, *a, **kw):
@@ -405,7 +404,7 @@ class TestItActuallyCompiles:
             f'#include "{header.name}"\n',
             encoding="utf-8",
         )
-        cc = shutil.which("cc") or shutil.which("gcc")
+        cc = default_cc()
         inc = root / INC_DIR
         proc = subprocess.run(
             [

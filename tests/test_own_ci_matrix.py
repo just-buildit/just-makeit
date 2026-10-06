@@ -29,10 +29,10 @@ import re
 from pathlib import Path
 
 import pytest
+from _pyfloor import python_floor
 
 ROOT = Path(__file__).parent.parent
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
-PYPROJECT = ROOT / "pyproject.toml"
 
 _LIST = re.compile(
     r"^\s*(?P<key>os|python-version):\s*\[(?P<items>[^\]]*)\]\s*$"
@@ -88,14 +88,6 @@ def _excludes() -> set[tuple[str, str]]:
     return out
 
 
-def _floor() -> str:
-    """`requires-python = ">=3.9"` -> `"3.9"`."""
-    for ln in PYPROJECT.read_text(encoding="utf-8").splitlines():
-        if ln.startswith("requires-python"):
-            return _unquote(ln.split(">=")[1])
-    raise AssertionError(f"no `requires-python` line in {PYPROJECT}")
-
-
 def _key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
 
@@ -108,9 +100,10 @@ def test_the_matrix_floor_is_the_declared_floor() -> None:
     without raising the floor ships an untested promise.
     """
     _, pys = _axes()
-    assert min(pys, key=_key) == _floor(), (
-        f'`requires-python = ">={_floor()}"` but the CI matrix\'s oldest '
-        f"Python is {min(pys, key=_key)}"
+    floor = python_floor()
+    assert _key(min(pys, key=_key)) == floor, (
+        f'`requires-python = ">={".".join(map(str, floor))}"` but the CI '
+        f"matrix's oldest Python is {min(pys, key=_key)}"
     )
 
 

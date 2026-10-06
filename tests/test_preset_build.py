@@ -16,6 +16,7 @@ import re
 import subprocess
 
 import pytest
+from _compilers import default_cc, find_compiler
 
 from just_makeit import _cli_object
 from just_makeit._new import run as new_run
@@ -24,7 +25,7 @@ from just_makeit._new import run as new_run
 def _skip_reason():
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 
@@ -372,47 +373,6 @@ _WARN_SHAPES = {
 #: caught -- and the day the issue is fixed this goes red and the entry
 #: comes out.
 _WARN_KNOWN: "dict[tuple[str, str], str]" = {}
-
-
-def find_compiler(name: str) -> "str | None":
-    """The path of compiler *name* on PATH, bare or versioned, else None.
-
-    ``shutil.which(name)`` first; failing that, the newest ``<name>-<N>``
-    on PATH (gh-1861). Debian installs clang only as ``clang-18`` (its
-    ``clang`` is a separate package), so a bare lookup reported clang
-    missing on a box that has it, and the sweep's clang leg skipped there
-    -- which the skip gate rightly turns into a red ``make test``. Among
-    several versions the highest number wins, and among one version's
-    copies the first on PATH, which is the one a shell would run.
-
-    Only an absent compiler is None: then the caller's skip names what is
-    missing, and the skip gate holds it red, because installing a compiler
-    is a fix a maintainer can make.
-
-    `test_find_compiler_takes_the_newest_versioned_name` holds each of
-    these on a PATH it builds.
-
-    Examples
-    --------
-    >>> find_compiler("no-such-cc") is None
-    True
-    """
-    exe = shutil.which(name)
-    if exe:
-        return exe
-    versioned = re.compile(re.escape(name) + r"-(\d+)")
-    best: "tuple[int, str] | None" = None
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        try:
-            entries = os.listdir(d or os.curdir)
-        except OSError:
-            continue
-        for entry in entries:
-            m = versioned.fullmatch(entry)
-            hit = m and shutil.which(entry, path=d or os.curdir)
-            if hit and (best is None or int(m.group(1)) > best[0]):
-                best = (int(m.group(1)), hit)
-    return best[1] if best else None
 
 
 def test_find_compiler_takes_the_newest_versioned_name(tmp_path, monkeypatch):
