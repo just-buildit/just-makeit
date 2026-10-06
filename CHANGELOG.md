@@ -1,5 +1,147 @@
 ## [Unreleased]
 
+## [0.98.2] — 2026-10-05
+
+### Fixed
+
+- **A new project's `_core` stubs build clean under `-Wall -Wextra`**
+    (gh-1857). A scaffolded constructor or `reset()` left the parameters its
+    placeholder body does not read unsuppressed, so a project building its C
+    with `-Werror` failed before a line of it was written: `state` in an
+    empty `reset()`, every parameter of a `--no-state` or `init_params`
+    constructor, an `--array-arg` beside the fields `create()` assigns, the
+    dtype-dispatch and optional-array constructors, and a `jm view`
+    constructor. Each stub now says `(void)name;` for exactly the parameters
+    it leaves to the author, as method stubs always did, and the author's
+    body replaces the line with the placeholder. Under `--header-only` the
+    `create()` body is on its own line again rather than glued to
+    `return obj;`. Existing `_core` files are the author's and are not
+    rewritten. The warning sweep drops its last `-Wno-error` flag.
+
+- **A release commit is a version bump alone under any uv** (gh-1866).
+    `make bump-version` left `uv.lock` to uv: it ran `sync_version.py` under
+    a plain `uv run`, then `uv lock`, and each re-locked the whole file,
+    stamping the lockfile `revision` of the running uv. uv 0.12.22 and later
+    write 5 over this repo's 3, so a release cut with a newer uv changed that
+    line too. `make ci-changes` then read the release commit as more than a
+    bump, and its CI ran the full matrix, with nothing saying so until CI
+    did. `sync_version.py` now writes `uv.lock`'s own version line, the way
+    it writes `bootstrap.toml`'s, under `uv run --no-sync`, which never
+    re-locks; the bump then only asks `uv lock --check`. The lock's diff is
+    its version line under every uv measured (0.11.28 to 0.12.23), its
+    revision stays whatever it was, and a lock that needs more than the
+    version stops `release-branch` with a message rather than riding into
+    the release. A version edited by hand keeps the revision through the
+    pre-commit hooks the same way.
+
+- **An installed library finds the libraries it needs** (gh-1869). jm's
+    installed shared libraries carried no RUNPATH, and a program's own rpath
+    reaches only its direct dependencies. So from a non-system prefix a
+    program that named one package, whose library needs another, did not even
+    link (`libalpha.so, needed by libbeta.so, not found`), and a
+    `find_package` consumer of it failed to start. On Linux and the BSDs each
+    installed library now carries RUNPATH `$ORIGIN`, for the libraries beside
+    it, plus the directory of any dependency in another prefix. Both are
+    defaults of CMake's own `CMAKE_INSTALL_RPATH` /
+    `CMAKE_INSTALL_RPATH_USE_LINK_PATH`, so a packager's setting wins. A
+    program now needs only the rpath to what it links, which the rewritten
+    "Runtime loading" section of the C library guide gives per platform. The
+    `.pc` itself carries no rpath. `jm apply` updates an existing project's
+    install section.
+
+- **A generator's manifest records the return type its header declares**
+    (gh-1880). `jm object g --preset generator` (or `--arg-type void`)
+    scaffolded a `step()` returning `float _Complex` but wrote
+    `return_type = "void"` to the manifest, so `jm status` was STALE on the
+    fresh scaffold and `jm apply` re-rendered the binding from the manifest
+    and broke the build (`too few arguments to function '..._steps'`). The
+    manifest writer, the manifest reader's default for an absent
+    `return_type`, and `jm script` each kept their own copy of the default;
+    all three now use the renderer's, so the manifest says `float _Complex`,
+    a hand-written object table without `return_type` means what omitting
+    `--return-type` means, and `jm script` still spells a deliberate
+    `--arg-type void --return-type void`. A project scaffolded with the bug
+    keeps `return_type = "void"`: set it to `"float _Complex"` in that
+    object's table (`objects/<name>.toml`) before running `jm apply`.
+
+- **A `--varargs` method on a module object builds under `c_prefix`**
+    (gh-1881). The module's `Python3_add_library` named the method's binding
+    file after its C symbol, `../g/p_g_configure_core.c`, while the file jm
+    writes is `g_configure_core.c`: a file stem stays the object's name. So
+    a default `jm new` project, which sets `c_prefix`, failed CMake
+    configure as soon as a module object gained a varargs method, and
+    `jm status` reported it clean because its replay rendered the same
+    path. Every side now names the file through one helper, and the
+    `_ext.c` comment that pointed at the missing file names the real one.
+    `jm apply` repairs an existing module's `CMakeLists.txt`.
+
+- **A float or complex state default like `0.1` passes its own tests**
+    (gh-1883). `jm new fd --object g --state a:float:0.1` scaffolded a
+    project whose generated C test failed on the first `make test`: the
+    field stores `(float)0.1`, and the test asserted
+    `fd_g_get_a(obj) == 0.1`, comparing it against the double `0.1`, after
+    construction and again after `reset()`. A `float _Complex` given
+    `0.1 + 0.2 * I` failed both suites the same way, since the Python test
+    compared complex values exactly. The C test now compares against the
+    value the field holds, `(float)(0.1)`, the conversion the assignment
+    applies, so the check stays exact for every float and complex type and
+    every spelling of the default; the Python test compares complex values
+    within `approx`, as it already did floats. `jm apply` refreshes a
+    generated Python test; an existing project's C test is the author's and
+    is not rewritten, so cast its default checks the same way by hand.
+
+- **The curl installer runs on Python 3.9 and 3.10** (gh-1916). jm has
+    supported Python 3.9+ since its `requires-python` was lowered, but
+    `install.sh` still refused anything older than 3.11
+    (`Python 3.10 found, but 3.11+ is required.`), and the README, the docs
+    and every example README told 3.9 and 3.10 users to install with pip
+    instead. The installer now accepts the same Pythons pip does: its floor
+    is written once and every check and message reads it, and a test runs
+    it at `requires-python`'s floor and just below so the two cannot drift
+    again. The caveats are gone.
+
+- **A documented struct member called `name` no longer fails a manifest write**
+    (gh-1932). The declared-name walk read every `name` key in the config,
+    including inside `_doc_blocks`, the derived table of Doxygen text for C
+    struct members, so a member `name` with the comment `e.g. "agc.gain_db".`
+    was refused as a name and `jm adopt` exited 1 with nothing written. The
+    walk now skips `_`-prefixed runtime state, the way `_strip_private`
+    already does; a genuinely bad declared name is still refused.
+
+- **`jm function --inline` takes every shape the out-of-line stub does.**
+    The header stub for an inline module function rendered its own
+    signature and knew only scalars, so `--inline --out-type` scaffolded
+    `f(const T *x, size_t x_len)` while the binding called `f(x, x_len, out)`
+    and the project did not compile (the feature tour's Step 6). It also
+    dropped an `--impl` body, leaving the placeholder. The inline stub is
+    now the out-of-line stub with a `static inline` storage class.
+
+### Docs
+
+- **The bundled example READMEs and a new project's README match what jm
+    0.98.1 generates.** Every walkthrough was re-run against a fresh
+    scaffold: C symbols carry the `c_prefix` and headers live under
+    `native/inc/<pkg>/`, tables land in `objects/` / `modules/` fragments,
+    `--variable-output` arrays are allocated per call (gh-604), and the
+    `.pyi` doctest commands work as shown (`PYTHONPATH=src`) and say what
+    runs them: a generated `make test` does not. Steps that could not work
+    as written now do -- `cmake ... -q`, a missing `--return-type`, a
+    `--pytest` flag `object` never had, a doppler floor below the example's
+    own, an `example_value` only the test set, a `cd` in the wrong step --
+    and array_processing, filter_module, full_workflow and varargs_method now
+    build the C their READMEs show. A new project's README no longer says
+    `pip install -e .` builds the extension or `make test` runs pytest when
+    it runs unittest, and a `--build-system make` project's README describes
+    its own build -- no `make docs`, CMake or Windows build it cannot run --
+    from backend slots in the one README template.
+
+- **Every mention of jbx links how to install it.** The README of every
+    project jm scaffolds told its users to run `jbx install-deps -g dev`
+    without saying what jbx is; it now links just-bashit's own install
+    section, as jm's README does. A test fails a doc, template or example
+    that mentions jbx without that link, or that carries its own copy of
+    the install recipe.
+
 ## [0.98.1] — 2026-10-05
 
 ### Changed
