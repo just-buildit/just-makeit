@@ -1518,7 +1518,9 @@ def _build_params_parse(
                 # default (not parse_zero) so an omitted defaulted arg
                 # yields the default — previously only the non-parse_type
                 # branch honoured `default` (mirrors _context/_parse.py).
-                _raw_init = p.get("default") or meta["parse_zero"]
+                # gh-1887: through the one seed, as that face is -- a
+                # `Py_complex` default is the struct's `{re, im}`.
+                _raw_init = T.parse_seed(ptype, p.get("default") or "")
                 decl_lines.append(
                     f"    {meta['parse_type']} {raw} = {_raw_init};"
                 )
