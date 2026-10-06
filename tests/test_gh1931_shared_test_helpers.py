@@ -14,6 +14,9 @@ others:
   different name lists. Now `tests/_compilers`: `default_cc` /
   `default_cxx` for what CMake picks when nobody chooses, `find_compiler`
   for one named compiler, bare or versioned -- two questions, kept apart.
+  A lookup routed through a local wrapper, ``_require("gcc")``, is one
+  too (gh-1976); the only ones allowed are the two example tests whose
+  README runs ``gcc`` itself, named in `_README_RUNS_GCC`.
 
 Every arm reads the source of every test file, so a new file is covered the
 moment it exists, and each is anchored on CODE, read from the AST: a
@@ -48,10 +51,21 @@ CLI_MODULE = "just_makeit._cli"
 #: Every name the compiler lookups asked `shutil.which` about.
 COMPILERS = frozenset(_compilers.C_COMPILERS + _compilers.CXX_COMPILERS)
 
-#: Lookups left in place because a concurrent change owned the file when
-#: gh-1931 landed. A ratchet: the count must match exactly, so the day the
-#: file is converted this goes red until the entry comes out.
-_COMPILER_RESIDUAL = {"test_new.py": 1}
+#: Where the bundled examples live, each beside the README it teaches.
+EXAMPLES = TESTS.parent / "src" / "just_makeit" / "examples"
+
+#: The lookups that name their compiler on purpose (gh-1976). Each of
+#: these files runs, step by step, the example README its name carries,
+#: and that README hands the reader a line starting ``gcc``. Whether THAT
+#: command is on PATH is the question, and neither shared helper asks it:
+#: `default_cc` may answer ``cc``, and `find_compiler` ``gcc-14``, which
+#: the reader's line would not run. Counted exactly, so a new lookup in
+#: either file is still a finding; and each holds only while its README
+#: still says ``gcc`` (`test_named_compiler_exception_keeps_its_reason`).
+_README_RUNS_GCC = {
+    "test_example_fir_filter.py": 2,
+    "test_example_running_stats.py": 1,
+}
 
 
 def _cli_entry_names(tree: ast.Module) -> "set[str]":
@@ -131,26 +145,60 @@ def floor_readers(tree: ast.Module) -> "list[int]":
     ]
 
 
+def _callee(n: ast.AST) -> "str | None":
+    """The name a call calls: ``f`` for ``f(...)`` and ``m.f(...)``."""
+    f = getattr(n, "func", None) if isinstance(n, ast.Call) else None
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    return f.id if isinstance(f, ast.Name) else None
+
+
+def _which_wrappers(tree: ast.Module) -> "set[str]":
+    """Functions in *tree* that hand one of their own parameters to
+    ``which``: ``def _require(name): ... shutil.which(name)``.
+
+    What makes a function a lookup is what it does with its argument,
+    not what it is called, so a call to `_compilers.find_compiler` --
+    defined elsewhere -- is not one, and ``parametrize("cc", ...)`` is
+    not either.
+    """
+    out = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        a = fn.args
+        params = {p.arg for p in a.posonlyargs + a.args + a.kwonlyargs}
+        if any(
+            _callee(n) == "which"
+            and any(isinstance(x, ast.Name) and x.id in params for x in n.args)
+            for n in ast.walk(fn)
+        ):
+            out.add(fn.name)
+    return out
+
+
 def compiler_lookups(tree: ast.Module) -> "list[int]":
     """Lines that ask ``shutil.which`` about a compiler by name.
 
-    Both shapes the copies took: ``shutil.which("cc")``, and
-    ``shutil.which(c) for c in ("cc", "gcc", "clang")``.
+    The three shapes the copies took: ``shutil.which("cc")``,
+    ``shutil.which(c) for c in ("cc", "gcc", "clang")``, and a call
+    naming a compiler to a local function that passes its parameter to
+    ``which`` (gh-1976: ``_require("gcc")``).
     """
-
-    def is_which(n: ast.AST) -> bool:
-        f = getattr(n, "func", None)
-        return isinstance(n, ast.Call) and (
-            (isinstance(f, ast.Attribute) and f.attr == "which")
-            or (isinstance(f, ast.Name) and f.id == "which")
-        )
+    wrappers = _which_wrappers(tree)
 
     def names_compiler(n: ast.AST) -> bool:
         return isinstance(n, ast.Constant) and n.value in COMPILERS
 
     out = []
     for node in ast.walk(tree):
-        if is_which(node) and node.args and names_compiler(node.args[0]):
+        callee = _callee(node)
+        if callee == "which" and node.args and names_compiler(node.args[0]):
+            out.append(node.lineno)
+        elif callee in wrappers and any(
+            names_compiler(x)
+            for x in [*node.args, *(k.value for k in node.keywords)]
+        ):
             out.append(node.lineno)
         elif isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
             literal = [
@@ -159,9 +207,11 @@ def compiler_lookups(tree: ast.Module) -> "list[int]":
                 if isinstance(g.iter, (ast.Tuple, ast.List))
                 and any(map(names_compiler, g.iter.elts))
             ]
-            if literal and any(map(is_which, ast.walk(node.elt))):
+            if literal and any(
+                _callee(n) == "which" for n in ast.walk(node.elt)
+            ):
                 out.append(node.lineno)
-    return out
+    return sorted(out)
 
 
 def _scan(arm, owner: str) -> "dict[str, list]":
@@ -199,13 +249,28 @@ def test_no_private_compiler_lookup():
         name: len(lines)
         for name, lines in _scan(compiler_lookups, "_compilers.py").items()
     }
-    assert found == _COMPILER_RESIDUAL, (
+    assert found == _README_RUNS_GCC, (
         "a compiler is looked up through `_compilers`: `default_cc()` / "
         "`default_cxx()` for what CMake picks when nobody chooses, "
         "`find_compiler(name)` for one named compiler. Found (file: "
-        f"count) {found}; the residual allowed is {_COMPILER_RESIDUAL}, "
-        "and an entry comes out when its file is converted."
+        f"count) {found}; the only lookups allowed are the README-driven "
+        f"{_README_RUNS_GCC} (see `_README_RUNS_GCC`)."
     )
+
+
+def test_named_compiler_exception_keeps_its_reason():
+    """Each file `_README_RUNS_GCC` excuses mirrors an example README
+    that still hands the reader a ``gcc`` line; the day one stops, its
+    lookup has no reason left to bypass `_compilers`."""
+    for name in _README_RUNS_GCC:
+        example = name[len("test_example_") : -len(".py")]
+        readme = EXAMPLES / example / "README.md"
+        lines = readme.read_text(encoding="utf-8").splitlines()
+        assert any(ln.startswith("gcc ") for ln in lines), (
+            f"{readme} no longer runs `gcc`, so {name}'s lookup is a "
+            "private one: use `_compilers` and drop it from "
+            "`_README_RUNS_GCC`"
+        )
 
 
 def test_every_arm_sees_the_shape_it_refuses():
@@ -230,7 +295,14 @@ def test_every_arm_sees_the_shape_it_refuses():
         '    return [ln for ln in t if ln.startswith("requires-python")]\n'
         '_CC = shutil.which("cc") or shutil.which("gcc")\n'
         'ok = any(shutil.which(c) for c in ("c++", "g++"))\n'
+        "def _require(name):\n"
+        "    if not shutil.which(name):\n"
+        "        pytest.skip(name)\n"
+        '_require("gcc")\n'
+        '_require("cmake")\n'
+        'find_compiler("clang")\n'
+        'cc = pytest.mark.parametrize("cc", ["gcc", "clang"])\n'
     )
     assert replayers(private) == ["_replay"]
     assert floor_readers(private) == [8]
-    assert compiler_lookups(private) == [9, 9, 10]
+    assert compiler_lookups(private) == [9, 9, 10, 14]
