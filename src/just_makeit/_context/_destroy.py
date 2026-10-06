@@ -311,25 +311,23 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
     ``RuntimeError: <comp>_destroy reported failure`` from collection. Not a
     drift risk — the out-of-the-box result.
 
-    So an unstated pair is inherited from the named finalizer. Both keys or
-    neither: a half-inherited pair would pin someone else's message under the
-    author's own category, which is a third message rather than one fewer.
-    Declaring either key keeps both explicit, so saying something different
-    on purpose stays possible.
+    So each unstated key is inherited from the named finalizer, on its own
+    (gh-864): declaring ``error`` alone keeps the finalizer's
+    ``error_message``, and declaring ``error_message`` alone keeps its
+    ``error``. The message describes the *condition* ("the capture has a
+    hole"), not the exception class, so it stays accurate under a category
+    the author chose. This first shipped as a pair, so as not to pin one
+    declaration's message under another's category — and that left no
+    setting where every surface was right: declaring ``error`` to correct
+    the stub silently dropped the message, which is the entire content of
+    the diagnostic gh-541 exists to preserve. A declared key is always the
+    author's, so saying something different on purpose stays possible.
 
     doppler maintains this identity **by hand today** — the same
     180-character ``error_message`` copied verbatim into the ``close`` method
     and the ``destroy`` table — which is the duplication this key removes
     everywhere else.
     """
-    # gh-864: INDEPENDENTLY, not both-or-neither. This shipped as a pair
-    # because a half-inherited pair "pins one declaration's message under the
-    # other's category" — but that reasoning was wrong twice over. The message
-    # describes the CONDITION ("the capture has a hole"), not the exception
-    # class, so it stays accurate under a different class. And pairing left no
-    # setting where all three surfaces were right: declaring `error` to fix
-    # the stub silently dropped the message, which is the entire content of
-    # the diagnostic gh-541 exists to preserve.
     return (
         spec.get("error") or exit_method.get("error") or _DEFAULT_CATEGORY,
         spec.get("error_message") or exit_method.get("error_message") or "",
