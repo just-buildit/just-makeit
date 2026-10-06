@@ -26,20 +26,33 @@ What the answer is
 length jm can size:
 
 * no params at all — the *generator* shape, sized from the synthesized count;
-* exactly one array param — sized from that array's length;
+* params with an array among them — sized from the FIRST array param's length,
+  whether it is the only param or sits beside scalars (``Farrow.delay(x,
+  mu)``) or other arrays (``Resampler.execute_ctrl(x, ctrl)``);
 * all-scalar params — sized from ``<m>_max_out(state)``, the same expression
   the internal allocation uses.
 
 and withheld otherwise. :func:`why_not` names which of those it is, so the
 reason is available to a diagnostic instead of being implicit in a boolean.
 
+The first array is not a new choice made here. It is the length the binding
+already hands ``<m>_max_out()`` (gh-607) and already allocates from when
+``max_out()`` answers 0 (gh-421), for every one of these shapes, with or
+without ``out=``. The caller's buffer is validated against exactly what the
+binding would have allocated itself -- ``_capacity_exprs``' invariant -- so an
+``out=`` adds no bound the allocating path did not already trust.
+
 What it is NOT
 --------------
-An array *beside* other params (``Farrow.delay(x, mu)``) stays excluded. There
-is a length to size from, so this is not a sizing gap — gh-412 carved the shape
-out deliberately and widening it is its own piece of work. :func:`why_not` says
-so in those words rather than returning a bare False, because "jm will not"
-and "jm cannot" are different answers and a bool makes them look alike.
+Params beside an ``arg_type`` input stay excluded: that wrapper's parse reads
+the input alone and drops them (gh-1960), so there is no call to thread an
+``out=`` through.
+
+An array beside other params was excluded too, until gh-1998. gh-412 had
+carved it out of the `out=` feature while making those methods
+keyword-capable, and the sizing was never the obstacle -- doppler hand-wrote
+``Farrow.delay(x, mu, out=)`` and ``Resampler.execute_ctrl(x, ctrl, out=)``
+sized from ``x``, which is the rule above.
 
 This section used to say the all-scalar shape got no `out=` either, and that
 its bound was unusable because ``max_out()`` may legally answer ``0``. gh-1079
@@ -49,31 +62,6 @@ closing comment and gh-1091.
 """
 
 from __future__ import annotations
-
-
-def single_array_param(has_arg: bool, params: list[dict]) -> bool:
-    """Is this method's sole input one array param, declared as a param?
-
-    gh-219 follow-up: a method's primary array input is sometimes declared as
-    the only entry in ``params`` (``arg_type = "void"`` plus one array) rather
-    than through ``arg_type``. That is functionally the same as ``has_arg``
-    for sizing an output buffer; genuine *extra* params (``Farrow.delay(x,
-    mu)``) are what stay ineligible.
-
-    Examples
-    --------
-    >>> single_array_param(False, [{"name": "x", "type": "float[]"}])
-    True
-    >>> single_array_param(False, [{"name": "n", "type": "size_t"}])
-    False
-    >>> single_array_param(True, [{"name": "x", "type": "float[]"}])
-    False
-    """
-    return (
-        not has_arg
-        and len(params) == 1
-        and str(params[0].get("type", "")).endswith("[]")
-    )
 
 
 def sizing_param(has_arg: bool, params: list[dict]) -> "dict | None":
@@ -231,9 +219,13 @@ def why_not(
     >>> why_not(variable_output=True, multi_output=False, has_arg=False,
     ...         params=[{"name": "n", "type": "size_t"}])
     ''
+    >>> why_not(variable_output=True, multi_output=False, has_arg=False,
+    ...         params=[{"name": "x", "type": "float _Complex[]"},
+    ...                 {"name": "mu", "type": "double"}])
+    ''
     >>> why_not(variable_output=True, multi_output=False, has_arg=True,
     ...         params=[{"name": "mu", "type": "double"}])
-    'extra params beside the array input (gh-1079)'
+    'extra params beside the array input (gh-1079, gh-1960)'
     """
     if not variable_output:
         return "not variable_output"
@@ -241,22 +233,23 @@ def why_not(
         # Two output arrays would need two buffers and a rule for pairing
         # them with the caller's; one `out=` cannot say which.
         return "multi_output"
-    if not params or single_array_param(has_arg, params):
-        return ""
-    if any(str(p.get("type", "")).endswith("[]") for p in params):
-        # An array among several params — `Farrow.delay(x, mu)`, whether the
-        # array arrives through `arg_type` or as a param. There IS a length to
-        # size from, and gh-412 carved the shape out of the `out=` feature
-        # deliberately; widening it is a separate piece of work from gh-1079,
-        # which asks about the ALL-SCALAR shape.
-        return "an array beside other params (gh-412)"
-    if has_arg:
-        # An `arg_type` array plus extra params — `Farrow.delay(x, mu)`. The
-        # `has_arg` branch builds its own kwlist around the array input and
-        # does not thread extra params through it, so this one is still a
-        # parse-block gap rather than a sizing one. Named separately for that
-        # reason: it is a different piece of work from the shape below.
-        return "extra params beside the array input (gh-1079)"
+    if has_arg and params:
+        # An `arg_type` input plus params. That wrapper's parse reads the
+        # input alone (`"O"`) and never threads the params through -- they
+        # are missing from the call and the prototype too (gh-1960) -- so
+        # there is no parse to add an `out=` to. A parse-block gap, not a
+        # sizing one; it is a different piece of work from the shapes below.
+        return "extra params beside the array input (gh-1079, gh-1960)"
+    # Every remaining shape is offered `out=`.
+    #
+    # gh-1998: an array param, alone or beside others -- `Farrow.delay(x,
+    # mu)`, `Resampler.execute_ctrl(x, ctrl)`. Sized from the FIRST array,
+    # which is not a choice made here: it is the count the binding already
+    # hands `<m>_max_out()` (gh-607) and the fallback it already allocates
+    # (gh-421) for these shapes, with or without `out=`. gh-412 carved them
+    # out of `out=` only while making them keyword-capable; the sizing was
+    # never in doubt, and doppler hand-wrote exactly this binding for both.
+    #
     # gh-1079: the all-scalar shape. Sized from `<m>_max_out(state)`, which is
     # the same expression the internal allocation uses for this shape — so the
     # caller's buffer is validated against exactly what the binding would have

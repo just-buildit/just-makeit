@@ -67,6 +67,21 @@ SHAPES = [
         dict(arg_type="void", params=[("n", "size_t")]),
         True,
     ),
+    # gh-1998: an array param beside a scalar (`Farrow.delay(x, mu)`) and
+    # beside another array (`Resampler.execute_ctrl(x, ctrl)`), sized from
+    # the first array as their allocation already was.
+    (
+        "array-param-beside-scalar",
+        dict(arg_type="void", params=[("x", "float[]"), ("mu", "double")]),
+        True,
+    ),
+    (
+        "two-array-params",
+        dict(arg_type="void", params=[("x", "float[]"), ("c", "double[]")]),
+        True,
+    ),
+    # gh-1960: params beside an `arg_type` input are not parsed at all, so
+    # there is no parse to thread an `out=` through.
     (
         "array-plus-scalar",
         dict(arg_type="float", params=[("mu", "double")]),
@@ -127,16 +142,19 @@ class TestThePredicate:
             params=[{"name": "mu", "type": "double"}],
         )
         assert "gh-1079" in gap
-        # ...and the gh-412 carve-out, which is a THIRD kind of reason: a
-        # deliberate scope decision rather than a gap or a property.
-        assert "gh-412" in _outbuf.why_not(
-            variable_output=True,
-            multi_output=False,
-            has_arg=False,
-            params=[
-                {"name": "x", "type": "float[]"},
-                {"name": "mu", "type": "double"},
-            ],
+        # gh-1998 closed the gh-412 carve-out: an array beside other params
+        # is offered `out=` now, so it has no reason to give.
+        assert (
+            _outbuf.why_not(
+                variable_output=True,
+                multi_output=False,
+                has_arg=False,
+                params=[
+                    {"name": "x", "type": "float[]"},
+                    {"name": "mu", "type": "double"},
+                ],
+            )
+            == ""
         )
 
 

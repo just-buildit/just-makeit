@@ -2209,8 +2209,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             ret_ann = _py(m_ret)
 
-        # gh-423: mirror make_methods_ctx's _enable_out/_single_array_param
-        # (gh-219) here -- this loop is a separate stub generator for the
+        # gh-423: mirror make_methods_ctx's _enable_out (gh-219) here --
+        # this loop is a separate stub generator for the
         # module-aggregated .pyi and was never taught the out=/_max_out()
         # shape, so it kept emitting the pre-#219 signature after that fix.
         # gh-1079: the same accessor the binding and the standalone `.pyi`

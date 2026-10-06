@@ -29,11 +29,13 @@ real hole:
   splice refuses rather than deleting.
 
 `TestTheExcludedShapeStillWorks` is the fence in the other direction, and the
-issue named it explicitly: a gh-412-excluded shape (an array beside other
-params) generates no bound at all, so doppler's hand-written
-`Farrow.delay_max_out` and `Resampler.execute_ctrl_max_out` are still correct
-and must keep working. Reserving every `*_max_out` name would refuse exactly
-those.
+issue named it explicitly: a shape `_outbuf.enabled` excludes generates no
+bound at all, so a hand-written one there is still correct and must keep
+working. Reserving every `*_max_out` name would refuse exactly those. The
+issue's examples were doppler's `Farrow.delay_max_out` and
+`Resampler.execute_ctrl_max_out`, an array beside other params; gh-1998 made
+jm generate those, so the fence now stands on params beside an `arg_type`
+input (gh-1960), which still gets no `out=` and no bound.
 """
 
 from __future__ import annotations
@@ -65,8 +67,11 @@ def _quiet(fn, *a, **kw):
 
 #: The all-scalar shape gh-1079 generates a bound for.
 SIZEABLE = dict(arg_type="void", params=[("x", "double")])
-#: gh-412's carve-out: an array beside another param. No bound is generated.
-EXCLUDED = dict(arg_type="void", params=[("x", "double[]"), ("mu", "double")])
+#: A param beside an `arg_type` input (gh-1960). No bound is generated.
+EXCLUDED = dict(arg_type="float", params=[("mu", "double")])
+#: gh-1998: an array beside another param -- doppler's `Farrow.delay`. Its
+#: bound is generated now, so a hand-written one is refused like any other.
+BESIDE = dict(arg_type="void", params=[("x", "double[]"), ("mu", "double")])
 
 
 def _project(tmp_path: Path, name: str, **method_kw) -> Path:
@@ -98,8 +103,11 @@ def _project(tmp_path: Path, name: str, **method_kw) -> Path:
 class TestTheCollisionIsRefused:
     """jm owns `<m>_max_out`, so a method entry claiming it is refused."""
 
-    def test_the_generated_bound_is_reserved(self, tmp_path):
-        root = _project(tmp_path, "r", **SIZEABLE)
+    @pytest.mark.parametrize(
+        "shape", [SIZEABLE, BESIDE], ids=["all-scalar", "array-beside"]
+    )
+    def test_the_generated_bound_is_reserved(self, tmp_path, shape):
+        root = _project(tmp_path, "r", **shape)
         taken = reserved_python_members(C.load(root), "obj")
         assert "vo_max_out" in taken
         holder, hint = taken["vo_max_out"]
@@ -151,11 +159,11 @@ class TestTheCollisionIsRefused:
 class TestTheExcludedShapeStillWorks:
     """The fence the issue asked for by name.
 
-    gh-412 carves an array-beside-other-params method out of the `out=`
-    feature, so no bound is generated for it and a hand-written one is still
-    the right answer. doppler carries two. A fix that reserved every
-    `*_max_out` name would refuse them, which is why the reservation is
-    derived from `_outbuf.enabled` rather than from the name's shape.
+    A param beside an `arg_type` input gets no `out=` (gh-1960), so no bound
+    is generated for it and a hand-written one is still the right answer. A
+    fix that reserved every `*_max_out` name would refuse it, which is why
+    the reservation is derived from `_outbuf.enabled` rather than from the
+    name's shape.
     """
 
     def test_no_bound_is_reserved(self, tmp_path):
