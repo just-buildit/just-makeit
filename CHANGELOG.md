@@ -1,5 +1,64 @@
 ## [Unreleased]
 
+## [0.98.3] — 2026-10-05
+
+### Fixed
+
+- **A complex default on a method or function parameter compiles**
+    (gh-1887). The binding parses a complex parameter into a `Py_complex`
+    local, a struct, and seeds it with the declared default so an omitted
+    keyword reads that value. gh-1561 gave the seed one spelling for
+    constructor parameters, and three copies of the old one survived: method
+    parameters, `variable_output` method parameters and module function
+    parameters each emitted the default verbatim,
+    `Py_complex z_raw = 1.0f;`. `jm apply` exited 0 and the C compiler then
+    failed with "invalid initializer". All three now seed the struct as
+    `{re, im}`, and an omitted keyword returns the declared value.
+    `jm apply` rewrites a standalone object's `_ext.c` and a module's
+    function bindings. A module object's binding fragment belongs to the
+    author, so `jm status` lists one written before this fix as
+    UNEXPLAINED. Deleting it and running `jm apply` regenerates it.
+
+- **A generator's, tick's or sink's `steps()` takes its arguments by keyword**
+    (gh-1901). Unless a field was `controllable`, a void-arg object's
+    `steps()` was bound positional-only, so `g.steps(n=4)` raised
+    `TypeError: G.steps() takes no keyword arguments`, while both `.pyi`
+    writers declared `steps(self, n: int = 1)` and its docstring read
+    `steps(n=1)`. A scalar-to-void sink's `steps(x=a)` failed the same way,
+    and its docstring advertised an `out` argument and an ndarray result
+    that a sink does not have. Every `steps()` is now keyword-capable, as
+    `docs/arguments.md` already said, standalone and in a module; positional
+    calls are unchanged, and a sink's docstring reads `steps(x)`. `jm apply`
+    regenerates the binding.
+
+- **cmake-format and cmake-lint run under Python 3.15** (gh-1930). CPython
+    3.15 refuses capturing groups in `re.Scanner`, and cmakelang's last
+    release builds its lexer that way, so every cmakelang entry point
+    crashed on its first file when it ran under the Python being tested.
+    The 3.15 CI leg reported the crash as `cmake-lint found violations` with
+    an empty list, because the test helpers printed stdout alone. cmakelang
+    now runs under a pinned Python 3.14 whatever Python the suite uses,
+    through one Makefile command that `make format`, `make lint` and the
+    tests all use; its version is still the one `pyproject.toml` pins. The
+    two test helpers are one, which reports exit 2 as a cmake-lint crash
+    rather than as findings and always shows stderr, and fails when it has
+    no cmake-lint instead of passing quietly.
+
+- **A no-argument method that returns records builds warning-clean and
+    refuses an argument** (gh-1959). A method with `arg_type = "void"` and
+    no params that returned one record (`single`), or a list of them, was
+    bound as `(self, PyObject *args)` under `METH_VARARGS` and never read
+    `args`, so `-Wall -Wextra` reported an unused parameter in the
+    standalone `_ext.c` and in a module's fragment, adopted or not. The call
+    also took any positional arguments and dropped them, so `obj.fer(1)`
+    returned the record although both `.pyi` writers declare `fer(self)`.
+    Both shapes are now `METH_NOARGS` with `Py_UNUSED(ignored)`, like every
+    other no-argument wrapper, and `obj.fer(1)` raises `TypeError`.
+    `jm apply` regenerates a standalone `_ext.c` and an adopted fragment
+    (`fragment = "generated"`); one not yet adopted lists the wrapper and
+    its `PyMethodDef` table as differing in `jm adopt --check`, to accept by
+    name.
+
 ## [0.98.2] — 2026-10-05
 
 ### Fixed
