@@ -135,6 +135,16 @@ Commands:
                                 result: raise instead of returning an
                                 empty array. Pairs with --error /
                                 --error-message.
+    --count-type TYPE           The C type a --variable-output kernel
+                                returns its count in (default size_t). A
+                                signed one (int64_t, ...) goes with
+                                --error-negative: a negative count raises,
+                                with (rc=N) appended, and 0 stays a normal
+                                empty result.
+    --error-sentinel EXPR       A C constant (e.g. SIZE_MAX) a size_t count
+                                returns to REFUSE: it raises --error with
+                                --error-message, and 0 stays a normal empty
+                                result.
     --none-on-empty             The opposite reading: nothing yet is a
                                 NORMAL answer, so the call returns None.
                                 On a --borrow, a NULL view means "not
@@ -181,10 +191,12 @@ Commands:
                                 in which case it is an error code and the method
                                 raises. Distinct from a status return, where the
                                 int carries nothing but status. Signed integer
-                                return types only.
-    --error EXC                 Exception --error-negative raises (default
+                                return types only; on --variable-output the
+                                value is the count, typed by --count-type.
+    --error EXC                 Exception a declared refusal raises (default
                                 ValueError); one of jm's error categories.
-    --error-message TEXT        Text for that exception; jm appends (rc=%d).
+    --error-message TEXT        Text for that exception; jm appends (rc=%d)
+                                where there is a code to append.
     --count-default EXPR        C expression seeding the synthesized leading count
                                 argument of a void-input --variable-output method,
                                 e.g. "state->num_taps". Its default IS the zero-arg

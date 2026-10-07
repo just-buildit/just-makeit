@@ -153,11 +153,15 @@ def _c_string_literal(message: str, indent: int) -> str:
     return "\n".join(out)
 
 
-def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
+def _rc_raise_c(
+    category: str, message: str, indent: int = 21, *, pad: int = 8
+) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
     Shared by ``status_return``, ``error_negative`` (gh-823 Ask D) and the
-    ``exit`` finalizer (gh-805 §H). It lives here, beside `_c_string_literal`,
+    ``exit`` finalizer (gh-805 §H), and by a ``variable_output`` method's
+    signed count (gh-2012), whose negative value is the same code read the
+    same way. It lives here, beside `_c_string_literal`,
     rather than in `_methods` — the third caller is in `_destroy`, and a
     teardown emitter reaching into the method renderer for its raise is how
     the two spellings this docstring describes came apart in the first place.
@@ -186,7 +190,14 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
         ``PyErr_Format`` walks off the end of its varargs — on the error path
         only, which is the path least likely to be exercised before a release.
     indent : int
-        Continuation-line indent for the rendered literal.
+        Continuation-line indent for the rendered literal, and for the
+        ``(long long)_rc`` argument after it.
+    pad : int, keyword-only
+        Column of the statements. 8 is a raise in a function body's ``if``;
+        a raise nested one block deeper (a ``variable_output`` method's
+        ``out=`` branch, gh-2012) passes 12, with *indent* moved by the same
+        4, so the literal is wrapped for the column it is printed at rather
+        than shifted past 79 after wrapping.
 
     Notes
     -----
@@ -196,13 +207,22 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
     losslessly — so unifying on the wider conversion removes a difference
     rather than parameterising one, and the rendered message is unchanged
     (``"<name> failed (rc=-4)"`` either way).
+
+    Examples
+    --------
+    >>> print(_rc_raise_c("OSError", "seek failed", indent=25, pad=12), end="")
+                PyErr_Format(PyExc_OSError, "%s (rc=%lld)",
+                             "seek failed",
+                             (long long)_rc);
+                return NULL;
     """
+    lead = " " * pad
     return (
-        f"        PyErr_Format(PyExc_{category},"
+        f"{lead}PyErr_Format(PyExc_{category},"
         f' "%s (rc=%lld)",\n'
         f"{_c_string_literal(message, indent)},\n"
-        f"                     (long long)_rc);\n"
-        f"        return NULL;\n"
+        f"{' ' * indent}(long long)_rc);\n"
+        f"{lead}return NULL;\n"
     )
 
 
@@ -212,6 +232,8 @@ def empty_raise_c(
     decrefs: str = "",
     indent: int = 24,
     ret: bool = True,
+    *,
+    pad: int = 8,
 ) -> str:
     """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
 
@@ -235,6 +257,14 @@ def empty_raise_c(
     raise under a condition and returns once after it -- `reason_raise_c`'s
     ``else`` branch takes a single statement (gh-1614).
 
+    It is also the raise for a declared ``error_sentinel`` (gh-2012), for
+    the reason it is this one's: the value tested is the sentinel by
+    construction, so there is no code worth appending -- and ``(long long)``
+    of ``SIZE_MAX`` would print ``-1``, a number the kernel never returned.
+
+    *pad* is the statements' column, as `_rc_raise_c`'s: 12 for a raise one
+    block deeper, with *indent* moved by the same 4.
+
     Examples
     --------
     >>> print(empty_raise_c("ValueError", "bad length", indent=0))
@@ -243,11 +273,12 @@ def empty_raise_c(
             return NULL;
     <BLANKLINE>
     """
+    lead = " " * pad
     return (
-        f"        {decrefs}"
+        f"{lead}{decrefs}"
         f"PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, indent)});\n"
-        + ("        return NULL;\n" if ret else "")
+        + (f"{lead}return NULL;\n" if ret else "")
     )
 
 
@@ -590,9 +621,38 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
         # one reading: a binding that raises and a `.pyi` that documents no
         # exception is the gh-869 split.
         or m.get("error_on_empty")
+        # gh-2012: the unsigned count's refusal value, for a kernel whose
+        # zero is a real answer. A signed count needs no line here: it is
+        # `error_negative`, the trigger above.
+        or m.get("error_sentinel")
     ):
         return None
     return _raise_pair(m, str(m.get("name", "")))
+
+
+#: The C type a ``variable_output`` kernel returns its count in when the
+#: manifest names none (gh-2012). Today's type, so a method that does not
+#: declare `count_type` renders byte-identically to before the key existed.
+DEFAULT_COUNT_TYPE = "size_t"
+
+
+def count_type(m: dict) -> str:
+    """The C type *m*'s kernel returns its output count in (gh-2012).
+
+    ``return_type`` names the ELEMENT of a ``variable_output`` result, so the
+    count needs a key of its own: ``count_type``, absent meaning
+    `DEFAULT_COUNT_TYPE`. Read through here by every writer of the kernel's
+    prototype -- the ``_core.h`` declaration, the ``_core.c`` stub and the
+    binding's call -- so the three cannot name different types.
+
+    Examples
+    --------
+    >>> count_type({"name": "interleave"})
+    'size_t'
+    >>> count_type({"name": "execute_ctrl", "count_type": "int64_t"})
+    'int64_t'
+    """
+    return str(m.get("count_type") or DEFAULT_COUNT_TYPE)
 
 
 def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
@@ -666,6 +726,31 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     if pair is None:
         return []
     category, message = pair
+    # gh-2012: a `variable_output` method may declare its zero refusal AND a
+    # negative code or a sentinel, and each is its own condition with its own
+    # message shape -- `(rc=N)` is appended to one and not the other. One
+    # entry per condition the binding tests, in the order it tests them, so
+    # the documentation is a list of what raises rather than a sentence
+    # trying to hold three.
+    out: "list[tuple[str, str]]" = []
+    if m.get("error_negative"):
+        out.append(
+            (
+                category,
+                f"If the C call returns a negative value. The exception "
+                f"message is ``{message}``, with the return code appended "
+                f"(gh-869).",
+            )
+        )
+    if m.get("error_sentinel"):
+        out.append(
+            (
+                category,
+                f"If the C call returns ``{m['error_sentinel']}``, its "
+                f"refusal value, in place of a count. The exception message "
+                f"is ``{message}``.",
+            )
+        )
     # gh-1159: a refusal is not a status, and saying so matters. This text is
     # what a caller reads at the REPL and in the `.pyi`, and the
     # `status_return` sentence -- "returns a non-zero status ... with the
@@ -674,22 +759,21 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     # by construction. A generated docstring that describes a mechanism the
     # binding does not have is the gh-869 split wearing the other face.
     if m.get("error_on_empty"):
-        return [
+        out.append(
             (
                 category,
                 f"If the C call writes no output. Its return value is a "
                 f"count, so a zero-length result is a REFUSAL rather than an "
                 f"empty answer. The exception message is ``{message}``.",
             )
-        ]
-    condition = (
-        "a negative value" if m.get("error_negative") else "a non-zero status"
-    )
+        )
+    if out:
+        return out
     return [
         (
             category,
-            f"If the C call returns {condition}. The exception message is "
-            f"``{message}``, with the return code appended (gh-869).",
+            f"If the C call returns a non-zero status. The exception message "
+            f"is ``{message}``, with the return code appended (gh-869).",
         )
     ]
 

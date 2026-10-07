@@ -1053,6 +1053,8 @@ way.
 | `max_results = N`                      | (TOML only; default 64)                                                                             | 🟡           |
 | `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418) |
 | `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159) |
+| `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012) |
+| `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                         | ✅ (gh-2012) |
 | `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                              | ✅ (gh-823)  |
 | `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                             | ✅ (gh-1312) |
 | `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                    | ✅ (gh-1312) |
@@ -1550,6 +1552,8 @@ One entry per `just-makeit method` call.
 | `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
 | `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly |
 | `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)     |
+| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)     |
+| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
 | `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
 | `batch`           | bool                    | `--batch`                                                         |

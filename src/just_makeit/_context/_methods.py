@@ -57,6 +57,7 @@ from ._diagnostics import (
     # defaults a third time behind a branch that cannot be taken.
     _raise_pair as raise_pair_of,
     _rc_raise_c,
+    count_type as count_type_of,
     declared_raise,
     empty_raise_c,
     raises_doc,
@@ -290,9 +291,73 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
     )
 
 
-def _kernel_call_block(call_expr: str, nogil: bool) -> str:
-    """``size_t n_out = <call>;`` — the variable-output shape."""
+def _kernel_call_block(
+    call_expr: str, nogil: bool, m: "dict | None" = None
+) -> str:
+    """``size_t n_out = <call>;`` — the variable-output shape.
+
+    gh-2012: a SIGNED count (`error_negative`, with the `count_type` it
+    requires) lands in ``<count_type> _rc`` instead, because its sign has to
+    be read before it is a length; :func:`_count_refusal_c` reads it and only
+    then declares ``n_out``. Everything after that sees the same
+    ``size_t n_out`` as before, so no later comparison mixes signedness.
+    """
+    if m and m.get("error_negative"):
+        return _nogil_call(count_type_of(m), "_rc", call_expr, nogil)
     return _nogil_call("size_t", "n_out", call_expr, nogil)
+
+
+def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
+    """A ``variable_output`` count's declared refusal value (gh-2012).
+
+    The kernel's one return value is the count, so a refusal has to be a
+    value no count can be. Two forms, each chosen by the C library's own
+    convention:
+
+    ``error_negative`` (with a signed `count_type`)
+        ``_rc < 0`` raises through `_rc_raise_c`, the raise the scalar
+        ``error_negative`` already uses, so the message carries
+        ``(rc=N)`` -- doppler's negative ``DP_ERR_*`` codes. ``_rc >= 0``
+        becomes ``size_t n_out``.
+    ``error_sentinel``
+        ``n_out == (<sentinel>)`` raises through `empty_raise_c`: the value
+        tested IS the sentinel, so there is no code worth appending. For a
+        library that keeps ``size_t`` counts and cannot change an ABI.
+
+    Emitted on BOTH call paths, right after the kernel returns and BEFORE
+    `_coerce.returned_count_c`: a refusal value is past any capacity, so
+    the overflow guard would otherwise answer first, as a ``RuntimeError``
+    blaming the kernel for writing ``18446744073709551615`` elements. Each
+    path passes the arrays IT holds as *release* -- ``out_arr`` on the
+    ``out=`` path, ``arr0..`` on the allocate path (gh-1159's lesson).
+    ``error_on_empty`` / ``none_on_empty`` still read zero, after the guard,
+    independently of this.
+
+    Empty when the method declares neither, so its binding is unchanged.
+    """
+    body = len(pad) + 4
+    lead = " " * body
+    if m.get("error_negative"):
+        return (
+            f"{pad}if (_rc < 0) {{\n"
+            f"{lead}{release}\n"
+            + _rc_raise_c(*raise_pair_of(m, name), indent=body + 13, pad=body)
+            + f"{pad}}}\n"
+            f"{pad}size_t n_out = (size_t)_rc;\n"
+        )
+    sentinel = m.get("error_sentinel")
+    if sentinel:
+        # Parenthesised: the sentinel is the author's C, and `== A | B`
+        # would bind as `(n_out == A) | B`.
+        return (
+            f"{pad}if (n_out == ({sentinel})) {{\n"
+            f"{lead}{release}\n"
+            + empty_raise_c(
+                *raise_pair_of(m, name), indent=body + 16, pad=body
+            )
+            + f"{pad}}}\n"
+        )
+    return ""
 
 
 def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
@@ -2438,11 +2503,16 @@ def make_methods_ctx(
             # rewrites the author's prototype out from under their code.
             if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                 _moc_decl = ""
+            # gh-2012: the kernel returns its count in `count_type`, which
+            # `_method._build_method_prototype` and the `_core.c` stub read
+            # through the same accessor. `_max_out` stays `size_t`: it is a
+            # capacity, never a refusal.
+            _count_t = count_type_of(m)
             if has_arg:
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
                     f" const {arg_disp} *in, size_t n_in,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
@@ -2454,7 +2524,7 @@ def make_methods_ctx(
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
@@ -2463,7 +2533,7 @@ def make_methods_ctx(
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state, size_t n,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
@@ -2899,6 +2969,7 @@ def make_methods_ctx(
                     _kernel_call_block(
                         f"{c_fn}({_out_call_data}{_out_cap_arg})",
                         nogil,
+                        m,
                     )
                 )
                 _out_decref = _reindent(decref_in) if decref_in else ""
@@ -3033,6 +3104,10 @@ def make_methods_ctx(
                     f"        }}\n"
                     f"{_out_kernel}"
                     f"{_out_decref}"
+                    # gh-2012: a declared refusal value, read before the
+                    # guard below -- which would otherwise report it as an
+                    # overrun. This path holds `out_arr`.
+                    + _count_refusal_c(m, name, "Py_DECREF(out_arr);", " " * 8)
                     # gh-1716: `n_out` becomes the length of a view over the
                     # caller's `_cap`-element buffer; past it, the view reads
                     # beyond the caller's allocation.
@@ -3182,6 +3257,7 @@ def make_methods_ctx(
             _kernel_vo = _kernel_call_block(
                 f"{c_fn}({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
                 nogil,
+                m,
             )
             if error_on_empty:
                 # The same test, the opposite verdict. Rendered from
@@ -3282,6 +3358,9 @@ def make_methods_ctx(
                     f"{_vo_alloc}"
                     f"{_kernel_vo}"
                     f"{decref_in}"
+                    # gh-2012: the same refusal, before the same guard. This
+                    # path holds the arrays it allocated, not `out_arr`.
+                    + _count_refusal_c(m, name, _decref_arrs, " " * 4)
                     # gh-1716: past `_cap`, PyArray_Resize below GREW the
                     # result into memory the kernel never wrote.
                     + _coerce.returned_count_c(

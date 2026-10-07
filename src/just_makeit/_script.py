@@ -647,6 +647,11 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_bool_flag("--variable-output"))
     if m.get("error_on_empty"):
         parts.append(_bool_flag("--error-on-empty"))
+    # gh-2012: the count's type and its unsigned refusal value.
+    if m.get("count_type"):
+        parts.append(_flag("--count-type", str(m["count_type"])))
+    if m.get("error_sentinel"):
+        parts.append(_flag("--error-sentinel", str(m["error_sentinel"])))
     if m.get("count_default"):
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):
