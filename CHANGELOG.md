@@ -1,5 +1,180 @@
 ## [Unreleased]
 
+## [0.99.0] — 2026-10-06
+
+### Added
+
+- **An ordinary object registers a hand-written method:
+    `[[<obj>.extra_methods]]`** (gh-1997). A CPython function in the
+    object's `_extra.c` (`<comp>_ext_extra.c`, or `<cname>_ext_<comp>_extra.c`
+    in a module) had no way into the object's method table: `manual_stub`
+    emits only a `.pyi` placeholder, and once a module fragment is jm's
+    (`fragment = "generated"`) its table is rendered whole from the manifest,
+    so a row typed into it was lost on the flip and `jm adopt` refused it.
+    A row now declares it with gh-1190's composer keys, `name`, `fn`,
+    `flags`, `args`, `returns` and `doc`: jm writes the `PyMethodDef` entry
+    after the generated ones, a prototype above the table (in a module, in
+    the aggregator before the fragment, so a sacred fragment's own row
+    compiles too), the `#include` of the file and the `.pyi` member, through
+    the one emitter the composer now shares. Write the function with the
+    signature its `flags` imply, `self` as a `PyObject *`. A `manual_stub`
+    method of the same name may stay: the row's stub replaces its
+    placeholder, and a stub written by hand is kept. `apply` refuses a row
+    whose name jm already generates (`reset`, a property, `__enter__`, ...)
+    or a `[[<obj>.methods]]` entry declares, two rows of one name, one `fn`
+    with two `flags`, and an `fn` the object's `_core.h` declares; `jm method`
+    refuses a name a row holds. A view does not inherit the rows, and
+    `jm script` names them in a NOTE.
+
+- **`out=` and `<m>_max_out` for an array beside other params** (gh-1998).
+    A `variable_output` method whose array param sits beside a scalar
+    (`delay(x, mu)`) or another array (`execute_ctrl(x, ctrl)`) got no
+    `out=` buffer and no `<m>_max_out()` -- the gh-412 carve-out -- so a
+    project wanting either hand-wrote the binding and a `manual_stub`, and
+    `jm adopt` refused the fragment as "binding ahead". Both are generated
+    now, in the binding and both `.pyi` faces: `out` follows the params
+    (`delay(x, mu, out=None)`), and the buffer is sized from the first array
+    param, which is the length `<m>_max_out()` was already given and the
+    allocation already fell back to. An interleaved first array
+    (`elements_per_sample`, gh-1996) counts the buffer in samples, as the
+    rest of the method does, and the overflow and returned-count errors of
+    such a method now say "samples of N elements" where they used to say
+    "elements" of a count in samples. A `manual_stub` entry for that
+    `<m>_max_out` is now refused, with the instruction to drop it: the stub
+    it declared is jm's own. Params beside an `arg_type` input still get no
+    `out=`, since that parse drops them (gh-1960).
+
+- **`rank` and `elements_per_sample` on a constructor array:
+    `[[<obj>.init_params]]`** (gh-2004). gh-805 §C's two array-shape keys
+    were a method's and a module function's only, so a constructor array
+    whose C contract is 1-D silently flattened a 2-D input through
+    `PyArray_SIZE`: `HalfbandDecimator(np.zeros((4, 19)))` constructed, and
+    `jm adopt` dropped the hand-written guard that had refused it, because no
+    key could carry it. Written anyway, either key drew an unknown-key warning
+    and did nothing. Now `rank = 1` on an init param emits the method form's
+    guard, `ValueError: h must be a 1-D array`, on every constructor path that
+    acquires an array (plain, after another array, dtype dispatch, defaulted
+    `"[]"`, optional dispatch, a view's own constructor, a module object's
+    fragment); it fails as a `tp_init` must, `return -1`, and releases every
+    array already held. `elements_per_sample = N` divides the length
+    `create()` receives into samples. Both are TOML-only, like their method
+    spelling, and `jm script` names them in a NOTE. `load` now refuses
+    either key where nothing would read it: on a param that is not an array
+    (on a method or module-function param too, where it was silently
+    ignored), a value that is not an integer of at least 1 (`rank = 0` was
+    read as no guard), and on an init param a `rank` a `T[][]` contradicts or
+    an `elements_per_sample` above 1 on a `T[][]` or a dtype-dispatch array.
+    An undeclared key renders exactly what it did.
+
+### Fixed
+
+- **A method that returns an array of `void` is refused, before anything is
+    written** (gh-1885). Three shapes were accepted: a `--variable-output`
+    method with `--return-type void` and nothing else naming its element,
+    `jm object --variable-output` on a `consumer` or a `generator` (or any
+    `--arg-type void` with no `--return-type`), and a `--batch` method with
+    `--return-type void`. jm wrote the method's row, then crashed with
+    `KeyError: 'void'` rendering the binding, and every later `jm status`
+    and `jm apply` crashed on the manifest it had just written. Each now
+    exits 1 with one `error:` line that names the method and the flag that
+    names its element, and leaves the project untouched. A manifest that
+    already holds such a row gets the same refusal from `jm apply` and
+    `jm status` instead of a traceback; `jm remove method` clears it.
+
+- **A scaffolded `bootstrap.toml` bootstraps: its just-makeit source
+    fetches, and every Linux dev group installs patchelf** (gh-1897).
+    `[tools.just-makeit]` named `just-bashit:just-makeit`, which just-runit
+    fetches from `jbs/just-makeit.sh`. `jbs/` holds only just-bashit's own
+    scripts, so the fetch 404'd and `just-runit install` failed in every
+    project `jm new` made. The source is now jm's own installer,
+    `https://just-buildit.github.io/just-makeit/install.sh`, the one the
+    README's `curl` line runs. No `[dev.apt]`, `[dev.pacman]`, `[dev.dnf]`
+    or `[dev.zypper]` group named `patchelf`, which auditwheel needs to
+    repair a Linux wheel, so a project provisioned with
+    `jbx install-deps -g dev` failed `pip wheel .`. All four now list it,
+    as jm's own `install-deps` already did. `bootstrap.toml` is
+    create-only, so `jm status` reports an existing project's as OUTDATED;
+    adopting it is your call.
+
+- **Both installers install patchelf on Linux, and `install-deps --check`
+    reports it missing** (gh-1972). auditwheel needs patchelf to repair a
+    Linux wheel. `just-makeit install-deps` listed it for every Linux
+    package manager but checked only for cmake and a C compiler, so on a
+    box with both and no patchelf `--check` printed "All build dependencies
+    are already installed." and exited 0, and a run installed nothing. The
+    curl installer, `install.sh`, never installed it at all. patchelf is now
+    a dependency of its own on Linux in both: `--check` names it and exits
+    1, a run installs it, and on a distro neither knows the hint names it
+    among the packages to install by hand. macOS is not asked for it, since
+    delocate repairs a macOS wheel without it.
+
+- **`jm apply` and `jm status` refuse a method's unusable `out_type`,
+    `multi_output` or `extra_args` type instead of crashing** (gh-1977).
+    The manifest's type check covered `arg_type`, `return_type`, `params`
+    and `result_fields`, and nothing else, so a type `jm method` refuses on
+    the command line (`multi_output = ["void"]`, `out_type = "void"` on a
+    plain method, any unregistered spelling) reached the binding and both
+    commands died with a bare `KeyError`. A module function's `out_type`
+    crashed the same way. Each now exits 1 with one `error:` line naming the
+    method or function and the key, and leaves the project untouched.
+    `--out-type` and `--multi-output` on `jm method`, `jm object` and
+    `jm function` ask the same predicate the manifest does, so the two
+    faces refuse the same spellings. That narrows what a hand-written
+    manifest may say: a method's `out_type` must name an array element
+    (`float`, not `float[]` or `bool`) and each `multi_output` entry a
+    registered scalar, on every method shape, exactly as on the command
+    line. A function keeps its own spellings (`float64[M]`, and `str` on a
+    variable-output function).
+
+- **`jm remove` leaves the tree its manifest describes: the link-check
+    table and the element contract follow the remove** (gh-1978).
+    `jm remove method`, `property`, `warning` or `error` on a standalone
+    object re-rendered the binding and the stub but not
+    `native/tests/test_<obj>_symbols.c`, so a removed method's or
+    property's symbol stayed in it: `jm status --check` reported it STALE
+    and exited 1 on the tree the remove had just written, and once you
+    deleted the body as the remove's note says, the C test failed to link
+    with `undefined reference`. The remove now re-renders through the same
+    call `jm property`, `jm warning` and `jm error` use, which writes the
+    table. A module object was not affected. The same sweep found
+    `test_<obj>_invariants.py` (the gh-1404 element contract) outliving its
+    pair: `jm remove method` of the pair's writer or reader now deletes it,
+    and `jm remove object` takes it with the object -- left behind, it
+    imported the removed class and the project's Python tests failed to
+    collect, while `status --check` exited 0.
+
+- **The curl installer sees an up-to-date just-makeit on macOS and Alpine**
+    (gh-1993). `install.sh` read the latest version off
+    `pip index versions` with `grep -oP`, which only GNU grep has. On macOS
+    (BSD grep) and Alpine (busybox grep) the version came back empty, so
+    just-makeit never counted as current: `--check` always exited 1, and
+    every run reinstalled it. The version is now read with POSIX `sed`.
+
+- **`elements_per_sample` on a `variable_output` method's array is honoured,
+    no longer accepted and ignored** (gh-1996). The key reached only the
+    `<p>_len` local of the ordinary method-param builder, which the
+    variable-output binding never used, so an interleaved `int16_t[]` I/Q
+    kernel was handed its input and its `pass_capacity` capacity as element
+    counts where it counts samples: it wrote twice as far as the buffer
+    allows, and its result came back half as long as what it produced. Every
+    count now crosses into C in samples and comes back as elements: the input,
+    the `max_out` count, the capacity (allocated and `out=`), the trimmed
+    result, and `<m>_max_out`, which still takes `len(x)` and answers in
+    elements, so it sizes `out=` as before. An
+    output whose element differs from the interleaved array's is refused
+    before anything is written, as is an `elements_per_sample` that is not an
+    integer of at least 1. `rank`, the key's sibling, was dropped on the same
+    path and now guards it too.
+
+### Docs
+
+- **`_inherited_error` says what it does** (gh-1965). Its docstring
+    still said a teardown inherits `error` and `error_message` from the
+    `exit` finalizer "both keys or neither", the rule gh-864 retired. The
+    code inherits each key on its own, as `docs/declarative-scaffolding.md`
+    says. The docstring now states that rule and its reason, once, and the
+    comment that contradicted it is gone. No behaviour change.
+
 ## [0.98.3] — 2026-10-05
 
 ### Fixed
