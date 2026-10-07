@@ -183,3 +183,17 @@ def test_no_note_when_the_bench_does_not_call_it(tmp_path, shape):
     out = _ok(root, "remove", "method", "m", "--object", "o", "--force")
 
     assert "still calls" not in out, out
+
+
+def test_no_note_when_the_author_deleted_the_bench(tmp_path):
+    """The file is theirs to delete as well as to edit."""
+    _ok(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _ok(root, "object", "o")
+    _ok(root, "method", "o", "m")
+    _bench(root).unlink()
+
+    out = _ok(root, "remove", "method", "m", "--object", "o", "--force")
+
+    assert "still calls" not in out, out
+    assert not _bench(root).exists()
