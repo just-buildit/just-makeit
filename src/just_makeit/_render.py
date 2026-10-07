@@ -1452,11 +1452,11 @@ def _build_params_parse(
             # length out — this pair is already the documented peer shape, and
             # an interleave factor applied to only one of them is exactly the
             # drift that costs a buffer overrun in whichever face was missed.
-            _rank = p.get("rank")
+            _rank = _coerce.array_rank(p)
             if _rank:
                 arr_acq.append(
                     _coerce.array_rank_guard(
-                        pname, arr_var, int(_rank), prior_decrefs.strip()
+                        pname, arr_var, _rank, prior_decrefs.strip()
                     ).rstrip("\n")
                 )
             arr_acq.append(

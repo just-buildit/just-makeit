@@ -235,7 +235,9 @@ result comes back as `n_out * 2` elements
 Python face stays in elements: `<m>_max_out(len(x))` sizes an `out=` array
 directly. The output must carry the interleaved array's element, since nothing
 declares how many elements of another type make one sample; jm refuses the
-method otherwise.
+method otherwise. On an init param the key does the same for the length
+`create()` receives
+([gh-2004](https://github.com/just-buildit/just-makeit/issues/2004)).
 
 ## Layer 3 — `out=` is for placement and determinism
 

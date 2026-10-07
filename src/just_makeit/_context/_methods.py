@@ -2733,12 +2733,12 @@ def make_methods_ctx(
                         # this acquisition is that builder's peer, and the
                         # `rank` it was never taught was accepted and dropped
                         # here, so a 2-D array flattened into the kernel.
-                        if _p.get("rank"):
+                        if _coerce.array_rank(_p):
                             _conv_lines.append(
                                 _coerce.array_rank_guard(
                                     _pn,
                                     f"{_pn}_arr",
-                                    int(_p["rank"]),
+                                    _coerce.array_rank(_p),
                                     _release,
                                 ).rstrip("\n")
                             )

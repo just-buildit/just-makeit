@@ -190,6 +190,27 @@ size_t
 
 Python call: `resamp.execute_ctrl(np.zeros(64, dtype=np.complex64))`
 
+An array of any rank converts, and `name_len` is its total element count, so
+a `(4, 19)` array reaches a 1-D contract as 76 flat elements. Two manifest
+keys say otherwise (gh-805 §C). `rank = 1` refuses any other rank with
+`ValueError: name must be a 1-D array`; `elements_per_sample = 2` makes
+`name_len` count samples of two elements, for interleaved I/Q in an
+`int16_t[]` (see [Memory ownership](../memory-ownership.md)). Both work on a
+method param, a module-function param and an init param (gh-2004), where
+the count is the length `create()` receives:
+
+```toml
+[[hb.init_params]]
+name = "h"
+type = "float[]"
+rank = 1
+```
+
+Both are TOML-only. `load` refuses either one on a param that is not an
+array, a value that is not an integer of at least 1, and, on an init param,
+a `rank` a `T[][]` contradicts or an `elements_per_sample` above 1 where
+there is no single length to divide (a `T[][]`, or a dtype-dispatch array).
+
 `--param` composes with `--arg-type`: the `--arg-type` input comes first (as
 `x`), then each `--param` in order.
 

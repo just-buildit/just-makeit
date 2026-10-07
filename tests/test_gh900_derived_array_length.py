@@ -72,7 +72,7 @@ _DERIVED = (
 # gh-1224 appended three more trailing slots (`object` and the two it
 # resolves to), all empty for a param that names no other generated class;
 # gh-1756 put `str_hint` between them, empty here too.
-_DERIVED_STORED = _DERIVED + ("", "") + ("", "", "", "")
+_DERIVED_STORED = _DERIVED + ("", "") + ("", "", "", "", "", "")
 _PLAIN = ("h", "float[]", "")
 
 
