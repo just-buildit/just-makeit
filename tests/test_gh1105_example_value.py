@@ -34,9 +34,9 @@ Three defects, and the first two were invisible behind the third:
    about the author's code for an init-params one — `errors_warnings` derives
    all three of its fields from `capacity`/`slots`. Asserted now only where
    jm generated the constructor that produces the value. The round-trip stays
-   in both cases: it is what an accessor test is for, and "reset restores the
-   declared defaults" is still covered by `test_reset`, where the code under
-   test really is jm's.
+   in both cases: it is what an accessor test is for. (`test_reset` kept its
+   declared-default assertions under init_params until gh-1882: reset()
+   returns to the post-create state, so they were this same guess.)
 
 After: **215 passed, 0 skipped, 0 failed** across the fleet, 21 of 26 examples
 carrying at least one real test. No example regressed.
@@ -261,11 +261,8 @@ class TestThePostConstructionAssertion:
     def _accessor_block(text: str) -> str:
         """Just the `/* n: getter / setter */` section.
 
-        Scoped deliberately: `reset_test_c` also asserts `get_n(obj) == 0`,
-        and that one is CORRECT and stays. reset's contract is "restore the
-        declared defaults", and jm generates the `reset()` that does it — so
-        the value being asserted there really is jm's own, which is the same
-        test this whole change applies.
+        Scoped deliberately: this file's question is the ACCESSOR test. What
+        `reset_test_c` asserts is gh-1882's, pinned below.
         """
         i = text.index("getter / setter */")
         j = text.find("/*", i + 1)
@@ -283,16 +280,20 @@ class TestThePostConstructionAssertion:
             _ctest_file(sv_root)
         )
 
-    def test_reset_still_asserts_the_declared_defaults(self, tmp_path):
-        """The other half of the rule, and the reason the round-trip losing
-        its initial assertion costs no coverage: "reset restores the declared
-        defaults" is still checked, on both faces, where the code under test
-        is jm's."""
+    def test_reset_asserts_no_default_either(self, tmp_path):
+        """gh-1882: the same guess, after a reset. This pinned the opposite
+        -- "reset restores the declared defaults" on both faces, because jm
+        writes the reset() body -- but reset()'s contract is the POST-CREATE
+        state, and under init_params the author's create() decides that. So
+        `test_reset` only calls it, as for a `reset_impl`, on both faces;
+        `tests/test_gh1882_reset_is_authors.py` holds the one predicate."""
         root = _project(tmp_path, "m", [_ip("cap", example="1024")])
-        assert "assert obj.get_n() == 0" in _body(
-            _pytest_file(root, "m"), "test_reset"
-        )
-        assert "CHECK(obj_get_n(obj) == 0);" in _ctest_file(root)
+        body = _body(_pytest_file(root, "m"), "test_reset")
+        assert "obj = Obj(cap=1024)" in body
+        assert "obj.reset()" in body
+        assert "obj.get_n()" not in body
+        assert "obj_reset(obj);" in _ctest_file(root)
+        assert "CHECK(obj_get_n(obj) == 0);" not in _ctest_file(root)
 
 
 class TestTheExampleActuallyRuns:

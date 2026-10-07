@@ -17,7 +17,6 @@ from . import _procglobal
 from . import _report
 from . import _context as Ctx
 from . import _render as R
-from . import _types as T
 from ._docstring import class_import_line
 from ._builtins import overridden_builtin_slots, require_param_names
 from . import _docstring
@@ -1199,6 +1198,11 @@ def run(
     # reason it passes `destroy`: the binding rendered here is the replay's
     # final one for an object with no other members.
     extra_methods: "list[dict] | None" = None,
+    # gh-1882: the manifest's own `reset_impl` / `reset_impl_file`, as
+    # written. Only the replay passes them, so every later render of its
+    # scratch tree reads that reset() is the author's; *reset_impl_body*
+    # is what this render reads.
+    reset_impl_decl: "dict[str, str] | None" = None,
 ) -> None:
     C.require_name(component, "component")
     # gh-910: every OTHER name this object declares, checked here because the
@@ -1321,6 +1325,8 @@ def run(
             # argument, not the manifest: at creation (and in a replay) the
             # component is not in `cfg` until `add_component` below.
             str_hints=state_str_hints,
+            # gh-1882: the argument too, for the same reason.
+            reset_impl=reset_impl_body is not None,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1432,37 +1438,11 @@ def run(
             ),
         )
     )
-    # Re-generate pyi_examples with the actual package name (not placeholder).
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in (vars_ or [])
-            if not T.parse_array_type(ct)
-        ]
-        if not no_state
-        else []
-    )
     # No module argument: `_init.run` is the standalone-object path (see the
     # note on `doc` above); `_object.py` renders module objects and passes
     # the module id there. The helper is still used so the spelling is
     # shared rather than re-typed (gh-1208).
     import_line = class_import_line(pkg, ctx["Component"])
-    # gh-273: suppress the construction doctest when a required init-param has
-    # no default — there is no valid seed and a validating ctor would reject the
-    # type's zero under `pytest --doctest-glob='*.pyi'`.
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            bool(array_args),
-            import_line,
-            ctx.get("py_create_args", ""),
-            ctx["Component"],
-            no_reset=no_reset,
-            init_params=init_params,
-        )
-        if scalar_state and not Ctx._unseedable_required(init_params)
-        else ""
-    )
     # Class docstring via the one shared builder (same as the module .pyi path),
     # so the summary/Parameters can never drift between the two generators. The
     # scaffold/create path has only jm's own boilerplate Doxygen in the header,
@@ -1479,7 +1459,11 @@ def run(
         import_line,
         ctx.get("py_create_args", ""),
         doc_blocks=None,
-        custom_reset=bool(init_params) or no_reset,
+        custom_reset=Ctx.reset_is_authors(
+            reset_impl=reset_impl_body is not None,
+            init_params=init_params,
+            no_reset=no_reset,
+        ),
         csym=ctx["csym"],
     )
 
@@ -1874,6 +1858,9 @@ def run(
     C.set_destroy_spec(cfg, comp, destroy or {})
     # gh-1997: and the extra-method rows, for the same reason.
     C.set_extra_methods(cfg, comp, extra_methods or [])
+    # gh-1882: and the declared reset body, which every later render reads
+    # through `Ctx.manifest_reset_is_authors`.
+    cfg[comp].update(reset_impl_decl or {})
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

@@ -410,6 +410,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     no_state=C.is_no_state(cfg, comp),
                     init_params=C.init_params(cfg, comp),
                     csym=comp_ctx["csym"],
+                    reset_impl=bool(Ctx.declared_reset_impl(cfg, comp)),
                 )
             )
             comp_ctx.update(Ctx.make_perf_ctx(perf))

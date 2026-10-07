@@ -31,7 +31,6 @@ from ._docstring import authored_class_brief, class_import_line
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
-from . import _types as T
 from ._builtins import builtin_owned_members, overridden_builtin_slots
 from ._init import (
     _make_component_ctx,
@@ -130,6 +129,8 @@ def component_ctx(
             # gh-542: the glue render is exactly the pass that used to
             # silently reinstate a hand-removed reset() binding.
             no_reset=C.is_no_reset(cfg, object_name),
+            # gh-1882: whose reset() body it is.
+            reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),
             # gh-676/gh-644: the built-ins derive from the header too. Without
             # this the standalone generators never saw doc_blocks at all, so a
             # hand-written @brief on <obj>_reset/_step/_steps reached the
@@ -264,40 +265,7 @@ def component_ctx(
         )
     )
 
-    # Re-generate pyi_examples with the real package name. make_state_ctx seeds
-    # this slot with <<package>>/<<Component>> placeholders that only _init.run
-    # was resolving, so every regenerating command (jm property, and now jm
-    # warning) rewrote the stub's doctest to a literal
-    # `>>> from <<package>> import <<Component>>`. That went unnoticed because
-    # the placeholder scan in tests covers .py/.c/.h/.toml/.txt but not .pyi —
-    # the one file it corrupts. Doing it here fixes every caller at once, which
-    # is the point of a single assembly chain.
     init_params = C.init_params(cfg, object_name)
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in state_vars_list
-            if not T.parse_array_type(ct)
-        ]
-        if not C.is_no_state(cfg, object_name)
-        else []
-    )
-    # gh-273: suppress the construction doctest when a required init-param has
-    # no default — there is no valid seed and a validating ctor would reject
-    # the type's zero under `pytest --doctest-glob='*.pyi'`.
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            bool(C.array_args(cfg, object_name)),
-            class_import_line(pkg, Component, _module_id),
-            ctx.get("py_create_args", ""),
-            Component,
-            no_reset=C.is_no_reset(cfg, object_name),
-            init_params=init_params,
-        )
-        if scalar_state and not Ctx._unseedable_required(init_params)
-        else ""
-    )
     # Class docstring via the one shared builder (identical to the module .pyi
     # path), so the two generators never drift. doc_blocks carry the sacred
     # header's create() @brief/@param; they are seeded on cfg by callers that
@@ -324,7 +292,7 @@ def component_ctx(
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
         state_docs=C.state_docs(cfg, object_name),
-        custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
+        custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
         create_fn=C.object_create_fn(cfg, object_name),
         raises=_cls_raises,
         warns=_cls_warns,
@@ -370,8 +338,7 @@ def component_ctx(
                 doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
                 manifest_doc=cfg.get(object_name, {}).get("doc", ""),
                 state_docs=C.state_docs(cfg, object_name),
-                custom_reset=bool(init_params)
-                or C.is_no_reset(cfg, object_name),
+                custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
                 create_fn=C.object_create_fn(cfg, object_name),
                 raises=_cls_raises,
                 warns=_cls_warns,

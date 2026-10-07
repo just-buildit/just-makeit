@@ -249,6 +249,12 @@ reset_impl_file  = "legacy/lfsr_core.c::lfsr_reset"
 `create_impl` / `create_impl_file` are mutually exclusive, as are
 `reset_impl` / `reset_impl_file`.
 
+A `reset_impl` may keep a field on purpose -- a delay line keeps its
+`length` -- so jm stops claiming what `reset()` restores: the generated C and
+Python reset tests only call it, and the `.pyi` docstring leaves out its
+"Reset restores defaults" example (gh-1882). Assert what your reset keeps
+and clears in a test of your own.
+
 ### Custom `destroy()` body — `destroy_impl`
 
 Objects that allocate auxiliary resources in `create_impl` (heap buffers,

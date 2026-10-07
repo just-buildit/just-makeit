@@ -38,6 +38,7 @@ except ModuleNotFoundError:  # Python < 3.11
 from pathlib import Path
 
 from . import _config as C
+from . import _context as Ctx
 from . import _modplatforms
 from . import _procglobal
 from . import _createonly
@@ -414,6 +415,13 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # row has no CLI spelling. Dropped here, the replayed binding has no
         # row for a method the author wrote, and `status` diffs against that.
         "extra_methods": C.extra_methods(cfg, comp),
+        # gh-1882: the body itself reaches `_object.run` as `reset_impl_body`,
+        # resolved -- but only for the one render that splices it. Every
+        # later one (a method's `.pyi`, the module aggregate) asks the
+        # SCRATCH manifest whether reset() is the author's, and without the
+        # declaration there it answered no and demonstrated a reset the
+        # author's body does not do: a doctest that fails.
+        "reset_impl_decl": Ctx.declared_reset_impl(cfg, comp),
     }
 
 
