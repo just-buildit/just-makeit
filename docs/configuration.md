@@ -1131,8 +1131,12 @@ table loses nothing on the flip.
 The rows follow the generated ones in the table, in the order declared. `apply`
 refuses a row whose `name` a member jm generates already holds (`reset`, a
 property, `__enter__`, …) or a `[[<component>.methods]]` entry declares, two
-rows of one name, one `fn` given two different `flags`, and an `fn` the
-object's `_core.h` declares (a core function, not a CPython method). A
+rows of one name, one `fn` given two different `flags`, an `fn` the object's
+`_core.h` declares (a core function, not a CPython method), and an `fn` the
+binding jm generates already declares — a wrapper such as `Solo_reset`, a
+type's `Solo_dealloc` or `SoloType`, read off jm's own render of the
+`_ext.c` (in a module, of every fragment it includes), since the row's
+prototype would conflict with it (gh-2005). A
 `manual_stub` method of the same name may stand beside the row: the row's stub
 replaces its placeholder, and a stub you wrote by hand stays yours. A view
 does not inherit the rows — each function is written against the parent's

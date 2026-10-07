@@ -162,15 +162,188 @@ def pyi_member(row: dict) -> "list[str]":
 _C_IDENT = re.compile(r"[A-Za-z_]\w*")
 
 
-def manifest_errors(root: Path, cfg: dict) -> "list[str]":
-    """Every ``[[<obj>.extra_methods]]`` row jm cannot render, with why.
+def _without_rows(cfg: dict) -> dict:
+    """A copy of *cfg* declaring no ``extra_methods`` row anywhere.
 
-    An object's rows only (gh-1997); a composer's belong to its module. Each
-    refusal is a binding that would not do what the row says, asked before
-    anything is written rather than left to the compiler or the import:
+    What a binding's own names are read from (:func:`binding_unit`): with a
+    row declared, its prototype is in the render too, and every ``fn`` would
+    collide with itself. Every row, not just one owner's, because a module's
+    objects share one translation unit and a composer's types one file.
+    """
+    import copy
+
+    from . import _config as C
+
+    bare = copy.deepcopy(cfg)
+    for comp in C.components(bare):
+        C.set_extra_methods(bare, comp, [])
+    for table in (bare.get("module") or {}).values():
+        if isinstance(table, dict):
+            table.pop("extra_methods", None)
+    return bare
+
+
+def binding_unit(
+    root: Path, cfg: dict, owner: str, *, composer: bool = False
+) -> "tuple[str, str]":
+    """The translation unit *owner*'s rows compile into, as jm renders it.
+
+    ``(path, text)``: *path* is the ``_ext.c`` the compiler is handed, for a
+    message; *text* is what jm generates into it, through the same calls
+    `apply` writes it with -- a standalone object's ``COMPONENT_EXT_C``, a
+    module object's aggregator and EVERY fragment it includes (one object's
+    prototype precedes the next object's definitions), a composer's
+    ``render_ext`` and the seam header it includes. Rendered from
+    :func:`_without_rows`, so nothing in it is a row's.
+
+    It is rendered rather than listed (gh-2005): which wrappers a binding
+    defines is conditional on nearly every manifest key -- ``--no-step``,
+    each property, a serializable object's triplet, a composer's four types
+    -- and a list beside the renderer is the copy that drifts. A render's
+    advisory warnings are printed by the render `apply` makes next, so they
+    are held back here; a refusal is let through with them.
+    """
+    import contextlib
+    import io
+    import sys
+
+    from . import _config as C
+    from . import _render as R
+
+    bare = _without_rows(cfg)
+    pkg = C.project_name(bare)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            if composer:
+                from . import _composer
+
+                cname = C.module_paths(owner).cname
+                text = _composer.render_ext(
+                    bare, owner, root
+                ) + _composer.render_bridge_h(bare, owner)
+            elif C.component_module(bare, owner) is None:
+                from . import _glue
+
+                cname = owner
+                text = R.render(
+                    R.COMPONENT_EXT_C,
+                    _glue.component_ctx(bare, owner, pkg, root),
+                )
+            else:
+                from . import _object as O
+
+                mod = C.component_module(bare, owner)
+                cname = C.module_paths(mod).cname
+                ctxs = O.build_component_ctxs(root, bare, mod, pkg)
+                text = O.render_module_ext_c(
+                    root, bare, mod, pkg, ctxs
+                ) + "".join(R.render_module_ext_fragment(c) for c in ctxs)
+    except BaseException:
+        sys.stdout.write(out.getvalue())
+        sys.stderr.write(err.getvalue())
+        raise
+    return f"native/src/{cname}/{cname}_ext.c", text
+
+
+def binding_names(text: str) -> "frozenset[str]":
+    """Every identifier a rendered binding declares at file scope.
+
+    The functions, ``typedef`` names and macros :func:`._csym.declared`
+    reads, and the initialised statics -- the ``PyTypeObject``, the method
+    and getset tables -- :func:`._docsync._file_scope_decls` does: each is a
+    name a row's prototype ``static PyObject *<fn>(...)`` would redeclare
+    as something else, which the compiler reports as ``conflicting types``
+    far from the row that caused it.
+
+    >>> sorted(binding_names('''typedef struct { int n; } OObject;
+    ... static PyObject *
+    ... O_reset(OObject *self, PyObject *Py_UNUSED(ignored))
+    ... {
+    ...     return helper(self);
+    ... }
+    ... static PyTypeObject OType = { 0 };'''))
+    ['OObject', 'OType', 'O_reset', 'Py_UNUSED']
+    """
+    from ._csym import declared
+    from ._docsync import _file_scope_decls
+
+    return frozenset(declared(text) | set(_file_scope_decls(text)))
+
+
+def _shape_error(label: str, row: dict, hook: str) -> "str | None":
+    """Why *row* names no function a prototype can be written for, or None."""
+    name = str(row.get("name") or "")
+    fn = str(row.get("fn") or "")
+    if not name or not fn:
+        return f"{label}: a row needs both `name` and `fn`."
+    if not _C_IDENT.fullmatch(fn):
+        return (
+            f"{label}: fn = {fn!r} is not a C identifier -- it names"
+            f" the function you write in the {hook}."
+        )
+    return None
+
+
+def _signature_error(
+    label: str, row: dict, signature_of: "dict[str, str]"
+) -> "str | None":
+    """Why *row*'s ``fn`` would be declared twice, two ways, or None.
+
+    *signature_of* is the rows already seen, ``{fn: params}``; this row's is
+    added to it.
+    """
+    fn = str(row["fn"])
+    sig = params(flags(row))
+    if signature_of.setdefault(fn, sig) != sig:
+        return (
+            f"{label}: another row gives fn {fn!r} different flags,"
+            " so it would be declared twice with two signatures."
+        )
+    return None
+
+
+def _binding_error(
+    label: str, fn: str, unit: "tuple[str, frozenset[str]]", hook: str
+) -> "str | None":
+    """Why *fn* is a name the generated binding *unit* already declares.
+
+    gh-2005: the row's prototype and jm's own definition of the name then
+    disagree, and ``conflicting types for 'Solo_reset'`` from the compiler
+    names neither the row nor the manifest.
+    """
+    path, names = unit
+    if fn not in names:
+        return None
+    return (
+        f"{label}: fn {fn!r} is already declared by the binding jm"
+        f" generates ({path}), so the row's prototype for it conflicts"
+        " with jm's own.\n"
+        f"  Name the function you write in the {hook} something jm does not"
+        " generate."
+    )
+
+
+def manifest_errors(root: Path, cfg: dict) -> "list[str]":
+    """Every ``extra_methods`` row jm cannot render, with why.
+
+    An object's ``[[<obj>.extra_methods]]`` rows (gh-1997), and a composer's
+    ``[[module.X.extra_methods]]`` (gh-1190), which render through this
+    module too. Each refusal is a binding that would not do what the row
+    says, asked before anything is written rather than left to the compiler
+    or the import:
 
     - a row with no ``name`` or no ``fn``, or an ``fn`` that is not a C
       identifier -- there is no row, or no prototype, to render;
+    - an ``fn`` two rows give different ``flags`` -- two prototypes of one
+      function;
+    - an ``fn`` the binding jm generates already declares
+      (:func:`binding_unit`, :func:`binding_names`) -- a wrapper such as
+      ``Solo_reset``, a type's ``Solo_dealloc``, its ``SoloType``: the row's
+      prototype conflicts with jm's own definition (gh-2005).
+
+    And, on an object, which has one type and one core:
+
     - a ``name`` two rows share, or one a member jm generates already holds
       (:func:`._builtins.reserved_python_members`, and the built-ins
       :func:`._builtins.absorbable_members` names) -- two ``PyMethodDef``
@@ -178,8 +351,6 @@ def manifest_errors(root: Path, cfg: dict) -> "list[str]":
     - a ``name`` a ``[[<obj>.methods]]`` entry declares, unless that entry is
       ``manual_stub`` -- a manual stub emits no row, and this is exactly the
       row it lacked;
-    - an ``fn`` two rows give different ``flags`` -- two prototypes of one
-      function;
     - an ``fn`` the object's ``_core.h`` declares -- a core C function, not
       the CPython wrapper a row registers, so jm's prototype for it would
       conflict with the header's.
@@ -199,6 +370,21 @@ def manifest_errors(root: Path, cfg: dict) -> "list[str]":
     from ._linkcheck import _header_functions
 
     errors: list[str] = []
+    # One render per translation unit: a module's objects share one.
+    units: "dict[tuple[str, bool], tuple[str, frozenset[str]]]" = {}
+
+    def unit(owner: str, composer: bool) -> "tuple[str, frozenset[str]]":
+        key = (
+            (owner, True)
+            if composer
+            else (C.component_module(cfg, owner) or owner, False)
+        )
+        if key not in units:
+            path, text = binding_unit(root, cfg, owner, composer=composer)
+            units[key] = (path, binding_names(text))
+        return units[key]
+
+    hook = "object's _extra.c"
     for comp in C.components(cfg):
         rows = C.extra_methods(cfg, comp)
         if not rows:
@@ -224,14 +410,9 @@ def manifest_errors(root: Path, cfg: dict) -> "list[str]":
             name = str(row.get("name") or "")
             fn = str(row.get("fn") or "")
             label = f"{where} {name or '?'!r}"
-            if not name or not fn:
-                errors.append(f"{label}: a row needs both `name` and `fn`.")
-                continue
-            if not _C_IDENT.fullmatch(fn):
-                errors.append(
-                    f"{label}: fn = {fn!r} is not a C identifier -- it names"
-                    " the function you write in the object's _extra.c."
-                )
+            shape = _shape_error(label, row, hook)
+            if shape:
+                errors.append(shape)
                 continue
             if name in seen:
                 errors.append(f"{label}: two rows are named {name!r}.")
@@ -249,17 +430,45 @@ def manifest_errors(root: Path, cfg: dict) -> "list[str]":
                     "  Drop one: a `methods` entry is a wrapper jm writes, an"
                     " `extra_methods` row one you wrote."
                 )
-            sig = params(flags(row))
-            if signature_of.setdefault(fn, sig) != sig:
-                errors.append(
-                    f"{label}: another row gives fn {fn!r} different flags,"
-                    " so it would be declared twice with two signatures."
-                )
+            twice = _signature_error(label, row, signature_of)
+            if twice:
+                errors.append(twice)
             if fn in core_fns:
                 errors.append(
                     f"{label}: fn {fn!r} is declared in {comp}_core.h -- a"
                     " core function, not a CPython method.\n"
-                    f"  Write a wrapper `static PyObject *<name>({sig})` in"
-                    " the object's _extra.c and name that."
+                    "  Write a wrapper `static PyObject *<name>"
+                    f"({params(flags(row))})` in the object's _extra.c and"
+                    " name that."
                 )
+                continue
+            clash = _binding_error(label, fn, unit(comp, False), hook)
+            if clash:
+                errors.append(clash)
+
+    from . import _composer
+
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        rows = _composer.extra_methods(cfg, mod)
+        hook = f"{C.module_paths(mod).cname}_ext_extra.c"
+        signature_of = {}
+        for row in rows:
+            label = (
+                f"[[module.{mod}.extra_methods]]"
+                f" {str(row.get('name') or '?')!r}"
+            )
+            shape = _shape_error(label, row, hook)
+            if shape:
+                errors.append(shape)
+                continue
+            twice = _signature_error(label, row, signature_of)
+            if twice:
+                errors.append(twice)
+            clash = _binding_error(
+                label, str(row["fn"]), unit(mod, True), hook
+            )
+            if clash:
+                errors.append(clash)
     return errors

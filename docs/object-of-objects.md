@@ -362,6 +362,10 @@ define the function with exactly that signature, `self`
 as a `PyObject *` too. A declared row always includes the file, so it can be
 written before or after the `apply` that declares it; if it is missing, the
 build fails naming it. The `composer_seams` example builds one end to end.
+`apply` refuses a row with no `name` or `fn`, an `fn` given two different
+`flags`, and an `fn` the generated `<cname>_ext.c` (or its seam header)
+already declares — `Composer_dealloc`, a getter, `PyInit_<leaf>` — since the
+row's prototype would conflict with jm's own (gh-2005).
 
 An ordinary object takes the same key, row for row, minus `type` (it has one
 type): see
