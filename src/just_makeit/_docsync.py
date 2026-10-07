@@ -851,9 +851,15 @@ def transplant_state_triplet(
     if '"state_bytes"' in existing[open_brace:close_brace]:
         return existing
     # Insert rows before the {NULL ...} sentinel (scan the mask so a brace
-    # hidden in a string/comment can't be mistaken for it).
+    # hidden in a string/comment can't be mistaken for it). At the start of
+    # its LINE (gh-2006): *pmd_rows* carry their own indent and newline, so
+    # at the `{` they sat at two indents and left the sentinel at none.
     sent = re.search(r"\{\s*NULL", mask[open_brace:close_brace])
-    rows_at = open_brace + sent.start() if sent else open_brace + 1
+    rows_at = (
+        existing.rfind("\n", 0, open_brace + sent.start()) + 1
+        if sent
+        else open_brace + 1
+    )
     funcs_text = "\n\n".join(c_funcs) + "\n\n"
     # Apply right-to-left so the earlier (funcs) offset stays valid.
     out = existing[:rows_at] + pmd_rows + existing[rows_at:]
@@ -882,6 +888,75 @@ def _array_names(
         if name is not None:
             names[name] = (s, e)
     return names
+
+
+def _splice_rows(
+    target: str,
+    array_re: re.Pattern,
+    order: "list[str | None]",
+    rows: "dict[str, str]",
+) -> str:
+    """Insert *rows* into *target*'s *array_re* table where *order* puts them.
+
+    gh-2006. *order* is the entry keys of the table the rows come from, in
+    that table's order -- an entry's name, ``None`` for an unnamed one (the
+    ``{NULL}`` sentinel) -- and *rows* maps each name to splice to its entry
+    text, ``{`` to ``}``. Each row goes immediately before the first entry
+    after it in *order* that *target*'s table holds, at that entry's indent:
+    the table it came from is the one statement of where it goes, so it is
+    read rather than restated as an anchor. A row nothing follows goes
+    before *target*'s sentinel.
+
+    Every splice used to put its rows before the sentinel, as
+    ``"    {row},\\n"`` at the sentinel's ``{`` -- the first row at two
+    indents, the sentinel at none, and a row a render puts ahead of jm's
+    trailing built-ins (``destroy``, ``__enter__``, ``__exit__``) after them.
+    So `jm adopt --check` reported ``differs: table:PyMethodDef`` on a table
+    only jm had touched.
+
+    >>> t = '''static PyMethodDef T_methods[] = {
+    ...     {"a", A, METH_NOARGS, NULL},
+    ...     {"z", Z, METH_NOARGS, NULL},
+    ...     {NULL, NULL, 0, NULL}
+    ... };'''
+    >>> print(_splice_rows(t, _METHODS_RE, ["a", "b", "z", "y", None],
+    ...       {"b": '{"b", B, METH_NOARGS, NULL}',
+    ...        "y": '{"y", Y, METH_NOARGS, NULL}'}))
+    static PyMethodDef T_methods[] = {
+        {"a", A, METH_NOARGS, NULL},
+        {"b", B, METH_NOARGS, NULL},
+        {"z", Z, METH_NOARGS, NULL},
+        {"y", Y, METH_NOARGS, NULL},
+        {NULL, NULL, 0, NULL}
+    };
+    """
+    # Both callers hold a balanced table here: jm's own render, or a
+    # fragment whose table they have already matched.
+    mask = _code_mask(target)
+    open_idx = array_re.search(mask).end() - 1
+    close_idx = _match_brace(mask, open_idx)
+    held: "dict[str | None, int]" = {}
+    for s, e in _entry_spans(mask, open_idx + 1, close_idx):
+        held.setdefault(_entry_name(target, mask, s, e), s)
+    at_rows: "dict[int, list[str]]" = {}
+    for i, key in enumerate(order):
+        if key not in rows:
+            continue
+        # With neither a successor nor a sentinel -- a table CPython would
+        # read past -- the closing brace is all there is to stand before.
+        at = next(
+            (held[k] for k in order[i + 1 :] if k in held),
+            held.get(None, close_idx),
+        )
+        at_rows.setdefault(at, []).append(rows[key])
+    # Right to left, so each offset still names the entry it was read from.
+    out = target
+    for at in sorted(at_rows, reverse=True):
+        lead = out[out.rfind("\n", 0, at) + 1 : at]
+        indent = lead[: len(lead) - len(lead.lstrip())]
+        text = "".join(f"{r},\n{indent}" for r in at_rows[at])
+        out = out[:at] + text + out[at:]
+    return out
 
 
 def _row_fn_names(
@@ -2173,7 +2248,8 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
     *reference* but absent (by name) from *existing* is a genuinely new
     binding — its wrapper function(s) (extracted from *reference* by name,
     brace-matched) are inserted before the ``static`` array declaration, and
-    its row before the array's ``{NULL ...}`` sentinel. An entry already
+    its row where *reference* puts it: before the row that follows it there,
+    at the table's indent (:func:`_splice_rows`, gh-2006). An entry already
     present in *existing* (hand-patched or not) is never touched, matching
     :func:`transplant_state_triplet`'s own idempotence.
 
@@ -2199,13 +2275,17 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         ref_close = _match_brace(ref_mask, ref_open)
         if ref_close == -1:
             continue
-        missing_rows: list[str] = []
+        missing_rows: dict[str, str] = {}
         missing_fn_names: list[str] = []
+        # gh-2006: the reference's row order says where each missing row
+        # goes (`_splice_rows`), so it is kept whole, sentinel included.
+        ref_order: "list[str | None]" = []
         for s, e in _entry_spans(ref_mask, ref_open + 1, ref_close):
             name = _entry_name(reference, ref_mask, s, e)
+            ref_order.append(name)
             if name is None or name in ex_names:
                 continue
-            missing_rows.append(reference[s : e + 1])
+            missing_rows[name] = reference[s : e + 1]
             for fn in _row_fn_names(reference, ref_mask, (s, e)):
                 if fn not in missing_fn_names:
                     missing_fn_names.append(fn)
@@ -2230,9 +2310,6 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         close_idx = _match_brace(ex_mask, open_idx)
         if close_idx == -1:
             continue
-        sent = re.search(r"\{\s*NULL", ex_mask[open_idx:close_idx])
-        rows_at = open_idx + sent.start() if sent else open_idx + 1
-        rows_text = "".join(f"    {r},\n" for r in missing_rows)
         # gh-544: a row may bind a name to a wrapper the fragment ALREADY
         # defines — that is exactly what a destructor alias is
         # (``{"close", ...}`` and ``{"destroy", ...}`` both point at
@@ -2305,10 +2382,9 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         )
         if funcs_text:
             funcs_text += "\n\n"
-        # Right-to-left: the rows offset always sits after the decl offset,
-        # so inserting there first leaves decl_m.start() valid for the
-        # second splice.
-        out = out[:rows_at] + rows_text + out[rows_at:]
+        # Rows first: they all land inside the table, after the decl offset,
+        # so decl_m.start() is still valid for the second splice.
+        out = _splice_rows(out, array_re, ref_order, missing_rows)
         out = out[: decl_m.start()] + funcs_text + out[decl_m.start() :]
     return out
 
@@ -2435,8 +2511,9 @@ def transplant_hand_written(
     A row is carried when its *name* is absent from the reference array, which
     also covers the case where a hand-written alias points at a wrapper jm
     does generate. Definitions go in ahead of the first binding array, rows
-    ahead of the array's ``{NULL …}`` sentinel, so both land in the file's
-    normal order.
+    where they stood on disk -- before the row that followed them there
+    (:func:`_splice_rows`, gh-2006) -- so both land in the file's normal
+    order.
 
     Deliberately not covered: a hand-written *file-scope* declaration that is
     not a function — a static lookup table, a typedef, a helper macro. Those
@@ -2475,33 +2552,26 @@ def transplant_hand_written(
     for array_re in (_METHODS_RE, _GETSET_RE):
         out_mask = _code_mask(out)
         ref_names = _array_names(out, out_mask, array_re)
-        rows = []
-        for name, (s, e) in _array_names(existing, ex_mask, array_re).items():
+        rows: dict[str, str] = {}
+        ex_rows = _array_names(existing, ex_mask, array_re)
+        for name, (s, e) in ex_rows.items():
             if name in ref_names:
                 continue
             if _dropped(name):
                 dropped_fns.update(_row_fn_names(existing, ex_mask, (s, e)))
                 continue
-            rows.append(existing[s : e + 1])
+            rows[name] = existing[s : e + 1]
         if not rows:
             continue
-        decl_m = array_re.search(out_mask)
-        if decl_m is None:
+        if array_re.search(out_mask) is None:
             # The reference has no array of this kind to hang the row on.
             # Splicing one in would also need the PyTypeObject slot wired up;
             # leave it to _splice_first_array's path rather than half-doing it.
             continue
-        open_idx = decl_m.end() - 1
-        close_idx = _match_brace(out_mask, open_idx)
-        if close_idx == -1:
-            continue
-        sent = re.search(r"\{\s*NULL", out_mask[open_idx:close_idx])
-        rows_at = open_idx + sent.start() if sent else open_idx + 1
-        out = (
-            out[:rows_at]
-            + "".join(f"    {r},\n" for r in rows)
-            + out[rows_at:]
-        )
+        # gh-2006: a hand row keeps its place -- before the row that followed
+        # it on disk, at the table's indent -- rather than moving behind jm's
+        # trailing built-ins. The sentinel (`None`) closes the order.
+        out = _splice_rows(out, array_re, [*ex_rows, None], rows)
 
     orphans = [n for n in orphans if n not in dropped_fns]
     if orphans:
