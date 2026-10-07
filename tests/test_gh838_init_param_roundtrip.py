@@ -78,14 +78,32 @@ def _slots(n: int) -> tuple:
     :func:`_maximal_object_param`.
     """
     # Slot 1 is an ARRAY type (gh-1756): `load` refuses a `str_hint` on a
-    # scalar, and the maximal param carries one.
+    # scalar, and the maximal param carries one. gh-2004: `load` likewise
+    # refuses a `rank` / `elements_per_sample` that is not an integer of at
+    # least 1, so those two slots hold one.
     return tuple(
-        "" if i == 15 else "v1[]" if i == 1 else f"v{i}" for i in range(n)
+        ""
+        if i == 15
+        else "v1[]"
+        if i == 1
+        else _INT_SLOTS[i]
+        if i in _INT_SLOTS
+        else f"v{i}"
+        for i in range(n)
     )
 
 
+#: gh-2004: the authored slots whose key `load` requires to be an integer.
+#: Found by key, so the probe still derives every slot it fills.
+_INT_SLOTS = {
+    i: 1
+    for i, (key, _is_bool) in enumerate(K.INIT_PARAM_FIELDS)
+    if key in ("rank", "elements_per_sample")
+}
+
+
 #: Consecutive slots adding no key before the probe decides the tuple ended.
-#: Longer than the widest run of non-persisted slots (17-18 here).
+#: Longer than the widest run of non-persisted slots (19-20 here).
 _QUIET_SLOTS = 4
 
 

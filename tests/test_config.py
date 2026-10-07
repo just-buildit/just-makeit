@@ -322,8 +322,11 @@ class TestAddComponentFlags:
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
                 # import line that makes the annotation resolvable. gh-1756's
-                # `str_hint` sits between the declared reference and the two
-                # it resolves to, which stay trailing.
+                # `str_hint` and gh-2004's `rank` / `elements_per_sample` sit
+                # between the declared reference and the two it resolves to,
+                # which stay trailing.
+                "",
+                "",
                 "",
                 "",
                 "",
@@ -349,8 +352,11 @@ class TestAddComponentFlags:
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
                 # import line that makes the annotation resolvable. gh-1756's
-                # `str_hint` sits between the declared reference and the two
-                # it resolves to, which stay trailing.
+                # `str_hint` and gh-2004's `rank` / `elements_per_sample` sit
+                # between the declared reference and the two it resolves to,
+                # which stay trailing.
+                "",
+                "",
                 "",
                 "",
                 "",

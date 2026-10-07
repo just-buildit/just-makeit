@@ -35,6 +35,7 @@ import sys as _sys
 from ._keys import FUNCTION_KEYS as _FUNCTION_KEYS
 from ._keys import COMPOSER_OWNED_PTR_KEYS as _COMPOSER_OWNED_PTR_KEYS
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
+from ._keys import SHAPE_KEYS as _SHAPE_KEYS
 from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
 from ._keys import PROPERTY_KEYS as _PROPERTY_KEYS
@@ -266,6 +267,13 @@ def load(root: Path) -> dict:
     hint_errors = str_hint_errors(cfg)
     if hint_errors:
         _refuse(hint_errors)
+    # gh-2004: likewise a `rank` / `elements_per_sample` no acquisition would
+    # read, on the same rows and after the same expansion.
+    from ._coerce import shape_key_errors
+
+    shape_errors = shape_key_errors(cfg)
+    if shape_errors:
+        _refuse(shape_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -4516,7 +4524,7 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # one are different values with different readers, and a single
             # slot standing in for both is how a key comes back wrong: slot 15
             # is what the author WROTE (persisted verbatim by
-            # `init_param_tuple_to_dict`), slot 17 is the Python class it
+            # `init_param_tuple_to_dict`), slot 19 is the Python class it
             # RESOLVES to (read by the two `.pyi` producers). Every C-side
             # slot above is already filled by the same resolution, so the
             # generated C path is the shipped capsule one, unchanged.
@@ -4525,8 +4533,16 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # of a str, read by `_coerce.str_hint`. Authored, so it sits with
             # the authored slots, ahead of the two resolved ones.
             p.get("str_hint", ""),
+            # Slots 17 and 18 (gh-2004): gh-805 §C's array-shape keys, read
+            # by `_coerce.array_rank` / `_coerce.elements_per_sample`. Each
+            # authored slot's index is its key's in `_keys.INIT_PARAM_FIELDS`,
+            # which is how `_coerce` finds them. "" when undeclared, like
+            # every slot here; a `rank = 0` stays 0, which load refuses.
+            p.get("rank", ""),
+            p.get("elements_per_sample", ""),
+            # Slot 19: the class an `object` reference resolves to.
             _object_ref_slot(cfg, p, 3),
-            # Slot 18: the `.pyi` import for that class. Resolved HERE, with
+            # Slot 20: the `.pyi` import for that class. Resolved HERE, with
             # the rest, because it is the last point that still has `cfg` --
             # `make_state_ctx` gets tuples, not the manifest, so a stub
             # producer could name the class but never find out where it lives.
@@ -4599,6 +4615,13 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["example_value"] = p[14]
     if len(p) > 16 and p[16]:
         rec["str_hint"] = p[16]
+    # gh-2004: not truth-tested, so a `rank = 0` the author wrote
+    # round-trips to the load that refuses it rather than vanishing on the
+    # way.
+    if len(p) > 17 and p[17] not in (None, ""):
+        rec["rank"] = p[17]
+    if len(p) > 18 and p[18] not in (None, ""):
+        rec["elements_per_sample"] = p[18]
     return rec
 
 
@@ -6821,7 +6844,7 @@ def _toml_inline_string(value: str) -> str:
     return _toml_basic_string(value)
 
 
-def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
+def _init_param_pairs(p: dict) -> list[tuple[str, bool, object]]:
     """``(key, is_bool, value)`` for each key *p* actually carries.
 
     Presence is the **narrower** of the two old rules, deliberately: a bool key
@@ -6840,8 +6863,12 @@ def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
     runs unguarded, the key is simply not written. Both are the right outcome
     for a key whose empty value means nothing, but neither is silent about it
     here.
+
+    A shape key's integer stays an integer (gh-2004): `rank` and
+    `elements_per_sample` quoted read back as strings that `load` refuses.
+    Only those keys, so every other value is written exactly as before.
     """
-    out: list[tuple[str, bool, str]] = []
+    out: list[tuple[str, bool, object]] = []
     for key, is_bool in _INIT_PARAM_FIELDS:
         val = p.get(key)
         if is_bool:
@@ -6853,6 +6880,12 @@ def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
             # to Python repr in both.
             if val:
                 out.append((key, False, list(val)))
+        elif (
+            key in _SHAPE_KEYS
+            and isinstance(val, int)
+            and not isinstance(val, bool)
+        ):
+            out.append((key, False, val))
         elif val not in (None, ""):
             out.append((key, False, str(val)))
     return out
@@ -6878,8 +6911,10 @@ def _init_param_block_lines(p: dict) -> list[str]:
             lines.append(f"{key} = true")
         elif isinstance(val, list):
             lines.append(f"{key} = {_toml_string_array(val)}")
+        elif isinstance(val, int):
+            lines.append(f"{key} = {val}")
         else:
-            lines.append(_str_assign(key, val))
+            lines.append(_str_assign(key, str(val)))
     return lines
 
 
@@ -6900,8 +6935,11 @@ def _init_param_inline(p: dict) -> str:
             # gh-1097: the peer of the block emitter above. Fixing one and not
             # the other is the pattern this repo keeps paying for.
             parts.append(f"{key} = {_toml_string_array(val)}")
+        elif isinstance(val, int):
+            # gh-2004: the block emitter's peer, as gh-1097's list is.
+            parts.append(f"{key} = {val}")
         else:
-            parts.append(f"{key} = {_toml_inline_string(val)}")
+            parts.append(f"{key} = {_toml_inline_string(str(val))}")
     return "{" + ", ".join(parts) + "}"
 
 

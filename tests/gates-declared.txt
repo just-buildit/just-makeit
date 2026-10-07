@@ -127,6 +127,7 @@ test_gh1978_remove_leaves_tree_in_sync
 test_gh1996_elements_per_sample_variable_output
 test_gh1997_object_extra_methods
 test_gh1998_out_beside_params
+test_gh2004_init_param_rank
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot

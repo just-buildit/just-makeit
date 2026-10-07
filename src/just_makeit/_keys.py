@@ -208,10 +208,27 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # appended to that refusal, naming what to pass instead
     # (`_coerce.str_hint`).
     ("str_hint", False),
+    # gh-2004: gh-805 §C's two array-shape keys, on a constructor array as
+    # on a method's. `rank` is the opt-in `PyArray_NDIM` guard -- without
+    # it a 2-D array handed to a 1-D `create()` contract flattens through
+    # `PyArray_SIZE` -- and `elements_per_sample` divides the `<name>_len`
+    # passed to `create()` into the samples the C counts. Each is read by
+    # one reader (`_coerce.array_rank`, `_coerce.elements_per_sample`), and
+    # `_coerce.shape_key_errors` refuses one no array path could honour.
+    ("rank", False),
+    ("elements_per_sample", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
 INIT_PARAM_KEYS = frozenset(key for key, _is_bool in INIT_PARAM_FIELDS)
+
+#: gh-805 §C's array-shape keys, in the order a refusal names them -- valid
+#: on a method's, a module function's and (gh-2004) an init-param's array.
+#: Their values are integers, so the init-param writer keeps them unquoted
+#: (`_config._init_param_pairs`), the init-param tuple carries them at their
+#: `INIT_PARAM_FIELDS` index (`_coerce._INIT_PARAM_SLOT`), and
+#: `_coerce.shape_key_errors` refuses one nothing would read.
+SHAPE_KEYS = ("rank", "elements_per_sample")
 
 #: Keys valid on a ``[[<component>.methods]]`` entry.
 #:

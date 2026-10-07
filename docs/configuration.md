@@ -698,6 +698,8 @@ for the full semantics.
 | `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                                  | ✅ (gh-1096)                |
 | `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                                  | ✅ (gh-1105)                |
 | `str_hint = "<text>"` (an array refuses a `str`, with this appended)   | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-1756)                |
+| `rank = N` (refuse an array of any other rank)                         | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-2004)                |
+| `elements_per_sample = N` (`create()` gets the length in samples)      | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-2004)                |
 | compose with `[[state]]`                                               | `--init-param + --state` together                                            | ✅ (0.13.23) (gate dropped) |
 
 #### `example_value` — constructing a required param in generated tests
@@ -1026,6 +1028,8 @@ way.
 | `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                                                          | ✅           |
 | `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)                                             | ✅           |
 | `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended                                            | ✅ (gh-1756) |
+| `params … {rank = N}`                  | (TOML only) an array of any other rank is refused                                                   | ✅ (gh-805)  |
+| `params … {elements_per_sample = N}`   | (TOML only) the kernel's counts are in samples of N elements                                        | ✅ (gh-1996) |
 | `varargs = true`                       | `jm method --varargs`                                                                               | ✅           |
 | `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)                                              | ✅ (0.14.2)  |
 | `variable_output = true`               | `jm method --variable-output`                                                                       | ✅           |
@@ -1231,6 +1235,8 @@ guard, so guard anything platform-specific in it yourself.
 | `params = [{name, type, out?}]`               | `jm function --param name:T` + `--out-param name:T[]`                             | ✅ (0.13.22) |
 | `params … {mutable = true}`                   | (synonym for `out` — writable array param)                                        | ✅ (0.15.3)  |
 | `params … {str_hint = "..."}`                 | (TOML only) an array refuses a `str`, with this appended                          | ✅ (gh-1756) |
+| `params … {rank = N}`                         | (TOML only) an array of any other rank is refused                                 | ✅ (gh-805)  |
+| `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
 | `inline = true`                               | `jm function --inline`                                                            | ✅           |
 | `out_type = "T"`                              | `jm function --out-type T`                                                        | ✅ (0.13.23) |
 | `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                      | ✅ (gh-335)  |

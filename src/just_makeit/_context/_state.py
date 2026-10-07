@@ -314,6 +314,31 @@ def _build_no_state_init_ctx(
     # gh-1756: each array param's `str_hint`, by name, for every acquisition
     # below -- read through the one accessor every other face uses.
     _hints = {param[0]: _coerce.str_hint(param) for param in params}
+    # gh-2004: and its gh-805 §C shape keys, through the same readers a
+    # method's array uses. `_coerce.shape_key_errors` has refused at load
+    # every value and every combination no path below could honour.
+    _ranks = {param[0]: _coerce.array_rank(param) for param in params}
+    _eps = {param[0]: _coerce.elements_per_sample(param) for param in params}
+
+    def _rank_guard(aname: str, cleanup: str, indent: str = "    ") -> str:
+        """gh-2004: *aname*'s rank guard, or "" when it declares no rank.
+
+        *cleanup* releases what this path already holds besides the array
+        itself, which the guard releases. It fails with ``return -1;``:
+        this is a ``tp_init``, where a ``return NULL`` compiles and reports
+        success.
+        """
+        rank = _ranks.get(aname)
+        if not rank:
+            return ""
+        return _coerce.array_rank_guard(
+            aname,
+            f"{aname}_arr",
+            rank,
+            cleanup.strip(),
+            fail="return -1;",
+            indent=indent,
+        )
 
     for param in params:
         name, ct, dflt = param[:3]
@@ -344,13 +369,13 @@ def _build_no_state_init_ctx(
                     " is always a required positional (like 'path' and"
                     " 'bytes')."
                 )
-            # gh-1224: slot 17 is the Python class an `object` reference
+            # gh-1224: slot 19 is the Python class an `object` reference
             # resolved to, and "" for a capsule declared the gh-790 way. It
             # rides along here rather than in a parallel dict because every
             # consumer below already indexes `_capsule_meta` by name, and a
             # second dict keyed the same way is the peer that drifts.
-            _obj_cls = param[17] if len(param) > 17 else ""
-            _obj_imp = param[18] if len(param) > 18 else ""
+            _obj_cls = param[19] if len(param) > 19 else ""
+            _obj_imp = param[20] if len(param) > 20 else ""
             if _obj_imp and _obj_imp not in object_imports:
                 object_imports.append(_obj_imp)
             capsule_ip.append(
@@ -1261,8 +1286,9 @@ def _build_no_state_init_ctx(
                 f"        ? {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))}\n"
                 f"        : {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                + _rank_guard(aname, cleanup)
+                + _coerce.array_len_c(aname, f"{aname}_arr", _eps[aname])
+                + "\n"
             )
             allocated.append(aname)
         elif andim == 2:
@@ -1283,12 +1309,16 @@ def _build_no_state_init_ctx(
             )
             allocated.append(aname)
         else:
+            # gh-2004: the rank guard between the acquisition and the
+            # length, as a method's array has it -- `PyArray_SIZE` of a 2-D
+            # array is a valid-looking length for a 1-D contract.
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr ="
                 f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                + _rank_guard(aname, cleanup)
+                + _coerce.array_len_c(aname, f"{aname}_arr", _eps[aname])
+                + "\n"
             )
             allocated.append(aname)
 
@@ -1310,12 +1340,19 @@ def _build_no_state_init_ctx(
             f"        {aname}_arr =\n"
             f"            {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
             f"        if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-            f"        {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
+            + _rank_guard(aname, cleanup, " " * 8)
+            + f"        {aname}_len ="
+            f" {_coerce.array_count_c(f'{aname}_arr', _eps[aname])};\n"
             f"    }}\n"
         )
         maybe_allocated.append(aname)
 
     scalar_call_str = create_call_args
+    # gh-2004: every array held when an optional one is acquired, which its
+    # rank guard releases on top of the optional array itself.
+    _opt_cleanup = "".join(
+        f" Py_DECREF({n}_arr);" for n in allocated
+    ) + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
         if ondim == 2:
             aapb_lines.append(
@@ -1348,17 +1385,25 @@ def _build_no_state_init_ctx(
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
                 f"        if (!{oname}_arr) {{ return -1; }}\n"
-                f"        size_t {oname}_len ="
-                f" (size_t)PyArray_SIZE({oname}_arr);\n"
-                # gh-1827: the argument list its scaffolded prototype is
-                # built from, so the call and the declaration are one list.
-                f"        self->handle ="
-                f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
-                f"        Py_DECREF({oname}_arr);\n"
-                f"    }} else {{\n"
-                f"        self->handle ="
-                f" {_create}({scalar_call_str});\n"
-                f"    }}\n"
+                # gh-2004: the guard releases every array this tp_init
+                # already holds. (A path param never reaches here: it is
+                # refused beside optional-array dispatch, gh-515.)
+                + _rank_guard(oname, _opt_cleanup, " " * 8)
+                + "    "
+                + _coerce.array_len_c(oname, f"{oname}_arr", _eps[oname])
+                + (
+                    "\n"
+                    # gh-1827: the argument list its scaffolded prototype
+                    # is built from, so the call and the declaration are
+                    # one list.
+                    f"        self->handle ="
+                    f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
+                    f"        Py_DECREF({oname}_arr);\n"
+                    f"    }} else {{\n"
+                    f"        self->handle ="
+                    f" {_create}({scalar_call_str});\n"
+                    f"    }}\n"
+                )
             )
 
     array_args_parse_block = "".join(aapb_lines)
