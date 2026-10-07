@@ -519,3 +519,23 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
     _textio.write_text(out, text)
     return True
+
+
+def sync(root: Path, cfg: dict, comp: str, pkg: str) -> None:
+    """:func:`write`, announced the way a verb announces its other files.
+
+    For the verbs, which print one ``  <verb>  <path>`` line per file they
+    touch. `apply` reports by the bytes a file ends with instead, so it
+    calls :func:`write` and collects the path. One place decides the verb,
+    so a contract that a command created, rewrote or deleted reads the same
+    whichever command did it (gh-1984).
+    """
+    out = file_for(root, pkg, comp, C.module_of(cfg, comp) or "")
+    existed = out.exists()
+    if not write(root, cfg, comp, pkg):
+        return
+    if not out.exists():
+        verb = "remove"
+    else:
+        verb = "update" if existed else "create"
+    print(f"  {verb}  {out}")

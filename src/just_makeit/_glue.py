@@ -380,7 +380,8 @@ def regenerate_standalone(
     Both writes are create-if-exists: a component whose files have not been
     materialised yet is left alone rather than half-written, so this is safe
     to call on a manifest-only component (``jm apply`` is what materialises).
-    The gh-1361 link-check table is rewritten from the binding just written.
+    The gh-1361 link-check table is rewritten from the binding just written,
+    and the gh-1404 element contract from the manifest (gh-1984).
 
     Every verb that changes a standalone object's members re-renders it
     through here -- `jm property`, `jm warning` and `jm error` on the way in,
@@ -432,6 +433,13 @@ def regenerate_standalone(
     from . import _linkcheck
 
     _linkcheck.write(root, cfg, object_name)
+    # gh-1984: and the element contract (gh-1404), as the module re-render
+    # writes it for every member, so a verb that changes a member gets it
+    # whichever kind of object that is. `jm remove` used to write it itself
+    # after calling this (gh-1978).
+    from . import _invariants
+
+    _invariants.sync(root, cfg, object_name, pkg)
 
 
 def regenerate(

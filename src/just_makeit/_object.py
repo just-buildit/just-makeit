@@ -2419,10 +2419,18 @@ def _regenerate_module_now(
     )
     # gh-1361: every member's link-check table, from the fragments just
     # written.
+    # gh-1984: and every member's element contract (gh-1404), as `apply`
+    # writes it. Here and not in `jm method`, because every verb that
+    # changes a module member re-renders the module through this function:
+    # declaring the second face of a pair brings the contract into being,
+    # and without this `status --check` reported it MISSING on the tree
+    # `jm method` had just written, until an `apply`.
+    from . import _invariants
     from . import _linkcheck
 
     for _obj in C.module_objects(cfg, module):
         _linkcheck.write(root, cfg, _obj)
+        _invariants.sync(root, cfg, _obj, pkg)
 
 
 def run(
