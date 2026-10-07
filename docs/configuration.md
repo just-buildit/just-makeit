@@ -1392,6 +1392,12 @@ Fixed-size array constructor arguments added with `--array-arg`.
 | `name` | string | Argument name                                                                                                                                                 |
 | `type` | string | Stored as NumPy dtype name (`float32`, `float64`, `complex64`, …); C types (`float`, `double`, `float _Complex`, …) are also accepted on input and normalised |
 
+A hand-written row may spell `type` as `dtype`. Those are the row's only keys:
+any other is reported as an unknown key naming the row, and does nothing
+(gh-2008). A constructor array that needs `rank` or `elements_per_sample` is
+declared as an [`[[<object>.init_params]]`](#objectinit_params) row instead,
+typed as a C array such as `"float[]"` (gh-2004).
+
 ### `[[group]]` and `[[<object>.init_groups]]`
 
 A **field group** is a repeat declared once and instantiated under a prefix
