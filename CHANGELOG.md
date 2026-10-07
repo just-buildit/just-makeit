@@ -1,5 +1,197 @@
 ## [Unreleased]
 
+## [0.100.1] — 2026-10-07
+
+### Fixed
+
+- **A component whose `reset()` is the author's passes its own generated
+    tests** (gh-1882). A `reset_impl` that keeps a field -- the `delay_line`
+    README's own fragment, which zeroes the ring buffer and keeps `length`
+    -- scaffolded a project that failed on the first `make test`: the C
+    test, the Python `test_reset` and the `.pyi` doctest each asserted that
+    `reset()` restores every declared default, and none of them asked
+    whether jm wrote that `reset()`. One predicate now decides, read by all
+    of them and by both `.pyi` generators, the runtime class docstring and
+    `jm bind`: a `reset_impl` / `reset_impl_file` (or `--impl reset::...`),
+    `init_params` -- whose author-written `create()` defines the
+    post-create state `reset()` returns to, so the generated `test_reset`
+    under `init_params` now only calls it -- or `no_reset`. Where it holds,
+    both tests call `reset()` and assert nothing about the result, and the
+    doctest leaves its "Reset restores defaults" demo out. `jm apply` carries
+    the declaration into its replay, so an object that also has a method,
+    or sits in a module, keeps the answer when its `.pyi` is re-rendered;
+    `jm bind`, which has no manifest, reads it off the `reset()` body. The
+    `delay_line` example no longer overwrites its generated tests.
+
+- **`const char *` is refused as an object's step() type, as the docs always
+    said** (gh-1884). Every face accepted it and exited 0 on a broken
+    scaffold: `jm new --object cc --arg-type 'const char *'` failed its own
+    `make test`, `jm object --preset generator --return-type 'const char *'`
+    segfaulted the generated suite, and a consumer (or a `'const char *[]'`
+    input) passed each slot's `PyObject *` of an `NPY_OBJECT` array to C as
+    a string. `--arg-type` / `--return-type` on `jm new` and `jm object`
+    (every `--preset`, and a module object) now refuse it as a scalar and as
+    a `T[]` element with one `error:` line naming the flag and what to use
+    instead (an init param or a method param); `apply` and `status` refuse
+    a manifest `arg_type` / `return_type` the same way before anything is
+    written; and the render refuses it for the paths that do not pass
+    through `apply`, a mutating command over a hand-edited manifest and
+    `jm bind` of a header. The refusal is keyed on the type registry's
+    `kind`, so a string type registered later is refused too; an init
+    param, and a method's or function's param or return, keep their
+    string support.
+
+- **A `const char *` param default no longer breaks every later `apply`;
+    every string jm writes into a manifest is escaped** (gh-1886).
+    `jm method o greet --param 's:const char *="hi"'` -- the documented
+    spelling, a C string literal -- succeeded, and then every `jm apply` and
+    `jm status` failed with "just-makeit generated a manifest it cannot read
+    back": the serializer they replay through wrote the default between
+    quotes it never escaped. That was the house style for 130-odd values,
+    not one: every `default`, `name`, `type`, `header`, C expression,
+    `help` text and array entry outside the prose keys. All of them now go
+    through the one escaper, so a `"`, `\` or newline in any value reads
+    back as written -- including the hand-written `default = '""'` that
+    jm's own refusal recommends for an empty string, which failed the same
+    way. A C body (`impl`, `create_impl`, `reset_impl`, `destroy_impl`,
+    `init_post_parse`) keeps its backslashes: `printf("a\n")` used to read
+    back with a real newline inside the C string literal, and `'\0'` made
+    the write refuse itself. And `init_post_parse` stays on its component:
+    it was written after the `init_params` rows, so a rewrite through the
+    serializer (`jm split-objects`, a new fragment) moved it onto the last
+    of them.
+
+- **`jm add` asks before it writes anything, and keeps the state rows it is
+    appending to** (gh-1889, gh-1890). The manifest was saved first and the
+    question came after, so answering N, or running with no terminal, exited
+    0 with the new `[[<obj>.state]]` row on disk and nothing rebuilt:
+    `jm status` reported STALE, and the `jm apply` it advises rewrote
+    `create()` against a `_core.c` that was never regenerated, which stopped
+    the project compiling. The question now comes first, and declining exits
+    1 with every file as it was. The state list was also rebuilt from each
+    row's name, type and default alone, so one `jm add` deleted every
+    `opaque` field and every `doc`, `no_ctor`, `controllable` and `str_hint`
+    on the rows it kept. The rows already there are now kept as written and
+    the new ones appended, and a new name that repeats an opaque field's, or
+    another new one, is refused before anything is written.
+
+- **A `variable_output` method with an input AND params passes the params
+    to its kernel** (gh-1960). The `_core.h` prototype, the `_core.c` stub
+    and the binding all dropped them, while both `.pyi` writers and the
+    runtime doc advertised them: `amp.run(x, 0.3)` raised `TypeError`, and
+    `amp.run(x, mu=0.3)` was accepted and the `0.3` discarded. They now
+    follow the input in all three
+    (`const T *in, size_t n_in, <params>, T *out`), and are parsed as every
+    other params shape's are, positional or keyword. The shape still takes
+    no `out=` (gh-2028). In a tree scaffolded before this, `apply`
+    re-declares a standalone object's prototype and regenerates its binding,
+    so the build names the `_core.c` kernel that still lacks the params; a
+    module object's sacred fragment keeps the old binding, and `apply` and
+    `jm status` report it.
+
+- **A list-of-records method with a `--param` compiles and passes it**
+    (gh-1961). A method returning a list of records (`result_fields`,
+    neither `single` nor `variable_output`) declared the param in its
+    prototype, and the binding never parsed it: the kernel was called
+    without it, and so was it from the generated benchmark, so neither
+    built. The params are now parsed as the single-record shape's are
+    (gh-594), positional or keyword, with the input first, and the
+    benchmark passes them; the runtime doc's example passes them too.
+
+- **`jm method` and `jm remove` leave your C benchmark alone** (gh-1987).
+    `native/benchmarks/bench_<obj>_core.c` is yours: `apply` never rewrites
+    it, and neither do `jm property`, `jm warning` or `jm error`. But on a
+    standalone object `jm method`, and `jm remove` of any member (method,
+    property, warning, error), re-rendered it from scratch, discarding
+    whatever you had written there. They no longer touch it, so a new method
+    is not timed until you add it, and a removed one is not taken out. When
+    the benchmark still calls the method `jm remove method` took away, a
+    second note says so beside "delete it by hand", since deleting the body
+    is what makes that benchmark stop linking. On a standalone object, the
+    benchmark `jm apply` writes when the file is missing still times every
+    method the manifest declares.
+
+- **Both installers check for pkg-config on every platform, and Homebrew
+    installs it** (gh-1994). Both installers' help said they install
+    pkg-config, and every Linux package manager's list carried it, but
+    neither checked for it: it arrived only as a side effect of another
+    missing dependency, and the Homebrew path never installed it at all. So
+    on a box with cmake, a compiler and patchelf but no pkg-config,
+    `install-deps --check` and `install.sh --check` both passed, and a
+    project declaring `[project] pkg_modules` then failed at CMake
+    configure. pkg-config is now a dependency of its own in both, on Linux
+    and macOS: `--check` names it and exits 1, a run installs it (on macOS,
+    `brew install pkg-config`), and on a distro neither knows the hint
+    names it. A box with only `pkgconf` still needs it: CMake 3.16, a
+    generated project's floor, looks for `pkg-config` alone, and every
+    manager's package provides that name.
+
+- **A params `variable_output` method's doc example passes every argument
+    the binding takes** (gh-2001). Its synthesized example called the
+    method with one argument whatever the params -- `obj.delay(np.zeros(4))`
+    for `delay(x, mu)`, a `TypeError` the moment it runs. It is built by the
+    one builder the other shapes' examples use: a typed array per array
+    param, the type's zero per scalar, a real choice per enum. A lone array
+    param now reads `np.zeros(4, dtype=...)`, so every such method's runtime
+    `__doc__` changes once on the next `apply`.
+
+- **`jm apply` refuses an `extra_methods` row whose `fn` names something the
+    generated binding already declares** (gh-2005). `fn = "Solo_reset"` on
+    object `solo` applied cleanly, and the build then failed in the compiler
+    with `conflicting types for 'Solo_reset'`: the row's prototype takes
+    `PyObject *self`, jm's own wrapper `SoloObject *self`. The names are
+    read off jm's render of the binding, not a list -- every wrapper, a
+    type's `_dealloc` / `_init`, its `PyTypeObject` and tables, the
+    module's `PyInit_` -- and for a module object that is the whole
+    translation unit, every fragment the aggregator includes. A composer's
+    `[[module.X.extra_methods]]` gets the same refusal (its seam header
+    included), and with it the first checks its rows ever had: a row with
+    no `name` or `fn`, an `fn` that is not a C identifier and one `fn`
+    given two `flags` are refused instead of crashing with a `KeyError` or
+    reaching the compiler. Each exits 1 with one `error:` line naming the
+    row, and leaves the project untouched.
+
+- **`jm apply` splices a new method, `extra_methods` row or property into a
+    sacred module fragment where a render puts it, so `jm adopt --check`
+    no longer reports jm's own splice as `differs`** (gh-2006). Every spliced
+    row went before the `{NULL}` sentinel, written at the sentinel's `{`:
+    the first row sat at two indents and the sentinel at none, and a method
+    row landed after `destroy` / `__enter__` / `__exit__`, where a render
+    puts it before them. So a fragment `adopt --check` had called safe read
+    `differs: table:PyMethodDef` one `apply` later, on a table only jm had
+    touched. A row now goes before the row that follows it in the render, at
+    the table's indent, and the spliced method and getset tables equal a
+    fresh render byte for byte. The re-render that carries a hand-written
+    row into a sacred fragment (`jm method`, `jm property`) keeps that row
+    where it was written, before the row that followed it, instead of moving
+    it behind jm's trailing built-ins.
+
+- **A key an `[[<obj>.array_args]]` row does not read is reported, not
+    silently kept** (gh-2008). The `--array-arg name:dtype` rows were the one
+    object table the unknown-key walk never visited, and their reader takes
+    only `name` and `type` / `dtype`, so anything else -- gh-2004's
+    `rank = 1`, a misspelt `dtype` -- was accepted, kept and did nothing,
+    with no warning: the array still flattened through `PyArray_SIZE`. Each
+    such key now draws the same `warning:` line as an unknown key on every
+    other table, naming the object and the row. The row does not grow the
+    shape keys: a `rank` or `elements_per_sample` written on it is reported
+    with the table that honours it, `[[<obj>.init_params]]`, where a
+    constructor array typed `"float[]"` takes both.
+
+- **A capsule or handle row typed as an array is refused, naming the row,
+    instead of crashing `jm apply`** (gh-2009). A capsule module's
+    `init_params` and a handle module's `create_args` parse one C scalar per
+    row, and both looked the type up in jm's scalar table directly, so
+    `type = "float[]"` died with a bare `KeyError: 'float[]'` naming neither
+    the module nor the row. The same lookup crashed a capsule's
+    `properties`, a handle factory's `init_params` and a handle getter's
+    `fields` on an array, and every one of those -- plus a handle method's
+    scalar `args` and its `returns` -- on a type spelling jm does not know.
+    Each now exits 1 with one `error:` line naming the module, the table
+    and the row, and leaves the project untouched; on a constructor row it
+    adds that a constructor array is supported on an object's
+    `[[<obj>.init_params]]`.
+
 ## [0.100.0] — 2026-10-07
 
 ### Added
