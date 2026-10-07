@@ -269,8 +269,10 @@ class TestOptionalArrayToml:
             # every param that does not name another generated class: the
             # declared reference, the class it resolves to, and the `.pyi`
             # import line that makes the annotation resolvable. gh-1756's
-            # `str_hint` sits after the declared reference, ahead of the two
-            # resolved slots.
+            # `str_hint` and gh-2004's `rank` / `elements_per_sample` sit
+            # after the declared reference, ahead of the two resolved slots.
+            "",
+            "",
             "",
             "",
             "",
@@ -310,7 +312,10 @@ class TestOptionalArrayToml:
                 "",
                 "",
                 # gh-1224: (object, object_class, object_import), with
-                # gh-1756's `str_hint` after `object`.
+                # gh-1756's `str_hint` and gh-2004's `rank` /
+                # `elements_per_sample` after `object`.
+                "",
+                "",
                 "",
                 "",
                 "",

@@ -391,8 +391,9 @@ def array_rank(param, what: str = "") -> "int | None":
     default, as `array_rank_guard` explains.
 
     A value that is not a positive integer is refused rather than coerced:
-    ``rank = 0`` was read as "no guard" (it is falsy), and ``"1"`` was
-    ``int()``-ed by one builder while the next might not.
+    ``rank = 0`` was read as "no guard" (it is falsy), ``"1"`` was
+    ``int()``-ed where its sibling ``elements_per_sample`` refuses a string,
+    and ``"x"`` died on that ``int()`` inside the renderer.
 
     Parameters
     ----------
