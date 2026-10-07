@@ -22,7 +22,11 @@ Add a named execute method to an existing object.
 declaration into `<obj>_core.h` and appends a fresh C stub to `<obj>_core.c`,
 then regenerates the glue (`_ext.c`, `.pyi`) with the new Python binding.
 Existing bodies in `_core.c` are never re-rendered — only the new stub is
-appended, ready for you to implement.
+appended, ready for you to implement. The C benchmark
+`native/benchmarks/bench_<obj>_core.c` is yours and is left alone too
+(gh-1987): time the new method there yourself. On a standalone object you can
+instead delete the file and run `jm apply`, which writes jm's render of it,
+timing every declared method it can.
 
 **Arguments**
 
@@ -828,7 +832,10 @@ removed function, and an element contract (`test_<obj>_invariants.py`) the
 entry was one face of goes (gh-1978). It is splice-free, so it **leaves the
 orphaned `_core.c` body** (and the `_core.h` declaration, or the field-backed
 struct member) in place with a "delete by hand" note — your code is never
-silently rewritten. Remove the stub yourself once you're sure. (Removing
+silently rewritten. Remove the stub yourself once you're sure. Your C
+benchmark is left as it is as well (gh-1987): if it still calls the method, a
+second note says so — update it before you delete the body, or it stops
+linking. (Removing
 *state* via `just-makeit remove state <name> --object <obj>` is structural and
 rebuilds the object via the regenerate path instead.)
 

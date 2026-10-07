@@ -35,7 +35,11 @@ jm can only auto-populate the timing loop for a shape it can size: a `step()`,
 or a method that is not `variable_output` / `out_type` / `varargs` / `codec`.
 For anything else the file is a **scaffold with a `TODO:`** naming the
 candidate methods and showing a worked `jm_bench_add` call to copy — fill it in
-and the target measures. `jm status` lists the unfilled ones under `SILENT`. The Python
+and the target measures. `jm status` lists the unfilled ones under `SILENT`.
+Once written, the file is yours: `jm method` does not add a timing loop to it
+and `jm remove method` does not take one out (gh-1987). On a standalone object,
+delete it and run `jm apply` for jm's render with every method the manifest
+declares. The Python
 benchmark script runs as a plain script (`python bench_gain.py`) and reports
 ns/call for `step()` and µs + MSa/s for `steps()`.
 

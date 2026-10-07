@@ -407,7 +407,7 @@ def component_ctx(
 
 def regenerate_standalone(
     root: Path, cfg: dict, object_name: str, pkg: str
-) -> dict:
+) -> None:
     """Re-render a standalone object's ``_ext.c`` and ``.pyi`` in place.
 
     Both writes are create-if-exists: a component whose files have not been
@@ -424,11 +424,8 @@ def regenerate_standalone(
     `jm remove` had just written, and the C test stopped linking once the
     author deleted the body as the remove told them to.
 
-    Returns
-    -------
-    dict
-        The render context, for a caller that renders a further file of the
-        same component from it (`jm remove` re-renders the benchmark).
+    The C benchmark is not re-rendered here, by any verb: it is the
+    author's (gh-1987).
     """
     # Seed the sacred header's create() Doxygen (filtered of jm's own scaffold
     # boilerplate) so component_ctx can enrich the class docstring — it is
@@ -468,7 +465,6 @@ def regenerate_standalone(
     from . import _linkcheck
 
     _linkcheck.write(root, cfg, object_name)
-    return ctx
 
 
 def regenerate(
