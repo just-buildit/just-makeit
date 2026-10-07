@@ -834,6 +834,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             none_on_empty=bool(m.get("none_on_empty")),
             strict=bool(m.get("strict")),  # gh-1426 B
             error_on_empty=bool(m.get("error_on_empty")),
+            # gh-2012: named one by one like every key here, or the replay
+            # declares a `size_t` kernel over a signed `_core.c` and drops
+            # the refusal the binding raises.
+            count_type=m.get("count_type", ""),
+            error_sentinel=m.get("error_sentinel", ""),
             result_fields=list(m.get("result_fields", [])),
             max_results=int(m.get("max_results", 64)),
             single=bool(m.get("single")),

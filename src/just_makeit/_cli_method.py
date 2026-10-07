@@ -59,6 +59,8 @@ def run(args: list[str]) -> None:
     error_message = ""
     batch_method = False
     error_on_empty = False
+    count_type = ""
+    error_sentinel = ""
     none_on_empty = False
     strict = False
     releases: list[str] = []
@@ -118,6 +120,30 @@ def run(args: list[str]) -> None:
         elif tok == "--error-on-empty":
             # gh-1159: an empty result is a REFUSAL, not an empty answer.
             error_on_empty = True
+            i += 1
+        # gh-2012: a variable_output kernel whose zero is a real answer
+        # refuses with a value no count can be -- a negative one in a signed
+        # `--count-type` (with --error-negative), or an unsigned count's
+        # `--error-sentinel`, a C constant such as SIZE_MAX.
+        elif tok == "--count-type":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --count-type requires a C integer type",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            count_type = remaining[i]
+            i += 1
+        elif tok == "--error-sentinel":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --error-sentinel requires a C constant expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            error_sentinel = remaining[i]
             i += 1
         elif tok == "--none-on-empty":
             # gh-1418: the opposite reading -- nothing yet is a normal
@@ -706,6 +732,8 @@ def run(args: list[str]) -> None:
         impl_body=impl_body_m,
         batch=batch_method,
         error_on_empty=error_on_empty,
+        count_type=count_type,
+        error_sentinel=error_sentinel,
         none_on_empty=none_on_empty,
         strict=strict,
         releases=releases or None,

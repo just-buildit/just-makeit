@@ -1260,7 +1260,9 @@ IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
 #: `count_default` (`_context/_methods._count_default_parts`); an object's
 #: `init_post_parse` (`_context/_state`); a handle `create_post`'s `arg`
 #: and its `when` guard (`_handle`); an init-param's `default_raw`, the key
-#: that says "this default is C, not a literal" (`_context/_state`, gh-1671).
+#: that says "this default is C, not a literal" (`_context/_state`, gh-1671);
+#: a variable_output method's `error_sentinel`, the constant its count is
+#: compared with (`_context/_methods._count_refusal_c`, gh-2012).
 #: Any of them can call a derived function -- doppler's
 #: ``out_size = "kaiser_num_taps(...) | 1"`` -- or name a derived type.
 #: `default` is not here: it is C only on an entry that names no enum
@@ -1273,6 +1275,7 @@ C_EXPR_KEYS = (
     "arg",
     "when",
     "default_raw",
+    "error_sentinel",
 )
 
 #: The manifest keys whose value is a free-form C TYPE -- never checked

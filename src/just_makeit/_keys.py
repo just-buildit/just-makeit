@@ -303,6 +303,11 @@ METHOD_KEYS = frozenset(
         # REFUSAL rather than an empty answer -- the sibling of
         # `none_on_empty`, which reads the same zero the opposite way.
         "error_on_empty",
+        # gh-2012: a variable_output kernel's refusal VALUE, for one whose
+        # zero is a real answer: `error_negative` over a signed
+        # `count_type`, or an unsigned count's `error_sentinel` (C).
+        "count_type",
+        "error_sentinel",
         "status_return",
         "error_negative",
         "error",

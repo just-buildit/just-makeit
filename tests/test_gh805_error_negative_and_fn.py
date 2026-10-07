@@ -62,6 +62,7 @@ from just_makeit._context._diagnostics import (  # noqa: E402
 )
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 
 COMP = "dp_tlm"
 MOD = "telemetry"
@@ -360,12 +361,11 @@ class TestErrorNegativeNeedsAScalarIntResult:
     @pytest.mark.parametrize(
         "kw",
         [
-            {"variable_output": True},
             {"single": True, "result_fields": [{"name": "n", "type": "int"}]},
             {"multi_output": ["int"]},
             {"out_type": "int"},
         ],
-        ids=["variable_output", "single", "multi_output", "out_type"],
+        ids=["single", "multi_output", "out_type"],
     )
     def test_a_non_scalar_shape_is_rejected(self, tmp_path, kw):
         root = _project(tmp_path)
@@ -389,6 +389,21 @@ class TestErrorNegativeNeedsAScalarIntResult:
                     **kw,
                 )
         assert "plain scalar int return" in err.getvalue()
+
+    def test_variable_output_needs_a_signed_count(self, tmp_path):
+        """gh-2012 lifted the variable_output case: its count IS a single
+        int once the method declares a signed `count_type`. Over the default
+        `size_t` count the test could never fire, so it is still refused --
+        naming the count, not the element `return_type`."""
+        root = _project(tmp_path)
+        with (
+            pytest.raises(Refusal, match="count_type is size_t"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            method_run(
+                root, COMP, "x", MOD, "void", "int", True, [],
+                error_negative=True,
+            )  # fmt: skip
 
 
 class TestFnMustBeACIdentifier:

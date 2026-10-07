@@ -51,6 +51,7 @@ from ._init import (
 from ._object import _regenerate_module
 from . import _linkcheck
 from . import _incpath as INC
+from ._context._diagnostics import DEFAULT_COUNT_TYPE
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -60,6 +61,148 @@ from . import _incpath as INC
 SIGNED_INT_RETURNS = frozenset(
     {"int", "int8_t", "int16_t", "int32_t", "int64_t"}
 )
+
+
+def count_why_not(
+    method: str,
+    *,
+    variable_output: bool,
+    count_type: str = "",
+    error_negative: bool = False,
+    error_sentinel: str = "",
+    error_on_empty: bool = False,
+    batch: bool = False,
+    varargs: bool = False,
+    manual_stub: bool = False,
+    codec: str = "",
+) -> str:
+    """Why the keys that read a ``variable_output`` COUNT cannot take effect.
+
+    gh-2012. The kernel's one return value is the count, so a refusal has to
+    be a value no count can be. Two declarations say which, by the C
+    library's own convention: ``error_negative`` over a SIGNED `count_type`
+    (``rc < 0`` raises, ``rc >= 0`` is the count -- doppler's negative
+    ``DP_ERR_*`` codes), and ``error_sentinel`` naming one value of an
+    unsigned ``size_t`` count (``SIZE_MAX``, for a library that cannot change
+    an ABI). ``error_on_empty`` reads zero, independently of either.
+
+    Every combination that would be stored and then read by nobody is
+    refused here, because accept-and-ignore is how gh-1996 shipped a key
+    that changed nothing. Asked by `run`, which both ``jm method`` and
+    ``apply``'s replay call, so the two refuse alike.
+
+    The signed set is `SIGNED_INT_RETURNS`, the one the scalar
+    ``error_negative`` gate reads: the same question (can ``_rc < 0`` be
+    true?) about the same C value.
+
+    Parameters
+    ----------
+    method : str
+        The method's name, for the message.
+    variable_output, count_type, error_negative, error_sentinel, \
+error_on_empty
+        The declaration. An empty *count_type* is the default, ``size_t``.
+    batch, varargs, manual_stub, codec
+        The shapes that win over ``variable_output`` and never read the
+        count: each renders its own binding, so a count key on one is
+        silently inert.
+
+    Returns
+    -------
+    str
+        One sentence for ``error:``, or ``""`` when the declaration holds.
+
+    Examples
+    --------
+    >>> count_why_not("m", variable_output=True)
+    ''
+    >>> count_why_not("m", variable_output=True, count_type="int64_t",
+    ...               error_negative=True)
+    ''
+    >>> count_why_not("m", variable_output=True, error_sentinel="SIZE_MAX")
+    ''
+    >>> why = count_why_not("m", variable_output=True, error_negative=True)
+    >>> "count_type is size_t, which cannot be negative" in why
+    True
+    """
+    ct = count_type or DEFAULT_COUNT_TYPE
+    signed = ct in SIGNED_INT_RETURNS
+    declared = [
+        k
+        for k, v in (
+            ("count_type", count_type and ct != DEFAULT_COUNT_TYPE),
+            ("error_sentinel", error_sentinel),
+            ("error_on_empty", error_on_empty),
+        )
+        if v
+    ]
+    if variable_output and error_negative:
+        declared.insert(0, "error_negative")
+    who = f"method '{method}'"
+    if not variable_output:
+        # `error_negative` on a scalar method is the gh-805 key, gated by
+        # the scalar checks in `run`; only the count's own keys are here.
+        bad = [k for k in declared if k != "error_on_empty"]
+        if bad:
+            return (
+                f"{who}: {' and '.join(bad)} "
+                f"{'describes' if len(bad) == 1 else 'describe'} the count "
+                "a variable_output kernel returns, and this method returns "
+                "none. Add --variable-output, or drop "
+                f"{'it' if len(bad) == 1 else 'them'}."
+            )
+        return ""
+    hides = (
+        "--batch"
+        if batch
+        else "--varargs"
+        if varargs
+        else "--manual-stub"
+        if manual_stub
+        else "a codec"
+        if codec
+        else ""
+    )
+    if hides and declared:
+        return (
+            f"{who}: {' and '.join(declared)} "
+            f"{'reads' if len(declared) == 1 else 'read'} the count a "
+            f"variable_output kernel returns, but {hides} renders its own "
+            "binding, which never reads one. Drop one of the two."
+        )
+    if ct != DEFAULT_COUNT_TYPE and not signed:
+        return (
+            f"{who}: count_type {ct!r} is not a count jm reads. It is "
+            f"{DEFAULT_COUNT_TYPE} (the default), or a signed integer with "
+            f"error_negative: {', '.join(sorted(SIGNED_INT_RETURNS))}."
+        )
+    if error_negative and error_sentinel:
+        return (
+            f"{who}: error_negative and error_sentinel are two refusal "
+            "values for one count. A signed count already refuses on every "
+            "negative value; an unsigned one names its sentinel. Pick one."
+        )
+    if error_negative and not signed:
+        return (
+            f"{who}: error_negative reads a negative count, but its "
+            f"count_type is {ct}, which cannot be negative. Declare the "
+            "signed type the kernel returns (--count-type int64_t), or name "
+            "an unsigned refusal value with --error-sentinel."
+        )
+    if error_sentinel and signed:
+        return (
+            f"{who}: error_sentinel names a refusal value of an unsigned "
+            f"count, but count_type is {ct}. A signed count refuses with a "
+            "negative value: use --error-negative instead."
+        )
+    if signed and not error_negative:
+        return (
+            f"{who}: count_type {ct} is signed, but nothing reads its sign: "
+            "a negative count would reach the size_t length unread. Add "
+            "--error-negative, or keep the default size_t count."
+        )
+    return ""
+
 
 # gh-805 §A2: what a C function name may be.
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -135,6 +278,8 @@ def _methods_c_stub_variable(
     c_fn: str = "",
     *,
     csym: str,
+    count_type: str = DEFAULT_COUNT_TYPE,
+    error_sentinel: str = "",
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -151,9 +296,21 @@ def _methods_c_stub_variable(
     binding calls it with exactly the value it is about to pass to the
     kernel, so ``0`` is an ordinary answer (e.g. "this call produces
     nothing"), not a "no information" sentinel.
+
+    gh-2012: the kernel returns its count as *count_type* -- the type the
+    ``_core.h`` declaration names, read from the same key -- and its
+    ``IMPLEMENT`` note says how it refuses when the method declares a way:
+    a negative code for a signed count, *error_sentinel* for an unsigned one.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = _out_elem_disp(return_type, out_type)
+    _refuse = (
+        f", or {error_sentinel} to refuse"
+        if error_sentinel
+        else ", or a negative error code"
+        if count_type in SIGNED_INT_RETURNS
+        else ""
+    )
     has_arg = arg_type != "void"
     params = params or []
 
@@ -201,8 +358,8 @@ def _methods_c_stub_variable(
         "}",
         "",
         f"/* <<IMPLEMENT: process{' input and' if has_arg else ''} write results"
-        f" into out[0..n_out-1]; return actual output count >> */",
-        "size_t",
+        f" into out[0..n_out-1]; return actual output count{_refuse} >> */",
+        count_type,
         f"{c_fn}({csym}_state_t *state"
         f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
@@ -730,6 +887,7 @@ def _build_method_prototype(
     c_fn: str = "",
     *,
     csym: str,
+    count_type: str = DEFAULT_COUNT_TYPE,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
 
@@ -746,6 +904,10 @@ def _build_method_prototype(
     out-param pair, and this is the third of three places that distinction
     has to be drawn (the other two are ``make_methods_ctx``'s declaration
     chain and :func:`run`'s stub dispatch).
+
+    gh-2012: a variable-output kernel returns its count as *count_type*
+    (``size_t`` unless the method declares a signed one); its ``_max_out``
+    sibling stays ``size_t``, a capacity and never a refusal.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
@@ -839,7 +1001,7 @@ def _build_method_prototype(
         return "\n".join(
             [
                 f"size_t {c_fn}_max_out({csym}_state_t *state{moc_decl});",
-                f"size_t {c_fn}({csym}_state_t *state"
+                f"{count_type} {c_fn}({csym}_state_t *state"
                 f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]
         )
@@ -892,6 +1054,10 @@ _SIGNATURE_COERCIONS: dict = {
     "none_on_empty": (bool, False),
     "strict": (bool, False),
     "error_on_empty": (bool, False),
+    # gh-2012: the kernel's count type is in the C prototype, and the
+    # sentinel decides what the binding raises on -- both part of the call.
+    "count_type": (lambda v: v or DEFAULT_COUNT_TYPE, DEFAULT_COUNT_TYPE),
+    "error_sentinel": (str, ""),
     "result_fields": (list, []),
     "max_results": (int, 64),
     "single": (bool, False),
@@ -1026,6 +1192,8 @@ def run(
     none_on_empty: bool = False,
     strict: bool = False,
     error_on_empty: bool = False,
+    count_type: str = "",
+    error_sentinel: str = "",
     result_fields: list[dict] | None = None,
     max_results: int = 64,
     single: bool = False,
@@ -1197,6 +1365,11 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+    # gh-2012: on a `variable_output` method the int `error_negative` reads
+    # is the COUNT, whose C type is `count_type` (`return_type` names the
+    # element), so it is not this block's question: `count_why_not` below
+    # asks every one about the count, signedness included.
+    if error_negative and not variable_output:
         if return_type not in SIGNED_INT_RETURNS:
             # An unsigned or non-integer return makes `_rc < 0` either
             # always-false or meaningless, and always-false is the version
@@ -1219,10 +1392,11 @@ def run(
         # declaration that lands where jm does not look for it, read back as
         # correct because reading the manifest is what reviewing it consists
         # of. Rejection rather than a warning, to match the three siblings.
+        #
+        # gh-2012: `--variable-output` left this list -- its count IS a
+        # single int, once the method declares its signed type.
         _shape = (
-            "--variable-output"
-            if variable_output
-            else "--single"
+            "--single"
             if single
             else "--record-dtype"
             if record_dtype
@@ -1241,6 +1415,25 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
+    # gh-2012: the keys that read a variable_output COUNT -- its signed type,
+    # its sentinel, `error_negative` over it -- refused together wherever one
+    # could be stored and read by nobody. `error_on_empty` rides along for
+    # the shapes that hide the count (`--batch` and friends); its own
+    # non-variable_output refusal is above.
+    _count_why = count_why_not(
+        method_name,
+        variable_output=variable_output,
+        count_type=count_type,
+        error_negative=error_negative,
+        error_sentinel=error_sentinel,
+        error_on_empty=error_on_empty,
+        batch=batch,
+        varargs=varargs,
+        manual_stub=manual_stub,
+        codec=codec,
+    )
+    if _count_why:
+        raise _report.Refusal(_count_why)
     # gh-1064: a record declaration jm cannot generate from was accepted
     # silently and emitted C that does not compile -- the binding built from
     # the shape, the prototype from the return type, and nothing comparing
@@ -1289,20 +1482,25 @@ def run(
     # licenses these two exactly as the other triggers do. Left out, the
     # keys would be refused on the one shape whose whole purpose is to
     # explain a refusal.
-    _raises_somehow = error_negative or status_return or error_on_empty
+    # gh-2012: `error_sentinel` is a fourth, and `error_negative` over a
+    # variable_output count is the third reached from a new shape -- the
+    # same key, so it needs no line here.
+    _raises_somehow = (
+        error_negative or status_return or error_on_empty or error_sentinel
+    )
     if error and not _raises_somehow:
         print(
             "error: --error names the exception a failing return raises, so "
-            "it needs\n--error-negative, status_return or error_on_empty as "
-            "well.",
+            "it needs\n--error-negative, status_return, error_on_empty or "
+            "error_sentinel as well.",
             file=sys.stderr,
         )
         sys.exit(1)
     if error_message and not _raises_somehow:
         print(
             "error: --error-message is the text a failing return raises with, "
-            "so it\nneeds --error-negative, status_return or error_on_empty as "
-            "well.",
+            "so it\nneeds --error-negative, status_return, error_on_empty or "
+            "error_sentinel as well.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1494,6 +1692,8 @@ def run(
                     batch=batch,
                     none_on_empty=none_on_empty,
                     error_on_empty=error_on_empty,
+                    count_type=count_type,
+                    error_sentinel=error_sentinel,
                     result_fields=result_fields,
                     max_results=max_results,
                     single=single,
@@ -1866,6 +2066,8 @@ def run(
                 pass_capacity=pass_capacity,
                 c_fn=fn,
                 csym=csym,
+                count_type=count_type or DEFAULT_COUNT_TYPE,
+                error_sentinel=error_sentinel,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -1945,6 +2147,7 @@ def run(
             borrow=borrow,
             c_fn=fn,
             csym=csym,
+            count_type=count_type or DEFAULT_COUNT_TYPE,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -2087,6 +2290,13 @@ def run(
         method_entry["none_on_empty"] = True
     if error_on_empty:
         method_entry["error_on_empty"] = True
+    # gh-2012: written only when they say something. `count_type = "size_t"`
+    # is the default spelled out, so it is not written either: the manifest
+    # of a method that never declared one stays byte-identical.
+    if count_type and count_type != DEFAULT_COUNT_TYPE:
+        method_entry["count_type"] = count_type
+    if error_sentinel:
+        method_entry["error_sentinel"] = error_sentinel
     if batch:
         method_entry["batch"] = True
     if multi_output:
