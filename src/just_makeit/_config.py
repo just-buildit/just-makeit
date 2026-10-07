@@ -2263,9 +2263,13 @@ def _module_key(mod: str) -> str:
     """TOML table key for a module id — quoted when dotted.
 
     ``[module."dsp.filters"]`` keeps the dotted id a single key; the bare
-    ``[module.dsp.filters]`` would parse as nested tables.
+    ``[module.dsp.filters]`` would parse as nested tables. A quoted key is a
+    basic string, so it is written by the one escaper (gh-1886).
+
+    >>> _module_key("dsp.filters"), _module_key("filt")
+    ('"dsp.filters"', 'filt')
     """
-    return f'"{mod}"' if "." in mod else mod
+    return _toml_basic_string(mod) if "." in mod else mod
 
 
 def _truthy(v: object) -> bool:
@@ -5905,10 +5909,13 @@ def stamp_jm_version(root: Path, cfg: dict) -> str | None:
         text = mp.read_text(encoding="utf-8")
     except OSError:
         return None
+    # A version string holds nothing to escape; it is quoted by the one
+    # escaper anyway, so no TOML text jm writes is quoted by hand (gh-1886).
+    value = _toml_basic_string(running)
     if _re.search(r"^[ \t]*jm_version[ \t]*=", text, _re.M):
         text = _re.sub(
             r"^([ \t]*jm_version[ \t]*=[ \t]*).*$",
-            lambda m: m.group(1) + f'"{running}"',
+            lambda m: m.group(1) + value,
             text,
             count=1,
             flags=_re.M,
@@ -5916,7 +5923,7 @@ def stamp_jm_version(root: Path, cfg: dict) -> str | None:
     elif _re.search(r"^\[project\]", text, _re.M):
         text = _re.sub(
             r"^(\[project\][^\n]*\n)",
-            lambda m: m.group(1) + f'jm_version = "{running}"\n',
+            lambda m: m.group(1) + f"jm_version = {value}\n",
             text,
             count=1,
             flags=_re.M,
@@ -6760,8 +6767,13 @@ _TOML_SHORT_ESCAPES = {
 }
 
 
-def _toml_basic_string(value: str) -> str:
+def _toml_basic_string(value: object) -> str:
     """*value* as a TOML **basic string**, quotes included.
+
+    Anything that is not a string is written as its ``str()`` -- what the
+    ``f'key = "{value}"'`` sites gh-1886 routed through here did, so a
+    number a hand-written manifest gave a string key reads back as the same
+    string it always has. Only the escaping changed.
 
     gh-844. The one escaper. There were **four**, hand-rolled to three
     different levels of completeness, and three of them emitted strings
@@ -6783,9 +6795,17 @@ def _toml_basic_string(value: str) -> str:
     format's rules is not a substitute for the rules — so this states TOML's,
     and `tests/test_gh844_toml_escaping.py` checks every path against every
     class of forbidden character rather than against a remembered list.
+
+    gh-1886: and the one *way* a string is quoted in `_dump`. The serializer
+    had 130-odd ``f'key = "{value}"'`` sites beside the five that called
+    this, so a `const char *` param default -- documented as a C string
+    literal, ``"hi"`` -- made every later `apply` refuse its own manifest.
+    `tests/test_gh1886_dump_escapes_every_string.py` refuses that shape in
+    the source and round-trips a quote, backslash and newline through every
+    string the serializer writes.
     """
     out = []
-    for ch in value:
+    for ch in str(value):
         if ch in _TOML_SHORT_ESCAPES:
             out.append(_TOML_SHORT_ESCAPES[ch])
         elif ch < "\u0020" or ch == "\u007f":
@@ -6793,6 +6813,55 @@ def _toml_basic_string(value: str) -> str:
         else:
             out.append(ch)
     return '"' + "".join(out) + '"'
+
+
+def _toml_multiline_string(value: str) -> str:
+    r"""*value* as a TOML **multi-line** basic string, delimiters included.
+
+    The heredoc form: the opening delimiter, a newline, the text, a newline,
+    the closing delimiter. `_str_assign` uses it for prose that has line
+    breaks in it, and `_dump` for the C bodies (``impl``, ``create_impl``,
+    ``reset_impl``, ``destroy_impl``, ``init_post_parse``), which keep it
+    whatever they hold.
+
+    gh-1886. Those C bodies had their own copy of this, which escaped a run
+    of three quotes and nothing else -- so a backslash reached TOML raw, and
+    a multi-line basic string reads escapes. ``printf("a\n")`` came back with
+    a real newline inside the C string literal, and ``'\0'`` made `_dump`
+    refuse its own output. So the backslash is doubled here, once, for
+    both callers.
+
+    Newline and tab are written raw, which is the point of the form; every
+    other character TOML forbids raw in it (a lone CR, the other C0
+    controls, U+007F) is written as its escape, so any value is
+    representable.
+
+    Leading and trailing newlines are dropped (gh-192): TOML trims the
+    newline after the opening delimiter and keeps the one before the closing
+    one, so the value reads back with exactly one trailing newline -- which
+    the next save drops again, and repeated saves stay byte-stable.
+
+    Examples
+    --------
+    >>> body = _toml_multiline_string('puts("a' + chr(92) + 'n");')
+    >>> body.splitlines()[1]
+    'puts("a\\\\n");'
+    >>> tomllib.loads("k = " + body)["k"] == 'puts("a' + chr(92) + 'n");\n'
+    True
+    """
+    out = []
+    for ch in value.strip("\n"):
+        if ch in "\n\t":
+            out.append(ch)
+        elif ch in _TOML_SHORT_ESCAPES and ch != '"':
+            out.append(_TOML_SHORT_ESCAPES[ch])
+        elif ch < " " or ch == "\x7f":
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    # A quote is legal on its own; three in a row would close the string.
+    body = "".join(out).replace('"""', '\\"\\"\\"')
+    return '"""\n' + body + '\n"""'
 
 
 def _str_assign(key: str, value: str) -> str:
@@ -6811,11 +6880,7 @@ def _str_assign(key: str, value: str) -> str:
     # single-line basic string keeps the pretty form where it is correct and is
     # never wrong where it is not.
     if "\n" in value and not _TOML_UNSAFE_IN_MULTILINE.search(value):
-        # strip("\n") for round-trip idempotency (gh-192) — see _dump impl keys.
-        body = (
-            value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"').strip("\n")
-        )
-        return f'{key} = """\n{body}\n"""'
+        return f"{key} = {_toml_multiline_string(value)}"
     return f"{key} = {_toml_basic_string(value)}"
 
 
@@ -6985,13 +7050,13 @@ def _inline_field(f: dict) -> str:
     a TOML inline table — drives the source/segment field marshalling (gh-287)."""
     # gh-1711: an owned pointer bound by `object` resolves its type from the
     # referenced component, so `type` is written only when the row has one.
-    parts = [f'name = "{f["name"]}"']
+    parts = [f"name = {_toml_basic_string(f['name'])}"]
     if f.get("type"):
-        parts.append(f'type = "{f["type"]}"')
+        parts.append(f"type = {_toml_basic_string(f['type'])}")
     if f.get("enum"):
-        parts.append(f'enum = "{f["enum"]}"')
+        parts.append(f"enum = {_toml_basic_string(f['enum'])}")
     if f.get("default") not in (None, ""):
-        parts.append(f'default = "{f["default"]}"')
+        parts.append(f"default = {_toml_basic_string(f['default'])}")
     if f.get("bytes"):
         parts.append("bytes = true")
     # gh-1236: read by `_composer` and written by nobody, so a field carrying
@@ -7006,15 +7071,15 @@ def _inline_field(f: dict) -> str:
         parts.append("complex = true")
     for _k in ("c_ptr", "c_len"):
         if f.get(_k):
-            parts.append(f'{_k} = "{f[_k]}"')
+            parts.append(f"{_k} = {_toml_basic_string(f[_k])}")
     if f.get("aliases"):
-        parts.append(
-            "aliases = [" + ", ".join(f'"{a}"' for a in f["aliases"]) + "]"
-        )
+        parts.append(f"aliases = {_toml_string_array(f['aliases'])}")
     if f.get("coerce"):
-        parts.append(f'coerce = "{f["coerce"]}"')
+        parts.append(f"coerce = {_toml_basic_string(f['coerce'])}")
     if f.get("coerce_str_fn"):
-        parts.append(f'coerce_str_fn = "{f["coerce_str_fn"]}"')
+        parts.append(
+            f"coerce_str_fn = {_toml_basic_string(f['coerce_str_fn'])}"
+        )
     # gh-1711: an owned-pointer field. Dropped, the next save would turn it
     # back into a scalar of a pointer type, which the renderer refuses.
     # gh-1735: through the scalar writer, because `parse_why` is a switch --
@@ -7043,16 +7108,16 @@ def _inline_result_field(f: dict) -> str:
     >>> _inline_result_field({"name": "n", "type": "int", "doc": 'say "hi"'})
     '{name = "n", type = "int", doc = "say \\\\"hi\\\\""}'
     """
-    parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
+    parts = [
+        f"name = {_toml_basic_string(f['name'])}",
+        f"type = {_toml_basic_string(f['type'])}",
+    ]
     if f.get("doc"):
-        body = (
-            str(f["doc"])
-            .replace("\\", "\\\\")
-            .replace('"', '\\"')
-            # An inline table is one line; a wrapped doc rides as an escape.
-            .replace("\n", "\\n")
-        )
-        parts.append(f'doc = "{body}"')
+        # An inline table is one line, so a wrapped doc rides as `\n`.
+        # gh-1886: through the one escaper. This was a sixth hand-rolled
+        # one -- backslash, quote and newline, but a CR or a control
+        # character reached TOML raw.
+        parts.append(f"doc = {_toml_basic_string(f['doc'])}")
     return "{" + ", ".join(parts) + "}"
 
 
@@ -7068,7 +7133,7 @@ def _inline_dict(d: dict) -> str:
         if isinstance(v, bool):
             parts.append(f"{k} = {'true' if v else 'false'}")
         else:
-            parts.append(f'{k} = "{v}"')
+            parts.append(f"{k} = {_toml_basic_string(v)}")
     return "{ " + ", ".join(parts) + " }"
 
 
@@ -7081,31 +7146,31 @@ def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
 
     for a in data.get("create_args", []):
         out.append(f"[[module.{mk}.create_args]]")
-        out.append(f'name = "{a["name"]}"')
-        out.append(f'type = "{a["type"]}"')
+        out.append(f"name = {_toml_basic_string(a['name'])}")
+        out.append(f"type = {_toml_basic_string(a['type'])}")
         if a.get("enum"):
-            out.append(f'enum = "{a["enum"]}"')
+            out.append(f"enum = {_toml_basic_string(a['enum'])}")
         if a.get("default") not in (None, ""):
-            out.append(f'default = "{a["default"]}"')
+            out.append(f"default = {_toml_basic_string(a['default'])}")
         if a.get("kwonly"):
             out.append("kwonly = true")
         out.append("")
 
     for p in data.get("create_post", []):
         out.append(f"[[module.{mk}.create_post]]")
-        out.append(f'fn = "{p["fn"]}"')
+        out.append(f"fn = {_toml_basic_string(p['fn'])}")
         if p.get("when"):
-            out.append(f'when = "{p["when"]}"')
+            out.append(f"when = {_toml_basic_string(p['when'])}")
         if "arg" in p:
-            out.append(f'arg = "{p["arg"]}"')
+            out.append(f"arg = {_toml_basic_string(p['arg'])}")
         out.append("")
 
     for m in data.get("methods", []):
         out.append(f"[[module.{mk}.methods]]")
-        out.append(f'name = "{m["name"]}"')
-        out.append(f'fn = "{m["fn"]}"')
+        out.append(f"name = {_toml_basic_string(m['name'])}")
+        out.append(f"fn = {_toml_basic_string(m['fn'])}")
         if m.get("returns"):
-            out.append(f'returns = "{m["returns"]}"')
+            out.append(f"returns = {_toml_basic_string(m['returns'])}")
         if m.get("nogil"):
             out.append("nogil = true")
         if m.get("args"):
@@ -7121,9 +7186,9 @@ def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
         # fn/out are absent for a per-field-getter table (gh-314); each field
         # then carries its own `getter` (dumped inline via _inline_dict).
         if g.get("fn"):
-            out.append(f'fn = "{g["fn"]}"')
+            out.append(f"fn = {_toml_basic_string(g['fn'])}")
         if g.get("out"):
-            out.append(f'out = "{g["out"]}"')
+            out.append(f"out = {_toml_basic_string(g['out'])}")
         if g.get("cache"):
             out.append("cache = true")
         if g.get("fields"):
@@ -7141,9 +7206,9 @@ def _inline_computed(c: dict) -> str:
     """Serialize a computed read-only property (``{name, type, fn, doc?}``) as a
     TOML inline table — the source's derived-property declarations (gh-287)."""
     parts = [
-        f'name = "{c["name"]}"',
-        f'type = "{c["type"]}"',
-        f'fn = "{c["fn"]}"',
+        f"name = {_toml_basic_string(c['name'])}",
+        f"type = {_toml_basic_string(c['type'])}",
+        f"fn = {_toml_basic_string(c['fn'])}",
     ]
     if c.get("doc"):
         # gh-1236: through the shared writer, not raw interpolation. This was
@@ -7249,7 +7314,7 @@ def _dump_composer_settings(mk: str, data: dict) -> list[str]:
         out.append(f"[[module.{mk}.settings]]")
         for k in ("name", "setter_fn", "getter_fn", "type", "enum"):
             if st.get(k):
-                out.append(f'{k} = "{st[k]}"')
+                out.append(f"{k} = {_toml_basic_string(st[k])}")
         out.append("")
     return out
 
@@ -7291,7 +7356,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         out.append(f"[module.{mk}.source]")
         for k in ("object", "struct", "type_name"):
             if src.get(k):
-                out.append(f'{k} = "{src[k]}"')
+                out.append(f"{k} = {_toml_basic_string(src[k])}")
         fields = src.get("fields") or []
         if fields:
             out.append(
@@ -7324,7 +7389,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 "output_type",
             ):
                 if gen.get(k):
-                    out.append(f'{k} = "{gen[k]}"')
+                    out.append(f"{k} = {_toml_basic_string(gen[k])}")
             out.append("")
 
     seg = data.get("segment")
@@ -7338,7 +7403,7 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
             "count_member",
         ):
             if seg.get(k):
-                out.append(f'{k} = "{seg[k]}"')
+                out.append(f"{k} = {_toml_basic_string(seg[k])}")
         if seg.get("flat_sources"):
             out.append("flat_sources = true")
         fields = seg.get("fields") or []
@@ -7355,25 +7420,19 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     if tl:
         out.append(f"[module.{mk}.timeline]")
         if tl.get("type_name"):
-            out.append(f'type_name = "{tl["type_name"]}"')
+            out.append(f"type_name = {_toml_basic_string(tl['type_name'])}")
         if tl.get("loop"):
-            out.append(
-                "loop = [" + ", ".join(f'"{x}"' for x in tl["loop"]) + "]"
-            )
+            out.append(f"loop = {_toml_string_array(tl['loop'])}")
         out.append("")
 
     oo = data.get("oo")
     if oo:
         out.append(f"[module.{mk}.oo]")
         if oo.get("factories"):
-            out.append(
-                "factories = ["
-                + ", ".join(f'"{x}"' for x in oo["factories"])
-                + "]"
-            )
+            out.append(f"factories = {_toml_string_array(oo['factories'])}")
         for k in ("emit", "discriminant", "composer_type_name"):
             if oo.get(k):
-                out.append(f'{k} = "{oo[k]}"')
+                out.append(f"{k} = {_toml_basic_string(oo[k])}")
         out.append("")
 
     comp = data.get("composer")
@@ -7386,7 +7445,9 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
         rt = comp.get("realtime")
         if rt:
             # gh-317: the realtime stream clock fns as an inline table.
-            _rt = ", ".join(f'{k} = "{v}"' for k, v in rt.items())
+            _rt = ", ".join(
+                f"{k} = {_toml_basic_string(v)}" for k, v in rt.items()
+            )
             out.append(f"realtime = {{ {_rt} }}")
         out.append("")
 
@@ -7410,9 +7471,8 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
                 out.append(f"{k} = true")
         if js.get("to_json_trailing"):
             out.append(
-                "to_json_trailing = ["
-                + ", ".join(f'"{x}"' for x in js["to_json_trailing"])
-                + "]"
+                "to_json_trailing = "
+                + _toml_string_array(js["to_json_trailing"])
             )
         out.append("")
 
@@ -7420,12 +7480,12 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     # table with an inline-table `params` array.
     for s in data.get("serializers", []):
         out.append(f"[[module.{mk}.serializers]]")
-        out.append(f'name = "{s["name"]}"')
-        out.append(f'fn = "{s["fn"]}"')
+        out.append(f"name = {_toml_basic_string(s['name'])}")
+        out.append(f"fn = {_toml_basic_string(s['fn'])}")
         if s.get("returns"):
-            out.append(f'returns = "{s["returns"]}"')
+            out.append(f"returns = {_toml_basic_string(s['returns'])}")
         if s.get("header"):  # gh-343: #include for the serializer fn's decl
-            out.append(f'header = "{s["header"]}"')
+            out.append(f"header = {_toml_basic_string(s['header'])}")
         if s.get("params"):
             out.append(
                 "params = ["
@@ -7437,6 +7497,26 @@ def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
     out += _dump_composer_settings(mk, data)
 
     return out
+
+
+def _warning_head_lines(w: dict) -> list[str]:
+    """The ``after`` / ``condition`` / ``category`` lines of one warning.
+
+    Shared by an object's ``[[<comp>.warnings]]`` and a view's
+    ``[[<comp>.views.warnings]]`` (gh-481, gh-504), which wrote them twice.
+    ``condition`` is a C expression, so it can hold a string literal -- one
+    reason none of the three is quoted by hand (gh-1886).
+
+    Examples
+    --------
+    >>> _warning_head_lines({"condition": 'strcmp(s, "x") == 0'})[1]
+    'condition = "strcmp(s, \\\\"x\\\\") == 0"'
+    """
+    return [
+        f"after = {_toml_basic_string(w.get('after', '__init__'))}",
+        f"condition = {_toml_basic_string(w['condition'])}",
+        f"category = {_toml_basic_string(w.get('category', 'UserWarning'))}",
+    ]
 
 
 def _property_dump_lines(p: dict, header: str) -> list[str]:
@@ -7455,31 +7535,34 @@ def _property_dump_lines(p: dict, header: str) -> list[str]:
     ``tests/test_gh549_property_dump_keys.py`` pins the whole key set rather
     than any one key, so the next key added cannot repeat it.
     """
-    lines = [header, f'name = "{p["name"]}"']
+    lines = [header, f"name = {_toml_basic_string(p['name'])}"]
     if p.get("doc"):
         lines.append(_doc_assign(p["doc"]))
-    lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
+    _type = p.get("type") or p.get("ctype", "size_t")
+    lines.append(f"type = {_toml_basic_string(_type)}")
     # gh-519: `enum` qualifies how `type` is presented to Python, so it reads
     # best directly beneath it.
     if p.get("enum"):
-        lines.append(f'enum = "{p["enum"]}"')
+        lines.append(f"enum = {_toml_basic_string(p['enum'])}")
     if p.get("writable"):
         lines.append("writable = true")
     if p.get("field"):
         lines.append("field = true")
     if p.get("buf_field"):
-        lines.append(f'buf_field = "{p["buf_field"]}"')
-        lines.append(f'len_field = "{p.get("len_field", "n")}"')
+        lines.append(f"buf_field = {_toml_basic_string(p['buf_field'])}")
+        lines.append(
+            f"len_field = {_toml_basic_string(p.get('len_field', 'n'))}"
+        )
     if p.get("valid_field"):
-        lines.append(f'valid_field = "{p["valid_field"]}"')
+        lines.append(f"valid_field = {_toml_basic_string(p['valid_field'])}")
     if p.get("expr"):
-        lines.append(f'expr = "{p["expr"]}"')
+        lines.append(f"expr = {_toml_basic_string(p['expr'])}")
     # gh-543: a container property's accessors.
     if p.get("value_type"):
-        lines.append(f'value_type = "{p["value_type"]}"')
+        lines.append(f"value_type = {_toml_basic_string(p['value_type'])}")
     for _fn in ("count_fn", "key_fn", "value_fn"):
         if p.get(_fn):
-            lines.append(f'{_fn} = "{p[_fn]}"')
+            lines.append(f"{_fn} = {_toml_basic_string(p[_fn])}")
     # gh-1242: everything else `PROPERTY_KEYS` accepts, DERIVED rather than
     # listed. The hand-written chain above kept growing a key behind, and the
     # cost is not cosmetic: `capsule` (gh-788 gap 4) was dropped here, so
@@ -7510,13 +7593,13 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
     Shared (gh-504) by an object's ``[[<comp>.methods]]`` and a view's
     ``[[<comp>.views.methods]]``.
     """
-    lines = [header, f'name = "{m["name"]}"']
+    lines = [header, f"name = {_toml_basic_string(m['name'])}"]
     if m.get("doc"):
         lines.append(_doc_assign(m["doc"]))
     if m.get("arg_type"):
-        lines.append(f'arg_type = "{m["arg_type"]}"')
+        lines.append(f"arg_type = {_toml_basic_string(m['arg_type'])}")
     if m.get("return_type"):
-        lines.append(f'return_type = "{m["return_type"]}"')
+        lines.append(f"return_type = {_toml_basic_string(m['return_type'])}")
     if m.get("varargs"):
         lines.append("varargs = true")
     if m.get("manual_stub"):
@@ -7540,40 +7623,42 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
     if m.get("batch"):
         lines.append("batch = true")
     if m.get("multi_output"):
-        mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
-        lines.append(f"multi_output = [{mo_str}]")
+        lines.append(f"multi_output = {_toml_string_array(m['multi_output'])}")
     _ea = m.get("extra_args") or m.get("params")
     if _ea:
         _ekey = "extra_args" if "extra_args" in m else "params"
 
         def _param_inline(p: dict) -> str:
-            s = f'name = "{p["name"]}"'
+            s = f"name = {_toml_basic_string(p['name'])}"
             # gh-554: a codec `role = "variant"` param carries no C type (jm
             # packs it from a PyObject), so `type` is optional here.
             if p.get("type"):
-                s += f', type = "{p["type"]}"'
+                s += f", type = {_toml_basic_string(p['type'])}"
             # gh-240: an optional scalar default round-trips as a string.
+            # gh-1886: the issue's site. A `const char *` default is a C
+            # string literal, quotes and all, and written raw here it ended
+            # the TOML string early -- every later `apply` refused.
             if p.get("default") not in (None, ""):
-                s += f', default = "{p["default"]}"'
+                s += f", default = {_toml_basic_string(p['default'])}"
             # gh-554: the codec arg role (discriminant / variant) must survive
             # save()/load() — a per-param key the gh-257 generic passthrough
             # (method-level scalars only) does not cover.
             if p.get("role"):
-                s += f', role = "{p["role"]}"'
+                s += f", role = {_toml_basic_string(p['role'])}"
             # gh-432: capsule-typed params — the capsule name and the
             # foreign type's header must survive save()/load(); the
             # gh-257 generic passthrough covers only method-level
             # scalar keys, not per-param keys.
             if p.get("capsule"):
-                s += f', capsule = "{p["capsule"]}"'
+                s += f", capsule = {_toml_basic_string(p['capsule'])}"
             if p.get("header"):
-                s += f', header = "{p["header"]}"'
+                s += f", header = {_toml_basic_string(p['header'])}"
             return "{" + s + "}"
 
         parts = ", ".join(_param_inline(p) for p in _ea)
         lines.append(f"{_ekey} = [{parts}]")
     if m.get("out_type"):
-        lines.append(f'out_type = "{m["out_type"]}"')
+        lines.append(f"out_type = {_toml_basic_string(m['out_type'])}")
     if m.get("out_divisor") and m["out_divisor"] != 1:
         lines.append(f"out_divisor = {m['out_divisor']}")
     if m.get("bench") is False:
@@ -7588,7 +7673,9 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
     if m.get("single"):
         lines.append("single = true")
     if m.get("py_return_type"):
-        lines.append(f'py_return_type = "{m["py_return_type"]}"')
+        lines.append(
+            f"py_return_type = {_toml_basic_string(m['py_return_type'])}"
+        )
     if m.get("max_out"):
         lines.append(f"max_out = {m['max_out']}")
     # gh-257: preserve any manifest-authored scalar key the explicit block
@@ -7608,7 +7695,7 @@ def _method_dump_lines(m: dict, header: str) -> list[str]:
         elif isinstance(_v, (int, float)):
             lines.append(f"{_k} = {_v}")
         else:
-            lines.append(f'{_k} = "{_v}"')
+            lines.append(f"{_k} = {_toml_basic_string(_v)}")
     lines.append("")
     return lines
 
@@ -7671,31 +7758,32 @@ def _dump(cfg: dict) -> str:
                 items_str = ", ".join(_toml_value(x) for x in v)
                 lines.append(f"{k} = [{items_str}]")
             else:
-                lines.append(f'{k} = "{v}"')
+                lines.append(f"{k} = {_toml_basic_string(v)}")
         for name, sub in subtables.items():
             lines.append("")
             lines.append(f"[project.{name}]")
             for k, v in sub.items():
                 if isinstance(v, (list, tuple)):
-                    items_str = ", ".join(
-                        str(x) if isinstance(x, (int, float)) else f'"{x}"'
-                        for x in v
-                    )
+                    # gh-1886: the `[project]` branch's writer, one table
+                    # down. It already wrote a number bare; a string went
+                    # through `f'"{x}"'`, and a bool came out `True`.
+                    items_str = ", ".join(_toml_value(x) for x in v)
                     lines.append(f"{k} = [{items_str}]")
                 elif isinstance(v, bool):
                     lines.append(f"{k} = {str(v).lower()}")
                 elif isinstance(v, (int, float)):
                     lines.append(f"{k} = {v}")
                 else:
-                    lines.append(f'{k} = "{v}"')
+                    lines.append(f"{k} = {_toml_basic_string(v)}")
         lines.append("")
 
     # [[enum]] SSOT tables (top-level, manifest-owned) — render before modules.
     for e in cfg.get("enum", []):
         lines.append("[[enum]]")
-        lines.append(f'name = "{e["name"]}"')
-        vals_str = ", ".join(f'"{v}"' for v in e.get("values", []))
-        lines.append(f"values = [{vals_str}]")
+        lines.append(f"name = {_toml_basic_string(e['name'])}")
+        lines.append(
+            f"values = {_toml_string_array(list(e.get('values', [])))}"
+        )
         lines.append("")
 
     # gh-999: the [[group]] SSOT, beside [[enum]] and for the same reason —
@@ -7723,15 +7811,20 @@ def _dump(cfg: dict) -> str:
             # gh-286/gh-287/gh-306: capsule + composer + handle modules expose
             # an opaque backing (composer adds OO types; handle a typed class) —
             # no `objects` list.
-            lines.append(f'kind = "{data["kind"]}"')
+            lines.append(f"kind = {_toml_basic_string(data['kind'])}")
             if data.get("backing"):
-                lines.append(f'backing = "{data["backing"]}"')
+                lines.append(
+                    f"backing = {_toml_basic_string(data['backing'])}"
+                )
             if data.get("capsule_name"):
-                lines.append(f'capsule_name = "{data["capsule_name"]}"')
+                _cn = _toml_basic_string(data["capsule_name"])
+                lines.append(f"capsule_name = {_cn}")
             if data.get("package"):
-                lines.append(f'package = "{data["package"]}"')
+                lines.append(
+                    f"package = {_toml_basic_string(data['package'])}"
+                )
             if data.get("header"):
-                lines.append(f'header = "{data["header"]}"')
+                lines.append(f"header = {_toml_basic_string(data['header'])}")
             if data.get("kind") == "handle":
                 # gh-306: the typed-class scalar keys.
                 for _hk in (
@@ -7744,22 +7837,25 @@ def _dump(cfg: dict) -> str:
                     "serializable",  # gh-403: state triplet over the handle
                 ):
                     if data.get(_hk):
-                        lines.append(f'{_hk} = "{data[_hk]}"')
+                        lines.append(
+                            f"{_hk} = {_toml_basic_string(data[_hk])}"
+                        )
                 if data.get("context_manager"):
                     lines.append("context_manager = true")
             if data.get("kind") == "composer":
                 # gh-287: composes a generator source object; sample_type turns
                 # on the inherited jm-app output axes.
                 if data.get("composes"):
-                    cstr = ", ".join(f'"{c}"' for c in data["composes"])
-                    lines.append(f"composes = [{cstr}]")
+                    lines.append(
+                        f"composes = {_toml_string_array(data['composes'])}"
+                    )
                 if data.get("sample_type"):
                     lines.append("sample_type = true")
             if data.get("depends_on"):
                 parts = []
                 for d in data["depends_on"]:
                     if isinstance(d, dict):
-                        inner = f'name = "{d["name"]}"'
+                        inner = f"name = {_toml_basic_string(d['name'])}"
                         if d.get("link"):
                             inner += ", link = true"
                         # gh-537: dropping this republishes a test-only dep
@@ -7768,14 +7864,13 @@ def _dump(cfg: dict) -> str:
                             inner += ", test_only = true"
                         parts.append(f"{{ {inner} }}")
                     else:
-                        parts.append(f'"{d}"')
+                        parts.append(_toml_basic_string(d))
                 lines.append(f"depends_on = [{', '.join(parts)}]")
         elif data.get("functions_in_core") in (True, "true"):
             lines.append('functions_in_core = "true"')
         else:
-            objs = data.get("objects", [])
-            objs_str = ", ".join(f'"{o}"' for o in objs)
-            lines.append(f"objects = [{objs_str}]")
+            objs = list(data.get("objects", []))
+            lines.append(f"objects = {_toml_string_array(objs)}")
         # gh-523: `package` is not capsule/handle-specific — an object module
         # can also land its .so / .pyi / __init__ exports inside a sibling
         # package. The capsule branch above already emitted it (in its own
@@ -7783,29 +7878,29 @@ def _dump(cfg: dict) -> str:
         # would be silently dropped on the next save.
         if data.get("kind") not in ("capsule", "composer", "handle"):
             if data.get("package"):
-                lines.append(f'package = "{data["package"]}"')
+                lines.append(
+                    f"package = {_toml_basic_string(data['package'])}"
+                )
         # gh-645: applies to every module kind -- a capsule's free functions
         # need documenting as much as an object group's.
         if data.get("doc"):
             lines.append(_str_assign("doc", str(data["doc"])))
         extra_t = data.get("extra_types", [])
         if extra_t:
-            types_str = ", ".join(f'"{t}"' for t in extra_t)
-            lines.append(f"extra_types = [{types_str}]")
+            lines.append(f"extra_types = {_toml_string_array(extra_t)}")
         extra = data.get("extra_link_libs", [])
         if extra:
-            libs_str = ", ".join(f'"{lib}"' for lib in extra)
-            lines.append(f"extra_link_libs = [{libs_str}]")
+            lines.append(f"extra_link_libs = {_toml_string_array(extra)}")
         extra_inc = data.get("extra_include_dirs", [])
         if extra_inc:
-            inc_str = ", ".join(f'"{d}"' for d in extra_inc)
-            lines.append(f"extra_include_dirs = [{inc_str}]")
+            lines.append(
+                f"extra_include_dirs = {_toml_string_array(extra_inc)}"
+            )
         reexp = data.get("reexports", {})
         if isinstance(reexp, dict) and reexp:
             parts = []
             for sub, names in reexp.items():
-                names_str = ", ".join(f'"{n}"' for n in names)
-                parts.append(f"{sub} = [{names_str}]")
+                parts.append(f"{sub} = {_toml_string_array(list(names))}")
             lines.append(f"reexports = {{ {', '.join(parts)} }}")
         header_end = len(lines)
         lines.append("")
@@ -7850,19 +7945,28 @@ def _dump(cfg: dict) -> str:
             if fn.get("params"):
                 _emit = []
                 for p in fn["params"]:
-                    base = f'name = "{p["name"]}", type = "{p["type"]}"'
+                    base = (
+                        f"name = {_toml_basic_string(p['name'])}, "
+                        f"type = {_toml_basic_string(p['type'])}"
+                    )
                     # `mutable` is a synonym for `out`; canonicalise on dump.
                     if p.get("out") or p.get("mutable"):
                         base += ", out = true"
-                    # gh-240: an optional scalar default round-trips as a string.
+                    # gh-240: an optional scalar default round-trips as a
+                    # string. gh-1886: escaped, because it is a C literal and
+                    # a `const char *` one is spelled with quotes.
                     if p.get("default") not in (None, ""):
-                        base += f', default = "{p["default"]}"'
+                        base += (
+                            f", default = {_toml_basic_string(p['default'])}"
+                        )
                     # gh-432: capsule-typed params round-trip their capsule
                     # name and foreign header.
                     if p.get("capsule"):
-                        base += f', capsule = "{p["capsule"]}"'
+                        base += (
+                            f", capsule = {_toml_basic_string(p['capsule'])}"
+                        )
                     if p.get("header"):
-                        base += f', header = "{p["header"]}"'
+                        base += f", header = {_toml_basic_string(p['header'])}"
                     _emit.append("{" + base + "}")
                 lines.append(f"params = [{', '.join(_emit)}]")
             if fn.get("inline"):
@@ -7893,18 +7997,24 @@ def _dump(cfg: dict) -> str:
             mk = _module_key(mod)
             for p in data.get("init_params", []):
                 lines.append(f"[[module.{mk}.init_params]]")
-                lines.append(f'name = "{p["name"]}"')
-                lines.append(f'type = "{p["type"]}"')
+                lines.append(f"name = {_toml_basic_string(p['name'])}")
+                lines.append(f"type = {_toml_basic_string(p['type'])}")
                 if p.get("default") not in (None, ""):
-                    lines.append(f'default = "{p["default"]}"')
+                    lines.append(
+                        f"default = {_toml_basic_string(p['default'])}"
+                    )
                 lines.append("")
             for m in data.get("methods", []):
                 lines.append(f"[[module.{mk}.methods]]")
-                lines.append(f'name = "{m["name"]}"')
+                lines.append(f"name = {_toml_basic_string(m['name'])}")
                 if m.get("arg_type"):
-                    lines.append(f'arg_type = "{m["arg_type"]}"')
+                    lines.append(
+                        f"arg_type = {_toml_basic_string(m['arg_type'])}"
+                    )
                 if m.get("return_type"):
-                    lines.append(f'return_type = "{m["return_type"]}"')
+                    lines.append(
+                        f"return_type = {_toml_basic_string(m['return_type'])}"
+                    )
                 if m.get("caller_out"):
                     lines.append("caller_out = true")
                 if m.get("nogil"):
@@ -7912,8 +8022,8 @@ def _dump(cfg: dict) -> str:
                 lines.append("")
             for pr in data.get("properties", []):
                 lines.append(f"[[module.{mk}.properties]]")
-                lines.append(f'name = "{pr["name"]}"')
-                lines.append(f'type = "{pr["type"]}"')
+                lines.append(f"name = {_toml_basic_string(pr['name'])}")
+                lines.append(f"type = {_toml_basic_string(pr['type'])}")
                 if pr.get("writable"):
                     lines.append("writable = true")
                 lines.append("")
@@ -7969,17 +8079,18 @@ def _dump(cfg: dict) -> str:
             # ``acq_create_continuous``) declares it here so the generated
             # tp_init calls it — no hand-patch that regeneration would drop.
             "create_fn",
-            # gh-482. `create_error` is a name from ERROR_CATEGORIES, so the
-            # raw f-string emission below is safe for it. Its paired
-            # `create_error_message` is human prose and is emitted separately
-            # via _str_assign — this loop does no escaping, so a message
-            # containing a quote would produce broken TOML here.
+            # gh-482. `create_error` is a name from ERROR_CATEGORIES. Its
+            # paired `create_error_message` is human prose and is emitted
+            # separately via _str_assign, for the readable multi-line form.
             "create_error",
         )
         lines.append(f"[{comp}]")
         for k in scalar_keys:
             if k in comp_data:
-                lines.append(f'{k} = "{comp_data[k]}"')
+                # gh-1886: escaped like every other value. `core_macro` and
+                # `class_name` are names, but "safe because it is validated"
+                # was the reasoning that left 130 sites raw.
+                lines.append(f"{k} = {_toml_basic_string(comp_data[k])}")
         if comp_data.get("create_error_message"):
             lines.append(
                 _str_assign(
@@ -7992,25 +8103,21 @@ def _dump(cfg: dict) -> str:
             parts = []
             for d in comp_data["depends_on"]:
                 if isinstance(d, dict):
-                    inner = f'name = "{d["name"]}"'
+                    inner = f"name = {_toml_basic_string(d['name'])}"
                     if d.get("link"):
                         inner += ", link = true"
                     if d.get("test_only"):  # gh-537, see above
                         inner += ", test_only = true"
                     parts.append(f"{{ {inner} }}")
                 else:
-                    parts.append(f'"{d}"')
+                    parts.append(_toml_basic_string(d))
             lines.append(f"depends_on = [{', '.join(parts)}]")
         if comp_data.get("extra_link_libs"):
-            libs_str = ", ".join(
-                f'"{lib}"' for lib in comp_data["extra_link_libs"]
-            )
-            lines.append(f"extra_link_libs = [{libs_str}]")
+            libs = _toml_string_array(comp_data["extra_link_libs"])
+            lines.append(f"extra_link_libs = {libs}")
         if comp_data.get("extra_include_dirs"):
-            inc_str = ", ".join(
-                f'"{d}"' for d in comp_data["extra_include_dirs"]
-            )
-            lines.append(f"extra_include_dirs = [{inc_str}]")
+            incs = _toml_string_array(comp_data["extra_include_dirs"])
+            lines.append(f"extra_include_dirs = {incs}")
         if comp_data.get("core_args"):
             # Arguments are C expressions, so a string literal's quotes must
             # survive -- hence the escaping array writer, not an f-string.
@@ -8024,15 +8131,20 @@ def _dump(cfg: dict) -> str:
         # drops hand-written create/reset/destroy/step bodies.
         for _impl_key in ("impl", "create_impl", "reset_impl", "destroy_impl"):
             if comp_data.get(_impl_key):
-                # strip("\n") so a load→dump round-trip is idempotent: TOML keeps
-                # the trailing newline from `"""\n{body}\n"""`, which would
-                # otherwise accumulate a blank line per re-dump (gh-192).
-                _body = (
-                    comp_data[_impl_key]
-                    .replace('"""', '\\"\\"\\"')
-                    .strip("\n")
-                )
-                lines.append(f'{_impl_key} = """\n{_body}\n"""')
+                # gh-1886: through the multi-line escaper. This escaped `"""`
+                # and nothing else, so a C body's backslashes reached TOML
+                # raw: `printf("a\n")` read back holding a real newline, and
+                # `'\0'` made `_dump` refuse its own output.
+                body = _toml_multiline_string(comp_data[_impl_key])
+                lines.append(f"{_impl_key} = {body}")
+        # gh-1886: C as well, so the same escaper -- and HERE, with the other
+        # bodies. It was written after the `[[<comp>.init_params]]` rows, so
+        # TOML bound it to the last of them: the key it parses the
+        # constructor's arguments for left `[<comp>]` on every rewrite of a
+        # component that had any.
+        if comp_data.get("init_post_parse"):
+            ipp = _toml_multiline_string(comp_data["init_post_parse"])
+            lines.append(f"init_post_parse = {ipp}")
         lines.append("")
         # gh-541/gh-544: the destructor contract. Emitted before the [[...]]
         # sub-tables purely for readability — TOML headers are absolute paths,
@@ -8042,35 +8154,39 @@ def _dump(cfg: dict) -> str:
         if _destroy:
             lines.append(f"[{comp}.destroy]")
             if _destroy.get("name"):
-                lines.append(f'name = "{_destroy["name"]}"')
+                lines.append(f"name = {_toml_basic_string(_destroy['name'])}")
             if _destroy.get("aliases"):
-                _al = ", ".join(f'"{a}"' for a in _destroy["aliases"])
-                lines.append(f"aliases = [{_al}]")
+                _al = _toml_string_array(_destroy["aliases"])
+                lines.append(f"aliases = {_al}")
             if _destroy.get("returns"):
-                lines.append(f'returns = "{_destroy["returns"]}"')
+                _ret = _toml_basic_string(_destroy["returns"])
+                lines.append(f"returns = {_ret}")
             if _destroy.get("error"):
-                lines.append(f'error = "{_destroy["error"]}"')
+                lines.append(
+                    f"error = {_toml_basic_string(_destroy['error'])}"
+                )
             if _destroy.get("error_message"):
                 lines.append(
                     _str_assign("error_message", _destroy["error_message"])
                 )
-            # gh-805 §H. Plain quoting like `name`/`error`, not `_str_assign`:
-            # both are _PY_IDENT-validated at declaration time, so there is no
-            # free text to escape (gh-844's rule is about the text keys).
+            # gh-805 §H. A basic string like `name`/`error`, not
+            # `_str_assign`: both are _PY_IDENT-validated at declaration
+            # time, so there is no prose to lay out on several lines.
             if _destroy.get("exit"):
-                lines.append(f'exit = "{_destroy["exit"]}"')
+                lines.append(f"exit = {_toml_basic_string(_destroy['exit'])}")
             lines.append("")
         for a in comp_data.get("array_args", []):
             lines.append(f"[[{comp}.array_args]]")
-            lines.append(f'name = "{a["name"]}"')
-            lines.append(f'type = "{a.get("type") or a.get("dtype", "")}"')
+            lines.append(f"name = {_toml_basic_string(a['name'])}")
+            _at = a.get("type") or a.get("dtype", "")
+            lines.append(f"type = {_toml_basic_string(_at)}")
             lines.append("")
         for s in comp_data.get("state", []):
             lines.append(f"[[{comp}.state]]")
-            lines.append(f'name = "{s["name"]}"')
-            lines.append(f'type = "{s["type"]}"')
+            lines.append(f"name = {_toml_basic_string(s['name'])}")
+            lines.append(f"type = {_toml_basic_string(s['type'])}")
             if "default" in s:
-                lines.append(f'default = "{s["default"]}"')
+                lines.append(f"default = {_toml_basic_string(s['default'])}")
             if s.get("opaque"):
                 lines.append("opaque = true")
             if s.get("no_ctor"):
@@ -8104,14 +8220,6 @@ def _dump(cfg: dict) -> str:
             if row.get("prefix"):
                 lines.append(_str_assign("prefix", row["prefix"]))
             lines.append("")
-        if comp_data.get("init_post_parse"):
-            ipp = (
-                comp_data["init_post_parse"]
-                .replace('"""', '\\"\\"\\"')
-                .strip("\n")
-            )
-            lines.append(f'init_post_parse = """\n{ipp}\n"""')
-            lines.append("")
         for m in comp_data.get("methods", []):
             lines += _method_dump_lines(m, f"[[{comp}.methods]]")
         for p in comp_data.get("properties", []):
@@ -8139,9 +8247,7 @@ def _dump(cfg: dict) -> str:
         # silently. gh-482 adds a sibling [[<comp>.errors]] table here.
         for w in comp_data.get("warnings", []):
             lines.append(f"[[{comp}.warnings]]")
-            lines.append(f'after = "{w.get("after", "__init__")}"')
-            lines.append(f'condition = "{w["condition"]}"')
-            lines.append(f'category = "{w.get("category", "UserWarning")}"')
+            lines += _warning_head_lines(w)
             lines.append(_str_assign("message", w["message"]))
             if w.get("stacklevel"):
                 lines.append(f"stacklevel = {int(w['stacklevel'])}")
@@ -8152,8 +8258,8 @@ def _dump(cfg: dict) -> str:
         # multi_output. Nothing emitted when the list is empty → zero churn.
         for v in comp_data.get("views", []):
             lines.append(f"[[{comp}.views]]")
-            lines.append(f'class_name = "{v["class_name"]}"')
-            lines.append(f'create_fn = "{v["create_fn"]}"')
+            lines.append(f"class_name = {_toml_basic_string(v['class_name'])}")
+            lines.append(f"create_fn = {_toml_basic_string(v['create_fn'])}")
             if v.get("doc"):
                 lines.append(_doc_assign(v["doc"]))
             if v.get("init_params"):
@@ -8162,17 +8268,18 @@ def _dump(cfg: dict) -> str:
                 )
                 lines.append(f"init_params = [{parts}]")
             if v.get("exclude_properties"):
-                ep = ", ".join(f'"{n}"' for n in v["exclude_properties"])
-                lines.append(f"exclude_properties = [{ep}]")
+                ep = _toml_string_array(v["exclude_properties"])
+                lines.append(f"exclude_properties = {ep}")
             if v.get("exclude_methods"):
-                em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
-                lines.append(f"exclude_methods = [{em}]")
+                em = _toml_string_array(v["exclude_methods"])
+                lines.append(f"exclude_methods = {em}")
             # gh-580: a view's OWN create_error, when it overrides rather than
             # inheriting the parent's. Only the explicitly-declared keys are
             # written — dumping the resolved value would freeze an inherited
             # translation into a copy that then stops tracking the parent.
             if v.get("create_error"):
-                lines.append(f'create_error = "{v["create_error"]}"')
+                _ce = _toml_basic_string(v["create_error"])
+                lines.append(f"create_error = {_ce}")
                 lines.append(
                     _str_assign(
                         "create_error_message",
@@ -8188,11 +8295,7 @@ def _dump(cfg: dict) -> str:
             v_warnings = v.get("warnings", [])
             for w in v_warnings:
                 lines.append(f"[[{comp}.views.warnings]]")
-                lines.append(f'after = "{w.get("after", "__init__")}"')
-                lines.append(f'condition = "{w["condition"]}"')
-                lines.append(
-                    f'category = "{w.get("category", "UserWarning")}"'
-                )
+                lines += _warning_head_lines(w)
                 lines.append(_str_assign("message", w["message"]))
                 if w.get("stacklevel"):
                     lines.append(f"stacklevel = {int(w['stacklevel'])}")
@@ -8211,35 +8314,36 @@ def _dump(cfg: dict) -> str:
     app = cfg.get("app", {})
     if app.get("target"):
         lines.append("[app]")
-        lines.append(f'target = "{app["target"]}"')
-        lines.append(f'name = "{app["name"]}"')
+        lines.append(f"target = {_toml_basic_string(app['target'])}")
+        lines.append(f"name = {_toml_basic_string(app['name'])}")
         if app.get("function") is not None:
-            lines.append(f'function = "{app["function"]}"')
-            lines.append(f'module = "{app.get("module", "")}"')
+            lines.append(f"function = {_toml_basic_string(app['function'])}")
+            _mod = _toml_basic_string(app.get("module", ""))
+            lines.append(f"module = {_mod}")
         elif app.get("object"):
-            lines.append(f'object = "{app["object"]}"')
+            lines.append(f"object = {_toml_basic_string(app['object'])}")
             if app.get("module"):  # owning module (gh-187 console scoping)
-                lines.append(f'module = "{app["module"]}"')
+                lines.append(f"module = {_toml_basic_string(app['module'])}")
         lines.append("")
         for f in app.get("flags", []):
             lines.append("[[app.flags]]")
-            lines.append(f'name = "{f["name"]}"')
-            lines.append(f'type = "{f["type"]}"')
+            lines.append(f"name = {_toml_basic_string(f['name'])}")
+            lines.append(f"type = {_toml_basic_string(f['type'])}")
             if f.get("default") not in (None, ""):
-                lines.append(f'default = "{f["default"]}"')
+                lines.append(f"default = {_toml_basic_string(f['default'])}")
             if f.get("help"):
-                lines.append(f'help = "{f["help"]}"')
+                lines.append(f"help = {_toml_basic_string(f['help'])}")
             lines.append("")
         for c in app.get("commands", []):
             lines.append("[[app.commands]]")
-            lines.append(f'name = "{c["name"]}"')
+            lines.append(f"name = {_toml_basic_string(c['name'])}")
             if c.get("help"):
-                lines.append(f'help = "{c["help"]}"')
+                lines.append(f"help = {_toml_basic_string(c['help'])}")
             if c.get("flags"):
                 parts = ", ".join(
                     "{"
                     + ", ".join(
-                        f'{k} = "{fl[k]}"'
+                        f"{k} = {_toml_basic_string(fl[k])}"
                         for k in ("name", "type", "default", "help")
                         if fl.get(k) not in (None, "")
                     )
