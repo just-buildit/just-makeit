@@ -758,8 +758,10 @@ accessor test asserts the set/get **round-trip only**, not the value a field
 holds after construction. jm generates the state-var constructor whole, so
 there it knows the initial value and still asserts it; with init-params the
 constructor is the author's, and any state it *derives* from its arguments
-makes that assertion a guess. "Reset restores the declared defaults" is still
-asserted by the reset test on both faces, where the code under test is jm's.
+makes that assertion a guess. The reset test is the same guess one step later
+-- `reset()` returns to the post-create state, which that constructor defines
+-- so on both faces it only calls `reset()` (gh-1882), as it does for a
+`reset_impl`.
 
 #### A `default` is a literal; a constant is `default_raw`
 

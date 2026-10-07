@@ -466,6 +466,17 @@ def _build_ctx(
         (name, ct, defaults.get(name, T._CTYPE_META[ct]["zero"]))
         for name, ct in parsed["fields"]
     ]
+    # gh-1882: whose reset() this is, the question every other path reads
+    # off the manifest's `reset_impl`. bind has no manifest, so it reads the
+    # body itself: a field `<comp>_reset` does not assign is one it keeps
+    # (or one jm could not parse), and "reset restores defaults" would be a
+    # claim about it. jm's own body assigns every field, so a project it
+    # scaffolded answers exactly as `jm apply` does. `no_reset` is a
+    # manifest key bind has never read, so it is not an input here.
+    reset_keeps = any(name not in defaults for name, _ in parsed["fields"])
+    authors_reset = Ctx.reset_is_authors(
+        reset_impl=reset_keeps, init_params=init_params, no_reset=False
+    )
 
     ctx.update(Ctx.make_sample_ctx(arg_type, return_type))
     ctx.update(
@@ -475,6 +486,7 @@ def _build_ctx(
             state_vars,
             no_state=is_opaque,
             init_params=init_params,
+            reset_impl=reset_keeps,  # gh-1882, derived above
             # gh-676/gh-644: bind reflects the header, so the built-ins'
             # documentation is exactly what it should be reading -- and it
             # writes the same _ext.c apply does, so anything it does not
@@ -543,36 +555,13 @@ def _build_ctx(
         )
     )
 
-    # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
-    # slot with the <<package>>/<<Component>> placeholder that only _init.run and
-    # _glue resolve; _build_ctx claims to produce "the same context dict
-    # _init.run produces" but skipped this step, so `jm bind` wrote a literal
-    # `>>> from <<package>> import <<Component>>` into the regenerated .pyi. That
-    # went unnoticed because the placeholder scan covers .py/.c/.h/.toml/.txt but
-    # not .pyi — the one file it corrupts.
-    # gh-1208 left these three `from {pkg} import` lines BARE on purpose.
+    # gh-1208 left these two `from {pkg} import` lines BARE on purpose.
     # `bind` writes the standalone layout unconditionally --
     # `native/src/<comp>/<comp>_ext.c` and `src/<pkg>/<comp>.pyi`, see `run()`
     # below -- so within the files it emits, the bare form is the one that
     # imports. It does not consult module membership at all, which is a
     # separate limitation and not something a module segment here would fix:
     # adding one would name a path whose `.so` bind never wrote.
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in state_vars
-            if not T.parse_array_type(ct)
-        ]
-        if not is_opaque
-        else []
-    )
-    ctx["pyi_examples"] = Ctx._pyi_examples_block(
-        scalar_state,
-        False,
-        f"from {pkg} import {ctx['Component']}",
-        ctx.get("py_create_args", ""),
-        ctx["Component"],
-    )
     # Class docstring via the one shared builder (identical to _init.run and the
     # module path), enriched from the header's create() @brief/@param when
     # doc_blocks are supplied.
@@ -585,7 +574,7 @@ def _build_ctx(
         f"from {pkg} import {ctx['Component']}",
         ctx.get("py_create_args", ""),
         doc_blocks=doc_blocks,
-        custom_reset=bool(init_params),
+        custom_reset=authors_reset,
         csym=ctx["csym"],
     )
     # gh-676/gh-644: the runtime class docstring, on the same precedence
@@ -607,7 +596,7 @@ def _build_ctx(
                 f"from {pkg} import {ctx['Component']}",
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
-                custom_reset=bool(init_params),
+                custom_reset=authors_reset,
                 csym=ctx["csym"],
             )
         )

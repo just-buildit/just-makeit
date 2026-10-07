@@ -159,58 +159,12 @@ def _enrich_doxygen(core_h: Path) -> None:
     core_h.write_text(text, encoding="utf-8")
 
 
-# Hand-written C smoke test that matches our reset semantics (length is
-# preserved across reset because it's the configured ring-buffer size).
-_C_TEST_BODY = """\
-#include "delay_line_demo/delay_line/delay_line_core.h"
-
-/* gh-934: CHECK, REQUIRE and the epilogue come from the shared harness
-   just-makeit writes once per project.  This example used to carry its own
-   copy of the CHECK macro -- which is exactly the divergence jm_test.h
-   exists to prevent, demonstrated in just-makeit's own example. */
-#define JM_TEST_NAME "test_delay_line_core"
-#include "jm_test.h"
-
-int main(void)
-{
-    const uint32_t N = 8;
-    delay_line_demo_delay_line_state_t *obj = delay_line_demo_delay_line_create(N, 0);
-    REQUIRE(obj != NULL);
-
-    CHECK(delay_line_demo_delay_line_get_length(obj) == N);
-    CHECK(delay_line_demo_delay_line_get_idx(obj) == 0);
-
-    /* First N outputs should be the initial zeros in the ring buffer. */
-    for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_demo_delay_line_step(obj, (float)(i + 1));
-        CHECK(y == 0.0f);
-    }
-    /* Now the (i+N+1)th input drops out — output should equal the (i+1)th
-     * input we sent above. */
-    for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_demo_delay_line_step(obj, 0.0f);
-        CHECK(y == (float)(i + 1));
-    }
-
-    /* reset() must zero the buffer + idx but preserve length. */
-    delay_line_demo_delay_line_reset(obj);
-    CHECK(delay_line_demo_delay_line_get_length(obj) == N);   /* preserved! */
-    CHECK(delay_line_demo_delay_line_get_idx(obj) == 0);
-    for (uint32_t i = 0; i < N; i++) {
-        float y = delay_line_demo_delay_line_step(obj, (float)(i + 1));
-        CHECK(y == 0.0f);
-    }
-
-    delay_line_demo_delay_line_destroy(obj);
-    JM_TEST_EPILOGUE();
-}
-"""
-
-
-# Replace the auto-generated pytest with one that actually validates the
-# delay semantics — feed N+M samples, verify the first N out are zero
-# and the rest match the input M samples back.
-_PYTEST_BODY = '''"""End-to-end test for the delay_line component."""
+# The delay semantics, in a test of the example's own BESIDE the generated
+# suite -- feed N+M samples, verify the first N out are zero and the rest
+# match the input N samples back. The generated C and Python tests stay as jm
+# wrote them: since gh-1882 they only call reset(), because this reset_impl
+# keeps `length`, so they pass as scaffolded -- which is the point.
+_PYTEST_BODY = '''"""The delay semantics of the delay_line component."""
 
 import numpy as np
 
@@ -237,6 +191,9 @@ def test_reset_preserves_length_and_zeros_buffer():
         obj.step(float(x))
     # After 10 steps, buffer is fully populated.
     obj.reset()
+    # reset_impl zeroes idx and keeps the configured length.
+    assert obj.get_length() == N
+    assert obj.get_idx() == 0
     # The first N outputs after reset should be zero — buffer was cleared.
     ys = np.array([obj.step(0.0) for _ in range(N)], dtype=np.float32)
     assert np.all(ys == 0.0), ys
@@ -334,18 +291,15 @@ def run(root: Path) -> None:
     # 5. Patch step() to implement the ring-delay.
     _patch_step(core_h)
 
-    # 6. Replace the auto-generated pytest with the real one.
-    py_test = proj / "src" / "delay_line_demo" / "tests" / "test_delay_line.py"
-    py_test.write_text(_PYTEST_BODY, encoding="utf-8")
+    # 6. Add the delay-semantics test beside the generated suite, which is
+    #    left exactly as jm wrote it (gh-1882).
+    tests_dir = proj / "src" / "delay_line_demo" / "tests"
+    assert (tests_dir / "test_delay_line.py").is_file()
+    (tests_dir / "test_delay_semantics.py").write_text(
+        _PYTEST_BODY, encoding="utf-8"
+    )
 
-    # 7. The auto-generated C test asserts that reset() restores `length`
-    #    to its default — but our reset_impl deliberately preserves it
-    #    (it's a runtime-configured config field, not state).  Override
-    #    the C test with one that matches the actual semantics.
-    c_test = proj / "native" / "tests" / "test_delay_line_core.c"
-    c_test.write_text(_C_TEST_BODY, encoding="utf-8")
-
-    # 8. cmake + build + ctest.
+    # 7. cmake + build + ctest -- the generated C test, untouched.
     _cmd(
         [
             "cmake",

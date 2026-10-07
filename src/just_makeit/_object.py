@@ -37,7 +37,6 @@ from . import _render as R
 from . import _report
 from . import _targets
 from . import _stubs as S
-from . import _types as T
 from . import _incpath as INC
 from ._builtins import (
     builtin_owned_members,
@@ -426,12 +425,16 @@ def _make_object_ctx(
     create_fn: str | None = None,
     owner: "INC.Owner" = None,
     str_hints: "dict[str, str] | None" = None,
+    reset_impl: bool = False,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
 
     *str_hints* is `_config.state_str_hints` for the object: each array
     state field's ``set_<name>`` appends its hint to the refusal of a
     ``str`` (gh-1761).
+
+    *reset_impl* says the object's ``reset()`` body is the author's, one
+    input of `Ctx.reset_is_authors` (gh-1882).
 
     A view passes ``class_name`` (its Python-facing name) and ``create_fn``
     (its C constructor) while ``component`` stays the parent's, so the ctx
@@ -478,6 +481,7 @@ def _make_object_ctx(
             doc_blocks=doc_blocks,
             csym=ctx["csym"],
             str_hints=str_hints,
+            reset_impl=reset_impl,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -495,32 +499,6 @@ def _make_object_ctx(
             doc_blocks=doc_blocks,
             controllable=controllable,
         )
-    )
-    # Re-generate pyi_examples now that package and Component are in ctx.
-    # make_state_ctx emits placeholder text; we replace it with the real values.
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in (state_vars or [])
-            if not T.parse_array_type(ct)
-        ]
-        if not no_state
-        else []
-    )
-    has_aa = bool(array_args)
-    import_line = class_import_line(pkg, ctx["Component"], module)
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            has_aa,
-            import_line,
-            ctx.get("py_create_args", ""),
-            ctx["Component"],
-            no_reset=no_reset,
-            init_params=init_params,
-        )
-        if (scalar_state or has_aa)
-        else ""
     )
     return ctx
 
@@ -1209,6 +1187,8 @@ def _make_view_ctx(
         no_state=C.is_no_state(cfg, obj),
         no_step=C.is_no_step(cfg, obj),
         no_reset=C.is_no_reset(cfg, obj),
+        # gh-1882: a view shares its parent's reset().
+        reset_impl=bool(Ctx.declared_reset_impl(cfg, obj)),
         mutable=C.is_mutable(cfg, obj),
         step_delegates=C.step_delegates(cfg, obj),
         init_params=C.view_init_params(cfg, obj, view),
@@ -1409,7 +1389,10 @@ def _make_view_ctx(
                 doc_blocks=doc_blocks,
                 manifest_doc=view.get("doc", ""),
                 state_docs=C.state_docs(cfg, obj),
-                custom_reset=bool(_vinit) or C.is_no_reset(cfg, obj),
+                # gh-1882: the parent's reset(), the view's constructor.
+                custom_reset=Ctx.manifest_reset_is_authors(
+                    cfg, obj, init_params=_vinit
+                ),
                 create_fn=view["create_fn"],
                 csym=ctx["csym"],
             )
@@ -1494,6 +1477,7 @@ def build_component_ctxs(
             no_state=C.is_no_state(cfg, obj),
             no_step=C.is_no_step(cfg, obj),
             no_reset=C.is_no_reset(cfg, obj),
+            reset_impl=bool(Ctx.declared_reset_impl(cfg, obj)),  # gh-1882
             mutable=C.is_mutable(cfg, obj),
             step_delegates=C.step_delegates(cfg, obj),
             init_params=C.init_params(cfg, obj),
@@ -1636,8 +1620,7 @@ def build_component_ctxs(
                 doc_blocks=_doc_blocks,
                 manifest_doc=cfg.get(obj, {}).get("doc", ""),
                 state_docs=C.state_docs(cfg, obj),
-                custom_reset=bool(C.init_params(cfg, obj))
-                or C.is_no_reset(cfg, obj),
+                custom_reset=Ctx.manifest_reset_is_authors(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),
                 raises=_cls_raises,
                 warns=_cls_warns,
@@ -2506,6 +2489,9 @@ def run(
     # gh-1997: the object's `[[<obj>.extra_methods]]` rows -- manifest-only,
     # so only `jm apply`'s replay passes them, as it passes `destroy`.
     extra_methods: "list[dict] | None" = None,
+    # gh-1882: the manifest's `reset_impl` / `reset_impl_file` as written,
+    # from the replay alone -- see `_init.run`, which takes it too.
+    reset_impl_decl: "dict[str, str] | None" = None,
 ) -> None:
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
@@ -2620,6 +2606,7 @@ def run(
             doc=doc,
             _hint=_hint and not variable_output,
             extra_methods=extra_methods,  # gh-1997
+            reset_impl_decl=reset_impl_decl,  # gh-1882
         )
         if variable_output:
             from . import _method as _M
@@ -2708,6 +2695,8 @@ def run(
         # create-only files, never its binding fragment: that is
         # `_regenerate_module`'s, which reads the hint back from the
         # manifest `add_component` below writes it into.
+        # gh-1882: this ctx DOES render the reset tests, from the argument.
+        reset_impl=reset_impl_body is not None,
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -3071,6 +3060,9 @@ def run(
     # gh-1997: the extra-method rows, before the same re-render, which
     # renders their table rows and the aggregator's prototypes from them.
     C.set_extra_methods(cfg, comp, extra_methods or [])
+    # gh-1882: and the declared reset body, before the same re-render, whose
+    # `.pyi` asks `Ctx.manifest_reset_is_authors` whether to demo reset().
+    cfg[comp].update(reset_impl_decl or {})
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)

@@ -1251,9 +1251,10 @@ def _build_class_docstring(
     for name, out in scalar_getters[:3]:
         ex += [f"    >>> obj.get_{name}()", f"    {out}"]
 
-    # The "reset restores defaults" demo assumes reset() zeroes the first state
-    # var. A custom reset_impl (#51) may deliberately preserve config (e.g. a
-    # waveform `type` set by create_impl), so skip the demo there.
+    # The "reset restores defaults" demo assumes reset() restores the first
+    # state var's declared default. *custom_reset* is
+    # `Ctx.reset_is_authors` (gh-1882): a reset_impl (#51) may deliberately
+    # preserve it, as a delay line keeps its `length`, so skip the demo.
     if scalar_getters and not custom_reset:
         first_name, first_out = scalar_getters[0]
         first_ct = next(ct for n, ct, _ in state_vars if n == first_name)
@@ -1710,10 +1711,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # Class docstring — same shared builder the standalone COMPONENT_PYI path
     # uses (class_docstring_block), so the two .pyi generators never drift.
-    # init_params imply a create_impl that derives state from the params (the
-    # #69 contract), so the first state var is config — not guaranteed zeroed by
-    # reset(); skip the "reset restores defaults" demo there. gh-542: `no_reset`
-    # removes the method, so the demo would be a failing doctest under
+    # gh-1882: whether to demo "reset restores defaults" is the one predicate
+    # every reset() claim asks -- a reset_impl, init_params (the #69
+    # contract) or gh-542's `no_reset` each make it a failing doctest under
     # `pytest --doctest-glob='*.pyi'`, not just stale prose.
     _raises, _warns = class_diagnostics(cfg, obj)
     doc_lines = class_docstring_block(
@@ -1727,7 +1727,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         doc_blocks=doc_blocks,
         manifest_doc=cfg.get(obj, {}).get("doc", ""),
         state_docs=C.state_docs(cfg, obj),
-        custom_reset=bool(ip) or no_reset,
+        custom_reset=Ctx.manifest_reset_is_authors(cfg, obj),
         create_fn=C.object_create_fn(cfg, obj),
         raises=_raises,
         warns=_warns,
