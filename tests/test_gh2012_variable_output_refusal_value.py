@@ -582,6 +582,55 @@ def test_both_doc_faces_document_each_condition(scaffolded):
     ]
 
 
+@pytest.mark.parametrize(
+    "rows",
+    [
+        'count_type = "int64_t"\nerror_negative = true\n',
+        'error_sentinel = "SIZE_MAX"\n',
+    ],
+    ids=["signed", "sentinel"],
+)
+def test_a_sacred_fragment_without_it_is_reported(tmp_path, rows):
+    """A module object's binding fragment is sacred: `apply` never revises
+    a member it already holds. A refusal value declared after first render
+    is then absent from the binding, and said so by name (gh-1432's axis)
+    -- not left to surface as a RuntimeError at the first refusal."""
+    _ok("new", "q", cwd=tmp_path)
+    proj = tmp_path / "q"
+    _ok("module", "m", cwd=proj)
+    _ok("object", "r", "--module", "m", cwd=proj)
+    _ok(
+        "method", "r", "run", "--module", "m", "--arg-type", "float",
+        "--return-type", "float", "--variable-output", cwd=proj,
+    )  # fmt: skip
+    frag = proj / "native/src/m/m_ext_r.c"
+    p = proj / "objects" / "r.toml"
+    body = p.read_text("utf-8")
+    assert body.count("variable_output = true\n") == 1, body
+    p.write_text(
+        body.replace(
+            "variable_output = true\n",
+            "variable_output = true\n" + rows + 'error = "ValueError"\n',
+        ),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=proj)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    # Its docstrings are refreshed (`_docsync`); its binding is not.
+    code = frag.read_text("utf-8")
+    assert "_rc < 0" not in code and "n_out == (" not in code, code
+    assert "binding no longer matches the manifest" in out, out
+    assert "declares a refusal value for the count" in out, out
+
+    # ...and a fragment that has it is silent: the exact-fill test every
+    # variable_output wrapper carries is not mistaken for a sentinel.
+    frag.unlink()
+    _ok("apply", cwd=proj)
+    again = run_cli("apply", cwd=proj)
+    assert "no longer matches" not in again.stdout + again.stderr
+
+
 def test_an_undeclared_method_is_unchanged(project):
     """Zero churn: without the keys, the binding has no `_rc`, no sentinel
     test, and the kernel is declared `size_t` as before."""

@@ -1086,6 +1086,16 @@ _ARRAY_ARG_RE = re.compile(
 #: and a fragment rendered before it lacks.
 _ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 
+#: A ``variable_output`` count's declared refusal value (gh-2012), as
+#: `_context/_methods._count_refusal_c` tests it: a signed count's
+#: ``_rc < 0``, or ``n_out ==`` an unsigned count's sentinel. The exact-fill
+#: test every such wrapper carries, ``(size_t)n_out == _cap``, is not one,
+#: so ``_cap`` is excluded as the right-hand side. Whitespace anywhere, for
+#: a fragment formatted in the project's own style.
+_REFUSAL_VALUE_RE = re.compile(
+    r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
+)
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1181,6 +1191,16 @@ _FEATURE_MARKERS = {
         "the manifest declares a str_hint on an array param or state "
         "field and this fragment does not pass it to jm_array_arg, so a "
         "str is converted by numpy rather than refused with the hint",
+    ),
+    # gh-2012: a manifest declaration -- `error_negative` over a signed
+    # `count_type`, or `error_sentinel` -- added to a variable_output method
+    # after its sacred fragment was rendered. Named for its consequence.
+    "refusal-value": _Feature(
+        (_REFUSAL_VALUE_RE,),
+        "the manifest declares a refusal value for the count "
+        "(error_negative over a signed count_type, or error_sentinel) and "
+        "this fragment does not test it, so a refusal reaches the overflow "
+        "guard and raises RuntimeError instead of the declared error",
     ),
 }
 

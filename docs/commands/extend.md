@@ -396,7 +396,7 @@ the refusal needs a value no count can be, and jm reads one of two (gh-2012):
 
 | Declaration                                  | The kernel returns                  | The binding                                             |
 | -------------------------------------------- | ----------------------------------- | ------------------------------------------------------- |
-| `--count-type int64_t --error-negative`      | the count, or a negative error code | raises `--error` with `--error-message (rc=N)` on `< 0` |
+| `--count-type int64_t --error-negative`      | the count, or a negative error code | raises `--error` with the message and `(rc=N)` on `< 0` |
 | `--error-sentinel SIZE_MAX` (any C constant) | a `size_t` count, or the sentinel   | raises `--error` with `--error-message` on the sentinel |
 
 ```sh
