@@ -9,7 +9,8 @@ and the ``create()`` / ``reset()`` lifecycle.  Under the sacred/glue contract
 those are never spliced into your files — the object is rebuilt from the
 manifest instead, exactly like ``jm regenerate``.  Keep your algorithm in the
 TOML (``impl`` / ``create_impl``) or ``git stash`` first so the rebuild
-re-asserts it.  ``--force`` skips the confirmation.
+re-asserts it.  The confirmation comes before anything is written, and
+declining exits 1 with every file as it was; ``--force`` skips it.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _regenerate
+from ._remove import _confirm
 
 
 def run(
@@ -63,33 +65,60 @@ def run(
         )
         sys.exit(1)
 
-    existing = C.state_vars(cfg, component)
-    existing_names = {n for n, _, _ in existing}
+    # gh-1890: the rows as the manifest holds them, every key on each. This
+    # was `C.state_vars`, whose (name, type, default) triples skip an opaque
+    # row by design, and the list was rebuilt from them -- so one `jm add`
+    # deleted every opaque field and every `doc`, `no_ctor`, `controllable`
+    # and `str_hint` on the rows it kept (the gh-1760 / gh-838 class). The
+    # existing rows are never rebuilt now, only appended to, and the name
+    # check reads every row: an opaque field's name is taken too.
+    rows = cfg[component].get("state", [])
+    taken = {row.get("name") for row in rows}
     for name, _, _ in new_vars:
-        if name in existing_names:
+        if name in taken:
             print(
                 f"error: state variable '{name}' already exists.",
                 file=sys.stderr,
             )
             sys.exit(1)
+        taken.add(name)
+
+    names = ", ".join(n for n, _, _ in new_vars)
+    print(
+        f"just-makeit: add state ({names}) to '{component}'. State is "
+        f"structural, so '{component}' is rebuilt from the manifest."
+    )
+    print()
+    # gh-1889: ask BEFORE the manifest is written. The prompt used to be
+    # regenerate's own, reached after `C.save`, so answering N left the new
+    # row on disk with no rebuild behind it: exit 0, `jm status` STALE, and
+    # the `jm apply` it advises rewrote create() against a `_core.c` that
+    # was never regenerated. The confirmation is the caller's, as for `jm
+    # remove` of a state field, and the rebuild below runs forced.
+    if not _confirm(
+        f"Add state ({names}) to '{component}'? This rebuilds "
+        f"'{component}' from the manifest and discards hand-written "
+        "_core.c bodies (git stash or keep them in impl/create_impl "
+        "first).",
+        force,
+    ):
+        print(
+            f"error: aborted; nothing was added to '{component}' and no "
+            "file was written.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Author: append the new field(s) to the object's manifest entry.  The
     # struct/lifecycle change is materialized by the regenerate below — never
     # by splicing into the sacred source.
-    all_vars = existing + new_vars
-    cfg[component]["state"] = [
-        {"name": n, "type": t, "default": d} for n, t, d in all_vars
+    cfg[component]["state"] = rows + [
+        {"name": n, "type": t, "default": d} for n, t, d in new_vars
     ]
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
     print()
-    names = ", ".join(n for n, _, _ in new_vars)
-    print(
-        f"just-makeit: added state ({names}) to '{component}'. State is "
-        f"structural, so '{component}' is rebuilt from the manifest:"
-    )
-    print()
     # discard=True: the old body's signature is guaranteed stale (it
     # predates the new field(s)) — splicing it back in would either not
     # compile or silently skip initializing the new state.
-    _regenerate.run(root, component, force=force, discard=True)
+    _regenerate.run(root, component, force=True, discard=True)

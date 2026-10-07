@@ -145,8 +145,11 @@ class TestStep5C:
 
 class TestStep6AddState:
     def test_add_min_max(self, project):
+        # `--force`, as `.steps/06_add_state.sh` spells it (gh-1889: a
+        # declined add used to exit 0 having written the manifest).
         r = run_cli(
             "add",
+            "--force",
             "--state",
             "min_val:double:0.0",
             "--state",
