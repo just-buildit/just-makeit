@@ -5074,13 +5074,14 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     it returns anything, which is the manifest-path counterpart of the check
     the ``jm function`` / ``jm method`` front-ends have always done.
 
-    Covers module functions, component methods, view methods, and capsule /
-    composer module methods — every table whose types reach a generated
-    binding. gh-1977 added the output-side keys of the first three, which
-    reached the render unchecked: ``out_type`` (methods and functions),
-    ``multi_output`` and ``extra_args`` (methods). Each is asked the
-    predicate its command-line flag asks, so a row ``jm method`` refuses is
-    one ``apply`` refuses too.
+    Covers module functions, component methods, view methods, capsule /
+    composer module methods, and each component's own step() ``arg_type`` /
+    ``return_type`` (gh-1884, asked :func:`_types.step_type_error`) — every
+    table whose types reach a generated binding. gh-1977 added the
+    output-side keys of the first three, which reached the render unchecked:
+    ``out_type`` (methods and functions), ``multi_output`` and
+    ``extra_args`` (methods). Each is asked the predicate its command-line
+    flag asks, so a row ``jm method`` refuses is one ``apply`` refuses too.
 
     Parameters
     ----------
@@ -5177,6 +5178,19 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 _RETURN_TYPE_EXEMPT_KEYS,
             )
     for comp in components(cfg):
+        # gh-1884: the component's own step() input and output, asked what
+        # `--arg-type` / `--return-type` ask on the command line. Unchecked
+        # here, a string step type reached the render and `apply` wrote a
+        # binding that fails its own tests or segfaults. An absent key is
+        # the default, which is legal.
+        for key in ("arg_type", "return_type"):
+            declared = cfg.get(comp, {}).get(key)
+            if declared is None:
+                continue
+            err = _T.step_type_error(f"{comp!r} {key}", str(declared))
+            if err:
+                first, *rest = err.splitlines()
+                errors.append("\n".join([first] + [f"  {r}" for r in rest]))
         # gh-1037: the constructor's own inputs. This is the table the issue
         # was filed against -- an unknown init-param type crashed the render.
         for ip in cfg.get(comp, {}).get("init_params", []) or []:
