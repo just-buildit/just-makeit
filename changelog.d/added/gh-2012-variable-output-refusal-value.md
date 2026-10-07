@@ -16,8 +16,10 @@
     The `_core.h` declaration, the `_core.c` stub and the binding all return
     `count_type` (the default `size_t` renders as before), the docstring and
     `.pyi` `Raises` document each condition, `apply` and `jm script` carry
-    both keys (`--count-type`, `--error-sentinel`), and the `c_prefix`
-    respell of `jm upgrade` reaches the sentinel. Every combination that
+    both keys (`--count-type`, `--error-sentinel`), the `c_prefix` respell
+    of `jm upgrade` reaches the sentinel, and a sacred module fragment
+    rendered before the declaration is reported by `apply` and `jm status`
+    rather than left to raise the guard's error. Every combination that
     could not take effect is refused by `jm method` and `apply` alike:
     `error_negative` over a `size_t` count, a signed count without it, a
     sentinel on a signed count, both forms together, and either key (or
