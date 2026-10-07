@@ -930,39 +930,31 @@ def _splice_rows(
         {NULL, NULL, 0, NULL}
     };
     """
+    # Both callers hold a balanced table here: jm's own render, or a
+    # fragment whose table they have already matched.
     mask = _code_mask(target)
-    m = array_re.search(mask)
-    if m is None or not rows:
-        return target
-    open_idx = m.end() - 1
+    open_idx = array_re.search(mask).end() - 1
     close_idx = _match_brace(mask, open_idx)
-    if close_idx == -1:
-        return target
     held: "dict[str | None, int]" = {}
     for s, e in _entry_spans(mask, open_idx + 1, close_idx):
         held.setdefault(_entry_name(target, mask, s, e), s)
-    # The line of the table's closing brace: where a row goes in a table
-    # with neither a successor nor a sentinel to stand before.
-    tail = target.rfind("\n", open_idx, close_idx) + 1 or close_idx
     at_rows: "dict[int, list[str]]" = {}
     for i, key in enumerate(order):
         if key not in rows:
             continue
+        # With neither a successor nor a sentinel -- a table CPython would
+        # read past -- the closing brace is all there is to stand before.
         at = next(
             (held[k] for k in order[i + 1 :] if k in held),
-            held.get(None, tail),
+            held.get(None, close_idx),
         )
         at_rows.setdefault(at, []).append(rows[key])
     # Right to left, so each offset still names the entry it was read from.
     out = target
     for at in sorted(at_rows, reverse=True):
-        line = out.rfind("\n", 0, at) + 1
-        lead = out[line:at]
-        if at == tail and at not in held.values():
-            text = "".join(f"    {r},\n" for r in at_rows[at])
-        else:
-            indent = lead[: len(lead) - len(lead.lstrip())]
-            text = "".join(f"{r},\n{indent}" for r in at_rows[at])
+        lead = out[out.rfind("\n", 0, at) + 1 : at]
+        indent = lead[: len(lead) - len(lead.lstrip())]
+        text = "".join(f"{r},\n{indent}" for r in at_rows[at])
         out = out[:at] + text + out[at:]
     return out
 
