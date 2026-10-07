@@ -316,8 +316,13 @@ def _methods_c_stub_variable(
 
     if has_arg:
         arg_disp = _block_in_elem_disp(arg_type)
-        step_param = f", const {arg_disp} *in, size_t n_in"
-        suppress_in = "    (void)in; (void)n_in;"
+        # gh-1960: the params follow the input, as the prototype declares.
+        step_param = f", const {arg_disp} *in, size_t n_in" + "".join(
+            f", {p}" for p in T.c_param_parts(params)
+        )
+        suppress_in = "    " + " ".join(
+            ["(void)in;", "(void)n_in;", *T.c_param_suppress(params)]
+        )
     elif params:
         # gh-1491: through the one expansion, so a writable (`out`) array
         # param loses its `const` here exactly as it does in the header.
@@ -983,9 +988,12 @@ def _build_method_prototype(
 
     if variable_output:
         if has_arg:
+            # gh-1960: the params follow the block input, as in the record
+            # branch above. Dropped here, they were dropped from the binding
+            # too, and the two agreed with each other and with no stub.
             step_param = (
                 f", const {_block_in_elem_disp(arg_type)} *in, size_t n_in"
-            )
+            ) + "".join(f", {p}" for p in T.c_param_parts(params))
         elif params:
             # gh-1272: through `c_param_parts`, like the branch above. This
             # was one of FOUR inline copies of that expansion, which is why a
