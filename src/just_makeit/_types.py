@@ -172,7 +172,9 @@ _CTYPE_META: dict[str, dict] = {
             f"PyComplex_FromDoubles((double)creall({v}), (double)cimagl({v}))"
         ),
     },
-    # ── String — return-type only; step() returns a Python str. ──────────────
+    # ── String — an init param, a method / function param or return; never
+    # an object's step() type, as a scalar or as a T[] element: its kind is
+    # in _STEP_REFUSED_KINDS (gh-1884). Nor a state field (_STATE_REFUSED).
     "const char *": {
         "kind": "str",
         "fmt": "s",
@@ -1102,7 +1104,9 @@ _NP_ENUM: dict[str, str] = {
     # bool is a registered scalar arg/return type; without this entry
     # make_sample_ctx's `_NP_ENUM[out_np_dtype]` lookup KeyErrors on it.
     "np.bool_": "NPY_BOOL",
-    # const char * — return-type only; steps() array path does not apply.
+    # const char * has no numeric dtype, which is why an object's step()
+    # refuses it (gh-1884, `step_type_error`); the method and record emitters
+    # still index this table by every registered type's py_type.
     "str": "NPY_OBJECT",
 }
 
@@ -1695,6 +1699,106 @@ def state_type_error(name: str, ctype: str) -> str | None:
         f"unsupported type '{ctype}' for state field '{name}'.\n"
         f"State types: {legal}\n"
         f"Array syntax: type[N]  e.g. float[64]"
+    )
+
+
+#: Kinds of registered type an object's step() may not carry, as a scalar or
+#: as the element of ``T[]``, and why (gh-1884). Keyed on ``kind`` rather than
+#: on a spelling, so a type registered later under one of these kinds is
+#: refused with no edit here.
+#:
+#: A string has no per-sample meaning, and every scaffold that took one was
+#: broken while ``jm`` exited 0: ``steps()`` maps the element to
+#: ``NPY_OBJECT`` and hands the kernel each slot's ``PyObject *`` as a
+#: ``const char *``; a generator's stub returns ``NULL``, which the binding
+#: passes to ``PyUnicode_FromString`` and the generated suite segfaults; a
+#: processor's generated tests compare ``dtype('O')`` with ``str`` and fail.
+_STEP_REFUSED_KINDS: dict[str, str] = {
+    "str": (
+        "a step() type is one sample, and steps() moves a block of them as an"
+        " ndarray, which has no dtype for a C string. Take text as an init"
+        " param (--init-param NAME:'const char *') or as a method param"
+        " (jm method OBJ NAME --param NAME:'const char *')."
+    ),
+}
+
+#: Every registered type an object's step() may carry, as a scalar and as the
+#: element of ``T[]``: :data:`SUPPORTED_TYPES` less the kinds in
+#: :data:`_STEP_REFUSED_KINDS`.
+STEP_TYPES: frozenset[str] = frozenset(
+    t for t, m in _CTYPE_META.items() if m["kind"] not in _STEP_REFUSED_KINDS
+)
+
+
+def step_type_error(what: str, ctype: str) -> str | None:
+    """Why *ctype* cannot be an object's step() type; ``None`` if it can.
+
+    The one answer every face that declares an object's step input or output
+    asks (gh-1884): ``--arg-type`` / ``--return-type`` on ``jm new`` and
+    ``jm object`` (a ``--preset`` expands into those flags, and a module
+    object is parsed by the same loop), a component's ``arg_type`` /
+    ``return_type`` in the manifest, which
+    ``_config.manifest_type_errors`` checks before ``apply`` writes
+    anything, and the render every step passes through. Two copies of this
+    check in the command lines accepted any registered type, including the
+    string the docs had always said was refused.
+
+    Legal: ``void``; a type in :data:`STEP_TYPES`; and ``T[]`` with ``T`` in
+    :data:`STEP_TYPES`. Whether a pair of them makes sense together (an array
+    return needs an array input) is the caller's question, not this one's.
+
+    Parameters
+    ----------
+    what : str
+        Names the slot, opening the message: the flag (``"--arg-type"``) on
+        the command line, the component and key (``"'cc' arg_type"``) in
+        the manifest.
+    ctype : str
+        The declared spelling, e.g. ``"float _Complex"`` or ``"int16_t[]"``.
+
+    Returns
+    -------
+    str or None
+        A complete message for one ``error:`` line (a second line lists the
+        legal types when the spelling is unknown), or ``None`` when the type
+        is a legal step type.
+
+    Examples
+    --------
+    >>> step_type_error("--arg-type", "float _Complex") is None
+    True
+    >>> step_type_error("--arg-type", "int16_t[]") is None
+    True
+    >>> step_type_error("--return-type", "void") is None
+    True
+    >>> step_type_error("--arg-type", "const char *").split(":")[0]
+    "--arg-type 'const char *' cannot be an object's step() type"
+    >>> step_type_error("'cc' arg_type", "const char *[]").split(":")[0]
+    "'cc' arg_type 'const char *[]' cannot be an object's step() type"
+    >>> print(step_type_error("--arg-type", "unsigned").splitlines()[0])
+    --arg-type 'unsigned' is not a supported scalar type.
+    >>> print(step_type_error("--arg-type", "unsigned[]").splitlines()[0])
+    --arg-type array element type 'unsigned' is not supported.
+    """
+    is_array = ctype.endswith("[]")
+    elem = ctype[:-2] if is_array else ctype
+    kind = _CTYPE_META.get(elem, {}).get("kind")
+    if kind in _STEP_REFUSED_KINDS:
+        return (
+            f"{what} '{ctype}' cannot be an object's step() type: "
+            f"{_STEP_REFUSED_KINDS[kind]}"
+        )
+    if ctype == "void" or elem in STEP_TYPES:
+        return None
+    legal = ", ".join(sorted(STEP_TYPES))
+    if is_array:
+        return (
+            f"{what} array element type '{elem}' is not supported.\n"
+            f"Supported element types: {legal}"
+        )
+    return (
+        f"{what} '{ctype}' is not a supported scalar type.\n"
+        f"Supported: void, {legal}"
     )
 
 

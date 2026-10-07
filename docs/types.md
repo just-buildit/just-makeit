@@ -131,7 +131,10 @@ Notes:
     passes a `str`. If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
-    it, as a scalar and as a `T[N]` element, and say so.
+    it, as a scalar and as a `T[N]` element, and say so. So do
+    `--arg-type` / `--return-type` and a manifest `arg_type` /
+    `return_type`, as a scalar and as a `T[]` element (see
+    [Scalar shapes](#scalar-shapes)).
 
 - A fixed state array `T[N]` takes the array element types above plus
     `int` and `long double _Complex`, whose width the struct fixes. `bool[N]`
@@ -414,7 +417,12 @@ plus a few shape forms.
 
 Every type in [State variable types](#state-variable-types) except
 `const char *` is also a legal `--arg-type` / `--return-type` value.
-Strings can't flow through a sample-by-sample DSP step.
+Strings can't flow through a sample-by-sample DSP step: `steps()` moves a
+block of samples as an ndarray, which has no dtype for a C string. `jm new`,
+`jm object` (every `--preset` included) and `jm apply` of a manifest
+`arg_type` / `return_type` refuse it, as a scalar and as a `T[]` element,
+with one `error:` line, before anything is written. Take text as an
+init-param or a method `--param` instead.
 
 ### Array shape — `T[]`
 
