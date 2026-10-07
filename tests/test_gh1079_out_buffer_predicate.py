@@ -80,8 +80,8 @@ SHAPES = [
         dict(arg_type="void", params=[("x", "float[]"), ("c", "double[]")]),
         True,
     ),
-    # gh-1960: params beside an `arg_type` input are not parsed at all, so
-    # there is no parse to thread an `out=` through.
+    # gh-2028: params beside an `arg_type` input. Parsed since gh-1960,
+    # but an `out=` beside them breaks the header `@param in` -> `x` match.
     (
         "array-plus-scalar",
         dict(arg_type="float", params=[("mu", "double")]),

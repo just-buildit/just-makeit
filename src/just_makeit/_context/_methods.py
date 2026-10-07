@@ -717,6 +717,8 @@ def _bench_method_block(
         # the generic branches entirely.
         rf_disp = return_type
         lines.append(f"        {rf_disp} {name}_results[{max_results}];")
+        # gh-1961: the params sit between the input and the results, as in
+        # the prototype; this call omitted them, like the binding did.
         if has_arg:
             lines += [
                 f"        {arg_elem_disp} *{name}_in ="
@@ -725,11 +727,11 @@ def _bench_method_block(
                 f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
             ]
             call = (
-                f"{c_fn}(obj, {name}_in, BENCH_N,"
+                f"{c_fn}(obj, {name}_in, BENCH_N{param_args},"
                 f" {name}_results, {max_results})"
             )
         else:
-            call = f"{c_fn}(obj, {name}_results, {max_results})"
+            call = f"{c_fn}(obj{param_args}, {name}_results, {max_results})"
         lines.append(f"        volatile size_t {name}_sink;")
         has_sink = True
         lines += [
@@ -2240,7 +2242,7 @@ def make_methods_ctx(
         )
         _obj_line = f"    >>> obj = {Component}({py_create_args})"
 
-        def _demo_call_args() -> str:
+        def _demo_call_args(block_input: bool = False) -> str:
             """The argument list for this method's synthesized doctest.
 
             One builder for every shape, because the example is executable
@@ -2249,10 +2251,21 @@ def make_methods_ctx(
             reports) in the fixed-output branch, which was then the only
             caller — a second copy would have shipped that bug again the day
             a record method declared an enum param.
+
+            gh-2001: the variable-output and list-of-records examples did not
+            call it, and each spelled its input alone -- ``delay(x, mu)``
+            was shown as ``obj.delay(np.zeros(4))``, a TypeError for the
+            missing ``mu``. *block_input* keeps the list-of-records input
+            spelled as the block it is (``np.zeros(4, dtype=...)``) where
+            the other shapes show one element.
             """
             parts: list[str] = []
             if has_arg:
-                parts.append(_in_example if _in_example else "x")
+                parts.append(
+                    f"np.zeros(4, dtype={_in_dtype_str})"
+                    if block_input
+                    else (_in_example if _in_example else "x")
+                )
             for _p in params:
                 _pt = _p["type"]
                 # gh-1426 A: a release's count resolves 0 to "the outstanding
@@ -2286,6 +2299,22 @@ def make_methods_ctx(
                 else:
                     parts.append("0")
             return ", ".join(parts)
+
+        def _block_params() -> list[dict]:
+            """``x`` as the block it is, then every declared param.
+
+            A record or variable-output method's ``arg_type`` is a BLOCK
+            input -- ``const T *in, size_t n_in`` in its prototype -- so it
+            joins the param list in its array form whether or not the
+            manifest spelled the ``[]``, under the Python name ``x``. The one
+            list the single-record (gh-594), list-of-records (gh-1961) and
+            variable-output (gh-1960) parses hand `_build_params_parse`, so
+            the three read a declared param the way every other shape does.
+            """
+            _x_type = arg_type if arg_type.endswith("[]") else f"{arg_type}[]"
+            return ([{"name": "x", "type": _x_type}] if has_arg else []) + [
+                dict(_p) for _p in params
+            ]
 
         # gh-581: every `out=` branch below requires the exact output dtype
         # before marshaling, so FROM_OTF cannot cast the caller's buffer into a
@@ -2509,12 +2538,17 @@ def make_methods_ctx(
             # capacity, never a refusal.
             _count_t = count_type_of(m)
             if has_arg:
+                # gh-1960: the params follow the block input, as they do in
+                # a record method's prototype. They were dropped here, in
+                # `_method._build_method_prototype` and in the `_core.c` stub
+                # alike, so the three agreed with each other and with no stub.
+                _vp_in = "".join(f", {_p}" for _p in c_param_parts(params))
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
                     f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
-                    f" const {arg_disp} *in, size_t n_in,"
+                    f" const {arg_disp} *in, size_t n_in{_vp_in},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             elif has_params:
@@ -2626,7 +2660,7 @@ def make_methods_ctx(
         # mu=0.3)` raised TypeError despite the stub advertising the keyword.
         _enable_kw = _enable_out or (variable_output and has_params)
         if variable_output:
-            if has_arg:
+            if has_arg and not has_params:
                 if _enable_out:
                     _kwlist_decl = (
                         '    static char *_kwlist[] = {"x", "out", NULL};\n'
@@ -2663,6 +2697,23 @@ def make_methods_ctx(
                 # gh-607: the count `*_max_out()` is called with — the same
                 # value about to be passed to the kernel as n_in.
                 _moc_arg: str | None = _lazy_fallback
+            elif has_arg:
+                # gh-1960: an input AND params. This shape parsed the input
+                # alone ("O") and called the kernel without the params, while
+                # both `.pyi` writers and the runtime doc advertised them and
+                # a keyword one was accepted and dropped. The input and the
+                # params now go through the parse every other params shape
+                # uses -- the single-record shape's route since gh-594 -- with
+                # the input first, as the block (`x`, `x_len`) the prototype
+                # takes as `in, n_in`. No `out=` yet (`_outbuf.why_not`).
+                parse_block, _p_call, decref_in = _build_params_parse(
+                    _block_params(), Component, enums, records, _sid, strict_in
+                )
+                call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
+                # The input sizes the output, as without params: `x_len` is
+                # the `n_in` the kernel and `*_max_out()` are both handed.
+                _lazy_fallback = "x_len"
+                _moc_arg = _lazy_fallback
             elif has_params:
                 _pb_lines: list[str] = []
                 _cd_parts: list[str] = ["self->handle"]
@@ -3145,9 +3196,9 @@ def make_methods_ctx(
                 _out_branch = ""
             # Every parse above reads `args` (an output count is optional,
             # never absent). gh-412: params methods take kwds (keyword
-            # parsing) even without the out= buffer branch -- though with an
-            # input as well the parse drops the params and never reads kwds
-            # (gh-1960), which the unused `kwds` is the one diagnostic for.
+            # parsing) even without the out= buffer branch -- and with an
+            # input as well since gh-1960, whose parse dropped the params and
+            # left `kwds` unread.
             _vo_cc = call_convention(Component, args=True, kwds=_enable_kw)
 
             # ── allocate the outputs, call, trim, return ─────────────────
@@ -3396,14 +3447,15 @@ def make_methods_ctx(
                 if len(_all_rts_vo) > 1
                 else "ndarray"
             )
-            if has_arg:
-                _vo_sig_arg = ", ".join(_doc_names)
-                _vo_call_example = f"obj.{name}({_in_example})"
-            elif has_params:
+            if has_arg or has_params:
                 # Every declared param, not just the first array one: the
                 # signature line has to match what the binding accepts.
-                _vo_sig_arg = ", ".join(_doc_names) if _doc_names else "n=1"
-                _vo_call_example = f"obj.{name}(np.zeros(4))"
+                _vo_sig_arg = ", ".join(_doc_names)
+                # gh-2001: and so does the example's call. It passed ONE
+                # argument whatever the params -- `obj.delay(np.zeros(4))`
+                # for `delay(x, mu)`, a TypeError the moment it runs -- and
+                # with an input it passed the input alone (gh-1960).
+                _vo_call_example = f"obj.{name}({_demo_call_args()})"
             else:
                 # gh-657: the kwlist binds this as `count`; the doc said
                 # `n`, which is what sent the reporter looking for a rename
@@ -3632,16 +3684,9 @@ def make_methods_ctx(
                 # A record method's `arg_type` is always the block input
                 # (`const T *in, size_t n_in` in the prototype -- see
                 # _method._methods_c_stub_result_single), so the primary arg
-                # joins the param list in its array form regardless of whether
-                # the manifest spelled the `[]`.
-                _x_type = (
-                    arg_type if arg_type.endswith("[]") else f"{arg_type}[]"
-                )
-                _pp_params = (
-                    [{"name": "x", "type": _x_type}] if has_arg else []
-                ) + [dict(_p) for _p in params]
+                # joins the param list in its array form: `_block_params`.
                 _s_parse, _p_call, _p_cleanup = _build_params_parse(
-                    _pp_params, Component, enums, records, _sid, strict_in
+                    _block_params(), Component, enums, records, _sid, strict_in
                 )
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
@@ -3782,7 +3827,25 @@ def make_methods_ctx(
             # through record_tuple_build so a field type converts via
             # _CTYPE_META's to_py rather than a cast-less "i" fallback.
             _bv = record_tuple_build(result_fields, "results[i]")
-            if has_arg:
+            if has_params:
+                # gh-1961: the params, through the parse the single-record
+                # branch above uses (gh-594), the input first as its block.
+                # Parsed by neither path before, so the kernel was called
+                # without them against a prototype that takes them, and the
+                # wrapper did not compile.
+                _rf_parse, _p_call, _p_cleanup = _build_params_parse(
+                    _block_params(), Component, enums, records, _sid, strict_in
+                )
+                _rf_call = (
+                    f"    {ret_disp} results[{max_results}];\n"
+                    + _kernel_call_block(
+                        f"{c_fn}(self->handle, {_p_call}, "
+                        f"results, {max_results})",
+                        nogil,
+                    )
+                    + _p_cleanup
+                )
+            elif has_arg:
                 _rf_parse = (
                     f"    PyObject *in_obj = NULL;\n"
                     f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
@@ -3812,9 +3875,10 @@ def make_methods_ctx(
                 )
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
-            # param still asks for `args`: this branch drops params (gh-1961)
-            # and the fix for that is parsing them, not marking them unread.
-            _rf_cc = call_convention(Component, args=has_arg or has_params)
+            # param is parsed with keywords (gh-1961), as in that shape.
+            _rf_cc = call_convention(
+                Component, args=has_arg or has_params, kwds=has_params
+            )
             wrapper = (
                 _in_dtype_helper
                 + (
@@ -3844,9 +3908,10 @@ def make_methods_ctx(
                 )
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
-            _rf_call_arg = (
-                f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
-            )
+            # gh-1961 / gh-2001: every argument the binding takes, from the
+            # one builder -- the input alone was a TypeError once the params
+            # were parsed.
+            _rf_call_arg = _demo_call_args(block_input=True)
             _rf_doc_lines = [
                 f"{name}({', '.join(_doc_names)}) -> list[tuple]",
                 "",

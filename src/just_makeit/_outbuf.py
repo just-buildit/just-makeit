@@ -46,9 +46,11 @@ binding would have allocated itself -- ``_capacity_exprs``' invariant -- so an
 
 What it is NOT
 --------------
-Params beside an ``arg_type`` input stay excluded: that wrapper's parse reads
-the input alone and drops them (gh-1960), so there is no call to thread an
-``out=`` through.
+Params beside an ``arg_type`` input stay excluded. Their parse dropped them
+until gh-1960, so there was no call to thread an ``out=`` through; it goes
+through `_build_params_parse` now, and what keeps ``out=`` out is the doc:
+``out`` would join the Python arguments and break the positional match of
+the header's ``@param in`` onto ``x`` (gh-2028).
 
 An array beside other params was excluded too, until gh-1998. gh-412 had
 carved it out of the `out=` feature while making those methods
@@ -227,7 +229,7 @@ def why_not(
     ''
     >>> why_not(variable_output=True, multi_output=False, has_arg=True,
     ...         params=[{"name": "mu", "type": "double"}])
-    'extra params beside the array input (gh-1079, gh-1960)'
+    'extra params beside the array input (gh-1079, gh-2028)'
     """
     if not variable_output:
         return "not variable_output"
@@ -236,12 +238,12 @@ def why_not(
         # them with the caller's; one `out=` cannot say which.
         return "multi_output"
     if has_arg and params:
-        # An `arg_type` input plus params. That wrapper's parse reads the
-        # input alone (`"O"`) and never threads the params through -- they
-        # are missing from the call and the prototype too (gh-1960) -- so
-        # there is no parse to add an `out=` to. A parse-block gap, not a
-        # sizing one; it is a different piece of work from the shapes below.
-        return "extra params beside the array input (gh-1079, gh-1960)"
+        # An `arg_type` input plus params. Their parse read the input alone
+        # until gh-1960; it is `_build_params_parse` now, so the binding
+        # could take an `out=` sized from the input like the shapes below.
+        # The doc is what is not ready: `out` would join the Python args and
+        # the header's `@param in` would stop aligning onto `x` (gh-2028).
+        return "extra params beside the array input (gh-1079, gh-2028)"
     # Every remaining shape is offered `out=`.
     #
     # gh-1998: an array param, alone or beside others -- `Farrow.delay(x,

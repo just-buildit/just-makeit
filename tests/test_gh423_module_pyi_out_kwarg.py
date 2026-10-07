@@ -69,8 +69,9 @@ class TestModulePyiOutKwarg:
         assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
 
     def test_params_beside_an_input_get_no_out_kwarg(self, tmp_path):
-        # An `arg_type` input plus a param: that parse drops the param
-        # (gh-1960), so there is no call to thread `out=` through.
+        # An `arg_type` input plus a param: parsed since gh-1960, and still
+        # offered no `out=` until the header's `@param` zip can take one
+        # (gh-2028).
         root = self._scaffold(
             tmp_path, arg_type="float _Complex", params=[("mu", "double")]
         )
