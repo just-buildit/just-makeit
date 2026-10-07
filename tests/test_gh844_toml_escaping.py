@@ -103,6 +103,14 @@ ESCAPERS = {
         _first,
         True,
     ),
+    # gh-1886: the heredoc form, out of `_str_assign` and the `impl` bodies'
+    # own copy, which doubled no backslash. gh-192's newline strip applies,
+    # as for `_str_assign`.
+    "_toml_multiline_string": (
+        lambda v: f"k = {C._toml_multiline_string(v)}",
+        _scalar,
+        False,
+    ),
 }
 
 
