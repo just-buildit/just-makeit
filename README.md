@@ -33,8 +33,8 @@ ______________________________________________________________________
 ## Quickstart
 
 `install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
-patchelf through your system package manager (only when cmake, a C compiler
-or patchelf is missing), then numpy and just-makeit into a Python venv
+patchelf through your system package manager (only when one of them is
+missing), then numpy and just-makeit into a Python venv
 (default `/tmp/jm-venv`, or pass your own path). Run
 `just-makeit install-deps --help` for the full reference.
 

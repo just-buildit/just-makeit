@@ -102,10 +102,11 @@ _detect_mgr() {
     fi
 }
 
-# ── 1. Check / install cmake + C compiler + patchelf ─────────────────────────
+# ── 1. Check cmake + C compiler + pkg-config + patchelf ──────────────────────
 
 MGR="$(_detect_mgr)"
 NEED_CMAKE=0
+NEED_PKG_CONFIG=0
 
 # Every system dependency found missing, as the report names it. The install
 # step, --check's verdict and the unknown-manager hint all read this one
@@ -129,6 +130,18 @@ if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
     skip "C compiler ($(command -v gcc || command -v clang || command -v cc))"
 else
     _need "C compiler"
+fi
+
+# CMake's FindPkgConfig runs pkg-config to configure a project that declares
+# `[project] pkg_modules`, and a C consumer reads an installed library's .pc
+# through it (gh-1994). Probed by that name alone, not as pkgconf: CMake 3.16,
+# a generated project's floor, searches for no other, and every manager's
+# package below provides it.
+if command -v pkg-config >/dev/null 2>&1; then
+    skip "pkg-config ($(command -v pkg-config))"
+else
+    NEED_PKG_CONFIG=1
+    _need pkg-config
 fi
 
 # auditwheel needs patchelf to repair a Linux wheel (`just-makeit build`,
@@ -186,6 +199,7 @@ _install_apk()    { info "apk"; $SUDO apk add --no-cache cmake gcc musl-dev pkgc
 _install_brew() {
     if command -v brew >/dev/null 2>&1; then
         [[ $NEED_CMAKE -eq 1 ]] && brew install cmake
+        [[ $NEED_PKG_CONFIG -eq 1 ]] && brew install pkg-config
         if ! command -v cc >/dev/null 2>&1; then
             warn "No C compiler. Run: xcode-select --install"
         fi

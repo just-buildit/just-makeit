@@ -76,6 +76,8 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     {g}ok{/g}  Python 3.12
     {g}ok{/g}  cmake 4.2.3  (already installed)
     {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
+    {g}ok{/g}  pkg-config (/usr/bin/pkg-config)  (already installed)
+    {g}ok{/g}  patchelf (/usr/bin/patchelf)  (already installed)
   {y}-->{/y}   just-makeit  (/tmp/jm-venv)
 {b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
     {g}ok{/g}  numpy 2.4.6
@@ -90,7 +92,7 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
     `install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
     patchelf (auditwheel needs it to repair a wheel) through your system
-    package manager (only when cmake, a C compiler or patchelf is missing),
+    package manager (only when one of them is missing),
     then numpy and just-makeit into a Python venv. The curl installer does the
     same, and also activates the venv in your shell; `just-makeit install-deps`
     prints the `source <venv>/bin/activate` line to run. The venv is created at

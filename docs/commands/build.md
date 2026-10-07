@@ -976,10 +976,11 @@ ______________________________________________________________________
 
 ## `just-makeit install-deps [path]`
 
-Install the build dependencies: cmake, a C compiler and pkg-config through the
-system package manager when cmake or a C compiler is missing, then numpy and
-just-makeit into a Python venv at `path` (default `/tmp/jm-venv`). It prints
-the `source <path>/bin/activate` line to run. See [Get it](../index.md#get-it).
+Install the build dependencies: cmake, a C compiler, pkg-config and, on Linux,
+patchelf through the system package manager when one of them is missing, then
+numpy and just-makeit into a Python venv at `path` (default `/tmp/jm-venv`).
+It prints the `source <path>/bin/activate` line to run. See
+[Get it](../index.md#get-it).
 
 ```sh
 just-makeit install-deps             # venv at /tmp/jm-venv
