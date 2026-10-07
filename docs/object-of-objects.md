@@ -989,6 +989,13 @@ it below; one that belongs to another face (a handle `properties`, a capsule
 `getters`, a composer `init_params`, ...) warns and names the table that face
 reads instead.
 
+A capsule's `init_params` and `properties`, and a handle's `create_args`,
+factory `init_params` and getter `fields`, each cross as one C scalar. A
+`type` there that is an array (`"float[]"`) or a spelling jm does not know is
+refused before anything is written, with one `error:` line naming the module,
+the table and the row (gh-2009). A constructor array is supported on an
+object's [`[[<object>.init_params]]`](configuration.md#objectinit_params).
+
 **Capsule only:** `capsule_name` (the `PyCapsule` name string; default
 `<pkg>.<module>.<backing>_state`), `[[module.X.init_params]]`
 (`name`/`type`), `[[module.X.methods]]` (`name`, `arg_type?`,
