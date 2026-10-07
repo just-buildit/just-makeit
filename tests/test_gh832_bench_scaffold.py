@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 from _compilers import default_cc
+from _jm_bench import materialize_bench
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -71,6 +72,8 @@ def _unfillable(tmp_path) -> Path:
     _quiet(new_run, "proj", root)
     _quiet(object_run, root, "tlm", None, no_step=True)
     _quiet(method_run, root, "tlm", "read", None, "void", "uint64_t", True, [])
+    # gh-1987: `jm method` no longer renders the bench; `apply` does.
+    materialize_bench(root, "tlm")
     return root
 
 
@@ -314,7 +317,8 @@ class TestItShipsNoDeadCode:
             False,
             [],
         )
-        src = _bench_src(root, "tlm")
+        # gh-1987: `jm method` no longer renders the bench; `apply` does.
+        src = materialize_bench(root, "tlm")
         # gh-1341: the DECLS are still emitted here (they are the
         # benchmark's own locals), but the helper is not -- it moved to
         # `jm_bench.h`, so a populated bench must not define one either.

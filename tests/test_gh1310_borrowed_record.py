@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 from _compilers import default_cc
+from _jm_bench import materialize_bench
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -191,7 +192,8 @@ class TestEveryFaceNamesTheRecord:
         `volatile <T> sink` for a pointer-returning kernel -- a constraint
         violation in the one generated file no test compiles."""
         root = _declare(tmp_path / "p")
-        b = (root / "native/benchmarks/bench_ring_core.c").read_text()
+        # gh-1987: `jm method` no longer renders the bench; `apply` does.
+        b = materialize_bench(root, "ring")
         assert "iq_pair_t *volatile wait_sink;" in b, b
         # and NOT the list-of-records bench, whose kernel does not exist
         assert "wait_results[" not in b, b

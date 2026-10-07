@@ -2444,7 +2444,7 @@ def run(
 
         # Surgically inject the new method's declaration into _core.h (sacred
         # struct + inline step() untouched); regenerate the glue (_ext.c, the
-        # benchmark, the stub, and the component CMakeLists) from the manifest.
+        # stub, and the component CMakeLists) from the manifest.
         core_h = INC.core_h(root, object_name)
         ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
         obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
@@ -2469,10 +2469,17 @@ def run(
         if ext_c.exists():
             _textio.write_text(ext_c, r(R.COMPONENT_EXT_C))
             print(f"  update  {ext_c}")
+        # gh-1987: the C benchmark is the AUTHOR's (`_createonly`), so the
+        # verb leaves it alone, as `apply`, `jm remove` and every other
+        # member verb do. Re-rendering it here discarded their edits; timing
+        # the new method is theirs to add. The replay is the one exception,
+        # for gh-137's reason: its tree is scratch, so the bench there is
+        # jm's own scaffold, and re-rendering it is how a bench `apply`
+        # materialises times the methods the manifest declares.
         bench_c = (
             root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
         )
-        if bench_c.exists():
+        if from_apply and bench_c.exists():
             _textio.write_text(bench_c, r(bench_c_tmpl))
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"

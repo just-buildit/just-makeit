@@ -24,7 +24,6 @@ from . import _config as C
 from . import _csym as CSYM
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
-from . import _render as R
 from . import _incpath as INC
 from ._init import _to_title
 from ._object import _regenerate_module
@@ -560,6 +559,10 @@ def _remove_method(
 
     print(f"just-makeit: removing method '{name}' from '{obj}'")
     print()
+    # The C function the method bound, read before the entry goes.
+    sym = C.method_c_symbol(
+        csym, next(m for m in methods if m.get("name") == name)
+    )
     _drop_named_entry(methods, name)
     if not methods:
         cfg[obj].pop("methods", None)
@@ -571,6 +574,29 @@ def _remove_method(
     print(
         f"Done!  Method '{name}' removed."
         f"\n  note: {csym}_{name}() remains in {obj}_core.c — delete it by hand."
+        + _bench_still_calls(root, obj, sym)
+    )
+
+
+def _bench_still_calls(root: Path, obj: str, sym: str) -> str:
+    """A note line when *obj*'s C benchmark still calls *sym*, else ``""``.
+
+    The benchmark is the author's (gh-1987), so the remove leaves it alone
+    -- and one that times the removed method stops linking the moment the
+    author deletes the body as the note above tells them to. Said here,
+    where it is actionable, rather than left for the linker. Read through
+    `_csym.references`, the one "does this C refer to that name" reader, so
+    a comment or string naming the function is not a call.
+    """
+    bench = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
+    if not bench.is_file():
+        return ""
+    if not CSYM.references(bench.read_text(encoding="utf-8"), {sym}):
+        return ""
+    rel = bench.relative_to(root).as_posix()
+    return (
+        f"\n  note: {rel} still calls {sym}() — it is yours, so jm left "
+        "it as it is; update it before deleting the body."
     )
 
 
@@ -833,11 +859,12 @@ def _regenerate_object_bindings(
 ) -> None:
     """Regenerate the glue after a member entry was dropped from the TOML.
 
-    The binding, the stub and the benchmark, and the two files jm derives
-    from them: the gh-1361 link-check table and the gh-1404 element
-    contract. Each through the call that writes it on the way in, so a
-    remove leaves exactly the tree an add of the remaining members would
-    (gh-1978).
+    The binding and the stub, and the two files jm derives from them: the
+    gh-1361 link-check table and the gh-1404 element contract. Each through
+    the call that writes it on the way in, so a remove leaves exactly the
+    tree an add of the remaining members would (gh-1978).
+
+    The C benchmark is not among them: it is the author's (gh-1987).
 
     The orphaned `_core.c` body and its `_core.h` declaration are left in
     place for the user to delete — they are sacred, so removal never splices
@@ -868,16 +895,12 @@ def _regenerate_object_bindings(
         # gh-1361 link-check table. This was a copy of it that wrote the
         # first two only, so the removed member's symbol stayed in
         # `test_<obj>_symbols.c`.
-        ctx = _glue.regenerate_standalone(root, cfg, obj, pkg)
-        bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
-        if bench_c.exists():
-            tmpl = (
-                R.NO_STEP_BENCH_C
-                if C.is_no_step(cfg, obj)
-                else R.COMPONENT_BENCH_C
-            )
-            _textio.write_text(bench_c, R.render(tmpl, ctx))
-            print(f"  update  {bench_c}")
+        # gh-1987: and NOT the C benchmark. `bench_<obj>_core.c` is the
+        # author's (`_createonly`), which `apply`, the module branch above
+        # and every adding verb already honour; this re-rendered it
+        # wholesale, discarding their edits. A bench still calling a removed
+        # method is theirs to update, which `_bench_still_calls` tells them.
+        _glue.regenerate_standalone(root, cfg, obj, pkg)
 
     # gh-1978: the element contract (gh-1404), through the writer `jm method`
     # and `apply` use. Removing a pair's writer or reader ends the contract,
