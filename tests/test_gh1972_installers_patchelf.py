@@ -1,5 +1,7 @@
 """gh-1972: both installers install patchelf on Linux, and agree per manager.
 
+gh-1994 extends it to pkg-config, on every platform.
+
 auditwheel needs patchelf to repair a Linux wheel (``just-makeit build``,
 ``pip wheel .``). jm's two installers disagreed about it:
 
@@ -14,12 +16,19 @@ The two cannot share one list: install.sh is fetched alone by curl, before
 jm exists (``tests/_installers.py``). So patchelf is a need of its own on
 Linux in both, and this file holds the two copies to one another.
 
+pkg-config had the same gap (gh-1994): both installers' help names it and
+every Linux manager's list carries it, but neither checked for it, and the
+Homebrew path never installed it. A box with cmake, a compiler and patchelf
+passed ``--check``, and a project declaring ``[project] pkg_modules`` then
+failed at CMake configure. It is now a need of its own in both, on every
+platform: a C consumer of an installed ``.pc`` runs it too.
+
 Every check RUNS the installers rather than reading them, under a PATH that
-holds only stubs: ``uname`` answers the platform under test, cmake and a
-compiler are present, patchelf is absent unless a test puts it there, sudo
-runs its arguments, and every package manager records its argv and changes
-nothing. just-makeit is current in the venv, so install.sh's ``--check``
-verdict turns on the system alone. The interpreter that would build a venv
+holds only stubs: ``uname`` answers the platform under test, every tool
+the installers probe for (`PROBED`) is present unless a test leaves it
+off, sudo runs its arguments, and every package manager records its argv
+and changes nothing. just-makeit is current in the venv, so install.sh's
+``--check`` verdict turns on the system alone. The interpreter that would build a venv
 builds a stub one instead, so a full run is offline and writes nothing
 outside ``tmp_path``.
 
@@ -39,6 +48,10 @@ GATE: on Linux with no patchelf, each installer's ``--check`` names it and
       exits 1, and a run hands it to the package manager; on macOS neither
       asks for it; and for every manager either script knows, the two run
       the same package-manager commands, which name patchelf on Linux.
+GATE: on Linux and macOS with no pkg-config -- or only ``pkgconf`` --
+      each installer's ``--check`` names it and exits 1, and with it
+      passes; a run hands it to the package manager; and every manager
+      either script knows, Homebrew included, installs it (gh-1994).
 GATE: install.sh reads just-makeit as current with no GNU-only tool, so
       its --check passes on any host with nothing to install (gh-1993).
 """
@@ -105,6 +118,23 @@ os.execv(sys.executable, [sys.executable] + args)
 #: The just-makeit both the stub venv and the stub index report.
 JM_VERSION = "1.0"
 
+#: The system tools the installers probe for, each with its stub's body.
+#: A `Box` puts every one on its PATH except those it is told to leave off.
+PROBED = {
+    "cmake": "echo cmake version 3.99.0",
+    "cc": ":",
+    "patchelf": ":",
+    "pkg-config": ":",
+}
+
+#: The package that provides ``pkg-config``, as each manager spells it:
+#: ``pkg-config`` (apt, Homebrew), ``pkgconf`` (pacman),
+#: ``pkgconf-pkg-config`` (dnf), ``pkgconfig`` (zypper, apk).
+PKG_CONFIG_PACKAGE = re.compile(r"pkg-?conf(?:ig)?(?:-pkg-config)?")
+
+#: What ``uname`` answers on each platform the installers serve.
+SYSTEMS = ("Linux", "Darwin")
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -123,11 +153,12 @@ class Box:
         under it.
     system : str
         What ``uname`` answers: ``"Linux"`` or ``"Darwin"``.
-    patchelf : bool
-        Whether patchelf is on the PATH.
+    without : tuple of str
+        The `PROBED` tools left off the PATH; every other one is on it.
     """
 
-    def __init__(self, root: Path, system: str, patchelf: bool = False):
+    def __init__(self, root: Path, system: str, without: tuple = ()):
+        assert set(without) <= set(PROBED), without
         self.root = root
         self.bin = root / "bin"
         self.bin.mkdir(parents=True)
@@ -138,11 +169,10 @@ class Box:
             assert real, f"the host has no {tool}"
             (self.bin / tool).symlink_to(real)
         _stub(self.bin / "uname", f"echo {system}")
-        _stub(self.bin / "cmake", "echo cmake version 3.99.0")
-        _stub(self.bin / "cc", ":")
         _stub(self.bin / "sudo", 'exec "$@"')
-        if patchelf:
-            _stub(self.bin / "patchelf", ":")
+        for tool, body in PROBED.items():
+            if tool not in without:
+                _stub(self.bin / tool, body)
         # just-makeit is already current in the venv, as PyPI's index
         # reports it, so install.sh's verdict turns on the system alone.
         _stub(self.bin / "pip", f'echo "just-makeit ({JM_VERSION})"')
@@ -237,7 +267,8 @@ def _check_passes(script: Path, res: "subprocess.CompletedProcess") -> None:
 
 @pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
 def test_check_on_linux_names_missing_patchelf(tmp_path, script):
-    res = Box(tmp_path, "Linux").run(script, "--check")
+    box = Box(tmp_path, "Linux", without=("patchelf",))
+    res = box.run(script, "--check")
     assert _marked_missing(res.stdout, "patchelf"), (
         f"{script.name} --check on Linux with no patchelf does not report "
         f"it missing; auditwheel needs it to repair a wheel (gh-1972):\n"
@@ -249,7 +280,7 @@ def test_check_on_linux_names_missing_patchelf(tmp_path, script):
 @pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
 def test_check_on_linux_passes_with_patchelf(tmp_path, script):
     # The other side of the check above: armed, not merely always red.
-    res = Box(tmp_path, "Linux", patchelf=True).run(script, "--check")
+    res = Box(tmp_path, "Linux").run(script, "--check")
     assert not _marked_missing(res.stdout, "patchelf"), res.stdout
     assert _reported(res.stdout, "patchelf", "ok"), res.stdout
     _check_passes(script, res)
@@ -259,7 +290,8 @@ def test_check_on_linux_passes_with_patchelf(tmp_path, script):
 def test_check_on_macos_does_not_ask_for_patchelf(tmp_path, script):
     # delocate repairs a macOS wheel without patchelf; Homebrew is not
     # asked for it, and its absence is not a missing dependency.
-    res = Box(tmp_path, "Darwin").run(script, "--check")
+    box = Box(tmp_path, "Darwin", without=("patchelf",))
+    res = box.run(script, "--check")
     assert not _reported(res.stdout, "patchelf"), res.stdout
     _check_passes(script, res)
 
@@ -273,7 +305,7 @@ def test_a_run_on_linux_installs_missing_patchelf(tmp_path, script):
     is the installer's outcome on THIS host's distro: patchelf handed to the
     package manager it detects, or -- with none it knows -- named in the
     hint to install it by hand. Either is absent on main."""
-    box = Box(tmp_path, "Linux")
+    box = Box(tmp_path, "Linux", without=("patchelf",))
     res = box.run(script)
     assert res.returncode == 0, (res.stdout, res.stderr)
     out = res.stdout + res.stderr
@@ -281,6 +313,72 @@ def test_a_run_on_linux_installs_missing_patchelf(tmp_path, script):
     assert _names(box.calls(), "patchelf") or hint, (
         f"{script.name} on Linux with no patchelf neither installed it nor "
         f"asked for it (gh-1972). Package-manager calls: {box.calls()}\n{out}"
+    )
+
+
+# ── pkg-config, on every platform (gh-1994) ────────────────────────────────
+
+
+def _names_pkg_config(calls: "list[str]") -> bool:
+    """Whether a package-manager call installs pkg-config's package."""
+    return any(
+        PKG_CONFIG_PACKAGE.fullmatch(word)
+        for call in calls
+        for word in call.split()
+    )
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+@pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
+def test_check_names_missing_pkg_config(tmp_path, script, system):
+    box = Box(tmp_path, system, without=("pkg-config",))
+    res = box.run(script, "--check")
+    assert _marked_missing(res.stdout, "pkg-config"), (
+        f"{script.name} --check on {system} with no pkg-config does not "
+        f"report it missing; a project declaring pkg_modules cannot "
+        f"configure without it (gh-1994):\n{res.stdout}{res.stderr}"
+    )
+    assert res.returncode == 1, (res.stdout, res.stderr)
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+@pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
+def test_check_passes_with_pkg_config(tmp_path, script, system):
+    # The other side of the check above: armed, not merely always red.
+    res = Box(tmp_path, system).run(script, "--check")
+    assert not _marked_missing(res.stdout, "pkg-config"), res.stdout
+    assert _reported(res.stdout, "pkg-config", "ok"), res.stdout
+    _check_passes(script, res)
+
+
+@pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
+def test_check_does_not_take_pkgconf_for_pkg_config(tmp_path, script):
+    """pkgconf answers pkg-config's options under its own name, but CMake
+    3.16's FindPkgConfig -- a generated project's floor -- searches for
+    ``pkg-config`` alone, and a consumer runs that name. Every manager's
+    package installs it, so a box with only ``pkgconf`` still needs one."""
+    box = Box(tmp_path, "Linux", without=("pkg-config",))
+    _stub(box.bin / "pkgconf", ":")
+    res = box.run(script, "--check")
+    assert _marked_missing(res.stdout, "pkg-config"), res.stdout
+    assert res.returncode == 1, (res.stdout, res.stderr)
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+@pytest.mark.parametrize("script", INSTALLERS, ids=lambda p: p.name)
+def test_a_run_installs_missing_pkg_config(tmp_path, script, system):
+    """On macOS the manager is Homebrew, which installed only cmake; on
+    Linux the host's ``/etc/os-release`` picks it, as for patchelf above,
+    and a manager neither installer knows gets the hint instead."""
+    box = Box(tmp_path, system, without=("pkg-config",))
+    res = box.run(script)
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    out = res.stdout + res.stderr
+    hint = re.search(r"Unknown package manager\b.*\bpkg-config\b", out)
+    assert _names_pkg_config(box.calls()) or hint, (
+        f"{script.name} on {system} with no pkg-config neither installed it "
+        f"nor asked for it (gh-1994). Package-manager calls: {box.calls()}"
+        f"\n{out}"
     )
 
 
@@ -302,15 +400,20 @@ def _manager_calls(tmp_path: Path, script: Path) -> "dict[str, list[str]]":
     """``{manager: calls}``: what each ``_install_<manager>()`` runs.
 
     Each function runs alone against the recorders, with sudo needed and
-    cmake missing (``NEED_CMAKE`` is the one need a function reads, for
-    Homebrew); the scripts' own ``info`` / ``warn`` lines are silenced.
+    every need it reads set: a ``NEED_<DEP>`` flag is how ``_install_brew``
+    installs only what is missing (``NEED_CMAKE``, ``NEED_PKG_CONFIG``), and
+    the flags are read off the function, so one it gains is set here
+    without being listed. The scripts' own ``info`` / ``warn`` lines are
+    silenced.
     """
     out = {}
     for mgr, text in install_functions(script).items():
         box = Box(tmp_path / f"{script.name}-{mgr}", "Linux")
+        needs = sorted(set(re.findall(r"\bNEED_\w+", text)))
         res = box.call(
-            f"SUDO=sudo MGR={mgr} NEED_CMAKE=1\n"
-            "info() { :; }; warn() { :; }\n"
+            f"SUDO=sudo MGR={mgr}\n"
+            + "".join(f"{need}=1\n" for need in needs)
+            + "info() { :; }; warn() { :; }\n"
             f"{text}\n_install_{mgr}"
         )
         assert res.returncode == 0, (
@@ -365,4 +468,21 @@ def test_every_linux_manager_installs_patchelf(tmp_path, manager_calls):
     assert not lacking, (
         "auditwheel needs patchelf to repair a Linux wheel, and these never "
         "install it (gh-1972):\n  " + "\n  ".join(lacking)
+    )
+
+
+def test_every_manager_installs_pkg_config(tmp_path, manager_calls):
+    darwin = _darwin_managers(tmp_path)
+    lacking = []
+    for name, calls in manager_calls.items():
+        # Armed: apt is CI's Linux manager, and Homebrew its macOS one.
+        assert "apt" in calls and darwin <= set(calls), (name, sorted(calls))
+        lacking += [
+            f"{name}: {mgr}"
+            for mgr in sorted(calls)
+            if not _names_pkg_config(calls[mgr])
+        ]
+    assert not lacking, (
+        "both installers check for pkg-config on every platform, and these "
+        "managers never install it (gh-1994):\n  " + "\n  ".join(lacking)
     )
