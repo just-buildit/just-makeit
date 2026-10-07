@@ -20,8 +20,8 @@ turning that into an error would break every manifest already relying on it.
 Scope
 -----
 Only the tables whose key sets can be stated with confidence are checked:
-objects, their methods/properties/state/init-params, and module-level
-functions. Handle, composer and capsule modules (``kind = "handle"`` and
+objects, their methods/properties/state/init-params/array-args, and
+module-level functions. Handle, composer and capsule modules (``kind = "handle"`` and
 friends in :mod:`._handle`) carry their own method vocabulary — ``returns``,
 ``out_len_fn``, ``caller_out`` — and are **skipped** rather than guessed at.
 A false warning on a valid key is worse than the silence this replaces: it
@@ -125,6 +125,20 @@ INIT_GROUP_KEYS = frozenset({"group", "prefix"})
 
 #: Keys valid on a top-level ``[[group]]`` table (gh-999).
 GROUP_KEYS = frozenset({"name", "fields"})
+
+#: Keys valid on a ``[[<component>.array_args]]`` row (gh-2008): a
+#: ``--array-arg name:dtype`` constructor array. Exactly the keys
+#: :func:`_config.array_args` reads -- the name, and the element type spelled
+#: ``type`` or ``dtype`` -- and ``tests/test_gh2008_array_args_keys.py``
+#: holds the two equal in both directions.
+#:
+#: Closed on purpose. A row is the older spelling of a constructor array, and
+#: every key a constructor array has grown since -- gh-2004's ``rank`` /
+#: ``elements_per_sample``, gh-1756's ``str_hint`` -- is read on an
+#: ``[[<component>.init_params]]`` row instead, which is where :data:`HINTS`
+#: sends an author who writes a shape key here. Before this the rows were
+#: walked by nothing, so such a key was accepted, kept, and did nothing.
+ARRAY_ARG_KEYS = frozenset({"name", "type", "dtype"})
 
 
 #: Keys valid on a ``[[<component>.state]]`` entry. ``opaque`` (struct field
@@ -869,6 +883,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "state": STATE_KEYS,
     "init_param": INIT_PARAM_KEYS,
     "init_group": INIT_GROUP_KEYS,
+    "array_arg": ARRAY_ARG_KEYS,  # gh-2008
     "method": METHOD_KEYS,
     "param": PARAM_KEYS,
     "property": PROPERTY_KEYS,
@@ -983,6 +998,18 @@ HINTS: dict[tuple[str, str], str] = {
     ("init_param", "create_error_message"): (
         "declare it on the `[<object>]` table, beside `create_error`"
     ),
+    # gh-2008: gh-2004 reads a constructor array's shape keys on an init
+    # param and nowhere else. An `array_args` row is the older spelling of
+    # the same array and does not grow them, so the advice is the table that
+    # honours the key, not a key this row lacks.
+    **{
+        ("array_arg", _k): (
+            "a constructor array's shape keys are read on an "
+            "`[[<object>.init_params]]` row (gh-2004), so declare the array "
+            'there, typed as a C array such as `"float[]"`'
+        )
+        for _k in SHAPE_KEYS
+    },
     # gh-1114. The confusions the two faces invite, each naming the spelling
     # that works here. `status_return` is the one gh-1111 was reported with:
     # written beside a working `error`, it read as if it did something.
@@ -1281,6 +1308,13 @@ def unknown_keys(cfg: dict) -> list:
         for entry in _entries(section, "init_groups"):
             found += _check(
                 "init_group", f"{name}.{entry.get('group', '?')}", entry
+            )
+        # gh-2008: a constructor array declared the older way. Its reader
+        # takes two keys, so anything else on the row -- gh-2004's `rank`,
+        # a misspelt `dtype` -- was accepted and did nothing, in silence.
+        for entry in _entries(section, "array_args"):
+            found += _check(
+                "array_arg", f"{name}.{entry.get('name', '?')}", entry
             )
         for entry in _entries(section, "properties"):
             found += _check(
