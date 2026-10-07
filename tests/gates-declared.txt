@@ -133,6 +133,7 @@ test_gh1998_out_beside_params
 test_gh2004_init_param_rank
 test_gh2005_extra_fn_names_generated
 test_gh2008_array_args_keys
+test_gh2009_kind_scalar_rows_refuse
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot

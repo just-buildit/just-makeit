@@ -35,18 +35,102 @@ from . import _types as T
 from . import _incpath as INC
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
+from ._report import Refusal
 
 # ── small type helpers ───────────────────────────────────────────────────────
 
 
-def _scalar_fmt(ptype: str) -> str:
-    """PyArg_ParseTuple format char for a scalar C type."""
-    return T._CTYPE_META[ptype]["fmt"]
+#: gh-2009: what a constructor row that parses scalars only says after it
+#: refuses an array -- where a constructor array IS supported.
+CTOR_ARRAY_HOME = (
+    "a constructor array is supported on an object's `[[<obj>.init_params]]`"
+)
 
 
-def _to_py(ptype: str, expr: str) -> str:
-    """C expression converting a scalar C value to a new PyObject."""
-    return T._CTYPE_META[ptype]["to_py"](expr)
+def scalar_meta(ptype: str, where: str, home: str = "") -> dict:
+    """The ``_CTYPE_META`` row of one scalar a kind module converts.
+
+    The one lookup behind :func:`_scalar_fmt` and :func:`_to_py`, which every
+    capsule and handle row that crosses as a single C scalar reaches: a
+    capsule's ``init_params`` and ``properties``; a handle's ``create_args``,
+    factory ``init_params``, method scalar ``args`` and ``returns``, and
+    getter ``fields``.
+
+    gh-2009: it indexed ``_CTYPE_META`` directly, so a type outside it -- an
+    array such as ``"float[]"``, or a spelling jm does not know -- left
+    ``jm apply`` as a bare ``KeyError: 'float[]'`` from inside the renderer,
+    naming neither the module nor the row. It is refused here instead, as
+    one ``error:`` line naming both. ``apply`` renders into a throwaway tree
+    first, so the refusal leaves the project byte-identical.
+
+    Refused at the lookup, not by a check in front of the emitters: each row
+    reaches this only after its own other shapes (``path``, ``string``,
+    ``bytes``, ``enum``, a method's array argument) have branched away, so a
+    check beside it would have to restate every one of those branches, and
+    would refuse a row that works the day it fell behind one.
+
+    Parameters
+    ----------
+    ptype : str
+        The row's declared ``type``.
+    where : str
+        The row, as the refusal names it, e.g.
+        ``capsule module 'cap' init_params row 'h'``.
+    home : str, optional
+        Said after an array is refused: where one is supported instead.
+        :data:`CTOR_ARRAY_HOME` on a constructor row.
+
+    Returns
+    -------
+    dict
+        ``_CTYPE_META[ptype]``.
+
+    Raises
+    ------
+    Refusal
+        When *ptype* is not a scalar jm converts.
+
+    Examples
+    --------
+    >>> scalar_meta("double", "x")["fmt"]
+    'd'
+    >>> try:
+    ...     scalar_meta("float[]", "capsule module 'cap' init_params row 'h'",
+    ...                 CTOR_ARRAY_HOME)
+    ... except Refusal as e:
+    ...     print(e)
+    capsule module 'cap' init_params row 'h': `type = "float[]"` is an array, and this row crosses as one C scalar; a constructor array is supported on an object's `[[<obj>.init_params]]`.
+    """
+    meta = T._CTYPE_META.get(ptype)
+    if meta is not None:
+        return meta
+    if str(ptype).rstrip().endswith("]"):
+        why = (
+            f'`type = "{ptype}"` is an array, and this row crosses as one C '
+            f"scalar"
+        )
+        if home:
+            why += f"; {home}"
+    else:
+        why = (
+            f"unknown type '{ptype}'; jm converts this value as one C "
+            f"scalar, one of {', '.join(sorted(T._CTYPE_META))}"
+        )
+    raise Refusal(f"{where}: {why}.")
+
+
+def _scalar_fmt(ptype: str, where: str, home: str = "") -> str:
+    """PyArg_ParseTuple format char for a scalar C type; see `scalar_meta`."""
+    return scalar_meta(ptype, where, home)["fmt"]
+
+
+def _to_py(ptype: str, expr: str, where: str) -> str:
+    """C expression converting a scalar C value to a new PyObject.
+
+    Refuses a type that is not a scalar jm converts, naming *where*; see
+    :func:`scalar_meta`.
+    """
+    return scalar_meta(ptype, where)["to_py"](expr)
 
 
 def _array_elem_npy(array_type: str) -> tuple[str, str]:
@@ -93,9 +177,18 @@ def arg_scopes(
     ]
 
 
-def _emit_create(backing: str, sym: str, init_params: list[tuple]) -> str:
+def _emit_create(
+    backing: str, sym: str, init_params: list[tuple], module: str
+) -> str:
     names = [p[0] for p in init_params]
-    fmt = "".join(_scalar_fmt(p[1]) for p in init_params)
+    fmt = "".join(
+        _scalar_fmt(
+            p[1],
+            f"capsule module '{module}' init_params row '{p[0]}'",
+            CTOR_ARRAY_HOME,
+        )
+        for p in init_params
+    )
     decls = "".join(f"    {p[1]} {p[0]};\n" for p in init_params)
     addrs = ", ".join(f"&{n}" for n in names)
     call_args = ", ".join(names)
@@ -221,8 +314,12 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
 """
 
 
-def _emit_getset(backing: str, sym: str, prop: dict) -> str:
+def _emit_getset(backing: str, sym: str, prop: dict, module: str) -> str:
     name, ptype = prop["name"], prop["type"]
+    where = f"capsule module '{module}' properties row '{name}'"
+    value = _to_py(
+        ptype, f"{CSYM.property_getter(sym, name)}(w->state)", where
+    )
     out = f"""static PyObject *
 _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
 {{
@@ -231,11 +328,11 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    return {_to_py(ptype, f"{CSYM.property_getter(sym, name)}(w->state)")};
+    return {value};
 }}
 """
     if prop.get("writable"):
-        fmt = _scalar_fmt(ptype)
+        fmt = _scalar_fmt(ptype, where)
         out += f"""
 static PyObject *
 _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
@@ -335,7 +432,7 @@ _get_wrap(PyObject *cap)
 }}
 """)
 
-    parts.append(_emit_create(backing, sym, init_params))
+    parts.append(_emit_create(backing, sym, init_params, module))
     for m in C.module_methods(cfg, module):
         if m.get("caller_out") or m.get("arg_type"):
             parts.append(_emit_execute(backing, sym, m))
@@ -343,7 +440,7 @@ _get_wrap(PyObject *cap)
             parts.append(_emit_void_method(backing, sym, m["name"]))
     parts.append(_emit_destroy(backing, sym))
     for p in C.module_properties(cfg, module):
-        parts.append(_emit_getset(backing, sym, p))
+        parts.append(_emit_getset(backing, sym, p, module))
 
     # ── method table ──
     fn_names = _fn_list(cfg, module)

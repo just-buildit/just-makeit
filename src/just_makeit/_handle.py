@@ -57,14 +57,18 @@ if TYPE_CHECKING:
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
 
 
-def _scalar_fmt(ctype: str) -> str:
-    """PyArg_ParseTuple format char for a scalar C type (reuses _CTYPE_META)."""
-    return _capsule._scalar_fmt(ctype)
+def _scalar_fmt(ctype: str, where: str, home: str = "") -> str:
+    """PyArg_ParseTuple format char for a scalar C type (reuses _CTYPE_META).
+
+    *where* names the row in the refusal of a type that is not a scalar jm
+    converts (gh-2009, :func:`_capsule.scalar_meta`).
+    """
+    return _capsule._scalar_fmt(ctype, where, home)
 
 
-def _to_py(ctype: str, expr: str) -> str:
+def _to_py(ctype: str, expr: str, where: str) -> str:
     """C expression converting a scalar C value to a new PyObject (reused)."""
-    return _capsule._to_py(ctype, expr)
+    return _capsule._to_py(ctype, expr, where)
 
 
 def _array_elem_npy(array_type: str) -> tuple[str, str]:
@@ -188,15 +192,23 @@ def _arg_decl(a: dict) -> str:
     return f"    {a['type']} {n} = {default};"
 
 
-def _arg_fmt(a: dict) -> str:
-    """PyArg_ParseTupleAndKeywords format char for one create-arg."""
+def _arg_fmt(a: dict, where: str) -> str:
+    """PyArg_ParseTupleAndKeywords format char for one create-arg.
+
+    *where* names the table (``handle module 'h' create_args``). A type that
+    reaches the scalar branch and is not a scalar jm converts is refused
+    there, naming the row, and an array is pointed at
+    :data:`_capsule.CTOR_ARRAY_HOME` (gh-2009).
+    """
     if a.get("type") == "path":
         return _coerce.path_fmt()
     if a.get("type") == "bytes":
         return _coerce.bytes_fmt()  # gh-565: y#
     if a.get("enum") or a.get("type") == "string":
         return "s"
-    return _scalar_fmt(a["type"])
+    return _scalar_fmt(
+        a["type"], f"{where} row '{a['name']}'", _capsule.CTOR_ARRAY_HOME
+    )
 
 
 def _arg_addr(a: dict) -> str:
@@ -265,7 +277,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
         if a.get("default") is not None and not opt_started:
             fmt_parts.append("|")
             opt_started = True
-        fmt_parts.append(_arg_fmt(a))
+        fmt_parts.append(_arg_fmt(a, f"handle module '{module}' create_args"))
     fmt = "".join(fmt_parts)
     decls = "\n".join(_arg_decl(a) for a in args)
     addrs = ", ".join(_arg_addr(a) for a in args)
@@ -485,7 +497,9 @@ def _method_kwargs(m: dict) -> bool:
     return True  # (a) scalar args
 
 
-def _scalar_string_argparse(margs: list[dict]) -> tuple[str, str, list[str]]:
+def _scalar_string_argparse(
+    margs: list[dict], where: str
+) -> tuple[str, str, list[str]]:
     """Positional parse of a handle method's scalar/``string`` args.
 
     Shared by the two ``out_len_fn`` shapes — (e) array-out and the (f)
@@ -503,7 +517,7 @@ def _scalar_string_argparse(margs: list[dict]) -> tuple[str, str, list[str]]:
             addrs.append(f"&{an}")
             calls.append(an)
         else:
-            meta = T._CTYPE_META[a["type"]]
+            meta = _capsule.scalar_meta(a["type"], f"{where} row '{an}'")
             pt = meta.get("parse_type", a["type"])  # safe-width parse target
             to_c = meta.get("to_c")
             decls += f"    {pt} {an}_raw = 0;\n"
@@ -770,6 +784,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     }}"""
 
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
+    # gh-2009: how a refusal names this method's argument rows and return.
+    args_where = f"handle module '{module}' method '{name}' args"
+    returns_where = f"handle module '{module}' method '{name}' returns"
 
     _check_error_decl(m, name, returns, margs)
 
@@ -790,7 +807,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         )
     if returns and str(returns).endswith("[]") and not array_in and out_len_fn:
         out_elem, out_npy = _array_elem_npy(returns)
-        decls, parse, calls = _scalar_string_argparse(margs)
+        decls, parse, calls = _scalar_string_argparse(margs, args_where)
         call_args = "".join(f", {c}" for c in calls)
         # gh-1710: `out_len_fn` returns a size_t; cast straight to npy_intp
         # a value past NPY_MAX_INTP wrapped to a negative dimension.
@@ -822,7 +839,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # array shapes' deferred-free / view machinery applies. Positional
     # (METH_VARARGS) — _method_kwargs() returns False for a bytes return.
     if returns == "bytes" and out_len_fn:
-        decls, parse, calls = _scalar_string_argparse(margs)
+        decls, parse, calls = _scalar_string_argparse(margs, args_where)
         call_args = "".join(f", {c}" for c in calls)
         # gh-1716: `_got` bytes are copied out of an `_n`-byte buffer.
         _got_guard = _coerce.returned_count_c(
@@ -938,7 +955,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 if dflt is not None and not d_inserted:
                     d_fmt.append("|")
                     d_inserted = True
-                d_fmt.append(_scalar_fmt(s["type"]))
+                d_fmt.append(
+                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
+                )
             d_fmt_s = "".join(d_fmt)
             d_kwlist = ", ".join(
                 f'"{n}"' for n in [xn, on] + [s["name"] for s in d_others]
@@ -1020,7 +1039,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             )
         scal_call = "".join(f", {s['name']}" for s in others)
         ret_to_py = (
-            _to_py(returns, "r")
+            _to_py(returns, "r", returns_where)
             if returns
             else "(Py_INCREF(Py_None), Py_None)"
         )
@@ -1050,7 +1069,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 if d is not None and not inserted:
                     fmt_parts.append("|")
                     inserted = True
-                fmt_parts.append(_scalar_fmt(s["type"]))
+                fmt_parts.append(
+                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
+                )
             fmt_b = "".join(fmt_parts)
             kwnames = [a["name"]] + [s["name"] for s in others]
             kwlist_b = ", ".join(f'"{n}"' for n in kwnames)
@@ -1109,7 +1130,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     elif returns:
         ret = f"""    {returns} r;
 {gil_open}    r = {fn}({call});
-{gil_close}{fs_release}    return {_to_py(returns, "r")};"""
+{gil_close}{fs_release}    return {_to_py(returns, "r", returns_where)};"""
     else:
         ret = f"""{gil_open}    {fn}({call});
 {gil_close}{fs_release}    Py_RETURN_NONE;"""
@@ -1124,7 +1145,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 # gh-565: the ctor's fspath coercion (O& + FSConverter), a
                 # required positional — no `default`, so it never trips the `|`.
                 decls += _arg_decl(a) + "\n"
-                fmt_parts.append(_arg_fmt(a))
+                fmt_parts.append(_arg_fmt(a, args_where))
                 addrs_list.append(_arg_addr(a))
                 continue
             d = a.get("default")
@@ -1133,7 +1154,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             if d is not None and not inserted:
                 fmt_parts.append("|")  # everything after is optional
                 inserted = True
-            fmt_parts.append(_scalar_fmt(a["type"]))
+            fmt_parts.append(
+                _scalar_fmt(a["type"], f"{args_where} row '{a['name']}'")
+            )
             addrs_list.append(f"&{a['name']}")
         fmt = "".join(fmt_parts)
         kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
@@ -1197,7 +1220,10 @@ def _emit_factory(cfg: dict, module: str, f: dict) -> str:
     ips = list(f.get("init_params", []))
 
     decls = "\n".join(_arg_decl(a) for a in ips)
-    fmt = "".join(_arg_fmt(a) for a in ips)
+    fmt = "".join(
+        _arg_fmt(a, f"handle module '{module}' factory '{fname}' init_params")
+        for a in ips
+    )
     addrs = ", ".join(_arg_addr(a) for a in ips)
     call_args = ", ".join(_create_call_arg(a) for a in ips)
     parse = (
@@ -1294,7 +1320,7 @@ def _scalar_out(g: dict) -> bool:
     return g.get("out", "") in T._CTYPE_META
 
 
-def _decode_field(f: dict, scalar: bool) -> str:
+def _decode_field(f: dict, scalar: bool, where: str) -> str:
     """Decode one field's value (held in the C local ``tmp``) into a PyObject.
 
     The access expression is ``tmp`` for a scalar value (a scalar struct-getter
@@ -1304,18 +1330,21 @@ def _decode_field(f: dict, scalar: bool) -> str:
       enum    → ``PyUnicode_FromString(_enum_<e>[<acc>])`` (composer SSOT);
       scale   → ``_to_py(<acc> * <scale>)``;
       expr    → the verbatim-C ``expr`` (may reference ``tmp`` / ``tmp.<f>`` +
-                stashed ``self-><init>``)."""
+                stashed ``self-><init>``).
+
+    *where* names the field's row in the refusal of a type that is not a
+    scalar jm converts (gh-2009)."""
     acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
     if f.get("expr"):
-        return _to_py(f["type"], f["expr"])
+        return _to_py(f["type"], f["expr"], where)
     if f.get("enum"):
         return f"PyUnicode_FromString(_enum_{f['enum']}[{acc}])"
     if "scale" in f:
-        return _to_py(f["type"], f"{acc} * {f['scale']}")
-    return _to_py(f["type"], acc)
+        return _to_py(f["type"], f"{acc} * {f['scale']}", where)
+    return _to_py(f["type"], acc, where)
 
 
-def _decode_field_stmts(f: dict, scalar: bool, enums: dict) -> str:
+def _decode_field_stmts(f: dict, scalar: bool, enums: dict, where: str) -> str:
     """Statements ending in a ``return`` that decode one field (gh-521).
 
     Every non-enum transform is the historical one-line
@@ -1335,9 +1364,10 @@ def _decode_field_stmts(f: dict, scalar: bool, enums: dict) -> str:
 
     *enums* is the ``[[enum]]`` registry. An enum it cannot resolve keeps
     the unchecked form rather than emitting a check that rejects everything.
+    *where* names the field's row for :func:`_decode_field`.
     """
     if not _decoded_enum(f) or not enums.get(f["enum"]):
-        return f"    return {_decode_field(f, scalar)};"
+        return f"    return {_decode_field(f, scalar, where)};"
     acc = "tmp" if scalar else f"tmp.{f.get('from', f['name'])}"
     # gh-1450: one emitter for int -> choice string, shared by every face,
     # so an enum bound to C constants is searched rather than indexed here
@@ -1412,6 +1442,10 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     {g["fn"]}(self->h, &tmp);"""
         for f in g.get("fields", []):
             n = f["name"]
+            # gh-2009: how a refusal names this field's row. A getter row
+            # whose fields each name their own `getter` has no `fn`.
+            g_fn = f" '{g['fn']}'" if g.get("fn") else ""
+            f_where = f"handle module '{module}' getter{g_fn} fields row '{n}'"
             field_getter = f.get("getter")
             if field_getter:
                 # #314: a field with its own scalar getter `T fn(h)` — fetch
@@ -1451,7 +1485,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
 {{
     (void)closure;
 {fetch}
-{_decode_field_stmts(f, f_scalar, _enum_reg)}
+{_decode_field_stmts(f, f_scalar, _enum_reg, f_where)}
 }}
 """)
             # A field naming a `writable_fn` also emits a (setter) slot calling
@@ -1461,7 +1495,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # same member. NULL (as before) when none is declared.
             _doc_c = authored_c_doc(_field_doc(cfg, module, g, f))
             if set_fn:
-                fmt = _scalar_fmt(f["type"])
+                fmt = _scalar_fmt(f["type"], f_where)
                 funcs.append(f"""static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
