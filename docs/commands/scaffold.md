@@ -327,10 +327,13 @@ shot.
 Because the rebuild deletes and re-stubs the sacred `_core.c`, any
 hand-written `steps()`/lifecycle body is **discarded** unless it lives in the
 TOML `impl`/`create_impl` (which the rebuild re-asserts) — keep your algorithm
-there, or `git stash` first. `add` prompts for one confirmation before
-rebuilding; `--force` skips it.
+there, or `git stash` first. `add` asks once, before it writes anything:
+declining leaves every file as it was and exits 1, and `--force` skips the
+question. The rows already in the manifest are kept as written, every key on
+them (`doc`, `opaque`, `no_ctor`, ...); the new ones are appended.
 
 **Constraints**
 
-- Each new variable name must be unique within the object's state list.
+- Each new variable name must be unique within the object's state list,
+    opaque fields included.
 - Requires a `just-makeit.toml` — run `just-makeit new` first.

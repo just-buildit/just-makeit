@@ -12,9 +12,11 @@ regenerate path (delete + apply) — the new field reaches the struct, the
 constructor, the getter/setter, and reset in one shot. The rebuild **discards
 hand-written `_core.c` bodies and the inline `step()` body in `_core.h`**,
 so keep your algorithm in the TOML `impl`/`create_impl` (the rebuild
-re-asserts it) or `git stash` first. `add` prompts for one confirmation before
-rebuilding; `--force` skips it. When the project has a single standalone
-object, `--object` may be omitted.
+re-asserts it) or `git stash` first. `add` asks once, before it writes
+anything: declining leaves every file as it was and exits 1, and `--force`
+skips the question. The rows already in the manifest are kept as written,
+every key on them; the new ones are appended. When the project has a single
+standalone object, `--object` may be omitted.
 
 ______________________________________________________________________
 
