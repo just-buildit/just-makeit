@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from .. import _coerce, _ctorsig
+from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import (
@@ -2096,8 +2097,6 @@ def manifest_reset_is_authors(
     >>> manifest_reset_is_authors({"d": {}}, "d")
     False
     """
-    from .. import _config as C
-
     return reset_is_authors(
         reset_impl=bool(declared_reset_impl(cfg, component)),
         init_params=(
