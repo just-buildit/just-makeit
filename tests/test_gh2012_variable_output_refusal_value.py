@@ -285,7 +285,36 @@ def test_a_second_output_is_released_and_refused(built):
     assert got == "[4, 4]", got
     body = _wrapper(_ext(built), "multi")
     test = body.index("if (n_out == (SIZE_MAX)) {")
-    assert "Py_DECREF(arr0); Py_DECREF(arr1);" in body[test:], body
+    guard = body.index("if ((size_t)(n_out) > (size_t)(_cap))", test)
+    assert "Py_DECREF(arr0); Py_DECREF(arr1);" in body[test:guard], body
+
+
+@pytest.mark.parametrize("method", ["neg", "sen", "multi"])
+def test_a_refused_allocate_call_frees_what_it_allocated(built, method):
+    """The allocate path made its arrays before the kernel ran; a refusal
+    that forgot them leaks an array per call. Measured by tracemalloc,
+    which numpy reports its buffers to: 5000 refusals leaking even the
+    smallest array would hold hundreds of kB."""
+    got = _py(
+        built,
+        "import gc, tracemalloc\n"
+        "x = np.arange(3, dtype=np.float32)\n"
+        f"f = b.{method}\n"
+        "def burst():\n"
+        "    for _ in range(5000):\n"
+        "        try:\n"
+        "            f(x)\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "tracemalloc.start()\n"
+        "burst()\n"  # warm: interned strings, exception caches
+        "gc.collect()\n"
+        "before = tracemalloc.get_traced_memory()[0]\n"
+        "burst()\n"
+        "gc.collect()\n"
+        "print(tracemalloc.get_traced_memory()[0] - before < 64 * 1024)\n",
+    )
+    assert got == "True", got
 
 
 @pytest.mark.parametrize("method", [m for m, _k, _f in METHODS])
