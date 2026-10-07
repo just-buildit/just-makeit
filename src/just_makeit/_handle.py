@@ -1442,10 +1442,10 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     {g["fn"]}(self->h, &tmp);"""
         for f in g.get("fields", []):
             n = f["name"]
-            # gh-2009: how a refusal names this field's row.
-            f_where = (
-                f"handle module '{module}' getter '{g['fn']}' fields row '{n}'"
-            )
+            # gh-2009: how a refusal names this field's row. A getter row
+            # whose fields each name their own `getter` has no `fn`.
+            g_fn = f" '{g['fn']}'" if g.get("fn") else ""
+            f_where = f"handle module '{module}' getter{g_fn} fields row '{n}'"
             field_getter = f.get("getter")
             if field_getter:
                 # #314: a field with its own scalar getter `T fn(h)` — fetch

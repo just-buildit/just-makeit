@@ -122,6 +122,17 @@ FACES = {
         False,
         (*ARRAYS, UNKNOWN),
     ),
+    # A getter row whose fields each name their own `getter` has no `fn`.
+    "handle per-field getter field": (
+        *_HANDLE,
+        _append("getters"),
+        lambda t: {
+            "fields": [{"name": "zz", "type": t, "getter": "ringbuf_get_zz"}],
+        },
+        "handle module 'ringbuf' getter fields row 'zz'",
+        False,
+        (*ARRAYS, UNKNOWN),
+    ),
     "handle method arg": (
         *_HANDLE,
         _append("methods"),
