@@ -1,0 +1,210 @@
+# TEMPORARY -- gh-2078 measurement only, on a draft PR. Delete before the
+# branch merges. Runs on a push to this one branch (not on pull_request, so
+# it is no PR check and `CI passed` does not wait on it).
+#
+# census: which CPUs sit behind `ubuntu-latest`, each with one yardstick.
+# probe:  on ONE runner, a variant of the Coverage run and then the baseline,
+#         so the pair shares hardware.
+name: gh2078-probe
+
+on:
+  push:
+    branches: [ci/gh-2078-coverage-time]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  census:
+    name: census ${{ matrix.n }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - name: hardware
+        run: |
+          nproc
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|MHz|L3'
+          python3 - <<'PY'
+          import multiprocessing as mp
+          import time
+
+          def work(_):
+              t = time.perf_counter()
+              s = 0
+              for i in range(20_000_000):
+                  s += i * i
+              return time.perf_counter() - t
+
+          if __name__ == "__main__":
+              print("GH2078 yardstick 1proc %.2fs" % work(0))
+              with mp.Pool(4) as p:
+                  t = time.perf_counter()
+                  r = p.map(work, range(4))
+                  w = time.perf_counter() - t
+              print("GH2078 yardstick 4proc wall %.2fs each %s"
+                    % (w, " ".join("%.2f" % x for x in r)))
+          PY
+
+  probe:
+    name: probe ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: nocov
+            python: "3.12"
+          - variant: nosub
+            python: "3.12"
+          - variant: no2057
+            python: "3.12"
+          - variant: sysmon
+            python: "3.14"
+          - variant: old0925
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: old tree (61ceeb5c, main on 2026-09-25)
+        if: matrix.variant == 'old0925'
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: 61ceeb5c421b8f7dc69b3a32de12d7e96aa2562c
+          path: old
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install just-makeit and build deps
+        run: |
+          make setup
+          uv pip install -e .
+          uv run jm-install-deps ${{ runner.temp }}/jm-venv
+
+      - name: Install the old tree
+        if: matrix.variant == 'old0925'
+        working-directory: old
+        run: |
+          make setup
+          uv pip install -e .
+
+      - name: hardware and helper
+        run: |
+          nproc
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|MHz|L3'
+          python3 - <<'PY'
+          import multiprocessing as mp
+          import time
+
+          def work(_):
+              t = time.perf_counter()
+              s = 0
+              for i in range(20_000_000):
+                  s += i * i
+              return time.perf_counter() - t
+
+          if __name__ == "__main__":
+              print("GH2078 yardstick 1proc %.2fs" % work(0))
+              with mp.Pool(4) as p:
+                  t = time.perf_counter()
+                  r = p.map(work, range(4))
+                  w = time.perf_counter() - t
+              print("GH2078 yardstick 4proc wall %.2fs each %s"
+                    % (w, " ".join("%.2f" % x for x in r)))
+          PY
+          cat > "$RUNNER_TEMP/measure.sh" <<'SH'
+          measure() {
+            label=$1
+            shift
+            rm -f .coverage .coverage.* junit.xml coverage.xml
+            ( while :; do
+                echo "$(date +%s) $(find . -maxdepth 1 -name '.coverage.*' | wc -l)"
+                sleep 5
+              done ) > "$RUNNER_TEMP/count-$label.log" 2>&1 &
+            sampler=$!
+            start=$(date +%s)
+            rc=0
+            "$@" || rc=$?
+            end=$(date +%s)
+            kill "$sampler"
+            max=$(awk '$2 > m { m = $2 } END { print m + 0 }' \
+              "$RUNNER_TEMP/count-$label.log")
+            echo "GH2078 $label rc=$rc wall=$((end - start))s max_coverage_files=$max"
+            tail -n 30 "$RUNNER_TEMP/count-$label.log"
+            if [ -f junit.xml ]; then
+              cp junit.xml "$RUNNER_TEMP/junit-$label.xml"
+            fi
+          }
+          SH
+
+      - name: variant nocov (same env, no coverage at all)
+        if: matrix.variant == 'nocov'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          measure nocov make coverage \
+            'COVERAGE_CMD=$(DEV_RUN) pytest $(PYTEST_PARALLEL) $(EXAMPLES_IGNORE) --junitxml=junit.xml -o junit_family=legacy'
+
+      - name: variant nosub (no COVERAGE_PROCESS_START)
+        if: matrix.variant == 'nosub'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          measure nosub make coverage 'COVERAGE_ENV=COVERAGE_FILE=$(CURDIR)/.coverage'
+
+      - name: variant no2057 (gh-2057 gate file left out)
+        if: matrix.variant == 'no2057'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          measure no2057 make coverage \
+            'COVERAGE_CMD=$(COVERAGE_BASE) --ignore=tests/test_gh2057_verb_leaves_what_apply_writes.py'
+
+      - name: variant sysmon (3.14, COVERAGE_CORE=sysmon)
+        if: matrix.variant == 'sysmon'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          COVERAGE_CORE=sysmon uv run --group dev python -m coverage debug sys | grep -i -E 'core|version' || true
+          measure sysmon make coverage \
+            'COVERAGE_ENV=COVERAGE_CORE=sysmon COVERAGE_PROCESS_START=$(CURDIR)/pyproject.toml COVERAGE_FILE=$(CURDIR)/.coverage'
+
+      - name: variant old0925 (the 2026-09-25 tree)
+        if: matrix.variant == 'old0925'
+        working-directory: old
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          measure old0925 make coverage
+
+      - name: baseline (ctrace on 3.14)
+        if: matrix.variant == 'sysmon'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          COVERAGE_CORE=ctrace uv run --group dev python -m coverage debug sys | grep -i -E 'core|version' || true
+          measure ctrace314 make coverage \
+            'COVERAGE_ENV=COVERAGE_CORE=ctrace COVERAGE_PROCESS_START=$(CURDIR)/pyproject.toml COVERAGE_FILE=$(CURDIR)/.coverage'
+
+      - name: baseline (the Coverage job's command, 3.12)
+        if: matrix.variant != 'sysmon'
+        run: |
+          . "$RUNNER_TEMP/measure.sh"
+          measure base make coverage
+
+      - name: upload junit and sampler logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gh2078-probe-${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/junit-*.xml
+            ${{ runner.temp }}/count-*.log
+          if-no-files-found: ignore

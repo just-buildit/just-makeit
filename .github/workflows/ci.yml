@@ -534,8 +534,61 @@ jobs:
       # subprocess resolved it against the scaffolded project it had cd'd into
       # (which has a pyproject.toml of its own). Both paths are absolute in
       # COVERAGE_ENV now, so a local `make coverage` measures what CI measures.
+      # TEMPORARY (gh-2078 measurement, draft PR only; drop before merge):
+      # the runner's CPU, a fixed CPU yardstick, and a sampler counting the
+      # per-process `.coverage.*` data files until the combine removes them.
+      - name: "TEMP gh-2078: runner hardware and data-file sampler"
+        run: |
+          nproc
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|MHz|L3'
+          free -g
+          python3 - <<'PY'
+          import multiprocessing as mp
+          import time
+
+          def work(_):
+              t = time.perf_counter()
+              s = 0
+              for i in range(20_000_000):
+                  s += i * i
+              return time.perf_counter() - t
+
+          if __name__ == "__main__":
+              print("GH2078 yardstick 1proc %.2fs" % work(0))
+              with mp.Pool(4) as p:
+                  t = time.perf_counter()
+                  r = p.map(work, range(4))
+                  w = time.perf_counter() - t
+              print("GH2078 yardstick 4proc wall %.2fs each %s"
+                    % (w, " ".join("%.2f" % x for x in r)))
+          PY
+          nohup sh -c 'while :; do
+            echo "$(date +%s) $(find . -maxdepth 1 -name ".coverage.*" | wc -l)"
+            sleep 5
+          done' > "$RUNNER_TEMP/covcount.log" 2>&1 &
+          echo "GH2078 coverage step starts $(date +%s)"
+
       - name: Run full test suite with coverage
         run: make coverage-gate
+
+      - name: "TEMP gh-2078: data-file count and junit artifact"
+        if: always()
+        run: |
+          echo "GH2078 coverage step ended $(date +%s)"
+          awk '$2 > m { m = $2 } END { print "GH2078 max_coverage_files", m + 0 }' \
+            "$RUNNER_TEMP/covcount.log"
+          tail -n 40 "$RUNNER_TEMP/covcount.log"
+          cp "$RUNNER_TEMP/covcount.log" covcount.log
+
+      - name: "TEMP gh-2078: upload junit and sampler log"
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gh2078-coverage-job
+          path: |
+            junit.xml
+            covcount.log
+          if-no-files-found: ignore
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7.1.1
