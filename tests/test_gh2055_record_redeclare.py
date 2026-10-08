@@ -24,6 +24,12 @@ Two cases, decided on the issue:
   module that needed jm's own dtype builders regenerated rather than kept
   by gh-770 (`_object.jm_owned_functions`), which fixes `apply` too.
 
+Running the struct-to-scalar route found the same mistake the other way
+round: `jm remove method` of a module object's record reader carried its
+builder into the fragment as hand-written, without the cache static it
+reads, and the module stopped compiling on a tree `status --check` called
+clean. `_docsync.transplant_hand_written` now leaves builders behind.
+
 GATE: for every transition between the two kinds of element, re-declaring
       one that a writer and a reader speak, standalone and in a module,
       either is refused with the tree byte-identical, or leaves
