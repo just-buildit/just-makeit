@@ -25,6 +25,11 @@ GATE: for every command `_cli.COMMANDS` classifies MUTATING -- the one
           path against the from-scratch one, and the only oracle here that
           sees a file nothing derives any more.
 
+      A case whose verb must REFUSE on its shapes (`Case.refuses`) is held
+      to that first: it exits non-zero, prints one ``error:`` line naming
+      the route it offers instead, and leaves the tree byte-identical. Then
+      to (a) and (b), on the shape's own tree.
+
 Registration-free where the source can say it: the commands are the
 dispatch's (`test_every_dispatched_command_is_classified`), a mutating
 command without a case fails `test_every_mutating_command_has_a_case`, and
@@ -136,6 +141,25 @@ def _impl_source(root: Path) -> None:
     """A C file `--impl` lifts a body from (``impl.c::lifted``)."""
     (root / "impl.c").write_text(
         "double\nlifted(double x)\n{\n    return 2.0 * x;\n}\n",
+        encoding="utf-8",
+    )
+
+
+def _foreign_header(root: Path) -> None:
+    """A hand-written ``u_core.h`` the manifest does not declare: what `jm
+    bind` is for (gh-2072). In the template contract `bind` parses, spelled
+    with the project's ``c_prefix`` stem."""
+    path = root / "native/inc/p/u/u_core.h"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "#ifndef P_U_CORE_H\n#define P_U_CORE_H\n\n"
+        "typedef struct\n{\n  double gain;\n} p_u_state_t;\n\n"
+        "p_u_state_t *p_u_create (double gain);\n"
+        "void p_u_destroy (p_u_state_t *state);\n"
+        "void p_u_reset (p_u_state_t *state);\n\n"
+        "static inline double\n"
+        "p_u_step (const p_u_state_t *state, double x)\n"
+        "{\n  return x * state->gain;\n}\n\n#endif\n",
         encoding="utf-8",
     )
 
@@ -263,6 +287,13 @@ SHAPES: "dict[str, Shape]" = {
     "no-c-prefix": Shape(("--no-c-prefix",), (("object", "o"),), _O),
     # gh-2062: a vendored C dependency, and nothing else yet.
     "c-dep": Shape(("--c-dep", "vend"), (), frozenset({"c-dep"})),
+    # gh-2072: a header nothing declares, beside a declared `o` (a manifest
+    # declaring nothing is one `apply` refuses). It does not offer `o`:
+    # every case on `o` already runs on `standalone`, this tree less a
+    # header.
+    "foreign": Shape(
+        (), (("object", "o"), _foreign_header), frozenset({"foreign"})
+    ),
 }
 
 
@@ -275,22 +306,30 @@ class Case(NamedTuple):
     In ``argv``, ``{M}`` is ``--module <id>`` when ``o`` lives in a module
     and nothing when it is standalone; ``{mod}`` is that module's id.
     ``only`` restricts the case to the named shapes; by default it runs on
-    every shape that holds ``needs``.
+    every shape that holds ``needs``. ``refuses``, when not empty, says the
+    verb must refuse there, and is what its one ``error:`` line names: the
+    route it offers instead.
     """
 
     argv: tuple
     needs: frozenset = frozenset({"o"})
     only: "frozenset | None" = None
+    refuses: tuple = ()
 
 
-def _case(*argv: str, needs=("o",), only=None) -> Case:
-    return Case(argv, frozenset(needs), frozenset(only) if only else None)
+def _case(*argv: str, needs=("o",), only=None, refuses=()) -> Case:
+    return Case(
+        argv, frozenset(needs), frozenset(only) if only else None, refuses
+    )
 
 
 #: The placements a flag variant runs on: what decides where its files go.
 BASE = ("standalone", "module", "package")
 
 _FN = ("--param", "x:double", "--return-type", "double")
+
+#: What `jm bind` offers instead of a declared component (gh-2072).
+_BIND_ROUTE = ("`jm regenerate o`", "`jm apply`")
 
 #: verb -> case name -> Case. Held to `_cli.COMMANDS` by
 #: `test_every_mutating_command_has_a_case`: the classification is the list.
@@ -650,10 +689,14 @@ CASES: "dict[str, dict[str, Case]]" = {
         "packaging": _case("adopt", "--packaging", needs=()),
     },
     "bind": {
-        "bind": _case("bind", "o", needs=("o", "standalone")),
-        # Read-only, and its exit status is its verdict: run where `bind`
-        # renders what `apply` does, so a non-zero one is a regression.
-        "check": _case("bind", "o", "--check", only=("standalone",)),
+        # gh-2072: a component the manifest declares is `apply`'s to render.
+        # `bind` would render it from the header alone, dropping what only
+        # the manifest says; it refuses, in both modes, from one predicate.
+        "declared": _case("bind", "o", refuses=_BIND_ROUTE),
+        "check-declared": _case("bind", "o", "--check",
+                                refuses=_BIND_ROUTE),
+        # What `bind` is for: a header the manifest does not declare.
+        "undeclared": _case("bind", "u", needs=("foreign",)),
     },
     "config": {"version": _case("config", "version", "0.2.0", needs=())},
     "ci": {
@@ -769,12 +812,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
     **_entries("gh-2071",
                [("object", "delegates", s) for s in BASE],
                *_stale("native/src/a/a_ext.c", "src/p/a.pyi")),
-    # `bind` renders from the header alone and drops what only the manifest
-    # declares. Decided on gh-2072: it will REFUSE a declared component, so
-    # its fix turns these runs into a refusal with the tree byte-identical.
-    **_entries("gh-2072",
-               [("bind", "bind", s) for s in ("members", "pair", "struct")],
-               *_stale("native/src/o/o_ext.c", "src/p/o.pyi")),
     **_entries("gh-2062",
                [("object", "standalone", "c-dep"),
                 ("module", "sorts-first", "c-dep"),
@@ -990,6 +1027,22 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
 def _ok(root: Path, argv) -> None:
     r = run_cli(*argv, cwd=root)
     assert r.returncode == 0, (list(argv), (r.stdout + r.stderr)[-3000:])
+
+
+def _refused(root: Path, argv, route: tuple) -> None:
+    """*argv* refuses: non-zero, one ``error:`` line naming every part of
+    *route*, and the tree byte-identical -- so what the oracles see next is
+    the shape's own tree."""
+    before = _tree(root)
+    r = run_cli(*argv, cwd=root)
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert r.returncode and len(errors) == 1, (
+        list(argv),
+        (r.stdout + r.stderr)[-3000:],
+    )
+    missing = [part for part in route if part not in errors[0]]
+    assert not missing, f"the refusal does not name {missing}: {errors[0]}"
+    assert _tree(root) == before, f"the refused {list(argv)} wrote"
 
 
 def _build(base: Path, shape: Shape) -> Path:
@@ -1231,7 +1284,10 @@ def test_the_verb_leaves_what_apply_writes(
     case = CASES[verb][cname]
     shape = SHAPES[sname]
     root = shape_copy(sname)
-    _ok(root, _expand(case.argv, shape))
+    if case.refuses:
+        _refused(root, _expand(case.argv, shape), case.refuses)
+    else:
+        _ok(root, _expand(case.argv, shape))
     found = findings(root)
     if verb in FRESH_VERBS:
         found |= fresh(root, shape, tmp_path_factory.mktemp("fresh"))

@@ -392,7 +392,9 @@ Commands:
                                 hand-written <component>_core.h (the "port an
                                 existing C API" path). --check exits 1 if the
                                 generated binding differs from the file on disk
-                                (a CI drift gate; nothing is written).
+                                (a CI drift gate; nothing is written). Refuses
+                                a component the manifest declares: `regenerate`
+                                and `apply` render that one from the manifest.
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
