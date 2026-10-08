@@ -247,6 +247,17 @@ class TestConfigVersionWritesEveryCopy:
         assert _carrying(project, OLD) == set()
         assert _cli("status", "--check", cwd=project).returncode == 0
 
+    def test_the_verb_names_a_copy_it_cannot_write(
+        self, project: Path
+    ) -> None:
+        """A pre-release has no CMake spelling (gh-2084): the verb writes
+        every other copy, leaves `CMakeLists.txt` configuring, and says so
+        with the gating mark, because `status --check` still fails on it."""
+        r = _cli("config", "version", "1.1.2a47", cwd=project)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "warning !: CMakeLists.txt:" in r.stderr, r.stderr
+        assert _carrying(project, OLD) == {"CMakeLists.txt"}
+
     def test_a_deferred_version_moves_pyproject(self, project: Path) -> None:
         """gh-1283: a manifest that omits the version reads it from
         `pyproject.toml`, and `save` keeps the omission. The verb was a
@@ -355,3 +366,22 @@ class TestConfigVersionWritesEveryCopy:
         assert V.drift(tmp_path, cfg) == []
         assert V.sync(tmp_path, cfg) == ([], [])
         assert (tmp_path / "Doxyfile").read_text(encoding="utf-8") == body
+
+    def test_only_a_copy_that_differs_is_touched(self, tmp_path: Path) -> None:
+        """The verb runs over whatever tree it is given. A file jm cannot
+        read or parse carries no copy it understands, and a copy already at
+        the version is not rewritten -- neither is an error, and neither is
+        a write."""
+        from just_makeit import _projversion as V
+
+        broken = '[project\nversion = "0.1.0"\n'
+        (tmp_path / "pyproject.toml").write_text(broken, encoding="utf-8")
+        (tmp_path / "Doxyfile").write_bytes(b"PROJECT_NUMBER = 0.1.0\xff\n")
+        current = f'[project]\nname = "p"\nversion = "{NEW}"\n'
+        (tmp_path / "bootstrap.toml").write_text(current, encoding="utf-8")
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.drift(tmp_path, cfg) == []
+        assert V.sync(tmp_path, cfg) == ([], [])
+        assert (tmp_path / "pyproject.toml").read_text(
+            encoding="utf-8"
+        ) == broken
