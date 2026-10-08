@@ -4035,9 +4035,7 @@ def _apply_manifest(
     for obj in C.components(cfg):
         if _invariants.write(root, cfg, obj, _pkg):
             updated.append(
-                _invariants.file_for(
-                    root, _pkg, obj, C.module_of(cfg, obj) or ""
-                )
+                _invariants.file_for(root, cfg, obj, C.module_of(cfg, obj))
             )
 
     # gh-184: re-materialise the recorded app, not a default one. Passing

@@ -170,7 +170,7 @@ def _object_paths(
         # gh-1978: jm's element contract (gh-1404). Left behind, it imported
         # the removed class, and the project's Python tests failed to
         # collect on a tree `status --check` called clean.
-        _invariants.file_for(root, pkg, obj, module or ""),
+        _invariants.file_for(root, cfg, obj, module or ""),
     ]
     if module:
         # gh-523: the module's Python artifacts may live in a `package`

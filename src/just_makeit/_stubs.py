@@ -1702,9 +1702,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # gh-1208: one spelling, shared with every synthesized doctest on the
     # runtime face, so the two faces of a method cannot disagree about where
-    # the class imports from. `...` stays the no-package fallback.
+    # the class imports from. `...` stays the no-package fallback. gh-2054:
+    # from the module's package, not its id.
     import_line = (
-        class_import_line(pkg, Component, module)
+        class_import_line(
+            pkg, Component, C.module_package_resolved(cfg, module)
+        )
         if pkg
         else f"from ... import {Component}"
     )

@@ -128,14 +128,20 @@ class DoxyBlock:
 _HEADER_DEFAULT_RE = re.compile(r"\(default:\s*([^)]+?)\)\.?\s*$")
 
 
-def class_import_path(pkg: str, module: str = "") -> str:
+def class_import_path(pkg: str, module_dir: str = "") -> str:
     """The dotted, importable path a generated class lives at.
 
     A **standalone** object lands at ``<pkg>/<obj>.so`` and imports as
-    ``from <pkg> import <Component>``; a **module** object lands at
-    ``<pkg>/<module>/<module>.so`` and needs the module segment. *module* is
-    the manifest's module **id**, which is already dotted for a nested one
-    (``dsp.filters``), so it concatenates directly.
+    ``from <pkg> import <Component>``; a **module** object is re-exported by
+    its module's package and needs that segment. *module_dir* is that
+    package's directory below ``src/<pkg>/`` -- always
+    `_config.module_package_resolved`'s answer, ``""`` for a standalone
+    object -- and ``/`` separates a nested one (``dsp/filters``).
+
+    Never pass the module **id**. It names the class's package only while
+    the module declares no ``package`` (gh-523); with one, every import jm
+    wrote from the id named a module that does not hold the class
+    (gh-2054).
 
     This exists because thirteen call sites built the line inline and only
     one of them asked the question (gh-1208): every synthesized doctest in a
@@ -148,22 +154,23 @@ def class_import_path(pkg: str, module: str = "") -> str:
     'commz'
     >>> class_import_path("commz", "dsp")
     'commz.dsp'
-    >>> class_import_path("commz", "dsp.filters")
+    >>> class_import_path("commz", "dsp/filters")
     'commz.dsp.filters'
-    >>> class_import_path("", "dsp")
-    'dsp'
+    >>> class_import_path("", "dsp/filters")
+    'dsp.filters'
     """
-    seg = (module or "").strip(".")
+    seg = (module_dir or "").replace("/", ".").strip(".")
     if pkg and seg:
         return f"{pkg}.{seg}"
     return pkg or seg
 
 
-def class_import_line(pkg: str, Component: str, module: str = "") -> str:
+def class_import_line(pkg: str, Component: str, module_dir: str = "") -> str:
     """``from <path> import <Component>`` — a synthesized doctest's first line.
 
     The one spelling, so the ``.pyi`` and the runtime ``__doc__`` faces of the
     same method cannot disagree about where the class is importable from.
+    *module_dir* is as for :func:`class_import_path`.
 
     Examples
     --------
@@ -172,7 +179,7 @@ def class_import_line(pkg: str, Component: str, module: str = "") -> str:
     >>> class_import_line("commz", "Counter", "dsp")
     'from commz.dsp import Counter'
     """
-    return f"from {class_import_path(pkg, module)} import {Component}"
+    return f"from {class_import_path(pkg, module_dir)} import {Component}"
 
 
 def header_default(desc: str | None) -> str | None:

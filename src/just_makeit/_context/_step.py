@@ -640,7 +640,8 @@ def make_step_ctx(
                     + class_import_line(
                         ctx.get("package", ""),
                         Component,
-                        ctx.get("module", ""),
+                        # gh-2054: the module's package, never its id.
+                        ctx.get("module_dir", ""),
                     )
                 ]
                 if ctx.get("package")
@@ -1578,7 +1579,7 @@ def make_step_ctx(
     _from_pkg = (
         [
             "    >>> "
-            + class_import_line(_pkg, Component, ctx.get("module", ""))
+            + class_import_line(_pkg, Component, ctx.get("module_dir", ""))
         ]
         if _pkg
         else []

@@ -2743,13 +2743,47 @@ def module_package(cfg: dict, module: str) -> str:
         package = "wfm"
 
     When unset the module's own ``pypath`` is used, so a standalone module
-    (``<pkg>.<module>``) needs no key. Callers spell the fallback explicitly —
-    ``C.module_package(cfg, m) or mp.pypath`` — because ``mp`` is already in
-    scope wherever the path is being built.
+    (``<pkg>.<module>``) needs no key. This is the RAW reader: ``""`` means
+    "not declared". :func:`module_package_resolved` fills the default in,
+    and is what anything naming where a module's class lives must read.
 
     :func:`capsule_package` and :func:`handle_package` are kind-flavoured
     aliases that delegate here; there is exactly one implementation."""
     return cfg.get("module", {}).get(module, {}).get("package", "")
+
+
+def module_package_resolved(cfg: dict, module: str) -> str:
+    """The package directory a module's Python lands in, default filled in.
+
+    THE one answer to "where does a module's class live" (gh-2054), for every
+    module kind: ``[module.X] package`` (gh-523) when declared, else the
+    module's own ``pypath``. It is a directory below ``src/<pkg>/``, ``/``
+    separated for a nested module. Its ``__init__.py`` re-exports the
+    module's classes, so ``<pkg>.<this, dotted>`` is the path a class
+    imports from (`_docstring.class_import_path` spells it); the module's
+    per-object tests, and the gh-1404 element contract beside them, land in
+    its ``tests/``.
+
+    Every generated import of a module object's class reads this: the
+    ``.pyi`` and runtime ``__doc__`` doctests, the element contract and its
+    directory, the ``.pyi`` import of an ``object`` reference, and the
+    apps. They spelled the module id's path instead, which is the class's
+    home only while the module declares no ``package``: on doppler-shaped
+    trees each named a module that does not hold the class.
+
+    ``""`` for ``""``, a standalone object, whose class imports from the
+    package root.
+
+    Examples
+    --------
+    >>> module_package_resolved({"module": {"m": {"package": "wfm"}}}, "m")
+    'wfm'
+    >>> module_package_resolved({"module": {"dsp.filters": {}}}, "dsp.filters")
+    'dsp/filters'
+    >>> module_package_resolved({}, "")
+    ''
+    """
+    return module_package(cfg, module) or module_paths(module).pypath
 
 
 def capsule_package(cfg: dict, module: str) -> str:
@@ -3233,9 +3267,11 @@ def handle_package_resolved(cfg: dict, module: str) -> str:
     Same argument as :func:`handle_header_resolved`: three call sites spelled
     ``C.handle_package(cfg, m) or mp.pypath`` inline, and gh-1227's `.pyi`
     import needed a fourth. One answer to "where does this class live", read
-    by the handle's own writers and by any consumer naming it.
+    by the handle's own writers and by any consumer naming it -- and the key
+    is not handle-specific, so the answer is :func:`module_package_resolved`'s
+    (gh-2054).
     """
-    return handle_package(cfg, module) or module_paths(module).pypath
+    return module_package_resolved(cfg, module)
 
 
 def handle_depends_on(cfg: dict, module: str) -> list:
@@ -3482,24 +3518,29 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     **standalone** object has its own ``.so`` named for the component
     (``from .frame import FrameDesc``). Getting that wrong is not a soft
     failure -- it is an import error in every consumer's type-check.
+
+    A module's package is :func:`module_package_resolved`'s, for a handle and
+    an object module alike: the object branch read the module id's path, so
+    a module declaring ``package`` was imported from a module that does not
+    hold the class (gh-2054).
     """
+    from ._docstring import class_import_path
+
     comp, _, _cls = ref.partition(".")
-    if comp not in components(cfg):
-        # gh-1227: a handle module's class lives in the module's own package,
-        # which `handle_package` already answers for the handle's own `.pyi`.
-        # Reading it here rather than rebuilding the path keeps one answer to
-        # "where does this class live" for both writers.
-        if module_kind(cfg, comp) == "handle":
-            cls = resolve_handle_object_ref(cfg, ref)[3]
-            dotted = handle_package_resolved(cfg, comp).replace("/", ".")
-            return f"from .{dotted} import {cls}"
+    if comp in components(cfg):
+        cls = resolve_object_ref(cfg, ref)[3]
+        home = module_of(cfg, comp)
+        if not home:
+            return f"from .{comp} import {cls}"
+    elif module_kind(cfg, comp) == "handle":
+        # gh-1227: a handle module's class lives in the module's own
+        # package, the one its own `.pyi` lands in.
+        cls = resolve_handle_object_ref(cfg, ref)[3]
+        home = comp
+    else:
         return ""
-    cls = resolve_object_ref(cfg, ref)[3]
-    for mod in modules(cfg):
-        if comp in module_objects(cfg, mod):
-            dotted = module_paths(mod).pypath.replace("/", ".")
-            return f"from .{dotted} import {cls}"
-    return f"from .{comp} import {cls}"
+    where = class_import_path("", module_package_resolved(cfg, home))
+    return f"from .{where} import {cls}"
 
 
 def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
