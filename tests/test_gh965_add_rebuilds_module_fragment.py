@@ -28,6 +28,12 @@ discards hand-written bodies (e.g. in _core.c)": a hand-written binding in the
 fragment is now given up under the same warning and the same confirmation.
 Plain `jm regenerate` preserves and does not touch the fragment — asserted
 below, because that is the property gh-770 exists to protect.
+
+gh-2073: the same for every VIEW over the object (gh-504). A view without its
+own `init_params` takes the parent's, and `apply` re-scaffolds its
+`create_fn` in the rebuilt core at the new arity; its fragment was left out
+of the set, so its `<View>_init` called that function with the old
+arguments and the module did not compile.
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 from _jmrun import JmRun, run_cli
 
@@ -166,3 +174,53 @@ def test_a_standalone_object_is_unaffected(tmp_path):
     ext = (proj / "native/src/solo/solo_ext.c").read_text(encoding="utf-8")
     assert re.search(r'kwlist\[\] = \{[^}]*"bias"', ext)
     assert _cli("status", "--check", cwd=proj).returncode == 0
+
+
+#: Every verb that changes a module object's constructor keywords, each
+#: through `regenerate --discard`. `remove-state` takes the LAST field away,
+#: which `status` cannot see (no kwlist on the fresh side), so only this
+#: test sees it; `add-state` is gh-2073's trigger, which the gh-2057 gate
+#: runs on its `view` shape on the full-matrix leg alone.
+_CTOR_VERBS = {
+    "add-state": ("add", "--object", "gain", "--state", "bias:double:0.0"),
+    "remove-state": ("remove", "state", "gain", "--object", "gain"),
+}
+
+
+@pytest.mark.parametrize("verb", sorted(_CTOR_VERBS))
+def test_a_views_constructor_follows_its_parents(tmp_path, verb):
+    """gh-2073: the view's binding calls its `create_fn` with the arguments
+    the rebuilt header declares, not the ones it had before.
+
+    Read off the two files a compiler reads, so the assertion is the build
+    error itself: "too few arguments to function 'gain_create_wide'".
+
+    Sabotage: keep only the object's own fragment in `_regenerate.run`'s
+    delete set (`binding_sources(...)[:1]`) and both go red.
+    """
+    proj = _project(tmp_path)
+    view = ("view", "gain", "Wide", "--module", "filt")
+    r = _cli(*view, "--create-fn", "gain_create_wide", cwd=proj)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    r = _cli(*_CTOR_VERBS[verb], "--force", cwd=proj)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+    (core_h,) = proj.glob("native/inc/**/gain_core.h")
+    proto = re.search(
+        r"\*gain_create_wide\(([^)]*)\);", core_h.read_text(encoding="utf-8")
+    )
+    assert proto, "the view's create_fn is not declared"
+    declared = [
+        p.split()[-1] for p in proto.group(1).split(",") if p.strip() != "void"
+    ]
+    frag = proj / "native/src/filt/filt_ext_wide.c"
+    call = re.search(
+        r"= gain_create_wide\(([^)]*)\);", frag.read_text(encoding="utf-8")
+    )
+    assert call, "the view's constructor does not call its create_fn"
+    passed = [a.strip() for a in call.group(1).split(",") if a.strip()]
+    assert passed == declared, (
+        f"{frag.name} calls gain_create_wide({', '.join(passed)}) but the "
+        f"header declares ({', '.join(declared) or 'void'}): the view's "
+        "constructor was not rebuilt with its parent's"
+    )

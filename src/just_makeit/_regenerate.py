@@ -33,6 +33,7 @@ from pathlib import Path
 from . import _config as C
 from . import _incpath as INC
 from ._docstring import max_out_prototypes, restore_max_out_prototypes
+from ._linkcheck import binding_sources
 from ._object import _extract_c_function_bodies, _restore_c_function_bodies
 from ._remove import _confirm, _object_paths, _rm
 
@@ -118,16 +119,20 @@ def run(
     # given up with the same warning and the same confirmation as a
     # hand-written `_core.c` body. Plain `jm regenerate` preserves, and is
     # unchanged — it does not touch the fragment at all.
+    #
+    # gh-2073: and every VIEW's fragment over the same core (gh-504). A view
+    # without its own `init_params` takes the parent's (`C.view_init_params`),
+    # so a state change moves its `kwlist` too, and `apply` re-scaffolds its
+    # `create_fn` in the rebuilt core at the new arity. Only the object's
+    # fragment was deleted here, so the view's `<View>_init` kept the old
+    # kwlist and called the new `create_fn` with the old arguments: KWARGS
+    # drift in `status`, and a module that did not compile. The set is
+    # `_linkcheck.binding_sources`, the one list of "the fragments that call
+    # into this core", as it is for the link-check table.
     if discard and module:
-        _frag = (
-            root
-            / "native"
-            / "src"
-            / C.module_paths(module).cname
-            / f"{C.module_paths(module).cname}_ext_{component}.c"
-        )
-        if _frag.exists():
-            paths.append(_frag)
+        paths += [
+            p for p in binding_sources(root, cfg, component) if p.exists()
+        ]
 
     core_h = INC.core_h(root, component)
     core_c = root / "native" / "src" / component / f"{component}_core.c"

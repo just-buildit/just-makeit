@@ -401,7 +401,11 @@ regenerated ones, by function name. A signature change (e.g. from `jm add`
 growing a lifecycle function's parameter list) is detected and skipped in
 favor of the fresh body rather than force an incompatible splice. Pass
 `--discard` for the old behavior — a clean reset back to the template
-scaffold, with no preservation attempt. Either way, `git stash` or commit
+scaffold, with no preservation attempt. On a module object `--discard` also
+rebuilds the binding fragments that call into its core, its own
+`<module>_ext_<obj>.c` and each view's, so a constructor change reaches all
+of them (gh-965, gh-2073); a hand-written `*_extra.c` is kept. `jm add` and
+`jm remove state` rebuild this way. Either way, `git stash` or commit
 first — the splice is best-effort text matching, not a guarantee. A single
 confirmation guards the deletion; `--force` skips it.
 
