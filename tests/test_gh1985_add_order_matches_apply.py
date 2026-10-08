@@ -322,31 +322,46 @@ def test_every_adder_has_a_case():
     )
 
 
+def _jm_modules() -> list:
+    """Every jm library module, imported -- so a rebinding reaches the ones
+    a command would import later, too."""
+    import importlib
+    import pkgutil
+
+    return [
+        importlib.import_module(info.name)
+        for info in pkgutil.walk_packages(
+            just_makeit.__path__, prefix="just_makeit."
+        )
+        if not info.name.startswith(
+            ("just_makeit.templates", "just_makeit.examples")
+        )
+    ]
+
+
+def _rebind(monkeypatch, name: str, make) -> None:
+    """Replace jm's function *name* by ``make(original)`` under every name
+    any jm module binds it to (``_object`` imports one under an alias)."""
+    mods = _jm_modules()
+    (fn,) = {
+        f
+        for m in mods
+        if callable(f := getattr(m, name, None))
+        and getattr(f, "__module__", "").startswith("just_makeit.")
+    }
+    replacement = make(fn)
+    for mod in mods:
+        for attr, value in list(vars(mod).items()):
+            if value is fn:
+                monkeypatch.setattr(mod, attr, replacement)
+
+
 def _record_writers(monkeypatch) -> "set[str]":
     """Wrap every writer wherever jm binds it; return the set the wrappers
     fill with each caller's ``module.function``."""
-    import importlib
-    import pkgutil
     import sys
 
-    for info in pkgutil.walk_packages(
-        just_makeit.__path__, prefix="just_makeit."
-    ):
-        if not info.name.startswith(
-            ("just_makeit.templates", "just_makeit.examples")
-        ):
-            importlib.import_module(info.name)
-    writers, _, _ = derived()
     seen: "set[str]" = set()
-    originals = {}
-    for name in writers:
-        for mod in list(sys.modules.values()):
-            fn = getattr(mod, name, None) if mod else None
-            if callable(fn) and getattr(fn, "__module__", "").startswith(
-                "just_makeit."
-            ):
-                originals[name] = fn
-                break
 
     def wrap(fn):
         def recording(*args, **kwargs):
@@ -356,14 +371,9 @@ def _record_writers(monkeypatch) -> "set[str]":
 
         return recording
 
-    for name, fn in originals.items():
-        wrapper = wrap(fn)
-        for mod in list(sys.modules.values()):
-            if not (mod and mod.__name__.startswith("just_makeit")):
-                continue
-            for attr, value in list(vars(mod).items()):
-                if value is fn:
-                    monkeypatch.setattr(mod, attr, wrapper)
+    writers, _, _ = derived()
+    for name in writers:
+        _rebind(monkeypatch, name, wrap)
     return seen
 
 
@@ -400,6 +410,41 @@ def test_the_add_leaves_what_apply_writes(
     assert adder in seen, f"{adder} was never reached; reached: {sorted(seen)}"
 
 
+def _aggregates(root: Path) -> "dict[Path, bytes]":
+    """The two files this is about, as bytes."""
+    return {
+        p: p.read_bytes()
+        for p in (_root_cmake(root), *(root / "native" / "inc").rglob("p.h"))
+    }
+
+
+def test_the_order_is_the_one_apply_always_wrote(tmp_path, monkeypatch):
+    """No project in sync before gh-1985 is reported stale by it.
+
+    With the two sorts made inert, `jm` is what it was: the writers put a
+    block on top and an include last, and `apply` copies the replay's
+    order, prepending the ``c_deps`` and appending the ``no_generate``
+    modules. The order the sorts declare must be exactly that one -- for
+    every kind of block -- or the fix itself would rewrite every project
+    with two components in a section.
+    """
+    root = _run(
+        tmp_path,
+        ("--c-dep", "vend"),
+        [("module", "b"), ("module", "a"), ("module", "h"),
+         _hand_written("h"), ("object", "q"), ("object", "o"),
+         ("object", "y", "--module", "b"), ("object", "x", "--module", "a"),
+         ("apply",)],
+    )  # fmt: skip
+    before = _aggregates(root)
+    for name in ORDER_FNS:
+        _rebind(monkeypatch, name, lambda fn: lambda text, cfg: text)
+    _ok(root, "apply")
+    assert _aggregates(root) == before, (
+        "the declared order is not the one `apply` wrote before gh-1985"
+    )
+
+
 def test_apply_orders_whatever_the_replay_left(tmp_path, monkeypatch):
     """`apply`'s order is the sort's, not the replay's.
 
@@ -415,10 +460,7 @@ def test_apply_orders_whatever_the_replay_left(tmp_path, monkeypatch):
         [("module", "m"), ("module", "n"), ("object", "o"), ("object", "q"),
          ("object", "x", "--module", "m"), ("object", "y", "--module", "n")],
     )  # fmt: skip
-    before = {
-        p: p.read_bytes()
-        for p in (_root_cmake(root), *(root / "native" / "inc").rglob("p.h"))
-    }
+    before = _aggregates(root)
     real_replay = _apply.replay_project
 
     def shuffled(cfg, temp_root, project_root, **kw):
@@ -445,5 +487,6 @@ def test_apply_orders_whatever_the_replay_left(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_apply, "replay_project", shuffled)
     _ok(root, "apply")
-    after = {p: p.read_bytes() for p in before}
-    assert after == before, "apply wrote the replay's order, not the sort's"
+    assert _aggregates(root) == before, (
+        "apply wrote the replay's order, not the sort's"
+    )
