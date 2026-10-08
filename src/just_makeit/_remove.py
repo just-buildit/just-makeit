@@ -878,9 +878,16 @@ def _regenerate_object_bindings(
     would take the method out of the manifest and the `.pyi` and leave the
     binding callable forever."""
     module = C.component_module(cfg, obj)
+    # gh-1978: both branches rewrite the element contract (gh-1404) too.
+    # Removing a pair's writer or reader ends it, and the writer then
+    # deletes the file -- left alone, it went on asserting a member the
+    # binding no longer has until the next `apply`. It was written here,
+    # after both; gh-1984 moved it into the two re-renders below, because
+    # the module one is also how `jm method` adds a member, and it never
+    # wrote the contract on the way in.
     if module:
         # The module's shared ext.c / CMakeLists / __init__ / .pyi, and each
-        # member's link-check table.
+        # member's link-check table and element contract.
         _regenerate_module(
             root,
             cfg,
@@ -891,26 +898,16 @@ def _regenerate_object_bindings(
     else:
         # gh-1978: through the ONE standalone re-render the adders use (`jm
         # property`, `jm warning` and `jm error` reach it via
-        # `_glue.regenerate`), which writes the binding, the stub and the
-        # gh-1361 link-check table. This was a copy of it that wrote the
-        # first two only, so the removed member's symbol stayed in
-        # `test_<obj>_symbols.c`.
+        # `_glue.regenerate`), which writes the binding, the stub, the
+        # gh-1361 link-check table and the element contract. This was a
+        # copy of it that wrote the binding and the stub only, so the
+        # removed member's symbol stayed in `test_<obj>_symbols.c`.
         # gh-1987: and NOT the C benchmark. `bench_<obj>_core.c` is the
         # author's (`_createonly`), which `apply`, the module branch above
         # and every adding verb already honour; this re-rendered it
         # wholesale, discarding their edits. A bench still calling a removed
         # method is theirs to update, which `_bench_still_calls` tells them.
         _glue.regenerate_standalone(root, cfg, obj, pkg)
-
-    # gh-1978: the element contract (gh-1404), through the writer `jm method`
-    # and `apply` use. Removing a pair's writer or reader ends the contract,
-    # and `write` then deletes the file -- left alone, it went on asserting a
-    # member the binding no longer has until the next `apply`.
-    from . import _invariants
-
-    inv = _invariants.file_for(root, pkg, obj, module or "")
-    if _invariants.write(root, cfg, obj, pkg):
-        print(f"  {'update' if inv.exists() else 'remove'}  {inv}")
 
 
 def run(

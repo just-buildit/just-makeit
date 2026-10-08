@@ -2501,14 +2501,11 @@ def run(
         # write it would mean the CLI and the manifest path disagree about
         # what the project contains. The gh-949 dead-rule gate found this:
         # its fixture drives the private API and never applies, so the file
-        # was simply absent from every tree it measured.
+        # was simply absent from every tree it measured. A module object
+        # gets it from `_regenerate_module`, in the branch above (gh-1984).
         from . import _invariants
 
-        if _invariants.write(root, cfg, object_name, pkg):
-            _inv_path = _invariants.file_for(
-                root, pkg, object_name, C.module_of(cfg, object_name) or ""
-            )
-            print(f"  update  {_inv_path}")
+        _invariants.sync(root, cfg, object_name, pkg)
         # Surgical splice: when a varargs binding file was just added,
         # insert it into the Python3_add_library line in CMakeLists.txt.
         # Only varargs methods change the build-system source list; normal

@@ -24,12 +24,19 @@ called clean, because status compares the files `apply` writes and `apply`
 has no component left to write that one for. Hence the second oracle below,
 which does not go through status at all.
 
+gh-1984 is the add half of the same contract: `jm method` on a MODULE object
+wrote no element contract, so the add that completes a pair left `status
+--check` reporting ``test_<obj>_invariants.py`` MISSING until an `apply`.
+The module case below ran an `apply` in its add for exactly that; it no
+longer does, so the add's own `status --check` is that gate.
+
 GATE: for every kind `jm remove` dispatches (`_cli_remove._KINDS`; a kind
-      without a case here fails), adding a member then removing it leaves
-      `status --check` at exit 0 and leaves behind no file `apply` rewrites
-      (`_createonly.REWRITTEN`) that the add brought; and a project whose
-      author followed the remove's "delete it by hand" note builds, links
-      and passes `jm test`.
+      without a case here fails), adding a member leaves `status --check`
+      at exit 0 with no `apply` step of its own (gh-1984), and removing it
+      leaves `status --check` at exit 0 and leaves behind no file `apply`
+      rewrites (`_createonly.REWRITTEN`) that the add brought; and a
+      project whose author followed the remove's "delete it by hand" note
+      builds, links and passes `jm test`.
 """
 
 from __future__ import annotations
@@ -90,13 +97,12 @@ CASES: "dict[str, dict[str, tuple[list, list, tuple]]]" = {
         ),
         # Removing the reader ends the contract `jm method` wrote.
         "ends-a-pair": (_writer(), [_reader()], ("wait", "--object", "o")),
-        # `apply` in the add: `jm method` on a MODULE object does not write
-        # the contract itself (`status --check` reports it MISSING right
-        # after the add -- an add-side gap, not this fix, gh-1984), so this
-        # brings the tree to what the add should have left.
+        # No `apply` in the add, and that is the gh-1984 gate: `jm method`
+        # on a MODULE object wrote no contract, so `status --check` reported
+        # it MISSING on the tree the add had just written.
         "ends-a-pair-in-a-module": (
             [("module", "mod"), *_writer("o", *_M)],
-            [_reader("o", *_M), ("apply",)],
+            [_reader("o", *_M)],
             ("wait", "--object", "o"),
         ),
     },
@@ -225,6 +231,9 @@ def test_every_remove_kind_has_a_case():
 )
 def test_add_then_remove_leaves_the_tree_in_sync(tmp_path, kind, flavor):
     setup, add, rest = CASES[kind][flavor]
+    # gh-1984: an `apply` in the add would bring the tree to what the add
+    # should have left, and so hide an add that left it short.
+    assert all(argv[0] != "apply" for argv in add), add
     _ok(tmp_path, "new", "p")
     root = tmp_path / "p"
     for argv in setup:
