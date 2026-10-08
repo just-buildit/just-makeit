@@ -12,6 +12,7 @@ from .._types import (
 )
 from .._docstring import (
     class_import_line,
+    delegator_note,
     render_numpy_doc,
     render_runtime_doc,
 )
@@ -129,6 +130,22 @@ def _steps_stub_summary(stub: str) -> "str | None":
     if end < 0:
         return None
     return stub[start:end].strip() or None
+
+
+def _delegator_doc(csym: str, *, returns: bool) -> str:
+    """The delegating ``step()``'s body paragraph, as header comment lines.
+
+    The sentence is ``_docstring.delegator_note``'s, the one definition the
+    scaffold sentinel recognises it by, so `apply` reads jm's note as jm's
+    rather than deriving it into the docstring `jm object` rendered without
+    it (gh-2071).
+
+    >>> print(_delegator_doc("fir", returns=False), end="")
+     * Thin delegator to fir_steps() (gh-208).
+    """
+    return "".join(
+        f" * {line}\n" for line in delegator_note(csym, returns=returns)
+    )
 
 
 def _is_authored(blk) -> bool:
@@ -835,7 +852,7 @@ def make_step_ctx(
                     f"/**\n"
                     f" * @brief Advance state by one tick (no I/O).\n"
                     f" *\n"
-                    f" * Thin delegator to {csym}_steps() (gh-208).\n"
+                    f"{_delegator_doc(csym, returns=False)}"
                     f" * @param state  Must be non-NULL; state is mutated.\n"
                     f" */\n"
                     f"{step_qualifier} void\n"
@@ -935,10 +952,7 @@ def make_step_ctx(
                     f" * @brief Generate one output sample from internal"
                     f" state.\n"
                     f" *\n"
-                    f" * Thin delegator to {csym}_steps() so the"
-                    f" per-sample algorithm\n"
-                    f" * exists once and step() == steps(.., 1)"
-                    f" byte-for-byte (gh-208).\n"
+                    f"{_delegator_doc(csym, returns=True)}"
                     f" * @param state  Must be non-NULL.\n"
                     f" * @return Next output sample ({ret_disp}).\n"
                     f" */\n"
@@ -1189,7 +1203,7 @@ def make_step_ctx(
                     f"/**\n"
                     f" * @brief Consume one input sample (sink; no output).\n"
                     f" *\n"
-                    f" * Thin delegator to {csym}_steps() (gh-208).\n"
+                    f"{_delegator_doc(csym, returns=False)}"
                     f" * @param state  Must be non-NULL.\n"
                     f" * @param x      Input sample ({arg_disp}).\n"
                     f" */\n"
@@ -1324,10 +1338,7 @@ def make_step_ctx(
                     f"/**\n"
                     f" * @brief Process one input sample.\n"
                     f" *\n"
-                    f" * Thin delegator to {csym}_steps() so the"
-                    f" per-sample algorithm\n"
-                    f" * exists once and step() == steps(.., 1)"
-                    f" byte-for-byte (gh-208).\n"
+                    f"{_delegator_doc(csym, returns=True)}"
                     f" * @param state  Must be non-NULL.\n"
                     f" * @param x      Input sample ({arg_disp}).\n"
                     f" * @return Output sample ({ret_disp}).\n"
