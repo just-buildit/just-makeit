@@ -205,23 +205,6 @@ def run(
         S.make_module_pyi(cfg, module, root),
     )
 
-    # Root CMakeLists.txt — insert add_subdirectory into the Modules sentinel
-    # section, and fold the module's own OBJECT library into the combined C
-    # library the same way a component's is (gh-981). Without the second half a
-    # module whose C surface is module-level *functions* builds its core, links
-    # it straight into the Python extension, and ships it in no library at all —
-    # so `jm function` compiles, imports and tests clean while a C consumer gets
-    # `undefined reference`. `component_core_libs` reads the file just written
-    # above, so a module with no core of its own (capsule/handle/composer, or a
-    # collocated object supplying the `add_library`) wires nothing.
-    splice_cmake_component(
-        root,
-        pkg,
-        cname,
-        component_core_libs(root, cname),
-        sentinel=MODULES_SENTINEL,
-    )
-
     # Ensure C test and benchmark directories exist (even before any objects
     # or functions are added — users may want to write their own C tests).
     for subdir in ("native/tests", "native/benchmarks"):
@@ -264,6 +247,27 @@ def run(
         ] = "true"
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
+
+    # Root CMakeLists.txt — insert add_subdirectory into the Modules sentinel
+    # section, and fold the module's own OBJECT library into the combined C
+    # library the same way a component's is (gh-981). Without the second half a
+    # module whose C surface is module-level *functions* builds its core, links
+    # it straight into the Python extension, and ships it in no library at all —
+    # so `jm function` compiles, imports and tests clean while a C consumer gets
+    # `undefined reference`. `component_core_libs` reads the file just written
+    # above, so a module with no core of its own (capsule/handle/composer, or a
+    # collocated object supplying the `add_library`) wires nothing.
+    # gh-1985: after the save, because the block is placed where `apply` puts
+    # it -- by the order of the manifest on disk, which until then has no
+    # [module.<module>] to place. Before the save it went to the top, so
+    # `jm module q && jm module o` in a split layout was in the wrong order.
+    splice_cmake_component(
+        root,
+        pkg,
+        cname,
+        component_core_libs(root, cname),
+        sentinel=MODULES_SENTINEL,
+    )
 
     print()
     print(

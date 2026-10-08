@@ -21,8 +21,6 @@ JSON / CLI faces land in the following slices.
 
 from __future__ import annotations
 
-from . import _textio
-
 import textwrap
 from pathlib import Path
 from typing import NamedTuple
@@ -5141,19 +5139,11 @@ def materialize(
             render_cli(cfg, module),
         )
 
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        text = cmake_path.read_text(encoding="utf-8")
-        sub = f"add_subdirectory(native/src/{mp.cname})\n"
-        if sub not in text:
-            sentinel = "# ── Modules"
-            if sentinel in text:
-                idx = text.index(sentinel)
-                idx = text.index("\n", idx) + 1
-                text = text[:idx] + sub + text[idx:]
-            else:
-                text += sub
-            _textio.write_text(cmake_path, text)
+    # The top CMakeLists add_subdirectory (Modules sentinel), through
+    # _module.run's own writer, as _capsule.materialize does (gh-1985).
+    from ._libwiring import MODULES_SENTINEL, splice_cmake_component
+
+    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
 
 
 # ── generic JSON ser/de from the [[enum]] SSOT (gh-287) ──────────────────────

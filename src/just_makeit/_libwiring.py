@@ -625,6 +625,86 @@ def dep_core_libs(depends_on: list) -> list[str]:
 # ── Writing it ───────────────────────────────────────────────────────────────
 
 
+def section_order(cfg: dict) -> "dict[str, list[str]]":
+    """The ``native/src`` directory of every block jm writes under each root
+    sentinel, in the order every writer of the file lists them (gh-1985).
+
+    - ``# ── Components``: the ``[project] c_deps`` first, then
+      :func:`_config.object_order` newest first.
+    - ``# ── Modules``: the generated modules newest first, in manifest
+      order, then the ``no_generate`` ones oldest first.
+
+    "Newest first" is not a choice made here. It is what `apply` has always
+    written -- its replay put each block directly under its sentinel, in
+    manifest order, and appended the two kinds it adds itself -- and it is
+    kept so that no project in sync today is reported stale by the rule that
+    fixes the adders. An adder inserted the same way but in the order its
+    commands ran, which is why ``jm object q && jm object o`` in a split
+    layout left `apply` something to rewrite.
+    """
+    gen, hand = [], []
+    for mod in C.modules(cfg):
+        cname = C.module_paths(mod).cname
+        (hand if C.is_no_generate_module(cfg, mod) else gen).append(cname)
+    return {
+        COMPONENTS_SENTINEL: [*C.c_deps(cfg), *reversed(C.object_order(cfg))],
+        MODULES_SENTINEL: [*reversed(gen), *hand],
+    }
+
+
+def order_sections(text: str, cfg: dict) -> str:
+    """*text*, a root CMakeLists, with the blocks under each sentinel in
+    :func:`section_order` (gh-1985).
+
+    Each sentinel's run is the :data:`SUBDIR_BLOCK` s directly beneath its
+    line -- where `apply` and :func:`splice_cmake_component` both put them.
+    A block the order does not name (a hand-written one) keeps its place;
+    the named ones are sorted among the places they hold. Nothing is added
+    or dropped, so this is safe to run on any file, any number of times.
+
+    >>> cfg = {"project": {}, "o": {}, "q": {}}
+    >>> text = (
+    ...     "# ── Components\\n"
+    ...     "add_subdirectory(native/src/o)\\n"
+    ...     "add_subdirectory(native/src/mine)\\n"
+    ...     "add_subdirectory(native/src/q)\\n"
+    ...     "# ──────────\\n"
+    ... )
+    >>> print(order_sections(text, cfg), end="")
+    # ── Components
+    add_subdirectory(native/src/q)
+    add_subdirectory(native/src/mine)
+    add_subdirectory(native/src/o)
+    # ──────────
+    """
+    for sentinel, order in section_order(cfg).items():
+        if sentinel not in text:
+            continue
+        start = text.index("\n", text.index(sentinel)) + 1
+        run, end = [], start
+        while m := SUBDIR_BLOCK.match(text, end):
+            run.append(m)
+            end = m.end()
+        rank: dict[str, int] = {}
+        for i, name in enumerate(order):
+            rank.setdefault(name, i)
+        named = iter(
+            sorted(
+                (m for m in run if m.group(1) in rank),
+                key=lambda m: rank[m.group(1)],
+            )
+        )
+        text = (
+            text[:start]
+            + "".join(
+                (next(named) if m.group(1) in rank else m).group(0)
+                for m in run
+            )
+            + text[end:]
+        )
+    return text
+
+
 def cmake_core_wiring(
     cmake_text: str,
     pkg: str,
@@ -678,6 +758,12 @@ def splice_cmake_component(
     Keeping the wiring adjacent to the ``add_subdirectory`` is what lets
     :data:`SUBDIR_BLOCK` lift the whole block as a unit when it
     reconciles a real project against a fresh replay.
+
+    gh-1985: the block lands where `apply` puts it -- :func:`order_sections`,
+    from the manifest on disk. So the caller saves the manifest entry for
+    *comp* FIRST: a block for a name the saved manifest does not hold yet is
+    one the order cannot place, and it stays directly under the sentinel,
+    which is exactly the history-ordered write this fixes.
     """
     cmake_path = root / "CMakeLists.txt"
     if not cmake_path.exists():
@@ -697,14 +783,18 @@ def splice_cmake_component(
     # replay's `_object._DOC_ROOT_OVERRIDE`, as gh-1046's check reads it).
     from . import _object
 
-    real = _object._DOC_ROOT_OVERRIDE or root
-    skip = externally_wired(root) | library_cores(C.load(real))
-    wiring = cmake_core_wiring(text, pkg, cores, skip)
-    if wiring:
-        idx = text.index("\n", text.index(sub)) + 1
-        text = text[:idx] + wiring + text[idx:]
+    cfg = C.load(root)
+    if cores:
+        real = _object._DOC_ROOT_OVERRIDE or root
+        skip = externally_wired(root) | library_cores(
+            cfg if real == root else C.load(real)
+        )
+        wiring = cmake_core_wiring(text, pkg, cores, skip)
+        if wiring:
+            idx = text.index("\n", text.index(sub)) + 1
+            text = text[:idx] + wiring + text[idx:]
     if text != original:
-        _textio.write_text(cmake_path, text)
+        _textio.write_text(cmake_path, order_sections(text, cfg))
         print(f"  update  {cmake_path}")
 
 

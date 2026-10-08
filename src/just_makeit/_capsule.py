@@ -20,8 +20,6 @@ hand-written in ``<backing>_core.c``. This mirrors doppler's hand-written
 
 from __future__ import annotations
 
-from . import _textio
-
 from pathlib import Path
 
 from . import _coerce
@@ -758,18 +756,10 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
         render_pyi(cfg, module),
     )
 
-    # Wire the top CMakeLists add_subdirectory (Modules sentinel), like
-    # _module.run does for an object-group module.
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        text = cmake_path.read_text(encoding="utf-8")
-        sub = f"add_subdirectory(native/src/{mp.cname})\n"
-        if sub not in text:
-            sentinel = "# ── Modules"
-            if sentinel in text:
-                idx = text.index(sentinel)
-                idx = text.index("\n", idx) + 1
-                text = text[:idx] + sub + text[idx:]
-            else:
-                text += sub
-            _textio.write_text(cmake_path, text)
+    # Wire the top CMakeLists add_subdirectory (Modules sentinel) through
+    # _module.run's own writer. A capsule module owns no core, so no wiring
+    # line; and the block lands where every writer of the section puts it
+    # (gh-1985) -- this was one of three private copies that put it on top.
+    from ._libwiring import MODULES_SENTINEL, splice_cmake_component
+
+    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)

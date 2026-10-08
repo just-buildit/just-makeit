@@ -932,6 +932,11 @@ and every `[module.X]` into `modules/<name>.toml`, leaving the manifest with
 today. The merged manifest is unchanged, and running it again is a no-op. Must
 be run from the project root.
 
+Fragments load sorted by file name, so the order the manifest lists
+components in can change. The root `CMakeLists.txt` wiring and the umbrella
+header's includes are re-sorted to match — the order `jm apply` writes — and
+nothing in them is added or removed.
+
 ```sh
 just-makeit migrate-to-fragments
 ```
@@ -945,7 +950,8 @@ ______________________________________________________________________
 
 The objects-only subset of `migrate-to-fragments`: each `[<obj>]` section
 moves to `objects/<obj>.toml` and every `[module.X]` stays inline. Prefer
-`migrate-to-fragments` unless you want the modules to stay put.
+`migrate-to-fragments` unless you want the modules to stay put. It re-sorts
+the root `CMakeLists.txt` wiring and the umbrella header the same way.
 
 ```sh
 just-makeit split-objects

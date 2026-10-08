@@ -3067,6 +3067,14 @@ def run(
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
 
+    # Save config -- BEFORE the two root writers below (gh-1985), which place
+    # *comp* by the order of the manifest on disk, as `apply` does. Until the
+    # save that manifest has no *comp*, so the block went to the top and the
+    # include to the bottom whatever the order: a standalone object added
+    # after a module object was then in the wrong place in both files.
+    C.save(root, cfg)
+    print(f"  update  {cfg_path}")
+
     # Root CMakeLists: insert add_subdirectory into Components sentinel section,
     # then wire OBJECT library into both shared and static C library targets.
     # These two operations are independent: a same-name module (module.agc with
@@ -3088,12 +3096,8 @@ def run(
     umbrella = INC.path(root, f"{pkg}.h")
     from ._init import insert_umbrella_include
 
-    if insert_umbrella_include(umbrella, comp):
+    if insert_umbrella_include(root, comp):
         print(f"  update  {umbrella}")
-
-    # Save config
-    C.save(root, cfg)
-    print(f"  update  {cfg_path}")
 
     if variable_output:
         from . import _method as _M

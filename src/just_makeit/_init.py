@@ -35,6 +35,7 @@ from ._libwiring import (  # noqa: F401
     component_core_libs,
     declared_cores,
     dep_core_libs,
+    order_sections,
     splice_cmake_component,
 )
 
@@ -938,7 +939,70 @@ def _core_h_decl_lines(text: str) -> "list[str]":
     ]
 
 
-def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
+def order_umbrella_includes(text: str, cfg: dict) -> str:
+    """*text*, the umbrella header of the project *cfg* describes, with its
+    component includes in :func:`_config.object_order` (gh-1985).
+
+    The include lines are sorted among the lines they already occupy, so the
+    blank line after each and everything around them stay put; a line the
+    order does not name keeps its place. `apply` sorts the replay's umbrella
+    with this before writing it, and :func:`insert_umbrella_include` sorts
+    what it inserted, so the two cannot disagree on where an include goes.
+
+    >>> cfg = {"project": {"name": "p", "schema": "8"}, "o": {}, "q": {}}
+    >>> text = '#include "p/q/q_core.h"\\n\\n#include "p/o/o_core.h"\\n'
+    >>> print(order_umbrella_includes(text, cfg), end="")
+    #include "p/o/o_core.h"
+    <BLANKLINE>
+    #include "p/q/q_core.h"
+    """
+    rank: dict[str, int] = {}
+    for i, comp in enumerate(C.object_order(cfg)):
+        rank.setdefault(f'#include "{INC.core_include(comp, cfg)}"', i)
+    lines = text.splitlines(keepends=True)
+    slots = [i for i, ln in enumerate(lines) if ln.rstrip("\r\n") in rank]
+    for i, ln in zip(
+        slots,
+        sorted(
+            (lines[i] for i in slots), key=lambda s: rank[s.rstrip("\r\n")]
+        ),
+    ):
+        lines[i] = ln
+    return "".join(lines)
+
+
+def settle_aggregate_order(root: "Path") -> "list[Path]":
+    """Re-sort the root CMakeLists' wiring and the umbrella header's includes
+    into the order the manifest on disk gives them; return what changed.
+
+    For a command that changes that order without adding anything (gh-1985):
+    ``migrate-to-fragments`` and ``split-objects`` move sections into
+    fragments, and a split layout loads its fragments sorted by path, so the
+    manifest's order -- and with it the order `apply` writes both files in --
+    is no longer the one the files were written in. Without this, the
+    command that promises an unchanged project left ``status --check`` red
+    on two files it never mentioned.
+
+    Only the order moves (:func:`_libwiring.order_sections`,
+    :func:`order_umbrella_includes`): no line is added or dropped.
+    """
+    cfg = C.load(root)
+    changed = []
+    for path, order in (
+        (root / "CMakeLists.txt", order_sections),
+        (INC.path(root, f"{C.project_name(cfg)}.h"), order_umbrella_includes),
+    ):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = order(text, cfg)
+        if new != text:
+            _textio.write_text(path, new)
+            changed.append(path)
+    return changed
+
+
+def insert_umbrella_include(root: "Path", comp: str) -> bool:
     """Add ``#include "<comp>/<comp>_core.h"`` to the umbrella header.
 
     One inserter for every caller, because there were three and they agreed
@@ -959,8 +1023,16 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     did, and it depends on the include guard rather than on a block that
     turned out to be removable.
 
+    gh-1985: and then sorted into :func:`order_umbrella_includes`, the order
+    `apply` writes, read from the manifest on disk -- so the caller saves
+    *comp*'s manifest entry FIRST. Appending alone listed the includes in
+    the order the commands ran, which `apply` rewrote whenever that was not
+    the manifest's (a split layout loads its fragments sorted).
+
     Returns True when the file was written.
     """
+    cfg = C.load(root)
+    umbrella = INC.path(root, f"{C.project_name(cfg)}.h")
     if not umbrella.exists():
         return False
     text = umbrella.read_text(encoding="utf-8")
@@ -971,7 +1043,10 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     if last_endif == -1:
         return False
     _textio.write_text(
-        umbrella, text[:last_endif] + include_line + "\n" + text[last_endif:]
+        umbrella,
+        order_umbrella_includes(
+            text[:last_endif] + include_line + "\n" + text[last_endif:], cfg
+        ),
     )
     return True
 
@@ -1759,31 +1834,11 @@ def run(
                 R.owned_packaging(R.render(R.CMAKE_PC_IN, ctx), pc_in.name),
             )
 
-        # Write or update the umbrella header
+        # The umbrella header. Its include line, and the root CMakeLists
+        # wiring, are written after the manifest is saved below (gh-1985).
         umbrella = INC.path(root, f"{pkg}.h")
         if not umbrella.exists():
             _write(umbrella, R.render(R.UMBRELLA_H, ctx))
-        if insert_umbrella_include(umbrella, comp):
-            print(f"  update  {umbrella}")
-
-        # Insert add_subdirectory + target_sources into the `# ── Components`
-        # sentinel section — matches `_object.run`'s placement so a project
-        # built via `jm new --object` and one built via `jm new` + `jm object`
-        # have identical CMakeLists, and so `jm apply`'s aggregate reconcile
-        # is a no-op on either.
-        # gh-1311: a header-only core is an INTERFACE library, which has no
-        # objects to fold into lib<pkg>. Wiring one in is a CONFIGURE error
-        # -- `$<TARGET_OBJECTS:>` is resolved then -- so the project would
-        # not build at all. `_libwiring`'s detector already reaches the same
-        # answer from the tree (it matches `add_library(... OBJECT`); this is
-        # the creation-time half, which emits rather than detects.
-        splice_cmake_component(
-            root,
-            pkg,
-            comp,
-            dep_core_libs(depends_on)
-            + ([] if header_only else [f"{comp}_core"]),
-        )
     else:
         # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile
         mf_path = root / "Makefile"
@@ -1863,6 +1918,33 @@ def run(
     cfg[comp].update(reset_impl_decl or {})
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
+
+    if build == "cmake":
+        # gh-1985: AFTER the save. Both writers place *comp* where `apply`
+        # does, by the order of the manifest on disk, and until it is saved
+        # that manifest has no *comp* to place -- the include went to the
+        # bottom and the block to the top, so a split layout (fragments load
+        # sorted) got the order the commands ran in, which `apply` rewrote.
+        if insert_umbrella_include(root, comp):
+            print(f"  update  {umbrella}")
+        # The add_subdirectory + target_sources, in the `# ── Components`
+        # section -- the same writer `_object.run` uses, so a project built
+        # via `jm new --object` and one built via `jm new` + `jm object` have
+        # identical CMakeLists, and `jm apply`'s aggregate reconcile is a
+        # no-op on either.
+        # gh-1311: a header-only core is an INTERFACE library, which has no
+        # objects to fold into lib<pkg>. Wiring one in is a CONFIGURE error
+        # -- `$<TARGET_OBJECTS:>` is resolved then -- so the project would
+        # not build at all. `_libwiring`'s detector already reaches the same
+        # answer from the tree (it matches `add_library(... OBJECT`); this is
+        # the creation-time half, which emits rather than detects.
+        splice_cmake_component(
+            root,
+            pkg,
+            comp,
+            dep_core_libs(depends_on)
+            + ([] if header_only else [f"{comp}_core"]),
+        )
 
     print()
     if _hint:
