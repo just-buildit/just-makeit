@@ -780,8 +780,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
                 ("module", "sorts-first", "c-dep"),
                 ("module", "sorts-last", "c-dep")],
                *_stale("CMakeLists.txt")),
-    **_entries("gh-2073", [("add", "state", "view")],
-               "status:KWARGS ! native/src/mod/mod_ext_v.c"),
     ("remove", "function", "apps"): {
         "gh-2075": frozenset({
             "status:exit 1", f"apply:refused {_REMOVE_FN}",
