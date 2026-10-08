@@ -1497,9 +1497,25 @@ def _main() -> None:
         elif len(args) == 3:
             key, value = args[1], args[2]
             if key == "version":
+                # gh-2069: the author declares the version, so every copy
+                # follows -- the generated ones `_projversion` owns, and the
+                # app `apply` re-renders (a PEP 723 script carries it).
+                # Reported by the bytes each write leaves, as `apply` does.
+                from . import _apply, _app, _projversion
+                from . import _report
+
+                before = _apply._tree_digests(root)
                 cfg.setdefault("project", {})["version"] = value
                 C.save(root, cfg)
+                written, unwritable = _projversion.sync(root, cfg)
+                app_written = _app.replay(root, cfg)
                 print(f"version = {value!r}")
+                for verb, rel in _apply._changed_report(
+                    root, before, [C.FILENAME, *written, *app_written]
+                ):
+                    print(f"  {verb:<6}  {rel}")
+                for msg in unwritable:
+                    _report.warn(msg, gates=True)
             else:
                 print(f"error: unknown config key '{key}'", file=sys.stderr)
                 sys.exit(1)

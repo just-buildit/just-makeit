@@ -38,6 +38,8 @@ from . import _incpath as INC
 from . import _csym as CSYM
 from . import _textio
 
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -1638,6 +1640,43 @@ def run(
     print()
     _print_summary(target, root, name, pkg)
     return [*written, root / C.FILENAME]
+
+
+def replay(root: Path, cfg: dict) -> list[Path]:
+    """Re-render the app ``[app]`` records, quietly.
+
+    gh-184: the recorded app, not a default one -- passing the record's
+    target, name and source keeps the replay from rewriting it to
+    ``<project>/<first object>``. The verb's own progress is swallowed: the
+    caller reports these writes by the bytes they leave (gh-1477), so an
+    unchanged app says nothing. The warning that edits were discarded goes
+    to stderr and is not swallowed; it fires only when the bytes differ.
+
+    One call for every command that must leave the app `apply` writes:
+    `apply` itself, and `jm config version` (gh-2069), whose new version a
+    PEP 723 script carries.
+
+    Returns
+    -------
+    list of Path
+        Every path the replay wrote (see :func:`run`); empty when the
+        manifest records no app.
+    """
+    rec = C.app_config(cfg)
+    if not rec:
+        return []
+    with contextlib.redirect_stdout(io.StringIO()):
+        return run(
+            root,
+            cfg,
+            target=rec.get("target", "c"),
+            name=rec.get("name"),
+            object_=rec.get("object"),
+            function_=rec.get("function"),
+            module=rec.get("module"),
+            flags=rec.get("flags"),
+            commands=rec.get("commands"),
+        )
 
 
 def _run_c(

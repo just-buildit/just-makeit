@@ -4056,33 +4056,17 @@ def _apply_manifest(
                 _invariants.file_for(root, cfg, obj, C.module_of(cfg, obj))
             )
 
-    # gh-184: re-materialise the recorded app, not a default one. Passing
-    # the [app] record's target/name/object keeps `jm apply` from rewriting
-    # it to <project>/<first object>.
+    # gh-184: re-materialise the recorded app, not a default one.
     #
     # gh-1477: BEFORE the report, with the verb's own progress captured, so
     # its writes are reported by the bytes they leave like every other write
     # here. It ran after the summary and printed its own unconditional
     # `update` lines, so an unchanged app project announced three rewrites on
-    # every apply. Its warning that edits were discarded goes to stderr and
-    # is not captured: it fires only when the bytes really differ.
-    app_written: list = []
-    _app_rec = C.app_config(cfg)
-    if _app_rec:
-        from . import _app
+    # every apply. `_app.replay` is the one call, shared with `jm config
+    # version` (gh-2069).
+    from . import _app
 
-        with contextlib.redirect_stdout(io.StringIO()):
-            app_written = _app.run(
-                root,
-                cfg,
-                target=_app_rec.get("target", "c"),
-                name=_app_rec.get("name"),
-                object_=_app_rec.get("object"),
-                function_=_app_rec.get("function"),
-                module=_app_rec.get("module"),
-                flags=_app_rec.get("flags"),
-                commands=_app_rec.get("commands"),
-            )
+    app_written = _app.replay(root, cfg)
 
     # gh-1474: after the LAST write -- the formatter pass, the link-check
     # tables, the invariants file, the app -- each path decided by the bytes
