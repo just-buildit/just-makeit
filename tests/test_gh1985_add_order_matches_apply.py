@@ -30,6 +30,9 @@ the order `apply` does not list, and the scenario must reach it and leave
 functions outside `_apply` that read the sort. An adder reached only from
 inside `apply`'s replay is exempt, also by derivation -- `apply` re-sorts
 everything the replay leaves (`test_apply_orders_whatever_the_replay_left`).
+And the order is the one `apply` wrote before the fix, so no project that
+was in sync is reported stale by it
+(`test_the_order_is_the_one_apply_always_wrote`).
 """
 
 from __future__ import annotations
@@ -54,19 +57,36 @@ ORDER_FNS = {"order_sections", "order_umbrella_includes"}
 # ── Deriving the adders from the source ──────────────────────────────────────
 
 
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
 def _modules() -> "dict[str, ast.Module]":
+    """jm's library modules, by dotted name under the package (``_init``,
+    ``_context._state``) -- the name a frame's ``__name__`` gives too."""
     out = {}
     for path in sorted(SRC.rglob("*.py")):
-        if "templates" in path.parts or "examples" in path.parts:
+        rel = path.relative_to(SRC).with_suffix("")
+        if rel.parts[0] in ("templates", "examples"):
             continue
-        out[path.stem] = ast.parse(path.read_text(encoding="utf-8"))
+        out[".".join(rel.parts)] = ast.parse(path.read_text(encoding="utf-8"))
     return out
+
+
+def _own(fn: ast.AST):
+    """*fn*'s own nodes: a nested function is its own frame, so its body is
+    its own caller, not the enclosing function's."""
+    todo = list(ast.iter_child_nodes(fn))
+    while todo:
+        node = todo.pop()
+        yield node
+        if not isinstance(node, _DEFS):
+            todo.extend(ast.iter_child_nodes(node))
 
 
 def _functions(tree: ast.Module):
     """Every function in *tree*, by its own name."""
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, _DEFS):
             yield node
 
 
@@ -85,7 +105,7 @@ def _aliases(tree: ast.Module, names: "set[str]") -> "dict[str, str]":
 def _references(fn: ast.AST, local: "dict[str, str]") -> "set[str]":
     """Which of *local*'s targets *fn* names -- called or passed along."""
     out = set()
-    for node in ast.walk(fn):
+    for node in _own(fn):
         if isinstance(node, ast.Name) and node.id in local:
             out.add(local[node.id])
         elif isinstance(node, ast.Attribute) and node.attr in local.values():
@@ -98,41 +118,42 @@ def _callers(
 ) -> "set[str]":
     """``module.function`` for every function naming one of *names*."""
     out = set()
-    for stem, tree in mods.items():
+    for name, tree in mods.items():
         local = _aliases(tree, names)
         for fn in _functions(tree):
-            if fn.name in names or stem in skip:
+            if fn.name in names or name in skip:
                 continue
             if _references(fn, local):
-                out.add(f"{stem}.{fn.name}")
+                out.add(f"{name}.{fn.name}")
     return out
 
 
 def _sites(mods: "dict[str, ast.Module]", target: str) -> "set[str]":
     """Every function that refers to *target* (``module.function``)."""
-    tmod, tfn = target.split(".")
+    tmod, tfn = target.rsplit(".", 1)
+    leaf = tmod.rsplit(".", 1)[-1]
     out = set()
-    for stem, tree in mods.items():
-        modnames = {tmod} if stem != tmod else set()
-        fnnames = {tfn} if stem == tmod else set()
+    for name, tree in mods.items():
+        modnames = {leaf} if name != tmod else set()
+        fnnames = {tfn} if name == tmod else set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 for a in node.names:
-                    if a.name == tmod:
+                    if a.name == leaf:
                         modnames.add(a.asname or a.name)
-                    if node.module and node.module.endswith(tmod):
+                    if node.module and node.module.endswith(leaf):
                         if a.name == tfn:
                             fnnames.add(a.asname or a.name)
         for fn in _functions(tree):
-            for node in ast.walk(fn):
+            for node in _own(fn):
                 hit = (
                     isinstance(node, ast.Attribute)
                     and node.attr == tfn
                     and isinstance(node.value, ast.Name)
                     and node.value.id in modnames
                 ) or (isinstance(node, ast.Name) and node.id in fnnames)
-                if hit and f"{stem}.{fn.name}" != target:
-                    out.add(f"{stem}.{fn.name}")
+                if hit and f"{name}.{fn.name}" != target:
+                    out.add(f"{name}.{fn.name}")
     return out
 
 
@@ -146,7 +167,7 @@ def derived():
     """
     mods = _modules()
     writers = {
-        c.split(".")[1] for c in _callers(mods, ORDER_FNS, skip={"_apply"})
+        c.rsplit(".", 1)[1] for c in _callers(mods, ORDER_FNS, skip={"_apply"})
     }
     adders = _callers(mods, writers)
     replay_only = {a for a in adders if _sites(mods, a) == {"_apply._replay"}}
@@ -365,8 +386,9 @@ def _record_writers(monkeypatch) -> "set[str]":
 
     def wrap(fn):
         def recording(*args, **kwargs):
-            code = sys._getframe(1).f_code
-            seen.add(f"{Path(code.co_filename).stem}.{code.co_name}")
+            caller = sys._getframe(1)
+            mod = caller.f_globals["__name__"].removeprefix("just_makeit.")
+            seen.add(f"{mod}.{caller.f_code.co_name}")
             return fn(*args, **kwargs)
 
         return recording
