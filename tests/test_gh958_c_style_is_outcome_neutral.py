@@ -148,6 +148,12 @@ _STEPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("perf", ("perf",)),
     ("regenerate", ("regenerate", "gain")),
     ("split-objects", ("split-objects",)),
+    ("migrate-to-fragments", ("migrate-to-fragments",)),
+    ("record", ("record", "gain", "sample", "--type", "float")),
+    ("app", ("app", "--object", "gain", "--module", "filt", "--target", "c")),
+    ("ci", ("ci",)),
+    ("adopt", ("adopt", "--all")),
+    ("config", ("config", "version", "0.2.0")),
     ("upgrade", ("upgrade",)),
     ("apply", ("apply",)),
 )
