@@ -341,7 +341,12 @@ def test_control_still_demonstrates_it(tmp_path):
 
 def test_bind_reads_whose_reset_it_is_off_the_body(tmp_path):
     """`jm bind` has no manifest: a field reset() does not assign is kept."""
+    from test_bind import undeclare
+
     proj = _project(tmp_path, {"kept": _reset_lines("reset_impl")})
+    # bind refuses a declared component (gh-2072): undeclared, the header
+    # and the reset() body are all it reads.
+    undeclare(proj, "kept")
     r = run_cli("bind", "kept", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
     (pyi,) = _pyis(proj)

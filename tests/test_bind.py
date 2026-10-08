@@ -1,9 +1,11 @@
 """Integration tests for the ``jm bind`` prototype.
 
 The MVP only handles the *filter* template shape. The test contract is:
-scaffold a project with ``jm`` (the canonical source of truth), delete
-the generated ``_ext.c``, run ``_bind.run``, and assert the regenerated
-binding is byte-identical to the original.
+scaffold a project with ``jm`` (the canonical source of truth), take the
+component out of the manifest -- ``jm bind`` refuses one the manifest
+declares (gh-2072), so this is what makes the scaffold the hand-written
+header bind is for -- delete the generated ``_ext.c``, run ``_bind.run``,
+and assert the regenerated binding is byte-identical to the original.
 
 Byte-identity is the strongest possible bind-is-correct signal — it
 proves the parser-driven path and the TOML-driven path agree on every
@@ -25,6 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit import _config as C
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._bind import (
@@ -34,8 +37,23 @@ from just_makeit._bind import (
 )
 
 
+def undeclare(root: Path, comp: str) -> None:
+    """Take standalone *comp* out of the manifest, keeping its files.
+
+    ``jm bind`` refuses a component the manifest declares: that binding is
+    ``jm apply``'s (gh-2072). Undeclared, a scaffold is what bind is for --
+    a hand-written header nothing else describes -- and one whose binding
+    ``apply`` has already rendered, so bind's output can be held to it byte
+    for byte. Either manifest layout: ``C.save`` drops a fragment file.
+    """
+    cfg = C.load(root)
+    del cfg[comp]
+    C.save(root, cfg)
+
+
 def _scaffold_filter(root: Path) -> Path:
-    """Scaffold a default filter; return the path to <comp>_ext.c."""
+    """Scaffold a default filter and undeclare it; return the path to
+    <comp>_ext.c."""
     new_run(
         "my_dsp",
         root,
@@ -43,6 +61,7 @@ def _scaffold_filter(root: Path) -> Path:
         [("gain", "float", "1.0f")],
         c_prefix=None,
     )
+    undeclare(root, "my_filter")
     return root / "native" / "src" / "my_filter" / "my_filter_ext.c"
 
 
@@ -76,6 +95,7 @@ class TestBindByteIdenticalToScaffold:
         )
         ext_c = root / "native" / "src" / "accumulator" / "accumulator_ext.c"
         original = ext_c.read_text(encoding="utf-8")
+        undeclare(root, "accumulator")
 
         ext_c.unlink()
         bind_run(root, "accumulator")
