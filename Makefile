@@ -388,7 +388,11 @@ GATES_LOCAL_ONLY =
 # where leaving them out of ci.yml entirely would have been an accident.
 # `wheel` builds the artifact ci.yml's per-PR artifact smoke installs
 # (gh-1632): a build step the smoke gates, not a gate itself.
-GATES_PROVISION = install-deps install-deps-dev tool-install setup wheel
+# `coverage-shard` is the same shape (gh-2078): it leaves one shard's data
+# for `coverage-gate` to judge, and gates nothing alone. `make gates` runs the
+# gate unsharded, over the whole suite.
+GATES_PROVISION = install-deps install-deps-dev tool-install setup wheel \
+                  coverage-shard
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
 # Two commands because a report is not a gate — the standard splits them so CI
@@ -407,8 +411,9 @@ GATES_PROVISION = install-deps install-deps-dev tool-install setup wheel
 # changing the speed and the threshold in one step means a red build tells you
 # nothing about which did it. Raise it once CI has reported 90% a few times.
 COVERAGE_MIN     ?= 87
+COVERAGE_JUNIT    = --junitxml=junit.xml -o junit_family=legacy
 COVERAGE_REPORTS  = --cov=just_makeit --cov-report=xml --cov-report=term \
-                    --junitxml=junit.xml -o junit_family=legacy
+                    $(COVERAGE_JUNIT)
 
 # gh-978: count the tests that drive the shipped CLI. Both paths are ABSOLUTE,
 # and that is the entire fix — a test that runs `jm` in a scaffolded project
@@ -430,10 +435,54 @@ COVERAGE_REPORTS  = --cov=just_makeit --cov-report=xml --cov-report=term \
 # holds it is `coverage-subprocess-check` in local.mk.
 COVERAGE_ENV      = COVERAGE_PROCESS_START=$(CURDIR)/pyproject.toml \
                     COVERAGE_FILE=$(CURDIR)/.coverage
-COVERAGE_BASE     = $(COVERAGE_ENV) $(DEV_RUN) pytest $(PYTEST_PARALLEL) \
-                    $(EXAMPLES_IGNORE) $(COVERAGE_REPORTS)
+COVERAGE_RUN      = $(COVERAGE_ENV) $(DEV_RUN) pytest $(PYTEST_PARALLEL) \
+                    $(EXAMPLES_IGNORE)
+COVERAGE_BASE     = $(COVERAGE_RUN) $(COVERAGE_REPORTS)
 COVERAGE_CMD      = $(COVERAGE_BASE)
-COVERAGE_GATE_CMD = $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN)
+
+# gh-2078: CI runs the suite as COVERAGE_SHARDS jobs, then gates ONCE.
+#
+# Measured on CI before the split (draft #2082): Coverage took 41.7 min of
+# its 45-min timeout on an AMD EPYC 7763, and 42 of 55 PR-head runs
+# (2026-10-05..08) took 28 min or more. All of it was pytest; combining the
+# ~2000 per-process data files took <= 35 s.
+#
+#   make coverage-shard COVERAGE_SHARD=K   one job per K in 1..N. Runs the
+#       test FILES that shard K owns (tests/_shard.py: a SHA-1 of the path,
+#       so complete, disjoint and registration-free) and leaves its data and
+#       junit.xml in COVERAGE_SHARD_ROOT/K/. No threshold: half a suite's
+#       percentage means nothing.
+#   make coverage-gate COVERAGE_FROM_SHARDS=1   combines every shard's data
+#       under COVERAGE_SHARD_ROOT, refuses unless exactly N are there (one
+#       missing shard can still clear the threshold on its own), and applies
+#       COVERAGE_MIN to the union.
+#
+# Plain `make coverage-gate` is unchanged: the whole suite in one run, gated
+# -- what `make gates` runs. Locally, CI's path is the two lines above with
+# K = 1..N in turn. The coverage CLI runs WITHOUT COVERAGE_ENV: with
+# COVERAGE_PROCESS_START set, `coverage combine` would measure itself and
+# leave a data file of its own.
+COVERAGE_SHARDS      = 2
+COVERAGE_SHARD       =
+COVERAGE_SHARD_ROOT  = coverage-shards
+COVERAGE_FROM_SHARDS =
+COVERAGE_SHARD_DIR   = $(COVERAGE_SHARD_ROOT)/$(COVERAGE_SHARD)
+COVERAGE_SHARD_CMD   = $(COVERAGE_RUN) \
+                       --jm-shard=$(COVERAGE_SHARD)/$(COVERAGE_SHARDS) \
+                       --cov=just_makeit --cov-report= $(COVERAGE_JUNIT)
+COVERAGE_SHARD_DATA  = $(wildcard $(COVERAGE_SHARD_ROOT)/*/.coverage)
+COVERAGE_COMBINE_CMD = n=$(words $(COVERAGE_SHARD_DATA)); \
+    if [ "$$n" -ne $(COVERAGE_SHARDS) ]; then \
+        echo "coverage-gate: $$n shard data files under" \
+             "$(COVERAGE_SHARD_ROOT)/, want $(COVERAGE_SHARDS)"; \
+        exit 1; \
+    fi; \
+    $(DEV_RUN) coverage combine $(COVERAGE_SHARD_DATA) && \
+    $(DEV_RUN) coverage xml && \
+    $(DEV_RUN) coverage report --precision=2 --fail-under=$(COVERAGE_MIN)
+
+COVERAGE_GATE_CMD = $(if $(COVERAGE_FROM_SHARDS),$(COVERAGE_COMBINE_CMD),\
+                    $(COVERAGE_BASE) --cov-fail-under=$(COVERAGE_MIN))
 
 # ── Build ────────────────────────────────────────────────────────────────────
 # No WHEEL_CMD override: standard.mk's default is `uv build --wheel`, which is

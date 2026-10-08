@@ -494,14 +494,30 @@ jobs:
       - name: Smoke-test the shipped jm-run-tests entry point
         run: jm-run-tests tests/test_lint_ssot.py -q
 
-  coverage:
-    name: Coverage
+  # gh-2078: the suite under coverage, split by test FILE across
+  # COVERAGE_SHARDS runners (tests/_shard.py), then combined and gated ONCE
+  # by `coverage` below. One job ran 41.7 min of a 45-min timeout on an AMD
+  # EPYC 7763, and the CPU behind `ubuntu-latest` is a lottery: a census of
+  # 12 jobs drew 7763, 9V74, 9V45 and Xeon 8573C, ~1.7x apart.
+  #
+  # Python 3.14, not 3.12: coverage.py measures with sys.monitoring by
+  # default there (`env.SYSMON_DEFAULT`), and branch coverage needs 3.14 for
+  # it. Measured on CI (draft #2082): on one 7763 the unsharded run took
+  # 957 s, against 1649 s with the C tracer forced on 3.14; 3.12 took 2454 s
+  # on another 7763. Its TOTAL row missed 983 statements against 3.12's 984.
+  #
+  # The matrix is 1..N for the Makefile's COVERAGE_SHARDS;
+  # tests/test_gh2078_coverage_shards.py refuses any other list.
+  coverage-shard:
+    name: Coverage shard ${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
-    # Stopgap: 17-24 min measured, and three runs were killed at the old 30.
-    # Back to 30 once #1374 has made it fit.
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       # Runs the same suite, so it needs the same clone -- the skip gate
       # is not satisfied by the `test` job alone (gh-1442).
@@ -511,7 +527,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install just-makeit and build deps
         run: |
@@ -519,23 +535,61 @@ jobs:
           uv pip install -e .
           uv run jm-install-deps ${{ runner.temp }}/jm-venv
 
-      # `make coverage-gate`, not a bespoke pytest line: the Makefile is the
-      # SSOT for how a tool runs, and this invocation was the only one in the
-      # repo that CI alone knew — so the command gating every merge was the
-      # command nobody could run locally. `make lint` and `make test-examples`
-      # already followed this; coverage was the outlier.
-      #
-      # The *gate*, not the report: `-q` used to keep the percentage out of
-      # every log, so "coverage" was enforced by remembering to open Codecov.
-      # This fails the job when it drops below COVERAGE_MIN.
-      # gh-978: `COVERAGE_PROCESS_START: pyproject.toml` used to live here, and
-      # a workflow is the wrong place for it twice over — the Makefile is the
-      # SSOT for how a tool runs, and the value was RELATIVE, so each `jm`
-      # subprocess resolved it against the scaffolded project it had cd'd into
-      # (which has a pyproject.toml of its own). Both paths are absolute in
-      # COVERAGE_ENV now, so a local `make coverage` measures what CI measures.
-      - name: Run full test suite with coverage
-        run: make coverage-gate
+      # Which CPU this shard drew. gh-2078 could not say whether a slow run
+      # was the suite or the runner until a draft PR printed this line: the
+      # job log names the image and the region, never the hardware.
+      - name: Runner CPU
+        run: lscpu | grep -m1 'Model name'
+
+      # `make`, not a bespoke pytest line: the Makefile is the SSOT for how a
+      # tool runs. gh-978's COVERAGE_ENV (absolute COVERAGE_PROCESS_START and
+      # COVERAGE_FILE) lives there, and `coverage-subprocess-check` runs
+      # first, in this environment.
+      - name: Run this shard of the suite with coverage
+        run: make coverage-shard COVERAGE_SHARD=${{ matrix.shard }}
+
+      # Even from a red shard: its junit.xml carries the failures to the
+      # Codecov upload below. Its data does not exist then, which is what
+      # makes the gate refuse.
+      - name: Hand the shard to the gate
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage-shards/
+          include-hidden-files: true
+
+  coverage:
+    name: Coverage
+    needs: [changes, coverage-shard]
+    # Skips with the shards (src=false) and runs on a docs-only diff as they
+    # do. `!cancelled()` runs it after a FAILED shard too, so that shard's
+    # test report still reaches Codecov; the gate itself then fails on the
+    # missing data, and `CI passed` sees the failed shard as well.
+    if: ${{ !cancelled() && needs.changes.outputs.src == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.14"
+
+      - run: make setup
+
+      # merge-multiple: each artifact holds `coverage-shards/<K>/`, so this
+      # rebuilds the tree a local run of every shard leaves.
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: coverage-shard-*
+          path: coverage-shards
+          merge-multiple: true
+
+      # The *gate*, not a report: COVERAGE_MIN applies here, once, to the
+      # union of every shard's data, and never to a shard alone.
+      - name: Combine the shards and gate the total
+        run: make coverage-gate COVERAGE_FROM_SHARDS=1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7.1.1
@@ -544,12 +598,17 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
 
+      - name: List the shards' test reports
+        id: junit
+        if: ${{ !cancelled() }}
+        run: echo "files=$(ls coverage-shards/*/junit.xml | paste -sd, -)" >> "$GITHUB_OUTPUT"
+
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: junit.xml
+          files: ${{ steps.junit.outputs.files }}
           report_type: test_results
           fail_ci_if_error: false
 
@@ -753,7 +812,8 @@ jobs:
   # a broken strict build merged green; docs.yml now only deploys. It runs on
   # any source change, and on a version bump too when the docs moved -- a
   # release rewrites CHANGELOG.md. A docs-only diff keeps it, with `lint`
-  # and `coverage` (the full suite on one leg), and skips the rest.
+  # and `coverage` (the full suite: its shards, then the gate), and skips
+  # the rest.
   docs:
     name: Docs (strict build)
     needs: changes
@@ -779,7 +839,8 @@ jobs:
     timeout-minutes: 10
     needs: [changes, toolchain, test, examples, examples-windows,
             install-deps-smoke,
-            consumer-smoke, coverage, lint, bench, wheel, artifact-smoke,
+            consumer-smoke, coverage-shard, coverage, lint, bench, wheel,
+            artifact-smoke,
             docker, docs]
     if: always()
     # Inputs as env, so the script below reads only shell variables and

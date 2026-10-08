@@ -511,7 +511,8 @@ just-buildit/.github README under "Makefile standard".
     the matrix like a bump (`src=false`), and `docker` still publishes
     (`tested == 'true'`). Fail-safe: any doubt runs everything.
 - A docs-only diff (gh-1801 item 3) skips every `ci.yml` job but `lint`,
-    `coverage` (the full suite on one leg) and `docs`: `changes.yml` runs
+    `coverage` (the full suite: `coverage-shard` jobs, then one gate,
+    gh-2078) and `docs`: `changes.yml` runs
     `make ci-docs` (CI_DOCS_RE minus the Makefile's CI_DOCS_EXCLUDE_RE), and
     the rest skip only on an explicit `code=false`. `docs` runs `make docs-check` (strict build + docs tests) and gates `CI passed`;
     `docs.yml` only deploys.
