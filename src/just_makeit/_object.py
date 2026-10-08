@@ -27,7 +27,7 @@ from typing import Iterator
 from . import _color as Color
 from . import _config as C
 from . import _csym as CSYM
-from ._docstring import class_import_line
+from ._docstring import class_import_line, class_import_path
 from . import _modplatforms
 from . import _procglobal
 from . import _context as Ctx
@@ -450,6 +450,12 @@ def _make_object_ctx(
         {
             "module": module,
             "Module": _to_title(module),
+            # gh-2054: where the class imports from, for the doctests
+            # `make_step_ctx` writes below. `module` is the id, which names
+            # the wrong package once the module declares `package`.
+            "module_dir": C.module_package_resolved(
+                INC.manifest(owner), module
+            ),
             "package": pkg,
             "PACKAGE": pkg.upper(),
             "project": pkg.replace("_", "-"),
@@ -1234,7 +1240,7 @@ def _make_view_ctx(
             ctx["Component"],
             merged_methods,
             pkg=pkg,
-            module=module,
+            module_dir=ctx["module_dir"],
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
             serializable=C.is_serializable(cfg, obj),
@@ -1384,7 +1390,7 @@ def _make_view_ctx(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 _vinit,
-                class_import_line(pkg, ctx["Component"], module),
+                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
                 manifest_doc=view.get("doc", ""),
@@ -1501,7 +1507,7 @@ def build_component_ctxs(
                 ctx["Component"],
                 C.methods(cfg, obj),
                 pkg=pkg,
-                module=module,
+                module_dir=ctx["module_dir"],
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
                 serializable=C.is_serializable(cfg, obj),
@@ -1615,7 +1621,7 @@ def build_component_ctxs(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 C.init_params(cfg, obj),
-                class_import_line(pkg, ctx["Component"], module),
+                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
                 ctx.get("py_create_args", ""),
                 doc_blocks=_doc_blocks,
                 manifest_doc=cfg.get(obj, {}).get("doc", ""),
@@ -2712,7 +2718,7 @@ def run(
             ctx["Component"],
             [],
             pkg=pkg,
-            module=module,
+            module_dir=ctx["module_dir"],
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
             serializable=serializable,
@@ -2959,16 +2965,16 @@ def run(
     # pypath (src/<pkg>/dsp/filters/) for a dotted module id.
     # gh-523: honour the module's `package` override so the per-object tests
     # and benchmarks land beside the .so, not in a directory named after the
-    # module that nothing else uses.
-    _mp = C.module_paths(module)
-    _out_pkg = C.module_package(cfg, module) or _mp.pypath
+    # module that nothing else uses. gh-2054: from the one answer, which the
+    # element contract's directory reads too -- it belongs beside this test.
+    _out_pkg = ctx["module_dir"]
     pkg_mod_dir = root / "src" / pkg / _out_pkg
     # The generated test/bench import `from <package>.<module> import <Class>`,
     # which must name the package the .so actually lands in — the `package`
     # override when set, else the module's own pypath as a dotted import path.
     # Without a package override this is exactly the module id (flat or
     # dotted), so unpackaged modules render byte-identically.
-    _py_ctx = {**ctx, "module": _out_pkg.replace("/", ".")}
+    _py_ctx = {**ctx, "module": class_import_path("", _out_pkg)}
 
     def r_py(tmpl):
         return R.render_scaffold_py(tmpl, _py_ctx)

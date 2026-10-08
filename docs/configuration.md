@@ -1197,12 +1197,22 @@ ranges error cleanly.
 | `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
 | `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
 | `platforms = ["linux", "macos"]`      | (TOML only)                                       | 🟡           |
+| `package = "<dir>"`                   | (TOML only)                                       | 🟡 (gh-523)  |
 
 `reexports` folds names from a *sibling* extension (typically a `no_generate`
 module whose binding/`.pyi` are hand-written) into this module's generated
 `__init__.py` — both the import block and `__all__` — so the re-export glue
 regenerates from the manifest instead of being a hand-edit `jm apply` would
 clobber. Output is single-line, matching the rest of the package.
+
+`package` (gh-523) puts the module's Python in a sibling package's directory
+instead of one named after the module — `package = "io"` lands a `reader`
+module in `src/<pkg>/io/`, beside the classes already there. That package's `__init__.py`
+re-exports the module's classes, so they import from `<pkg>.<package>`, and
+everything jm writes that names one follows it (gh-2054): the `.pyi` and
+runtime doctests, `test_<obj>.py` and the element contract beside it, an
+`object` reference's `.pyi` import, and the `pep723` and `console` apps. The
+extension keeps its own name inside it (`<pkg>/<package>/<module>.so`).
 
 #### A module built on some platforms only
 
@@ -1687,17 +1697,18 @@ The nested tables (and the view's `create_error`) are written by
 
 ### `[module.<name>]`
 
-| Key                                                      | Type                    | Notes                                                                   |
-| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| `objects`                                                | array of strings        | Objects in declaration order                                            |
-| `functions`                                              | array                   | Module-level functions (see below)                                      |
-| `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                   |
-| `platforms`                                              | array of strings        | Build the extension on these platforms only (gh-1463)                   |
-| `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                      |
-| `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory` |
-| `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)          |
-| `functions_in_core`                                      | string `"true"`         | Every function body in `<m>_core.c`, one TU (gh-247)                    |
-| `doc`                                                    | string                  | The module's docstring                                                  |
+| Key                                                      | Type                    | Notes                                                                                              |
+| -------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `objects`                                                | array of strings        | Objects in declaration order                                                                       |
+| `functions`                                              | array                   | Module-level functions (see below)                                                                 |
+| `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                                              |
+| `platforms`                                              | array of strings        | Build the extension on these platforms only (gh-1463)                                              |
+| `package`                                                | string                  | Package directory the module's Python lands in; its classes import from `<pkg>.<package>` (gh-523) |
+| `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                                                 |
+| `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory`                            |
+| `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)                                     |
+| `functions_in_core`                                      | string `"true"`         | Every function body in `<m>_core.c`, one TU (gh-247)                                               |
+| `doc`                                                    | string                  | The module's docstring                                                                             |
 
 ### `[[module.<name>.functions]]`
 

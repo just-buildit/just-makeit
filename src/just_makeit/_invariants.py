@@ -213,19 +213,25 @@ def _foreign_dtype(rec: dict) -> str:
     return "np.float64"
 
 
-def file_for(root: Path, pkg: str, comp: str, module: str = "") -> Path:
-    """Where the generated invariants live for *comp*.
+def file_for(root: Path, cfg: dict, comp: str, module: str = "") -> Path:
+    """Where the generated invariants live for *comp*, in module *module*.
 
     Beside the user-owned ``test_<comp>.py``, which for an object in a
     module is the MODULE's tests directory -- not the package's. Written
     to the package root the file also imported from the wrong place, and
     the two were the same mistake: an object in a module lives in the
     module, on both faces (gh-1432).
+
+    "The module's directory" is `_config.module_package_resolved`'s, the
+    one `_object` writes ``test_<comp>.py`` into. This read the module id's
+    path, so a module declaring ``package`` (gh-523) got its contract in a
+    directory nothing else uses, importing from a module that does not hold
+    the class (gh-2054). It takes *cfg* so that no caller can hand it the
+    id in place of the answer.
     """
-    pypath = C.module_paths(module).pypath if module else ""
-    base = root / "src" / pkg
-    if pypath:
-        for part in pypath.split("/"):
+    base = root / "src" / C.project_name(cfg)
+    for part in C.module_package_resolved(cfg, module).split("/"):
+        if part:
             base = base / part
     return base / "tests" / f"test_{comp}_invariants.py"
 
@@ -312,7 +318,12 @@ def render(
         # use, so this file cannot disagree with them about where the class
         # is importable from. `from <pkg> import <cls>` is simply wrong for
         # an object in a module, and doppler met it as an ImportError.
-        _class_import_line(pkg, cls, C.module_of(cfg, comp) or ""),
+        # gh-2054: from the module's package, not its id.
+        _class_import_line(
+            pkg,
+            cls,
+            C.module_package_resolved(cfg, C.module_of(cfg, comp)),
+        ),
         "",
         "",
     ]
@@ -508,7 +519,7 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     )
     core_c = core.read_text(encoding="utf-8") if core.exists() else ""
     text = render(cfg, comp, pkg, found, core_c, root)
-    out = file_for(root, pkg, comp, C.module_of(cfg, comp) or "")
+    out = file_for(root, cfg, comp, C.module_of(cfg, comp))
     if not text:
         if out.exists():
             out.unlink()
@@ -530,7 +541,7 @@ def sync(root: Path, cfg: dict, comp: str, pkg: str) -> None:
     so a contract that a command created, rewrote or deleted reads the same
     whichever command did it (gh-1984).
     """
-    out = file_for(root, pkg, comp, C.module_of(cfg, comp) or "")
+    out = file_for(root, cfg, comp, C.module_of(cfg, comp))
     existed = out.exists()
     if not write(root, cfg, comp, pkg):
         return

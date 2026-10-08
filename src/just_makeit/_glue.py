@@ -74,7 +74,9 @@ def component_ctx(
     # gh-1208: a synthesized doctest must name the module segment when the
     # component lives in one. The manifest records membership one way, so
     # ask it here; "" for a standalone object leaves the line unchanged.
-    _module_id = C.module_of(cfg, object_name)
+    # gh-2054: the segment is the module's PACKAGE, which is its id only
+    # while it declares no `package`.
+    _module_dir = C.module_package_resolved(cfg, C.module_of(cfg, object_name))
     state_vars_list = C.state_vars(cfg, object_name)
     arg_type_ = C.arg_type(cfg, object_name)
     return_type_ = C.return_type(cfg, object_name)
@@ -92,6 +94,8 @@ def component_ctx(
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": C.project_version(cfg),
+            # The slot `make_step_ctx` reads, as `_object` seeds it.
+            "module_dir": _module_dir,
             **INC.ctx_slots(cfg),
         }
     )
@@ -163,7 +167,7 @@ def component_ctx(
             Component,
             C.methods(cfg, object_name),
             pkg=pkg,
-            module=_module_id,
+            module_dir=_module_dir,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, object_name),
             serializable=C.is_serializable(cfg, object_name),
@@ -287,7 +291,7 @@ def component_ctx(
         state_vars_list,
         C.is_no_state(cfg, object_name),
         init_params,
-        class_import_line(pkg, Component, _module_id),
+        class_import_line(pkg, Component, _module_dir),
         ctx.get("py_create_args", ""),
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
@@ -333,7 +337,7 @@ def component_ctx(
                 state_vars_list,
                 C.is_no_state(cfg, object_name),
                 init_params,
-                class_import_line(pkg, Component, _module_id),
+                class_import_line(pkg, Component, _module_dir),
                 ctx.get("py_create_args", ""),
                 doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
                 manifest_doc=cfg.get(object_name, {}).get("doc", ""),

@@ -127,8 +127,9 @@ make && ./build/<name> --help
 
 ### `--target console`
 
-Generates `src/<pkg>/cli.py` (or `src/<pkg>/<module>/cli.py` for a
-`--function`/`--object` inside a module) — an `argparse` CLI over the Python
+Generates `src/<pkg>/cli.py` (or `cli.py` in the module's package directory
+for a `--function`/`--object` inside a module: `src/<pkg>/<module>/`, or the
+module's `package` when it declares one) — an `argparse` CLI over the Python
 bindings, one `--<param>` per constructor scalar plus any `--flag`s, with the
 matching process loop. Adds `<name>` to `[project.scripts]` in `pyproject.toml`
 (snippet printed if `tomlkit`/`pyproject.toml` is unavailable).

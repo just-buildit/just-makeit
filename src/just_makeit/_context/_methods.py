@@ -1474,7 +1474,7 @@ def make_methods_ctx(
     codecs: dict | None = None,
     builtin_members: "frozenset[str]" = frozenset(),
     enums: dict[str, list[str]] | None = None,
-    module: str = "",
+    module_dir: str = "",
     records: "list[dict] | None" = None,
     properties: "list[dict] | None" = None,
     *,
@@ -1494,10 +1494,13 @@ def make_methods_ctx(
 
     pkg and py_create_args are used in the generated PyMethodDef docstrings
     to produce working doctests; omitting them produces functional but
-    package-anonymous examples. *module* is the manifest module id when the
-    component lives in one — without it the synthesized example says
+    package-anonymous examples. *module_dir* is
+    `_config.module_package_resolved`'s answer when the component lives in a
+    module — without it the synthesized example says
     ``from <pkg> import <Component>``, which is right for a standalone object
-    and does not import for a module one (gh-1208).
+    and does not import for a module one (gh-1208). It is not the module id,
+    which names the wrong package once the module declares ``package``
+    (gh-2054).
 
     enums (gh-1021) is the ``[[enum]]`` SSOT, read only to write a REAL choice
     into a generated doctest for an enum parameter. The C those parameters
@@ -2236,7 +2239,7 @@ def make_methods_ctx(
             _in_dtype_str = "np.float32"
             _in_example = "x"
         _from_line = (
-            ["    >>> " + class_import_line(pkg, Component, module)]
+            ["    >>> " + class_import_line(pkg, Component, module_dir)]
             if pkg
             else []
         )

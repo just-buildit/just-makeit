@@ -47,6 +47,7 @@ from . import _targets
 from . import _render as R
 from . import _report
 from . import _types as T
+from ._docstring import class_import_path
 from ._init import _to_title
 from ._init import _write as _write_guarded
 
@@ -997,10 +998,12 @@ def _splice_cmake(
     _textio.write_text(cmake, text)
 
 
-def _update_pyproject_scripts(
-    root: Path, name: str, pkg: str, module: str | None = None
-) -> bool:
+def _update_pyproject_scripts(root: Path, name: str, dotted: str) -> bool:
     """Add/update [project.scripts] in pyproject.toml using tomlkit.
+
+    *dotted* is the console module's import path, which the caller derived
+    from where it wrote ``cli.py`` -- one derivation, so the entry point
+    cannot name a module the scaffold did not write.
 
     Returns True on success, False if tomlkit is absent or pyproject.toml
     does not exist (caller should print manual instructions instead)."""
@@ -1017,7 +1020,6 @@ def _update_pyproject_scripts(
         doc.add("project", _tk.table())
     if "scripts" not in doc["project"]:
         doc["project"].add("scripts", _tk.table())
-    dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
     doc["project"]["scripts"][name] = f"{dotted}:main"
     _textio.write_text(pyproject, _tk.dumps(doc))
     return True
@@ -1266,9 +1268,13 @@ def _build_ctx(
     version = C.project_version(cfg)
     Component = _to_title(component)
     # gh-187: the pep723 face imports the class by absolute path; for a module
-    # object that's `<pkg>.<module>`, not `<pkg>`. `package` stays the pip
-    # distribution name (dependency line); `import_pkg` is the import path.
-    import_pkg = f"{pkg}.{module}" if module else pkg
+    # object that's the module's package, not `<pkg>`. `package` stays the
+    # pip distribution name (dependency line); `import_pkg` is the import
+    # path. gh-2054: the PACKAGE, which is the module id's path only while
+    # the module declares no `package`.
+    import_pkg = class_import_path(
+        pkg, C.module_package_resolved(cfg, module or "")
+    )
 
     all_flags = _ctor_flags(cfg, component) + _extra_flags(flags)
     arg_t = C.arg_type(cfg, component)
@@ -1620,7 +1626,9 @@ def run(
             name,
             pkg,
             console_tmpl,
-            module=C.app_config(cfg).get("module") or None,
+            module_dir=C.module_package_resolved(
+                cfg, C.app_config(cfg).get("module") or ""
+            ),
         )
     else:
         written = _run_pep723(root, ctx, name, pep_tmpl)
@@ -1708,23 +1716,28 @@ def _run_console(
     name: str,
     pkg: str,
     tmpl: str = R.APP_CONSOLE_CLI,
-    module: str | None = None,
+    module_dir: str = "",
 ) -> list[Path]:
     # gh-187: scope the console module under its owning subpackage when the app
     # is built from a module object/function, so it never collides with a
     # `src/<pkg>/cli.py` already used by a `cli` subpackage.
+    # gh-2054: that subpackage is *module_dir*,
+    # `_config.module_package_resolved`'s answer -- the package that
+    # re-exports the class the template's `from . import` names. The module
+    # id's directory is it only while the module declares no `package`.
     cli_dir = root / "src" / pkg
-    if module:
-        cli_dir = cli_dir / module
+    for part in module_dir.split("/"):
+        if part:
+            cli_dir = cli_dir / part
     cli_py = cli_dir / "cli.py"
-    dotted = f"{pkg}.{module}.cli" if module else f"{pkg}.cli"
+    dotted = f"{class_import_path(pkg, module_dir)}.cli"
     # gh-962's twin, still live here: `exists()` was read AFTER the write,
     # so this always said `update`. gh-1336 routes it through the shared
     # guard, which is also where the ordering gets fixed.
     _verb = "update" if cli_py.exists() else "create"
     _write_guarded(cli_py, R.render(tmpl, ctx), _verb)
 
-    updated = _update_pyproject_scripts(root, name, pkg, module)
+    updated = _update_pyproject_scripts(root, name, dotted)
     if updated:
         print(f"  update  {root / 'pyproject.toml'}")
         return [cli_py, root / "pyproject.toml"]
