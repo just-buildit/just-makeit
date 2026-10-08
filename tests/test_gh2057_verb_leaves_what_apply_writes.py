@@ -188,7 +188,13 @@ _OM = frozenset({"o", "module"})
 
 SHAPES: "dict[str, Shape]" = {
     "empty": Shape((), (), frozenset()),
-    "standalone": Shape((), (("object", "o"), _impl_source), _O),
+    # gh-2072: with a header nothing declares, which every verb on `o` must
+    # leave alone and `jm bind` is for.
+    "standalone": Shape(
+        (),
+        (("object", "o"), _impl_source, _foreign_header),
+        _O | {"foreign"},
+    ),
     "module": Shape((), (*_MOD, _impl_source), _OM, "mod"),
     # gh-2054: the class is importable from the package, not the module id.
     "package": Shape(
@@ -287,13 +293,6 @@ SHAPES: "dict[str, Shape]" = {
     "no-c-prefix": Shape(("--no-c-prefix",), (("object", "o"),), _O),
     # gh-2062: a vendored C dependency, and nothing else yet.
     "c-dep": Shape(("--c-dep", "vend"), (), frozenset({"c-dep"})),
-    # gh-2072: a header nothing declares, beside a declared `o` (a manifest
-    # declaring nothing is one `apply` refuses). It does not offer `o`:
-    # every case on `o` already runs on `standalone`, this tree less a
-    # header.
-    "foreign": Shape(
-        (), (("object", "o"), _foreign_header), frozenset({"foreign"})
-    ),
 }
 
 
