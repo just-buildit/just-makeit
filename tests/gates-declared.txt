@@ -138,6 +138,7 @@ test_gh2008_array_args_keys
 test_gh2009_kind_scalar_rows_refuse
 test_gh2054_module_package_import_path
 test_gh2055_record_redeclare
+test_gh2057_verb_leaves_what_apply_writes
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot

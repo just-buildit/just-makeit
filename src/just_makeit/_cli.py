@@ -1942,7 +1942,10 @@ COMMANDS: "dict[str, str]" = {
 # pass is a no-op unless the project opts in, and idempotent when it does, so
 # running it after a command that wrote no C costs a manifest read; skipping
 # it after one that did leaves the glue in jm's style while `apply` writes the
-# project's, which `status --check` then reports.
+# project's, which `status --check` then reports. `adopt` never reaches the
+# pass -- it ends in `sys.exit` -- and does not need it: it hands a fragment
+# to `apply`, which formats what it writes (gh-917), and its packaging
+# templates are not C.
 _C_EMITTING_COMMANDS = frozenset(
     cmd for cmd, kind in COMMANDS.items() if kind == MUTATING
 )

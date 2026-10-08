@@ -18,12 +18,24 @@ GATE: for every command `_cli.COMMANDS` classifies MUTATING -- the one
 
       `jm new`, the one CREATES command, is held to the same two on each
       flag set it is given, and every shape is a sequence of verbs that must
-      itself end in sync.
+      itself end in sync. On the shapes and after `jm remove`, a third:
 
-A verb without a case fails `test_every_mutating_command_has_a_case`. A case
-red today is ratcheted in `RATCHET` with its issue and the exact findings it
-is red with, so it fails for that cause or not at all (gh-1652); the ratchet
-may only shrink.
+      (c) the files `apply` renders whole are the ones a fresh `jm new`,
+          given the same manifest and an `apply`, renders: the incremental
+          path against the from-scratch one, and the only oracle here that
+          sees a file nothing derives any more.
+
+Registration-free where the source can say it: the commands are the
+dispatch's (`test_every_dispatched_command_is_classified`), a mutating
+command without a case fails `test_every_mutating_command_has_a_case`, and
+a flag its parser accepts that no case passes fails
+`test_every_flag_has_a_case`. The cases themselves -- a representative
+argv per render path -- are the one hand list, held to those three.
+
+A run red today is ratcheted in `RATCHET` under the issue each of its
+findings belongs to, and must report exactly those: so it fails for that
+cause or not at all (gh-1652), a fix must delete its part of the entry, and
+the ratchet only shrinks.
 """
 
 from __future__ import annotations
@@ -40,6 +52,8 @@ import pytest
 from _jmrun import run_cli
 from just_makeit import _cli
 from just_makeit import _config as C
+from just_makeit import _createonly as CO
+from just_makeit._upgrade import _manifest_fragments
 from test_cli_dispatch import _dispatched_commands
 
 
@@ -662,10 +676,116 @@ NEW_CASES: "dict[str, tuple]" = {
 }  # fmt: skip
 
 
-#: (verb, case, shape) -> (issue, the findings it is red with). Only ever
-#: shrinks; an entry is checked against the exact findings, so it fails for
-#: its issue's cause or not at all (gh-1652).
-RATCHET: "dict[tuple[str, str, str], tuple[str, frozenset]]" = {}
+# ── The ratchet ──────────────────────────────────────────────────────────────
+#
+# Every run red when this gate landed, keyed (verb, case, shape) -- or
+# ("shape", name, "") / ("new", name, "") -- and split by the issue each
+# finding belongs to. A run must report EXACTLY its entry's findings: one
+# that has gone away is a fix, and its part of the entry must go with it in
+# the same change; one that is new is a new red, which needs a fix or an
+# issue of its own. So an entry fails for its issue's cause or not at all
+# (gh-1652), and the ratchet can only shrink.
+
+
+def _stale(*paths: str) -> "tuple[str, ...]":
+    """Glue `status` reports STALE and `apply` rewrites: both oracles."""
+    return tuple(
+        f"{o} {p}" for p in paths for o in ("status:STALE ~", "apply:~")
+    )
+
+
+#: `jm config version` writes the manifest and none of the copies (gh-2069).
+_VERSION = tuple(
+    f"status:VERSION ! {p}"
+    for p in ("CMakeLists.txt", "Doxyfile", "bootstrap.toml",
+              "native/src/p_lib.c", "pyproject.toml")
+)  # fmt: skip
+#: Printed beside a red status by a shape whose module function has no
+#: timed bench; it is not drift, so it goes when the red does.
+_SILENT = ("status:SILENT ~ native/benchmarks/bench_mod_core.c",)
+#: Removing a module's last object renders the module the way a module with
+#: objects is rendered; `apply` renders an object-less one (gh-2070).
+_EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
+#: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
+_APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
+#: `jm module` before `package` is set leaves the module id's stub (gh-2064).
+_MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
+
+
+def _entries(issue: str, keys, *found: str) -> dict:
+    return {key: {issue: frozenset(found)} for key in keys}
+
+
+_REMOVE_FN = "error: function 'f' not found in module 'mod'."
+
+RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
+    **_entries(
+        "gh-2069",
+        [("config", "version", s) for s in (
+            "central", "dotted", "members", "members-in-module", "module",
+            "no-c-prefix", "package", "pair", "pair-in-module", "reverse",
+            "standalone", "struct", "struct-in-module", "view")],
+        *_VERSION,
+    ),
+    **_entries("gh-2069", [("config", "version", "function")],
+               *_VERSION, *_SILENT),
+    **_entries("gh-2069", [("config", "version", "apps")],
+               *_VERSION, *_SILENT, *_stale("f.py")),
+    # `make` writes no CMakeLists.txt and no <pkg>_lib.c.
+    **_entries("gh-2069", [("config", "version", "make")],
+               "status:VERSION ! Doxyfile", "status:VERSION ! bootstrap.toml",
+               "status:VERSION ! pyproject.toml"),
+    **_entries(
+        "gh-2070",
+        [("remove", "object", s) for s in (
+            "module", "pair-in-module", "struct-in-module",
+            "members-in-module", "view")],
+        *_EMPTIED,
+    ),
+    **_entries("gh-2070", [("remove", "object", "dotted")],
+               *_stale("native/src/dsp_filt/CMakeLists.txt",
+                       "native/src/dsp_filt/dsp_filt_ext.c")),
+    ("remove", "object", "package"): {
+        "gh-2070": frozenset(_EMPTIED),
+        "gh-2064": frozenset(_MOD_ORPHAN),
+    },
+    # The verb's first render does not read the doc source `apply` reads.
+    **_entries("gh-2071", [("method", "fn", "standalone")],
+               *_stale("native/src/o/o_ext.c", "src/p/o.pyi")),
+    # A module object's fragment: `apply` rewrites it, `status` does not
+    # compare it.
+    **_entries("gh-2071", [("method", "fn", s) for s in ("module", "package")],
+               "apply:~ native/src/mod/mod_ext_o.c"),
+    **_entries("gh-2071",
+               [("object", "delegates", s) for s in BASE],
+               *_stale("native/src/a/a_ext.c", "src/p/a.pyi")),
+    # `bind` renders from the header alone and drops what only the manifest
+    # declares. Decided on gh-2072: it will REFUSE a declared component, so
+    # its fix turns these runs into a refusal with the tree byte-identical.
+    **_entries("gh-2072",
+               [("bind", "bind", s) for s in ("members", "pair", "struct")],
+               *_stale("native/src/o/o_ext.c", "src/p/o.pyi")),
+    **_entries("gh-2062",
+               [("object", "standalone", "c-dep"),
+                ("module", "sorts-first", "c-dep"),
+                ("module", "sorts-last", "c-dep")],
+               *_stale("CMakeLists.txt")),
+    **_entries("gh-2073", [("add", "state", "view")],
+               "status:KWARGS ! native/src/mod/mod_ext_v.c"),
+    ("remove", "function", "apps"): {
+        "gh-2075": frozenset({
+            "status:exit 1", f"apply:refused {_REMOVE_FN}",
+            f"fresh:refused {_REMOVE_FN}"}),
+        "gh-2074": frozenset(_APP_ORPHAN),
+    },
+    **_entries("gh-2074",
+               [("shape", "apps", ""), ("remove", "object", "apps"),
+                ("remove", "module", "apps")],
+               *_APP_ORPHAN),
+    **_entries("gh-2064",
+               [("shape", "package", ""), ("remove", "module", "package")],
+               *_MOD_ORPHAN),
+}  # fmt: skip
 
 
 # ── Running a case ───────────────────────────────────────────────────────────
@@ -739,8 +859,11 @@ def findings(root: Path) -> "frozenset[str]":
     a = run_cli("apply", cwd=root)
     after = _tree(root)
     if a.returncode and _declares_nothing(root):
-        # `apply` refuses a manifest that declares nothing: it has nothing
-        # to materialize, so (b) cannot speak there and (a) is the oracle.
+        # `apply` refuses a manifest that declares nothing ("nothing to
+        # materialize"), and `status` stops early on one, so on such a tree
+        # (b) cannot speak and (a) checks less than it does elsewhere: the
+        # version copies and a c_dep's wiring go unchecked (gh-2076). The
+        # tree after removing the last component is one; (c) still sees it.
         assert after == before, "a refused `apply` wrote to the tree"
         return frozenset(out)
     if a.returncode:
@@ -759,6 +882,57 @@ def findings(root: Path) -> "frozenset[str]":
 def _declares_nothing(root: Path) -> bool:
     cfg = C.load(root)
     return not C.components(cfg) and not C.modules(cfg)
+
+
+def _rewritten_by_apply(root: Path) -> "dict[str, bytes]":
+    """The files `apply` renders whole from the manifest alone.
+
+    `_createonly`'s RECONCILED kind: not DERIVED, which follows the tree's
+    own sacred files by design and so legitimately differs from a rebuild.
+    """
+    out = {}
+    for rel, data in _tree(root).items():
+        rule = CO.classify(rel, root)
+        if rule is not None and rule.kind == CO.RECONCILED:
+            out[rel] = data
+    return out
+
+
+def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
+    """(c) The tree `apply` left, against a fresh `jm new` given the same
+    manifest and an `apply`.
+
+    It tests the incremental path against the from-scratch one, and it is
+    the oracle that sees a file nothing derives any more: neither `status`
+    (gh-1986) nor `apply` reports one that `apply` does not delete. Run
+    after `findings`, so the tree is `apply`'s.
+    """
+    _ok(base, ("new", "p", *shape.new))
+    other = base / "p"
+    for path in _manifest_fragments(other):
+        path.unlink()
+    for path in (root / C.FILENAME, *_manifest_fragments(root)):
+        rel = path.relative_to(root)
+        (other / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, other / rel)
+    out = set()
+    if not _declares_nothing(other):
+        a = run_cli("apply", cwd=other)
+        if a.returncode:
+            (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
+            out.add(f"fresh:refused {last}")
+    ours, theirs = _rewritten_by_apply(root), _rewritten_by_apply(other)
+    for rel in set(ours) | set(theirs):
+        if ours.get(rel) != theirs.get(rel):
+            mark = (
+                "only-tree"
+                if rel not in theirs
+                else "only-fresh"
+                if rel not in ours
+                else "~"
+            )
+            out.add(f"fresh:{mark} {rel}")
+    return frozenset(out)
 
 
 def _ok(root: Path, argv) -> None:
@@ -916,39 +1090,62 @@ def test_every_flag_has_a_case():
     assert not stale, f"UNCOVERED_FLAGS entries to delete: {stale}"
 
 
-def test_every_ratchet_entry_names_a_case_and_an_issue():
-    ids = {(v, c, s) for v, cs in CASES.items() for c in cs for s in SHAPES}
+def test_every_ratchet_entry_names_a_run_and_an_issue():
+    """An entry for a (verb, case, shape) that never runs would sit in the
+    ratchet forever, reading as known breakage; so would one citing no
+    issue, or expecting nothing."""
+    ids = {tuple(p.values) for p in _params()}
     ids |= {("new", c, "") for c in NEW_CASES}
     ids |= {("shape", s, "") for s in SHAPES}
-    for key, (issue, found) in RATCHET.items():
-        assert key in ids, key
-        assert re.fullmatch(r"gh-\d+", issue), (key, issue)
-        assert found, key
+    for key, by_issue in RATCHET.items():
+        assert key in ids, f"{key} is not a run of this gate"
+        assert by_issue, key
+        for issue, found in by_issue.items():
+            assert re.fullmatch(r"gh-\d+", issue), (key, issue)
+            assert found, (key, issue)
+        parts = list(by_issue.values())
+        overlap = [f for i, a in enumerate(parts) for f in a if any(
+            f in b for b in parts[i + 1:])]  # fmt: skip
+        assert not overlap, f"{key}: a finding cited for two issues"
 
 
 def _check(key: "tuple[str, str, str]", found: "frozenset[str]") -> None:
-    issue, expected = RATCHET.get(key, ("", frozenset()))
-    if issue and not found:
-        pytest.fail(
-            f"{key} is in sync now: delete its RATCHET entry ({issue})."
-        )
+    """*found* must be exactly what the ratchet expects for *key*."""
+    by_issue = RATCHET.get(key, {})
+    fixed = [issue for issue, part in by_issue.items() if not part & found]
+    expected = frozenset().union(*by_issue.values())
+    assert not fixed, (
+        f"{key} no longer reports what {', '.join(fixed)} ratcheted: delete"
+        f" that part of its RATCHET entry (the ratchet only shrinks)."
+    )
     assert found == expected, (
         f"{key}: the tree differs from what `jm apply` writes"
-        + (f" (ratcheted for {issue})" if issue else "")
-        + ":\n  "
-        + "\n  ".join(sorted(found ^ expected))
+        + (f" (ratcheted: {', '.join(by_issue)})" if by_issue else "")
+        + ".\n  new:  "
+        + "\n        ".join(sorted(found - expected))
+        + "\n  gone: "
+        + "\n        ".join(sorted(expected - found))
     )
 
 
 # ── The gate ─────────────────────────────────────────────────────────────────
 
 
+#: The verbs (c) runs after: the ones that take things away, where a file
+#: nothing derives any more is left behind. On `jm new` it would compare a
+#: tree with one built from the same flags and the same manifest -- itself.
+FRESH_VERBS = frozenset({"remove"})
+
+
 @pytest.mark.parametrize("name", sorted(SHAPES))
 def test_the_shape_leaves_what_apply_writes(tmp_path, name):
     """Every shape is a sequence of verbs: it ends in sync, or a verb
     below would be blamed for what the shape left."""
-    root = _build(tmp_path, SHAPES[name])
-    _check(("shape", name, ""), findings(root))
+    (tmp_path / "tree").mkdir()
+    (tmp_path / "fresh").mkdir()
+    root = _build(tmp_path / "tree", SHAPES[name])
+    found = findings(root) | fresh(root, SHAPES[name], tmp_path / "fresh")
+    _check(("shape", name, ""), found)
 
 
 @pytest.mark.parametrize("name", sorted(NEW_CASES))
@@ -958,9 +1155,14 @@ def test_new_leaves_what_apply_writes(tmp_path, name):
 
 
 @pytest.mark.parametrize("verb, cname, sname", list(_params()))
-def test_the_verb_leaves_what_apply_writes(shape_copy, verb, cname, sname):
+def test_the_verb_leaves_what_apply_writes(
+    shape_copy, tmp_path_factory, verb, cname, sname
+):
     case = CASES[verb][cname]
     shape = SHAPES[sname]
     root = shape_copy(sname)
     _ok(root, _expand(case.argv, shape))
-    _check((verb, cname, sname), findings(root))
+    found = findings(root)
+    if verb in FRESH_VERBS:
+        found |= fresh(root, shape, tmp_path_factory.mktemp("fresh"))
+    _check((verb, cname, sname), found)

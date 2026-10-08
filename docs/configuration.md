@@ -444,11 +444,11 @@ machine.
 !!! note "Turning it on in an existing project needs one `jm apply`"
 
     There is no `jm config` key for this — you add the lines above to
-    `just-makeit.toml` by hand. Formatting happens after a command that emits
-    C, so declaring it changes nothing on its own: the committed `*_ext.c` is
-    still 4-space while the tree `jm status` compares it against is now
-    house-styled, and the next `jm status --check` reports it stale and exits
-    1 on a tree you did not touch.
+    `just-makeit.toml` by hand. Formatting happens after a command that
+    changes the project, so declaring it changes nothing on its own: the
+    committed `*_ext.c` is still 4-space while the tree `jm status` compares
+    it against is now house-styled, and the next `jm status --check` reports
+    it stale and exits 1 on a tree you did not touch.
 
     `jm apply` reconciles it, once, permanently. Nothing is lost — the binding
     is generated glue, not your code. Do it in the same commit as the manifest
