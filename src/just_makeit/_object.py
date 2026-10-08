@@ -1907,6 +1907,53 @@ def render_module_ext_c(
     )
 
 
+def jm_owned_functions(
+    cfg: dict, ctx: dict, rendered: str
+) -> "tuple[str, ...]":
+    """Fragment functions jm regenerates rather than keeps as the author's.
+
+    A module fragment is sacred, so a re-render keeps each function body it
+    finds by name (gh-770). That is right for a wrapper the author may have
+    written, and wrong for one with no authoring path, whose every byte is
+    the manifest. Kept, those go on saying what the manifest USED to say.
+
+    - gh-541: the teardown wrappers of an object that declares
+      ``[<obj>.destroy]``. Whether ``__exit__`` propagates a failed close
+      is the declaration, and a body from before it swallows the status.
+    - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
+      the declared columns, so a kept one describes the old element while
+      the element contract asserts the new one.
+
+    One answer for both writers of a fragment: `_regenerate_module_now`
+    regenerates these instead of restoring them, and `jm apply`
+    (`_docsync.refresh_module_fragment_docs`) overwrites them from its
+    reference render. Two lists here would be the gh-541 pair again, with
+    one of them missing the next addition.
+
+    Parameters
+    ----------
+    cfg : dict
+        The project manifest.
+    ctx : dict
+        The fragment's component context (`build_component_ctxs`).
+    rendered : str
+        A FRESH render of the fragment, so the names come from jm's own
+        emission rather than from a file a formatter may have reshaped.
+
+    Returns
+    -------
+    tuple of str
+        The function names, in the order above.
+    """
+    _w = ctx["ComponentW"]
+    teardown = (
+        (f"{_w}_destroy", f"{_w}_exit")
+        if C.destroy_spec(cfg, ctx["component"])
+        else ()
+    )
+    return teardown + _record.dtype_builders(rendered)
+
+
 def _regenerate_module_now(
     root: Path,
     cfg: dict,
@@ -1999,14 +2046,9 @@ def _regenerate_module_now(
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            # gh-541: a declared destructor contract owns the teardown
-            # wrappers — see _restore_c_function_bodies' force_regen.
-            _w = ctx["ComponentW"]
-            _force = (
-                (f"{_w}_destroy", f"{_w}_exit")
-                if C.destroy_spec(cfg, ctx["component"])
-                else ()
-            )
+            # gh-541 / gh-2055: functions that are jm's glue for the OLD
+            # manifest, not the author's -- see jm_owned_functions.
+            _force = jm_owned_functions(cfg, ctx, frag)
             # gh-1012: same reasoning one feature over — a view's signature
             # override reuses a wrapper name the fragment already has, and
             # that existing body is jm's own glue for the OLD signature. The

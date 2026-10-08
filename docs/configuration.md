@@ -1988,7 +1988,11 @@ A standalone object's `<comp>_ext.c` is **glue**: jm renders it whole on
 every `apply`, and `jm status --check` fails if it drifts. A module
 object's `<mod>_ext_<obj>.c` is the same generated wrapper code, and is
 **sacred** by default: created once, thereafter only ever gaining missing
-members. So where a wrapper lives decides whether it receives fixes.
+members. So where a wrapper lives decides whether it receives fixes. The
+exceptions are the units with nothing in them to author, which jm keeps
+current in place: a `*_max_out` binding's arity, the `[[enum]]` tables, the
+teardown wrappers of an object that declares `[<obj>.destroy]`, and a
+record's dtype builders (gh-2055).
 
 `fragment` on the object changes that:
 

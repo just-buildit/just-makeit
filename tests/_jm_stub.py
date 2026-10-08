@@ -16,16 +16,25 @@ import re
 def drop_jm_stubs(text: str, *names: str) -> str:
     """*text* without jm's ``<<IMPLEMENT: name>>`` stub for each of *names*.
 
-    The two spellings jm stamps: an accessor's marker names its C symbol,
+    The spellings jm stamps: an accessor's marker names its C symbol,
     ``<<IMPLEMENT: o_get_level>>``; a method's names the method, with a
-    space before the close, ``<<IMPLEMENT: m >>``.
+    space before the close, ``<<IMPLEMENT: m >>``, and a shape note after
+    the name for some (gh-2055), ``<<IMPLEMENT: wait (borrowed view) >>``.
 
     Each stub must be present exactly once: a fixture that asks to drop one
     jm did not write is describing a tree it does not have.
+
+    Examples
+    --------
+    >>> src = "/* <<IMPLEMENT: wait (borrowed view) >> */\\nT\\nf()\\n{\\n}\\n"
+    >>> drop_jm_stubs(src, "wait")
+    ''
     """
     for name in names:
         pat = re.compile(
-            rf"/\* <<IMPLEMENT: {re.escape(name)} ?>> \*/\n.*?\n\}}\n", re.S
+            rf"/\* <<IMPLEMENT: {re.escape(name)}(?: \([^)]*\))? ?>> \*/"
+            r"\n.*?\n\}\n",
+            re.S,
         )
         assert len(pat.findall(text)) == 1, f"no single jm stub for {name}"
         text = pat.sub("", text)
