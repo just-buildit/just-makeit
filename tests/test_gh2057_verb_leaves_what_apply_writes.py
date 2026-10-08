@@ -704,15 +704,6 @@ def _stale(*paths: str) -> "tuple[str, ...]":
     )
 
 
-#: `jm config version` writes the manifest and none of the copies (gh-2069).
-_VERSION = tuple(
-    f"status:VERSION ! {p}"
-    for p in ("CMakeLists.txt", "Doxyfile", "bootstrap.toml",
-              "native/src/p_lib.c", "pyproject.toml")
-)  # fmt: skip
-#: Printed beside a red status by a shape whose module function has no
-#: timed bench; it is not drift, so it goes when the red does.
-_SILENT = ("status:SILENT ~ native/benchmarks/bench_mod_core.c",)
 #: Removing a module's last object renders the module the way a module with
 #: objects is rendered; `apply` renders an object-less one (gh-2070).
 _EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
@@ -729,22 +720,6 @@ def _entries(issue: str, keys, *found: str) -> dict:
 _REMOVE_FN = "error: function 'f' not found in module 'mod'."
 
 RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
-    **_entries(
-        "gh-2069",
-        [("config", "version", s) for s in (
-            "central", "dotted", "members", "members-in-module", "module",
-            "no-c-prefix", "package", "pair", "pair-in-module", "reverse",
-            "standalone", "struct", "struct-in-module", "view")],
-        *_VERSION,
-    ),
-    **_entries("gh-2069", [("config", "version", "function")],
-               *_VERSION, *_SILENT),
-    **_entries("gh-2069", [("config", "version", "apps")],
-               *_VERSION, *_SILENT, *_stale("f.py")),
-    # `make` writes no CMakeLists.txt and no <pkg>_lib.c.
-    **_entries("gh-2069", [("config", "version", "make")],
-               "status:VERSION ! Doxyfile", "status:VERSION ! bootstrap.toml",
-               "status:VERSION ! pyproject.toml"),
     **_entries(
         "gh-2070",
         [("remove", "object", s) for s in (

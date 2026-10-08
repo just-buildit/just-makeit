@@ -466,9 +466,9 @@ parser:
 
 **Supported keys**
 
-| Key       | Description                                          |
-| --------- | ---------------------------------------------------- |
-| `version` | Project version string stored in `just-makeit.toml`. |
+| Key       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version` | The project version. Writes `[project] version` and every generated copy `status` checks for it (`pyproject.toml`, `bootstrap.toml`, the root `CMakeLists.txt`'s `project(VERSION)`, the `Doxyfile`, `<pkg>_version()`), replacing only the value, and re-renders a `pep723` app (gh-2069). A copy the build derives is left alone; a copy that cannot hold the value (CMake takes integers only, so a pre-release) is named and left, and stays a `VERSION` finding. |
 
 ______________________________________________________________________
 
