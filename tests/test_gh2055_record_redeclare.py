@@ -470,4 +470,12 @@ def test_a_column_change_builds_and_passes(tmp_path, placement):
 
     s = run_cli("status", "--check", cwd=root)
     assert s.returncode == 0, s.stdout
+    # A clean build, so the change reaches the binary through jm's sources
+    # alone. Incrementally, macOS CI twice kept the binding object from the
+    # build above -- its log shows `o_core.c` recompiled and the binding not,
+    # though `jm record` had just rewritten it -- and the contract failed on
+    # the old dtype builder. The record and the edit land within about a
+    # second of that build, where a timestamp read to the second calls the
+    # object current; a clean build has no timestamps to misread.
+    shutil.rmtree(root / "build")
     _jm_test(root)

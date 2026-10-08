@@ -41,9 +41,17 @@ drift that was there anyway. `status --json`'s entries can.
 format pass for one command at a time (`if cmd in _C_EMITTING_COMMANDS and
 cmd != "<x>"`) and re-running the gate:
 
-    detected      function, warning, error, view
+    detected      function, warning, error, view, record
     not detected  method, property, perf, regenerate, split-objects,
-                  upgrade, apply
+                  upgrade, apply, app, ci, config, migrate-to-fragments,
+                  adopt
+
+`record` joined the set when gh-2057 derived it from `_cli.COMMANDS`: a
+re-declaration a member speaks re-renders the module (gh-2055), and with the
+pass skipped the styled leg kept `filt_ext.c` in jm's style. The other five
+it brought write no glue the pass formats -- `adopt` takes a fragment through
+`apply`, which formats what it writes (gh-917), and exits before the pass in
+any case.
 
 That is not four holes — it is where the hook is load-bearing. `apply` formats
 its own replay and syncs the formatted result, so the hook is redundant after
@@ -148,6 +156,18 @@ _STEPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("perf", ("perf",)),
     ("regenerate", ("regenerate", "gain")),
     ("split-objects", ("split-objects",)),
+    ("migrate-to-fragments", ("migrate-to-fragments",)),
+    # A member speaks `sample` (the fixture's `write`), so re-declaring it
+    # re-renders the module's glue (gh-2055) -- which the post-command pass
+    # then has to format; before gh-2057 `record` was not in the set.
+    (
+        "record",
+        ("record", "gain", "sample", "--type", "float", "--doc", "A sample."),
+    ),
+    ("app", ("app", "--object", "gain", "--module", "filt", "--target", "c")),
+    ("ci", ("ci",)),
+    ("adopt", ("adopt", "--all")),
+    ("config", ("config", "version", "0.2.0")),
     ("upgrade", ("upgrade",)),
     ("apply", ("apply",)),
 )
@@ -180,6 +200,13 @@ def _scaffold(root: Path, *, styled: bool) -> None:
     proj = root / "p"
     assert _cli("module", "filt", cwd=proj).returncode == 0
     assert _cli("object", "gain", "--module", "filt", cwd=proj).returncode == 0
+    # An element, and a member that speaks it, for the `record` step.
+    for argv in (
+        ("record", "gain", "sample", "--type", "float"),
+        ("method", "gain", "write", "--module", "filt",
+         "--arg-type", "sample[]", "--return-type", "bool"),
+    ):  # fmt: skip
+        assert _cli(*argv, cwd=proj).returncode == 0, argv
 
 
 def _drift(proj: Path) -> set[tuple[str, str]]:

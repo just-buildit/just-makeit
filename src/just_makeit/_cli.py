@@ -1854,10 +1854,10 @@ def _main() -> None:
         sys.exit(1)
 
     # gh-265: optional house-style pass over the generated C. No-op unless the
-    # manifest opts in via [project] c_style. `new` formats its own freshly
-    # created tree (its root is a subdir, not cwd), so it is handled in
-    # _new.run and excluded here. Only commands that emit/regenerate native C
-    # are swept; query/build commands leave the tree alone.
+    # manifest opts in via [project] c_style. Every command that changes the
+    # project in cwd is swept (`COMMANDS`, gh-2057); `new` formats its own
+    # freshly created tree (its root is a subdir, not cwd) in _new.run, and
+    # query/build commands leave the tree alone.
     if cmd in _C_EMITTING_COMMANDS:
         from . import _cfmt
         from . import _config as C
@@ -1873,25 +1873,79 @@ def _main() -> None:
             _pyfmt.format_project(root, _cfg)
 
 
-# Commands that write or regenerate native C/H and should trigger the optional
-# clang-format pass (gh-265). `new` self-formats; query/build/bench do not emit.
+# ── What each command does to the project tree (gh-2057) ──────────────────────
+#
+# One classification of every command `_main` dispatches, held complete
+# against the dispatch by `tests/test_gh2057_verb_leaves_what_apply_writes.py`
+# (an unclassified command fails it). Everything that asks "which commands
+# change the tree" reads this table: the post-command format pass below, and
+# that gate, which requires every MUTATING command to leave the tree `jm
+# apply` would write. A second, hand-kept list of the same answer had already
+# lost `record` and `app`.
+
+#: Writes a NEW project, in a subdirectory of the working directory. Not
+#: swept by the format pass, whose root is the working directory: `_new.run`
+#: formats its own tree.
+CREATES = "creates"
+
+#: Changes the project in the working directory. After one, the tree is the
+#: one `jm apply` would write -- `status --check` exits 0 and `apply` changes
+#: nothing -- and the format pass runs over it. A read-only MODE of one
+#: (`adopt --check`, `bind --check`, a bare `config`) does not change what
+#: the command is.
+MUTATING = "mutating"
+
+#: Reads the project and writes nothing.
+READ_ONLY = "read-only"
+
+#: Builds, tests, benchmarks or installs: writes build output, a scratch
+#: project or an environment, never a file `apply` owns.
+BUILD = "build"
+
+COMMANDS: "dict[str, str]" = {
+    "new": CREATES,
+    "adopt": MUTATING,
+    "add": MUTATING,
+    "app": MUTATING,
+    "apply": MUTATING,
+    "bind": MUTATING,
+    "ci": MUTATING,
+    "config": MUTATING,
+    "error": MUTATING,
+    "function": MUTATING,
+    "method": MUTATING,
+    "migrate-to-fragments": MUTATING,
+    "module": MUTATING,
+    "object": MUTATING,
+    "perf": MUTATING,
+    "property": MUTATING,
+    "record": MUTATING,
+    "regenerate": MUTATING,
+    "remove": MUTATING,
+    "split-objects": MUTATING,
+    "upgrade": MUTATING,
+    "view": MUTATING,
+    "warning": MUTATING,
+    "dry-run": READ_ONLY,
+    "script": READ_ONLY,
+    "status": READ_ONLY,
+    "version": READ_ONLY,
+    "bench": BUILD,
+    "build": BUILD,
+    "example": BUILD,
+    "install-deps": BUILD,
+    "test": BUILD,
+}
+
+# The commands the optional house-style pass sweeps (gh-265): every one that
+# changes the project in the working directory. Derived, never listed. The
+# pass is a no-op unless the project opts in, and idempotent when it does, so
+# running it after a command that wrote no C costs a manifest read; skipping
+# it after one that did leaves the glue in jm's style while `apply` writes the
+# project's, which `status --check` then reports. `adopt` never reaches the
+# pass -- it ends in `sys.exit` -- and does not need it: it hands a fragment
+# to `apply`, which formats what it writes (gh-917), and its packaging
+# templates are not C.
 _C_EMITTING_COMMANDS = frozenset(
-    {
-        "module",
-        "object",
-        "method",
-        "view",
-        "property",
-        "warning",
-        "error",
-        "function",
-        "add",
-        "perf",
-        "apply",
-        "regenerate",
-        "remove",
-        "upgrade",
-        "split-objects",
-        "bind",
-    }
+    cmd for cmd, kind in COMMANDS.items() if kind == MUTATING
 )
