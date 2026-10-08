@@ -2573,7 +2573,14 @@ def transplant_hand_written(
         # trailing built-ins. The sentinel (`None`) closes the order.
         out = _splice_rows(out, array_re, [*ex_rows, None], rows)
 
-    orphans = [n for n in orphans if n not in dropped_fns]
+    # gh-2055: a record dtype builder is never hand-written -- it is the
+    # declared columns -- and its cache is a file-scope static this does not
+    # carry, so a carried builder cannot even compile. One the reference
+    # lacks belongs to a member that is gone or no longer reads a record.
+    jm_builders = set(_record.dtype_builders(existing))
+    orphans = [
+        n for n in orphans if n not in dropped_fns and n not in jm_builders
+    ]
     if orphans:
         anchor = min(
             (
@@ -2798,16 +2805,27 @@ def refresh_module_fragment_docs(
             # the status — the exact silent revert this feature exists to
             # prevent. Overwrite those two from the reference. Scoped to
             # declaring objects, so every other fragment is untouched.
-            if C.destroy_spec(cfg, ctx["component"]):
-                _w = ctx["ComponentW"]
+            # gh-2055: and every record dtype builder, on the same licence
+            # -- it is the declared columns and nothing else, so a kept one
+            # describes the old element while the contract asserts the new.
+            # The one list is `_object.jm_owned_functions`, which the
+            # regenerate path reads too.
+            _own_names = O.jm_owned_functions(cfg, ctx, reference)
+            if _own_names:
                 _ref_funcs = O._extract_c_function_bodies(reference)
                 _own = {
-                    n: _ref_funcs[n]
-                    for n in (f"{_w}_destroy", f"{_w}_exit")
-                    if n in _ref_funcs
+                    n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
+                _was = O._extract_c_function_bodies(updated)
                 if _own:
                     updated = O._restore_c_function_bodies(updated, _own)
+                # Loud, as the enum tables above are: a builder that moves is
+                # a binding that now accepts different rows. Compared as
+                # tokens, so a formatted fragment is not "changed" by layout.
+                for _n in _record.dtype_builders(reference):
+                    if _n in _was and _n in _own:
+                        if _norm_unit(_was[_n]) != _norm_unit(_own[_n]):
+                            print(f"  update  {_rel}: record dtype {_n}")
             # gh-404: a serializable object whose sacred fragment predates the
             # flag (or was hand-written) lacks the state triplet — inject it.
             # (Usually already covered by the general splice above, since the

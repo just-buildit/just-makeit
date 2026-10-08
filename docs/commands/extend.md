@@ -880,8 +880,44 @@ cannot be described wrongly.
 
 Re-declaring a record replaces its field list, so a column added to the struct
 reaches the manifest by running the command again rather than by hand-editing.
+The members that speak it are re-rendered then -- the binding, the stub and the
+contract below -- so `status --check` stays clean; give the struct in `_core.h`
+the same columns, since the binding reads each one's offset from it (gh-2055).
 A duplicate column is refused: numpy takes the field names as a set and would
 silently drop one.
+
+Changing the C type an element stands for -- a scalar's `--type`, or a switch
+between scalar and struct -- is **refused** while any member speaks it. It
+changes their C prototypes, and jm never rewrites your definitions of them, so
+re-declared underneath them the header and your `_core.c` would disagree. The
+refusal names the members and prints the commands that make the change instead
+(gh-2055):
+
+```console
+$ just-makeit record ring sample --type float
+error: 'sample' on 'ring' is spoken by write and wait, so changing its C type
+(float _Complex -> float) changes their C prototypes, and jm never
+rewrites your definitions of them: re-declared under them, the header
+and your _core.c would disagree, and the tree would not build.
+To change it, take them out, re-declare, and add them back:
+  just-makeit remove method write --object ring
+  just-makeit remove method wait --object ring
+  # then delete dsp_ring_write() and dsp_ring_wait() by hand, as each remove's note says
+  just-makeit record ring sample \
+      --type float
+  just-makeit method ring write \
+      --arg-type "sample[]" \
+      --return-type size_t
+  just-makeit method ring wait \
+      --param n:size_t \
+      --arg-type void \
+      --return-type sample \
+      --borrow
+```
+
+A switch between scalar and struct stops after the re-declare and says how the
+new kind is spoken instead, since a struct is read back through
+`--record-dtype`. An element no member speaks yet is re-declared freely.
 
 ### Referencing it
 

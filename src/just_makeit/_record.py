@@ -293,6 +293,38 @@ def resolve_element(spec: str, records: "list[dict] | None") -> str:
     return element_ctype(rec) + suffix
 
 
+def speaks(m: dict, element: str) -> bool:
+    """True when member *m* names the declared *element* as a type.
+
+    gh-2055. The keys :func:`resolve_element` substitutes in, ``arg_type``
+    and ``return_type`` with any ``[]``, plus ``record_dtype``, which names
+    a struct element outright. Wider than `_invariants`' writer and reader
+    on purpose: a member that takes or returns ONE element is not half of a
+    pair, but its C prototype still spells the element's type, so a change
+    of that type changes it all the same.
+
+    Examples
+    --------
+    >>> speaks({"arg_type": "sample[]"}, "sample")
+    True
+    >>> speaks({"return_type": "sample"}, "sample")
+    True
+    >>> speaks({"record_dtype": "iq16_t"}, "iq16_t")
+    True
+    >>> speaks({"arg_type": "samples[]"}, "sample")
+    False
+    >>> speaks({"arg_type": "void", "return_type": "double"}, "sample")
+    False
+    """
+    names = {str(m.get("record_dtype") or "")}
+    for key in ("arg_type", "return_type"):
+        spec = str(m.get(key) or "")
+        while spec.endswith("[]"):
+            spec = spec[:-2]
+        names.add(spec)
+    return bool(element) and element in names
+
+
 def input_record(arg_type: str, records: "list[dict] | None") -> dict:
     """The record an ARRAY *arg_type* names, or ``{}`` (gh-1405).
 
@@ -650,6 +682,46 @@ def find_dtype(text: str, sid: str) -> str:
         re.DOTALL,
     )
     return m.group(0) if m else ""
+
+
+def dtype_builders(text: str) -> "tuple[str, ...]":
+    """The name of every dtype builder :func:`dtype_c` wrote into *text*.
+
+    gh-2055. A builder is jm's glue, not the author's: every byte of it is
+    the declared columns, and nothing in it can be authored. gh-770 keeps a
+    fragment's function bodies as the author's, and was wrong about these
+    both ways round:
+
+    - a re-render RESTORED the old builder by name, so the binding kept the
+      old columns while the element contract asserted the new ones; the
+      regenerating callers ask this of the fresh render
+      (`_object.jm_owned_functions`);
+    - a remove CARRIED a removed member's builder as hand-written, without
+      its cache static (a file-scope declaration, which the carry does not
+      take), so the module stopped compiling;
+      `_docsync.transplant_hand_written` asks this of the file on disk.
+
+    The second reads a fragment the project's formatter may have reshaped,
+    so the shape allows any whitespace between its tokens rather than
+    jm's own layout: GNU style's ``name (void)`` is the same builder.
+
+    Examples
+    --------
+    >>> c = dtype_c("W_read", "rec_t", [RecordField("n", "uint64_t", "")])
+    >>> dtype_builders("/* head */\\n" + c)
+    ('W_read_get_dtype',)
+    >>> dtype_builders("static PyArray_Descr *\\nW_x_get_dtype (void)\\n{")
+    ('W_x_get_dtype',)
+    >>> dtype_builders("static int other = 0;")
+    ()
+    """
+    return tuple(
+        re.findall(
+            r"^static\s+PyArray_Descr\s*\*\s*(\w+_get_dtype)\s*\(\s*void\s*\)",
+            text,
+            re.MULTILINE,
+        )
+    )
 
 
 # ── the Python face ─────────────────────────────────────────────────────────
