@@ -535,6 +535,12 @@ jobs:
           uv pip install -e .
           uv run jm-install-deps ${{ runner.temp }}/jm-venv
 
+      # Which CPU this shard drew. gh-2078 could not say whether a slow run
+      # was the suite or the runner until a draft PR printed this line: the
+      # job log names the image and the region, never the hardware.
+      - name: Runner CPU
+        run: lscpu | grep -m1 'Model name'
+
       # `make`, not a bespoke pytest line: the Makefile is the SSOT for how a
       # tool runs. gh-978's COVERAGE_ENV (absolute COVERAGE_PROCESS_START and
       # COVERAGE_FILE) lives there, and `coverage-subprocess-check` runs
