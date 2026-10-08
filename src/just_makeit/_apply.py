@@ -3709,13 +3709,6 @@ def _apply_manifest(
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
-    if not C.components(cfg) and not C.modules(cfg):
-        print(
-            "error: manifest declares no objects or modules — nothing to materialize.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     # gh-595 / gh-598: refuse to generate from a manifest declaring a type no
     # binding can convert. Left unchecked neither failed — an unknown
     # return_type produced a binding that dropped the C result and returned

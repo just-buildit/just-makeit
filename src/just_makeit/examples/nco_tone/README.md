@@ -148,9 +148,11 @@ Then apply the fragment:
 just-makeit apply ../tone.toml
 ```
 
-`jm apply` writes `find_package(Doppler REQUIRED)` into the managed
+`jm new` already wrote `find_package(Doppler REQUIRED)` into the managed
 `# ── External deps` block of the root `CMakeLists.txt`, plus the matching
-`find_dependency(Doppler)` for the installed CMake config.
+`find_dependency(Doppler)` for the installed CMake config. `jm apply` keeps
+that block in step with the manifest, so the table form adds
+`Requires.private: doppler` to it.
 
 ______________________________________________________________________
 

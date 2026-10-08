@@ -326,7 +326,8 @@ c_deps = ["io", "vendor_dsp"]   # add_subdirectory(native/src/io), …
 
 Each listed dir owns its `CMakeLists.txt` (define `add_library(<name>_core …)`,
 tests, etc.); modules then link it via `extra_link_libs = ["io_core", …]`. CLI:
-`jm new --c-dep DIR` (repeatable; at creation, afterwards edit the manifest).
+`jm new --c-dep DIR` (repeatable; at creation, and it writes the
+`add_subdirectory` itself). Afterwards edit the manifest and run `jm apply`.
 
 ### `no_generate` — hand-written extension modules
 

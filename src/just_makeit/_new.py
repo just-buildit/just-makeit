@@ -55,6 +55,49 @@ def _write(path: Path, content: str) -> None:
     print(f"  create  {path}")
 
 
+def _write_project_wiring(root: Path, project: str, cfg: dict) -> None:
+    """Write the root wiring *cfg*'s ``[project]`` table declares.
+
+    Two things in the root ``CMakeLists.txt`` follow from ``[project]``
+    alone, with no component involved: an ``add_subdirectory`` for each
+    ``c_deps`` entry, and the ``# ── External deps`` block that
+    ``find_packages`` / ``pkg_modules`` (and the public defines and link
+    libraries) fill. `apply` writes both, and until gh-2062 nothing else
+    did: a project was born without them, and its first component left
+    the file STALE. That went unseen because `status` stopped early on a
+    manifest declaring no component, so the project read clean exactly
+    while nothing was being checked (gh-2076).
+
+    So the creating command writes them, through the writers that put the
+    same lines in an existing project -- never a copy of their text:
+
+    - each c_dep through :func:`_libwiring.splice_cmake_component`, the
+      writer every adder wires its own block with, which places it in the
+      order `apply` uses (:func:`_libwiring.section_order` lists the
+      c_deps first);
+    - the external-deps block through `apply`'s own splice of it, which
+      leaves the file untouched when the manifest declares nothing.
+
+    Parameters
+    ----------
+    root : Path
+        The new project's directory. Its manifest must already be saved:
+        the c_dep splice reads the order of the blocks from it.
+    project : str
+        The package name, which names the combined C library targets.
+    cfg : dict
+        The manifest just saved.
+    """
+    from ._apply import _splice_cmake_external_deps
+    from ._libwiring import splice_cmake_component
+
+    for dep in C.c_deps(cfg):
+        splice_cmake_component(root, project, dep, [])
+    cmake = root / "CMakeLists.txt"
+    if _splice_cmake_external_deps(cmake, cfg):
+        print(f"  update  {cmake}")
+
+
 #: The generated README's backend-specific text, one row per build backend,
 #: filled into the slots of the ONE ``templates/doc/README.md``. Everything
 #: else in the README is the same for both backends -- the dependency install,
@@ -238,9 +281,8 @@ def run(
     )
     if c_prefix is not None:
         cfg.setdefault("project", {})["c_prefix"] = c_prefix
-    # External-dep declarations land in [project] so jm apply's
-    # _splice_cmake_external_deps picks them up and writes the
-    # `# ── External deps` sentinel block in the top CMakeLists.txt.
+    # External-dep declarations land in [project]; the root wiring they
+    # declare is written below, once the manifest holding them is saved.
     if find_packages:
         cfg.setdefault("project", {})["find_packages"] = list(find_packages)
     if pkg_modules:
@@ -299,6 +341,8 @@ def run(
         )
     print(f"  create  {root / C.FILENAME}")
     _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))
+    if build_system == "cmake":
+        _write_project_wiring(root, project, cfg)
     print()
 
     if object_names:

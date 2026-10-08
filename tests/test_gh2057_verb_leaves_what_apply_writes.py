@@ -765,11 +765,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
     **_entries("gh-2072",
                [("bind", "bind", s) for s in ("members", "pair", "struct")],
                *_stale("native/src/o/o_ext.c", "src/p/o.pyi")),
-    **_entries("gh-2062",
-               [("object", "standalone", "c-dep"),
-                ("module", "sorts-first", "c-dep"),
-                ("module", "sorts-last", "c-dep")],
-               *_stale("CMakeLists.txt")),
     ("remove", "function", "apps"): {
         "gh-2075": frozenset({
             "status:exit 1", f"apply:refused {_REMOVE_FN}",
@@ -777,12 +772,23 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
         "gh-2074": frozenset(_APP_ORPHAN),
     },
     **_entries("gh-2074",
-               [("shape", "apps", ""), ("remove", "object", "apps"),
-                ("remove", "module", "apps")],
+               [("shape", "apps", ""), ("remove", "object", "apps")],
                *_APP_ORPHAN),
     **_entries("gh-2064",
                [("shape", "package", ""), ("remove", "module", "package")],
                *_MOD_ORPHAN),
+    # Seen since gh-2076, when `status` and `apply` began to read a manifest
+    # that declares no component instead of stopping early: none yet, or the
+    # last one removed.
+    **_entries("gh-2069",
+               [("config", "version", s) for s in ("c-dep", "empty")],
+               *_VERSION),
+    ("remove", "module", "apps"): {
+        "gh-2075": frozenset({
+            "status:exit 1", f"apply:refused {_REMOVE_FN}",
+            f"fresh:refused {_REMOVE_FN}"}),
+        "gh-2074": frozenset(_APP_ORPHAN),
+    },
 }  # fmt: skip
 
 
@@ -898,14 +904,6 @@ def findings(root: Path) -> "frozenset[str]":
     before = _tree(root)
     a = run_cli("apply", cwd=root)
     after = _tree(root)
-    if a.returncode and _declares_nothing(root):
-        # `apply` refuses a manifest that declares nothing ("nothing to
-        # materialize"), and `status` stops early on one, so on such a tree
-        # (b) cannot speak and (a) checks less than it does elsewhere: the
-        # version copies and a c_dep's wiring go unchecked (gh-2076). The
-        # tree after removing the last component is one; (c) still sees it.
-        assert after == before, "a refused `apply` wrote to the tree"
-        return frozenset(out)
     if a.returncode:
         # A manifest `apply` refuses is a tree no `apply` can reach.
         (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
@@ -917,11 +915,6 @@ def findings(root: Path) -> "frozenset[str]":
             )
             out.add(f"apply:{mark} {rel}")
     return frozenset(out)
-
-
-def _declares_nothing(root: Path) -> bool:
-    cfg = C.load(root)
-    return not C.components(cfg) and not C.modules(cfg)
 
 
 def _rewritten_by_apply(root: Path) -> "dict[str, bytes]":
@@ -956,11 +949,10 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
         (other / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, other / rel)
     out = set()
-    if not _declares_nothing(other):
-        a = run_cli("apply", cwd=other)
-        if a.returncode:
-            (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
-            out.add(f"fresh:refused {last}")
+    a = run_cli("apply", cwd=other)
+    if a.returncode:
+        (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
+        out.add(f"fresh:refused {last}")
     ours, theirs = _rewritten_by_apply(root), _rewritten_by_apply(other)
     for rel in set(ours) | set(theirs):
         if ours.get(rel) != theirs.get(rel):
