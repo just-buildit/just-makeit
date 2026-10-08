@@ -55,7 +55,7 @@ jobs:
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 

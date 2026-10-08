@@ -736,7 +736,7 @@ jobs:
       # ilammy/msvc-dev-cmd, node20 and unmaintained), into its own
       # directory, so nothing else from the repo is on disk.
       - name: Fetch msvc-env.sh
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
         with:
           path: .jm-ci
           sparse-checkout: scripts/msvc-env.sh

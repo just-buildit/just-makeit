@@ -71,7 +71,7 @@ jobs:
     outputs:
       image: ${{ steps.pin.outputs.image }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # An empty reference would not fail anything: an empty `container:`
       # image runs the leg on the bare runner, which is the macOS path. So a
@@ -168,7 +168,7 @@ jobs:
       # point at, so the checks went from "no release tags in this clone" to
       # "v0.82.3 not reachable in this clone" -- a different sentence for the
       # same green skip. The suite's skip gate caught both.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -318,7 +318,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -393,7 +393,7 @@ jobs:
       # The latest-release lookup's rate limit (see `examples`, gh-1782).
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # clang-cl drives the MSVC toolchain as cl.exe does and needs its
       # environment (INCLUDE / LIB / the linker).
@@ -462,7 +462,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -505,7 +505,7 @@ jobs:
     steps:
       # Runs the same suite, so it needs the same clone -- the skip gate
       # is not satisfied by the `test` job alone (gh-1442).
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -565,7 +565,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           # `changelog-check` asks what THIS branch changed, which needs the
           # merge base. The default shallow checkout has neither the history
@@ -617,7 +617,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -649,7 +649,7 @@ jobs:
           - { name: "CMake 3.16.3", os: ubuntu-22.04, cmake: "3.16.3" }
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -702,7 +702,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.11"
@@ -763,7 +763,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
