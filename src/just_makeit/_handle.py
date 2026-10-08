@@ -28,8 +28,6 @@ guard*; everything else calls the reused helpers.
 
 from __future__ import annotations
 
-from . import _textio
-
 from pathlib import Path
 from typing import NamedTuple, TYPE_CHECKING
 
@@ -2562,18 +2560,8 @@ def materialize(
         render_pyi(cfg, module, doc_blocks),
     )
 
-    # Wire the top CMakeLists add_subdirectory (Modules sentinel), like
-    # _capsule.materialize does.
-    cmake_path = root / "CMakeLists.txt"
-    if cmake_path.exists():
-        text = cmake_path.read_text(encoding="utf-8")
-        sub = f"add_subdirectory(native/src/{mp.cname})\n"
-        if sub not in text:
-            sentinel = "# ── Modules"
-            if sentinel in text:
-                idx = text.index(sentinel)
-                idx = text.index("\n", idx) + 1
-                text = text[:idx] + sub + text[idx:]
-            else:
-                text += sub
-            _textio.write_text(cmake_path, text)
+    # Wire the top CMakeLists add_subdirectory (Modules sentinel) through
+    # _module.run's own writer, as _capsule.materialize does (gh-1985).
+    from ._libwiring import MODULES_SENTINEL, splice_cmake_component
+
+    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)

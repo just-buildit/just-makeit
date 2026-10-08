@@ -15,6 +15,10 @@ objects (modules stayed inline).
 Idempotent: a fully migrated project is a no-op. Runs incrementally — a
 project already split via `split-objects` (objects out, modules inline)
 just gets its modules moved and the `modules/*.toml` glob added.
+
+Fragments load sorted by path, so the manifest's component order can change;
+the root CMakeLists wiring and the umbrella header's includes are re-sorted
+to it (`_init.settle_aggregate_order`, gh-1985). No other file is touched.
 """
 
 from . import _textio
@@ -90,6 +94,13 @@ def run(root: Path) -> None:
         )
     _textio.write_text(cfg_path, manifest_text)
     print(f"  update  {cfg_path}  (include = {C._toml_string_array(globs)})")
+    # gh-1985: fragments load sorted by path, so the manifest's order -- the
+    # order `apply` lists components in -- just changed; the two files listing
+    # them follow it, or `status --check` reports them stale.
+    from ._init import settle_aggregate_order
+
+    for path in settle_aggregate_order(root):
+        print(f"  update  {path}  (order)")
 
     print()
     print(

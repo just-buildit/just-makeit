@@ -1561,8 +1561,11 @@ _EXTDEPS_END = "# ── End external deps"
 # *created* on demand (anchored on `# ── Components`) rather than spliced into,
 # so its absence from a project that has never declared a dependency is normal
 # and `apply` fixes it — reporting it would fire on every such project.
-_COMPONENTS_ANCHOR = "# ── Components"
-_MODULES_ANCHOR = "# ── Modules"
+#
+# gh-1985: and the strings themselves are `_libwiring`'s, where the writer
+# every adder calls reads them -- this had its own copy of both.
+_COMPONENTS_ANCHOR = _libwiring.COMPONENTS_SENTINEL
+_MODULES_ANCHOR = _libwiring.MODULES_SENTINEL
 
 CMAKE_SPLICE_ANCHORS = {
     _COMPONENTS_ANCHOR: "the add_subdirectory() wiring for standalone objects",
@@ -1871,6 +1874,10 @@ def _splice_cmake_components(
             and (m.group(1) not in known or m.group(1) in external)
         )
     )
+    # gh-1985: in the one order every writer of this file uses, from the
+    # REAL manifest -- not whatever order the replay happened to leave, which
+    # is what the adders, inserting by history, could not reproduce.
+    new_real = _libwiring.order_sections(new_real, cfg)
 
     if new_real != real:
         _textio.write_text(real_path, new_real)
@@ -2423,11 +2430,14 @@ def _add_cmake_block_for(
     idx = real.index(sentinel)
     idx = real.index("\n", idx) + 1
     new_real = real[:idx] + block + real[idx:]
-    _textio.write_text(real_path, new_real)
+    # gh-1985: then where a full `apply` puts it, not at the top.
+    _textio.write_text(real_path, _libwiring.order_sections(new_real, cfg))
     return True
 
 
-def _add_umbrella_include(real_path: Path, temp_path: Path, comp: str) -> bool:
+def _add_umbrella_include(
+    root: Path, real_path: Path, temp_path: Path, comp: str
+) -> bool:
     """Insert `#include "comp/comp_core.h"` into the umbrella header.
 
     Reads *temp_path* to confirm the include line is present in the
@@ -2435,9 +2445,13 @@ def _add_umbrella_include(real_path: Path, temp_path: Path, comp: str) -> bool:
     them gracefully).  If the line already exists in *real_path*, or is
     absent from *temp_path*, returns False without touching anything.
 
-    The line is inserted immediately before the final `#endif` so the
-    header remains valid C.
+    The write is :func:`_init.insert_umbrella_include`'s, the one inserter
+    (gh-1985): this kept a copy of it, which inserted before the final
+    `#endif` and stopped there -- so `apply --only` put the include last
+    wherever a full `apply` would put it.
     """
+    from ._init import insert_umbrella_include
+
     include_line = f'#include "{INC.core_include(comp, real_path)}"'
     real = real_path.read_text(encoding="utf-8")
     if include_line in real:
@@ -2445,14 +2459,7 @@ def _add_umbrella_include(real_path: Path, temp_path: Path, comp: str) -> bool:
     temp = temp_path.read_text(encoding="utf-8")
     if include_line not in temp:
         return False
-
-    # Insert before the last #endif
-    last_endif = real.rfind("#endif")
-    if last_endif == -1:
-        return False
-    new_real = real[:last_endif] + include_line + "\n" + real[last_endif:]
-    _textio.write_text(real_path, new_real)
-    return True
+    return insert_umbrella_include(root, comp)
 
 
 def _sync_aggregates(
@@ -2513,9 +2520,20 @@ def _sync_aggregates(
     temp_umbrella = INC.path(temp_root, f"{pkg}.h")
     if only_comp is not None:
         if umbrella.exists() and temp_umbrella.exists():
-            if _add_umbrella_include(umbrella, temp_umbrella, only_comp):
+            if _add_umbrella_include(root, umbrella, temp_umbrella, only_comp):
                 updated.append(umbrella)
     else:
+        # gh-1985: the replay's umbrella in the one include order, from the
+        # REAL manifest, as `_splice_cmake_components` orders the CMakeLists.
+        if temp_umbrella.exists():
+            from ._init import order_umbrella_includes
+
+            _textio.write_text(
+                temp_umbrella,
+                order_umbrella_includes(
+                    temp_umbrella.read_text(encoding="utf-8"), cfg
+                ),
+            )
         if _overwrite_if_changed(umbrella, temp_umbrella):
             updated.append(umbrella)
 

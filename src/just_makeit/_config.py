@@ -1613,6 +1613,44 @@ def component_module(cfg: dict, component: str) -> str | None:
     return None
 
 
+def object_order(cfg: dict) -> list[str]:
+    """Every generated object, in the one order jm lists them (gh-1985).
+
+    Standalone objects first, in manifest order, then each module's objects,
+    module by module -- the order `apply`'s replay has always materialized
+    them in. A ``no_generate`` module contributes none: the replay builds
+    nothing of it.
+
+    This is the order of the umbrella header's includes and, newest first,
+    of the root CMakeLists' ``# ── Components`` blocks
+    (``_libwiring.section_order``). Every writer of those two files sorts by
+    it, `apply` included. Before, `apply`'s order was whatever the replay
+    left and the adders inserted by history -- a block at the top, an
+    include at the bottom -- so ``jm object q && jm object o`` in a split
+    layout (whose fragments load sorted) wrote what `apply` then rewrote,
+    and so did a standalone object added after a module object.
+
+    "Manifest order" is :func:`load`'s: the central manifest's sections,
+    then each ``include`` glob's fragments sorted by path. It is a fact
+    about the saved manifest, so a writer asks it AFTER saving the entry it
+    is placing.
+
+    >>> object_order({
+    ...     "project": {}, "b": {}, "x": {}, "a": {},
+    ...     "module": {"m": {"objects": ["x"]}},
+    ... })
+    ['b', 'a', 'x']
+    """
+    mods = modules(cfg)
+    owned = {o for m in mods for o in module_objects(cfg, m)}
+    return [c for c in components(cfg) if c not in owned] + [
+        o
+        for m in mods
+        if not is_no_generate_module(cfg, m)
+        for o in module_objects(cfg, m)
+    ]
+
+
 def resolve_module(
     cfg: dict, component: str, declared: str | None = None
 ) -> str | None:
