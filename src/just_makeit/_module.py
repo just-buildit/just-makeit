@@ -10,6 +10,10 @@ After: just-makeit module filter
   src/<pkg>/filter/__init__.py          — subpackage init (empty exports)
   just-makeit.toml                      — [module.filter] objects = []
   CMakeLists.txt                        — add_subdirectory appended
+
+Everything but the sacred ``filter_core.h`` / ``filter_core.c`` and the
+manifest is the module's glue, written by ``_object._regenerate_module`` --
+the one module render, whatever the module holds (gh-2070).
 """
 
 from __future__ import annotations
@@ -18,21 +22,11 @@ import sys
 from pathlib import Path
 
 from . import _config as C
-from . import _modplatforms
-from . import _procglobal
-from . import _context as Ctx
-from . import _stubs as S
 from . import _render as T
 from . import _incpath as INC
 from . import _csym as CSYM
-from ._init import (
-    MODULES_SENTINEL,
-    _to_title,
-    _write,
-    component_core_libs,
-    ensure_parent_packages,
-    splice_cmake_component,
-)
+from ._init import _to_title, _write
+from ._object import _regenerate_module
 
 
 def run(
@@ -93,19 +87,6 @@ def run(
         )
         sys.exit(1)
 
-    # gh-523: seed `package` into the in-memory cfg now that the "module
-    # already exists" checks above have passed, so every path helper below
-    # (and _stubs.make_module_pyi) reads the destination from the one place.
-    if package:
-        cfg.setdefault("module", {}).setdefault(module, {})["package"] = (
-            package
-        )
-    # gh-1463: seeded for the same reason -- the CMakeLists below reads it.
-    if platforms:
-        cfg.setdefault("module", {}).setdefault(module, {})["platforms"] = (
-            list(platforms)
-        )
-
     pkg = C.project_name(cfg)
     Module = _to_title(mp.cname)
 
@@ -125,17 +106,6 @@ def run(
         # gh-1591: the stem the module's C symbols and guard derive from.
         **CSYM.slots(cfg, cname),
     }
-    # Render slots that split the module's roles (module=cname, module_leaf,
-    # module_pypath, module_output_name, module_tp).
-    # gh-523: `package` redirects the Python-side artifacts into a sibling
-    # package; unset it resolves to the module's own pypath (zero churn).
-    out_pkg = C.module_package(cfg, module) or mp.pypath
-    # `doc` is the freshly-passed value; the manifest is written further down,
-    # so reading it back from cfg here would always see "".
-    mod_slots = Ctx.make_module_ctx(
-        module, pkg, out_pkg, doc or C.module_doc(cfg, module)
-    )
-
     # C header and implementation for module-level functions
     _write(
         INC.core_h(root, cname),
@@ -144,65 +114,6 @@ def run(
     _write(
         root / "native" / "src" / cname / f"{cname}_core.c",
         T.render(T.MODULE_CORE_C, mod_ctx),
-    )
-
-    # Empty module ext.c (no types yet — populated by `just-makeit object`)
-    ext_c = T.render_module_ext_c(
-        module,
-        [],
-        module_doc_c=mod_slots["module_doc_c"],
-        procglobal=_procglobal.rendezvous_c(cfg, module),
-        layout=INC.ctx_slots(cfg),
-        owner=cfg,
-    )
-    _write(root / "native" / "src" / cname / f"{cname}_ext.c", ext_c)
-
-    # CMakeLists for the module (no object libs yet)
-    cmake_ctx = {
-        **mod_slots,
-        "Module": Module,
-        "object_list": "",
-        "object_core_libs": f"{cname}_core",
-        "module_python_guard": _modplatforms.cmake_guard(cfg, module),
-        "module_core_lib_block": (
-            f"add_library({cname}_core OBJECT {cname}_core.c)\n"
-            f"target_include_directories({cname}_core PRIVATE"
-            f" {INC.CMAKE_INC})\n\n"
-        ),
-        "extra_link_libs_block": "",
-        "extra_include_dirs_block": "",
-        # gh-1199: CMAKE_LISTS_MODULE has two render sites and this one
-        # supplied neither of these, so a module declared `objects = []` wrote
-        # a CMakeLists carrying the literal slot text —
-        # `Python3_add_library(... emptymod_ext.c<<extra_ext_sources>>)` — and
-        # cmake then failed looking for a source file with `<<` in its name.
-        # `extra_ext_sources` is always empty here by construction: the peer
-        # site builds it by walking the module's objects, and this path is the
-        # one where there are none.
-        "extra_ext_sources": "",
-        "module_comment": f"{module} Python module",
-        # gh-1034: a brand-new module declares no functions yet, so this is
-        # empty here and filled by the regeneration that `jm function` runs.
-        "module_targets_block": "",
-    }
-    _write(
-        root / "native" / "src" / cname / "CMakeLists.txt",
-        T.render(T.CMAKE_LISTS_MODULE, cmake_ctx),
-    )
-
-    # Python subpackage at src/<pkg>/<pypath>/ (nested for dotted ids); ensure
-    # the intermediate packages exist so `pkg.<parent>...` is importable.
-    ensure_parent_packages(root, pkg, mp, out_pkg)
-    pkg_module_dir = root / "src" / pkg / out_pkg
-    # No objects yet, so no import line (an empty `from .<leaf> import` would be
-    # a SyntaxError). gh-523: create-only — when `package` aims the module at a
-    # pre-existing package, its __init__.py must never be stamped over.
-    mod_init = pkg_module_dir / "__init__.py"
-    if not mod_init.exists():
-        _write(mod_init, T.render(T.MODULE_INIT_PY_EMPTY, mod_slots))
-    _write(
-        pkg_module_dir / f"{mp.leaf}.pyi",
-        S.make_module_pyi(cfg, module, root),
     )
 
     # Ensure C test and benchmark directories exist (even before any objects
@@ -217,7 +128,7 @@ def run(
     if package:
         cfg["module"][module]["package"] = package
     # gh-645: a module has no header to derive from, so the manifest is the
-    # only place its documentation can live. Set before mod_slots is built,
+    # only place its documentation can live. Saved before the render below,
     # since both generated faces read it from there.
     if doc:
         cfg["module"][module]["doc"] = doc
@@ -248,26 +159,19 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    # Root CMakeLists.txt — insert add_subdirectory into the Modules sentinel
-    # section, and fold the module's own OBJECT library into the combined C
-    # library the same way a component's is (gh-981). Without the second half a
-    # module whose C surface is module-level *functions* builds its core, links
-    # it straight into the Python extension, and ships it in no library at all —
-    # so `jm function` compiles, imports and tests clean while a C consumer gets
-    # `undefined reference`. `component_core_libs` reads the file just written
-    # above, so a module with no core of its own (capsule/handle/composer, or a
-    # collocated object supplying the `add_library`) wires nothing.
-    # gh-1985: after the save, because the block is placed where `apply` puts
-    # it -- by the order of the manifest on disk, which until then has no
-    # [module.<module>] to place. Before the save it went to the top, so
-    # `jm module q && jm module o` in a split layout was in the wrong order.
-    splice_cmake_component(
-        root,
-        pkg,
-        cname,
-        component_core_libs(root, cname),
-        sentinel=MODULES_SENTINEL,
-    )
+    # gh-2070: the module's glue -- `<cname>_ext.c`, its CMakeLists, the
+    # re-export `__init__.py`, the `.pyi` and the root CMakeLists wiring --
+    # is the ONE module render every member verb and `jm remove` end in,
+    # whatever the module holds. This path had a render of its own for a
+    # module with nothing in it, and `apply` replays an empty module through
+    # here: so removing a module's last object (or function) left a tree the
+    # next `apply` rewrote, and this render dropped the gh-1351
+    # `<cname>_extra.cmake` hook, which an empty module's regenerated
+    # CMakeLists needs exactly as much as a full one's does. It also never
+    # read the `--extra-*` keys saved above.
+    # After the save: the render reads the manifest, and gh-1985 places the
+    # root wiring by the manifest's order on disk.
+    _regenerate_module(root, cfg, module, pkg)
 
     print()
     print(

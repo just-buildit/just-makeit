@@ -713,9 +713,6 @@ _VERSION = tuple(
 #: Printed beside a red status by a shape whose module function has no
 #: timed bench; it is not drift, so it goes when the red does.
 _SILENT = ("status:SILENT ~ native/benchmarks/bench_mod_core.c",)
-#: Removing a module's last object renders the module the way a module with
-#: objects is rendered; `apply` renders an object-less one (gh-2070).
-_EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
 #: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
 _APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
 #: `jm module` before `package` is set leaves the module id's stub (gh-2064).
@@ -745,18 +742,7 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
     **_entries("gh-2069", [("config", "version", "make")],
                "status:VERSION ! Doxyfile", "status:VERSION ! bootstrap.toml",
                "status:VERSION ! pyproject.toml"),
-    **_entries(
-        "gh-2070",
-        [("remove", "object", s) for s in (
-            "module", "pair-in-module", "struct-in-module",
-            "members-in-module", "view")],
-        *_EMPTIED,
-    ),
-    **_entries("gh-2070", [("remove", "object", "dotted")],
-               *_stale("native/src/dsp_filt/CMakeLists.txt",
-                       "native/src/dsp_filt/dsp_filt_ext.c")),
     ("remove", "object", "package"): {
-        "gh-2070": frozenset(_EMPTIED),
         "gh-2064": frozenset(_MOD_ORPHAN),
     },
     # The verb's first render does not read the doc source `apply` reads.
