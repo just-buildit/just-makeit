@@ -32,6 +32,13 @@ a flag its parser accepts that no case passes fails
 `test_every_flag_has_a_case`. The cases themselves -- a representative
 argv per render path -- are the one hand list, held to those three.
 
+Every shape, every `jm new` flag set and every case runs in every `make
+test`: each case on its home shapes (`_home`), plus every ratcheted run.
+The whole cross product -- every case on every shape that admits it --
+runs where ``JM_VERB_GATE_FULL=1`` (`FULL_ENV`): one CI leg, held to it by
+`test_the_whole_matrix_has_an_execution_home`. On every leg it added 5-8
+minutes and timed Coverage out (gh-2057).
+
 A run red today is ratcheted in `RATCHET` under the issue each of its
 findings belongs to, and must report exactly those: so it fails for that
 cause or not at all (gh-1652), a fix must delete its part of the entry, and
@@ -42,6 +49,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
 import shutil
 from pathlib import Path
@@ -55,6 +63,8 @@ from just_makeit import _config as C
 from just_makeit import _createonly as CO
 from just_makeit._upgrade import _manifest_fragments
 from test_cli_dispatch import _dispatched_commands
+from test_gh1648_exports_run_on_windows import CI_YML, _job_block
+from test_own_ci_matrix import _axes
 
 
 # ── Shapes ───────────────────────────────────────────────────────────────────
@@ -808,14 +818,56 @@ def _admits(case: Case, name: str) -> bool:
     return case.needs <= shape.has
 
 
+def _runs() -> "list[tuple[str, str, str]]":
+    """Every (verb, case, shape) the gate can run: each case on every shape
+    that admits it."""
+    return [
+        (verb, cname, sname)
+        for verb, cases in CASES.items()
+        for cname, case in cases.items()
+        for sname in SHAPES
+        if _admits(case, sname)
+    ]
+
+
+#: The environment variable that runs the whole of `_runs()`. Set on one CI
+#: leg (`.github/workflows/ci.yml`, held there by
+#: `test_the_whole_matrix_has_an_execution_home`), and by anyone who asks.
+FULL_ENV = "JM_VERB_GATE_FULL"
+
+
+def _home(verb: str, cname: str) -> "set[str]":
+    """The shapes a case runs on when the whole matrix does not: the first
+    shape admitting it on each side of the one axis most of this class's
+    bugs have turned on -- a standalone object or one in a module (gh-1984,
+    gh-2054, gh-2070, gh-2071)."""
+    out = set()
+    for in_module in (False, True):
+        for sname, shape in SHAPES.items():
+            if ("module" in shape.has) == in_module and _admits(
+                CASES[verb][cname], sname
+            ):
+                out.add(sname)
+                break
+    return out
+
+
 def _params():
-    for verb, cases in CASES.items():
-        for cname, case in cases.items():
-            for sname in SHAPES:
-                if _admits(case, sname):
-                    yield pytest.param(
-                        verb, cname, sname, id=f"{verb}-{cname}@{sname}"
-                    )
+    """The runs `make test` makes. The whole matrix on the leg that sets
+    `FULL_ENV`; elsewhere each case on its `_home` shapes, plus every run
+    the ratchet names, so a ratcheted issue's fix fails on every leg until
+    its entry goes. The whole matrix added 5-8 minutes to a 4-core CI leg
+    and timed Coverage out at 45 (gh-2057); this is about a third of it."""
+    full = os.environ.get(FULL_ENV) == "1"
+    for verb, cname, sname in _runs():
+        if (
+            full
+            or sname in _home(verb, cname)
+            or (verb, cname, sname) in (RATCHET)
+        ):
+            yield pytest.param(
+                verb, cname, sname, id=f"{verb}-{cname}@{sname}"
+            )
 
 
 _EXCLUDED = {"build", "__pycache__", ".pytest_cache"}
@@ -1090,11 +1142,29 @@ def test_every_flag_has_a_case():
     assert not stale, f"UNCOVERED_FLAGS entries to delete: {stale}"
 
 
+def test_the_whole_matrix_has_an_execution_home():
+    """`FULL_ENV` is set on a leg that exists, on the step that runs
+    `make test`: a matrix that runs nowhere is a gate that gates nothing.
+    Read by hand, as `test_own_ci_matrix` reads the matrix."""
+    block = _job_block(CI_YML.read_text(encoding="utf-8"), "test")
+    steps = re.split(r"\n      - ", block)
+    (suite,) = [s for s in steps if s.startswith("run: make test\n")]
+    m = re.search(rf"\n {{8}}env:\n {{10}}{FULL_ENV}: (.*?)(?=\n {{0,8}}\S|$)",
+                  suite, re.S)  # fmt: skip
+    assert m, f"the `make test` step sets no {FULL_ENV}"
+    expr = " ".join(m.group(1).split())
+    assert expr.endswith("&& '1' || '' }}"), expr
+    os_axis, py_axis = _axes()
+    leg = dict(re.findall(r"matrix\.([\w-]+) == '([^']+)'", expr))
+    assert leg.get("os") in os_axis, expr
+    assert leg.get("python-version") in py_axis, expr
+
+
 def test_every_ratchet_entry_names_a_run_and_an_issue():
     """An entry for a (verb, case, shape) that never runs would sit in the
     ratchet forever, reading as known breakage; so would one citing no
     issue, or expecting nothing."""
-    ids = {tuple(p.values) for p in _params()}
+    ids = set(_runs())
     ids |= {("new", c, "") for c in NEW_CASES}
     ids |= {("shape", s, "") for s in SHAPES}
     for key, by_issue in RATCHET.items():

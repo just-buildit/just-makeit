@@ -247,6 +247,17 @@ jobs:
       - run: make test
         id: suite
         continue-on-error: ${{ matrix.prerelease == true }}
+        # gh-2057: the verb-equals-apply gate's WHOLE matrix -- every case on
+        # every project shape -- runs on this one leg; every other run of
+        # `make test` takes each case on its home shapes and every ratcheted
+        # run, about a third of it. The whole of it on every leg added 5-8
+        # minutes to a 4-core leg and timed Coverage out at 45.
+        # tests/test_gh2057_verb_leaves_what_apply_writes.py refuses this
+        # line going away.
+        env:
+          JM_VERB_GATE_FULL: >-
+            ${{ matrix.os == 'ubuntu-latest'
+            && matrix.python-version == '3.12' && '1' || '' }}
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.
