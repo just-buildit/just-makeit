@@ -46,6 +46,8 @@ htmlcov/
 nosetests.xml
 coverage.xml
 junit.xml
+# gh-2078: what `make coverage-shard` leaves for the combined gate
+coverage-shards/
 *.cover
 *.py.cover
 .hypothesis/
