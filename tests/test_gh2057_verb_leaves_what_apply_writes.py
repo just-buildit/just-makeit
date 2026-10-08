@@ -734,16 +734,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
         "gh-2070": frozenset(_EMPTIED),
         "gh-2064": frozenset(_MOD_ORPHAN),
     },
-    # The verb's first render does not read the doc source `apply` reads.
-    **_entries("gh-2071", [("method", "fn", "standalone")],
-               *_stale("native/src/o/o_ext.c", "src/p/o.pyi")),
-    # A module object's fragment: `apply` rewrites it, `status` does not
-    # compare it.
-    **_entries("gh-2071", [("method", "fn", s) for s in ("module", "package")],
-               "apply:~ native/src/mod/mod_ext_o.c"),
-    **_entries("gh-2071",
-               [("object", "delegates", s) for s in BASE],
-               *_stale("native/src/a/a_ext.c", "src/p/a.pyi")),
     # `bind` renders from the header alone and drops what only the manifest
     # declares. Decided on gh-2072: it will REFUSE a declared component, so
     # its fix turns these runs into a refusal with the tree byte-identical.
@@ -755,8 +745,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
                 ("module", "sorts-first", "c-dep"),
                 ("module", "sorts-last", "c-dep")],
                *_stale("CMakeLists.txt")),
-    **_entries("gh-2073", [("add", "state", "view")],
-               "status:KWARGS ! native/src/mod/mod_ext_v.c"),
     ("remove", "function", "apps"): {
         "gh-2075": frozenset({
             "status:exit 1", f"apply:refused {_REMOVE_FN}",

@@ -216,19 +216,26 @@ def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     # From *cfg* when the caller renders from one: at `jm object` time the
     # manifest on disk does not hold the new object yet, and a scaffold that
     # read the brief as authored while `apply` read it as jm's disagreed.
-    cls = C.resolved_class_name(
-        cfg if cfg is not None else INC.manifest(doc_root), obj
-    )
+    manifest = cfg if cfg is not None else INC.manifest(doc_root)
+    cls = C.resolved_class_name(manifest, obj)
+    members = _method_members(manifest, obj, stem)
     for cname, block_text in raw.items():
-        # strip the stem_ prefix to recover the bare method/verb name for the
-        # triviality check (e.g. ddc_execute -> execute).
-        verb = (
+        # The members a declaration may document, for the triviality check:
+        # the name with the stem_ prefix stripped (e.g. ddc_execute ->
+        # execute), and the manifest's method when one binds this symbol --
+        # a block jm would scaffold for either is jm's.
+        verbs = {
             cname[len(stem) + 1 :] if cname.startswith(stem + "_") else cname
-        )
-        parsed = parse_doxygen_block(block_text, name=verb)
+        }
+        if cname in members:
+            verbs.add(members[cname])
+        parsed = parse_doxygen_block(block_text)
         if parsed is None:
             continue
-        if _is_scaffold_brief(obj, verb, parsed, cls):
+        if any(
+            _is_scaffold_brief(obj, verb, parsed, cls, csym=stem)
+            for verb in verbs
+        ):
             continue
         out[cname] = parsed
     # gh-761: the `_max_out` prototypes' arity, from the same header read.
@@ -370,7 +377,9 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     return out
 
 
-def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
+def _is_scaffold_brief(
+    obj: str, verb: str, block, cls: str = "", *, csym: str = ""
+) -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
     Thin owner-aware wrapper over :func:`_docstring.is_scaffold_doc`, which is
@@ -381,7 +390,37 @@ def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
     ``@param`` at all, so the method skeleton, which does carry generated
     ``@param`` lines, was derived into the ``.pyi`` as if authored.
     """
-    return is_scaffold_doc(block, verb, obj, cls)
+    return is_scaffold_doc(block, verb, obj, cls, csym=csym)
+
+
+def _method_members(cfg: dict, obj: str, stem: str) -> "dict[str, str]":
+    """``{c_symbol: method_name}`` for every method *obj*'s manifest binds.
+
+    The map `jm method` stamps its doc skeleton from: the symbol through
+    :func:`_config.method_c_symbol`, the ``@brief <name>.`` from the
+    method's Python name. Reading a declaration's member back by stripping
+    the stem agrees with it only for a derived symbol; an ``fn`` override
+    (``o_custom_m2`` for ``m2``) left jm's own ``@brief m2.`` judged
+    against ``o_custom_m2`` and derived as authored -- by `apply`, while the
+    verb, rendering before the skeleton existed, used the name fallback
+    (gh-2071). A view's own methods share the object's core, so they are
+    read too (gh-1012's signature override is the same shape).
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "m2", "fn": "o_custom_m2"},
+    ...                          {"name": "tune"}]}}
+    >>> _method_members(cfg, "o", "p_o")
+    {'o_custom_m2': 'm2', 'p_o_tune': 'tune'}
+    """
+    entries = C.methods(cfg, obj) + [
+        m for v in C.views(cfg, obj) for m in C.view_methods(v)
+    ]
+    out: "dict[str, str]" = {}
+    for m in entries:
+        if m.get("name"):
+            out.setdefault(C.method_c_symbol(stem, m), str(m["name"]))
+    return out
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
