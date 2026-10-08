@@ -56,8 +56,9 @@ Commands:
                                 shared static helpers) instead of one .c per function.
     --package DIR               Put the module's Python in src/<pkg>/DIR/ (`[module.X]
                                 package`), e.g. beside an existing package's classes;
-                                they import from <pkg>.DIR. The C side keeps the
-                                module's own name.
+                                they import from <pkg>.DIR. DIR is identifiers
+                                separated by / (dsp/io), or . for the package itself.
+                                The C side keeps the module's own name.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:

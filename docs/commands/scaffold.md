@@ -135,7 +135,7 @@ and records `[module.<name>]` with an empty `objects` list in
 | `--extra-include-dirs DIR` | CMake include path for the module (e.g. `${DOPPLER_INCLUDE_DIR}`). Repeatable.                                                    |
 | `--extra-link-libs TARGET` | CMake link target for the module (e.g. `PkgConfig::DOPPLER`). Repeatable.                                                         |
 | `--extra-types NAME`       | A hand-written Python type, defined in `<name>_ext_extra.c`, to register in `PyInit_`. Repeatable.                                |
-| `--package DIR`            | Land the module's Python in `src/<pkg>/DIR/` (`[module.<name>] package`), above.                                                  |
+| `--package DIR`            | Land the module's Python in `src/<pkg>/DIR/` (`[module.<name>] package`), above. `DIR` is `/`-separated identifiers, or `.`.      |
 
 Types are added with `just-makeit object`. Module-level functions are added
 with `just-makeit function`.

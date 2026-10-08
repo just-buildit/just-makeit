@@ -253,6 +253,12 @@ def load(root: Path) -> dict:
     platform_errors = _modplatforms.errors(cfg)
     if platform_errors:
         _refuse(platform_errors)
+    # gh-2064: a `[module.X] package` is joined onto `src/<pkg>/` as
+    # written, so `../evil` landed outside the package; it stops here,
+    # before any command writes.
+    package_errors = module_package_errors(cfg)
+    if package_errors:
+        raise Refusal("\n".join(package_errors))
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
@@ -2295,6 +2301,83 @@ def validate_module_id(module_id: str) -> str | None:
                 "with a digit."
             )
     return None
+
+
+def validate_module_package(package: str) -> str | None:
+    """Return why *package* is not a ``[module.X] package`` value, else None.
+
+    The value is a DIRECTORY below ``src/<pkg>/``, not a dotted name: every
+    reader that writes a file joins it onto that directory as written
+    (``root / "src" / pkg / package``), and the import-path readers split
+    it on ``/`` (`_docstring.class_import_path`, `_invariants`,
+    `_procglobal`). So it is one or more ``/``-separated segments, each a
+    :func:`valid_identifier` -- the predicate a module id's segments go
+    through -- or ``"."``, the package itself (the `composites` example's
+    ``ring``). Anything else was written as given (gh-2064): ``../evil``
+    created ``src/evil/``, outside the package, and ``a b``, ``1x``,
+    ``Other-Pkg`` and ``a.b`` created directories Python cannot import. The
+    message names the value and the rule; each caller says where it came
+    from.
+
+    Examples
+    --------
+    >>> validate_module_package("io") is None
+    True
+    >>> validate_module_package("dsp/io") is None
+    True
+    >>> validate_module_package(".") is None
+    True
+    >>> print(validate_module_package("../evil"))
+    "../evil" is not a directory below src/<pkg>/: each "/"-separated segment must be an ASCII identifier (letters, digits and underscores, not starting with a digit), as in "io" or "dsp/io", or the whole value "." for the package itself.
+    >>> print(validate_module_package("a.b"))
+    "a.b" is not a directory below src/<pkg>/: each "/"-separated segment must be an ASCII identifier (letters, digits and underscores, not starting with a digit), as in "io" or "dsp/io", or the whole value "." for the package itself. A "." does not nest one package in another here; write "a/b".
+    """
+    if package == "." or all(map(valid_identifier, package.split("/"))):
+        return None
+    msg = (
+        f'"{package}" is not a directory below src/<pkg>/: each'
+        ' "/"-separated segment must be an ASCII identifier (letters, digits'
+        " and underscores, not starting with a digit), as in"
+        ' "io" or "dsp/io", or the whole value "." for the package itself.'
+    )
+    nested = package.replace(".", "/")
+    if nested != package and validate_module_package(nested) is None:
+        msg += (
+            ' A "." does not nest one package in another here;'
+            f' write "{nested}".'
+        )
+    return msg
+
+
+def module_package_errors(cfg: dict) -> "list[str]":
+    """Every ``[module.X] package`` that is not a directory below the package.
+
+    Refused when the manifest loads, as a misspelt ``platforms`` is
+    (gh-1463): every command reads the manifest through `load` before it
+    writes, so `apply` and `status` stop on the value instead of writing
+    outside ``src/<pkg>/`` or a directory nothing can import. ``""`` is
+    "not declared" (:func:`module_package`), so it passes.
+
+    Examples
+    --------
+    >>> module_package_errors({"module": {"m": {"package": "io"}}})
+    []
+    >>> module_package_errors({"module": {"m": {"package": 3}}})
+    ['[module.m] package = 3 is not a string; write the directory as one, e.g. "io".']
+    """
+    out: "list[str]" = []
+    for mod, data in (cfg.get("module") or {}).items():
+        if not isinstance(data, dict) or not data.get("package"):
+            continue
+        value = data["package"]
+        if not isinstance(value, str):
+            out.append(
+                f"[module.{mod}] package = {value!r} is not a string;"
+                ' write the directory as one, e.g. "io".'
+            )
+        elif (why := validate_module_package(value)) is not None:
+            out.append(f"[module.{mod}] package = {why}")
+    return out
 
 
 def _module_key(mod: str) -> str:

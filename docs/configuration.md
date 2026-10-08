@@ -1215,7 +1215,11 @@ runtime doctests, `test_<obj>.py` and the element contract beside it, an
 extension keeps its own name inside it (`<pkg>/<package>/<module>.so`).
 Declare it with `jm module <name> --package <dir>`: set in the manifest after
 the module exists, the key leaves what `jm module` wrote in the module's own
-directory behind (gh-2081).
+directory behind (gh-2081). The value is a directory below `src/<pkg>/`: one
+or more `/`-separated segments, each an ASCII identifier (`io`, `dsp/io`), or
+`"."` for the package itself. Anything else (`../evil`, `a b`, `1x`,
+`Other-Pkg`, or the dotted `a.b`) is refused before anything is written, on
+the flag and when the manifest loads.
 
 #### A module built on some platforms only
 
