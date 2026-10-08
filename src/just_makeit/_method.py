@@ -2418,6 +2418,9 @@ def run(
         # Seed the header's create() Doxygen so the shared chain enriches the
         # class docstring from a hand-written @brief/@param instead of reverting
         # it to the generic stub on every `jm method` (see regenerate_standalone).
+        # Read before the skeleton below is injected, and `apply` reads it
+        # after: the same map, because a skeleton is jm's own and
+        # `_load_doc_blocks` drops it -- under an `fn` too (gh-2071).
         from ._object import _load_doc_blocks
 
         cfg.setdefault(object_name, {})["_doc_blocks"] = _load_doc_blocks(

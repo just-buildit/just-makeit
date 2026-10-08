@@ -1257,6 +1257,81 @@ _STEP_SCAFFOLD_BRIEFS = frozenset(
 )
 
 
+def delegator_note(csym: str, *, returns: bool) -> "list[str]":
+    """The body paragraph of jm's gh-208 delegating ``step()`` scaffold.
+
+    ``--step-delegates-to-steps`` scaffolds a ``step()`` that forwards to
+    ``steps()``, and its Doxygen block carries one sentence of body prose
+    saying so -- the only jm scaffold that writes any. It is returned as the
+    lines the header lays it out in, so the emitter (``_context._step``)
+    writes it from here and :func:`scaffold_bodies` recognises the same
+    text: what jm emits and what it refuses to derive are one definition
+    (gh-666), and this sentence was the one that escaped it (gh-2071).
+
+    Parameters
+    ----------
+    csym : str
+        The object's C symbol stem; the sentence names its ``steps()``.
+    returns : bool
+        Whether ``step()`` returns a value. The value-returning shapes say
+        why the delegation exists; the ``void`` ones only that it does.
+
+    Returns
+    -------
+    list of str
+        The paragraph's lines, without the `` * `` comment prefix.
+
+    Examples
+    --------
+    >>> delegator_note("fir", returns=False)
+    ['Thin delegator to fir_steps() (gh-208).']
+    >>> for line in delegator_note("fir", returns=True):
+    ...     print(line)
+    Thin delegator to fir_steps() so the per-sample algorithm
+    exists once and step() == steps(.., 1) byte-for-byte (gh-208).
+    """
+    if not returns:
+        return [f"Thin delegator to {csym}_steps() (gh-208)."]
+    return [
+        f"Thin delegator to {csym}_steps() so the per-sample algorithm",
+        "exists once and step() == steps(.., 1) byte-for-byte (gh-208).",
+    ]
+
+
+def scaffold_bodies(member: str, csym: str = "") -> "set[str]":
+    """Folded body paragraphs jm itself scaffolds for *member* (gh-2071).
+
+    The counterpart of :func:`scaffold_briefs` for the body. Only the
+    delegating ``step()`` has one (:func:`delegator_note`), and it names the
+    object's ``steps()`` symbol, so without *csym* nothing can match.
+
+    Parameters
+    ----------
+    member : str
+        Bare member name, as it appears after the ``<owner>_`` prefix.
+    csym : str, optional
+        The object's C symbol stem.
+
+    Returns
+    -------
+    set of str
+        Every body jm could have written here, folded by :func:`_fold`.
+
+    Examples
+    --------
+    >>> note = " ".join(delegator_note("fir", returns=True))
+    >>> _fold(note) in scaffold_bodies("step", "fir")
+    True
+    >>> scaffold_bodies("step"), scaffold_bodies("steps", "fir")
+    (set(), set())
+    """
+    if member != "step" or not csym:
+        return set()
+    return {
+        _fold(" ".join(delegator_note(csym, returns=r))) for r in (False, True)
+    }
+
+
 def scaffold_briefs(member: str, owner: str = "", cls: str = "") -> set[str]:
     """Normalized briefs jm itself scaffolds for *member* of *owner*.
 
@@ -1324,7 +1399,12 @@ def scaffold_briefs(member: str, owner: str = "", cls: str = "") -> set[str]:
 
 
 def is_scaffold_doc(
-    block: DoxyBlock, member: str = "", owner: str = "", cls: str = ""
+    block: DoxyBlock,
+    member: str = "",
+    owner: str = "",
+    cls: str = "",
+    *,
+    csym: str = "",
 ) -> bool:
     """True when *block* is jm's own scaffold boilerplate, not authored doc.
 
@@ -1350,9 +1430,14 @@ def is_scaffold_doc(
     written) keeps the prose the author did write instead of discarding it.
 
     Body prose and ``@code`` examples are the escape hatch in both strengths:
-    no jm scaffold emits either (the skeleton deliberately carries no runnable
-    example — a placeholder ``>>> TODO`` would be executed by the generated
-    project's doctest gate), so their presence proves an author has been here.
+    no jm scaffold emits an example (the skeleton deliberately carries no
+    runnable one — a placeholder ``>>> TODO`` would be executed by the
+    generated project's doctest gate), and one emits body prose -- the
+    delegating ``step()``'s sentence, :func:`scaffold_bodies` -- so anything
+    else there proves an author has been here. That one sentence used to
+    count as authorship too, so `apply` derived jm's own note into the
+    ``step()`` docstring that `jm object` had just rendered without it
+    (gh-2071).
 
     Parameters
     ----------
@@ -1362,6 +1447,12 @@ def is_scaffold_doc(
         Bare member name. Without it nothing can match.
     owner : str, optional
         Component/module name, for the lifecycle templates.
+    cls : str, optional
+        The class name the header was rendered with (gh-1651).
+    csym : str, optional
+        The owner's C symbol stem, for the body jm scaffolds
+        (:func:`scaffold_bodies`). Without it a body always counts as
+        authored, which is the safe direction.
 
     Returns
     -------
@@ -1379,8 +1470,17 @@ def is_scaffold_doc(
     >>> tmpl = parse_doxygen_block("@brief Get current g.\\n@param state  X.")
     >>> is_scaffold_doc(tmpl, "get_g")
     True
+    >>> note = "\\n".join(delegator_note("fir", returns=False))
+    >>> dlg = parse_doxygen_block(
+    ...     "@brief Process one input sample.\\n\\n" + note)
+    >>> is_scaffold_doc(dlg, "step"), is_scaffold_doc(dlg, "step", csym="fir")
+    (False, True)
     """
-    if block.body or block.examples:
+    if block.examples:
+        return False
+    if block.body and _fold(" ".join(block.body)) not in scaffold_bodies(
+        member, csym
+    ):
         return False
     brief = _norm_brief(block.brief)
     if not brief or not member:
