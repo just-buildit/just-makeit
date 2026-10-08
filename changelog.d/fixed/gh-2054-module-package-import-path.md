@@ -1,10 +1,10 @@
 - **A module that declares `package` has its classes imported from that
     package, everywhere jm names one** (gh-2054). With `package = "other"` in
     `[module.mod]`, the class is `p.other.O`: the package's `__init__.py`
-    re-exports it. But jm spelled the module id's path
-    wherever it named the class, so the `.pyi` and runtime `__doc__`
-    doctests said `from p.mod import O`, the element contract was written
-    to `src/p/mod/tests/` and imported from there, an `object` reference's
+    re-exports it. But jm spelled the module id's path wherever it named the
+    class, so the `.pyi` and runtime `__doc__` doctests said
+    `from p.mod import O`, the element contract was written to
+    `src/p/mod/tests/` and imported from there, an `object` reference's
     `.pyi` said `from .mod import O`, the `pep723` app imported from
     `p.mod`, and the `console` app was written to `src/p/mod/cli.py` --
     each naming a module that does not hold the class, on a tree
