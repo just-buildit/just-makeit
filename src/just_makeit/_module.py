@@ -52,6 +52,8 @@ def run(
     directory this module's Python artifacts (``.so``, ``.pyi``, re-export
     ``__init__.py``, tests and benchmarks) land in, instead of one named
     after the module. Empty means "a package of my own" — today's behaviour.
+    ``jm module --package`` passes it (gh-2064), so the module id's own
+    directory is never written when the module lives elsewhere.
 
     *platforms* (gh-1463) is ``[module.X] platforms``: the platforms the
     module's extension is built on. It has no CLI flag; ``apply`` passes it so

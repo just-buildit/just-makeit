@@ -6620,10 +6620,9 @@ def object_create_name(cfg: dict, component: str) -> str:
 # also keeps the object surface honest — the whole teardown contract is one
 # block a reader can take in at once.
 #
-# Manifest-only, no CLI flag — same call as `package` (gh-523). Five
-# interacting keys is exactly the shape the CLI is the wrong tool for (see
-# `_cli_object`'s division of labour: the CLI handles simple scalars, TOML
-# handles anything with internal structure).
+# Manifest-only, no CLI flag. Five interacting keys is exactly the shape the
+# CLI is the wrong tool for (see `_cli_object`'s division of labour: the CLI
+# handles simple scalars, TOML handles anything with internal structure).
 
 # The only value of `returns` that changes anything. Anything else is either
 # the default (absent / "void") or an authoring error.

@@ -1197,7 +1197,7 @@ ranges error cleanly.
 | `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
 | `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
 | `platforms = ["linux", "macos"]`      | (TOML only)                                       | 🟡           |
-| `package = "<dir>"`                   | (TOML only)                                       | 🟡 (gh-523)  |
+| `package = "<dir>"`                   | `jm module --package DIR`                         | ✅ (gh-2064) |
 
 `reexports` folds names from a *sibling* extension (typically a `no_generate`
 module whose binding/`.pyi` are hand-written) into this module's generated
@@ -1213,6 +1213,9 @@ everything jm writes that names one follows it (gh-2054): the `.pyi` and
 runtime doctests, `test_<obj>.py` and the element contract beside it, an
 `object` reference's `.pyi` import, and the `pep723` and `console` apps. The
 extension keeps its own name inside it (`<pkg>/<package>/<module>.so`).
+Declare it with `jm module <name> --package <dir>`: set in the manifest after
+the module exists, the key leaves what `jm module` wrote in the module's own
+directory behind (gh-2081).
 
 #### A module built on some platforms only
 

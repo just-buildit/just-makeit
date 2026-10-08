@@ -54,6 +54,10 @@ Commands:
                                 docstring on the re-export __init__.py.
     --functions-in-core         Keep this module's functions in <module>_core.c (one TU,
                                 shared static helpers) instead of one .c per function.
+    --package DIR               Put the module's Python in src/<pkg>/DIR/ (`[module.X]
+                                package`), e.g. beside an existing package's classes;
+                                they import from <pkg>.DIR. The C side keeps the
+                                module's own name.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:
@@ -797,6 +801,7 @@ def _main() -> None:
         mod_extra_types: list[str] = []
         mod_functions_in_core = False
         mod_doc = ""
+        mod_package = ""
         rest = args[2:]
         j = 0
         while j < len(rest):
@@ -844,6 +849,21 @@ def _main() -> None:
                     sys.exit(1)
                 mod_doc = rest[j]
                 j += 1
+            elif tok == "--package":
+                # gh-2064: `[module.X] package` (gh-523), declared before
+                # anything is written. Set by hand after `jm module`, the
+                # key came too late: the module id's directory was already
+                # on disk, and nothing owns it once the module lives
+                # elsewhere.
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --package requires a package directory",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_package = rest[j]
+                j += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -854,6 +874,7 @@ def _main() -> None:
             extra_link_libs=mod_extra_libs or None,
             extra_types=mod_extra_types or None,
             functions_in_core=mod_functions_in_core,
+            package=mod_package,
             doc=mod_doc,
         )
 

@@ -80,8 +80,10 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
     The module command used to be emitted bare, so every key `jm module`
     accepts was lost on replay — including ``doc``, which gh-645 had just
     finished wiring through the other two writers. ``objects`` is not a flag
-    (each object names its own ``--module``) and ``package`` has no flag at
-    all; the caller emits a NOTE for that one.
+    (each object names its own ``--module``). ``package`` is one since
+    gh-2064; until then the caller emitted a NOTE asking the reader to
+    re-add it by hand, which is the route that left the module id's
+    directory behind.
     """
     parts: list[str] = []
 
@@ -99,6 +101,9 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
 
     if C.module_doc(cfg, mod):
         parts.append(_flag("--doc", C.module_doc(cfg, mod)))
+
+    if C.module_package(cfg, mod):
+        parts.append(_flag("--package", C.module_package(cfg, mod)))
 
     return parts
 
@@ -1018,20 +1023,10 @@ def run(root: Path) -> None:
 
     # ── modules ──────────────────────────────────────────────────────────────
     for mod in mods:
-        # gh-523: `package` has no CLI flag on any module kind — it is a
-        # manifest-only key. Emitting the bare `jm module` command would
-        # silently rebuild the module in a package of its own (the gh-490
-        # silent-divergence trap), so flag it for the reader instead.
-        pkg_override = C.module_package(cfg, mod)
-        if pkg_override:
-            lines.append(
-                f'# NOTE: [module.{mod}] package = "{pkg_override}" has no\n'
-                f"# CLI flag — re-add it to just-makeit.toml and run"
-                f" `just-makeit apply`.\n"
-            )
-        # gh-1463: the same, for the platforms its extension is built on.
-        # Dropped in silence, the replayed project would build the module on
-        # a platform whose core does not exist.
+        # gh-1463: `platforms` has no CLI flag, so the reader is told to
+        # re-add it. Dropped in silence, the replayed project would build
+        # the module on a platform whose core does not exist (the gh-490
+        # silent-divergence trap). `package` replays as a flag (gh-2064).
         declared = cfg.get("module", {}).get(mod, {}).get("platforms")
         if declared:
             listed = ", ".join(f'"{p}"' for p in declared)
