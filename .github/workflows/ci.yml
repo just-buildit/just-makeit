@@ -812,7 +812,8 @@ jobs:
   # a broken strict build merged green; docs.yml now only deploys. It runs on
   # any source change, and on a version bump too when the docs moved -- a
   # release rewrites CHANGELOG.md. A docs-only diff keeps it, with `lint`
-  # and `coverage` (the full suite on one leg), and skips the rest.
+  # and `coverage` (the full suite: its shards, then the gate), and skips
+  # the rest.
   docs:
     name: Docs (strict build)
     needs: changes
