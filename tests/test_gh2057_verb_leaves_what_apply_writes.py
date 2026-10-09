@@ -194,6 +194,26 @@ def _foreign_header(root: Path) -> None:
     )
 
 
+def _hand_keys(root: Path) -> None:
+    """The keys a whole-manifest rewrite dropped or respelt, which no verb
+    writes in this spelling: a TOML ``true`` (gh-2046), an ``array_args``
+    row's ``dtype`` (gh-2036), and the param keys of gh-2045: every one on
+    the function, and on the method those its sacred fragment renders
+    (`rank`, `str_hint` and `enum` it does not, even regenerated: gh-2121;
+    `out` is the CLI's `--out-param`)."""
+    cfg = C.load(root)
+    k = cfg["k"]
+    k["streamable"] = True
+    (row,) = k["array_args"]
+    row["dtype"] = row.pop("type")
+    k["methods"][0]["params"][0].update(doc="The x.", elements_per_sample=1)
+    fn = cfg["module"]["mod"]["functions"][0]["params"]
+    fn[0].update(doc="The x.", rank=1, elements_per_sample=1,
+                 str_hint="pass an array")  # fmt: skip
+    fn[-1]["enum"] = "mode"
+    C.save(root, cfg)
+
+
 def _members(*module: str) -> tuple:
     """One of every member `jm remove` takes out of an object, and the
     state a backed property reads (``x``, the buffer ``buf`` and its
@@ -360,6 +380,50 @@ SHAPES: "dict[str, Shape]" = {
     "no-c-prefix": Shape(("--no-c-prefix",), (("object", "o"),), _O),
     # gh-2062: a vendored C dependency, and nothing else yet.
     "c-dep": Shape(("--c-dep", "vend"), (), frozenset({"c-dep"})),
+    # gh-2045 / gh-2046 / gh-2036: a central manifest holding keys the
+    # layout-moving verbs rewrote through `_dump` and lost. Last, holding no
+    # `o`, so it is the module-side home of `split-objects` and `migrate`
+    # and of nothing that has one already.
+    "central-keys": Shape(
+        ("--no-fragments",),
+        (
+            _enum("mode", "off", "on"),
+            ("module", "mod"),
+            ("object", "k", *_M, "--array-arg", "taps:float32"),
+            (
+                "method",
+                "k",
+                "run",
+                *_M,
+                "--param",
+                "x:float[]",
+                "--out-param",
+                "y:float[]",
+                "--param",
+                "m:int",
+                "--return-type",
+                "void",
+            ),
+            (
+                "function",
+                "f",
+                *_M,
+                "--param",
+                "x:double[]",
+                "--param",
+                "m:int",
+                "--return-type",
+                "double",
+            ),
+            _hand_keys,
+            # The keys reach k's sacred binding fragment too, so `adopt`
+            # finds it as jm would render it.
+            ("regenerate", "k", "--force"),
+            ("apply",),
+        ),
+        frozenset({"central", "module"}),
+        "mod",
+    ),  # fmt: skip
 }
 
 

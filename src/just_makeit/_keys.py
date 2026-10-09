@@ -1,9 +1,10 @@
 """Recognise the keys a manifest table may carry, and say so when it does not.
 
-jm tolerates an unknown scalar key on a manifest table by design: gh-257 makes
-:func:`_config._dump` round-trip any key it does not itself emit, so a
-hand-authored manifest survives ``save()`` -> ``load()`` instead of being
-silently rewritten. That tolerance is deliberate and stays.
+jm tolerates an unknown key on a manifest table by design: gh-257 made
+:func:`_config._dump` round-trip a key it did not itself emit, and gh-2045
+made it write every key a table holds, so a hand-authored manifest survives
+``save()`` -> ``load()`` instead of being silently rewritten. That tolerance
+is deliberate and stays.
 
 What was missing is that the tolerance was also **silent**. A key that belongs
 to a different kind of table — ``check_return``, which ``jm function`` reads
@@ -163,7 +164,8 @@ STATE_KEYS = frozenset(
 )
 
 #: Every key valid on an init-param, **in the order `_dump` writes them**,
-#: paired with whether the value is a bare TOML boolean.
+#: paired with whether the value is a TOML boolean. The writer reads the
+#: order; the type it writes is the value's own (gh-2045).
 #:
 #: Mirrors the fields :func:`_config.init_param_tuple_to_dict` persists and
 #: :func:`_config._project_init_params` reads back — the pair that defines the
@@ -238,18 +240,19 @@ INIT_PARAM_KEYS = frozenset(key for key, _is_bool in INIT_PARAM_FIELDS)
 
 #: gh-805 §C's array-shape keys, in the order a refusal names them -- valid
 #: on a method's, a module function's and (gh-2004) an init-param's array.
-#: Their values are integers, so the init-param writer keeps them unquoted
-#: (`_config._init_param_pairs`), the init-param tuple carries them at their
+#: Their values are integers, which `_config._dump` writes as integers
+#: (gh-2004, gh-2045), the init-param tuple carries them at their
 #: `INIT_PARAM_FIELDS` index (`_coerce._INIT_PARAM_SLOT`), and
 #: `_coerce.shape_key_errors` refuses one nothing would read.
 SHAPE_KEYS = ("rank", "elements_per_sample")
 
 #: Keys valid on a ``[[<component>.methods]]`` entry.
 #:
-#: The union of what the three manifest writers handle: ``_dump``'s explicit
-#: block (``_config._KNOWN_METHOD_KEYS``), the keys ``_apply._replay_method``
-#: forwards into ``_method.run``, and the flags ``_script`` re-emits. That is
-#: the consumer contract — a key outside it reaches no writer and no renderer.
+#: The union of what the manifest's consumers handle: the keys
+#: ``_apply._replay_method`` forwards into ``_method.run`` (held to this set
+#: by ``tests/test_gh663_apply_threads_method_keys.py``), and the flags
+#: ``_script`` re-emits. That is the consumer contract — a key outside it
+#: reaches no renderer. (``_config._dump`` writes every key, gh-2045.)
 METHOD_KEYS = frozenset(
     {
         "name",
@@ -759,8 +762,8 @@ COMPOSER_EXTRA_METHOD_KEYS = EXTRA_METHOD_KEYS | {"type"}
 # in silence and came out of the renderer as `KeyError: 'type'`, when `object`
 # is a real key one table over and the registry already knows how to say so.
 #
-# Derived from the WRITER (`_config._dump_composer_subtables` and its
-# `_inline_*` helpers) cross-checked against an AST sweep of every reader, not
+# Derived from the writer `_config._dump` had then (one emitter per composer
+# table) cross-checked against an AST sweep of every reader, not
 # from a grep for `f.get(` -- a set that is wrong in the narrow direction turns
 # working manifests red, which is why gh-1236 argued for measuring rather than
 # guessing.
@@ -792,9 +795,9 @@ COMPOSER_OWNED_PTR_FNS = ("copy_fn", "free_fn", "parse_fn", "format_fn")
 #: gh-1711: every key an owned-pointer source field adds to a composer field.
 #: `object` / `capsule` / `header` are the capsule triangle's own keys,
 #: meaning here what they mean on an init_param. The ONE list: the vocabulary
-#: below, the manifest writer (`_config._inline_field`) and the renderer
-#: (`_composer.owned_ptr`) all read it, so a key cannot be accepted and then
-#: dropped on the next save.
+#: below, the manifest writer's layout (`_config._KEY_ORDER`) and the
+#: renderer (`_composer.owned_ptr`) all read it. (Since gh-2045 the writer
+#: keeps every key whether or not a list names it.)
 COMPOSER_OWNED_PTR_KEYS = (
     ("object", "capsule", "header")
     + COMPOSER_OWNED_PTR_FNS
@@ -955,13 +958,12 @@ KIND_NESTED_VOCAB = {
 
 
 #: ``[module.X] kind`` -> the keys that face accepts, derived from
-#: :data:`KIND_KEYS` rather than restated. gh-1229: `_config._dump` reads it to
-#: write back every accepted key it has no hand-written branch for, so the
-#: validator's answer and the writer's answer come from one declaration. A key
-#: added to a ``*_MODULE_KEYS`` set above is therefore preserved on the next
-#: save without touching the dumper -- which is the half that was missing when
-#: gh-794's `capsule` validated, wrote nothing, and took the handle's
-#: `_capsule` property with it on the following command.
+#: :data:`KIND_KEYS` rather than restated. gh-1229: `_config._dump` read it to
+#: write back every accepted key it had no hand-written branch for -- the half
+#: that was missing when gh-794's `capsule` validated, wrote nothing, and took
+#: the handle's `_capsule` property with it on the following command. Since
+#: gh-2045 the writer keeps every key a table holds, and reads this only to
+#: lay a kind's keys out in the order it always has.
 MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
     name.split()[0]: keys
     for name, keys in KIND_KEYS.items()
