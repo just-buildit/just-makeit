@@ -594,6 +594,16 @@ def _remove_state(
         )
         sys.exit(1)
 
+    # gh-2087: the rebuild below deletes the object's files, and `apply`
+    # writes nothing of a `no_generate` module back; refused before the
+    # manifest is touched. (Imported lazily -- _regenerate imports helpers
+    # from this module.)
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written(
+        cfg, obj, f"remove state field '{name}' from '{obj}'"
+    )
+
     core_h = INC.core_h(root, obj)
     core_c = root / "native" / "src" / obj / f"{obj}_core.c"
     _warn_if_state_ref(core_h, core_c, name)
@@ -617,12 +627,9 @@ def _remove_state(
     print()
     # Removing a field is structural (struct + create/reset change): rebuild
     # from the manifest rather than splicing.  The remove was already
-    # confirmed above, so skip the regenerate prompt.  (Imported lazily —
-    # _regenerate imports helpers from this module.) discard=True: the old
+    # confirmed above, so skip the regenerate prompt.  discard=True: the old
     # body's signature predates the removed field — see _add.py's identical
     # reasoning for the opposite (add) direction.
-    from . import _regenerate
-
     _regenerate.run(root, obj, force=True, discard=True)
     print()
     print(f"Done!  State field '{name}' removed.")

@@ -287,7 +287,9 @@ CASES = {
              ("object", "y", "--module", "o")],
         ),
     },
-    "_module.run": {
+    "_object._regenerate_module_now": {
+        # `jm module`: since gh-2070 a new module is written by the one
+        # module render, so its wiring is this splice's too.
         "reverse-sorted": ((), [("module", "q"), ("module", "o")]),
         # Green before gh-1985 too: it pins the other half of the order,
         # where `apply` keeps a `no_generate` module's bare block last.
@@ -296,8 +298,6 @@ CASES = {
             [("module", "a"), ("module", "b"), _hand_written("b"),
              ("apply",), ("module", "c")],
         ),
-    },
-    "_object._regenerate_module_now": {
         # Its splice re-adds a module's wiring that is missing -- at the
         # top, before gh-1985, wherever the module belonged.
         "self-heal": (

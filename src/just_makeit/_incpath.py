@@ -50,7 +50,9 @@ PREFIXED_SCHEMA = 8
 #: as a dict. Never a bare package name: a name does not say which layout.
 Owner = Union[Path, dict]
 
-_CFG_CACHE: "dict[tuple[str, int], dict]" = {}
+#: gh-2095: per manifest path, the key it was loaded under and the merged
+#: manifest `C.load` built: see :func:`manifest`.
+_CFG_CACHE: "dict[str, tuple[tuple, dict]]" = {}
 
 
 def manifest(owner: Owner) -> dict:
@@ -58,6 +60,24 @@ def manifest(owner: Owner) -> dict:
 
     Shared with :mod:`_csym` (gh-1591), whose functions take the same kind
     of owner: one answer to "which project is this", not two.
+
+    A path owner is answered from a cache, because it is asked per include
+    spelled and per symbol stemmed: 10,116 times in one `jm apply` of
+    doppler, against ~130 ms for each `C.load` (measured 2026-10-08).
+
+    gh-2095: it was keyed on the central manifest's mtime alone, but
+    `C.load` merges `objects/*.toml` and `modules/*.toml` too (and reads
+    `pyproject.toml` for an omitted version), so in one process a command
+    that wrote only a fragment (`jm object`, `jm method` on a split
+    layout) left every later reader -- `_csym`'s component test, a
+    component's class name, the doc reader's methods -- on the manifest
+    from before the write. What makes it stale is jm's OWN writes of TOML,
+    so the key counts them (:func:`_textio.toml_writes`) rather than
+    re-stamping every fragment per ask, which cost 5x here: a lookup stays
+    one ``stat`` of the manifest and a dict hit. The manifest's own stamp
+    stays in the key, so a hand edit of it is still seen. Inside
+    `C.deferred_save`, where `C.load` serves the pending write rather than
+    the disk, so does this.
     """
     if isinstance(owner, dict):
         return owner
@@ -81,12 +101,28 @@ def manifest(owner: Owner) -> dict:
         # `C.schema_version` reads as schema 1 -- the legacy layout, the only
         # one there was before a manifest could say otherwise.
         return {}
-    key = (str(toml), toml.stat().st_mtime_ns)
-    if key not in _CFG_CACHE:
-        from . import _config as C
+    from . import _config as C
+    from . import _textio
 
-        _CFG_CACHE[key] = C.load(toml.parent)
-    return _CFG_CACHE[key]
+    root = toml.parent
+    # `C.load` answers from the pending write inside a deferral (gh-764),
+    # and every save there replaces it, so a disk stamp says nothing about
+    # it. Served as is, not copied: like a cached manifest, it is shared
+    # with every reader, and readers only read.
+    if C._DEFERRED is not None:
+        pending = C._DEFERRED.get(C._deferral_key(root))
+        if pending is not None:
+            return pending
+    # Keyed BEFORE the load, so a write racing it leaves an older key and
+    # the next ask reloads rather than trusting a newer one.
+    st = toml.stat()
+    key = (st.st_mtime_ns, st.st_size, _textio.toml_writes())
+    hit = _CFG_CACHE.get(str(toml))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    cfg = C.load(root)
+    _CFG_CACHE[str(toml)] = (key, cfg)
+    return cfg
 
 
 def prefixed(owner: Owner) -> bool:
@@ -133,7 +169,10 @@ def prefix(owner: Owner) -> str:
     >>> prefix({"project": {"name": "my_proj", "schema": "8"}})
     'my_proj/'
     """
-    return f"{_pkg(owner)}/" if prefixed(owner) else ""
+    # One manifest for both questions: a path owner is a cache lookup that
+    # stamps every fragment (gh-2095), and this is jm's most-asked one.
+    cfg = manifest(owner)
+    return f"{_pkg(cfg)}/" if prefixed(cfg) else ""
 
 
 def include(name: str, owner: Owner) -> str:

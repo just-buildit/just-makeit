@@ -932,6 +932,14 @@ new kind is spoken instead, since a struct is read back through
 | rows **in**  | `arg_type = "iq16_t[]"` on a method              | `write(x)` takes a 1-D structured array |
 | rows **out** | `record_dtype = "iq16_t"` with `variable_output` | `wait(n)` returns one                   |
 
+A **scalar** element is read back through `return_type` instead —
+`--return-type sample` with `--borrow` or `--variable-output` — because its
+name is jm's alias and no C type carries it. `--record-dtype sample` would
+spell the prototype `sample *out`, which does not compile, so it is refused
+(by `jm method`, by `apply` and `status` on a manifest row, and by
+`just-makeit record` declaring a scalar under a member already reading the
+name that way), naming the spelling to use instead (gh-2068).
+
 Declaring the record once is the point: a ring buffer whose `write()` takes
 exactly what `wait()` returns used to restate the columns on each face, and a
 restatement drifts — doppler measured three hand-written faces disagreeing
@@ -969,7 +977,10 @@ beside `test_<comp>.py` — which is jm's too until you delete its
 It asserts what the family promises: *what you read is exactly what you can
 write*. The input face — the declared width is accepted, a foreign one is
 refused rather than reinterpreted — is generated always and passes on a
-fresh scaffold. The full round trip (same dtype, same rank, bytes identical)
+fresh scaffold. "Foreign" means one numpy will not cast into the element
+safely: `complex128` for a real element, a string dtype for a complex one. A
+widening such as `int8` into a `double` element is a lossless cast the
+binding performs, so it cannot stand in for a foreign width (gh-2067). The full round trip (same dtype, same rank, bytes identical)
 needs a working kernel, since a borrowing reader's stub returns `NULL`, so
 it appears once you have implemented the pair. There is no `skipif`: a test
 that passes while covering nothing is worse than one that is absent.
