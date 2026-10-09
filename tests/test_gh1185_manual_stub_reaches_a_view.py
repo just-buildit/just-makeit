@@ -61,6 +61,17 @@ def _declare(root: Path, anchor: str, line: str) -> None:
     p.write_text(body.replace(anchor, anchor + line + "\n", 1), "utf-8")
 
 
+def _tree(root: Path) -> "dict[str, bytes]":
+    """Every file under *root*, and every directory as an empty marker."""
+    return {
+        p.relative_to(root).as_posix(): (
+            p.read_bytes() if p.is_file() else b"<dir>"
+        )
+        for p in sorted(root.rglob("*"))
+        if "__pycache__" not in p.parts
+    }
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """The issue's repro, exactly: an object with a method, a view over it,
@@ -220,6 +231,31 @@ class TestTheRefusalIsADiagnostic:
                 with pytest.raises(SystemExit):
                     _apply.run(project)
         assert pyi.read_bytes() == before
+
+    def test_the_cli_puts_back_what_the_reconcile_wrote(
+        self, project: Path, monkeypatch
+    ) -> None:
+        """gh-1676's measurement, through `jm apply`. With a new object
+        pending, the refused reconcile had already written that object's
+        files, the root CMakeLists and the umbrella header -- 15 in all --
+        under a message saying nothing had been. The command's `_undo`
+        record puts them back (gh-1867), so the message holds of the whole
+        tree."""
+        _declare(project, 'name = "gain2"\n', "manual_stub = true")
+        (project / "objects" / "extra.toml").write_text(
+            '[extra]\narg_type = "float"\nreturn_type = "float"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(S, "_manual_stub_pairs", lambda cfg: set())
+        before = _tree(project)
+
+        r = _cli("apply", cwd=project)
+
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "error: refusing to write a stub" in r.stderr, r.stderr
+        assert _tree(project) == before
+        # It had written before the refusal: the comparison is not vacuous.
+        assert "put back the" in r.stdout, r.stdout
 
 
 class TestTheMessageDoesNotPromiseARerun:

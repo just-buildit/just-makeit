@@ -409,6 +409,13 @@ of them (gh-965, gh-2073); a hand-written `*_extra.c` is kept. `jm add` and
 first — the splice is best-effort text matching, not a guarantee. A single
 confirmation guards the deletion; `--force` skips it.
 
+A regenerate that fails does not cost you the component. When the rebuild's
+`apply` refuses after the delete — over another component's manifest row,
+say — jm puts back every file it had deleted or written and says so. An
+`impl_file` naming a file inside the component is refused before anything
+is deleted, since the rebuild could not read the body back from a file it
+had just removed (gh-1867).
+
 An object in a [`no_generate`](../configuration.md#no_generate-hand-written-extension-modules)
 module is refused, by `regenerate` and by every command that rebuilds through
 it, before anything is asked or written: `jm apply` writes none of that
