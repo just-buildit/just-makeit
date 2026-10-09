@@ -376,29 +376,49 @@ def _has_pytest_benchmark(python: str) -> bool:
 _PYTHON_BENCH_FILES = "python_files=test_*.py bench_*.py"
 
 
-def _python_bench_files(root: Path, python: str) -> list[str]:
+def _python_bench_files(
+    root: Path, python: str, timeout: "float | None" = None
+) -> list[str]:
     """Return the test modules pytest collects under ``src/``, in order.
 
     gh-1841. The list is asked of pytest (``--collect-only``), not guessed
     from file names: pytest decides what it collects, so it says what runs.
     Each file is returned once, in the order pytest first reached it.
+
+    gh-2135. The listing imports every file, so one slow import would hold it
+    past any budget. Bounded by *timeout*; when it runs out, the files are the
+    ones jm's own ``python_files`` pattern names, each of which then gets its
+    own budgeted run. A file that is not a benchmark produces no JSON and is
+    skipped as before, so only the listing's cost changes, not the result.
     """
-    r = subprocess.run(
-        [
-            python,
-            "-m",
-            "pytest",
-            "src/",
-            "--collect-only",
-            "-q",
-            "-o",
-            _PYTHON_BENCH_FILES,
-        ],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        env=child_pytest_env(),
-    )
+    try:
+        r = subprocess.run(
+            [
+                python,
+                "-m",
+                "pytest",
+                "src/",
+                "--collect-only",
+                "-q",
+                "-o",
+                _PYTHON_BENCH_FILES,
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            env=child_pytest_env(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            "  listing    pytest --collect-only src/ ran over its budget; "
+            "running each bench_/test_ file under its own",
+            file=sys.stderr,
+            flush=True,
+        )
+        names = ("test_*.py", "bench_*.py")
+        found = sorted(p for pat in names for p in (root / "src").rglob(pat))
+        return [p.relative_to(root).as_posix() for p in found]
     # gh-1950's exit 5: pytest collected nothing, which is a project with no
     # Python benchmarks, not a failure. Any other non-zero exit means a file
     # did not collect (an import or syntax error), and the listing above
@@ -429,30 +449,41 @@ def _python_bench_files(root: Path, python: str) -> list[str]:
 _COLLECT_ERROR_RE = re.compile(r"^ERROR (?:collecting )?(\S+\.py)", re.M)
 
 
-def _file_nodes(root: Path, python: str, path: str) -> list[str]:
+def _file_nodes(
+    root: Path, python: str, path: str, timeout: "float | None"
+) -> "list[str] | None":
     """The benchmark node ids pytest collects in one file (gh-2135).
 
     Asked of pytest for the same reason the file list is (`_python_bench_files`):
     pytest decides what a benchmark is, so this names what a per-benchmark run
     would run. A node id is ``path::name``, and a parametrised case keeps its
     brackets, so each id is one benchmark.
+
+    The collection imports the file, so a file whose import is slow times out
+    here too. It is bounded by the same *timeout* as the runs, because an
+    unbounded collect would hang where the run it replaces would not; None is
+    returned when it does not finish in time.
     """
-    r = subprocess.run(
-        [
-            python,
-            "-m",
-            "pytest",
-            path,
-            "--collect-only",
-            "-q",
-            "-o",
-            _PYTHON_BENCH_FILES,
-        ],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        env=child_pytest_env(),
-    )
+    try:
+        r = subprocess.run(
+            [
+                python,
+                "-m",
+                "pytest",
+                path,
+                "--collect-only",
+                "-q",
+                "-o",
+                _PYTHON_BENCH_FILES,
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            env=child_pytest_env(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     return [
         line.strip()
         for line in r.stdout.splitlines()
@@ -478,11 +509,16 @@ def _run_python(
 
     gh-2135. A file past its budget used to lose every benchmark in it, the
     fast ones too, since pytest-benchmark writes its JSON once per run. Now a
-    file that times out is run again one benchmark at a time, each under the
-    same budget. The fast ones keep their results; a slow one is named in
-    *timed_out* as ``pytest <node id>``, which is the C side's convention with
-    the benchmark rather than the file. The common path is unchanged: one run
-    per file, and a second run only where the first one timed out.
+    file that times out is listed, then run again one benchmark at a time, each
+    under the same budget. The fast ones keep their results; a slow one is named
+    in *timed_out* as ``pytest <node id>``, the C side's convention with the
+    benchmark rather than the file. A file that cannot be listed, because its
+    collection timed out or failed, is named as ``pytest <file>``.
+
+    The cost of a file that times out is one budget for the file, then one
+    budget for each of its k slow benchmarks: 1 + k budgets, plus one more when
+    the listing itself runs out. The common path is unchanged: one run per file,
+    and the extra work only where the first run timed out.
     """
     if not _has_pytest_benchmark(python):
         print(
@@ -491,7 +527,7 @@ def _run_python(
         )
         return None
     merged: dict | None = None
-    for path in _python_bench_files(root, python):
+    for path in _python_bench_files(root, python, timeout):
         data = _run_one(root, python, [path], timeout, timed_out=None)
         if data is _TIMED_OUT:
             print(
@@ -500,8 +536,22 @@ def _run_python(
                 file=sys.stderr,
                 flush=True,
             )
+            nodes = _file_nodes(root, python, path, timeout)
+            if not nodes:
+                # No benchmark could be listed: the collection timed out or
+                # failed. The file's timeout is then the only record of it, so
+                # it is named, as the file-level run always was.
+                print(
+                    f"  timeout    pytest --benchmark-only {path} (no"
+                    " benchmarks could be listed in its budget)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if timed_out is not None:
+                    timed_out.append(f"pytest {path}")
+                continue
             data = None
-            for node in _file_nodes(root, python, path):
+            for node in nodes:
                 one = _run_one(root, python, [node], timeout, timed_out)
                 if one is _TIMED_OUT or one is None:
                     continue
@@ -538,8 +588,9 @@ def _run_one(
 ):
     """One pytest-benchmark run over *targets*; its report, None, or _TIMED_OUT.
 
-    *timed_out* is recorded by the caller for a node, not here, so a file's
-    failed run is not reported before its benchmarks have been tried.
+    A run that exceeds *timeout* appends each target to *timed_out* and returns
+    _TIMED_OUT. The file-level call passes None, so a file that is then retried
+    one benchmark at a time is not named before its benchmarks have been tried.
     """
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "py.json"

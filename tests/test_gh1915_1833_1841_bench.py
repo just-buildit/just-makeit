@@ -214,3 +214,49 @@ def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
 
     assert r.returncode == 1, r.stdout + r.stderr
     assert "bench_broken.py" in r.stderr, r.stderr
+
+
+IMPORT_SLEEP_BENCH = """\
+import time
+
+time.sleep(60)
+
+
+def test_never_reached(benchmark):
+    benchmark(lambda: None)
+"""
+
+
+def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
+    """gh-2135: a file whose import outlasts the budget is named, and jm stops
+    in about three budgets: the whole-tree listing, the file's run, and the
+    file's own listing. Without the listings' timeouts it would wait out the
+    import, which is worse than main."""
+    import time as _time
+
+    proj = _bench_project(tmp_path)
+    (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
+    (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
+    (proj / "src" / "p" / "tests" / "test_import_slow.py").write_text(
+        IMPORT_SLEEP_BENCH
+    )
+    with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[project.bench]\ntimeout = 8\n")
+
+    t0 = _time.monotonic()
+    r = run_cli("bench", "--python-only", "--tag", "slowimport", cwd=proj)
+    elapsed = _time.monotonic() - t0
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    # Three budgets: the whole-tree listing, the file's run, and the file's own
+    # listing, each at most 8 s. Without the bounds it waits out the 60 s import.
+    assert elapsed < 4 * 8, (
+        f"took {elapsed:.0f} s, more than three 8 s budgets"
+    )
+    # No benchmark is ever listed, so no snapshot is written; the file is named
+    # on the output, as every timed-out run is.
+    out = r.stdout + r.stderr
+    assert (
+        "timeout    pytest --benchmark-only src/p/tests/test_import_slow.py"
+        in out
+    ), out
