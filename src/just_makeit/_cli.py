@@ -363,18 +363,19 @@ Commands:
     --force, -f                 Skip the rebuild confirmation.
 
   remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
-    kind is object|module|method|property|function.
+    kind is object|module|state|method|property|warning|error|function|app.
     --object name               Object the method/property lives on (required for those).
     --module name               Module the function lives in (required for function).
     --force, -f                 Skip the confirmation prompt.
 
-  app [OPTIONS]                 Scaffold a shippable standalone application from an object.
+  app [OPTIONS]                 Add a shippable standalone application ([[app]] row).
     --target c|console|pep723   Output target (default: c).
     --object name               Component to scaffold from (default: first object).
     --function name             Bind the app to a module-level function
                                 instead of an object.
     --module name               Module the object or function lives in.
-    --name name                 App/script name (default: project name).
+    --name name                 App/script name, unique per project (default:
+                                the function's, else the project's name).
     --flag name:type[:default[:help]]
                                 Extra CLI flag wired into both the C and
                                 Python parsers ([[app.flags]]); repeatable.
@@ -559,10 +560,10 @@ Examples:
   jm app --target c --object engine --name dsp_tool
 
   # scaffold a Python console script (updates pyproject.toml [project.scripts])
-  jm app --target console --object engine --name dsp_tool
+  jm app --target console --object engine --name dsp_tool_py
 
   # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
-  jm app --target pep723 --object engine --name dsp_tool
+  jm app --target pep723 --object engine --name dsp_tool_script
 
   # config, build, test
   jm config

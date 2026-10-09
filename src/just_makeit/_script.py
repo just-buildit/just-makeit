@@ -1276,4 +1276,65 @@ def run(root: Path) -> None:
         lines += fn_lines
         lines.append("\n")
 
+    # ── apps (gh-2074) ────────────────────────────────────────────────────────
+    # Last: an app is built from an object or a module function, which has to
+    # exist when its `jm app` line runs. One line per [[app]] row, in order,
+    # each naming itself, so no two replay to one default name.
+    app_lines: list[str] = []
+    for entry in C.apps(cfg):
+        app_lines += _app_notes(entry)
+        app_lines.append(
+            _render_cmd(["just-makeit", "app"], _app_flags(entry))
+        )
+    if app_lines:
+        lines += app_lines
+        lines.append("\n")
+
     sys.stdout.write("".join(lines))
+
+
+def _app_flags(entry: dict) -> list[str]:
+    """CLI flags reconstructing one ``[[app]]`` row (gh-2074).
+
+    >>> row = {"target": "c", "name": "t", "object": "o",
+    ...        "flags": [{"name": "g", "type": "double", "help": "gain"}]}
+    >>> for line in _app_flags(row):
+    ...     print(line.split()[:2])
+    ['--target', 'c']
+    ['--name', 't']
+    ['--object', 'o']
+    ['--flag', 'g:double::gain']
+    """
+    parts = [
+        _flag("--target", entry["target"]),
+        _flag("--name", entry["name"]),
+    ]
+    source = "function" if entry.get("function") is not None else "object"
+    if entry.get(source) is not None:
+        parts.append(_flag(f"--{source}", entry[source]))
+        if entry.get("module"):
+            parts.append(_flag("--module", entry["module"]))
+    for f in entry.get("flags", []):
+        spec = f"{f['name']}:{f['type']}"
+        if f.get("default") or f.get("help"):
+            spec += f":{f.get('default', '')}"
+        if f.get("help"):
+            spec += f":{f['help']}"
+        parts.append(_flag("--flag", spec))
+    for c in entry.get("commands", []):
+        spec = f"{c['name']}:{c['help']}" if c.get("help") else c["name"]
+        parts.append(_flag("--command", spec))
+    return parts
+
+
+def _app_notes(entry: dict) -> list[str]:
+    """NOTE lines for an app's command flags, which no CLI flag spells."""
+    named = [c["name"] for c in entry.get("commands", []) if c.get("flags")]
+    if not named:
+        return []
+    return [
+        f"# NOTE: the flags of app '{entry['name']}' command(s)"
+        f" {', '.join(named)} have no CLI flag — copy\n# those"
+        " [[app.commands]] rows into just-makeit.toml and run"
+        " `just-makeit apply`.\n"
+    ]

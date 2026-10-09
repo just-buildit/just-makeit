@@ -111,7 +111,7 @@ under `templates/`, not a Python string constant.
 `just-makeit.toml` is the source of truth for scaffolded state: `[project]`,
 one table per object (`[<comp>]`, usually in `objects/<comp>.toml`), one per
 module (`[module.<name>]`, in `modules/`), and the shared declarations —
-`[[enum]]`, `[codec.<name>]`, `[app]`. The schema is
+`[[enum]]`, `[codec.<name>]`, `[[app]]`. The schema is
 [Configuration](../configuration.md); `_keys.py` is what refuses a key no
 table accepts.
 

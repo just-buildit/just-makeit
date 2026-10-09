@@ -1,7 +1,7 @@
 """End-to-end test: `jm app` generates working C binaries for non-scalar
 object shapes — blockwise (steps buffer→buffer) and generator (--count → N
 samples). Companion to `three_face` (scalar). Each shape is built in its own
-project (jm app keeps one app per project) and the binary is run on real bytes.
+project and the binary is run on real bytes.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/app_shapes/test.py
