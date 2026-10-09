@@ -3381,6 +3381,44 @@ _DOC_REMEDIES = {
 }
 
 
+#: The tables whose ``doc`` is a member's WHOLE docstring, on every face,
+#: keyed by the owner's kind (``"object"`` for a component, else the
+#: module's ``kind``) and then by the table's key path below the owner. Each
+#: renderer here writes the ``doc`` as written and generates no numpy section
+#: beside it (gh-2059), so a ``Parameters`` block in one duplicates nothing:
+#:
+#: - ``extra_methods``: `_extramethods.pyi_member` is the stub body and
+#:   `_extramethods.method_def_row` the ``ml_doc`` -- for an object and a
+#:   composer alike (gh-1997). jm does not know the hand-written function's
+#:   signature (``args`` / ``returns`` are raw text), so it has none to
+#:   document.
+#: - an object's ``properties`` (and a view's): a getset's doc and a bare
+#:   ``@property`` stub, never `render_numpy_doc` (gh-744).
+#: - a capsule's ``methods`` and ``properties``: `_capsule._fn_doc_lines`.
+#: - a handle's ``getters`` and their ``fields``: each field is a getset.
+#: - a composer's ``serializers`` and ``source.computed``: a method row and a
+#:   read-only getset, each carrying the ``doc`` alone.
+#:
+#: A table missing from here is one where jm generates a section beside the
+#: ``doc`` -- or nests the ``doc`` inside one, as a parameter's description.
+#: Tables that generate one only for SOME rows (a module function with no
+#: Doxygen and no documented param, a handle method with no params) are not
+#: here: whether a row gets a section is the renderer's per-row decision,
+#: and a copy of it here would drift. tests/test_gh2059_doc_stands_alone.py
+#: renders a sectioned ``doc`` in every position and fails when this table
+#: and the artefacts disagree, in either direction.
+DOC_STANDS_ALONE: "dict[str, frozenset[tuple[str, ...]]]" = {
+    "object": frozenset(
+        {("extra_methods",), ("properties",), ("views", "properties")}
+    ),
+    "capsule": frozenset({("methods",), ("properties",)}),
+    "handle": frozenset({("getters",), ("getters", "fields")}),
+    "composer": frozenset(
+        {("extra_methods",), ("serializers",), ("source", "computed")}
+    ),
+}
+
+
 def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
     """Manifest ``doc`` values carrying a numpy section heading jm duplicates.
 
@@ -3401,6 +3439,9 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
 
     - A **module** doc is never a finding: jm generates no sections for a
       module, so a heading there duplicates nothing.
+    - A doc in a :data:`DOC_STANDS_ALONE` table is never a finding either:
+      it is the member's whole docstring, with nothing generated beside it
+      (gh-2059 -- an ``extra_methods`` row, a property).
     - Every other ``doc`` is a finding when it carries a **section rule**.
 
     Reporting rather than repairing is unchanged, and so is the remedy: jm
@@ -3426,30 +3467,53 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
     >>> fn = {"module": {"dsp": {"functions": [{"name": "f", "doc": "A.\\n\\nB."}]}}}
     >>> manifest_docs_with_sections(fn)
     []
+
+    A row whose ``doc`` is the whole docstring is not a finding, and the
+    same heading on a generated method still is (gh-2059):
+
+    >>> obj = {"eng": {"extra_methods": [{"name": "h", "doc": mangled}],
+    ...                "methods": [{"name": "m", "doc": mangled}]}}
+    >>> [d.where for d in manifest_docs_with_sections(obj)]
+    ['eng.methods.m.doc']
     """
+    from ._config import RESERVED_SECTIONS, module_kind
+
     found: "list[ManifestDoc]" = []
 
-    def kind_at(path: "tuple[str, ...]") -> str:
-        """Which renderer shape a ``doc`` at *path* belongs to.
+    def kind_at(keys: "tuple[str, ...]") -> str:
+        """Which renderer shape a ``doc`` under *keys* belongs to.
 
-        ``""`` means the renderer carries the value whole, so there is
-        nothing to report.
+        *keys* is the table path with list rows left out --
+        ``("eng", "extra_methods")`` for any row of that table -- so it
+        names the TABLE, which is what decides the shape. ``""`` means the
+        renderer carries the value whole, so there is nothing to report.
         """
         # A module's own doc: jm generates no sections for a module, so a
-        # heading there duplicates nothing. Everywhere else jm appends its own
-        # Parameters/Returns. (gh-1493 retired the other two shapes: no face
-        # truncates or flattens a `doc` any more.)
-        if path[:1] == ("module",) and len(path) == 2:
+        # heading there duplicates nothing. (gh-1493 retired the other two
+        # shapes: no face truncates or flattens a `doc` any more.)
+        if keys[:1] == ("module",) and len(keys) == 2:
             return ""
+        if keys[:1] == ("module",):
+            owner, table = module_kind(cfg, keys[1]) or "module", keys[2:]
+        elif keys and keys[0] not in RESERVED_SECTIONS:
+            owner, table = "object", keys[1:]
+        else:
+            return "duplicated"
+        # gh-2059: the member's whole docstring -- nothing generated beside.
+        if table in DOC_STANDS_ALONE.get(owner, ()):
+            return ""
+        # Everywhere else jm appends its own Parameters/Returns/Examples.
         return "duplicated"
 
-    def walk(node: object, path: "tuple[str, ...]") -> None:
+    def walk(
+        node: object, path: "tuple[str, ...]", keys: "tuple[str, ...]"
+    ) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
                 if isinstance(key, str) and key.startswith("_"):
                     continue
                 if key == "doc" and isinstance(value, str):
-                    kind = kind_at(path)
+                    kind = kind_at(keys)
                     body = value.replace("\r\n", "\n").strip("\n")
                     hit = has_section_rule(body)
                     if kind and hit:
@@ -3461,7 +3525,7 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                             )
                         )
                     continue
-                walk(value, path + (str(key),))
+                walk(value, path + (str(key),), keys + (str(key),))
         elif isinstance(node, list):
             for item in node:
                 # Name the entry by its own `name` where it has one — an
@@ -3471,9 +3535,9 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                     if isinstance(item, dict) and item.get("name")
                     else str(node.index(item))
                 )
-                walk(item, path + (label,))
+                walk(item, path + (label,), keys)
 
-    walk(cfg, ())
+    walk(cfg, (), ())
     return found
 
 

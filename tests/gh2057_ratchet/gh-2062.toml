@@ -1,0 +1,13 @@
+# gh-2062: `jm new --c-dep` leaves the dep's add_subdirectory to `apply`,
+# so the first component a verb adds leaves the root CMakeLists.txt STALE.
+
+[[red]]
+runs = [
+    ["object", "standalone", "c-dep"],
+    ["module", "sorts-first", "c-dep"],
+    ["module", "sorts-last", "c-dep"],
+]
+found = [
+    "status:STALE ~ CMakeLists.txt",
+    "apply:~ CMakeLists.txt",
+]
