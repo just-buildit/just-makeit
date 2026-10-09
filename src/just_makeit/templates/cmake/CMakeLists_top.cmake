@@ -14,7 +14,7 @@ if(NOT DEFINED CMAKE_BUILD_TYPE)
 endif()
 project(
   <<project_underscore>>
-  VERSION <<version>>
+  VERSION <<cmake_version>>
   DESCRIPTION "<<project_underscore>> C library"
   LANGUAGES C)
 

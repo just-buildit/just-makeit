@@ -2168,13 +2168,24 @@ def run(
         )
         for v in version_entries:
             print(f"  ! {v.rel}: {v.found!r} (manifest says {v.expected!r})")
+        # #2102: the advice names the one command that writes every copy
+        # (gh-2069), once per side the author might keep. The manifest is
+        # not always the right one: a release bumps `pyproject.toml` and
+        # never the manifest, so a copy can be the true value.
+        expected = version_entries[0].expected
         print(
-            "  One side is stale — jm can't tell which, so it rewrites "
-            "neither; a release\n  bumps `pyproject.toml` and never the "
-            "manifest, so the manifest is often the\n  stale one. Sync "
-            "whichever is wrong. Note `<pkg>_version()` in\n  "
-            "`native/src/<pkg>_lib.c` is a C API: a linking consumer is "
-            "told this value.\n  See gh-1141."
+            "  One side is stale — jm can't tell which, so `apply` rewrites "
+            "neither. Keep one side with\n  `jm config version`, which "
+            "writes it into every copy:"
+        )
+        print(f"    `jm config version {expected}`   keep the manifest")
+        for found in dict.fromkeys(
+            v.found for v in version_entries if v.found != expected
+        ):
+            print(f"    `jm config version {found}`   keep that copy")
+        print(
+            "  Note `<pkg>_version()` in `native/src/<pkg>_lib.c` is a C "
+            "API: a linking consumer is\n  told this value. See gh-1141."
         )
         print()
 
