@@ -119,6 +119,25 @@ def prefixed_owner(pkg: str) -> dict:
     return {"project": {"name": pkg, "schema": str(PREFIXED_SCHEMA)}}
 
 
+def layouts(pkg: str) -> "tuple[dict, dict]":
+    """An owner for package *pkg* in each header layout: prefixed, then not.
+
+    For a tree no manifest describes (gh-1895): `jm bind` on a bare
+    ``native/`` has no schema to read, so where a header actually IS is the
+    only evidence of the layout. The caller asks each owner where the header
+    would be (:func:`core_h`) and keeps the ones that hold it -- the layout
+    stays a fact only this module states, as :func:`prefixed_owner` keeps it
+    for `jm upgrade`.
+
+    >>> [core_rel("g", o) for o in layouts("p")]
+    ['native/inc/p/g/g_core.h', 'native/inc/g/g_core.h']
+    """
+    return (
+        prefixed_owner(pkg),
+        {"project": {"name": pkg, "schema": str(PREFIXED_SCHEMA - 1)}},
+    )
+
+
 def _pkg(owner: Owner) -> str:
     from . import _config as C
 

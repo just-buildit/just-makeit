@@ -1656,14 +1656,9 @@ def _main() -> None:
             )
             sys.exit(1)
         if check:
-            rendered = _bind.run(Path.cwd(), comp, write=False)
-            existing = (
-                Path.cwd() / "native" / "src" / comp / f"{comp}_ext.c"
-            ).read_text(encoding="utf-8")
-            if rendered != existing:
-                print(f"error: {comp}_ext.c is out of date with {comp}_core.h")
-                sys.exit(1)
-            print(f"  ok  {comp}_ext.c matches {comp}_core.h")
+            code = _bind.check(Path.cwd(), comp)
+            if code:
+                sys.exit(code)
         else:
             _bind.run(Path.cwd(), comp)
 

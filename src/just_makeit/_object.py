@@ -164,18 +164,30 @@ def _included_member_docs(
     return out, structs
 
 
-def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
+def _load_doc_blocks(
+    root: Path,
+    obj: str,
+    cfg: "dict | None" = None,
+    *,
+    owner: "INC.Owner | None" = None,
+) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
     Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
     or ``{}`` when the header is absent or carries no usable comments. The
     header is the single source of truth for docstrings; generators derive
     Python docs from these blocks and fall back to name-based stubs otherwise.
+
+    *owner* is the project the header's TREE is in -- its layout and its
+    symbol stem -- when no manifest at *root* says so: `jm bind` on a bare
+    ``native/`` reads them off the tree (gh-1895). By default the manifest
+    at the doc root answers.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
+    tree = doc_root if owner is None else owner
     # Includes inside the header resolve from the -I directory.
     inc_root = INC.inc_dir(doc_root)
-    header = INC.core_h(doc_root, obj)
+    header = INC.core_h(doc_root, obj, tree)
     if not header.exists():
         return {}
     text = header.read_text(encoding="utf-8")
@@ -210,13 +222,13 @@ def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     if _structs:
         out[struct_members_key()] = _structs
     # gh-1591: a declaration's C name starts with the object's STEM.
-    stem = CSYM.stem(doc_root, obj)
+    stem = CSYM.stem(tree, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
     # boilerplate (which names the CLASS) is recognised under a class_name.
     # From *cfg* when the caller renders from one: at `jm object` time the
     # manifest on disk does not hold the new object yet, and a scaffold that
     # read the brief as authored while `apply` read it as jm's disagreed.
-    manifest = cfg if cfg is not None else INC.manifest(doc_root)
+    manifest = cfg if cfg is not None else INC.manifest(tree)
     cls = C.resolved_class_name(manifest, obj)
     members = _method_members(manifest, obj, stem)
     for cname, block_text in raw.items():

@@ -88,6 +88,29 @@ def stem(owner: INC.Owner, name: str) -> str:
     return f"{p}_{name}"
 
 
+def implied_prefix(declared: str, name: str) -> "str | None":
+    """The ``c_prefix`` a stem *declared* for *name* carries: :func:`stem`
+    read backwards, from a symbol jm derived.
+
+    ``""`` when *declared* carries none, and None when no prefix derives it
+    (*declared* does not end in ``_<name>``). The answer is only a reading:
+    the caller holds it to :func:`stem` before trusting it, because a *name*
+    that already starts with the prefix is used as is. It is how a header
+    with no manifest beside it says its prefix (`jm bind`, gh-1895), and how
+    :func:`stray_prefixes` reads an include guard.
+
+    >>> implied_prefix("fir", "fir"), implied_prefix("dp_fir", "fir")
+    ('', 'dp')
+    >>> implied_prefix("other", "fir") is None
+    True
+    """
+    if declared == name:
+        return ""
+    if declared.endswith(f"_{name}"):
+        return declared[: -len(name) - 1]
+    return None
+
+
 def backing_stem(owner: INC.Owner, backing: str) -> str:
     """The C stem a capsule / composer module's ``backing`` spells the
     backing API from: ``<stem>_create``, ``<stem>_state_t``, ... (gh-1685).
@@ -1239,13 +1262,13 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
         if not m:
             continue
         guard, name = m.group(1), comp.upper()
-        expect = upper(cfg, comp)
-        if guard == expect or guard == name:
+        if guard == upper(cfg, comp):
             continue
-        if guard.endswith("_" + name):
-            had = guard[: -len(name) - 1].lower()
-            if had != (want or ""):
-                out[comp] = had
+        # "" is a bare guard and None another component's: neither is a
+        # prefix this tree carries.
+        had = implied_prefix(guard, name)
+        if had and had.lower() != (want or ""):
+            out[comp] = had.lower()
     return out
 
 

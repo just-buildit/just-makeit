@@ -27,7 +27,9 @@ When a declaration is found but cannot be parsed (unknown type, complex
 multi-param signature), it is skipped with a warning rather than a hard
 error — the user can add those methods via TOML.
 
-Package name comes from ``pyproject.toml`` in the project root.
+Package name comes from ``pyproject.toml`` in the project root. The
+header layout and the C prefix come from ``just-makeit.toml`` when there is
+one, and from the tree when there is not (gh-1895): see :func:`run`.
 """
 
 from __future__ import annotations
@@ -643,18 +645,91 @@ def refuse_declared(root: Path, component: str) -> None:
         )
 
 
+def ext_c(root: Path, component: str) -> Path:
+    """The ``_ext.c`` `bind` writes for *component*, and ``--check`` reads.
+
+    One spelling for both modes: the standalone layout, which `bind` writes
+    unconditionally (see :func:`_build_ctx`).
+    """
+    return root / "native" / "src" / component / f"{component}_ext.c"
+
+
+def _layout(root: Path, component: str, pkg: str) -> "INC.Owner":
+    """The project *component*'s header is bound into, as its header
+    layout knows it (gh-1583, gh-1895).
+
+    *root* itself when it holds a manifest: its schema says the layout. A
+    tree with none -- a bare ``native/`` -- is in the layout its header is
+    found in, so each layout `_incpath` knows is asked where the header
+    would be, and the one that holds it answers. Reading no manifest as
+    the legacy layout (what `_incpath.manifest` does with ``{}``) looked
+    for a header no current `jm new` writes there, and the render then
+    spelled the other layout's ``#include``.
+
+    Raises
+    ------
+    Refusal
+        When no layout holds the header, or both do: then nothing says which
+        header is *component*'s.
+    """
+    from ._report import Refusal
+
+    if (root / C.FILENAME).is_file():
+        if not INC.core_h(root, component).is_file():
+            raise Refusal(f"header not found: {INC.core_rel(component, root)}")
+        return root
+    owners = INC.layouts(pkg)
+    held = [o for o in owners if INC.core_h(root, component, o).is_file()]
+    if len(held) == 1:
+        return held[0]
+    paths = " and ".join(INC.core_rel(component, o) for o in owners)
+    if not held:
+        raise Refusal(f"header not found: neither of {paths} exists")
+    raise Refusal(
+        f"both {paths} exist, and with no {C.FILENAME} to say which header"
+        f" layout this tree is in, `jm bind` cannot tell which is"
+        f" '{component}'s: remove the stale one."
+    )
+
+
+def _stem_owner(
+    owner: "INC.Owner", component: str, declared: str
+) -> "INC.Owner":
+    """*owner*, carrying the ``c_prefix`` a header with no manifest beside
+    it declares (gh-1895).
+
+    A manifest says its own prefix, so *owner* is returned as is when it is
+    one. With none, the header's ``<stem>_state_t`` is the only word on it:
+    `_csym.implied_prefix` reads *declared* back to a prefix, which the
+    caller then holds to `_csym.stem` like any other. A stem no prefix
+    derives leaves *owner* bare, and that check refuses it.
+    """
+    if not isinstance(owner, dict):
+        return owner
+    p = CSYM.implied_prefix(declared, component)
+    if not p:
+        return owner
+    return {**owner, "project": {**owner["project"], "c_prefix": p}}
+
+
 def run(root: Path, component: str, *, write: bool = True) -> str:
     """Reflect ``<component>_core.h`` and (optionally) write ``_ext.c``.
 
     Returns the rendered text either way so tests and ``--check`` mode
     can compare without touching the filesystem. A component the manifest
     declares is refused first, in both modes (:func:`refuse_declared`).
+
+    With no manifest the project is read off the tree (gh-1895): the header
+    layout from where the header is (:func:`_layout`), the ``c_prefix`` from
+    the stem it declares (:func:`_stem_owner`). One owner then answers the
+    header's path, the symbol-stem check and the render.
     """
+    from ._report import Refusal
+
     refuse_declared(root, component)
-    header = INC.core_h(root, component)
-    if not header.exists():
-        print(f"error: header not found: {header}", file=sys.stderr)
-        sys.exit(1)
+    pkg = _read_pkg(root)
+    owner = _layout(root, component, pkg)
+    header = INC.core_h(root, component, owner)
 
     try:
         parsed = parse_header(header)
@@ -672,42 +747,33 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     # The header spells its symbols with the SYMBOL stem (gh-1591): under a
     # c_prefix, `running_stats`'s are `my_stats_running_stats_*`. Comparing
     # against the bare name refused every prefixed project's own header.
-    want = CSYM.stem(root, component)
+    owner = _stem_owner(owner, component, parsed["component"])
+    want = CSYM.stem(owner, component)
     if parsed["component"] != want:
-        print(
-            f"error: header declares component '{parsed['component']}',"
+        raise Refusal(
+            f"header declares component '{parsed['component']}',"
             f" but you asked for '{component}'"
-            + (f" (symbols `{want}_*`)." if want != component else "."),
-            file=sys.stderr,
+            + (f" (symbols `{want}_*`)." if want != component else ".")
         )
-        sys.exit(1)
 
-    pkg = _read_pkg(root)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     defaults = parse_reset_defaults(core_c)
     # The header's create() Doxygen (filtered of scaffold boilerplate) enriches
-    # the class docstring on bind, matching every other regeneration path.
+    # the class docstring on bind, matching every other regeneration path --
+    # read through the same owner, so its stem is the header's (gh-1895).
     from ._object import _load_doc_blocks
 
-    doc_blocks = _load_doc_blocks(root, component)
-    # gh-1583: the layout of the project the header is bound into; a
-    # header bound where no manifest exists yet gets a new project's. The
-    # same owner answers the C symbol stem (gh-1591).
-    owner = (
-        root
-        if (root / C.FILENAME).is_file()
-        else {"project": {"name": pkg, "schema": str(C.CURRENT_SCHEMA)}}
-    )
+    doc_blocks = _load_doc_blocks(root, component, owner=owner)
     ctx = _build_ctx(component, parsed, pkg, owner, defaults, doc_blocks)
     ctx.update(INC.ctx_slots(owner))
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:
-        ext_c = root / "native" / "src" / component / f"{component}_ext.c"
-        ext_c.parent.mkdir(parents=True, exist_ok=True)
-        verb = "update" if ext_c.exists() else "create"
-        _textio.write_text(ext_c, text)
-        print(f"  {verb}  {ext_c}")
+        out = ext_c(root, component)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        verb = "update" if out.exists() else "create"
+        _textio.write_text(out, text)
+        print(f"  {verb}  {out}")
 
         pyi = root / "src" / pkg / f"{component}.pyi"
         if pyi.exists() or (root / "src" / pkg).is_dir():
@@ -733,3 +799,39 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
             _textio.write_text(pyi, pyi_text)
             print(f"  {verb}  {pyi}")
     return text
+
+
+def check(root: Path, component: str) -> int:
+    """``jm bind <component> --check``: is the ``_ext.c`` on disk the one
+    `bind` would write? Returns the exit code; writes nothing.
+
+    A binding that is not there at all is a finding like a stale one, not a
+    crash (gh-2101): each prints one ``error:`` line naming what `jm bind`
+    would do about it. Everything :func:`run` refuses -- a declared
+    component, a header it cannot find or read -- it refuses here too,
+    before the file on disk is looked at.
+
+    Returns
+    -------
+    int
+        0 when the file matches the render, 1 when it is absent or differs.
+    """
+    rendered = run(root, component, write=False)
+    path = ext_c(root, component)
+    rel = path.relative_to(root).as_posix()
+    if not path.is_file():
+        print(
+            f"error: {rel} does not exist: `jm bind {component}` would write"
+            f" it from {component}_core.h",
+            file=sys.stderr,
+        )
+        return 1
+    if path.read_text(encoding="utf-8") != rendered:
+        print(
+            f"error: {rel} is out of date with {component}_core.h: run"
+            f" `jm bind {component}` to rewrite it",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"  ok  {path.name} matches {component}_core.h")
+    return 0

@@ -708,6 +708,11 @@ CASES: "dict[str, dict[str, Case]]" = {
                                 refuses=_BIND_ROUTE),
         # What `bind` is for: a header the manifest does not declare.
         "undeclared": _case("bind", "u", needs=("foreign",)),
+        # gh-2101: `--check` on one not bound yet is a finding, on one line
+        # naming what `bind` would write -- not a FileNotFoundError.
+        "check-undeclared": _case("bind", "u", "--check", needs=("foreign",),
+                                  refuses=("native/src/u/u_ext.c",
+                                           "`jm bind u`")),
     },
     "config": {"version": _case("config", "version", "0.2.0", needs=())},
     "ci": {
