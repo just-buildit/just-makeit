@@ -345,40 +345,6 @@ class TestModuleAggregatedObject:
         assert proc.returncode == 0, proc.stderr
 
 
-class TestRenderModuleExtCPeer:
-    """``_render.render_module_ext_c`` duplicates `render_module_ext_aggregator`
-    (the docstring at gh-1181 says the extraction happened so the writer and
-    the drift oracle "call ONE thing" -- but this second copy still exists,
-    called with real `comp_ctxs` by nothing in the production tree today).
-    Two implementations of the same loop drift silently unless something
-    exercises both, so this proves the fix directly rather than leaving it
-    unproven on one of the two copies that carries it.
-    """
-
-    def test_it_also_creates_and_registers_the_record_type(self, tmp_path):
-        from just_makeit import _config as C
-        from just_makeit._object import build_component_ctxs
-        from just_makeit import _incpath as INC
-        from just_makeit._render import render_module_ext_c
-
-        root = _scaffold_module(tmp_path)
-        cfg = C.load(root)
-        comp_ctxs = build_component_ctxs(root, cfg, "m", "demo")
-        out = render_module_ext_c(
-            "m",
-            comp_ctxs,
-            layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
-            owner={"project": {"name": "p"}},
-        )
-        assert (
-            "Sync_find_type = PyStructSequence_NewType(&Sync_find_desc)" in out
-        )
-        assert (
-            'PyModule_AddObject(m, "SyncHit", (PyObject *)Sync_find_type)'
-            in out
-        )
-
-
 class TestApplyIsIdempotent:
     """A second `apply` on an unchanged manifest must not report drift --
     the exact property that keeps `jm status --check` quiet."""

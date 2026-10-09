@@ -315,21 +315,11 @@ class TestEveryEmitterSplicesIt:
         )
 
     def test_object_module_aggregator(self):
+        """An object module's `_ext.c`, with members or with none: since
+        gh-2070 an empty module is this same render, not one of its own."""
         cfg = _cfg()
         block = _procglobal.rendezvous_c(cfg, "own")
         out = R.render_module_ext_aggregator(
-            "own",
-            [],
-            procglobal=block,
-            layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
-            owner={"project": {"name": "p"}},
-        )
-        assert "PyCapsule_New(flag_state_ptr()" in out
-
-    def test_object_module_empty_scaffold(self):
-        cfg = _cfg()
-        block = _procglobal.rendezvous_c(cfg, "own")
-        out = R.render_module_ext_c(
             "own",
             [],
             procglobal=block,
