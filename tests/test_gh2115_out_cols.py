@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from _jmrun import run_cli, script_round_trip  # noqa: E402
 
+from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 
@@ -294,6 +295,23 @@ def test_a_count_that_is_not_whole_rows_is_a_kernel_error(built):
     assert "7 elements" in out and "4-wide" in out, out
 
 
+def test_a_ragged_count_is_refused_through_out_too(built):
+    """The whole-rows check lives on BOTH paths. `out=` has its own copy of
+    it (the buffer is the caller's, so the count comes from the kernel and is
+    never a function of the buffer's shape); a (5, 4) buffer holds 20 floats,
+    so 7 elements fit and only the whole-rows check can refuse them."""
+    out = _outcome(
+        built,
+        "try:\n"
+        "    Mat().ragged(np.arange(7, dtype=np.float32),\n"
+        "                 out=np.zeros((5, 4), dtype=np.float32))\n"
+        "except RuntimeError as e:\n"
+        "    print('RuntimeError', e)\n",
+    )
+    assert out.startswith("RuntimeError"), out
+    assert "7 elements" in out and "4-wide" in out, out
+
+
 def test_max_out_still_answers_in_elements(built):
     """Declaring a width does not move the unit `_max_out` speaks in."""
     out = _outcome(built, "print(Mat().run_max_out(10))")
@@ -431,3 +449,29 @@ def test_a_hand_edited_manifest_is_refused_on_load(tmp_path):
     r = run_cli("apply", cwd=root)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "out_cols needs variable_output" in r.stdout + r.stderr
+
+
+def test_dump_writes_out_cols_and_it_reads_back(tmp_path):
+    """`_dump` is hand-written per key and `apply` replays every manifest
+    through it, so a key it forgets is silently lost on the next apply. The
+    CLI test above compares the manifest `jm` wrote; this one asks `_dump`
+    itself, on a config loaded from that manifest."""
+    root = _scaffold(tmp_path)
+    for argv in (
+        ("object", "mat", "--state", "width:size_t:4", "--no-step"),
+        (
+            "method",
+            "mat",
+            "run",
+            "--param",
+            "x:float[]",
+            "--return-type",
+            "float",
+            "--variable-output",
+            "--out-cols",
+            "state->width",
+        ),
+    ):
+        assert run_cli(*argv, cwd=root).returncode == 0, argv
+    text = C._dump(C.load(root))
+    assert re.search(r'^out_cols = "state->width"$', text, re.M), text
