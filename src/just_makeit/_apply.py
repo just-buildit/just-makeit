@@ -633,6 +633,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-1591: and the C symbol prefix, for the same reason: a replay that
         # renders bare names makes the real project's prefixed ones "missing".
         c_prefix=C.c_prefix(cfg),
+        # gh-2083: and the real version, for the same reason. Rendered at the
+        # `new` default, the replay's Doxyfile and bootstrap.toml read as
+        # `0.1.0` and disagree with an in-sync project, and `apply` materialised
+        # a missing copy at `0.1.0`. The stamp below only reached the manifest.
+        version=C.project_version(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
