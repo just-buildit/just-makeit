@@ -1369,7 +1369,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     tname = src["type_name"]  # Python class name, e.g. "Synth"
     fields = _source_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -2199,7 +2199,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     src_tname = C.composer_source(cfg, module)["type_name"]  # e.g. "Synth"
     fields = _segment_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -2592,7 +2592,7 @@ def render_timeline_type(cfg: dict, module: str) -> str:
     tl = C.composer_timeline(cfg, module)
     tname = tl.get("type_name", "Timeline")
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
@@ -3102,7 +3102,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
             for i, op in enumerate(_ptrs)
         )
         src_bytes_copy += "            }\n"
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
     obj = f"{cname}Object"
     type_obj = f"{cname}Type"
@@ -4401,7 +4401,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     Mirrors the capsule CMake generator."""
     mp = C.module_paths(module)
     leaf, cname = mp.leaf, mp.cname
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     link_cores = C.dep_link_libs(C.capsule_depends_on(cfg, module))
     extra = C.capsule_extra_link_libs(cfg, module)
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
@@ -5110,7 +5110,7 @@ def materialize(
     cfg = resolve_field_docs(cfg, module, project_root or root)
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     # gh-998: the project's straight-C seams, published before the binding
     # that calls them. Absent when the source declares none, so a composer

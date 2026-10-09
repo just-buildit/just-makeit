@@ -694,14 +694,11 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
     :func:`_merge_module_init` recognise the neighbour's exports and leave them
     alone instead of pruning them out of ``__all__`` on every other apply.
     """
-    mp = C.module_paths(module)
-    out_pkg = C.module_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     return [
         C.module_paths(other).leaf
         for other in C.modules(cfg)
-        if other != module
-        and (C.module_package(cfg, other) or C.module_paths(other).pypath)
-        == out_pkg
+        if other != module and C.module_package_resolved(cfg, other) == out_pkg
     ]
 
 
@@ -1448,7 +1445,7 @@ def _make_view_ctx(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )
     )
@@ -1685,7 +1682,7 @@ def build_component_ctxs(
             Ctx.make_module_ctx(
                 module,
                 pkg,
-                C.module_package(cfg, module),
+                C.module_package_resolved(cfg, module),
                 C.module_doc(cfg, module),
             )
         )
@@ -1933,7 +1930,7 @@ def render_module_ext_c(
         module_doc_c=Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_doc_c"],
         # gh-643: the module header's Doxygen for its free functions — the
@@ -2011,6 +2008,13 @@ def _regenerate_module_now(
     # gh-523: `package` redirects every Python-side artifact (.so output dir,
     # .pyi, __init__ re-exports, tests/, benchmarks/) into a sibling package;
     # unset it collapses to the module's own pypath, so nothing changes.
+    #
+    # Spelled inline ON PURPOSE, the one place outside
+    # `C.module_package_resolved` that may (gh-2065): the `__init__.py`
+    # re-exports written here are the independent oracle gh-2054's gate
+    # checks every generated import path against. Through the owner, a
+    # wrong answer would put the re-exports where the imports look, and the
+    # gate would pass on a tree that does not import.
     out_pkg = C.module_package(cfg, module) or mp.pypath
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
@@ -2230,7 +2234,7 @@ def _regenerate_module_now(
         **Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         ),
         "Module": Module,
@@ -2462,7 +2466,7 @@ def _regenerate_module_now(
             Ctx.make_module_ctx(
                 module,
                 pkg,
-                C.module_package(cfg, module),
+                C.module_package_resolved(cfg, module),
                 C.module_doc(cfg, module),
             ),
         )
@@ -2484,7 +2488,7 @@ def _regenerate_module_now(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_docstring_py"],
     )

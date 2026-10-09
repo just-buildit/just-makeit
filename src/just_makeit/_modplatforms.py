@@ -179,7 +179,7 @@ def init_platforms(
     from . import _config as C
 
     def _out_pkg(mod: str) -> str:
-        return C.module_package(cfg, mod) or C.module_paths(mod).pypath
+        return C.module_package_resolved(cfg, mod)
 
     here = _out_pkg(module)
     by_leaf = {

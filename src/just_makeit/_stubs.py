@@ -2968,7 +2968,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # The .pyi sits beside the .so at src/<pkg>/<pypath>/<leaf>.pyi — or, when
     # the module declares a gh-523 `package`, inside that package instead.
     mp = C.module_paths(module)
-    out_pkg = C.module_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     needs_literal = _uses_literal(cfg, module)
     # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is

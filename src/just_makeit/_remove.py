@@ -175,8 +175,7 @@ def _object_paths(
     if module:
         # gh-523: the module's Python artifacts may live in a `package`
         # override rather than a directory named after the module.
-        mp = C.module_paths(module)
-        sub = root / "src" / pkg / (C.module_package(cfg, module) or mp.pypath)
+        sub = root / "src" / pkg / C.module_package_resolved(cfg, module)
         paths += [
             sub / "tests" / f"test_{obj}.py",
             sub / "benchmarks" / f"bench_{obj}.py",
@@ -378,8 +377,7 @@ def _prune_parent_packages(
     # Every directory prefix occupied by a surviving module.
     needed: set[str] = set()
     for other in C.modules(cfg):
-        other_mp = C.module_paths(other)
-        segs = (C.module_package(cfg, other) or other_mp.pypath).split("/")
+        segs = C.module_package_resolved(cfg, other).split("/")
         for d in range(1, len(segs) + 1):
             needed.add("/".join(segs[:d]))
     for depth in range(len(mp.parents), 0, -1):
