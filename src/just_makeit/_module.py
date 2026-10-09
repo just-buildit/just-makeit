@@ -25,6 +25,7 @@ from . import _config as C
 from . import _render as T
 from . import _incpath as INC
 from . import _csym as CSYM
+from ._report import Refusal
 from ._init import _to_title, _write
 from ._object import _regenerate_module
 
@@ -46,6 +47,11 @@ def run(
     directory this module's Python artifacts (``.so``, ``.pyi``, re-export
     ``__init__.py``, tests and benchmarks) land in, instead of one named
     after the module. Empty means "a package of my own" — today's behaviour.
+    ``jm module --package`` passes it (gh-2064), so the module id's own
+    directory is never written when the module lives elsewhere. A value
+    that is not a directory below ``src/<pkg>/`` is refused before anything
+    is written (`_config.validate_module_package`); the manifest key is
+    refused by the same rule when the manifest loads.
 
     *platforms* (gh-1463) is ``[module.X] platforms``: the platforms the
     module's extension is built on. It has no CLI flag; ``apply`` passes it so
@@ -55,6 +61,8 @@ def run(
     if err:
         print(f"error: {err}", file=sys.stderr)
         sys.exit(1)
+    if package and (why := C.validate_module_package(package)) is not None:
+        raise Refusal(f"--package {why}")
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
