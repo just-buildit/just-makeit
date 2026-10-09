@@ -753,9 +753,15 @@ show is declared. The same is true of an init-param with no seed at all — a
 `path`, a `bytes` blob, a `capsule` handle — where there is no call to attempt
 and the generated tests skip unconditionally.
 
-**It takes effect when the object is created.** The generated test files are
-create-only — jm writes them once and never rewrites them — so adding
-`example_value` to an existing project changes nothing already on disk.
+**Adding it later reaches the Python faces, not the C smoke.** The scaffolded
+`tests/test_<comp>.py` and `benchmarks/bench_<comp>.py` are jm's while they
+start `# jm:generated`, so the next `jm apply` rewrites them to construct with
+the value; the `.pyi` and the runtime docstrings, which `apply` always
+regenerates, pick it up as well. The C smoke test,
+`native/tests/test_<comp>_core.c`, is yours from the moment it is written:
+`apply` never rewrites it, so it keeps its zero-seeded call until you edit the
+`create()` arguments yourself. Which files `apply` rewrites, and how one
+becomes yours: [Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file).
 
 **One thing changes with it.** For an init-params constructor the generated
 accessor test asserts the set/get **round-trip only**, not the value a field
