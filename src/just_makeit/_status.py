@@ -671,10 +671,32 @@ def run(
         # and stops hearing about it. Suppressible because adopting jm's
         # render is the author's call — unlike the gh-426 dropped symbol
         # beside it, nothing is being lost here.
+        # gh-1899: a Makefile still rendered for the other backend is a
+        # backend mismatch, reported as drift. Reporting it as OUTDATED sent
+        # the author to "upgrade jm" for a file the manifest made wrong.
+        from . import _apply as _apply_mod
+        from . import _new as _new_mod
+
+        _backend = None
+        _cur_mf = replay_root / "Makefile"
+        _other = _new_mod.other_backend(cfg)
+        if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
+            root,
+            _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            _other,
+            lambda: _apply_mod._other_backend_makefile(cfg, root),
+        ):
+            _backend = _other
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
+            if not (_backend and p == "Makefile")
         ]
+        backend_entries = (
+            [("Makefile", _backend, _is_allowed("Makefile", allow_patterns))]
+            if _backend
+            else []
+        )
         # gh-1589: a packaging template scaffolded before it was born owned
         # carries no token, so `apply` never renders it and, being
         # RECONCILED, it is never OUTDATED either. When it differs from
@@ -1052,6 +1074,7 @@ def run(
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
         + len(version_entries)
+        + sum(1 for b in backend_entries if not b[2])
         + len(manifest_doc_entries)
         + len(_orphan_pg)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
@@ -1177,6 +1200,12 @@ def run(
                             "kind": d.kind,
                         }
                         for d in manifest_doc_entries
+                    ],
+                    # gh-1899: the Makefile of the backend the project no
+                    # longer uses, which is drift, not outdated.
+                    "backend": [
+                        {"path": p, "backend": b, "allowed": al}
+                        for (p, b, al) in backend_entries
                     ],
                     "version_drift": [
                         {
@@ -1647,6 +1676,20 @@ def run(
     # The reported scenario is a reader running `status --check` *before*
     # migrating, seeing OK, and concluding there is nothing to do; collapsing
     # this into the summary line would reproduce it with extra steps.
+    if backend_entries:
+        cur = C.build_system(cfg)
+        print(
+            f"BACKEND ({len(backend_entries)}) — the Makefile is the "
+            f"{backend_entries[0][1]} backend's, but [project] build is "
+            f"{cur!r}:"
+        )
+        for p, _b, al in backend_entries:
+            tag = " [status_allow]" if al else ""
+            print(f"  ! {p}{tag}")
+        print(
+            "  `jm apply` replaces it with the "
+            f"{cur} backend's Makefile. gh-1899.\n"
+        )
     if outdated_entries:
         print(
             f"OUTDATED ({len(outdated_entries)}) — create-only file(s) "
