@@ -40,13 +40,14 @@ def _script() -> str:
     return "\n".join(lines)
 
 
-def _exit(src: str, *results: str, docs: str = "") -> int:
+def _exit(src: str, *results: str, docs: str = "", owed: str = "") -> int:
     return subprocess.run(
         ["bash", "-c", _script()],
         env={
             "SRC": src,
             "RESULTS": " ".join(results),
             "DOCS": docs,
+            "OWED": owed,
             "PATH": "/usr/bin:/bin",
         },
         capture_output=True,
@@ -100,3 +101,31 @@ def test_the_aggregator_reads_the_docs_result():
     text = CI.read_text(encoding="utf-8")
     job = text[text.index("\n  ci-passed:") :]
     assert "DOCS: ${{ needs.docs.result }}" in job
+
+
+@pytest.mark.parametrize(
+    "owed, code",
+    [
+        ("success success", 0),
+        ("skipped skipped", 0),
+        ("success failure", 1),
+        ("success cancelled", 1),
+        ("failure skipped", 1),
+    ],
+    ids=["ran", "bump", "leg-failed", "leg-timed-out", "planner-failed"],
+)
+def test_a_tested_tree_still_needs_the_legs_its_pr_trimmed(owed, code):
+    """gh-2125: a push whose tree its PR tested has src=false, and still
+    runs the test legs that PR trimmed. This check is what release.yml
+    reads, and those legs run nowhere else that gates a release, so the
+    early exit must not certify one that failed or timed out -- nor a
+    failed planner, which leaves the legs SKIPPED."""
+    assert _exit("false", "skipped", owed, docs="skipped", owed=owed) == code
+
+
+def test_the_aggregator_reads_the_owed_legs():
+    text = CI.read_text(encoding="utf-8")
+    job = text[text.index("\n  ci-passed:") :]
+    assert (
+        "OWED: ${{ needs.toolchain.result }} ${{ needs.test.result }}" in job
+    )
