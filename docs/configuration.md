@@ -583,6 +583,15 @@ carrying one gets a second copy after it, which `jm status` reports as
 `DOC`. For a full docstring with its own sections and doctests, write it as
 Doxygen above the declaration in the component's `_core.h`.
 
+The exception is a `doc` that is the member's whole docstring, with nothing
+generated beside it. Write the whole numpy docstring, sections and doctests
+included, in the `doc` of an
+[`extra_methods`](#componentextra_methods-entries) row, which has no core
+declaration to put Doxygen on. The same goes for an object's or a view's
+property, a capsule's methods and properties, a handle's getters, and a
+composer's serializers and computed properties. `status` does not report
+these (gh-2059).
+
 ### Generated Python style — `py_format_command`
 
 The Python twin of `c_format_command`. jm emits its own layout for the
@@ -1114,6 +1123,11 @@ doc     = "FFT of interleaved int16 I/Q."
 | TOML field                                      | CLI flag    | Status       |
 | ----------------------------------------------- | ----------- | ------------ |
 | `name`, `fn`, `flags`, `args`, `returns`, `doc` | (TOML only) | ✅ (gh-1997) |
+
+The `doc` is the method's whole docstring on both faces, the `.pyi` member
+and the runtime `__doc__`, and jm generates nothing beside it. So it can be
+a full numpy docstring with `Parameters`, `Returns` and an `Examples`
+doctest (gh-2059).
 
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):
