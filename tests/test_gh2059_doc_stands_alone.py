@@ -34,6 +34,9 @@ GATE: a manifest `doc` is reported as a duplicated numpy section exactly
   renderer that starts generating sections beside a listed table fails
   until its entry goes. `RATCHET` pins the rows whose renderer decides per
   row (gh-2103).
+- `TestEveryFace` (gh-2104) reads the same render for layout: every stub
+  docstring keeps its indent, and a `doc` on the stub is on the runtime
+  face too.
 """
 
 from __future__ import annotations
@@ -324,6 +327,11 @@ def _every_position_project(base: Path) -> Path:
     ):
         _jm(*args, cwd=root)
     cfg = C.load(root)
+    # gh-2104: a record type's own doc is authored text too, read by a face
+    # `_inject` does not reach (the key is not `doc`).
+    for m in cfg["eng"]["methods"]:
+        if m["name"] == "one":
+            m["record_doc"] = "One record.\n\nIts second paragraph."
     cfg["codec"] = copy.deepcopy(_CODEC)
     cfg["fir"].setdefault("methods", []).append(copy.deepcopy(_METHOD))
     for comp in ("solo", "fir", "bare"):
@@ -417,17 +425,26 @@ def _inject(cfg: dict) -> "dict[str, tuple[str, tuple[str, ...]]]":
 
 
 @pytest.fixture(scope="module")
-def measured(tmp_path_factory) -> "dict[str, tuple]":
-    """``{where: (reported, beside, (owner, table))}`` per rendered doc.
-
-    *beside* is every heading jm wrote in a docstring that carries the doc,
-    on any face; *reported* is whether the detector named it.
-    """
+def rendered(tmp_path_factory) -> "tuple[Path, dict]":
+    """Every `doc` position given a sectioned, multi-line value, applied:
+    ``(root, marks)``, *marks* as `_inject` returns them."""
     root = _every_position_project(tmp_path_factory.mktemp("every"))
     cfg = C.load(root)
     marks = _inject(cfg)
     C.save(root, cfg)
     _jm("apply", cwd=root)
+    return root, marks
+
+
+@pytest.fixture(scope="module")
+def measured(rendered: "tuple[Path, dict]") -> "dict[str, tuple]":
+    """``{where: (reported, beside, (owner, table))}`` per rendered doc.
+
+    *beside* is every heading jm wrote in a docstring that carries the doc,
+    on any face; *reported* is whether the detector named it.
+    """
+    root, marks = rendered
+    cfg = C.load(root)
     reported = {
         m.group(0)
         for d in D.manifest_docs_with_sections(C.load(root))
@@ -504,3 +521,61 @@ class TestEveryPosition:
             if (owner, table) not in rendered
         )
         assert not unmeasured, unmeasured
+
+
+#: A `.pyi` docstring: its opening line's indent, and its text.
+_STUB_DOCSTRING = re.compile(r'^([ \t]*)[rR]?"""(.*?)"""', re.S | re.M)
+
+
+class TestEveryFace:
+    """gh-2104: every face carries a `doc`, laid out as written.
+
+    A codec-pack method pasted its `doc` raw into the stub, so every line
+    after the first sat in column 0. Its `ml_doc` was a fixed line that never
+    read the `doc` (gh-1113's shape: a key honoured on one face). Both are
+    checked over every position this fixture renders, not over the one
+    table: a raw paste anywhere fails the first test, and a `doc` honoured on
+    the stub alone fails the second. Every injected `doc` has four lines,
+    so a raw paste cannot pass by being one line long.
+    """
+
+    def test_every_stub_docstring_keeps_its_indent(
+        self, rendered: "tuple[Path, dict]"
+    ) -> None:
+        root, _ = rendered
+        flush = [
+            f"{p.name}: {ln!r}"
+            for p in sorted((root / "src").rglob("*.pyi"))
+            for m in _STUB_DOCSTRING.finditer(p.read_text(encoding="utf-8"))
+            for ln in m.group(2).split("\n")[1:]
+            if ln.strip() and len(ln) - len(ln.lstrip()) < len(m.group(1))
+        ]
+        assert not flush, (
+            "a docstring line left of its opening quotes -- a `doc` pasted "
+            "raw; lay it out with `_docstring.authored_docstring`:\n  "
+            + "\n  ".join(flush)
+        )
+
+    def test_a_doc_on_the_stub_is_on_the_runtime_face(
+        self, rendered: "tuple[Path, dict]"
+    ) -> None:
+        root, marks = rendered
+        docs = _docstrings(root)
+
+        def on(mk: str, suffix: str) -> bool:
+            return any(
+                f"Summary {mk}." in text
+                for name, text in docs
+                if name.endswith(suffix)
+            )
+
+        stub_only = sorted(
+            where
+            for mk, (where, _) in marks.items()
+            if on(mk, ".pyi") and not on(mk, ".c")
+        )
+        assert not stub_only, (
+            "in the stub, but `help()` on the built type will not say it -- "
+            "write the runtime doc from the same text "
+            "(`_docstring.authored_c_doc`):\n  " + "\n  ".join(stub_only)
+        )

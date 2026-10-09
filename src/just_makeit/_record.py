@@ -832,19 +832,26 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
     adds the two things it could not express: ``r.enob`` is typed, and both the
     record and each field carry their documentation.
     """
-    lines = ["@final", f"class {name}({annotation(flds)}):", '    """' + doc]
-    documented = [f for f in flds if f.doc]
+    from ._docstring import authored_doc_lines, authored_docstring
+
+    # gh-2104: every doc here is laid out as written, through the helpers
+    # every other face uses (gh-1493). The type doc and each field doc were
+    # pasted raw, so a multi-line one put its later lines in column 0.
+    body = authored_doc_lines(doc) or [doc]
+    fdoc = {f.name: authored_doc_lines(f.doc) for f in flds}
+    documented = [f for f in flds if fdoc[f.name]]
     if documented:
-        lines += ["", "    Attributes", "    ----------"]
+        body += ["", "Attributes", "----------"]
         for f in documented:
-            lines.append(f"    {f.name} : {T.scalar_py_annotation(f.ctype)}")
-            lines.append(f"        {f.doc}")
-    if documented or "\n" in doc:
-        lines.append('    """')
-    else:
-        # A one-line docstring closes on its own line; ruff joins it
-        # otherwise (gh-1478).
-        lines[-1] += '"""'
+            body.append(f"{f.name} : {T.scalar_py_annotation(f.ctype)}")
+            body += [f"    {ln}" if ln else "" for ln in fdoc[f.name]]
+    # A one-line docstring stays on one line, quotes and all; ruff joins a
+    # one-liner split across lines otherwise (gh-1478).
+    lines = [
+        "@final",
+        f"class {name}({annotation(flds)}):",
+        *authored_docstring(body, 4),
+    ]
     for f in flds:
         ann = T.scalar_py_annotation(f.ctype)
         lines.append("")
@@ -852,9 +859,9 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
         # An undocumented field gets the plain stub body rather than prose
         # synthesised from its own name: "sfdr dbc" reads as documentation and
         # says nothing, which is worse for the reader than an honest gap.
-        if f.doc:
+        if fdoc[f.name]:
             lines.append(f"    def {f.name}(self) -> {ann}:")
-            lines.append(f'        """{f.doc}"""')
+            lines += authored_docstring(fdoc[f.name], 8)
         else:
             lines.append(f"    def {f.name}(self) -> {ann}: ...")
     return "\n".join(lines) + "\n"
