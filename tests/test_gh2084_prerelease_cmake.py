@@ -15,6 +15,8 @@ spelling CMake accepts.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -59,6 +61,23 @@ def test_status_is_clean_at_a_prerelease(project: Path) -> None:
     """Before the fix the CMake copy stayed at 0.1.0 and `--check` failed on
     the very command that was meant to bump the version."""
     r = run_cli("status", "--check", cwd=project)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_a_prerelease_project_configures(
+    project: Path, tmp_path: Path
+) -> None:
+    """The spelling is only worth anything if CMake takes it: configure a
+    fresh project at the pre-release and demand exit 0. No skip -- a missing
+    cmake fails the gate rather than hiding it, because the build is the
+    thing being gated."""
+    cmake = shutil.which("cmake")
+    assert cmake, "cmake is required: this gate configures, it does not skip"
+    r = subprocess.run(
+        [cmake, "-S", str(project), "-B", str(tmp_path / "build")],
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stdout + r.stderr
 
 
