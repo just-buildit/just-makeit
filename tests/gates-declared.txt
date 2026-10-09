@@ -142,6 +142,7 @@ test_gh2057_verb_leaves_what_apply_writes
 test_gh2064_module_package_flag
 test_gh2078_coverage_shards
 test_gh2087_no_generate_rebuild_refused
+test_gh2101_gh1895_bind_on_every_tree
 test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot
