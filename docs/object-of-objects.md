@@ -1000,6 +1000,16 @@ refused before anything is written, with one `error:` line naming the module,
 the table and the row (gh-2009). A constructor array is supported on an
 object's [`[[<object>.init_params]]`](configuration.md#objectinit_params).
 
+A composer's `settings`, `segment.fields`, `source.computed`, source fields
+and serializer `params` convert each value by its declared `type`, through
+the same conversion an object's property and method use: a `double` keeps
+its fraction, a `bool` reads back as a `bool`, a complex keeps both parts,
+and the `.pyi` says so (gh-2035). The same refusal covers them. Beyond it,
+a `settings`, `segment.fields` or `source.computed` row holds a number, so a
+string `type` is refused there; and a complex segment field is refused when
+the JSON or CLI face is on, since each carries a segment field as one real
+number.
+
 **Capsule only:** `capsule_name` (the `PyCapsule` name string; default
 `<pkg>.<module>.<backing>_state`), `[[module.X.init_params]]`
 (`name`/`type`), `[[module.X.methods]]` (`name`, `arg_type?`,

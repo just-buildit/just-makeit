@@ -69,6 +69,7 @@ from ._parse import (
     borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
+    scalar_parse_c as _scalar_parse_c,
 )
 
 
@@ -5226,19 +5227,11 @@ def make_properties_ctx(
                     + "\n"
                     f"    {disp} v = ({disp})v_idx;\n"
                 )
-            elif "parse_type" in meta:
-                parse_block = (
-                    f"    {meta['parse_type']} v_raw ="
-                    f" {meta['parse_zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw))'
-                    f" return -1;\n"
-                    f"    {disp} v = {meta['to_c']('v')};\n"
-                )
             else:
-                parse_block = (
-                    f"    {disp} v = {meta['zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v))'
-                    f" return -1;\n"
+                # gh-2035: the one PyObject -> C scalar conversion, which a
+                # composer's settings and fields call too.
+                parse_block = _scalar_parse_c(
+                    disp, "value", "v", "return -1;", meta=meta
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"

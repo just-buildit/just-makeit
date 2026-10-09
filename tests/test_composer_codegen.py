@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer
+from just_makeit import _types as T
 
 
 def _cfg():
@@ -561,9 +562,13 @@ class TestSourceComputed:
     def test_readonly_getset_emitted(self):
         s = _composer.render_source_type(_computed_cfg(), "wfm_compose")
         assert "Synth_get_n_samples(SynthObject *self" in s
-        # delegates to the project fn over the struct; size_t → PyLong
+        # delegates to the project fn over the struct, converted by the
+        # declared type's own `to_py` (gh-2035)
         assert (
-            "PyLong_FromSize_t((size_t)wfm_source_n_samples(&self->src))" in s
+            T._CTYPE_META["size_t"]["to_py"](
+                "wfm_source_n_samples(&self->src)"
+            )
+            in s
         )
         # read-only: NULL setter + the doc string in the getset row, laid
         # out by the one runtime-doc emitter (gh-1499: it was pasted raw).
@@ -608,7 +613,7 @@ class TestSourceComputed:
             {"name": "duration", "type": "double", "fn": "src_duration"}
         ]
         s = _composer.render_source_type(cfg, "wfm_compose")
-        assert "PyFloat_FromDouble((double)src_duration(&self->src))" in s
+        assert "PyFloat_FromDouble(src_duration(&self->src))" in s
         pyi = _composer.render_pyi(cfg, "wfm_compose")
         assert "    duration: float" in pyi
 
