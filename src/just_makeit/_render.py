@@ -28,6 +28,7 @@ from . import _config as C
 from . import _types as T
 from . import _record
 from . import _borrow
+from . import _outbuf
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._report import Refusal
@@ -1674,6 +1675,59 @@ def status_errors_why_not(fn: dict) -> str:
     )
 
 
+def _out_length_keys(fn: dict) -> dict:
+    """What a function's allocated output reads its length from (gh-1888).
+
+    The keys :func:`_outbuf.length` takes, as this face reads them: a
+    ``result_fields`` function's records are sized by ``max_results`` and
+    read no ``out_type``, and ``out_size`` is the capacity of a
+    variable-output result only -- a fixed one never read it.
+    """
+    if not fn.get("out_type") or fn.get("result_fields"):
+        return {}
+    vo = bool(fn.get("variable_output"))
+    return {
+        "out_type": str(fn["out_type"]),
+        "out_size": str(fn.get("out_size", "")) if vo else "",
+    }
+
+
+def out_length_why_not(fn: dict) -> str:
+    """Why a function's allocated output has no length, or ``""``.
+
+    gh-1888: ``_outbuf.length_why_not`` over the row, read as this face
+    reads it. ``jm function`` asks before it writes anything -- ``apply``
+    replays through it, and ``status`` runs ``apply`` -- and the binding
+    asks again before it renders, so every face meets one refusal.
+
+    Examples
+    --------
+    >>> out_length_why_not({"name": "f", "out_type": "float[n]",
+    ...     "params": [{"name": "n", "type": "size_t"}]})
+    ''
+    >>> out_length_why_not({"name": "f", "out_type": "float",
+    ...     "params": [{"name": "n", "type": "size_t"}]}).split(",")[0]
+    "function 'f' returns a fresh out_type 'float'"
+    """
+    keys = _out_length_keys(fn)
+    if not keys:
+        return ""
+    return _outbuf.length_why_not(
+        f"function '{fn.get('name', '<function>')}'",
+        list(fn.get("params") or []),
+        variable_output=bool(fn.get("variable_output")),
+        **keys,
+    )
+
+
+def _out_length(fn: dict) -> str:
+    """The C length of a function's allocated output, or the refusal."""
+    why = out_length_why_not(fn)
+    if why:
+        raise Refusal(why)
+    return _outbuf.length(list(fn.get("params") or []), **_out_length_keys(fn))
+
+
 def _status_cases(
     fn_name: str, c_name: str, params: list[dict], rows: list[dict], why: bool
 ) -> str:
@@ -1752,8 +1806,10 @@ def _py_wrapper_for_function(
     function's C symbol (``_csym.stem``, gh-1591); *fn_name* is its
     manifest name, which names the static ``_bind_<fn_name>`` binder.
 
-    out_type: if set, allocates a 1-D ndarray of this type (length = first
-    array param's length) and passes it after the array args, before scalars.
+    out_type: if set, allocates a 1-D ndarray of this type and passes it
+    after the array args, before scalars. Its length is `_outbuf.length`'s:
+    the `[n]` of ``"T[n]"``, else the first array param's length; a row
+    with neither is refused (gh-1888).
 
     result_fields: if set, calls C with a stack-allocated array of structs,
     builds and returns list[tuple] from the fields. max_results_param names
@@ -1764,6 +1820,16 @@ def _py_wrapper_for_function(
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
+    # gh-1888: the row as `out_length_why_not` reads it, for each branch
+    # below that allocates the output.
+    _out_row = {
+        "name": fn_name,
+        "params": params,
+        "out_type": out_type,
+        "out_size": out_size,
+        "variable_output": variable_output,
+        "result_fields": result_fields,
+    }
     if why and (not check_return or result_fields):
         raise ValueError(_why_unreadable(fn_name))
     status_errors = status_errors or []
@@ -1860,14 +1926,10 @@ def _py_wrapper_for_function(
         # it a legal scalar type everywhere and silently retire the hint that
         # steers `char` to `int8_t` for its platform-dependent signedness.
         # This is one output shape, not a new type.
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        #
+        # gh-1888: `out_size`, else the first array's length -- refused
+        # when neither answers, where this allocated one character.
+        len_expr = _out_length(_out_row)
         _call_with_out = f"{call_args}, _buf" if call_args else "_buf"
         _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
@@ -1926,14 +1988,9 @@ def _py_wrapper_for_function(
         _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: `out_size`, else `[n]`, else the first array's length --
+        # refused when none answers, where this allocated one element.
+        len_expr = _out_length(_out_row)
         _out_ptr = f"({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
         _call_with_out = f"{call_args}, {_out_ptr}" if call_args else _out_ptr
         _call_with_out += _why_call_arg(why)
@@ -1981,17 +2038,13 @@ def _py_wrapper_for_function(
         # Allocate output array, insert after array args, before scalars.
         # out_type may carry a [param_name] suffix naming the scalar that
         # holds the output length (e.g. "float64[M]").
-        _base_ctype, _scalar_len_param = parse_out_type(out_type)
+        _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if _scalar_len_param:
-            len_expr = _scalar_len_param
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: the `[n]` the row names, else the first array's length.
+        # A scalar-only function allocated ONE element here, and a kernel
+        # filling the `n` it was called with wrote past it.
+        len_expr = _out_length(_out_row)
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
         _arr_count = sum(1 for p in params if is_array_param_type(p["type"]))
