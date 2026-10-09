@@ -3458,6 +3458,8 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
                 f"fragment, or `jm remove` the object first."
             )
         shutil.copy2(fragment_path, dest)
+        # gh-2095: a fragment the merged manifest reads, written by copy.
+        _textio.wrote_toml()
         print(f"  copy    {fragment_path} -> {dest}")
 
     # Ensure `include = ["objects/*.toml"]` is present at the top of the
