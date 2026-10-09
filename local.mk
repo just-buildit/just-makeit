@@ -13,7 +13,8 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 complex-spelling-check code-span-check \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update
+                doppler-pin-check consumer-smoke install-history-update \
+                ci-test-legs
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -224,3 +225,12 @@ consumer-smoke: ## Install jm packages, consume them by the official instruction
 install-history-update: ## Record the root install section's commands for adopt
 	@python3 scripts/install_history.py
 	@$(RUFF) format -q src/just_makeit/_installhistory.py
+
+# gh-2125: which `test` legs a ci.yml run owes, from the matrix the
+# toolchain job's `legs` step declares (MATRIX, TRIM) and the run's EVENT
+# and TESTED, all read from the environment as that step sets them. A PR
+# runs each TRIM os at its oldest and newest Python only; the push that lands
+# a PR whose tree it tested runs exactly what that PR trimmed; anything else
+# runs every leg. tests/test_own_ci_matrix.py runs it for each event.
+ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
+	@python3 scripts/ci-test-legs.py

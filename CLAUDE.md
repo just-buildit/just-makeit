@@ -514,14 +514,20 @@ just-buildit/.github README under "Makefile standard".
 
 ### CI / release
 
-- `ci.yml` — matrix (ubuntu/macos/ubuntu-arm64 × py3.9–3.14); runs
-    `jm-install-deps` then `jm-run-tests`. Windows: the examples, under
-    clang-cl, in a job that feeds `CI passed` (see the Windows section).
+- `ci.yml` — the `test` matrix (ubuntu/macos/ubuntu-arm64 × every Python
+    `requires-python` promises) is declared once, as the toolchain job's
+    `legs` step `MATRIX`; `make ci-test-legs` keeps the legs each run owes
+    (gh-2125). Windows: the examples, under clang-cl, in a job that feeds
+    `CI passed` (see the Windows section).
 - Each tree on `main` is tested once (gh-1801): `changes.yml` asks
     `make ci-tree-tested` whether a push's tree is a merged PR's head that
     contained the replaced tip and passed `CI passed`; if so the push skips
-    the matrix like a bump (`src=false`), and `docker` still publishes
+    what its PR ran (`src=false`), and `docker` still publishes
     (`tested == 'true'`). Fail-safe: any doubt runs everything.
+- A PR runs macOS at its oldest and newest Python only (gh-2125); the push
+    that lands it runs the macOS legs it trimmed, so `CI passed` on `main`
+    still certifies the whole matrix. `tests/test_own_ci_matrix.py` holds
+    each event's legs.
 - A docs-only diff (gh-1801 item 3) skips every `ci.yml` job but `lint`,
     `coverage` (the full suite: `coverage-shard` jobs, then one gate,
     gh-2078) and `docs`: `changes.yml` runs
