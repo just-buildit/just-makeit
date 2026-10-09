@@ -1144,8 +1144,9 @@ def is_out_type(ctype: str) -> bool:
     ``out_type`` names the element of a fresh ndarray the binding allocates
     per call, so it needs a numpy dtype enum: exactly
     :data:`SUPPORTED_ARRAY_CTYPES`. ``bool``, ``int``, ``const char *`` and
-    ``long double _Complex`` are registered scalars with no such enum, and
-    ``void`` is no element at all.
+    ``long double _Complex`` are registered scalars that table does not
+    carry (a step ``T[]`` of any but the string is legal all the same:
+    :data:`STEP_TYPES`), and ``void`` is no element at all.
 
     gh-1977: ONE predicate for ``--out-type`` on ``jm method`` and
     ``jm function`` and for the manifest's ``out_type``, which
