@@ -1,5 +1,140 @@
 ## [Unreleased]
 
+## [0.101.0] — 2026-10-09
+
+### Added
+
+- **`jm module <name> --package <dir>` declares `[module.X] package` when the
+    module is created** (gh-2064). The key (gh-523) had no CLI flag, so the
+    documented route was `jm module mod` and then adding `package = "other"`
+    to the manifest. By then `jm module` had already written
+    `src/<pkg>/mod/__init__.py` and `mod.pyi`. `jm apply` then wrote the
+    module into `src/<pkg>/other/` and left those two files behind. No
+    command owned them and `status --check` read clean. The flag writes the
+    key before any file, so nothing lands in the module's own directory.
+    `jm script` replays the key as `--package` instead of a NOTE asking you
+    to add it back by hand. The key still has to be set when the module is
+    created: added to an existing module, it leaves the old directory
+    behind (gh-2081). The value must be a directory below `src/<pkg>/`:
+    `/`-separated identifiers such as `io` or `dsp/io`, or `"."` for the
+    package itself. Before, the manifest key took any string, so
+    `package = "../evil"` wrote `src/evil/`, outside the package, and
+    `"a b"`, `"1x"` or `"Other-Pkg"` wrote directories Python cannot
+    import. Such a value is now refused before anything is written, both on
+    the flag and when the manifest loads, so `apply` and `status` stop on it
+    and name the rule.
+
+### Fixed
+
+- **A numpy section in the `doc` of a hand-written method, or of a property,
+    no longer fails `jm status --check`** (gh-2059). `status` reported any
+    manifest `doc` with a `Parameters` / `----------` heading as `DOC !`,
+    on the grounds that jm generates the numpy sections itself and the
+    author's section would duplicate them. For several tables that was
+    false. An `[[<obj>.extra_methods]]` or `[[module.X.extra_methods]]` row's
+    `doc` is the whole stub body and the whole runtime `__doc__`, with
+    nothing generated beside it. The remedy the finding printed, Doxygen in
+    `_core.h`, could not apply either, because a hand-written method has no
+    core declaration. So a hand-written method could not carry a real numpy
+    docstring with a doctest. A sectioned `doc` was rendered in every
+    position, and the same was true for an object's and a view's
+    properties, a capsule's methods and properties, a handle's getters, and
+    a composer's serializers and computed properties. Those tables are now
+    named once, in `_docstring.DOC_STANDS_ALONE`, and their `doc` is never
+    reported. A `doc` beside a generated section is still reported: an
+    object's class doc and methods, parameter and field descriptions.
+
+- **`jm config version` writes the new version into every generated copy
+    of it, so `jm status --check` passes right after it** (gh-2069). The
+    verb wrote `[project] version` and nothing else. `pyproject.toml`,
+    `bootstrap.toml`, the root `CMakeLists.txt`, the `Doxyfile` and
+    `<pkg>_version()` in `native/src/<pkg>_lib.c` all kept the old value,
+    and `status --check` reported each one. A `pep723` app script was
+    STALE too, until the next `jm apply`. `apply` still rewrites none of the
+    create-only copies, because from the tree alone it cannot tell which side
+    moved. The verb can: it is the author declaring the value. It writes each
+    copy `status` checks, through the same table `status` reads, replacing
+    only the value. It re-renders the recorded app the way `apply` does. A
+    copy the build derives (`PROJECT_NUMBER = $(VAR)`) is left alone. A
+    value a copy cannot hold is not written, and the verb names that copy:
+    `project(VERSION)` takes integers only, so a pre-release such as
+    `1.0rc1` stays out of `CMakeLists.txt` (gh-2084). On a project whose
+    manifest omits the version and reads it from `pyproject.toml` (gh-1283),
+    the verb used to do nothing. It now writes `pyproject.toml`, and the
+    manifest still omits the version. The root `CMakeLists.txt` copy is now
+    read from the `project()` command itself, wherever a formatter puts it,
+    and never from another command's `VERSION`.
+
+- **Removing a module's last object or function leaves the tree `jm apply`
+    writes, and an empty module keeps its `<module>_extra.cmake` hook**
+    (gh-2070). A module had two renders: the one every member verb and
+    `jm remove` use, and a second for a module with nothing in it, which
+    `jm module` wrote and `jm apply` replayed an empty module through. So
+    after `jm remove object` (or `jm remove function`) took a module's last
+    member, `jm status --check` reported its `CMakeLists.txt` and `_ext.c`
+    STALE, and `jm apply` rewrote them without the gh-1351 `include()` of
+    `<module>_extra.cmake`, warning that it was dropping jm's own line. The
+    empty render also ignored `jm module --extra-include-dirs` and
+    `--extra-link-libs` until the module's first member arrived. Now a
+    module has one render whatever it holds: an empty module's CMakeLists
+    carries the hook and its declared include directories and libraries,
+    and its `_ext.c` is the same aggregator a module with members gets.
+
+- **`jm method --fn` and `jm object --step-delegates-to-steps` leave the
+    tree `jm apply` writes, because jm reads its own scaffold Doxygen as
+    jm's** (gh-2071). Both verbs write a doc block into the header that only
+    jm wrote, and the one test that decides whether a block is jm's
+    boilerplate or the author's prose missed both. An `fn`-overridden
+    method's skeleton (`@brief m2.` above `o_custom_m2`) was judged against
+    the symbol rather than the method's name, and the delegating `step()`'s
+    note (`Thin delegator to <csym>_steps() ... (gh-208).`) counted as
+    authored body prose. So `apply` derived them into the binding and the
+    `.pyi` -- `m2.` for `M2.`, and jm's own note in `step()`'s docstring --
+    while the verb had rendered the name fallback, and `status --check`
+    called the glue STALE straight after the verb. The block's member is
+    now read through the manifest's method-to-symbol map, the map the
+    skeleton is stamped from, and the note has one definition, which the
+    header is written from and the test recognises. A project whose
+    `step()` docstring carries the note loses it on the next `apply`.
+
+- **`jm bind` refuses a component the manifest declares, naming
+    `jm regenerate <comp>` and `jm apply`, and writes nothing** (gh-2072).
+    `bind` renders `<comp>_ext.c` and the `.pyi` from the header alone. On a
+    declared component that was a second render of a binding `jm apply`
+    already owns, and a lossy one: a warning, a `create()` error or a record
+    type is nothing a header says, so `bind` dropped it, `jm status --check`
+    reported both files STALE, and the next `apply` rewrote them.
+    `jm bind --check` refuses the same way, from the same check. A header
+    the manifest does not declare -- what `bind` is for -- binds as before.
+
+- **`jm add --state` and `jm remove state` on an object with a view rebuild
+    the view's binding too, so the module compiles and `jm status --check`
+    passes** (gh-2073). A view without its own `init_params` takes its
+    parent's constructor keywords, and the rebuild these commands run
+    re-declares the view's `create_fn` at the new arity. It deleted and
+    re-rendered the object's own binding fragment (gh-965) but not the
+    view's, so the view's `__init__` kept the old `kwlist` and called its
+    `create_fn` with the old arguments: `status` reported KWARGS drift that
+    `jm apply` could not fix and the build failed with "too few arguments".
+    Removing the object's last state field failed the build too, with
+    nothing reported: the view still passed the field and still bound its
+    accessors. `jm regenerate --discard` now rebuilds every binding fragment
+    over the object's core, the object's and each view's; a view's
+    hand-written `_extra.c` is left alone.
+
+- **`jm add --state`, `jm remove state` and `jm regenerate` refuse an object
+    in a `no_generate` module, and write nothing, where they deleted its
+    hand-written files** (gh-2087). Each rebuilds the object by deleting its
+    files and having `jm apply` write them again from the manifest, and
+    `apply` writes nothing of a `no_generate` module. So on one of its
+    objects the delete was all that happened: `_core.c` with the author's
+    edits in it, `_core.h`, the object's CMakeLists, its binding fragment,
+    its C test and bench were gone, the command exited 0, and `apply` said
+    there was nothing to do. The rebuild now refuses before the first
+    delete, and `add` and `remove state` refuse before they ask or save, so
+    the tree is left exactly as it was; the message says to edit the C by
+    hand.
+
 ## [0.100.2] — 2026-10-08
 
 ### Fixed

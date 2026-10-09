@@ -103,28 +103,6 @@ def speakers(cfg: dict, comp: str, element: str) -> "list[tuple[str, str]]":
     return out
 
 
-def _spoken_as(name: str, struct: bool) -> str:
-    """How a member speaks element *name*, one spelling per direction.
-
-    The first declaration's ``Done!`` line teaches it, and so does a kind
-    switch's route (gh-2055): one text, so the two cannot teach different
-    spellings.
-
-    Examples
-    --------
-    >>> _spoken_as("sample", False)
-    "--arg-type 'sample[]' (in) or --return-type sample (out)"
-    >>> _spoken_as("iq16_t", True)
-    "--arg-type 'iq16_t[]' (rows in) or --record-dtype iq16_t (rows out)"
-    """
-    if struct:
-        return (
-            f"--arg-type '{name}[]' (rows in) or --record-dtype {name} "
-            "(rows out)"
-        )
-    return f"--arg-type '{name}[]' (in) or --return-type {name} (out)"
-
-
 def _retype_refusal(
     cfg: dict,
     comp: str,
@@ -149,8 +127,8 @@ def _retype_refusal(
     and struct changes how a member spells it too (a struct is read back
     through ``--record-dtype``), and translating one spelling into the
     other is a guess, so that route stops at the re-declare and says how
-    the new kind is spoken (:func:`_spoken_as`). Its gate runs every route
-    as printed, through build and `jm test`.
+    the new kind is spoken (:func:`_record.spoken_as`). Its gate runs every
+    route as printed, through build and `jm test`.
     """
     element = str(new["name"])
     labels = [f"{v}.{n}" if v else n for n, v in who]
@@ -202,7 +180,7 @@ def _retype_refusal(
             f"# and add {' and '.join(n for n, _v in who)} back as {kind} "
             "element is spoken:\n"
         )
-        lines.append(f"#   {_spoken_as(element, struct)}\n")
+        lines.append(f"#   {_record.spoken_as(element, struct)}\n")
     else:
         for n, _v in who:
             m = members[n]
@@ -355,6 +333,21 @@ def run(
         raise _report.Refusal(
             _retype_refusal(cfg, object_name, old, entry, who)
         )
+    # gh-2068: a member already reading this name as a STRUCT -- through
+    # `record_dtype`, which spells `<name> *out` in its prototype -- cannot
+    # read it once it is a scalar alias no C type carries. `jm method` and
+    # `apply` ask the same predicate for the same pair from the other side.
+    readers = list(C.methods(cfg, object_name))
+    for v in C.views(cfg, object_name):
+        readers += C.view_methods(v)
+    for m in readers:
+        why = _record.record_dtype_why_not(
+            f"method '{object_name}.{m.get('name', '?')}'",
+            str(m.get("record_dtype") or ""),
+            [entry],
+        )
+        if why:
+            raise _report.Refusal(why)
     for i, existing in enumerate(rows):
         if str(existing.get("name") or "") == record_name:
             rows[i] = entry
@@ -395,12 +388,12 @@ def run(
         print(
             f"Done!  Reference `{record_name}` from every member that speaks "
             f"it:\n"
-            f"       {_spoken_as(record_name, False)}.\n"
+            f"       {_record.spoken_as(record_name, False)}.\n"
             "       Both read the width from here, so they cannot disagree."
         )
         return
     print(
         f"Done!  Declare `{record_name}` in the sacred header, then reference "
         f"it with\n"
-        f"       {_spoken_as(record_name, True)}."
+        f"       {_record.spoken_as(record_name, True)}."
     )

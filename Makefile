@@ -259,7 +259,7 @@ endef
 # infrastructure like pytest and numpy, not a formatter whose exact
 # version has to agree byte-for-byte across machines.
 PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
-                  --with pyyaml
+                  --with pyyaml --with pytest-benchmark
 PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit \
                   --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
