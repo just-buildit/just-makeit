@@ -41,6 +41,9 @@ def _make_project_ctx(
         "project": project.replace("_", "-"),
         "project_underscore": project,
         "version": version,
+        # gh-2083/gh-2084: the CMake copy's spelling, rendered beside the full
+        # version. `project(VERSION)` takes the release segment only.
+        "cmake_version": C.cmake_version(version),
         "ensure_pytest_win": ensure_win,
         "ensure_pytest_unix": ensure_unix,
         "py_test_cmd_win": cmd_win,
@@ -132,6 +135,7 @@ def run(
     c_format_command: list[str] | None = None,
     schema: int | None = None,
     c_prefix: "str | None | object" = DEFAULT_C_PREFIX,
+    version: str = "0.1.0",
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -164,7 +168,7 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx = _make_project_ctx(project, version=version, pytest_=pytest_)
     ctx.update(INC.ctx_slots(owner))
 
     def r(tmpl):

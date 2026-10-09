@@ -6150,6 +6150,47 @@ def project_version(cfg: dict) -> str:
     return cfg.get("project", {}).get("version", "0.1.0")
 
 
+#: The release segment of a PEP 440 version: the leading run of dotted
+#: integers. A pre-release, dev, post or local suffix hangs off the end of it.
+_RELEASE_RE = _re.compile(r"[0-9]+(?:\.[0-9]+)*")
+
+
+def cmake_version(version: str) -> str:
+    """The spelling of *version* that CMake's ``project(VERSION)`` accepts.
+
+    CMake takes ``major[.minor[.patch[.tweak]]]`` integers and rejects
+    anything else at configure time, so a PEP 440 pre-release such as
+    ``1.1.2a47`` has no CMake spelling of its own (gh-1141 found it; gh-2084
+    decided it). The CMake copy carries the **release segment** instead,
+    ``1.1.2``: the build then configures, and the pre-release is still the
+    PyPI and manifest version. Each slot's copy is compared and written in
+    this spelling, and the template renders it, so the three cannot disagree.
+
+    A version with no CMake spelling at all is returned unchanged, so the
+    copy it would be written into is reported as unwritable rather than
+    silently given a different version. That is an epoch (``1!2.0``) or more
+    than four integer components.
+
+    Examples
+    --------
+    >>> cmake_version("1.1.2a47")
+    '1.1.2'
+    >>> cmake_version("0.2.0")
+    '0.2.0'
+    >>> cmake_version("1!2.0")
+    '1!2.0'
+    >>> cmake_version("1.2.3.4.5")
+    '1.2.3.4.5'
+    """
+    m = _RELEASE_RE.match(version)
+    if m is None or version[m.end() : m.end() + 1] == "!":
+        return version
+    release = m.group(0)
+    if release.count(".") > 3:
+        return version
+    return release
+
+
 def build_system(cfg: dict) -> str:
     """Return 'cmake' (default) or 'make'."""
     return cfg.get("project", {}).get("build", "cmake")
