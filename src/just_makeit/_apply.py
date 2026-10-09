@@ -2217,17 +2217,40 @@ def _reconcile_object_core_cmake(
     ``set_source_files_properties`` the manifest can't express — gh-275) is left
     untouched, since re-rendering it would drop those rules.
 
-    Returns True if the file changed."""
+    Returns True if the file changed. What it writes is
+    :func:`_reconciled_object_core_cmake`'s, which `apply`'s gh-1840
+    refusal reads before anything is written."""
     if not real.exists() or not temp.exists():
         return False
+    original = real.read_text(encoding="utf-8")
+    new = _reconciled_object_core_cmake(
+        original, temp.read_text(encoding="utf-8"), comp, include_dirs
+    )
+    if new == original:
+        return False
+    _warn_dropped_cmake(real, original, new)
+    _textio.write_text(real, new)
+    return True
+
+
+def _reconciled_object_core_cmake(
+    original: str, rendered: str, comp: str, include_dirs: "list[str]"
+) -> str:
+    """The text :func:`_reconcile_object_core_cmake` writes over *original*.
+
+    *rendered* is jm's replay render of the same file. A hand-owned
+    *original* (gh-275) comes back unchanged; otherwise *rendered*, with the
+    two things the manifest-driven render cannot reproduce put back. Pure,
+    so `apply` can ask what a rewrite would leave before it writes anything
+    (gh-1840), and the writer cannot drift from the question.
+    """
     from ._object import _external_cmake_blocks
 
-    original = real.read_text(encoding="utf-8")
-    new = temp.read_text(encoding="utf-8")
+    new = rendered
     # gh-275: never re-render a hand-owned file (vendored sources, per-source
     # build properties) — the canonical render cannot reproduce them.
     if _is_hand_owned_object_cmake(original, comp, rendered=new):
-        return False
+        return original
     # (1) re-add component extra_include_dirs as a second PUBLIC include block,
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
@@ -2243,11 +2266,102 @@ def _reconcile_object_core_cmake(
     for block in _external_cmake_blocks(original):
         if block not in new:
             new = new.rstrip("\n") + "\n\n" + block + "\n"
-    if new == original:
-        return False
-    _warn_dropped_cmake(real, original, new)
-    _textio.write_text(real, new)
-    return True
+    return new
+
+
+def _reconciled_cmake_dirs(cfg: dict) -> "set[str]":
+    """The ``native/src/<d>`` whose CMakeLists `apply` reconciles.
+
+    A standalone component's and a module object's that is not its module's
+    own, both through :func:`_reconcile_object_core_cmake` (gh-271,
+    gh-1301). Every other directory jm renders -- a module's own, which a
+    collocated object shares, and a capsule / handle / composer module's --
+    is overwritten whole by :func:`_overwrite_if_changed`. The distinction is
+    what `apply` keeps of an author's text, and only gh-1840's refusal asks.
+    """
+    cnames = {C.module_paths(m).cname for m in C.modules(cfg)}
+    return {c for c in C.components(cfg) if c not in cnames}
+
+
+def _refuse_cmake_that_would_lose(
+    temp_root: Path, root: Path, cfg: dict
+) -> None:
+    """Refuse an apply that would erase an author's OBJECT library (gh-1840).
+
+    A ``native/src/<d>/CMakeLists.txt`` jm renders is glue: `apply` rewrites
+    it from the replay. An ``add_library(<x> OBJECT ...)`` the author added
+    there was erased with it, and nothing said so -- gh-1351's warning names
+    a dropped command only when jm never writes that command, and jm writes
+    ``add_library`` itself. Whatever the root wired to the library was left
+    naming a target that no longer exists, which cmake rejects at configure
+    time, and the next apply deleted that wiring too.
+
+    So the rewrite is asked about before the first write: the OBJECT
+    libraries the file declares that the text `apply` would write does not.
+    That text is the replay's render, put through the same reconcile the
+    writer runs (a hand-owned file, an ``if()`` block) where the directory
+    is reconciled, so a library `apply` keeps is never refused. A file
+    `[project] status_allow` names is one `apply` never writes, so it is
+    never asked about -- in the `status` replay too, which writes it anyway
+    to classify it.
+
+    The way out is the hook jm already gives a directory's own CMake,
+    ``<d>_extra.cmake``: the generated file includes it and jm never writes
+    it (gh-1351), and `_libwiring` reads a core declared there (gh-1840).
+
+    Every rendered directory is asked, ``--only`` or not: a library this
+    run would not reach is lost by the next one.
+
+    Raises
+    ------
+    _report.Refusal
+        Naming each file and library, and the hook to move it to. Nothing
+        has been written.
+    """
+    reconciled = _reconciled_cmake_dirs(cfg)
+    lost: "list[tuple[str, list[str]]]" = []
+    src = temp_root / "native" / "src"
+    for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
+        d = temp.parent.name
+        rel = f"native/src/{d}/CMakeLists.txt"
+        real = root / rel
+        if not real.is_file() or _status_allowed(cfg, rel):
+            continue
+        original = real.read_text(encoding="utf-8")
+        written = temp.read_text(encoding="utf-8")
+        if d in reconciled:
+            # No include dirs: the block they add declares no library.
+            written = _reconciled_object_core_cmake(original, written, d, [])
+        kept = set(_libwiring.object_libraries(written))
+        gone = [
+            lib
+            for lib in _libwiring.object_libraries(original)
+            if lib not in kept
+        ]
+        if gone:
+            lost.append((d, gone))
+    if not lost:
+        return
+    from ._render import extra_cmake_name
+
+    lines = [
+        "`jm apply` would erase an OBJECT library it does not write, so it"
+        " wrote\nnothing:"
+    ]
+    for d, gone in lost:
+        lines.append(
+            f"  native/src/{d}/CMakeLists.txt: {', '.join(gone)}"
+            f" -> native/src/{d}/{extra_cmake_name(d)}"
+        )
+    lines.append(
+        "Each CMakeLists.txt here is regenerated from the manifest, and a"
+        " line wiring\nthe library would be left naming a target that is"
+        " gone. Move the library,\nwith the statements that configure it,"
+        " into the hook named beside it: the\ngenerated file includes it and"
+        " jm never writes it (gh-1351). Wire it into the\nC library there or"
+        " in the root CMakeLists.txt, then re-run (gh-1840)."
+    )
+    raise _report.Refusal("\n".join(lines))
 
 
 def _refresh_core_h_decls(
@@ -2669,7 +2783,14 @@ def _sync_aggregates(
             # reconcile preserves component extra_include_dirs and user external
             # if(VAR) blocks. Collocated objects share the module CMakeLists
             # (handled above).
-            if obj != mod:
+            #
+            # gh-1840: and, like every peer, never a file `status_allow`
+            # names (gh-441) -- this one alone was rewritten anyway, so an
+            # author keeping their module object's CMakeLists lost it.
+            _obj_cml = f"native/src/{obj}/CMakeLists.txt"
+            if obj != mod and not (
+                honor_status_allow and _status_allowed(cfg, _obj_cml)
+            ):
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
                 temp_cmake = (
                     temp_root / "native" / "src" / obj / "CMakeLists.txt"
@@ -3868,6 +3989,9 @@ def _apply_manifest(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
+            # gh-1840: and an author's OBJECT library in a CMakeLists the
+            # reconcile below rewrites.
+            _refuse_cmake_that_would_lose(temp_root, root, cfg)
             _scaffolds = _owned_scaffolds(temp_root, root)
             # The first write into the tree: nothing above it has written.
             undo.disarm()

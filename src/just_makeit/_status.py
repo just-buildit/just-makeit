@@ -719,9 +719,15 @@ def run(
         # unwired although its render has the line could not PLACE it (a
         # missing `# ── Modules` anchor, gh-975), which is a different fix
         # from a core jm never writes a line for.
+        #
+        # gh-1840: "apply wires it" is a core the scratch still DECLARES
+        # after the apply and no longer reports unwired. Asked only as "not
+        # unwired", a core the apply had erased -- an author's OBJECT library
+        # in a CMakeLists it regenerates -- read as one it had wired, and the
+        # advice promised a line that never came.
         from . import _libwiring
 
-        _apply_leaves_unwired = {
+        _apply_wires = set(_libwiring.declared_cores(scratch)) - {
             u.core for u in _libwiring.unwired(scratch, cfg)
         }
         _jm_renders_wiring = {
@@ -1308,7 +1314,7 @@ def run(
                             "allowed": _wiring_allowed[u.core],
                             # gh-1626: whether `jm apply` clears it, read
                             # from the replay, as the text's advice is.
-                            "apply_wires": u.core not in _apply_leaves_unwired,
+                            "apply_wires": u.core in _apply_wires,
                         }
                         for u in _unwired
                     ],
@@ -1817,19 +1823,16 @@ def run(
         # writes only an `add_subdirectory` for a `no_generate` module or a
         # c_dep, so telling that author it would fix the wiring sent them
         # to re-run a command that never would, `--check` red forever.
-        _apply_fixes = [
-            u.core for u in _unwired if u.core not in _apply_leaves_unwired
-        ]
+        _apply_fixes = [u.core for u in _unwired if u.core in _apply_wires]
         _unplaced = [
             u.core
             for u in _unwired
-            if u.core in _apply_leaves_unwired and u.core in _jm_renders_wiring
+            if u.core not in _apply_wires and u.core in _jm_renders_wiring
         ]
         _yours = [
             u
             for u in _unwired
-            if u.core in _apply_leaves_unwired
-            and u.core not in _jm_renders_wiring
+            if u.core not in _apply_wires and u.core not in _jm_renders_wiring
         ]
         _why = (
             "  These build, and their symbols ship in neither lib<pkg>.so nor"
