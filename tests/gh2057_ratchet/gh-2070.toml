@@ -1,0 +1,28 @@
+# gh-2070: removing a module's last object renders the module the way a
+# module with objects is rendered; `apply` renders an object-less one, so
+# the module's CMakeLists.txt and _ext.c are left STALE.
+
+[[red]]
+runs = [
+    ["remove", "object", "module"],
+    ["remove", "object", "pair-in-module"],
+    ["remove", "object", "struct-in-module"],
+    ["remove", "object", "members-in-module"],
+    ["remove", "object", "view"],
+    ["remove", "object", "package"],
+]
+found = [
+    "status:STALE ~ native/src/mod/CMakeLists.txt",
+    "apply:~ native/src/mod/CMakeLists.txt",
+    "status:STALE ~ native/src/mod/mod_ext.c",
+    "apply:~ native/src/mod/mod_ext.c",
+]
+
+[[red]]
+runs = [["remove", "object", "dotted"]]
+found = [
+    "status:STALE ~ native/src/dsp_filt/CMakeLists.txt",
+    "apply:~ native/src/dsp_filt/CMakeLists.txt",
+    "status:STALE ~ native/src/dsp_filt/dsp_filt_ext.c",
+    "apply:~ native/src/dsp_filt/dsp_filt_ext.c",
+]
