@@ -758,9 +758,6 @@ def _stale(*paths: str) -> "tuple[str, ...]":
     )
 
 
-#: Removing a module's last object renders the module the way a module with
-#: objects is rendered; `apply` renders an object-less one (gh-2070).
-_EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
 #: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
 _APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
 #: `package` set after `jm module` leaves the module id's stub (gh-2081).
@@ -774,19 +771,6 @@ def _entries(issue: str, keys, *found: str) -> dict:
 _REMOVE_FN = "error: function 'f' not found in module 'mod'."
 
 RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
-    **_entries(
-        "gh-2070",
-        [("remove", "object", s) for s in (
-            "module", "pair-in-module", "struct-in-module",
-            "members-in-module", "view")],
-        *_EMPTIED,
-    ),
-    **_entries("gh-2070", [("remove", "object", "dotted")],
-               *_stale("native/src/dsp_filt/CMakeLists.txt",
-                       "native/src/dsp_filt/dsp_filt_ext.c")),
-    ("remove", "object", "package"): {
-        "gh-2070": frozenset(_EMPTIED),
-    },
     ("remove", "function", "apps"): {
         "gh-2075": frozenset({
             "status:exit 1", f"apply:refused {_REMOVE_FN}",
