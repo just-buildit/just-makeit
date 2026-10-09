@@ -12,8 +12,7 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 conflict-check \
                 complex-spelling-check code-span-check \
                 coverage-subprocess-check coverage-shard \
-                gates-index gates-index-update \
-                gates-declared-check \
+                gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
                 ci-test-legs
 
@@ -194,16 +193,22 @@ coverage-shard: coverage-subprocess-check ## Run shard COVERAGE_SHARD=K of the C
 # 14 miss four of the five that actually caught something. So a human
 # declares and the RATCHET refuses shrinkage, which is this repo's idiom for
 # a judgement no predicate can make.
+#
+# The ratchet's floor is derived as well: the gates declared at the merge
+# base with GATES_BASE, read by the same parse (gh-2038). It was a committed
+# file, and every two PRs adding a gate conflicted on it. GATES_BASE is
+# CHANGELOG_BASE because the question is the same one -- what did this branch
+# start from -- and CI already passes the PR's base SHA as that, with the
+# full history the merge base needs.
+GATES_BASE ?= $(CHANGELOG_BASE)
+
 lint: gates-declared-check
 
 gates-index: ## The obligations this repo's gates enforce
 	@python3 scripts/gates-index.py
 
-gates-index-update: ## Record the declared gates as the ratchet's new floor
-	@python3 scripts/gates-index.py --update
-
-gates-declared-check: ## Verify every declared gate is recorded and none dropped
-	@python3 scripts/gates-index.py --check
+gates-declared-check: ## Verify no gate declared at the merge base was dropped
+	@python3 scripts/gates-index.py --check --base '$(GATES_BASE)'
 
 # gh-1590: the acceptance test for epic gh-1584 -- jm packages installed the
 # documented way and consumed by the official pkg-config and CMake
