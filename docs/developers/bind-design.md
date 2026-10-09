@@ -7,9 +7,11 @@
 Status: **shipped for the processor shape (MVP + Real phases; see
 [Phased rollout](#phased-rollout) below).** `jm bind` reads a hand-written
 `<comp>_core.h` and synthesises `<comp>_ext.c` (and the `.pyi`) from it,
-never writing the manifest. It is covered by `tests/test_bind.py` and by the
-`running_stats` example's round-trip (delete `_ext.c`, rebind, byte-compare,
-rebuild, ctest). The other presets' headers, and the **Robust** phase (a
+never writing the manifest, for a component the manifest does not declare
+(a declared one is refused: its binding is `jm apply`'s, gh-2072). It is
+covered by `tests/test_bind.py` and by the `running_stats` example's
+round-trip (undeclare, delete `_ext.c`, rebind, byte-compare, rebuild,
+ctest). The other presets' headers, and the **Robust** phase (a
 libclang fallback for headers the regex parser can't handle), remain open —
 see [Acceptance](#acceptance). This note is kept as the design record for why
 the contract is shaped the way it is, and as the tracking doc for what is
@@ -214,7 +216,9 @@ ______________________________________________________________________
 - **Never writes `just-makeit.toml`.** `jm bind` reads the header,
     `<comp>_core.c`'s `reset()` (for defaults), `pyproject.toml` (for the
     package name), and `just-makeit.toml` when one exists — for the header
-    layout, the C symbol stem and any `manual_stub` bodies to keep.
+    layout and the C symbol stem, and to refuse a component it declares
+    (gh-2072): a declared component's binding has one owner, `jm apply`,
+    and a header cannot say all the manifest does.
 - **TOML is *one* front-end, header is another.** Both produce the
     same context dict; the renderer doesn't know which one emitted it.
 - **Imported libraries become bindable.** Drop a vendored
@@ -236,14 +240,15 @@ The bar the MVP + Real phases were set, and where each stands:
     and produce an `_ext.c` byte-identical to (or semantically
     equivalent to) what the original scaffold emitted. **Met for the
     processor preset only** (`tests/test_bind.py`, and the
-    `running_stats` example's round-trip); the other presets' headers
-    are refused.
+    `running_stats` example's round-trip, each on the component taken
+    out of the manifest); the other presets' headers are refused.
 1. `jm bind --check` runs in CI for every bundled example and
     passes on every commit. **Not met**: only `running_stats` binds.
 1. At least one bundled example uses `jm bind` end-to-end — author
     `_core.h` and `_core.c` by hand, then `jm bind` to materialise the
-    binding. **Not met**: `running_stats` scaffolds with jm, deletes
-    `_ext.c` and rebinds; no example hand-authors a header.
+    binding. **Not met**: `running_stats` scaffolds with jm, undeclares
+    the component, deletes `_ext.c` and rebinds; no example hand-authors a
+    header.
 
 The Robust (libclang) phase remains open; its bar is the same kind of
 proof — hand-import a small third-party C library (e.g. a single header

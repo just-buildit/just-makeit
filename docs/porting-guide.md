@@ -88,14 +88,19 @@ package name) joined to the component name.
 | constructor params not in the struct body                                         | `__init__` keyword args   |
 
 Declarations the parser cannot handle are skipped with a warning — add
-those by hand via `[[comp.methods]]` in TOML after binding.
+those by hand via `[[comp.methods]]` in TOML after binding. The manifest then
+declares the component, so its binding is `jm apply`'s from there on.
 
 ### Running jm bind
 
 ```sh
-# Scaffold the project first — bind will wire the binding into it
-just-makeit new myproject --object engine
+# A project to bind into. It must not declare engine: jm bind refuses a
+# component the manifest declares, whose binding jm apply renders.
+just-makeit new myproject
 
+# Your header and source, where jm reads them:
+#   native/inc/myproject/engine/engine_core.h
+#   native/src/engine/engine_core.c
 # jm bind reads the existing header; it does NOT touch _core.h / _core.c
 just-makeit bind engine          # writes engine_ext.c + engine.pyi
 
@@ -103,10 +108,14 @@ just-makeit bind engine          # writes engine_ext.c + engine.pyi
 just-makeit bind engine --check  # exit 0 = in sync; exit 1 = drift
 ```
 
+`jm bind` writes the binding and its stub, and no build wiring: nothing adds
+`native/src/engine` to the root `CMakeLists.txt` for you.
+
 ### When bind is not enough
 
 For each skipped declaration, add a `[[engine.methods]]` block to
-`just-makeit.toml` and run `jm apply`:
+`just-makeit.toml` and run `jm apply` — from then on the manifest declares
+`engine`, so `jm apply` renders its binding and `jm bind` refuses it:
 
 ```toml
 [[engine.methods]]
@@ -503,7 +512,8 @@ The regex parser couldn't handle those signatures. For each:
 - Simplify the C signature where possible, or
 - Add a `[[comp.methods]]` TOML block with the correct types. A definition
     already in the component's `_core.c` is kept as it is; one that lives
-    elsewhere is lifted with an `impl_file` pointing at it.
+    elsewhere is lifted with an `impl_file` pointing at it. The component is
+    then declared, and `jm apply` -- not `jm bind` -- renders its binding.
 
 ### `jm apply` regenerated `_ext.c` and lost my hand edits
 

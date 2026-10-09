@@ -466,9 +466,9 @@ parser:
 
 **Supported keys**
 
-| Key       | Description                                          |
-| --------- | ---------------------------------------------------- |
-| `version` | Project version string stored in `just-makeit.toml`. |
+| Key       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version` | The project version. Writes `[project] version` and every generated copy `status` checks for it (`pyproject.toml`, `bootstrap.toml`, the root `CMakeLists.txt`'s `project(VERSION)`, the `Doxyfile`, `<pkg>_version()`), replacing only the value, and re-renders a `pep723` app (gh-2069). A copy the build derives is left alone; a copy that cannot hold the value (CMake takes integers only, so a pre-release) is named and left, and stays a `VERSION` finding. |
 
 ______________________________________________________________________
 
@@ -476,7 +476,8 @@ ______________________________________________________________________
 
 Synthesise `<comp>_ext.c` and `<comp>.pyi` by reading `<comp>_core.h` directly,
 without consulting `just-makeit.toml`. This is the "point at your C and get
-Python" path. Must be run from the project root.
+Python" path, for a header the manifest does not declare. Must be run from the
+project root.
 
 ```sh
 just-makeit bind engine          # synthesise engine_ext.c from engine_core.h
@@ -489,6 +490,12 @@ field defaults from the reset body) and renders the binding from the same
 context builders the manifest-driven flow uses — so a bound `_ext.c` is
 byte-identical to a scaffolded one.
 
+**A component the manifest declares is refused**, `--check` included: its
+binding is `jm apply`'s, rendered from the manifest, and a warning, a
+`create()` error or a record type is nothing a header says, so a render from
+the header alone would drop it. `jm bind` exits 1 naming `jm regenerate <comp>`
+and `jm apply`, and writes nothing (gh-2072).
+
 **Current scope:** a state struct with scalar and opaque-pointer fields, or
 a forward-declared (opaque) one; a `<pkg>_<comp>_create()` taking the state
 fields in order, where a parameter that matches no field becomes an init
@@ -498,7 +505,8 @@ param; a scalar-in / scalar-out inline `step()`; getters and setters
 scalar argument parse, as a method; and a verb with a
 `<pkg>_<comp>_<verb>_max_out` sibling, as a variable-output method. A
 declaration it finds but cannot parse is skipped with a warning rather than
-failing the run — add that method through the manifest with `jm method`.
+failing the run. A method the header cannot express needs the manifest, and
+once the manifest declares the component its binding is `jm apply`'s.
 
 **`--check` as a CI gate:** run `jm bind <comp> --check` in CI to ensure
 the committed `_ext.c` never silently drifts from the header it was generated

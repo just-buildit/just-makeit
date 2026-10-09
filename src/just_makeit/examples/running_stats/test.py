@@ -165,13 +165,31 @@ def run(root: Path) -> None:
     # 6. `jm bind` round-trip — proves the binding can be regenerated from
     # the header alone (no TOML consulted). This validates the Phase 1
     # bind MVP against a real, multi-field, mid-sized scaffolded project.
+    from just_makeit import _config as C
     from just_makeit._bind import run as jm_bind
+    from just_makeit._report import Refusal
 
     ext_c = proj / "native" / "src" / "running_stats" / "running_stats_ext.c"
     original = ext_c.read_text(encoding="utf-8")
 
-    # Wipe the generated binding; the header + reset() defaults are all
-    # `jm bind` has to work with.
+    # While the manifest declares the component, its binding is `jm
+    # apply`'s, and `jm bind` refuses it (gh-2072): from the header alone it
+    # would drop what only the manifest says.
+    try:
+        jm_bind(proj, "running_stats")
+    except Refusal as exc:
+        assert "jm regenerate running_stats" in str(exc), exc
+    else:
+        raise AssertionError("jm bind rendered a declared component")
+
+    # Out of the manifest, the header is what `jm bind` is for: a
+    # hand-written one nothing else describes. Wipe the generated binding;
+    # the header + reset() defaults are all `jm bind` has to work with.
+    manifest = proj / C.FILENAME
+    declared = manifest.read_bytes()
+    cfg = C.load(proj)
+    del cfg["running_stats"]
+    C.save(proj, cfg)
     ext_c.unlink()
     jm_bind(proj, "running_stats")
 
@@ -188,6 +206,10 @@ def run(root: Path) -> None:
     assert rendered == ext_c.read_text(encoding="utf-8"), (
         "jm bind --check: binding on disk has drifted from the header"
     )
+
+    # Declared again, the project is the one `jm apply` owns -- and the
+    # binding `jm bind` wrote is byte-for-byte the one `apply` had.
+    manifest.write_bytes(declared)
 
     # Rebuild + retest to prove the bound binding still compiles, links,
     # and passes the same CTest suite the original did.
