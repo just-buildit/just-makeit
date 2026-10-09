@@ -133,10 +133,19 @@ def _c_print(ctype: str, v: str) -> "tuple[str, str]":
     return "%llu", f"(unsigned long long){v}"
 
 
+#: A ranged field -- a scalar, or a ``(lo, hi)`` pair -- reads its scalar
+#: through the same conversion. One per table, of the type ``long`` cut.
+RANGED = {"source": "r_double", "segment": "rg_double"}
+
+
 def _header() -> str:
     src = "".join(f"  {t} f_{_slug(t)};\n" for t in SOURCE_SCALARS)
+    src += f"  double {RANGED['source']};\n  double {RANGED['source']}_hi;\n"
+    src += "  unsigned ranged;\n"
     seg = "".join(f"  {t} g_{_slug(t)};\n" for t in SCALARS)
-    fns = "".join(
+    seg += f"  double {RANGED['segment']};\n"
+    seg += f"  double {RANGED['segment']}_hi;\n  unsigned ranged;\n"
+    fns = "#define MIX_RANGED 1u\n" + "".join(
         f"void mix_set_s_{_slug(t)}(mix_state_t *st, {t} v);\n"
         f"{t} mix_s_{_slug(t)}(const mix_state_t *st);\n"
         f"{t} src_c_{_slug(t)}(const src_t *s);\n"
@@ -271,14 +280,16 @@ def _every_row() -> dict:
     )
     m["source"]["fields"] = [
         {"name": f"f_{_slug(t)}", "type": t} for t in SOURCE_SCALARS
-    ]
+    ] + [{"name": RANGED["source"], "type": "double"}]
     m["source"]["computed"] = [
         {"name": f"c_{_slug(t)}", "type": t, "fn": f"src_c_{_slug(t)}"}
         for t in SCALARS
     ]
     m["segment"]["fields"] = [
         {"name": f"g_{_slug(t)}", "type": t} for t in SCALARS
-    ]
+    ] + [{"name": RANGED["segment"], "type": "double"}]
+    for table, name in RANGED.items():
+        m[table]["ranged"] = [{"name": name, "flag": "MIX_RANGED"}]
     m["extra_link_libs"] = ["backing_core"]
     return m
 
@@ -286,8 +297,8 @@ def _every_row() -> dict:
 #: Run in the built project's interpreter: drives every face of every type
 #: and prints `{case: [repr, type name] | error}` as JSON. Each case builds
 #: its own objects, so one conversion that raises reports that case and no
-#: other. `PKG`, `CASES`, `ZERO`, `KIND` and `SOURCE_CASES` are prepended by
-#: the test, as Python literals.
+#: other. `PKG`, `CASES`, `ZERO`, `KIND`, `SOURCE_CASES` and `RANGED` are
+#: prepended by the test, as Python literals.
 _DRIVER = """
 import json, sys
 sys.path.insert(0, "src")
@@ -350,6 +361,15 @@ for s, v in SOURCE_CASES.items():
            lambda: getattr(Mix([Seg.sum(Src(**{f: v}))]).segments[0]
                            .sources[0], f))
     record(f"source field {s} (attribute)", lambda: attr(Src(), f, v))
+r, rg = RANGED["source"], RANGED["segment"]
+record("ranged source field (constructor)",
+       lambda: getattr(Src(**{r: 0.1}), r))
+record("ranged source field (through C)",
+       lambda: getattr(Mix([Seg.sum(Src(**{r: 0.1}))]).segments[0]
+                       .sources[0], r))
+record("ranged segment field (Python)", lambda: getattr(seg(**{rg: 0.1}), rg))
+record("ranged segment field (through C)",
+       lambda: getattr(Mix([seg(**{rg: 0.1})]).segments[0], rg))
 print(json.dumps(out))
 """
 
@@ -373,6 +393,14 @@ def _expected() -> dict:
         s, v = _slug(t), _value(t)
         for face in ("constructor", "through C", "attribute"):
             want[f"source field {s} ({face})"] = [repr(v), type(v).__name__]
+    ranged_faces = {
+        "source": ("constructor", "through C"),
+        "segment": ("Python", "through C"),
+    }
+    assert set(ranged_faces) == set(RANGED)
+    for table, faces in ranged_faces.items():
+        for face in faces:
+            want[f"ranged {table} field ({face})"] = ["0.1", "float"]
     return want
 
 
@@ -455,7 +483,8 @@ def test_every_row_round_trips_every_scalar(tmp_path):
     driver = proj / "drive_gh2035.py"
     driver.write_text(
         f"PKG = {pkg!r}\nCASES = {cases!r}\nZERO = {zero!r}\n"
-        f"KIND = {kinds!r}\nSOURCE_CASES = {source_cases!r}\n{_DRIVER}",
+        f"KIND = {kinds!r}\nSOURCE_CASES = {source_cases!r}\n"
+        f"RANGED = {RANGED!r}\n{_DRIVER}",
         encoding="utf-8",
     )
     r = subprocess.run(
