@@ -33,6 +33,7 @@ from . import _csym as CSYM
 from . import _record
 from . import _render as T
 from . import _incpath as INC
+from . import _fncontract
 from ._builtins import require_param_names
 from ._object import _regenerate_module
 
@@ -611,6 +612,10 @@ def run(
 
     # Regenerate module ext.c (updates _bind_ wrappers + PyMethodDef)
     _regenerate_module(root, cfg, module, pkg)
+    # gh-2127: a functions-only module's contract test, which calls each
+    # wrapper it just bound. Written from the manifest, so the replay's last
+    # call leaves the file listing every function.
+    _fncontract.sync(root, cfg, module)
 
     print()
     if inline:

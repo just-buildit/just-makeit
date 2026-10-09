@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _csym as CSYM
+from . import _fncontract
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _incpath as INC
@@ -358,6 +359,8 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     # objects that remain.
     if module:
         _regenerate_module(root, cfg, module, pkg)
+        # gh-2127: removing the last object can leave a functions-only module.
+        _fncontract.sync(root, cfg, module)
     print()
     print(f"Done!  Object '{obj}' removed.")
 
@@ -821,6 +824,9 @@ def _remove_function(
             print(f"  update  {core_h}")
 
     _regenerate_module(root, cfg, module, pkg)
+    # gh-2127: the contract test lists the functions it calls, so a removed
+    # function leaves it stale unless it is rewritten here.
+    _fncontract.sync(root, cfg, module)
     if not fns:
         _remove_function_core_harness(root, cfg, module, cname)
     print()

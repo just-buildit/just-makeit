@@ -27,6 +27,7 @@ from typing import Iterator
 from . import _color as Color
 from . import _config as C
 from . import _csym as CSYM
+from . import _fncontract
 from ._docstring import class_import_line, class_import_path
 from . import _modplatforms
 from . import _procglobal
@@ -3087,6 +3088,10 @@ def run(
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)
+    # gh-2127: an object makes a module no longer functions-only, and its own
+    # tests take over, so the contract test the module had goes.
+    if module:
+        _fncontract.sync(root, cfg, module)
     C.add_component(
         cfg,
         comp,
