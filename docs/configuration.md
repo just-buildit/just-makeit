@@ -341,6 +341,10 @@ no_generate_reason = "free-function API over an opaque capsule; a handle module 
 
 `jm apply` emits the `add_subdirectory(native/src/io)` and otherwise leaves the
 module untouched — `io_ext.c`, `io.pyi`, and its `CMakeLists.txt` are yours.
+So are the files of every object it lists: a command that rebuilds an object
+from the manifest (`jm regenerate`, `jm add --state`, `jm remove state`)
+refuses one here, since `apply` would write none of it back (gh-2087). Change
+its C by hand.
 
 `no_generate_reason` is required: `jm status --check` fails on an opt-out that
 does not say why (gh-1313). Say which kind it is — a shape jm cannot express
