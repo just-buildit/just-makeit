@@ -39,11 +39,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from _compilers import default_cc  # noqa: E402
 from _jmrun import run_cli  # noqa: E402
-from just_makeit import _config as C  # noqa: E402
 from just_makeit import _fncontract as F  # noqa: E402
 from just_makeit._function import run as function_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from just_makeit._remove import run as remove_run  # noqa: E402
 
 _NEEDS_BUILD = pytest.mark.skipif(
     shutil.which("cmake") is None or default_cc() is None,
@@ -210,18 +210,31 @@ class TestWhatIsWritten:
         assert "def test_fft_sum_contract" in text
         assert (functions_only / "src/dsp/fft/tests/__init__.py").is_file()
 
-    def test_an_object_added_removes_the_owned_contract_test(
+    def test_removing_a_function_rewrites_the_contract_test(
         self, functions_only: Path
     ) -> None:
-        """The module's own tests take over, so the contract test goes, in the
-        same command: a replay that no longer produces it would not delete it."""
+        """The file lists the functions it calls, so removing one must drop its
+        case in the same command: a replay that no longer produces the case
+        would leave a test calling a function that is gone."""
         test = functions_only / "src/dsp/fft/tests/test_fft_functions.py"
-        assert test.is_file()
-        object_run(
-            functions_only,
-            "nco",
-            "fft",
-            state_vars=[("freq", "float", "0.0f")],
+        remove_run(
+            functions_only, "function", "fft_scale", module="fft", force=True
+        )
+        text = test.read_text(encoding="utf-8")
+        assert "def test_fft_scale_contract" not in text
+        assert "def test_fft_sum_contract" in text
+
+    def test_removing_the_last_function_removes_the_owned_contract_test(
+        self, functions_only: Path
+    ) -> None:
+        """A module with no functions has nothing for the file to call, so the
+        owned file goes, in the same command."""
+        test = functions_only / "src/dsp/fft/tests/test_fft_functions.py"
+        remove_run(
+            functions_only, "function", "fft_scale", module="fft", force=True
+        )
+        remove_run(
+            functions_only, "function", "fft_sum", module="fft", force=True
         )
         assert not test.exists()
 
@@ -229,32 +242,34 @@ class TestWhatIsWritten:
         self, functions_only: Path
     ) -> None:
         """Deleting the ownership token hands the file to its author. jm must
-        not delete a file it no longer owns, even when the module changes."""
+        not delete a file it no longer owns, even when the last function goes."""
         test = functions_only / "src/dsp/fft/tests/test_fft_functions.py"
         text = test.read_text(encoding="utf-8")
-        test.write_text(
-            text.replace("jm:generated", "authored"), encoding="utf-8"
+        taken = text.replace("jm:generated", "authored")
+        test.write_text(taken, encoding="utf-8")
+        remove_run(
+            functions_only, "function", "fft_scale", module="fft", force=True
         )
-        object_run(
-            functions_only,
-            "nco",
-            "fft",
-            state_vars=[("freq", "float", "0.0f")],
+        assert test.read_text(encoding="utf-8") == taken
+        remove_run(
+            functions_only, "function", "fft_sum", module="fft", force=True
         )
-        assert test.is_file()
+        assert test.read_text(encoding="utf-8") == taken
 
-    def test_a_module_with_objects_gets_no_function_test(
+    def test_a_mixed_module_gets_the_contract_test(
         self, tmp_path: Path
     ) -> None:
-        """Its objects already have scaffolded tests. A second, partial suite
-        for the same extension would be a file the author did not ask for."""
+        """A module with objects and functions: the functions are called by the
+        contract test beside the objects' own tests (#2156)."""
         root = tmp_path / "dsp"
         new_run("dsp", root, modules=["dsp"], c_prefix=None)
         object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
         function_run(root, "global_setup", "dsp", doc="Setup.")
-        cfg = C.load(root)
-        assert C.module_objects(cfg, "dsp")
-        assert not (root / "src/dsp/dsp/tests/test_dsp_functions.py").exists()
+        test = root / "src/dsp/dsp/tests/test_dsp_functions.py"
+        assert test.is_file()
+        assert "def test_global_setup_contract" in test.read_text(
+            encoding="utf-8"
+        )
 
 
 @_NEEDS_BUILD
@@ -279,3 +294,27 @@ class TestTheBuildRuns:
         ran = run_cli("test", cwd=root)
         assert ran.returncode == 0, ran.stdout + ran.stderr
         assert "1 passed" in ran.stdout + ran.stderr
+
+    def test_a_mixed_module_builds_and_its_contract_test_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """A module with an object and a function: the real `jm build` then
+        `jm test`, with the function's contract test among the tests that run
+        and pass (#2156)."""
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["dsp"], c_prefix=None)
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        function_run(
+            root,
+            "global_setup",
+            "dsp",
+            params=[("n", "int")],
+            return_type="float",
+        )
+        built = run_cli("build", cwd=root)
+        assert built.returncode == 0, built.stdout + built.stderr
+        ran = run_cli("test", cwd=root)
+        output = ran.stdout + ran.stderr
+        assert ran.returncode == 0, output
+        assert "test_global_setup_contract PASSED" in output
+        assert "FAILED" not in output
