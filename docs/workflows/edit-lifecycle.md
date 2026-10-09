@@ -6,6 +6,11 @@ hand. Either way, `jm apply` renders the whole project from the manifest into
 a scratch tree and reconciles it into yours — and what it does to each file
 depends on who owns it. That is the **sacred/glue contract**.
 
+Every verb that changes the project does all of it or none of it. One that
+fails partway — a refusal, a crash, Ctrl-C — puts back every file it had
+written or deleted, and says so: the tree is as it was before it ran, your
+edits in `_core.c` included (gh-1867).
+
 ## Who owns each file
 
 | Kind               | What `apply` does                                                                                                                                                            | Examples                                                                                                                                                                                                                                       |

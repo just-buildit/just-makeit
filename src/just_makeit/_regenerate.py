@@ -33,9 +33,60 @@ from pathlib import Path
 from . import _config as C
 from . import _incpath as INC
 from ._docstring import max_out_prototypes, restore_max_out_prototypes
+from ._keys import METHOD_KEYS, OBJECT_KEYS
 from ._linkcheck import binding_sources
 from ._object import _extract_c_function_bodies, _restore_c_function_bodies
 from ._remove import _confirm, _object_paths, _rm
+from ._report import Refusal
+
+
+def deleted_impl_sources(
+    root: Path, cfg: dict, component: str, paths: "list[Path]"
+) -> "list[str]":
+    """Each ``*_impl_file`` of *component* that names a file in *paths*.
+
+    gh-1867. A rebuild deletes *paths* and has `apply` write the component
+    again, and `apply` lifts a body from every ``*_impl_file`` as it does
+    -- from a file the delete has just removed, when one names a file
+    inside the component. That refusal came after the delete, which lost
+    the component; `_undo` now puts it back, but the refusal would still
+    say "file not found" of a file that is there. Asked here, before
+    anything is deleted, it can say what is wrong.
+
+    The keys are read from `_keys`: every ``*impl_file`` key an object
+    table or one of its methods may carry, so a new one is covered.
+
+    Returns
+    -------
+    list of str
+        ``<table>.<key> = '<value>'`` for each: the object's own keys,
+        then each method's, in the order the manifest lists the methods.
+
+    Examples
+    --------
+    >>> root = Path("/p")
+    >>> cfg = {"o": {"impl_file": "native/src/o/o_core.c::o_step",
+    ...              "methods": [{"name": "m", "impl_file": "ref.c::k"}]}}
+    >>> deleted_impl_sources(root, cfg, "o", [root / "native/src/o"])
+    ["o.impl_file = 'native/src/o/o_core.c::o_step'"]
+    >>> deleted_impl_sources(root, cfg, "o", [root / "ref.c"])
+    ["o.methods.m.impl_file = 'ref.c::k'"]
+    """
+    doomed = [p.resolve() for p in paths]
+    tables = [(component, cfg.get(component) or {}, OBJECT_KEYS)] + [
+        (f"{component}.methods.{m.get('name', '?')}", m, METHOD_KEYS)
+        for m in C.methods(cfg, component)
+    ]
+    found = []
+    for label, table, keys in tables:
+        for key in sorted(k for k in keys if k.endswith("impl_file")):
+            ref = table.get(key)
+            if not isinstance(ref, str):
+                continue
+            src = (root / ref.partition("::")[0]).resolve()
+            if any(src == d or d in src.parents for d in doomed):
+                found.append(f"{label}.{key} = {ref!r}")
+    return found
 
 
 def _stale_ext_modules(
@@ -133,6 +184,19 @@ def run(
         paths += [
             p for p in binding_sources(root, cfg, component) if p.exists()
         ]
+
+    # gh-1867: before anything is deleted. `_undo` would put the files back
+    # after `apply`'s "file not found", but this can say why.
+    _lost = deleted_impl_sources(root, cfg, component, paths)
+    if _lost:
+        raise Refusal(
+            f"cannot regenerate '{component}': {'; '.join(_lost)} names a"
+            " file regenerate deletes, so the rebuild could not read the"
+            " body back from it. Point it at a file outside the"
+            " component, or remove the key -- without --discard,"
+            " regenerate keeps the hand-written bodies in _core.c/_core.h"
+            " itself."
+        )
 
     core_h = INC.core_h(root, component)
     core_c = root / "native" / "src" / component / f"{component}_core.c"

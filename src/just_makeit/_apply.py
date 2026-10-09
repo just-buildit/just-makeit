@@ -189,6 +189,41 @@ def is_nested_checkout(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def walk(root: Path):
+    """Each directory of the project's own tree, with the files in it.
+
+    Yields ``(directory, file names)``, *root* first, top down. Never
+    descended into: a skipped name (``_SKIP_DIRS``), a build tree
+    (:func:`is_build_tree`, gh-1473) and another checkout
+    (:func:`is_nested_checkout`, gh-1713). Every file name in a directory
+    it yields is listed, whatever :func:`is_skipped` says of it -- that is
+    the caller's question.
+
+    The one reading of "the project's tree": :func:`_tree_digests` (what
+    `apply` reports) and `_undo` (what a failed command puts back,
+    gh-1867) both walk it through here, so the two cannot disagree about
+    which files a command might have changed.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> (d / "build").mkdir()
+    >>> _ = (d / "build" / "x.o").write_bytes(b"")
+    >>> _ = (d / "a.c").write_bytes(b"")
+    >>> [(p.relative_to(d).as_posix(), names) for p, names in walk(d)]
+    [('.', ['a.c'])]
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _SKIP_DIRS
+            and not is_build_tree(base / d)
+            and not is_nested_checkout(base / d)
+        ]
+        yield base, filenames
+
+
 def _tree_digests(root: Path) -> dict:
     """Digest of every project file, keyed by POSIX path relative to *root*.
 
@@ -201,8 +236,8 @@ def _tree_digests(root: Path) -> dict:
     and changed no bytes; and two modules sharing one package merged its
     ``__init__.py`` in turn, so it was announced twice.
 
-    Taken once, before anything is written, from the same walk rules
-    `status` uses: skipped names, build trees and nested checkouts
+    Taken once, before anything is written, over :func:`walk`: the same walk
+    rules `status` uses, so skipped names, build trees and nested checkouts
     (gh-1713) are never descended into.
 
     Each value is a pair, the digest of the bytes and of the bytes through
@@ -212,15 +247,7 @@ def _tree_digests(root: Path) -> dict:
     the time it is asked.
     """
     out: dict = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        base = Path(dirpath)
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if d not in _SKIP_DIRS
-            and not is_build_tree(base / d)
-            and not is_nested_checkout(base / d)
-        ]
+    for base, filenames in walk(root):
         for name in filenames:
             p = base / name
             rel = p.relative_to(root)
@@ -3529,62 +3556,6 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     return dangling
 
 
-class _ComposeUndo:
-    """What composing a fragment wrote, undone if the apply refuses (gh-1660).
-
-    A refused apply writes nothing. The refusals are asked before the first
-    write, so for them that holds by ordering alone -- the `jm_version`
-    stamp included, which is why it is written after the last of them. The
-    exception is a composed fragment (``jm apply <fragment.toml>``): it
-    copies the file into ``objects/`` and edits the manifest, and it has to
-    come first, because every refusal after it reads the manifest WITH the
-    fragment. So those writes are recorded here, before they happen, and
-    undone byte for byte when a refusal (or a crash) follows them.
-
-    :meth:`disarm` is called just before the reconcile's first write into the
-    tree; from there on the tree is no longer the one the fragment was
-    composed into, and restoring the manifest alone would describe neither.
-
-    Without a fragment it records nothing and :meth:`rollback` is a no-op.
-    """
-
-    def __init__(self, root: Path, fragment: "Path | None") -> None:
-        self._files: "dict[Path, bytes | None]" = {}
-        self._dirs: "list[Path]" = []
-        if fragment is None:
-            return
-        objects = root / "objects"
-        if not objects.exists():
-            self._dirs.append(objects)
-        # What `_compose_fragment` writes: the copy of the fragment, the
-        # manifest's include line, and the module wiring -- which goes
-        # through `C.save` (gh-1677), and so may land in the manifest or in
-        # any file it includes (`modules/X.toml` in the split layout). All
-        # of them, as `C._provenance` names them: the set `save` routes to.
-        owners, module_owners, _ = C._provenance(root)
-        for p in {
-            root / C.FILENAME,
-            objects / Path(fragment).name,
-            *owners.values(),
-            *module_owners.values(),
-        }:
-            self._files[p] = p.read_bytes() if p.is_file() else None
-
-    def disarm(self) -> None:
-        self._files, self._dirs = {}, []
-
-    def rollback(self) -> None:
-        for p, data in self._files.items():
-            if data is None:
-                if p.is_file():
-                    p.unlink()
-            elif p.read_bytes() != data:
-                p.write_bytes(data)
-        for d in self._dirs:
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
-
-
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -3616,44 +3587,41 @@ def run(
         )
         sys.exit(1)
 
-    # gh-1660: a refused apply writes nothing, and a fragment is composed
-    # before any refusal can be asked -- so what it writes is undone.
-    undo = _ComposeUndo(root, fragment)
-    try:
-        if fragment is not None:
-            print(f"just-makeit: composing fragment {fragment}")
-            try:
-                _compose_fragment(root, fragment)
-            except (FileNotFoundError, FileExistsError, ValueError) as e:
-                print(f"error: {e}", file=sys.stderr)
-                sys.exit(1)
-            print()
-        _apply_manifest(
-            root,
-            only,
-            undo,
-            honor_status_allow=honor_status_allow,
-            replay_out=replay_out,
-        )
-    except BaseException:
-        undo.rollback()
-        raise
+    # gh-1660: a refused apply writes nothing. A fragment is composed before
+    # any refusal can be asked, because every refusal reads the manifest
+    # WITH it, and the reconcile's own stub guards follow its first writes
+    # (gh-1676): what either wrote is put back by the command's `_undo`
+    # record when a refusal follows (gh-1867), which `_cli.main` takes
+    # around every mutating command.
+    if fragment is not None:
+        print(f"just-makeit: composing fragment {fragment}")
+        try:
+            _compose_fragment(root, fragment)
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print()
+    _apply_manifest(
+        root,
+        only,
+        honor_status_allow=honor_status_allow,
+        replay_out=replay_out,
+    )
 
 
 def _apply_manifest(
     root: Path,
     only: "str | None",
-    undo: _ComposeUndo,
     *,
     honor_status_allow: bool,
     replay_out: "Path | None",
 ) -> None:
     """The body of :func:`run`, once any fragment is composed.
 
-    Every refusal is asked before the first write into the tree, where
-    *undo* is disarmed -- except the reconcile phase's own stub guards,
-    which follow its first writes (gh-1676). The `jm_version` stamp follows
-    even those (gh-1660).
+    Every refusal is asked before the first write into the tree -- except
+    the reconcile phase's own stub guards, which follow its first writes
+    (gh-1676); the command's `_undo` record puts those writes back
+    (gh-1867). The `jm_version` stamp follows even those (gh-1660).
     """
     cfg = C.load(root)
     # gh-1310: a family member whose family header is missing, before anything
@@ -3870,7 +3838,6 @@ def _apply_manifest(
             _refuse_owned_that_would_lose(temp_root, root, _owned)
             _scaffolds = _owned_scaffolds(temp_root, root)
             # The first write into the tree: nothing above it has written.
-            undo.disarm()
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred

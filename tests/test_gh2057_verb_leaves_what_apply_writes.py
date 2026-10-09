@@ -30,6 +30,13 @@ GATE: for every command `_cli.COMMANDS` classifies MUTATING -- the one
       the route it offers instead, and leaves the tree byte-identical. Then
       to (a) and (b), on the shape's own tree.
 
+      And every case is run once more with a failure injected where it
+      would have succeeded -- after every write it makes -- and held to
+
+      (d) exit 1, one ``error:`` line, and the tree byte-identical: every
+          file, every directory, and the author's own edit to each
+          ``_core.c`` (gh-1867, gh-2040).
+
 Registration-free where the source can say it: the commands are the
 dispatch's (`test_every_dispatched_command_is_classified`), a mutating
 command without a case fails `test_every_mutating_command_has_a_case`, and
@@ -796,7 +803,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
         "gh-2075": frozenset({
             "status:exit 1", f"apply:refused {_REMOVE_FN}",
             f"fresh:refused {_REMOVE_FN}"}),
-        "gh-2074": frozenset(_APP_ORPHAN),
     },
     **_entries("gh-2074",
                [("shape", "apps", ""), ("remove", "object", "apps"),
@@ -979,8 +985,11 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
     if not _declares_nothing(other):
         a = run_cli("apply", cwd=other)
         if a.returncode:
+            # A refused `apply` writes nothing (gh-1867), so `other` holds
+            # only what `jm new` wrote: there is no from-scratch render to
+            # compare with, as (b) has none on a manifest declaring nothing.
             (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
-            out.add(f"fresh:refused {last}")
+            return frozenset({f"fresh:refused {last}"})
     ours, theirs = _rewritten_by_apply(root), _rewritten_by_apply(other)
     for rel in set(ours) | set(theirs):
         if ours.get(rel) != theirs.get(rel):
@@ -1263,3 +1272,104 @@ def test_the_verb_leaves_what_apply_writes(
     if verb in FRESH_VERBS:
         found |= fresh(root, shape, tmp_path_factory.mktemp("fresh"))
     _check((verb, cname, sname), found)
+
+
+# ── A verb that fails writes nothing (gh-1867, gh-2040) ──────────────────────
+
+
+def _failure_params():
+    """Each case on its `_home` shapes; on every shape that admits it where
+    `FULL_ENV` asks for the whole matrix. A run is one verb and no oracle:
+    the 234 home runs took 27 s on one core at a load average of 40
+    (2026-10-08, `pytest -p no:xdist -k fails_after`)."""
+    full = os.environ.get(FULL_ENV) == "1"
+    for verb, cname, sname in _runs():
+        if full or sname in _home(verb, cname):
+            yield pytest.param(
+                verb, cname, sname, id=f"{verb}-{cname}@{sname}"
+            )
+
+
+#: Cases that run a read-only MODE of a mutating command (`_cli.MUTATING`
+#: names them): each exits with its report, so it never reaches the success
+#: the failure is injected at -- and writes nothing to put back.
+READ_ONLY_MODES = frozenset({("adopt", "check")})
+
+#: Cases whose `_home` shapes already hold what they would write -- each
+#: shape is in sync with its manifest -- so the failure injected after
+#: their last write finds nothing written. On its home shapes every other
+#: case has written something by then, or its run says so: the comparison
+#: would otherwise hold of a tree nothing touched. (Off them, under
+#: `FULL_ENV`, a case may meet a shape that already holds its change: `jm
+#: app` on the shape that has the app.)
+WRITES_NOTHING = frozenset(
+    {
+        ("apply", "apply"),
+        ("apply", "only"),
+        ("upgrade", "upgrade"),
+        ("adopt", "packaging"),
+    }
+)
+
+
+def _tree_and_dirs(root: Path) -> tuple:
+    """`_tree`, and every directory: a directory left behind, or one gone,
+    is a change too."""
+    dirs = frozenset(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_dir() and not _EXCLUDED & set(p.relative_to(root).parts)
+    )
+    return _tree(root), dirs
+
+
+@pytest.mark.parametrize("verb, cname, sname", list(_failure_params()))
+def test_a_verb_that_fails_after_writing_writes_nothing(
+    shape_copy, monkeypatch, verb, cname, sname
+):
+    """(d) A mutating verb that fails leaves the tree it found, the
+    author's own edit to every ``_core.c`` included: exit 1, one
+    ``error:`` line, every byte and directory as it was.
+
+    The failure is injected at the last moment one can come: where the
+    command would have succeeded (`_undo.commit`), so after every write it
+    makes. A real refusal comes earlier and has less to put back; the
+    issues' own -- `regenerate` losing its component, `jm method` and `jm
+    property` half-writing a member -- are held in
+    `test_gh1867_failed_verb_writes_nothing.py` and
+    `test_gh1884_str_step_type_refused.py`."""
+    from just_makeit import _undo
+    from just_makeit._report import Refusal
+
+    case, shape = CASES[verb][cname], SHAPES[sname]
+    root = shape_copy(sname)
+    for core in sorted(root.glob("native/src/*/*_core.c")):
+        core.write_bytes(core.read_bytes() + b"/* the author's */\n")
+    before = _tree_and_dirs(root)
+    fired = []
+
+    def fail() -> None:
+        fired.append(_tree_and_dirs(root) != before)
+        raise Refusal("injected: the command failed after its last write")
+
+    monkeypatch.setattr(_undo, "commit", fail)
+    r = run_cli(*_expand(case.argv, shape), cwd=root)
+
+    assert _tree_and_dirs(root) == before, (r.stdout + r.stderr)[-3000:]
+    if case.refuses or (verb, cname) in READ_ONLY_MODES:
+        assert not fired, f"{verb} {cname} reached success"
+        return
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert fired and r.returncode == 1 and len(errors) == 1, (
+        fired,
+        (r.stdout + r.stderr)[-3000:],
+    )
+    assert "injected" in errors[0], errors
+    wrote = fired[0]
+    assert sname not in _home(verb, cname) or wrote != (
+        (verb, cname) in WRITES_NOTHING
+    ), (
+        f"{verb} {cname} wrote {'something' if wrote else 'nothing'} on"
+        f" {sname}: {'delete it from' if wrote else 'it belongs in'}"
+        " WRITES_NOTHING"
+    )
