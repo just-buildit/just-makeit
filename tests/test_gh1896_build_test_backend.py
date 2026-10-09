@@ -238,3 +238,28 @@ def test_no_subprocess_jm_starts_carries_a_timeout(tmp_path, spy):
     assert spy, "the spy saw no subprocess; the gate is not armed"
     timed = [cmd for cmd, kwargs in spy if "timeout" in kwargs]
     assert not timed, timed
+
+
+def test_darwin_links_the_extension_with_dynamic_lookup(tmp_path):
+    """gh-2169: a Mach-O bundle must leave the interpreter's symbols to load
+    time, or the link fails on macOS with _PyCapsule_* undefined. Checked as a
+    dry run with the platform forced, so it runs on every box: the flag is on
+    the Darwin link line and absent from the Linux one."""
+    proj = _make_project(
+        tmp_path, "q", "--object", "g", "--build-system", "make"
+    )
+    darwin = subprocess.run(
+        ["make", "-n", "UNAME_S=Darwin"],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+    )
+    linux = subprocess.run(
+        ["make", "-n", "UNAME_S=Linux"],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+    )
+    assert darwin.returncode == 0, darwin.stderr
+    assert "-undefined dynamic_lookup" in darwin.stdout, darwin.stdout
+    assert "-undefined dynamic_lookup" not in linux.stdout, linux.stdout
