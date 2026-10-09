@@ -118,7 +118,19 @@ tidy: compile-commands
 	@$(PYTHON) -c "import json; print('\n'.join(e['file'] for e in json.load(open('compile_commands.json'))))" \
 	  | xargs clang-tidy -p .
 
+# gh-1898: the cache remembers the interpreter it was configured with. A build
+# through another one -- `just-build`, which the PEP 517 frontend runs in an
+# isolated environment that is then deleted -- leaves that interpreter's paths
+# in the cache, so the next `build` fails on a numpy include dir that no longer
+# exists. `build` therefore drops the cache when it names a different
+# interpreter from $(PYTHON), and lets the cache rule above rebuild it, so the
+# NumPy check and install in that rule run again too. A configure is a second;
+# a stale cache is a failed build. (The check is Python, not grep, so it runs
+# on Windows too.)
+CACHE_NAMES_PYTHON = import sys; lines = open('$(BUILD_DIR)/CMakeCache.txt').read().splitlines(); names = [l.split('=', 1)[1].strip() for l in lines if l.startswith('Python3_EXECUTABLE:')]; sys.exit(0 if names == [sys.argv[1]] else 1)
+
 build: $(BUILD_DIR)/CMakeCache.txt
+	@$(PYTHON) -c "$(CACHE_NAMES_PYTHON)" "$(PYTHON)" || { rm -f $(BUILD_DIR)/CMakeCache.txt && $(MAKE) --no-print-directory $(BUILD_DIR)/CMakeCache.txt; }
 	cmake --build $(BUILD_DIR) --parallel $(NPROC)
 
 test: build
