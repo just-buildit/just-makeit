@@ -74,7 +74,10 @@ class TestTheKeyIsPartOfTheManifest:
             "coerce": "bit_pattern",
             "coerce_str_fn": HOST,
         }
-        assert f'coerce_str_fn = "{HOST}"' in _config._inline_field(f)
+        cfg = {
+            "module": {"w": {"kind": "composer", "source": {"fields": [f]}}}
+        }
+        assert f'coerce_str_fn = "{HOST}"' in _config._dump(cfg)
 
     def test_refused_on_a_field_that_does_not_coerce(self) -> None:
         """Read by nobody would be a silent no-op, so it is refused."""

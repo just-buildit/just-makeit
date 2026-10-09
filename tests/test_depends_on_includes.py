@@ -111,8 +111,11 @@ def test_function_mutable_param_is_non_const(tmp_path):
     assert "float *output" in decl  # writable
     assert "const float *output" not in decl
     assert "const float *input" in decl  # non-mutable stays const
-    # `mutable` canonicalises to `out` on a re-dump (round-trip)
-    assert "out = true" in C._dump(C.load(dest))
+    # gh-2045: a re-dump keeps the synonym the author wrote, as the
+    # layout-preserving writer always has; both read as `out`.
+    text = C._dump(C.load(dest))
+    assert "mutable = true" in text
+    assert "out = true" not in text
 
 
 def _inc_layout(tmp_path: Path, comp: str, comp_body: str, deps=()) -> Path:

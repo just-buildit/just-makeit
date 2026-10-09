@@ -245,31 +245,32 @@ class TestTheManifestRoundTrips:
         C.save(root, C.load(root))
         assert C.load(root)["obj"]["init_params"] == before
 
-    #: The two emitters, asserted DIRECTLY. A save/load round-trip cannot
-    #: stand in for them: `_dump` is self-checking, so a serializer that
-    #: mangles the list simply fails its own round-trip guard and `save`
-    #: falls back to tomlkit, which preserves the original text. Measured —
-    #: the integration form stayed green with `_init_param_pairs` sabotaged.
-    #: The fallback does not cover the brand-new-file path, where `_dump`
-    #: runs unguarded, which is the exposure these two protect.
+    #: The writer, asserted DIRECTLY. A save/load round-trip cannot stand in
+    #: for it: an existing file is saved by tomlkit, which preserves the
+    #: original text. Measured -- the integration form stayed green with the
+    #: init-param writer sabotaged. The brand-new-file path is `_dump`'s, and
+    #: is the exposure these two protect: an object's init_params, and a
+    #: view's, which were once two emitters (gh-2045 made them one).
     PARAM = {
         "name": "ref",
         "type": "float _Complex[][]",
         "derived": ["ny", "nx"],
     }
 
-    def test_the_block_emitter_writes_a_toml_array(self):
-        from just_makeit._config import _init_param_block_lines
+    def test_an_object_init_param_writes_a_toml_array(self):
+        text = C._dump({"obj": {"init_params": [self.PARAM]}})
+        assert 'derived = ["ny", "nx"]' in text
 
-        assert 'derived = ["ny", "nx"]' in _init_param_block_lines(self.PARAM)
-
-    def test_the_inline_emitter_writes_a_toml_array(self):
-        """The peer. `_init_param_inline` serves a view's init_params and is a
-        separate code path; fixing one and not the other is the pattern this
-        repo keeps paying for."""
-        from just_makeit._config import _init_param_inline
-
-        assert 'derived = ["ny", "nx"]' in _init_param_inline(self.PARAM)
+    def test_a_view_init_param_writes_a_toml_array(self):
+        """The inline spelling a view's init_params take."""
+        text = C._dump(
+            {
+                "obj": {
+                    "views": [{"class_name": "V", "init_params": [self.PARAM]}]
+                }
+            }
+        )
+        assert 'derived = ["ny", "nx"]' in text
 
 
 class TestTheGateGoesQuiet:

@@ -85,13 +85,17 @@ def _first(doc: dict) -> str:
     return doc["k"][0]
 
 
+def _key(doc: dict) -> str:
+    (key,) = doc
+    return key
+
+
 #: path name -> (render `k = <value>`, pull the value back out, exact?).
 ESCAPERS = {
-    "_toml_inline_string": (
-        lambda v: f"k = {C._toml_inline_string(v)}",
-        _scalar,
-        True,
-    ),
+    # gh-2047: a KEY is text too. One the writer had no escaper for -- a
+    # sub-package name with a dot, a codec key with a space -- was written
+    # bare and meant a nested table, or did not parse.
+    "_toml_key": (lambda v: f"{C._toml_key(v)} = 1", _key, True),
     "_str_assign": (lambda v: C._str_assign("k", v), _scalar, False),
     "_toml_scalar": (lambda v: f"k = {C._toml_scalar(v)}", _scalar, True),
     "_toml_value": (lambda v: f"k = {C._toml_value(v)}", _scalar, True),
