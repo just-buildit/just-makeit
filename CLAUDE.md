@@ -412,8 +412,12 @@ All supported C types are registered in `_CTYPE_META` in `_types.py`.
 Each entry specifies: `kind` (float/int/complex), `fmt` (PyArg_ParseTuple
 format char), `zero` (C zero literal), `py_type` (numpy dtype string),
 `parse_type` (intermediate C type for arg parsing), and `to_py` (lambda
-producing the PyObject\* conversion expression). Array types append `[]` to any
-scalar key; fixed-length state fields append `[N]`.
+producing the PyObject\* conversion expression). Array types append `[]` to a
+scalar key; fixed-length state fields append `[N]`. Which keys each slot takes
+is three registries, not one: a step `T[]` takes `STEP_TYPES`, an array
+param / init-param / `out_type` `SUPPORTED_ARRAY_CTYPES`, a state `T[N]`
+`STATE_ARRAY_NPY`. `docs/types.md`'s Supported types table states all three,
+held to them by `tests/test_gh2041_types_page_agrees.py`.
 
 ### Windows (clang-cl, gh-1368)
 

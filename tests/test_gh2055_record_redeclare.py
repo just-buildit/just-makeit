@@ -96,9 +96,9 @@ SPEAKERS = {"scalar": ("write", "wait"), "struct": ("write", "read")}
 #: (old kind, new kind) -> (the re-declaration's flags, what it must do).
 #: Held to every pair of `KINDS` by `test_every_transition_has_a_case`.
 TRANSITIONS = {
-    ("scalar", "scalar"): (("--type", "float"), "refused"),
+    ("scalar", "scalar"): (("--type", "double"), "refused"),
     ("scalar", "struct"): (("--field", "a:float"), "refused"),
-    ("struct", "scalar"): (("--type", "float"), "refused"),
+    ("struct", "scalar"): (("--type", "double"), "refused"),
     ("struct", "struct"): (
         ("--field", "i:int16_t", "--field", "q:int16_t",
          "--field", "t:uint32_t"),
@@ -433,10 +433,10 @@ _REFUSED = sorted(
 def test_the_refusals_route_builds_and_passes(tmp_path, placement, old, new):
     """The route a type change is refused with, run as printed.
 
-    The scalar change goes to ``float`` rather than the issue's ``double``:
-    a ``double`` element's contract cannot pass on a FIRST declaration
-    either (its foreign dtype, ``int8``, casts safely into ``float64``),
-    which is not this issue.
+    The scalar change goes to the issue's own ``double``. It went to
+    ``float`` until gh-2067: a ``double`` element's contract could not pass
+    on a FIRST declaration, its foreign dtype (``int8``) casting safely
+    into ``float64``.
     """
     root = _project(tmp_path, old, placement)
     if old == "struct":
