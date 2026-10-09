@@ -43,6 +43,13 @@ def parse_state_flag(
         default = ""
     else:
         default = parts[2] if len(parts) == 3 else T.state_default(ctype)
+    # gh-1946: before anything is written -- the answer make_state_ctx gives
+    # the same default in a manifest.
+    why = T.literal_default_error(ctype, default)
+    if why:
+        from ._report import Refusal
+
+        raise Refusal(f"state field '{name}': {why}")
     return (name, ctype, default), i + 1
 
 

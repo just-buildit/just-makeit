@@ -44,6 +44,7 @@ from dataclasses import replace as _replace
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
+from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     CLASS_INDENT,
@@ -912,76 +913,45 @@ def _py_default_stub(ctype: str, default: str) -> str:
     Python. Returning the raw empty default instead produced ``x: int = `` —
     a SyntaxError that broke the whole stub for any downstream ``mypy`` run or
     ``pytest --doctest-glob='*.pyi'`` sweep.
+
+    gh-1946: every present default is
+    :func:`~just_makeit._context._types._py_default`'s answer. This was its
+    branch-for-branch peer, and each fix had to land twice -- `bool`
+    (gh-610), header constants (gh-1488), `str` (gh-1271), the integer
+    suffixes (gh-1043), the complex parser (gh-1561) -- until the float
+    branch's suffix rule was the copy neither fix reached, and ``0.1L``
+    reached both stubs verbatim. What stays here is the one real
+    difference: an absent default, or a type jm has no Python for, is
+    ``...`` on this face.
     """
     if ctype not in _CTYPE_TO_PY or not default.strip():
         return "..."
-    if ctype == "bool":
-        # gh-610: "bool" isn't in kind_map (it falls to the generic "int"
-        # bucket below), so the C/TOML spelling `true`/`false` passed
-        # straight through into generated Python — a NameError.
-        # gh-1506: a header constant is `...`, as for every other type.
-        if T.is_c_only_default(ctype, default):
-            return "..."
-        return T.bool_default_py(default)
-    # gh-1488: the peer's answer for a header constant, from the same
-    # predicate -- a stub cannot name `LVL_INFO` any more than a test can.
-    if T.is_c_only_default(ctype, default):
-        return "..."
-    # gh-1271: the peer had a `str` branch and this one did not, so a
-    # `const char *` default fell through to the integer bucket below and
-    # reached the stub as the C token -- `dataset: str = NULL`, a NameError.
-    # One answer, shared, so the two cannot drift again.
-    if T._CTYPE_META.get(ctype, {}).get("kind") == "str":
-        return T.string_default_literal(default)
-    # gh-1561: the type's own kind. A hand list of the complex types sent
-    # `long double _Complex` to the integer bucket.
-    kind = T._CTYPE_META[ctype]["kind"]
-    if kind == "float":
-        s = default.rstrip("fF")
-        if "." not in s and "e" not in s.lower():
-            s += ".0"
-        return s
-    if kind == "complex":
-        # gh-1561: the peer's answer, from the same parser.
-        return T.complex_default_py(default) or "0j"
-    # gh-1043: the integer bucket, the peer of the branch in
-    # `_context/_types._py_default`. Both emitted the C literal unchanged, so
-    # a `uint64_t` state field put `0U` into the .pyi AND the runtime
-    # docstring — one manifest, two faces, the same wrong answer twice.
-    return T.strip_c_literal_suffix(default)
+    return _py_default(ctype, default)
 
 
 def _doctest_out(ctype: str, default: str) -> str | None:
-    """Expected repr from a getter call, or None if not safe for doctests."""
-    m = _ARRAY_RE.match(ctype.strip())
-    if m:
+    """Expected repr from a getter call, or None if not safe for doctests.
+
+    gh-1947: the value the getter RETURNS, which is
+    :func:`~just_makeit._types.held_default_py`'s answer -- not the declared
+    literal. A ``float _Complex`` given ``0.1`` prints
+    ``(0.10000000149011612+0j)``, and this printed ``(0.1+0j)``, so a fresh
+    scaffold's ``pytest --doctest-glob='*.pyi'`` failed.
+
+    A float field is demonstrated only when that value is integral, the
+    policy since the first stubs; every value shown is the exact one.
+    """
+    if _ARRAY_RE.match(ctype.strip()) or ctype not in _CTYPE_TO_PY:
         return None  # array fields: no scalar getter
-    if ctype not in _CTYPE_TO_PY:
+    held = T.held_default_py(ctype, default)
+    if held is None:
         return None
-    # gh-1561: the type's own kind. A hand list of the complex types sent
-    # `long double _Complex` to the integer bucket.
-    kind = T._CTYPE_META[ctype]["kind"]
-    if kind == "int":
-        val = _py_default_stub(ctype, default)
-        try:
-            int(val)
-            return val
-        except ValueError:
-            return None
-    if kind == "float":
-        s = default.rstrip("fF")
-        try:
-            v = float(s)
-            if v == int(v):
-                return repr(v)
-        except ValueError:
-            pass
+    if (
+        T._CTYPE_META[ctype]["kind"] == "float"
+        and not float(held).is_integer()
+    ):
         return None
-    if kind == "complex":
-        # gh-1561: the declared value's repr, which is what the getter
-        # prints; None for a C constant, as for any value Python cannot say.
-        return T.complex_default_py(default) if default.strip() else "0j"
-    return None
+    return held
 
 
 def _ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:

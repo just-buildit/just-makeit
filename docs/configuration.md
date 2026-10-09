@@ -769,10 +769,11 @@ makes that assertion a guess. The reset test is the same guess one step later
 
 #### A `default` is a literal; a constant is `default_raw`
 
-`default` is rendered **verbatim** into four places — the C local, both `.pyi`
-writers, and the generated app's `argparse` flags — so it has to be a literal
-of the type declared beside it. jm refuses anything else, naming the type and
-the value:
+`default` is rendered into four places — verbatim into the C local, and as
+the same value spelled in Python into both `.pyi` writers and the generated
+app's `argparse` flags — so it has to be a literal of the type declared beside
+it, and one Python can spell ([Defaults](types.md#defaults)). jm refuses
+anything else, naming the type and the value:
 
 ```toml
 [[det.init_params]]

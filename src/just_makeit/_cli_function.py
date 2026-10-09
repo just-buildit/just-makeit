@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from . import _borrow
+from ._report import Refusal
 
 
 def _required_after_default_ok(
@@ -161,6 +162,12 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-1946: a default Python has no spelling of, refused before
+            # anything is written -- the backstop in `_py_default` fires
+            # only once the manifest already carries it.
+            _why = T.literal_default_error(ptype, pdefault)
+            if _why:
+                raise Refusal(f"param '{pname}': {_why}")
             # A defaulted param makes everything after it optional too: a
             # required param may not follow a defaulted one (PyArg `|` rule).
             if not pdefault and any(len(fp) > 3 and fp[3] for fp in fn_params):
