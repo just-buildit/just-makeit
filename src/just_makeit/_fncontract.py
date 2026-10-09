@@ -1,9 +1,10 @@
 """_fncontract.py — the contract smoke test a functions-only module gets.
 
-gh-2127. A module that declares module-level functions and no objects builds
-an extension and generates no Python test that calls it, so a broken wrapper
-passed `jm build` and `jm test` both (gh-1950 made the empty suite a pass, not
-a test). An object gets a scaffolded test; a function did not.
+gh-2127. A module that declares module-level functions builds an extension and
+generated no Python test that calls it, so a broken wrapper passed `jm build`
+and `jm test` both (gh-1950 made the empty suite a pass, not a test). An object
+gets a scaffolded test; a function did not. A mixed module's functions are
+covered too (#2156).
 
 The maintainer's decision (gh-2127, option c) fixes what this test asserts:
 the CONTRACT the generated binding makes, not any value. For each wrapper it
@@ -196,23 +197,28 @@ def render(import_path: str, leaf: str, functions: list[dict]) -> str:
 
 
 def _qualifies(cfg: dict, module: str) -> bool:
-    """A module gets the contract test when it declares functions and no
-    objects. A module with objects already has scaffolded tests, and this file
-    would be a second, partial suite for the same extension."""
-    return not C.module_objects(cfg, module) and bool(
-        C.module_functions(cfg, module)
-    )
+    """A module gets the contract test when it declares at least one function.
+
+    Objects do not matter: the file is ``test_<leaf>_functions.py``, which no
+    object's test is named, so a mixed module's functions are covered beside
+    its objects' tests (#2156).
+    """
+    return bool(C.module_functions(cfg, module))
 
 
 def sync(root: Path, cfg: dict, module: str) -> None:
     """Make the module's contract test match the manifest, both ways.
 
-    Called wherever the module's functions or objects change: a function
-    added or removed, an object added or removed. A functions-only module gets
-    the file, rewritten from the manifest's current function list. A module
-    that no longer qualifies loses it, but only while the file still carries
-    jm's ownership token (gh-1489). A file the author has taken over is theirs,
-    and is left alone.
+    Called wherever the module's functions change: a function added or
+    removed. A module with functions gets the file, rewritten from the
+    manifest's current function list. A module whose last function is removed
+    loses it.
+
+    Both directions hold only while the file carries jm's ownership token
+    (gh-1489). The token is what makes the file jm's: an author who deletes it
+    has taken the file over, and neither a write nor a delete may touch it
+    again. A file that exists without the token is therefore left exactly as
+    it is, and a file jm never wrote is created only where none exists.
 
     The file is born owned, so ``apply`` re-renders it from the replay. A
     replay that no longer produces it does not delete it, which is why the
@@ -224,7 +230,12 @@ def sync(root: Path, cfg: dict, module: str) -> None:
     tests = root / "src" / pkg / module_dir / "tests"
     fname = f"test_{leaf}_functions.py"
     path = tests / fname
+    owned = path.is_file() and R.is_owned_render(
+        path.read_text(encoding="utf-8"), fname
+    )
     if _qualifies(cfg, module):
+        if path.is_file() and not owned:
+            return
         tests.mkdir(parents=True, exist_ok=True)
         init = tests / "__init__.py"
         if not init.exists():
@@ -236,8 +247,6 @@ def sync(root: Path, cfg: dict, module: str) -> None:
         )
         _textio.write_text(path, R.owned_scaffold(text, fname))
         print(f"  write   {path}")
-    elif path.is_file() and R.is_owned_render(
-        path.read_text(encoding="utf-8"), fname
-    ):
+    elif owned:
         path.unlink()
         print(f"  delete  {path}")

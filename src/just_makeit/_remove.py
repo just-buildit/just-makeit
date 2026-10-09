@@ -359,8 +359,6 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     # objects that remain.
     if module:
         _regenerate_module(root, cfg, module, pkg)
-        # gh-2127: removing the last object can leave a functions-only module.
-        _fncontract.sync(root, cfg, module)
     print()
     print(f"Done!  Object '{obj}' removed.")
 
