@@ -401,3 +401,33 @@ def test_out_cols_where_it_cannot_apply_is_refused_at_load(
     )
     text = r.stdout + r.stderr
     assert "out_cols" in text and needle in text, text
+
+
+def test_a_hand_edited_manifest_is_refused_on_load(tmp_path):
+    """The CLI is not the only writer: a manifest edited by hand reaches the
+    same validator when it is loaded, with the reason."""
+    root = _scaffold(tmp_path)
+    for argv in (
+        ("object", "mat", "--state", "width:size_t:4"),
+        (
+            "method",
+            "mat",
+            "run",
+            "--param",
+            "x:float[]",
+            "--return-type",
+            "float",
+            "--variable-output",
+        ),
+    ):
+        assert run_cli(*argv, cwd=root).returncode == 0, argv
+    frag = root / "objects" / "mat.toml"
+    text = frag.read_text("utf-8")
+    assert "variable_output = true\n" in text
+    frag.write_text(
+        text.replace("variable_output = true\n", 'out_cols = "4"\n', 1),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "out_cols needs variable_output" in r.stdout + r.stderr
