@@ -10,11 +10,12 @@ The last of those five is the one with teeth. `<pkg>_version()` in
 it what version it is, and was told the version the project had on the day it
 was scaffolded, forever.
 
-jm reports and does not rewrite, which is gh-442's answer to the identical
-question and is followed rather than re-derived: a release bumps
+`apply` reports and does not rewrite, which is gh-442's answer to the
+identical question and is followed rather than re-derived: a release bumps
 `pyproject.toml` and never the manifest, so the manifest is often the stale
 side, and rewriting an author-owned file from it on the next unrelated `apply`
-would be worse than the drift.
+would be worse than the drift. `jm config version` does rewrite (gh-2069): it
+is the author declaring the value, so jm knows which side moved.
 
 The coverage test here is deliberately **derived from the tree** rather than
 from a list of files: it bumps the manifest, asks the tree which files still
@@ -222,3 +223,165 @@ class TestEveryTemplateIsClassified:
             if p.is_file() and "<<version>>" in p.read_text(encoding="utf-8")
         }
         assert stamping == self.EXEMPT | self.CHECKED
+
+
+class TestConfigVersionWritesEveryCopy:
+    """gh-2069: `jm config version` wrote the manifest and none of the
+    copies, so `status --check` failed on the next command.
+
+    The verb is the author declaring the value, so every copy follows it:
+    the five `_projversion` owns, through the same table `drift` reads, and
+    the PEP 723 app, through the same replay `apply` makes. The gh-2057 gate
+    holds the verb to `apply`'s tree on every project shape; these hold the
+    parts it cannot see -- a copy neither oracle reports, and a write that
+    must NOT happen.
+    """
+
+    def test_no_copy_of_the_old_version_is_left(self, project: Path) -> None:
+        """Derived from the tree, like the reporter's coverage test above:
+        whatever still carries the old string after the verb is a copy it
+        missed, including the PEP 723 app and any file that gains a copy
+        later."""
+        r = _cli("config", "version", NEW, cwd=project)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _carrying(project, OLD) == set()
+        assert _cli("status", "--check", cwd=project).returncode == 0
+
+    def test_the_verb_names_a_copy_it_cannot_write(
+        self, project: Path
+    ) -> None:
+        """A pre-release has no CMake spelling (gh-2084): the verb writes
+        every other copy, leaves `CMakeLists.txt` configuring, and says so
+        with the gating mark, because `status --check` still fails on it."""
+        r = _cli("config", "version", "1.1.2a47", cwd=project)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "warning !: CMakeLists.txt:" in r.stderr, r.stderr
+        assert _carrying(project, OLD) == {"CMakeLists.txt"}
+
+    def test_a_deferred_version_moves_pyproject(self, project: Path) -> None:
+        """gh-1283: a manifest that omits the version reads it from
+        `pyproject.toml`, and `save` keeps the omission. The verb was a
+        silent no-op there -- it printed the new value and changed nothing.
+        Writing the copies is what makes it take effect, and the manifest
+        stays silent."""
+        manifest = project / "just-makeit.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                f'version = "{OLD}"\n', "", 1
+            ),
+            encoding="utf-8",
+        )
+        assert _cli("config", "version", NEW, cwd=project).returncode == 0
+        assert "\nversion = " not in manifest.read_text(encoding="utf-8")
+        assert _carrying(project, OLD) == set()
+        assert _cli("status", "--check", cwd=project).returncode == 0
+
+    def test_a_derived_copy_stays_derived(self, tmp_path: Path) -> None:
+        """gh-1204: a copy the build derives carries no value to overwrite.
+        Writing a literal over it would undo the one fix that makes drift
+        impossible."""
+        from just_makeit import _projversion as V
+
+        derived = "PROJECT_NUMBER = $(PKG_VERSION)\n"
+        (tmp_path / "Doxyfile").write_text(derived, encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text(
+            f'[project]\nname = "p"\nversion = "{OLD}"\n', encoding="utf-8"
+        )
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.sync(tmp_path, cfg) == (["pyproject.toml"], [])
+        assert (tmp_path / "Doxyfile").read_text(encoding="utf-8") == derived
+
+    def test_only_the_project_table_is_written(self, tmp_path: Path) -> None:
+        """A ``version`` under another table, ahead of ``[project]`` and
+        holding the same string, is not the project's: the parser decides
+        which line is, and the other is left byte-identical."""
+        from just_makeit import _projversion as V
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            f'[tool.x]\nversion = "{OLD}"\n\n'
+            f'[project]\nname = "p"\nversion = "{OLD}"\n',
+            encoding="utf-8",
+        )
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.sync(tmp_path, cfg) == (["pyproject.toml"], [])
+        assert pyproject.read_text(encoding="utf-8") == (
+            f'[tool.x]\nversion = "{OLD}"\n\n'
+            f'[project]\nname = "p"\nversion = "{NEW}"\n'
+        )
+
+    def test_a_value_its_slot_cannot_hold_is_not_written(
+        self, tmp_path: Path
+    ) -> None:
+        """CMake's ``project(VERSION)`` takes integers only and rejects a
+        PEP 440 pre-release at configure time. Writing one would break the
+        build to clear a status line, so the copy is left and named (its
+        spelling is gh-2084); the copies that can hold it are written."""
+        from just_makeit import _projversion as V
+
+        cmake = f"project(p\n  VERSION {OLD}\n  LANGUAGES C)\n"
+        (tmp_path / "CMakeLists.txt").write_text(cmake, encoding="utf-8")
+        (tmp_path / "Doxyfile").write_text(
+            f"PROJECT_NUMBER = {OLD}\n", encoding="utf-8"
+        )
+        cfg = {"project": {"name": "p", "version": "1.1.2a47"}}
+        written, unwritable = V.sync(tmp_path, cfg)
+        assert written == ["Doxyfile"]
+        assert len(unwritable) == 1 and "CMakeLists.txt" in unwritable[0]
+        assert (tmp_path / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        ) == cmake
+
+    def test_the_project_command_is_the_one_written(
+        self, tmp_path: Path
+    ) -> None:
+        """The writer replaces what the reader located, so the reader is
+        anchored on ``project()`` -- on one line, as a formatter may leave
+        it -- and never on another command's ``VERSION`` keyword, which a
+        line-anchored match would have rewritten instead."""
+        from just_makeit import _projversion as V
+
+        other = "write_basic_package_version_file(\n  f\n  VERSION 3.2.1)\n"
+        cmake = tmp_path / "CMakeLists.txt"
+        cmake.write_text(
+            f"project(p VERSION {OLD} LANGUAGES C)\n{other}", encoding="utf-8"
+        )
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.sync(tmp_path, cfg) == (["CMakeLists.txt"], [])
+        assert cmake.read_text(encoding="utf-8") == (
+            f"project(p VERSION {NEW} LANGUAGES C)\n{other}"
+        )
+
+    def test_two_copies_in_one_file_are_neither_read_nor_written(
+        self, tmp_path: Path
+    ) -> None:
+        """Exactly one match, or the file is not carrying a copy jm
+        understands: doxygen takes the LAST of two ``PROJECT_NUMBER`` lines,
+        so writing the first would change nothing doxygen reads."""
+        from just_makeit import _projversion as V
+
+        body = f"PROJECT_NUMBER = {OLD}\nPROJECT_NUMBER = 0.0.9\n"
+        (tmp_path / "Doxyfile").write_text(body, encoding="utf-8")
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.drift(tmp_path, cfg) == []
+        assert V.sync(tmp_path, cfg) == ([], [])
+        assert (tmp_path / "Doxyfile").read_text(encoding="utf-8") == body
+
+    def test_only_a_copy_that_differs_is_touched(self, tmp_path: Path) -> None:
+        """The verb runs over whatever tree it is given. A file jm cannot
+        read or parse carries no copy it understands, and a copy already at
+        the version is not rewritten -- neither is an error, and neither is
+        a write."""
+        from just_makeit import _projversion as V
+
+        broken = '[project\nversion = "0.1.0"\n'
+        (tmp_path / "pyproject.toml").write_text(broken, encoding="utf-8")
+        (tmp_path / "Doxyfile").write_bytes(b"PROJECT_NUMBER = 0.1.0\xff\n")
+        current = f'[project]\nname = "p"\nversion = "{NEW}"\n'
+        (tmp_path / "bootstrap.toml").write_text(current, encoding="utf-8")
+        cfg = {"project": {"name": "p", "version": NEW}}
+        assert V.drift(tmp_path, cfg) == []
+        assert V.sync(tmp_path, cfg) == ([], [])
+        assert (tmp_path / "pyproject.toml").read_text(
+            encoding="utf-8"
+        ) == broken

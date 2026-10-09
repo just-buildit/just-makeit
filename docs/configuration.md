@@ -1369,6 +1369,8 @@ default is still `"0.1.0"`.
 The other copies (`CMakeLists.txt`, the `Doxyfile`, `native/src/<pkg>_lib.c`,
 `bootstrap.toml`) are create-only and still carry their own literal, so they are
 still checked -- see [`status`](commands/build.md#just-makeit-status).
+`just-makeit config version X` writes `X` into `pyproject.toml` and each of
+them, and leaves the manifest without a version (gh-2069).
 
 ### `[<object>]`
 

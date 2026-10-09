@@ -259,7 +259,12 @@ def test_a_mutating_command_over_a_hand_edit_writes_no_binding(
 @pytest.mark.parametrize("stype", STR_TYPES)
 def test_bind_refuses_a_header_whose_step_takes_one(blank, tmp_path, stype):
     """``jm bind`` reads the step type from the header, not the manifest."""
+    from test_bind import undeclare
+
     root = _copy(blank, tmp_path)
+    # bind refuses a declared component first (gh-2072); undeclared, the
+    # header is all it reads, so the type check is the one that refuses.
+    undeclare(root, "cc")
     header = root / "native/inc/p/cc/cc_core.h"
     text = header.read_text(encoding="utf-8")
     old = "cc_step(const cc_state_t *state, float x)"

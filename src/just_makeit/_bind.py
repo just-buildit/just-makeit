@@ -4,7 +4,9 @@ _bind.py — ``just-makeit bind`` command.
 Reads ``<comp>_core.h`` and synthesises ``<comp>_ext.c`` (plus the
 matching ``.pyi``) without consulting ``just-makeit.toml``.  Designed
 as the header-driven path described in
-``docs/developers/bind-design.md``.
+``docs/developers/bind-design.md``: a header the manifest does not
+declare. A component it does declare is refused (gh-2072) -- its binding
+is ``jm apply``'s, rendered from the manifest.
 
 Supported shapes (Phase 3b)
 ---------------------------
@@ -603,12 +605,52 @@ def _build_ctx(
     return ctx
 
 
+def refuse_declared(root: Path, component: str) -> None:
+    """Refuse *component* when the project's manifest declares it (gh-2072).
+
+    `bind` renders ``<comp>_ext.c`` and the ``.pyi`` from the header alone.
+    A component the manifest declares already has a binding, and an owner
+    for it: `jm apply`, which renders it from the manifest. Much of what the
+    manifest declares -- a warning, a ``create()`` error, a record type --
+    is nothing a header says, so a second render from the header drops it,
+    and the next `apply` rewrites both files back. This names the two
+    commands that render it from the manifest instead.
+
+    One predicate for both modes: ``--check`` would otherwise compare the
+    file on disk with a render nothing ships. A header the manifest does
+    not declare -- or one in a project with no manifest at all -- is what
+    `bind` is for, and passes.
+
+    Raises
+    ------
+    Refusal
+        When the manifest declares *component*: before `run` reads anything
+        else, so nothing is written.
+    """
+    from ._report import Refusal
+
+    # The project `run` renders for is *root*'s manifest, or none (`owner`
+    # there). Read fresh, not through `_incpath`'s cache: that is keyed on
+    # just-makeit.toml alone, and a component lives in a fragment.
+    manifest = root / C.FILENAME
+    if manifest.is_file() and component in C.components(C.load(root)):
+        raise Refusal(
+            f"the manifest declares '{component}', so `jm apply` owns its"
+            " binding: `jm bind` renders from the header alone and would drop"
+            " what only the manifest says (warnings, errors, records). Run"
+            f" `jm regenerate {component}` to rebuild it from the manifest,"
+            " or `jm apply`."
+        )
+
+
 def run(root: Path, component: str, *, write: bool = True) -> str:
     """Reflect ``<component>_core.h`` and (optionally) write ``_ext.c``.
 
     Returns the rendered text either way so tests and ``--check`` mode
-    can compare without touching the filesystem.
+    can compare without touching the filesystem. A component the manifest
+    declares is refused first, in both modes (:func:`refuse_declared`).
     """
+    refuse_declared(root, component)
     header = INC.core_h(root, component)
     if not header.exists():
         print(f"error: header not found: {header}", file=sys.stderr)
@@ -670,11 +712,13 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
         pyi = root / "src" / pkg / f"{component}.pyi"
         if pyi.exists() or (root / "src" / pkg).is_dir():
             pyi_text = R.render_component_pyi(ctx)
-            # gh-428: bind derives its output purely from the header and
-            # otherwise never consults just-makeit.toml, but a manual_stub
-            # method's hand-written .pyi text has no header declaration for
-            # bind to reconstruct. Read the manifest (if any) only to learn
-            # which symbols to preserve verbatim across this regen.
+            # gh-428: a hand-written .pyi member has no header declaration
+            # for bind to reconstruct, so the splice carries it across. The
+            # component is undeclared (`refuse_declared`), so no
+            # `manual_stub` row names its class: what survives is each
+            # `# jm:hand` member, which needs no manifest. The splice still
+            # takes one -- it is the one entry point every stub writer
+            # shares, gh-765's check included.
             if pyi.exists():
                 cfg_path = root / C.FILENAME
                 old_cfg = C.load(root) if cfg_path.exists() else {}
