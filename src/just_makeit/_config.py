@@ -109,7 +109,8 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
                         raise Refusal(
                             f"{source}: [module.{mod}].{mk} conflicts with an "
                             f"earlier definition — a module's config belongs "
-                            f"in exactly one place (modules/{mod}.toml)."
+                            "in exactly one place (modules/"
+                            f"{module_paths(mod).cname}.toml)."
                         )
                     else:
                         dest[mk] = mv
