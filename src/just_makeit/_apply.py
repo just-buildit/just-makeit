@@ -2701,7 +2701,7 @@ def _sync_aggregates(
             or C.is_handle_module(cfg, mod)
         ):
             mp = C.module_paths(mod)
-            out_pkg = C.module_package(cfg, mod) or mp.pypath
+            out_pkg = C.module_package_resolved(cfg, mod)
             glue = [
                 f"native/src/{mp.cname}/{mp.cname}_ext.c",
                 f"native/src/{mp.cname}/CMakeLists.txt",
@@ -2740,7 +2740,7 @@ def _sync_aggregates(
         # gh-523: an object module may declare `package` to land its Python
         # artifacts inside a sibling package; unset it is the module's own
         # pypath, so unpackaged modules reconcile exactly as before.
-        out_pkg = C.module_package(cfg, mod) or mp.pypath
+        out_pkg = C.module_package_resolved(cfg, mod)
         # Re-create any intermediate package markers the user may have deleted
         # (create-only — never clobbers a hand-edited marker).
         from ._init import ensure_parent_packages

@@ -178,7 +178,7 @@ def _stale_ext_modules(
     if module:
         # Module objects share a single .so named after the module's leaf.
         mp = C.module_paths(module)
-        out_pkg = C.module_package(cfg, module) or mp.pypath
+        out_pkg = C.module_package_resolved(cfg, module)
         so = root / "src" / pkg / out_pkg / f"{mp.leaf}{suffix}"
     else:
         so = root / "src" / pkg / f"{component}{suffix}"
