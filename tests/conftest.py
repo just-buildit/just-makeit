@@ -58,6 +58,11 @@ from pathlib import Path
 
 import pytest
 
+# gh-2078: `--jm-shard=K/N`, which Coverage's CI jobs split the suite by. A
+# plugin module rather than hooks written here, so the gate in
+# test_gh2078_coverage_shards.py can load the same code into a child pytest.
+pytest_plugins = ["_shard"]
+
 SRC = Path(__file__).parent.parent / "src"
 
 # Ahead of any editable install — see the module docstring.

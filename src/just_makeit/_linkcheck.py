@@ -168,13 +168,21 @@ def bound_symbols(binding: str, header: str) -> "list[str]":
 
 
 def binding_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
-    """The generated binding file(s) that call into *comp*'s core."""
+    """The generated binding file(s) that call into *comp*'s core.
+
+    For a module object, its own fragment and every view's: the files whose
+    constructor calls one of the core's create functions. `jm regenerate
+    --discard` rebuilds exactly these (gh-2073).
+    """
+    from ._object import _view_frag_id
+
     mod = C.module_of(cfg, comp)
     if mod:
         cname = C.module_paths(mod).cname
         d = root / "native" / "src" / cname
-        # gh-504: a view's fragment calls the parent's core too.
-        frags = [comp] + [v["class_name"].lower() for v in C.views(cfg, comp)]
+        # gh-504: a view's fragment calls the parent's core too. Its id has
+        # one owner, `_view_frag_id`, as `_status` and `_apply` read it.
+        frags = [comp] + [_view_frag_id(v) for v in C.views(cfg, comp)]
         return [d / f"{cname}_ext_{f}.c" for f in frags]
     return [root / "native" / "src" / comp / f"{comp}_ext.c"]
 

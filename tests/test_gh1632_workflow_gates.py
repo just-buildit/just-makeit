@@ -144,10 +144,11 @@ def test_main_has_a_nightly_full_run_of_its_own():
 
 
 # The ci.yml jobs a docs-only diff can break, so they run on one (gh-1801
-# item 3): lint (mdformat reads the docs), coverage (the full suite on one
-# leg; tests read the live tree), and the strict docs build. Plus the jobs
-# that are not checks of the diff at all.
-_DOCS_CAN_BREAK = {"lint", "coverage", "docs"}
+# item 3): lint (mdformat reads the docs), coverage (the full suite, run as
+# coverage-shard jobs since gh-2078 and gated by `coverage`; tests read the
+# live tree), and the strict docs build. Plus the jobs that are not checks of
+# the diff at all.
+_DOCS_CAN_BREAK = {"lint", "coverage-shard", "coverage", "docs"}
 _NOT_A_CHECK = {"changes", "ci-passed", "trigger-mirror"}
 
 
