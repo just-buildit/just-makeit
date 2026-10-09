@@ -194,6 +194,18 @@ CASES: "dict[str, dict[str, tuple[list, list, tuple]]]" = {
             ("mod",),
         ),
     },
+    # gh-2074: by its name; the C app's wiring is the CMake App block, the
+    # console app's the package's `cli.py` and `[project.scripts]`.
+    "app": {
+        "c": ([("object", "o")],
+              [("app", "--object", "o", "--target", "c")], ("p",)),
+        "console": (
+            [("object", "o")],
+            [("app", "--object", "o", "--target", "console", "--name",
+              "o-cli")],
+            ("o-cli",),
+        ),
+    },
 }  # fmt: skip
 
 

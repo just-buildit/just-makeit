@@ -55,7 +55,7 @@ from . import _incpath as INC
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 8
+CURRENT_SCHEMA = 9
 
 
 def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
@@ -1533,7 +1533,8 @@ def save(root: Path, cfg: dict) -> None:
     if "project" in cfg:
         manifest_content["project"] = cfg["project"]
     if cfg.get("app"):
-        manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
+        # gh-190: the apps live in the manifest ([[app]] since gh-2074).
+        manifest_content["app"] = cfg["app"]
     if cfg.get("enum"):
         manifest_content["enum"] = cfg["enum"]  # [[enum]] SSOT, manifest-owned
     if cfg.get("codec"):
@@ -6498,76 +6499,137 @@ def from_new(
     }
 
 
-def app_config(cfg: dict) -> dict:
-    """Return the [app] section, or an empty dict if absent."""
-    return cfg.get("app", {})
+def apps(cfg: dict) -> "list[dict]":
+    """The project's apps: its ``[[app]]`` rows, in manifest order (gh-2074).
+
+    Each row is one app -- a C executable, a console script or a PEP 723
+    script -- keyed by its ``name``, which is unique within the manifest;
+    its target, flags and commands live inside the row. `jm app` appends one
+    (:func:`add_app`), `jm remove app` drops one (:func:`drop_app`), and
+    `apply` re-renders each.
+
+    The one reader, of one spelling. A single ``[app]`` TABLE is how schema
+    8 and earlier spelled the one app a manifest could hold; it is refused
+    here, naming `jm upgrade`, whose migration rewrites it as a one-row
+    ``[[app]]`` (`_upgrade.AppRows`). Two rows sharing a name are refused
+    too: `jm remove app <name>` could not say which one it meant.
+
+    Returns the list the manifest holds -- empty when it declares no app.
+
+    Examples
+    --------
+    >>> apps({"app": [{"target": "c", "name": "t", "object": "o"}]})
+    [{'target': 'c', 'name': 't', 'object': 'o'}]
+    >>> apps({})
+    []
+    """
+    rows = cfg.get("app", [])
+    if isinstance(rows, dict):
+        raise Refusal(
+            f"{FILENAME} declares [app] as one table, the spelling of schema"
+            " 8 and earlier; this jm reads one [[app]] row per app (gh-2074)."
+            " Run `jm upgrade`, which rewrites it as [[app]]."
+        )
+    seen: "set[str]" = set()
+    for row in rows:
+        name = row.get("name") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not name:
+            raise Refusal(
+                f"{FILENAME}: an [[app]] row has no `name` ({row!r}); each"
+                " app is keyed by its name."
+            )
+        if name in seen:
+            raise Refusal(
+                f"{FILENAME}: two [[app]] rows are named {name!r}, and an"
+                " app's name is unique within the manifest. Rename or delete"
+                " one."
+            )
+        seen.add(name)
+    return rows
 
 
-def set_app(
-    cfg: dict,
+def app_entry(
     target: str,
     name: str,
-    object_: str | None = None,
-    function: str | None = None,
-    module: str | None = None,
+    *,
+    object_: "str | None" = None,
+    function: "str | None" = None,
+    module: "str | None" = None,
+    flags: "list[dict] | tuple" = (),
+    commands: "list[dict] | tuple" = (),
 ) -> dict:
-    """Write the [app] target/name and its source (object, or function+module),
-    preserving any [[app.flags]]."""
-    app = cfg.get("app", {})
-    app.update({"target": target, "name": name})
+    """One ``[[app]]`` row, as `jm app` declares it (gh-2074).
+
+    The source is a module function (with the module that holds it, ``""``
+    when unresolved), an object (with its owning module when one was given,
+    gh-187), or neither, for a subcommand app. *flags* and *commands* are
+    keyed by name: a later one of the same name replaces the earlier, and
+    keeps the later one's place. Empty values are not written.
+
+    Examples
+    --------
+    >>> app_entry("c", "t", object_="o", flags=[
+    ...     {"name": "g", "type": "double", "default": "", "help": ""}
+    ... ])["flags"]
+    [{'name': 'g', 'type': 'double'}]
+    >>> app_entry("pep723", "f", function="f", module="m")
+    {'target': 'pep723', 'name': 'f', 'function': 'f', 'module': 'm'}
+    """
+    entry: dict = {"target": target, "name": name}
     if function is not None:
-        app["function"] = function
-        app["module"] = module or ""
-        app.pop("object", None)
-    else:
-        app["object"] = object_
-        app.pop("function", None)
+        entry["function"] = function
+        entry["module"] = module or ""
+    elif object_ is not None:
+        entry["object"] = object_
         if module:
-            app["module"] = module  # owning module (gh-187 console scoping)
-        else:
-            app.pop("module", None)
-    cfg["app"] = app
-    return cfg
-
-
-def app_flags(cfg: dict) -> list[dict]:
-    """Return declared [[app.flags]] (empty list if none)."""
-    return list(cfg.get("app", {}).get("flags", []))
-
-
-def add_app_flag(cfg: dict, flag: dict) -> dict:
-    """Add/replace an [[app.flags]] entry, keyed by name."""
-    app = cfg.setdefault("app", {})
-    flags = app.setdefault("flags", [])
-    flags[:] = [f for f in flags if f.get("name") != flag["name"]]
-    flags.append(
-        {
-            k: flag[k]
+            entry["module"] = module  # owning module (gh-187 console scoping)
+    rows: "dict[str, dict]" = {}
+    for f in flags:
+        rows.pop(f["name"], None)
+        rows[f["name"]] = {
+            k: f[k]
             for k in ("name", "type", "default", "help")
-            if flag.get(k) not in (None, "")
+            if f.get(k) not in (None, "")
         }
-    )
-    return cfg
+    if rows:
+        entry["flags"] = list(rows.values())
+    cmds: "dict[str, dict]" = {}
+    for c in commands:
+        row = {"name": c["name"]}
+        if c.get("help"):
+            row["help"] = c["help"]
+        if c.get("flags"):
+            row["flags"] = [dict(f) for f in c["flags"]]
+        cmds.pop(c["name"], None)
+        cmds[c["name"]] = row
+    if cmds:
+        entry["commands"] = list(cmds.values())
+    return entry
 
 
-def app_commands(cfg: dict) -> list[dict]:
-    """Return declared [[app.commands]] (empty list if none)."""
-    return list(cfg.get("app", {}).get("commands", []))
+def add_app(cfg: dict, entry: dict) -> None:
+    """Append *entry* to the manifest's ``[[app]]`` rows (gh-2074).
+
+    Appends, never replaces: a second `jm app` beside a first is a second
+    app. The caller refuses a name already taken, which :func:`apps` would
+    otherwise refuse on the next load.
+    """
+    apps(cfg)
+    cfg.setdefault("app", []).append(entry)
 
 
-def add_app_command(cfg: dict, command: dict) -> dict:
-    """Add/replace an [[app.commands]] entry, keyed by name. A command is
-    {name, help, flags: [{name, type, default, help}]}."""
-    app = cfg.setdefault("app", {})
-    cmds = app.setdefault("commands", [])
-    cmds[:] = [c for c in cmds if c.get("name") != command["name"]]
-    entry = {"name": command["name"]}
-    if command.get("help"):
-        entry["help"] = command["help"]
-    if command.get("flags"):
-        entry["flags"] = [dict(f) for f in command["flags"]]
-    cmds.append(entry)
-    return cfg
+def drop_app(cfg: dict, name: str) -> dict:
+    """Remove the ``[[app]]`` row named *name* and return it (gh-2074).
+
+    The key goes with the last row, so a manifest whose apps are all removed
+    is the one that never declared any.
+    """
+    rows = apps(cfg)
+    (entry,) = [row for row in rows if row["name"] == name]
+    rows.remove(entry)
+    if not rows:
+        cfg.pop("app", None)
+    return entry
 
 
 def arg_type(cfg: dict, component: str) -> str:
@@ -8489,9 +8551,10 @@ def _dump(cfg: dict) -> str:
             if not v_methods and not v_props and not v_warnings:
                 lines.append("")
 
-    app = cfg.get("app", {})
-    if app.get("target"):
-        lines.append("[app]")
+    # gh-2074: one `[[app]]` row per app; each row's `[[app.flags]]` and
+    # `[[app.commands]]` follow it, which is how TOML attaches them to it.
+    for app in apps(cfg):
+        lines.append("[[app]]")
         lines.append(f"target = {_toml_basic_string(app['target'])}")
         lines.append(f"name = {_toml_basic_string(app['name'])}")
         if app.get("function") is not None:

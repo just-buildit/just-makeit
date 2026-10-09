@@ -54,6 +54,8 @@ NOT_MEMBER_KINDS = {
     "function": "a module's free function: no object, so no object bench.",
     "state": "`jm add` rebuilds the object, discarding hand-written code,"
     " after asking (gh-1889); `remove state` is the same rebuild.",
+    "app": "an app is not a member of an object: removing one re-renders"
+    " no object's glue (gh-2074).",
 }
 
 #: What the author wrote. Valid C at the end of the file, so the edited

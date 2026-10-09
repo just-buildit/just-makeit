@@ -8,9 +8,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
+from just_makeit._app import replay as app_replay
 from just_makeit._app import run as app_run
 from just_makeit._object import run as object_run
-from just_makeit._config import load, app_config
+from just_makeit._config import load, apps
+from just_makeit._report import Refusal
 
 
 @pytest.fixture()
@@ -64,16 +66,16 @@ class TestAppTargetC:
 
     def test_cmake_idempotent(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
-        app_run(project, target="c", name="dsp_tool", object_="engine")
+        app_replay(project, load(project))
         cmake = (project / "CMakeLists.txt").read_text()
         assert cmake.count("add_executable(dsp_tool") == 1
 
     def test_toml_app_section_persisted(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
         cfg = load(project)
-        assert app_config(cfg)["target"] == "c"
-        assert app_config(cfg)["name"] == "dsp_tool"
-        assert app_config(cfg)["object"] == "engine"
+        assert apps(cfg)[0]["target"] == "c"
+        assert apps(cfg)[0]["name"] == "dsp_tool"
+        assert apps(cfg)[0]["object"] == "engine"
 
     def test_no_state_vars_no_ctor_args(self, no_state_project):
         app_run(no_state_project, target="c", name="tool", object_="gen")
@@ -116,7 +118,7 @@ class TestAppTargetConsole:
     def test_toml_app_section_persisted(self, project):
         app_run(project, target="console", name="dsp_tool", object_="engine")
         cfg = load(project)
-        assert app_config(cfg)["target"] == "console"
+        assert apps(cfg)[0]["target"] == "console"
 
 
 class TestAppTargetPep723:
@@ -145,19 +147,19 @@ class TestAppTargetPep723:
     def test_toml_app_section_persisted(self, project):
         app_run(project, target="pep723", name="dsp_tool", object_="engine")
         cfg = load(project)
-        assert app_config(cfg)["target"] == "pep723"
+        assert apps(cfg)[0]["target"] == "pep723"
 
 
 class TestAppDefaults:
     def test_default_name_is_project_name(self, project):
         app_run(project, target="c")
         cfg = load(project)
-        assert app_config(cfg)["name"] == "proj"
+        assert apps(cfg)[0]["name"] == "proj"
 
     def test_default_object_is_first_component(self, project):
         app_run(project, target="c")
         cfg = load(project)
-        assert app_config(cfg)["object"] == "engine"
+        assert apps(cfg)[0]["object"] == "engine"
 
     def test_unknown_target_exits(self, project):
         with pytest.raises(SystemExit):
@@ -181,11 +183,23 @@ class TestAppDefaults:
         cfg = load(project)
         assert "app" not in components(cfg)
 
-    def test_rerun_different_target_updates_toml(self, project):
+    def test_a_second_app_is_appended(self, project):
+        """gh-2074: a second `jm app` is a second app, not a replacement."""
         app_run(project, target="c", name="tool", object_="engine")
-        app_run(project, target="pep723", name="tool", object_="engine")
+        app_run(project, target="pep723", name="script", object_="engine")
         cfg = load(project)
-        assert app_config(cfg)["target"] == "pep723"
+        assert [(a["name"], a["target"]) for a in apps(cfg)] == [
+            ("tool", "c"),
+            ("script", "pep723"),
+        ]
+        assert (project / "native" / "src" / "app" / "tool.c").exists()
+
+    def test_a_taken_name_is_refused(self, project):
+        """gh-2074: an app's name is unique; the refusal names the route."""
+        app_run(project, target="c", name="tool", object_="engine")
+        with pytest.raises(Refusal, match="`jm remove app tool`"):
+            app_run(project, target="pep723", name="tool", object_="engine")
+        assert [a["target"] for a in apps(load(project))] == ["c"]
 
 
 class TestAppGenerationVsFallback:
@@ -285,7 +299,7 @@ class TestAppTargetCollision:
     def test_collision_idempotent(self, tmp_path):
         root = self._module_project(tmp_path)
         app_run(root, target="c", name="wfmgen", object_="synth")
-        app_run(root, target="c", name="wfmgen", object_="synth")
+        app_replay(root, load(root))
         cmake = (root / "CMakeLists.txt").read_text()
         # Re-run reuses the same suffixed id — no <name>_app_app, single block.
         assert cmake.count("add_executable(wfmgen_app") == 1

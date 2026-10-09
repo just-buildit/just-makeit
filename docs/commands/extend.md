@@ -816,9 +816,10 @@ container is released on every failure path.
 
 `just-makeit remove <kind> <name> --object <obj> [--module <mod>] [--force]`,
 where `kind` is `method` or `property` (also `object`, `module`, `function`,
-`state`, `warning`, or `error` for those respectively — `--object`/`--module`
-only apply where relevant; `warning` and `error` are addressed differently,
-see their own sections below):
+`state`, `warning`, `error` or `app` for those respectively —
+`--object`/`--module` only apply where relevant; `warning` and `error` are
+addressed differently, see their own sections below, and `app` is
+[removed by its name](app.md#removing-an-app)):
 
 ```sh
 just-makeit remove method configure --object nco --module dsp
@@ -838,6 +839,11 @@ second note says so — update it before you delete the body, or it stops
 linking. (Removing
 *state* via `just-makeit remove state <name> --object <obj>` is structural and
 rebuilds the object via the regenerate path instead.)
+
+An object, module or function that an [app](app.md) is built from is **not**
+removed while the app is there (gh-2075): `jm remove` refuses, names each
+such app and its route, `jm remove app <name>`, and changes nothing. Removing
+the component does not silently delete an app you may have shipped.
 
 ______________________________________________________________________
 
