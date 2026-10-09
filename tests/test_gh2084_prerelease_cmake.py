@@ -64,21 +64,30 @@ def test_status_is_clean_at_a_prerelease(project: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_a_prerelease_project_configures(
-    project: Path, tmp_path: Path
-) -> None:
-    """The spelling is only worth anything if CMake takes it: configure a
-    fresh project at the pre-release and demand exit 0. No skip -- a missing
-    cmake fails the gate rather than hiding it, because the build is the
-    thing being gated."""
+def test_a_prerelease_project_configures(tmp_path: Path) -> None:
+    """The spelling is only worth anything if CMake takes it.
+
+    A fresh scaffold at the pre-release, rendered by the template itself
+    (`_new.run` with `version=`, the path the replay takes), must configure,
+    and CMake must have taken the release segment: the cache's
+    CMAKE_PROJECT_VERSION is what a fallback to 0.1.0 would fail. No skip --
+    a missing cmake fails the gate rather than hiding it.
+    """
+    from just_makeit import _new
+
     cmake = shutil.which("cmake")
     assert cmake, "cmake is required: this gate configures, it does not skip"
+    root = tmp_path / "vp"
+    _new.run("vp", root, version=PRE)
+    build = tmp_path / "build"
     r = subprocess.run(
-        [cmake, "-S", str(project), "-B", str(tmp_path / "build")],
+        [cmake, "-S", str(root), "-B", str(build)],
         capture_output=True,
         text=True,
     )
     assert r.returncode == 0, r.stdout + r.stderr
+    cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
+    assert f"CMAKE_PROJECT_VERSION:STATIC={RELEASE}\n" in cache
 
 
 def test_the_manifest_keeps_the_pre_release(project: Path) -> None:
