@@ -65,6 +65,13 @@ _HANDLE = {"kind": "handle", "backing": "ring"}
 _CAPSULE = {"kind": "capsule", "backing": "buf"}
 _COMPOSER = {"kind": "composer", "backing": "wfm"}
 _GEOM = [{"name": "geom", "fields": [{"name": "x", "type": "double"}]}]
+#: An app with its own rows, which `[[app]]` (gh-2074) nests one level down.
+_APP = {
+    "target": "c",
+    "name": "t",
+    "flags": [{"name": "g", "type": "double"}],
+    "commands": [{"name": "run", "flags": [{"name": "n", "type": "int"}]}],
+}
 
 
 def _obj(**tables: object) -> dict:
@@ -255,11 +262,11 @@ RESERVED = {
     "module": lambda v: _mod("m", {"objects": [], "probe": v}),
     "app": lambda v: {
         "project": dict(_PROJECT),
-        "app": {"target": "c", "name": "t", "probe": v},
+        "app": {**_APP, "probe": v},
     },
     "app rows": lambda v: {
         "project": dict(_PROJECT),
-        "app": [{"target": "c", "name": "t", "probe": v}],
+        "app": [{**_APP, "probe": v}, {**_APP, "name": "u"}],
     },
     "enum": lambda v: {
         "project": dict(_PROJECT),
