@@ -223,6 +223,13 @@ TOML key is quoted (`[module."dsp.filters"]`); the split-layout fragment file is
 `modules/<cname>.toml`. `_apply._splice_cmake_components` classifies module
 blocks by `C.module_cnames(cfg)` (not the dotted id).
 
+An object's C lives in `native/src/<obj>/`. So the one object named for
+the module's **cname** shares the module's directory, CMakeLists and core;
+this is the collocated object, `C.collocated_object(cfg, module)`. A
+leaf-named object (`filters` in `dsp.filters`) is an ordinary member. Every
+writer asks that helper. Asking the leaf declared `<leaf>_core` twice
+(gh-1949).
+
 ### `just-makeit.toml` schema
 
 The TOML file is the project's persistent state — `_config.py` is the only

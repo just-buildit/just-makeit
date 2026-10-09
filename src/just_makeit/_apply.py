@@ -2809,13 +2809,13 @@ def _sync_aggregates(
             # the link block once it already existed, dropping new deps). The
             # reconcile preserves component extra_include_dirs and user external
             # if(VAR) blocks. Collocated objects share the module CMakeLists
-            # (handled above).
+            # (handled above); gh-1949: which one that is, the writers' rule.
             #
             # gh-1840: and, like every peer, never a file `status_allow`
             # names (gh-441) -- this one alone was rewritten anyway, so an
             # author keeping their module object's CMakeLists lost it.
             _obj_cml = f"native/src/{obj}/CMakeLists.txt"
-            if obj != mod and not (
+            if obj != C.collocated_object(cfg, mod) and not (
                 honor_status_allow and _status_allowed(cfg, _obj_cml)
             ):
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"

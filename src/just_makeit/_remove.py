@@ -942,10 +942,11 @@ def _remove_function_core_harness(
     act, and a harness for code that no longer exists has nothing left to
     hold.
 
-    Kept when an object of the module shares the module's name: that
-    object's core is ``<cname>_core`` too, and these are its files.
+    Kept when the module has a collocated object, the one named for its
+    cname (:func:`_config.collocated_object`): that object's core is
+    ``<cname>_core`` too, and these are its files.
     """
-    if cname in C.module_objects(cfg, module):
+    if C.collocated_object(cfg, module):
         return
     for path in (
         root / "native" / "tests" / f"test_{cname}_core.c",
