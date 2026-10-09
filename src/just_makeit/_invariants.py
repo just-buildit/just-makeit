@@ -43,7 +43,8 @@ The split is therefore by what is observable, not by a flag:
 
 - **Always** -- the input face. That the declared dtype is accepted and a
   foreign one is REFUSED is a property of the binding (gh-1405's
-  ``PyArray_EquivTypes`` guard), true whatever the kernel does.
+  ``PyArray_EquivTypes`` guard for a struct, numpy's safe-casting rule for
+  a scalar -- see `_foreign_dtype`), true whatever the kernel does.
 - **Once the kernel is real** -- the round trip, which needs a working
   kernel to say anything at all. It is not generated with a ``skipif``: a
   test that reports success while covering nothing is the failure mode
@@ -200,17 +201,47 @@ def declared_dtype_expr(rec: dict) -> str:
 
 
 def _foreign_dtype(rec: dict) -> str:
-    """A dtype the element is NOT, for the refusal check.
+    """A dtype the element's writer must REFUSE, for the refusal check.
 
-    Chosen to differ in *itemsize* as well as kind wherever possible: numpy
-    accepts a same-itemsize structured dtype with its fields in the other
-    order and hands C the bytes unchanged (gh-1405 measured exactly that),
-    so a near-miss is the interesting negative, not a wild one.
+    A scalar element's writer converts its argument with numpy's "safe"
+    casting rule, so a dtype that safe-casts INTO the element is not
+    foreign at all: the write succeeds and the test fails with ``DID NOT
+    RAISE``. That is what gh-2067 was -- ``int8`` picked for ``double``,
+    ``float64`` for ``double _Complex``, each a lossless widening numpy
+    performs without asking. So the choice is one rule over the element's
+    numpy KIND, the property safe casting is decided by, never its C
+    spelling:
+
+    - a real element (integer, boolean, floating) gets ``complex128``:
+      numpy never safe-casts a complex value into a real type, and at 16
+      bytes it is wider than every real scalar jm registers, so it differs
+      in itemsize too;
+    - a complex element gets a string dtype: every numeric dtype
+      safe-casts into ``complex128``, and into ``clongdouble``, which IS
+      ``complex128`` where ``long double`` is ``double`` (MSVC ABI, Apple
+      arm64), so no numeric choice is foreign on every platform.
+
+    ``tests/test_gh2067_element_dtypes.py`` asks numpy's own ``can_cast``
+    about every registered scalar, so a new type this rule mishandles is
+    named there rather than in a generated suite.
+
+    A struct element is guarded by ``PyArray_EquivTypes`` (gh-1405), which
+    refuses any dtype not equivalent to the binding's own; ``float64`` is
+    one.
+
+    Examples
+    --------
+    >>> _foreign_dtype({"name": "s", "type": "double"})
+    'np.complex128'
+    >>> _foreign_dtype({"name": "s", "type": "double _Complex"})
+    'np.str_'
+    >>> _foreign_dtype({"name": "iq_t", "fields": [{"name": "i"}]})
+    'np.float64'
     """
-    if _record.is_scalar_element(rec):
-        ct = str(rec.get("type") or "")
-        return "np.float64" if ct != "double" else "np.int8"
-    return "np.float64"
+    if not _record.is_scalar_element(rec):
+        return "np.float64"
+    meta = T._CTYPE_META.get(str(rec.get("type") or ""), {})
+    return "np.str_" if meta.get("kind") == "complex" else "np.complex128"
 
 
 def file_for(root: Path, cfg: dict, comp: str, module: str = "") -> Path:
