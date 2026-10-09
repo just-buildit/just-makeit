@@ -670,7 +670,9 @@ def test_the_fixtures_reach_every_escaper_call(monkeypatch) -> None:
     for cfg in FIXTURES.values():
         C._dump(copy.deepcopy(cfg))
     sites = _escaper_call_sites()
-    assert len(sites) > 20, "no escaper call sites found -- gate not armed"
+    # gh-2045: one writer for every table, so a handful of sites where there
+    # were 130-odd. Each still has to be reached.
+    assert len(sites) >= 5, "no escaper call sites found -- gate not armed"
     missed = [
         f"{fn}:{lo}: {seg}"
         for lo, hi, fn, seg in sites
@@ -735,7 +737,7 @@ def test_no_serializer_string_is_quoted_by_hand() -> None:
     """
     src, funcs = _module_tree()
     serializer = _call_graph(("_dump", "_write_doc", "stamp_jm_version"))
-    assert {"_dump", "_method_dump_lines", "_inline_field"} <= serializer
+    assert {"_dump", "_emit", "_assign", "_inline"} <= serializer
     offenders = []
     for name in sorted(serializer - _escapers()):
         for node in ast.walk(funcs[name]):
