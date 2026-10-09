@@ -509,6 +509,15 @@ binding is `jm apply`'s, rendered from the manifest, and a warning, a
 the header alone would drop it. `jm bind` exits 1 naming `jm regenerate <comp>`
 and `jm apply`, and writes nothing (gh-2072).
 
+**With no `just-makeit.toml`** -- a bare `native/` tree beside a
+`pyproject.toml` -- `jm bind` reads the project off the tree (gh-1895). The
+header layout is where the header is: `native/inc/<pkg>/<comp>/<comp>_core.h`
+(what `jm new` writes) or the older `native/inc/<comp>/<comp>_core.h`, and the
+binding's `#include`s are spelled for that layout. The C prefix is the one the
+header's `_state_t` declares: `<prefix>_<comp>_state_t` binds as
+`c_prefix = "<prefix>"`, a bare `<comp>_state_t` as none. When neither layout
+holds the header, or both do, it exits 1 naming both paths and writes nothing.
+
 **Current scope:** a state struct with scalar and opaque-pointer fields, or
 a forward-declared (opaque) one; a `<pkg>_<comp>_create()` taking the state
 fields in order, where a parameter that matches no field becomes an init
@@ -524,6 +533,8 @@ once the manifest declares the component its binding is `jm apply`'s.
 **`--check` as a CI gate:** run `jm bind <comp> --check` in CI to ensure
 the committed `_ext.c` never silently drifts from the header it was generated
 from. Green means byte-identical; non-zero exit means regenerate and commit.
+A binding that is not on disk at all is a finding too: `--check` exits 1 on
+one line naming the `_ext.c` `jm bind <comp>` would write (gh-2101).
 
 Not yet supported (see [roadmap](../roadmap.md#now-write-it-in-c-get-python-jm-bind)):
 methods with more than one parameter or with an array parameter, and
