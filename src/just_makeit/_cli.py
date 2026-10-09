@@ -237,7 +237,9 @@ Commands:
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
-    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
+    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor,
+                                in_len being the first array input's length, else the
+                                first integer --param.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
     --record-dtype STRUCT       With --variable-output: return ONE numpy structured
@@ -330,8 +332,10 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --out-param name:type[]     Writable output array param (drops const); repeatable.
     --return-type TYPE          Return type (default: void).
-    --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
-                                param's length, or the first integer scalar param.
+    --out-type TYPE[N]          Return a fresh ndarray of TYPE, as long as the
+                                integer param N says ('float[n]'); without [N],
+                                as long as the first array param. One of the two
+                                is required.
     --out-size EXPR             Length of that output, as a verbatim C expression
                                 over the function's own arguments — each array
                                 param's generated <name>_len included

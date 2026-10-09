@@ -572,10 +572,13 @@ choices or 2-D arrays.
 | `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                                           |
 
 `jm function --out-type T` makes the function return a fresh ndarray sized
-from the first array param's length, or — when no array param is present —
-from the first integer scalar param (gh-65). With `--variable-output`,
+from the first array param's length. `--out-type 'T[n]'` names the integer
+param that holds the length instead (`make_window(512)` from
+`--param n:size_t --out-type 'float[n]'`). With `--variable-output`,
 `--out-size EXPR` sizes it with a C expression over the arguments instead,
-and the C function returns how many elements it wrote.
+and the C function returns how many elements it wrote. The C function is
+handed only the pointer, never the length, so an output with none of these
+is refused rather than guessed at (gh-1888).
 
 ______________________________________________________________________
 

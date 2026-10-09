@@ -1289,6 +1289,7 @@ guard, so guard anything platform-specific in it yourself.
 | `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
 | `inline = true`                               | `jm function --inline`                                                            | ✅           |
 | `out_type = "T"`                              | `jm function --out-type T`                                                        | ✅ (0.13.23) |
+| `out_type = "T[n]"`                           | `jm function --out-type 'T[n]'`                                                   | ✅ (gh-1888) |
 | `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                      | ✅ (gh-335)  |
 | `out_type = "str"`                            | (TOML only)                                                                       | 🟡 (0.71.2)  |
 | `check_return = true`                         | `jm function --check-return`                                                      | ✅ (gh-363)  |

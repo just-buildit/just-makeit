@@ -769,6 +769,10 @@ CASES: "dict[str, dict[str, Case]]" = {
             "--variable-output", "--out-type", "float", "--return-type",
             "size_t", "--out-size", "x_len", needs=("o", "module"),
             only=BASE),
+        # gh-1888: the length a scalar holds, named on the command line.
+        "out-type-length": _case(
+            "function", "g", "--module", "{mod}", "--param", "n:size_t",
+            "--out-type", "float[n]", needs=("o", "module"), only=BASE),
         "out-param": _case(
             "function", "g", "--module", "{mod}", "--param", "x:float[]",
             "--out-param", "y:float[]", "--return-type", "void",

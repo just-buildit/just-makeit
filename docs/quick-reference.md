@@ -1032,10 +1032,15 @@ out_type = "float64[M]"
 </td>
 <td>
 
-*TOML only* — set `out_type`
-to `"dtype[param]"` after
-scaffolding, then run
-`jm apply`.
+```sh
+jm function ciccompmf \
+  --module resample \
+  --param N:uint32_t \
+  --param R:uint32_t \
+  --param M:uint32_t \
+  --out-type \
+    'float64[M]'
+```
 
 </td>
 </tr>

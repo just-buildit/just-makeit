@@ -486,8 +486,13 @@ FACES = {
         lambda x: _method_cfg(variable_output=True, multi_output=[x]),
         "--multi-output",
     ),
+    # gh-1888: an array param gives the output its length, so the element
+    # is the only question asked of the spelling.
     "function-out-type": (
-        lambda x: ["function", "g", "--module", "mm", "--out-type", x],
+        lambda x: (
+            ["function", "g", "--module", "mm", "--param", "x:float[]"]
+            + ["--out-type", x]
+        ),
         lambda x: _function_cfg(out_type=x),
         "--out-type",
     ),

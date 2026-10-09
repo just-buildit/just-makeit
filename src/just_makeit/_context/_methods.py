@@ -4129,33 +4129,28 @@ def make_methods_ctx(
             elif out_type:
                 out_disp = out_type
                 out_npy = _CTYPE_TO_NPY[out_type]
-                first_arr = next(
-                    (
-                        p["name"]
-                        for p in params
-                        if is_array_param_type(p["type"])
-                    ),
-                    None,
-                )
-                # Buffer size: prefer the length of the first array param.
-                # If there is no array param, fall back to the first scalar
-                # integer param so methods like ``foo(n: int) -> ndarray`` (n
-                # samples requested) allocate an n-sized output rather than
-                # an empty one (gh-65).
-                if first_arr:
-                    raw_len = f"{first_arr}_len"
-                else:
-                    first_int = next(
-                        (
-                            p["name"]
-                            for p in params
-                            if not is_array_param_type(p["type"])
-                            and _CTYPE_META.get(p["type"], {}).get("kind")
-                            == "int"
-                        ),
-                        None,
+                # Buffer size: `_outbuf.length`, the rule a module function's
+                # output is sized by too (gh-1888). The first array the call
+                # parses -- an array `arg_type` input first, as the `x` it is
+                # parsed as above; it was left out, so `--arg-type 'T[]'`
+                # allocated nothing and a kernel filling `x_len` wrote past
+                # it. Else the first integer param, so ``foo(n: int) ->
+                # ndarray`` (n samples requested) allocates n (gh-65).
+                _sizing = (
+                    [{"name": "x", "type": arg_type}]
+                    if has_arg and arg_type.endswith("[]")
+                    else []
+                ) + list(params)
+                # With neither, still an empty output: refusing the row
+                # would stop `apply` on projects that declare one -- the
+                # frozen `stale_project` example's `shape` among them --
+                # so that call is left open in gh-2109.
+                raw_len = (
+                    _outbuf.length(
+                        _sizing, out_type=out_type, count_fallback=True
                     )
-                    raw_len = first_int if first_int else "0"
+                    or "0"
+                )
                 if out_divisor > 1:
                     len_expr = f"({raw_len} / {out_divisor})"
                 else:
