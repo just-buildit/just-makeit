@@ -22,19 +22,27 @@ ratchet refuses shrinkage.
 This file is that ratchet's test, and it carries its own declaration --
 if the mechanism cannot describe itself it is not worth trusting.
 
-GATE: a gate that declares an obligation keeps declaring it; record a
-      removal with `make gates-index-update` so it is reviewed.
+The floor is derived too (gh-2038): the gates declared at the merge base,
+read by the same parse, rather than a committed file that every two gate
+PRs conflicted on. These tests ask git, in a repository of their own.
+
+GATE: a gate that declares an obligation keeps declaring it; a branch that
+      retires one says so in a `Gate-Retired:` commit trailer, so the
+      removal is reviewed.
 """
 
 from __future__ import annotations
 
 import doctest
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import _scratchgit
 import pytest
+from _scratchgit import Repo
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "gates-index.py"
@@ -61,6 +69,13 @@ def test_the_scripts_own_doctests_run():
     """
     result = doctest.testmod(GI, verbose=False)
     assert result.failed == 0, f"{result.failed} doctest(s) failed in {SCRIPT}"
+
+
+def test_the_scratch_repos_doctests_run():
+    """`tests/_scratchgit.py` is no test module, so nothing else runs its
+    examples -- and they are its claim that a merge it calls clean is."""
+    result = doctest.testmod(_scratchgit, verbose=False)
+    assert result.attempted and not result.failed, result
 
 
 class TestTheIndexIsReal:
@@ -100,48 +115,133 @@ class TestTheIndexIsReal:
         ), "the changelog-entry gate is a make target and must ride too"
 
 
+def _gate(text: str) -> str:
+    return f'"""t.\n\nGATE: {text}\n"""\n'
+
+
+#: The base every ratchet test branches from: two test gates, one makefile
+#: gate, and a test module that declares nothing.
+_BASE = {
+    "tests/test_kept.py": _gate("keep this."),
+    "tests/test_dropped.py": _gate("drop this."),
+    "tests/test_plain.py": '"""declares nothing."""\n',
+    "Makefile": "# GATE: a make target holds this.\nall:\n\t@true\n",
+}
+
+
 class TestTheRatchet:
-    def test_a_dropped_declaration_is_refused(self, tmp_path):
-        """Sabotage, in a COPY -- never the real tree.
+    """Against the merge base, in a repository of its own -- never the real
+    tree, which an earlier version sabotaged in place and restored with
+    `git checkout`, reverting an uncommitted marker."""
 
-        An earlier version of this check sabotaged in place and restored
-        with `git checkout`, which reverted an uncommitted marker and made
-        the next run measure the wrong thing.
-        """
-        assert GI.check(ROOT) == 0, "the repo is not clean to begin with"
+    @pytest.fixture
+    def repo(self, tmp_path, monkeypatch):
+        # The script's own git reads GIT_*; from inside a hook they would
+        # aim it at the outer repository (see `_scratchgit`).
+        for key in [k for k in os.environ if k.startswith("GIT_")]:
+            monkeypatch.delenv(key)
+        repo = Repo(tmp_path / "r")
+        (repo.root / "tests").mkdir()
+        for rel, text in _BASE.items():
+            (repo.root / rel).write_text(text, encoding="utf-8")
+        repo.commit("base")
+        assert GI.check(repo.root, "main") == 0
+        return repo
 
-        gate = ROOT / "tests" / "test_claude_md_drift.py"
-        text = gate.read_text(encoding="utf-8")
-        assert "GATE:" in text
-        gate_broken = text.replace("GATE:", "XXXX:", 1)
+    @staticmethod
+    def _on(repo, edit, message: str = "") -> None:
+        """Commit *edit* on a branch of ``main``, and stay on it."""
+        repo.branch("topic", edit, message)
+        repo.git("checkout", "-q", "topic")
 
-        fake = tmp_path / "repo"
-        (fake / "tests").mkdir(parents=True)
-        (fake / "tests" / "test_claude_md_drift.py").write_text(gate_broken)
-        (fake / "tests" / "gates-declared.txt").write_text(
-            "test_claude_md_drift\n"
+    @pytest.mark.parametrize(
+        "name, edit",
+        [
+            (
+                "test_dropped",
+                lambda root: (root / "tests/test_dropped.py").unlink(),
+            ),
+            (
+                "test_dropped",
+                lambda root: (root / "tests/test_dropped.py").write_text(
+                    _gate("drop this.").replace("GATE:", "XXXX:")
+                ),
+            ),
+            (
+                "Makefile:a make target holds this.",
+                lambda root: (root / "Makefile").write_text("all:\n"),
+            ),
+        ],
+        ids=["file-deleted", "line-dropped", "makefile-gate"],
+    )
+    def test_a_dropped_gate_is_refused(self, repo, capsys, name, edit):
+        """Committed on the branch, so only the merge base still declares
+        it: the check that compared with HEAD would pass this."""
+        self._on(repo, edit)
+        assert GI.check(repo.root, "main") == 1
+        err = capsys.readouterr().err
+        assert f"  {name}  (declared in {GI._where(name)})" in err, err
+        assert f"Gate-Retired: {name}" in err, "the remedy, ready to paste"
+
+    def test_an_uncommitted_drop_is_refused(self, repo):
+        (repo.root / "tests/test_dropped.py").unlink()
+        assert GI.check(repo.root, "main") == 1
+
+    def test_a_retired_gate_passes(self, repo):
+        """The one way a gate goes: said in a commit, where it is reviewed."""
+        self._on(
+            repo,
+            lambda root: (root / "tests/test_dropped.py").unlink(),
+            "chore: retire it\n\nGate-Retired: test_dropped\n",
         )
+        assert GI.check(repo.root, "main") == 0
 
-        assert GI.check(fake) == 1
-
-    def test_an_unrecorded_gate_is_refused(self, tmp_path):
-        """A new gate is recorded in the commit that adds it. Free once, and
-        37 sat unrecorded -- unprotected by the ratchet -- for weeks."""
-        fake = tmp_path / "repo"
-        (fake / "tests").mkdir(parents=True)
-        (fake / "tests" / "test_new.py").write_text(
-            '"""t.\n\nGATE: do it.\n"""\n'
+    def test_a_new_gate_passes_with_no_other_file_touched(self, repo):
+        """Nothing to record: the old floor wanted a line in a shared file
+        too, and that line is what every two gate PRs conflicted on."""
+        self._on(
+            repo,
+            lambda root: (root / "tests/test_new.py").write_text(
+                _gate("do it.")
+            ),
         )
-        (fake / "tests" / "gates-declared.txt").write_text("")
-        assert GI.check(fake) == 1
-        assert GI.update(fake) == 0
-        assert GI.check(fake) == 0, "recording it is the whole remedy"
+        assert GI.check(repo.root, "main") == 0
+        touched = repo.git("diff", "--name-only", "main", "HEAD").stdout
+        assert touched.split() == ["tests/test_new.py"]
+
+    def test_adjacent_gates_merge_in_either_order(self, repo):
+        """gh-2038: two branches each adding a gate that sorts beside the
+        other's merge with nothing to resolve, and the merge passes."""
+        for name in ("test_kept_a", "test_kept_b"):
+            repo.branch(
+                name,
+                lambda root, n=name: (root / f"tests/{n}.py").write_text(
+                    _gate(f"{n} holds.")
+                ),
+            )
+        for order in (
+            ("test_kept_a", "test_kept_b"),
+            ("test_kept_b", "test_kept_a"),
+        ):
+            assert repo.conflicts(*order) == [], order
+            repo.git("checkout", "-q", Repo.MERGED)
+            assert GI.check(repo.root, "main") == 0
+            repo.git("checkout", "-q", "main")
 
 
-@pytest.mark.parametrize("flag", ["", "--check"])
-def test_the_make_targets_run(flag):
-    """`make lint` depends on `--check`, so both must work as invoked."""
-    argv = [sys.executable, str(SCRIPT)] + ([flag] if flag else [])
-    r = subprocess.run(argv, capture_output=True, text=True, cwd=ROOT)
+@pytest.mark.parametrize("argv", [[], ["--check", "--base", "HEAD"]])
+def test_the_make_targets_run(argv):
+    """`make lint` depends on `--check`, so both must work as invoked.
+
+    ``--base HEAD`` because the real base is the merge base with
+    ``origin/main``, which `make lint` passes and a clone need not have;
+    `TestTheRatchet` holds the comparison itself, in a repository of its
+    own."""
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), *argv],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.strip()
