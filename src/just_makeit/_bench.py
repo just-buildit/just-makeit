@@ -416,7 +416,9 @@ def _python_bench_files(
             file=sys.stderr,
             flush=True,
         )
-        names = ("test_*.py", "bench_*.py")
+        # The same patterns pytest is told to use, read from the one place they
+        # are declared, so this fallback cannot disagree with the listing.
+        names = _PYTHON_BENCH_FILES.split("=", 1)[1].split()
         found = sorted(p for pat in names for p in (root / "src").rglob(pat))
         return [p.relative_to(root).as_posix() for p in found]
     # gh-1950's exit 5: pytest collected nothing, which is a project with no
