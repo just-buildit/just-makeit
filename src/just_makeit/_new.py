@@ -12,6 +12,7 @@ from . import _textio
 
 import sys
 from pathlib import Path
+from typing import Callable
 
 from . import _color as Color
 from . import _config as C
@@ -107,6 +108,55 @@ README_BY_BACKEND = {
 DEFAULT_C_PREFIX = object()
 
 
+def makefile_text(
+    project: str,
+    build_system: str,
+    *,
+    pytest_: bool,
+    schema: int,
+    c_prefix: "str | None",
+) -> str:
+    """The Makefile `run` writes for *build_system*, as text.
+
+    gh-1899. One render path for both `run` and the backend check in
+    `makefile_backend`: a second copy of this context would be exactly the
+    peer implementation that drifts, so `run` calls this too. The context is
+    the one `run` builds for the Makefile: the project, the pytest flag, and the
+    owner the include slots read (schema, and the C prefix when there is one).
+    """
+    owner = {"project": {"name": project, "schema": str(schema)}}
+    if c_prefix is not None:
+        owner["project"]["c_prefix"] = c_prefix
+    ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx.update(INC.ctx_slots(owner))
+    tmpl = T.MAKEFILE if build_system == "cmake" else T.MAKEFILE_SIMPLE
+    return T.render(tmpl, ctx)
+
+
+def is_other_backend_makefile(
+    root: Path, current: str, other: "Callable[[], str | None]"
+) -> bool:
+    """True when the project's Makefile is the OTHER backend's render (gh-1899).
+
+    Switching `[project] build` leaves the old backend's Makefile in place: it
+    is create-only, and nothing ties it to the manifest. *current* is the
+    Makefile the replay renders for the manifest as it stands. A Makefile equal
+    to that is not a mismatch. Otherwise *other* is called (only then, because
+    rendering the other backend is a whole replay) for that backend's Makefile,
+    and a match with it is the mismatch. An author's edit matches neither, and
+    is theirs, so jm does not claim it. CRLF is compared as LF, as `status`
+    compares every other generated file (gh-1641).
+    """
+    path = root / "Makefile"
+    if not path.is_file():
+        return False
+    real = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if real == current:
+        return False
+    text = other()
+    return text is not None and real == text.replace("\r\n", "\n")
+
+
 def run(
     project: str,
     dest: Path | None = None,
@@ -175,7 +225,16 @@ def run(
 
     if build_system == "cmake":
         _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
-        _write(root / "Makefile", r(T.MAKEFILE))
+        _write(
+            root / "Makefile",
+            makefile_text(
+                project,
+                "cmake",
+                pytest_=pytest_,
+                schema=schema,
+                c_prefix=c_prefix,
+            ),
+        )
         # Only the cmake build emits a compile database, so only it can run
         # clang-tidy — and a config with nothing to run it is exactly the dead
         # file gh-941 was about. The `make` build system gets no .clang-tidy.
@@ -189,7 +248,16 @@ def run(
         _write(root / "CMakePresets.json", T.CMAKE_PRESETS_JSON)
         ctx.update(README_BY_BACKEND["cmake"])
     else:
-        _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
+        _write(
+            root / "Makefile",
+            makefile_text(
+                project,
+                "make",
+                pytest_=pytest_,
+                schema=schema,
+                c_prefix=c_prefix,
+            ),
+        )
         # The README describes the build its own Makefile runs: one README
         # for both backends advertised CMake, a Windows build and
         # `make docs` to a make-backend project, which has none of them.

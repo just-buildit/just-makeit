@@ -1504,6 +1504,58 @@ def _owned_scaffolds(temp_root: Path, root: Path) -> set:
     return out
 
 
+def _other_backend_makefile(cfg: dict, project_root: Path) -> "str | None":
+    """The Makefile this project would have under the OTHER build backend.
+
+    gh-1899. The make Makefile is patched object by object (its TARGETS and
+    rules), so it is not a function of the manifest's flags. The reliable
+    answer is a replay of the whole manifest with `build` flipped, which is the
+    replay `apply` already runs, through :func:`replay_project`, so it is
+    silent and in apply's scopes like every other replay.
+    """
+    import copy
+    import tempfile
+
+    other = "make" if C.build_system(cfg) == "cmake" else "cmake"
+    flipped = copy.deepcopy(cfg)
+    flipped["project"]["build"] = other
+    with tempfile.TemporaryDirectory(prefix="jm-backend-") as tmp:
+        troot = Path(tmp)
+        replay_project(flipped, troot, project_root)
+        mf = troot / "Makefile"
+        return mf.read_text(encoding="utf-8") if mf.is_file() else None
+
+
+def reconcile_backend_makefile(
+    root: Path, cfg: dict, temp_root: Path
+) -> "str | None":
+    """Replace a Makefile that is the other backend's render (gh-1899).
+
+    `apply`'s step for a backend switch. The replay has rendered this
+    manifest's own Makefile into *temp_root*; a real Makefile equal to the
+    other backend's render is replaced with it, and nothing else is touched:
+    an author's edit is left, and `status` keeps reporting it. Returns the line
+    `apply` prints, or None.
+    """
+    from . import _new
+
+    mf = temp_root / "Makefile"
+    if not mf.is_file():
+        return None
+    current = mf.read_text(encoding="utf-8")
+    if not _new.is_other_backend_makefile(
+        root,
+        current.replace("\r\n", "\n"),
+        lambda: _other_backend_makefile(cfg, root),
+    ):
+        return None
+    _textio.write_text(root / "Makefile", current)
+    return (
+        f"  update  {root / 'Makefile'} (build = {C.build_system(cfg)}; "
+        "was the other backend's)"
+    )
+
+
 def _sync_missing(
     temp_root: Path, root: Path, owned: "set | None" = None
 ) -> list[Path]:
@@ -3871,6 +3923,11 @@ def _apply_manifest(
             _scaffolds = _owned_scaffolds(temp_root, root)
             # The first write into the tree: nothing above it has written.
             undo.disarm()
+            # gh-1899: a Makefile still rendered for the backend the project
+            # no longer uses is replaced, so the switch reaches the build.
+            _backend = reconcile_backend_makefile(root, cfg, temp_root)
+            if _backend:
+                print(_backend)
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
