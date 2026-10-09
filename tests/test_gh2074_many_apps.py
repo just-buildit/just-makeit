@@ -101,6 +101,8 @@ def test_remove_app_takes_its_wiring_and_keeps_an_edit(tmp_path):
     _ok(root, "app", "--object", "o", "--target", "pep723", "--name", "t")
     edited = root / "t.py"
     edited.write_text(edited.read_text("utf-8") + "# mine\n", "utf-8")
+    text = cmake.read_text("utf-8")
+    assert "add_executable(p " in text and "add_executable(p2 " in text
 
     _ok(root, "remove", "app", "p", "--force")
     text = cmake.read_text("utf-8")
