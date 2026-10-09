@@ -560,10 +560,10 @@ Examples:
   jm app --target c --object engine --name dsp_tool
 
   # scaffold a Python console script (updates pyproject.toml [project.scripts])
-  jm app --target console --object engine --name dsp_tool
+  jm app --target console --object engine --name dsp_tool_py
 
   # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
-  jm app --target pep723 --object engine --name dsp_tool
+  jm app --target pep723 --object engine --name dsp_tool_script
 
   # config, build, test
   jm config
