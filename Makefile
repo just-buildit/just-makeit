@@ -260,14 +260,14 @@ endef
 # version has to agree byte-for-byte across machines.
 PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
                   --with pyyaml --with pytest-benchmark
-# gh-2163. `uv run --no-project` still DISCOVERS an interpreter: run from the
-# checkout it finds the dev venv above the cwd and layers the --with env over
-# it, so a dev-group package imports here and not in CI. Pinning the base
-# interpreter stops that discovery. sys._base_executable is the same whether
-# python3 is bare or from an activated venv, so the pin does not depend on the
-# shell. tests/test_gh2163_isolated_test_env.py probes the leak.
-BASE_PYTHON     := $(or $(shell python3 -c "import sys; print(getattr(sys, '_base_executable', sys.executable))" 2>/dev/null),python3)
-PYTEST_ISOLATED = $(UV) run --no-project --python "$(BASE_PYTHON)" $(PYTEST_DEPS) \
+# gh-2163. `uv run --no-project` still DISCOVERS a virtual environment: from a
+# checkout it finds the dev .venv above the cwd, and so honours VIRTUAL_ENV, and
+# it layers the --with env over that venv, so a dev-group package imports here
+# and not in CI. Measured (tests/test_gh2163_isolated_test_env.py reproduces it):
+# an explicit --python path stops the overlay but overrides UV_PYTHON, which
+# setup-uv sets per CI leg, so every leg would test one interpreter. --isolated
+# stops the overlay and keeps the interpreter request already in force.
+PYTEST_ISOLATED = $(UV) run --no-project --isolated $(PYTEST_DEPS) \
                   --with just-buildit --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
