@@ -20,7 +20,9 @@ and `releases`, a plain module's `platforms`, an `[[enum]]` row's
 `enumerators`. Now there is one emitter; it writes every key a table holds, and
 reads its text back, refusing one that means anything else.
 
-GATES, each registration-free where the source can say it:
+GATE: every key a `_keys` vocabulary accepts survives `_dump`, as the type
+      it is, in either layout. Four parts, registration-free where the
+      source can say it:
 
 1. **Placement, held to `_keys`.** Every vocabulary in `_keys.KIND_KEYS` has a
    place in a manifest here, and `_keys.unknown_keys` reports a probe key
