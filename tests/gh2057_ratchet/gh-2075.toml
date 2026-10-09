@@ -1,0 +1,10 @@
+# gh-2075: `jm remove` takes out a function an app is built from and
+# leaves `[app]` naming it, so `status` and `apply` both fail.
+
+[[red]]
+runs = [["remove", "function", "apps"]]
+found = [
+    "status:exit 1",
+    "apply:refused error: function 'f' not found in module 'mod'.",
+    "fresh:refused error: function 'f' not found in module 'mod'.",
+]

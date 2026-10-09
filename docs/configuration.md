@@ -587,6 +587,15 @@ carrying one gets a second copy after it, which `jm status` reports as
 `DOC`. For a full docstring with its own sections and doctests, write it as
 Doxygen above the declaration in the component's `_core.h`.
 
+The exception is a `doc` that is the member's whole docstring, with nothing
+generated beside it. Write the whole numpy docstring, sections and doctests
+included, in the `doc` of an
+[`extra_methods`](#componentextra_methods-entries) row, which has no core
+declaration to put Doxygen on. The same goes for an object's or a view's
+property, a capsule's methods and properties, a handle's getters, and a
+composer's serializers and computed properties. `status` does not report
+these (gh-2059).
+
 ### Generated Python style — `py_format_command`
 
 The Python twin of `c_format_command`. jm emits its own layout for the
@@ -753,9 +762,15 @@ show is declared. The same is true of an init-param with no seed at all — a
 `path`, a `bytes` blob, a `capsule` handle — where there is no call to attempt
 and the generated tests skip unconditionally.
 
-**It takes effect when the object is created.** The generated test files are
-create-only — jm writes them once and never rewrites them — so adding
-`example_value` to an existing project changes nothing already on disk.
+**Adding it later reaches the Python faces, not the C smoke.** The scaffolded
+`tests/test_<comp>.py` and `benchmarks/bench_<comp>.py` are jm's while they
+start `# jm:generated`, so the next `jm apply` rewrites them to construct with
+the value; the `.pyi` and the runtime docstrings, which `apply` always
+regenerates, pick it up as well. The C smoke test,
+`native/tests/test_<comp>_core.c`, is yours from the moment it is written:
+`apply` never rewrites it, so it keeps its zero-seeded call until you edit the
+`create()` arguments yourself. Which files `apply` rewrites, and how one
+becomes yours: [Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file).
 
 **One thing changes with it.** For an init-params constructor the generated
 accessor test asserts the set/get **round-trip only**, not the value a field
@@ -1119,6 +1134,11 @@ doc     = "FFT of interleaved int16 I/Q."
 | TOML field                                      | CLI flag    | Status       |
 | ----------------------------------------------- | ----------- | ------------ |
 | `name`, `fn`, `flags`, `args`, `returns`, `doc` | (TOML only) | ✅ (gh-1997) |
+
+The `doc` is the method's whole docstring on both faces, the `.pyi` member
+and the runtime `__doc__`, and jm generates nothing beside it. So it can be
+a full numpy docstring with `Parameters`, `Returns` and an `Examples`
+doctest (gh-2059).
 
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):

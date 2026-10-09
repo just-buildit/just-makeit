@@ -1,0 +1,6 @@
+# gh-2081: `[module.X] package` set after `jm module` leaves the module
+# id's stub behind.
+
+[[red]]
+runs = [["shape", "package-edited", ""]]
+found = ["fresh:only-tree src/p/mod/mod.pyi"]
