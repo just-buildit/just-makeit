@@ -1,5 +1,6 @@
 """Unit tests for just_makeit._build."""
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,12 +25,12 @@ class TestHasPytest:
     def test_true_when_pytest_importable(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            assert B._has_pytest() is True
+            assert B._has_pytest(sys.executable) is True
 
     def test_false_when_pytest_missing(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1)
-            assert B._has_pytest() is False
+            assert B._has_pytest(sys.executable) is False
 
 
 class TestRunPythonTests:
