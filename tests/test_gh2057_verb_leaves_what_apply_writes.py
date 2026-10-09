@@ -90,7 +90,9 @@ class Shape(NamedTuple):
 
 
 def _package(module: str, package: str):
-    """``[module.X] package`` has no CLI flag (gh-2064): the author's edit."""
+    """``[module.X] package`` set by hand AFTER `jm module` (gh-2081): the
+    one route left to an existing module, since `jm module --package`
+    declares it up front (gh-2064)."""
 
     def edit(root: Path) -> None:
         cfg = C.load(root)
@@ -200,14 +202,20 @@ SHAPES: "dict[str, Shape]" = {
     "package": Shape(
         (),
         (
-            ("module", "mod"),
-            _package("mod", "other"),
+            ("module", "mod", "--package", "other"),
             ("object", "o", *_M),
             _impl_source,
         ),
         _OM | {"package"},
         "mod",
     ),  # fmt: skip
+    # gh-2081: the key added after `jm module`, and applied. Holds no
+    # object, so only the cases that need nothing run on it.
+    "package-edited": Shape(
+        (),
+        (("module", "mod"), _package("mod", "other"), ("apply",)),
+        frozenset(),
+    ),
     "dotted": Shape(
         (),
         (("module", "dsp.filt"), ("object", "o", "--module", "dsp.filt")),
@@ -390,6 +398,10 @@ CASES: "dict[str, dict[str, Case]]" = {
         "extras": _case("module", "a", "--extra-include-dirs",
                         "${FOO_INCLUDE_DIR}", "--extra-link-libs", "foo",
                         "--extra-types", "Foo", needs=(), only=BASE),
+        # gh-2064: into a package another module already fills, and one
+        # that does not exist yet.
+        "package": _case("module", "a", "--package", "other", needs=(),
+                         only=("package", "standalone")),
     },
     "method": {
         "plain": _case("method", "o", "m2", "{M}"),
@@ -751,7 +763,7 @@ def _stale(*paths: str) -> "tuple[str, ...]":
 _EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
 #: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
 _APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
-#: `jm module` before `package` is set leaves the module id's stub (gh-2064).
+#: `package` set after `jm module` leaves the module id's stub (gh-2081).
 _MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
 
 
@@ -774,7 +786,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
                        "native/src/dsp_filt/dsp_filt_ext.c")),
     ("remove", "object", "package"): {
         "gh-2070": frozenset(_EMPTIED),
-        "gh-2064": frozenset(_MOD_ORPHAN),
     },
     **_entries("gh-2062",
                [("object", "standalone", "c-dep"),
@@ -791,9 +802,7 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
                [("shape", "apps", ""), ("remove", "object", "apps"),
                 ("remove", "module", "apps")],
                *_APP_ORPHAN),
-    **_entries("gh-2064",
-               [("shape", "package", ""), ("remove", "module", "package")],
-               *_MOD_ORPHAN),
+    **_entries("gh-2081", [("shape", "package-edited", "")], *_MOD_ORPHAN),
 }  # fmt: skip
 
 
