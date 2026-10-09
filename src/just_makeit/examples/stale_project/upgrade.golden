@@ -1,6 +1,6 @@
 $ jm status   # exit 1
 warning: project generated with just-makeit 0.33.14, running <HEAD> (gh-183) — results may not reflect the pinned version.
-MISSING (8) — `jm apply` will create:
+MISSING (9) — `jm apply` will create:
   + .clang-tidy
   + .gitattributes
   + CMakePresets.json
@@ -9,6 +9,7 @@ MISSING (8) — `jm apply` will create:
   + native/tests/test_dsp_core.c
   + native/tests/test_fir_symbols.c
   + native/tests/test_gain_symbols.c
+  + src/stale/dsp/tests/test_dsp_functions.py
 
 STALE (9) — `jm apply` will rewrite from the manifest:
   ~ CMakeLists.txt
@@ -85,7 +86,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 8 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
+summary: 40 OK, 9 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
 
 $ jm apply   # exit 0
 warning: project schema is v7, current is v8. Run 'just-makeit upgrade' to get new features.
@@ -106,6 +107,7 @@ warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.to
   create  native/tests/test_dsp_core.c
   create  native/tests/test_fir_symbols.c
   create  native/tests/test_gain_symbols.c
+  create  src/stale/dsp/tests/test_dsp_functions.py
   update  CMakeLists.txt
   update  native/inc/stale.h
   update  native/src/dsp/dsp_ext.c
@@ -117,7 +119,7 @@ warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.to
   update  src/stale/gain.pyi
   update  native/src/dsp/dsp_ext_fir.c
 
-Done!  Materialized 8 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
+Done!  Materialized 9 new file(s), patched 0 impl(s), and reconciled 10 wiring file(s) from just-makeit.toml.
 warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 
 $ jm status   # exit 0
@@ -177,7 +179,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
+OK — up to date; 58 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -273,7 +275,7 @@ SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 2 packaging.
+OK — up to date; 58 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 6 outdated; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
@@ -418,7 +420,7 @@ SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
   These build, run, exit 0 and write an empty "benchmarks": []. Not drift.
 
-OK — up to date; 58 manifest-owned file(s) match; 1 silent bench.
+OK — up to date; 59 manifest-owned file(s) match; 1 silent bench.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones
