@@ -260,8 +260,15 @@ endef
 # version has to agree byte-for-byte across machines.
 PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
                   --with pyyaml --with pytest-benchmark
-PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit \
-                  --with-editable .
+# gh-2163. `uv run --no-project` still DISCOVERS a virtual environment: from a
+# checkout it finds the dev .venv above the cwd, and so honours VIRTUAL_ENV, and
+# it layers the --with env over that venv, so a dev-group package imports here
+# and not in CI. Measured (tests/test_gh2163_isolated_test_env.py reproduces it):
+# an explicit --python path stops the overlay but overrides UV_PYTHON, which
+# setup-uv sets per CI leg, so every leg would test one interpreter. --isolated
+# stops the overlay and keeps the interpreter request already in force.
+PYTEST_ISOLATED = $(UV) run --no-project --isolated $(PYTEST_DEPS) \
+                  --with just-buildit --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = CMAKE_LINT='$(CMAKE_LINT)' $(UV) run $(PYTEST_DEPS) pytest
