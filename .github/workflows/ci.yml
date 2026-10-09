@@ -59,17 +59,23 @@ jobs:
   # gh-1796: the image the Linux legs run in, the CI_IMAGE_2404 that
   # .github/ci-images.env pins (the org standard's HAS_CI_IMAGE). That the
   # pin was built from this tree is `make ci-image-check`, which `lint`
-  # runs; this job only hands the reference to the legs.
+  # runs; this job only hands the reference to the legs. gh-2125: and which
+  # `test` legs this run owes, from the matrix declared in its `legs` step.
   toolchain:
     name: CI toolchain image
     # Gated like the legs it feeds: a version bump or a docs-only diff runs
-    # none of them, so it needs no image either.
+    # none of them, so it needs no image either. A push whose tree its PR
+    # already tested still owes the macOS legs that PR trimmed (gh-2125).
     needs: changes
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    if: >-
+      (needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       image: ${{ steps.pin.outputs.image }}
+      matrix: ${{ steps.legs.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -82,11 +88,100 @@ jobs:
           test -n "$ref" || { echo "no CI_IMAGE_2404 in .github/ci-images.env"; exit 1; }
           echo "image=$ref" >> "$GITHUB_OUTPUT"
 
+      # The `test` matrix, declared once: MATRIX is a GitHub matrix, and
+      # `make ci-test-legs` (scripts/ci-test-legs.py) expands it and keeps
+      # the legs this run owes (gh-2125):
+      #
+      #   pull_request       every leg, but each TRIM os runs only its
+      #                      oldest and newest Python
+      #   push, tested=true  only the legs its PR trimmed
+      #   anything else      every leg: an untested push, the nightly, a
+      #                      dispatch
+      #
+      # macOS bounded PR throughput: 5 of the pool's 20 runners, and its
+      # five legs were ~100 of a run's ~340 job-minutes (gh-2125). The
+      # trimmed legs are not left to the nightly, which gates no release:
+      # the push that lands the PR runs them, so `CI passed` on a `main`
+      # commit -- what release.yml's verify-ci reads -- still certifies
+      # every leg below on that tree. tests/test_own_ci_matrix.py holds
+      # each event's legs and refuses a Python that no release-gating run
+      # tests on macOS.
+      #
+      # macOS + 3.9 is excluded for a MECHANISM, not for being slow.
+      #
+      # Measured on run 33501865715 (main @ 8eed7d5, 2026-09-01), reading
+      # the interpreter each leg actually reported to pytest:
+      #
+      #   macos-latest  3.9   Python 3.9.6    876s   <- the critical path
+      #   macos-latest  3.10  Python 3.10.21  387s
+      #   macos-latest  3.13  Python 3.13.14  516s
+      #   ubuntu-latest 3.9   Python 3.9.25   590s
+      #
+      # 3.9.6 is Apple's /usr/bin/python3 -- the system interpreter, built
+      # without the optimisations a python-build-standalone release carries.
+      # Every other version on that runner gets a uv-managed standalone
+      # build (note the patch levels: .21, .14 are current; .6 is frozen at
+      # whatever macOS shipped). So this one leg was not testing 3.9 the way
+      # anyone runs it; it was testing Apple's build of it, at 2.2x the cost
+      # of its siblings and 1.7x the next slowest job in the whole matrix.
+      #
+      # 3.9 itself is NOT dropped -- `requires-python = ">=3.9"` and a
+      # downstream is actively on it. It still runs on ubuntu-latest
+      # (x86-64) and ubuntu-24.04-arm (aarch64), so both architectures stay
+      # covered and only the unrepresentative interpreter goes.
+      # `tests/test_own_ci_matrix.py` gates that: an `exclude` that removed
+      # a Python version from the matrix ENTIRELY fails there, so this
+      # narrowing cannot quietly become a deletion.
+      #
+      # Revisit if uv gains a managed aarch64-apple-darwin build for 3.9 --
+      # then this leg becomes as cheap as the others and should come back.
+      #
+      # The `include` is the next Python, while it is still a PRE-RELEASE:
+      # one leg, on ubuntu-latest, told to uv as plain "3.15", which uv
+      # resolves to the newest pre-release (3.15.0rc2 at the time of
+      # writing). numpy already ships cp315 wheels, so the suite can really
+      # run.
+      #
+      # Allowed to fail, and deliberately not by job-level
+      # `continue-on-error`: how a failed job reads through `CI passed`'s
+      # `needs.*.result` is the question that could turn every PR red. The
+      # Python-dependent steps carry it instead, so the job concludes
+      # success, and a failure is annotated rather than silent.
+      #
+      # It EXPIRES: the `test` job's first step fails the job for real once
+      # uv hands back a final 3.15.0, naming the fix -- move "3.15" into
+      # python-version here (and the classifiers), and delete the include.
+      # A note to revisit it would be a wish.
+      - name: Which test legs this run owes
+        id: legs
+        env:
+          EVENT: ${{ github.event_name }}
+          TESTED: ${{ needs.changes.outputs.tested }}
+          TRIM: macos-latest
+          MATRIX: >-
+            {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"],
+            "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"],
+            "exclude": [{"os": "macos-latest", "python-version": "3.9"}],
+            "include": [{"os": "ubuntu-latest", "python-version": "3.15",
+            "prerelease": true}]}
+        run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
+
   test:
     needs: [changes, toolchain]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    # Also on a push whose tree its PR tested: it owes the legs that PR
+    # trimmed (gh-2125). An empty `matrix` means nothing is owed, and GitHub
+    # refuses an empty matrix, so the job skips instead.
+    if: >-
+      ((needs.changes.outputs.src == 'true' &&
+        needs.changes.outputs.code != 'false') ||
+       needs.changes.outputs.tested == 'true') &&
+      needs.toolchain.outputs.matrix != ''
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # 40, not 30 (gh-2125): over 33 PR runs every macOS leg's median was
+    # 20-21 min, each version had 3-7 runs past 25, and 30 cancelled
+    # #2096's 3.12 leg at 85% -- runner variance at the edge, which read as
+    # a red `CI passed` with no failing test.
+    timeout-minutes: 40
     # gh-1796: a Linux leg runs in the pinned CI toolchain image, so its
     # compilers, cmake and every apt package are the snapshot the pin names,
     # not whatever a live mirror serves this minute. An empty image -- a
@@ -100,61 +195,9 @@ jobs:
       # directory, so a declared gate of the suite skips there.
       options: --user 1001
     strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-
-        # macOS + 3.9 is dropped for a MECHANISM, not for being slow.
-        #
-        # Measured on run 33501865715 (main @ 8eed7d5, 2026-09-01), reading
-        # the interpreter each leg actually reported to pytest:
-        #
-        #   macos-latest  3.9   Python 3.9.6    876s   <- the critical path
-        #   macos-latest  3.10  Python 3.10.21  387s
-        #   macos-latest  3.13  Python 3.13.14  516s
-        #   ubuntu-latest 3.9   Python 3.9.25   590s
-        #
-        # 3.9.6 is Apple's /usr/bin/python3 -- the system interpreter, built
-        # without the optimisations a python-build-standalone release carries.
-        # Every other version on that runner gets a uv-managed standalone
-        # build (note the patch levels: .21, .14 are current; .6 is frozen at
-        # whatever macOS shipped). So this one leg was not testing 3.9 the way
-        # anyone runs it; it was testing Apple's build of it, at 2.2x the cost
-        # of its siblings and 1.7x the next slowest job in the whole matrix.
-        #
-        # 3.9 itself is NOT dropped -- `requires-python = ">=3.9"` and a
-        # downstream is actively on it. It still runs on ubuntu-latest
-        # (x86-64) and ubuntu-24.04-arm (aarch64), so both architectures stay
-        # covered and only the unrepresentative interpreter goes.
-        # `tests/test_own_ci_matrix.py` gates that: an `exclude` that removed
-        # a Python version from the matrix ENTIRELY fails there, so this
-        # narrowing cannot quietly become a deletion.
-        #
-        # Revisit if uv gains a managed aarch64-apple-darwin build for 3.9 --
-        # then this leg becomes as cheap as the others and should come back.
-        exclude:
-          - os: macos-latest
-            python-version: "3.9"
-
-        # The next Python, while it is still a PRE-RELEASE: one leg, on
-        # ubuntu-latest, told to uv as plain "3.15", which uv resolves to the
-        # newest pre-release (3.15.0rc2 at the time of writing). numpy
-        # already ships cp315 wheels, so the suite can really run.
-        #
-        # Allowed to fail, and deliberately not by job-level
-        # `continue-on-error`: how a failed job reads through `CI passed`'s
-        # `needs.*.result` is the question that could turn every PR red. The
-        # Python-dependent steps carry it instead, so the job concludes
-        # success, and a failure is annotated rather than silent.
-        #
-        # It EXPIRES: the first step below fails the job for real once uv
-        # hands back a final 3.15.0, naming the fix -- move "3.15" into
-        # python-version above (and the classifiers), and delete this entry.
-        # A note to revisit it would be a wish.
-        include:
-          - os: ubuntu-latest
-            python-version: "3.15"
-            prerelease: true
+      # Declared, and why each leg is there, in the toolchain job's `legs`
+      # step, which keeps only the legs this run owes (gh-2125).
+      matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
 
     steps:
       # `fetch-depth: 0` because three gates ask git what has been RELEASED,
@@ -191,8 +234,9 @@ jobs:
           case "$v" in
             *" final")
               echo "::error::Python ${v% final} is released. Promote it: add"
-              echo "  \"${{ matrix.python-version }}\" to the python-version list and the"
-              echo "  pyproject classifiers, and delete the prerelease include."
+              echo "  \"${{ matrix.python-version }}\" to the python-version"
+              echo "  list in the toolchain job's MATRIX and the pyproject"
+              echo "  classifiers, and delete the prerelease include."
               exit 1 ;;
           esac
 
@@ -791,10 +835,10 @@ jobs:
   docker:
     name: Docker image
     needs: changes
-    # Also on a push whose tree its PR already tested (gh-1801): the matrix
-    # need not run again, but publishing `:latest` from main is not a test,
-    # and skipping it would leave the image -- the Codespaces base -- behind
-    # main for every merge that skips.
+    # Also on a push whose tree its PR already tested (gh-1801): the PR's
+    # legs need not run again, but publishing `:latest` from main is not a
+    # test, and skipping it would leave the image -- the Codespaces base --
+    # behind main for every merge that skips.
     # A docs-only diff (code=false) cannot change the image, so it skips.
     if: >-
       (needs.changes.outputs.src == 'true' &&
@@ -849,17 +893,29 @@ jobs:
       SRC: ${{ needs.changes.outputs.src }}
       RESULTS: ${{ join(needs.*.result, ' ') }}
       DOCS: ${{ needs.docs.result }}
+      # gh-2125: what a push whose tree its PR tested still runs as a test --
+      # the legs that PR trimmed, and the job that says which.
+      OWED: ${{ needs.toolchain.result }} ${{ needs.test.result }}
     steps:
       - run: |
           # Bump-only PRs skip the matrix (src=false) — that is expected and
           # green. But `docs` can still run under src=false (a release
           # rewrites CHANGELOG.md, so docs=true), and a broken strict build
-          # must not be certified by this early exit (gh-1801).
+          # must not be certified by this early exit (gh-1801). Nor may the
+          # legs a tested tree's PR trimmed (gh-2125): this check is what
+          # release.yml reads, and they are the only run of them.
           if [[ "$SRC" == "false" ]]; then
             case "$DOCS" in
-              success | skipped | "") exit 0 ;;
+              success | skipped | "") ;;
               *) echo "::error::the docs build ended '$DOCS'"; exit 1 ;;
             esac
+            for r in $OWED; do
+              case "$r" in
+                success | skipped) ;;
+                *) echo "::error::a leg the PR trimmed ended '$r'"; exit 1 ;;
+              esac
+            done
+            exit 0
           fi
           # Every required job must have SUCCEEDED or been skipped by its own
           # `if`. This used to fail only on `failure` -- and a job that hits

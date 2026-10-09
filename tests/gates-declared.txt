@@ -146,5 +146,6 @@ test_gh949_outdated
 test_jbx_install_link
 test_lint_ssot
 test_one_replay_path
+test_own_ci_matrix
 test_stdlib_floor
 test_toml_roundtrip
