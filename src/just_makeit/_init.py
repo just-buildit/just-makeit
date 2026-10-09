@@ -264,9 +264,9 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
 
     gh-1199. `render` leaves an unmatched `<<key>>` as literal text, which is
     right for it — rendering is layered and a slot filled a pass later is
-    normal. It is not right for a FILE. `CMAKE_LISTS_MODULE` has two render
-    sites and one supplied neither `extra_ext_sources` nor `module_comment`,
-    so a module declared `objects = []` was written as
+    normal. It is not right for a FILE. `CMAKE_LISTS_MODULE` had two render
+    sites (one since gh-2070) and one supplied neither `extra_ext_sources`
+    nor `module_comment`, so a module declared `objects = []` was written as
 
         Python3_add_library(mod MODULE WITH_SOABI mod_ext.c<<extra_ext_sources>>)
 
