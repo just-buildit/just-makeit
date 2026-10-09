@@ -124,3 +124,38 @@ def test_an_authors_edit_is_not_rewritten(tmp_path: Path) -> None:
     assert mf.read_bytes() == edited
     st = run_cli("status", cwd=root)
     assert "BACKEND (" not in st.stdout, st.stdout
+
+
+def test_an_edited_makefile_costs_no_second_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The common case is an edited Makefile of the CURRENT backend. It must not
+    trigger the other backend's replay: that replay is a whole project render,
+    and it is only worth running when the file could be the other backend's
+    render, which the marker line decides from the templates."""
+    from just_makeit import _apply
+
+    root = _scaffold(tmp_path, "p", "make")
+    (root / "Makefile").write_bytes(
+        (root / "Makefile").read_bytes() + b"\n# an edit\n"
+    )
+    calls: list[int] = []
+
+    def counting(cfg, project_root):
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr(_apply, "_other_backend_makefile", counting)
+    r = run_cli("status", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert calls == []
+
+
+def test_each_backend_marker_is_in_its_own_template() -> None:
+    """The discriminator is only as good as its marker: a template edit that
+    drops the marker would make the mismatch check silently never fire."""
+    from just_makeit import _new
+    from just_makeit import _render as T
+
+    assert _new._marked(T.MAKEFILE_SIMPLE, "make")
+    assert _new._marked(T.MAKEFILE, "cmake")

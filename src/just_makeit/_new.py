@@ -133,16 +133,36 @@ def makefile_text(
     return T.render(tmpl, ctx)
 
 
+#: A line that only one backend's Makefile carries, and that a patched
+#: rendering keeps: the make Makefile's TARGETS list, the cmake Makefile's
+#: cache rule. Each is checked against its template when used, so a template
+#: that loses its marker fails the gate rather than silently skipping the check.
+BACKEND_MARKER = {
+    "make": "TARGETS :=",
+    "cmake": "$(BUILD_DIR)/CMakeCache.txt:",
+}
+
+
+def _marked(text: str, backend: str) -> bool:
+    """True when *text* has *backend*'s marker line (gh-1899)."""
+    prefix = BACKEND_MARKER[backend]
+    return any(line.lstrip().startswith(prefix) for line in text.splitlines())
+
+
 def is_other_backend_makefile(
-    root: Path, current: str, other: "Callable[[], str | None]"
+    root: Path,
+    current: str,
+    other_name: str,
+    other: "Callable[[], str | None]",
 ) -> bool:
     """True when the project's Makefile is the OTHER backend's render (gh-1899).
 
     Switching `[project] build` leaves the old backend's Makefile in place: it
     is create-only, and nothing ties it to the manifest. *current* is the
     Makefile the replay renders for the manifest as it stands. A Makefile equal
-    to that is not a mismatch. Otherwise *other* is called (only then, because
-    rendering the other backend is a whole replay) for that backend's Makefile,
+    to that is not a mismatch. A Makefile without *other_name*'s marker cannot
+    be that backend's render, so it is not one, and no replay is needed.
+    Otherwise *other* is called (a whole replay) for that backend's Makefile,
     and a match with it is the mismatch. An author's edit matches neither, and
     is theirs, so jm does not claim it. CRLF is compared as LF, as `status`
     compares every other generated file (gh-1641).
@@ -151,7 +171,7 @@ def is_other_backend_makefile(
     if not path.is_file():
         return False
     real = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-    if real == current:
+    if real == current or not _marked(real, other_name):
         return False
     text = other()
     return text is not None and real == text.replace("\r\n", "\n")

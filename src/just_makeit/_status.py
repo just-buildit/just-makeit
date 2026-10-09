@@ -689,12 +689,14 @@ def run(
 
         _backend = None
         _cur_mf = replay_root / "Makefile"
+        _other = "make" if C.build_system(cfg) == "cmake" else "cmake"
         if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
             root,
             _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            _other,
             lambda: _apply_mod._other_backend_makefile(cfg, root),
         ):
-            _backend = "make" if C.build_system(cfg) == "cmake" else "cmake"
+            _backend = _other
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
