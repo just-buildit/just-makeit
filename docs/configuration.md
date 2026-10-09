@@ -1154,7 +1154,9 @@ In a module the prototypes go in the aggregator, before the object's
 fragment, so a row works whether the fragment is sacred or `generated` — which
 is what lets a hand-written method survive [`jm adopt`](#who-owns-a-modules-binding-fragment):
 move the function into the `_extra.c`, declare its row, and the fragment's
-table loses nothing on the flip.
+table loses nothing on the flip. The core functions it calls stay
+link-checked: the object's `native/tests/test_<obj>_symbols.c` is read from
+the hook as well as the binding (gh-2175).
 
 The rows follow the generated ones in the table, in the order declared. `apply`
 refuses a row whose `name` a member jm generates already holds (`reset`, a
