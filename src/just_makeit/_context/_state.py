@@ -1865,9 +1865,11 @@ def _ctor_seed_slots(
     parameter and never validates, so on day one the construction works and the
     suite skips anyway. The issue framed the alternative as reading ``_core.c``
     to find out, and rejected it for three good reasons: jm does not read C,
-    the generated test files are create-only so the answer would be frozen at
-    scaffold time, and an inference that goes stale trades a skip for a red
-    suite (gh-1088, red on ``main`` for 14 runs).
+    the generated test files were create-only then so the answer would be
+    frozen at scaffold time (the C smoke still is; the Python test has been
+    jm's while it carries ``# jm:generated`` since gh-1489), and an inference
+    that goes stale trades a skip for a red suite (gh-1088, red on ``main``
+    for 14 runs).
 
     All three objections are about deciding at RENDER time. None of them apply
     to the C smoke, which decides at *runtime* — so that was the option the

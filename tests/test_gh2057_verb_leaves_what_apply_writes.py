@@ -47,7 +47,9 @@ minutes and timed Coverage out (gh-2057).
 A run red today is ratcheted in `RATCHET` under the issue each of its
 findings belongs to, and must report exactly those: so it fails for that
 cause or not at all (gh-1652), a fix must delete its part of the entry, and
-the ratchet only shrinks.
+the ratchet only shrinks. `RATCHET` is read from one file per issue,
+``tests/gh2057_ratchet/gh-<n>.toml``, so a fix edits only its own issue's
+file and two fixes never conflict there (gh-2108).
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ from typing import NamedTuple
 import pytest
 
 from _jmrun import run_cli
+from _scratchgit import Repo
 from just_makeit import _cli
 from just_makeit import _config as C
 from just_makeit import _createonly as CO
@@ -780,50 +783,73 @@ NEW_CASES: "dict[str, tuple]" = {
 # the same change; one that is new is a new red, which needs a fix or an
 # issue of its own. So an entry fails for its issue's cause or not at all
 # (gh-1652), and the ratchet can only shrink.
+#
+# One FILE per issue (gh-2108). As one dict literal, every fix deleted rows
+# beside another issue's, so any two fix PRs conflicted -- six hand
+# resolutions in one batch -- and one clean auto-merge kept a new row naming
+# a findings constant its sibling had deleted: a NameError at import. A file
+# is named for its issue and spells its findings out, so a fix deletes its
+# own file, or its own lines in it, and touches nothing another issue owns.
+
+#: ``gh-<n>.toml`` per issue: ``[[red]]`` tables, each the ``runs`` that
+#: report exactly ``found``.
+RATCHET_DIR = Path(__file__).with_name("gh2057_ratchet")
+_ISSUE_FILE = re.compile(r"gh-\d+\.toml")
+_RED_KEYS = {"runs", "found"}
 
 
-def _stale(*paths: str) -> "tuple[str, ...]":
-    """Glue `status` reports STALE and `apply` rewrites: both oracles."""
-    return tuple(
-        f"{o} {p}" for p in paths for o in ("status:STALE ~", "apply:~")
-    )
+def ratchet_file(issue: str) -> Path:
+    """The one file that holds *issue*'s entries, and that its fix edits."""
+    return RATCHET_DIR / f"{issue}.toml"
 
 
-#: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
-_APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
-#: `package` set after `jm module` leaves the module id's stub (gh-2081).
-_MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
+def load_ratchet(
+    where: Path,
+) -> "dict[tuple[str, str, str], dict[str, frozenset[str]]]":
+    """Every issue file in *where*, as ``{run: {issue: findings}}``.
+
+    Strict, because whatever this skipped would be an entry nothing
+    enforces: a file not named ``gh-<n>.toml``, anything but ``[[red]]``
+    tables, a table with a key other than ``runs`` and ``found`` or with
+    either empty, a run that is not three names, and a run its issue lists
+    twice are each refused, naming the file. A dotfile is an editor's, not
+    an entry.
+    """
+    out: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {}
+    for path in sorted(where.iterdir()):
+        if path.name.startswith("."):
+            continue
+        if not _ISSUE_FILE.fullmatch(path.name):
+            raise ValueError(f"{path}: not gh-<n>.toml, so it names no issue")
+        data = C.tomllib.loads(path.read_text(encoding="utf-8"))
+        tables = data.pop("red", None)
+        if data or not isinstance(tables, list) or not tables:
+            raise ValueError(f"{path}: [[red]] tables and nothing else")
+        seen: "set[tuple]" = set()
+        for red in tables:
+            runs, found = red.get("runs"), red.get("found")
+            if set(red) != _RED_KEYS or not runs or not found:
+                raise ValueError(
+                    f"{path}: a [[red]] is a non-empty `runs` and `found`"
+                    f" and nothing else, not {sorted(red)}"
+                )
+            # A bare string is a sequence too: one would read as its letters.
+            if not isinstance(found, list) or not all(
+                isinstance(f, str) for f in found
+            ):
+                raise ValueError(f"{path}: `found` is a list of strings")
+            for run in runs if isinstance(runs, list) else [runs]:
+                key = tuple(run) if isinstance(run, list) else ()
+                if len(key) != 3 or not all(isinstance(s, str) for s in key):
+                    raise ValueError(f"{path}: a run is three names: {run}")
+                if key in seen:
+                    raise ValueError(f"{path}: {key} is listed twice")
+                seen.add(key)
+                out.setdefault(key, {})[path.stem] = frozenset(found)
+    return out
 
 
-def _entries(issue: str, keys, *found: str) -> dict:
-    return {key: {issue: frozenset(found)} for key in keys}
-
-
-_REMOVE_FN = "error: function 'f' not found in module 'mod'."
-
-RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
-    **_entries("gh-2062",
-               [("object", "standalone", "c-dep"),
-                ("module", "sorts-first", "c-dep"),
-                ("module", "sorts-last", "c-dep")],
-               *_stale("CMakeLists.txt")),
-    ("remove", "function", "apps"): {
-        "gh-2075": frozenset({
-            "status:exit 1", f"apply:refused {_REMOVE_FN}",
-            f"fresh:refused {_REMOVE_FN}"}),
-        "gh-2074": frozenset(_APP_ORPHAN),
-    },
-    **_entries("gh-2074",
-               [("shape", "apps", ""), ("remove", "object", "apps"),
-                ("remove", "module", "apps")],
-               *_APP_ORPHAN),
-    **_entries("gh-2081", [("shape", "package-edited", "")], *_MOD_ORPHAN),
-    # Removing the collocated object takes the module's own core with it.
-    **_entries("gh-2141", [("remove", "object", "collocated")],
-               *(f"{o} {p}" for p in ("native/inc/p/o/o_core.h",
-                                      "native/src/o/o_core.c")
-                 for o in ("status:MISSING +", "apply:+"))),
-}  # fmt: skip
+RATCHET = load_ratchet(RATCHET_DIR)
 
 
 # ── Running a case ───────────────────────────────────────────────────────────
@@ -1223,14 +1249,94 @@ def test_every_ratchet_entry_names_a_run_and_an_issue():
         assert not overlap, f"{key}: a finding cited for two issues"
 
 
+_ONE_RED = '[[red]]\nruns = [["shape", "s", ""]]\nfound = ["x"]\n'
+
+#: id -> (file name, its text, what the refusal says).
+_NOT_A_RATCHET_FILE = {
+    "not-toml": ("gh-1.txt", _ONE_RED, "names no issue"),
+    "not-an-issue": ("notes.toml", _ONE_RED, "names no issue"),
+    "no-table": ("gh-1.toml", "# nothing\n", "tables and nothing else"),
+    "a-shared-key": (
+        "gh-1.toml", 'shared = ["x"]\n' + _ONE_RED, "tables and nothing else"),
+    "a-stray-key": ("gh-1.toml", _ONE_RED + 'also = ["y"]\n', "nothing else,"),
+    "nothing-found": ("gh-1.toml", _ONE_RED.replace('["x"]', "[]"), "non-em"),
+    "found-a-string": (
+        "gh-1.toml", _ONE_RED.replace('["x"]', '"xyz"'), "list of strings"),
+    "a-short-run": ("gh-1.toml", _ONE_RED.replace(', ""', ""), "three names"),
+    "a-run-a-string": (
+        "gh-1.toml", _ONE_RED.replace('["shape", "s", ""]', '"abc"'),
+        "three names"),
+    "a-run-twice": ("gh-1.toml", _ONE_RED * 2, "listed twice"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "name, text, why",
+    _NOT_A_RATCHET_FILE.values(),
+    ids=_NOT_A_RATCHET_FILE.keys(),
+)
+def test_a_ratchet_file_is_one_issues_and_nothing_else(
+    tmp_path, name, text, why
+):
+    """What the loader would otherwise skip is an entry nothing enforces,
+    so each such file is refused, by name (gh-2108)."""
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=why):
+        load_ratchet(tmp_path)
+
+
+def test_a_ratchet_file_reads_as_its_issue(tmp_path):
+    """The issue is the file's name, and an editor's dotfile is skipped."""
+    (tmp_path / "gh-7.toml").write_text(_ONE_RED, encoding="utf-8")
+    (tmp_path / ".gh-7.toml.swp").write_text("junk", encoding="utf-8")
+    assert load_ratchet(tmp_path) == {("shape", "s", ""): {"gh-7": {"x"}}}
+
+
+def test_two_issues_fixes_merge_in_either_order(tmp_path):
+    """gh-2108: the fix for one issue -- deleting its file -- merges with
+    the fix for another in either order, with nothing to resolve, and
+    leaves exactly the other issues' entries. On the real files, every
+    pair adjacent by number (adjacency is what conflicted as one dict),
+    plus two of its own so the check never runs out of pairs."""
+    repo = Repo(tmp_path / "r")
+    where = repo.root / RATCHET_DIR.name
+    shutil.copytree(RATCHET_DIR, where)
+    for n in (1, 2):
+        (where / f"gh-{n}.toml").write_text(_ONE_RED, encoding="utf-8")
+    repo.commit("base")
+    every = load_ratchet(where)
+    issues = sorted(
+        {i for by_issue in every.values() for i in by_issue},
+        key=lambda i: int(i[3:]),
+    )
+    for issue in issues:
+        path = ratchet_file(issue).relative_to(RATCHET_DIR.parent)
+        repo.branch(issue, lambda root, p=path: (root / p).unlink())
+    for a, b in zip(issues, issues[1:]):
+        rest = {
+            k: {i: f for i, f in v.items() if i not in (a, b)}
+            for k, v in every.items()
+        }
+        rest = {k: v for k, v in rest.items() if v}
+        for first, second in ((a, b), (b, a)):
+            assert repo.conflicts(first, second) == [], (first, second)
+            repo.git("checkout", "-q", Repo.MERGED)
+            assert load_ratchet(where) == rest, (first, second)
+            repo.git("checkout", "-q", "main")
+
+
 def _check(key: "tuple[str, str, str]", found: "frozenset[str]") -> None:
     """*found* must be exactly what the ratchet expects for *key*."""
     by_issue = RATCHET.get(key, {})
     fixed = [issue for issue, part in by_issue.items() if not part & found]
     expected = frozenset().union(*by_issue.values())
+    where = ", ".join(
+        ratchet_file(i).relative_to(RATCHET_DIR.parent.parent).as_posix()
+        for i in fixed
+    )
     assert not fixed, (
         f"{key} no longer reports what {', '.join(fixed)} ratcheted: delete"
-        f" that part of its RATCHET entry (the ratchet only shrinks)."
+        f" the run from {where} (the ratchet only shrinks)."
     )
     assert found == expected, (
         f"{key}: the tree differs from what `jm apply` writes"
