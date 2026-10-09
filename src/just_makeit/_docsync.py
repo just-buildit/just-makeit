@@ -2682,7 +2682,12 @@ def refresh_module_fragment_docs(
             continue
         if only_mod is not None and mod != only_mod:
             continue
-        ext_dir = root / "native" / "src" / mod
+        # gh-2088: the directory and the file stem are the CNAME, never the
+        # id. A dotted id (`dsp.filt`) names nothing on disk, so every
+        # fragment was "missing" and skipped: `apply` refreshed no doc in a
+        # dotted module and said nothing.
+        cname = C.module_paths(mod).cname
+        ext_dir = root / "native" / "src" / cname
         derived = O.build_component_ctxs(root, cfg, mod, pkg)
         # gh-504: key by frag_id, not component — a view shares its parent's
         # `component` but owns a distinct fragment (`<mod>_ext_<frag_id>.c`), so
@@ -2696,7 +2701,7 @@ def refresh_module_fragment_docs(
         }
         for ctx in derived:
             comp = ctx.get("frag_id", ctx["component"])
-            frag = ext_dir / f"{mod}_ext_{comp}.c"
+            frag = ext_dir / f"{cname}_ext_{comp}.c"
             if not frag.exists():
                 continue
             existing = frag.read_text(encoding="utf-8")
