@@ -1536,6 +1536,7 @@ def build_component_ctxs(
             create_fn=C.object_create_fn(cfg, obj),
             owner=cfg,
             str_hints=C.state_str_hints(cfg, obj),  # gh-1761
+            init_post_parse_impl=C.init_post_parse(cfg, obj),  # gh-1971
         )
         _override_slots = overridden_builtin_slots(
             ctx["component"], C.methods(cfg, obj), ctx
@@ -3135,6 +3136,7 @@ def run(
         # file -- while `_docsync` (which reads the REAL cfg) had already put
         # the right text in the runtime face beside it.
         doc_=doc,
+        init_post_parse_=init_post_parse_impl,  # gh-1971
     )
 
     # gh-1117: the contract header, on the module-object path too. This

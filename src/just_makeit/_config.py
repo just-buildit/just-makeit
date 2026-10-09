@@ -6827,6 +6827,7 @@ def add_component(
     extra_include_dirs_: list[str] = (),
     create_fn_: str | None = None,
     doc_: str = "",
+    init_post_parse_: str = "",
 ) -> dict:
     # gh-1880: the renderer's own default, from its one owner. A copy here
     # lacked the `void -> float _Complex` branch, so a generator's manifest
@@ -6911,6 +6912,12 @@ def add_component(
     # and `status` are blind to, because status's reference is the replay.
     if doc_:
         entry["doc"] = doc_
+    # gh-1971: same exposure as `doc` above. `init_post_parse` is a manifest-only
+    # key (no `jm object` flag writes it), so the replay's temp manifest only has
+    # it if it is persisted here; without it the module render, which reads that
+    # temp manifest, silently drops a key the real manifest declares.
+    if init_post_parse_:
+        entry["init_post_parse"] = init_post_parse_
     if create_fn_:
         entry["create_fn"] = create_fn_
     if depends_on_:
