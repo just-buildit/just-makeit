@@ -502,7 +502,7 @@ def run(
     manifest_doc_entries = [
         d
         for d in (
-            _doc_mod.manifest_docs_with_sections(cfg)
+            _doc_mod.manifest_docs_with_sections(cfg, root)
             + _composer_mod.field_doc_drift(root, cfg)
         )
         if not _is_allowed(d.where, allow_patterns)

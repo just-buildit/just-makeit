@@ -2289,6 +2289,53 @@ def py_face(m: dict) -> PyFace:
     )
 
 
+def method_doc_lines(m: dict, doc_blocks: "dict | None") -> "list[str]":
+    """The ``.pyi`` docstring of handle method *m*, at method-body indent.
+
+    `render_pyi` writes it under the method's signature, and gh-2103's
+    `_docstring.manifest_docs_with_sections` asks it whether a row's `doc`
+    gets a generated numpy section beside it: a method with no params and a
+    ``None`` return does not, so its `doc` duplicates nothing.
+    """
+    name = m["name"]
+    _face = py_face(m)
+    ann, doc_call = _face.ann, _face.doc_call
+    # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
+    # stub to a full numpy docstring — @param/@return prose plus a runnable
+    # @code doctest. Python-facing args only: an array arg is NDArray, the
+    # rest map through _pyi_arg_ann (gh-374).
+    m_block = _method_block(doc_blocks, m.get("fn"), name)
+    # gh-1111: an `error = "<category>"` method raises, and said so
+    # nowhere on this face -- `grep -c Raises` on a handle stub returned
+    # 0, so `drain(self, timeout_ms: int = ...) -> None` read as a call
+    # that cannot fail. The section comes from the same pair the binding
+    # raises with, so the documented class cannot drift from the emitted
+    # one. A declared raise is enough on its own to earn the full numpy
+    # form: without it the one-line stub is unchanged byte-for-byte, which
+    # is what keeps `jm status --check` quiet on every existing project.
+    _raises = _diagnostics.raises_doc(m, handle=True)
+    # gh-1113: `doc` was read on the runtime face and dropped here, so a
+    # manifest-declared summary reached `help()` and never the stub --
+    # gh-1118's shape (a key honoured on one face) in the documentation
+    # layer. Found by comparing the two faces rather than by reading
+    # either one.
+    _override = str(m.get("doc", ""))
+    if m_block is not None or _raises or _override:
+        from ._docstring import render_numpy_doc
+
+        return render_numpy_doc(
+            m_block,
+            name,
+            _face.py_params,
+            ann,
+            override=_override,
+            authored_doc=_override,
+            indent=8,
+            raises=_raises,
+        )
+    return [f'        """{doc_call} -> {ann}."""']
+
+
 def render_pyi(
     cfg: dict, module: str, doc_blocks: dict[str, str] | None = None
 ) -> str:
@@ -2360,47 +2407,9 @@ def render_pyi(
 
     # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):
-        name = m["name"]
         _face = py_face(m)
-        sig, ann, doc_call = _face.sig, _face.ann, _face.doc_call
-        lines.append(f"    def {name}({sig}) -> {ann}:")
-        # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
-        # stub to a full numpy docstring — @param/@return prose plus a runnable
-        # @code doctest. Python-facing args only: an array arg is NDArray, the
-        # rest map through _pyi_arg_ann (gh-374).
-        m_block = _method_block(doc_blocks, m.get("fn"), name)
-        # gh-1111: an `error = "<category>"` method raises, and said so
-        # nowhere on this face -- `grep -c Raises` on a handle stub returned
-        # 0, so `drain(self, timeout_ms: int = ...) -> None` read as a call
-        # that cannot fail. The section comes from the same pair the binding
-        # raises with, so the documented class cannot drift from the emitted
-        # one. A declared raise is enough on its own to earn the full numpy
-        # form: without it the one-line stub is unchanged byte-for-byte, which
-        # is what keeps `jm status --check` quiet on every existing project.
-        _raises = _diagnostics.raises_doc(m, handle=True)
-        # gh-1113: `doc` was read on the runtime face and dropped here, so a
-        # manifest-declared summary reached `help()` and never the stub --
-        # gh-1118's shape (a key honoured on one face) in the documentation
-        # layer. Found by comparing the two faces rather than by reading
-        # either one.
-        _override = str(m.get("doc", ""))
-        if m_block is not None or _raises or _override:
-            from ._docstring import render_numpy_doc
-
-            lines.extend(
-                render_numpy_doc(
-                    m_block,
-                    name,
-                    _face.py_params,
-                    ann,
-                    override=_override,
-                    authored_doc=_override,
-                    indent=8,
-                    raises=_raises,
-                )
-            )
-        else:
-            lines.append(f'        """{doc_call} -> {ann}."""')
+        lines.append(f"    def {m['name']}({_face.sig}) -> {_face.ann}:")
+        lines.extend(method_doc_lines(m, doc_blocks))
 
     # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):

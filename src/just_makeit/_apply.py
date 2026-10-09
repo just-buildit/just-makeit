@@ -4168,7 +4168,7 @@ def _apply_manifest(
     # already renders a complete numpy docstring from Doxygen.
     from . import _docstring as _doc_mod
 
-    for _md in _doc_mod.manifest_docs_with_sections(cfg):
+    for _md in _doc_mod.manifest_docs_with_sections(cfg, root):
         _report.warn(
             _doc_mod.manifest_doc_advice(_md),
             gates=True,
