@@ -1,0 +1,12 @@
+# gh-2141: removing the object a module is named for (the collocated one)
+# takes the module's own core with it, so `status` reports the core MISSING
+# and `apply` puts it back.
+
+[[red]]
+runs = [["remove", "object", "collocated"]]
+found = [
+    "status:MISSING + native/inc/p/o/o_core.h",
+    "apply:+ native/inc/p/o/o_core.h",
+    "status:MISSING + native/src/o/o_core.c",
+    "apply:+ native/src/o/o_core.c",
+]

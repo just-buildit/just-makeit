@@ -1828,6 +1828,53 @@ def module_cnames(cfg: dict) -> set[str]:
     return {module_paths(m).cname for m in modules(cfg)}
 
 
+def collocated_object(cfg: dict, module: str) -> str | None:
+    """The object of *module* that shares the module's native directory.
+
+    An object's C lives in ``native/src/<obj>/`` and a module's in
+    ``native/src/<cname>/``, so the one object named for the module's
+    **cname** writes into the module's own directory: its
+    ``<obj>_core`` IS the module's core, and its ``CMakeLists.txt``,
+    ``test_``/``bench_<obj>_core`` and ``*_extra.cmake`` hook are the
+    module's. Every other object is a member with a directory of its own.
+
+    The cname, not the leaf and not the dotted id: for a flat module the
+    three are one string, and for ``dsp.filters`` only ``dsp_filters`` names
+    the directory. gh-1949: the module CMakeLists asked the leaf, so an
+    object ``filters`` was written into ``native/src/filters/`` AND
+    prepended to the module's file as collocated -- ``filters_core``
+    declared twice, and a project that did not configure -- while ``apply``
+    asked the dotted id, which no object name can equal. This is the one
+    answer every writer asks.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    module : str
+        The module id, dotted or flat.
+
+    Returns
+    -------
+    str or None
+        The collocated object's name, or ``None`` when every object of
+        *module* has its own directory.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"dsp.filters": {"objects": ["filters", "fir"]}}}
+    >>> collocated_object(cfg, "dsp.filters") is None
+    True
+    >>> cfg["module"]["dsp.filters"]["objects"].append("dsp_filters")
+    >>> collocated_object(cfg, "dsp.filters")
+    'dsp_filters'
+    >>> collocated_object({"module": {"fft": {"objects": ["fft"]}}}, "fft")
+    'fft'
+    """
+    cname = module_paths(module).cname
+    return cname if cname in module_objects(cfg, module) else None
+
+
 def valid_identifier(name: str) -> bool:
     """True when *name* can be written into generated C and Python unchanged.
 

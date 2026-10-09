@@ -270,6 +270,37 @@ SHAPES: "dict[str, Shape]" = {
         _OM | {"dotted"},
         "dsp.filt",
     ),
+    # gh-1949: an object named for its module. Flat, it shares the module's
+    # directory and core; dotted, only the cname names that directory, so
+    # the leaf-named object is a member with its own (it declared
+    # `o_core` twice), and the cname-named one is the collocated object --
+    # with include dirs, which `apply` re-added to the module's CMakeLists
+    # while it took the dotted id for the collocated object's name.
+    "collocated": Shape(
+        (), (("module", "o"), ("object", "o", "--module", "o")), _OM, "o"
+    ),
+    "dotted-leaf": Shape(
+        (),
+        (("module", "dsp.o"), ("object", "o", "--module", "dsp.o")),
+        _OM | {"dotted"},
+        "dsp.o",
+    ),
+    "dotted-cname": Shape(
+        (),
+        (
+            ("module", "dsp.o"),
+            (
+                "object",
+                "dsp_o",
+                "--module",
+                "dsp.o",
+                "--extra-include-dirs",
+                "${FOO_INCLUDE_DIR}",
+            ),
+        ),
+        frozenset({"module", "dotted"}),
+        "dsp.o",
+    ),
     "pair": Shape((), (("object", "o"), *_pair()), _O | {"pair"}),
     "pair-in-module": Shape((), (*_MOD, *_pair(*_M)), _OM | {"pair"}, "mod"),
     "struct": Shape((), (("object", "o"), *_struct()), _O | {"struct"}),
