@@ -711,7 +711,10 @@ def make_step_ctx(
             f"        x = np.zeros(4, dtype={in_np_dtype})\n"
             f"        out = obj.steps(x)\n"
             f"        assert out.shape == (4,)\n"
-            f"        assert out.dtype == {in_np_dtype}\n"
+            # gh-2133: the OUTPUT's element, from `return_type` -- the dtype
+            # the binding allocates. The input's held only while the two
+            # element types matched.
+            f"        assert out.dtype == {out_np_dtype}\n"
             f"\n"
             f"    def test_steps_out_param(self):\n"
             f"        obj = {Component}({py_create_args})\n"

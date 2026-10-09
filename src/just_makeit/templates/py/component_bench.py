@@ -1,7 +1,8 @@
 """Benchmark for <<Component>>.
 
 Run standalone:  python src/<<package>>/benchmarks/bench_<<component>>.py
-Or via make:     make bench
+This file defines no pytest test, so neither `jm bench` nor `make bench`
+runs it: it is a timeit script, run standalone.
 """
 
 import time
