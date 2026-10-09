@@ -84,6 +84,13 @@ def run(
         taken.add(name)
 
     names = ", ".join(n for n, _, _ in new_vars)
+    # gh-2087: the rebuild below deletes the object's files for `apply` to
+    # write again, and `apply` writes nothing of a `no_generate` module.
+    # Refused here, before anything is asked or saved, so the tree is left
+    # as it was.
+    _regenerate.refuse_hand_written(
+        cfg, component, f"add state ({names}) to '{component}'"
+    )
     print(
         f"just-makeit: add state ({names}) to '{component}'. State is "
         f"structural, so '{component}' is rebuilt from the manifest."

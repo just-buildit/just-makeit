@@ -20,6 +20,10 @@ to preserve hand-patched module ``_ext.c`` glue. Pass ``--discard`` for a
 truly clean reset back to the template scaffold. Always ``git stash`` (or
 commit) first regardless — the splice is best-effort text matching, not a
 guarantee.
+
+An object in a ``no_generate`` module is refused, before anything is
+deleted: ``jm apply`` writes none of that module, so nothing would rebuild
+what this deletes (:func:`refuse_hand_written`, gh-2087).
 """
 
 from __future__ import annotations
@@ -89,6 +93,67 @@ def deleted_impl_sources(
     return found
 
 
+def refuse_hand_written(cfg: dict, component: str, action: str) -> None:
+    """Refuse to rebuild *component* when `apply` would not write it back.
+
+    A rebuild deletes the component's files -- its ``_core.c``, ``_core.h``,
+    CMakeLists, binding fragment, C test and bench -- and has ``jm apply``
+    write them again from the manifest. An object in a ``no_generate``
+    module is the author's by declaration, and ``apply`` writes none of it,
+    so on one the delete was the whole of the rebuild (gh-2087): ``jm add
+    --state`` removed ``_core.c`` with the author's edits in it, and the
+    rest, and exited 0; ``apply`` then had nothing to do.
+
+    :func:`run` calls this first, so every rebuild passes it before
+    anything is deleted -- ``jm regenerate`` with or without ``--discard``,
+    and any caller added later. A caller that edits the manifest calls it
+    as well, before it asks or saves, so a refusal leaves the tree exactly
+    as it found it. ``tests/test_gh2087_no_generate_rebuild_refused.py``
+    reads the callers of :func:`run` from the source and holds each to that.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    component : str
+        The component the command would rebuild.
+    action : str
+        What the command was asked to do, as the refusal opens with it:
+        ``"add state (y) to 'o'"``.
+
+    Raises
+    ------
+    Refusal
+        When *component* belongs to a ``no_generate`` module. It names the
+        route instead: edit the C by hand.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"mod": {"objects": ["o"], "no_generate": True}}}
+    >>> try:
+    ...     refuse_hand_written(cfg, "o", "regenerate 'o'")
+    ... except Refusal as exc:
+    ...     print(str(exc).split(":")[0])
+    cannot regenerate 'o'
+
+    An object `apply` writes, standalone or in a generated module, passes:
+
+    >>> refuse_hand_written({"o": {}}, "o", "regenerate 'o'")
+    >>> cfg = {"module": {"mod": {"objects": ["o"]}}}
+    >>> refuse_hand_written(cfg, "o", "regenerate 'o'")
+    """
+    module = C.component_module(cfg, component)
+    if module is None or not C.is_no_generate_module(cfg, module):
+        return
+    raise Refusal(
+        f"cannot {action}: module '{module}' is `no_generate`, so"
+        f" '{component}' is yours and `jm apply` writes none of it. A"
+        " rebuild deletes its files -- _core.c with your edits, the header,"
+        " binding and tests -- and nothing writes them back. Edit the C by"
+        " hand instead."
+    )
+
+
 def _stale_ext_modules(
     root: Path, cfg: dict, pkg: str, component: str, module: str | None
 ) -> list[Path]:
@@ -141,6 +206,10 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-2087: before the first delete. A caller that edits the manifest
+    # asks this itself too, before it saves.
+    refuse_hand_written(cfg, component, f"rebuild '{component}'")
 
     pkg = C.project_name(cfg)
     module = C.component_module(cfg, component)
