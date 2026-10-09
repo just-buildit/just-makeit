@@ -689,7 +689,7 @@ def run(
 
         _backend = None
         _cur_mf = replay_root / "Makefile"
-        _other = "make" if C.build_system(cfg) == "cmake" else "cmake"
+        _other = _new_mod.other_backend(cfg)
         if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
             root,
             _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),

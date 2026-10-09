@@ -1516,7 +1516,9 @@ def _other_backend_makefile(cfg: dict, project_root: Path) -> "str | None":
     import copy
     import tempfile
 
-    other = "make" if C.build_system(cfg) == "cmake" else "cmake"
+    from . import _new
+
+    other = _new.other_backend(cfg)
     flipped = copy.deepcopy(cfg)
     flipped["project"]["build"] = other
     with tempfile.TemporaryDirectory(prefix="jm-backend-") as tmp:
@@ -1543,7 +1545,7 @@ def reconcile_backend_makefile(
     if not mf.is_file():
         return None
     current = mf.read_text(encoding="utf-8")
-    other = "make" if C.build_system(cfg) == "cmake" else "cmake"
+    other = _new.other_backend(cfg)
     if not _new.is_other_backend_makefile(
         root,
         current.replace("\r\n", "\n"),

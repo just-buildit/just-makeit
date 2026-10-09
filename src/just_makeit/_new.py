@@ -143,6 +143,16 @@ BACKEND_MARKER = {
 }
 
 
+def other_backend(cfg: dict) -> str:
+    """The build backend *cfg* does NOT name: the one a stale Makefile could be.
+
+    gh-1899. Spelled once, because the flip is asked for in three places (the
+    other-backend replay, the reconcile step and the status check), and a
+    second spelling is where they would drift apart.
+    """
+    return "make" if C.build_system(cfg) == "cmake" else "cmake"
+
+
 def _marked(text: str, backend: str) -> bool:
     """True when *text* has *backend*'s marker line (gh-1899)."""
     prefix = BACKEND_MARKER[backend]
