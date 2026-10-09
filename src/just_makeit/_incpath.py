@@ -50,35 +50,9 @@ PREFIXED_SCHEMA = 8
 #: as a dict. Never a bare package name: a name does not say which layout.
 Owner = Union[Path, dict]
 
-#: gh-2095: per manifest path, the merged manifest `C.load` built, the
-#: `include` patterns it resolved, and the stamp of every file it read.
-_CFG_CACHE: "dict[str, tuple[list, tuple, dict]]" = {}
-
-
-def _stamp(path: Path) -> "tuple[str, int, int]":
-    """*path*, its mtime and its size: what moves when the file is written.
-
-    Size beside mtime because a file's mtime has the kernel's coarse tick,
-    so two writes inside one tick share it.
-    """
-    st = path.stat()
-    return (str(path), st.st_mtime_ns, st.st_size)
-
-
-def _stamps(root: Path, head: tuple, includes: list) -> tuple:
-    """The stamp of every file `C.load(root)` reads: the manifest (*head*),
-    `pyproject.toml` (an omitted ``[project] version`` is read from it,
-    gh-1283), and each fragment its *includes* resolve to, through the same
-    `_resolve_includes` `C.load` calls -- so a fragment added, removed or
-    rewritten moves the key exactly when it moves the merge."""
-    from . import _config as C
-
-    pyproject = root / "pyproject.toml"
-    return (
-        head,
-        _stamp(pyproject) if pyproject.is_file() else None,
-        *(_stamp(p) for p in C._resolve_includes(root, includes)),
-    )
+#: gh-2095: per manifest path, the key it was loaded under and the merged
+#: manifest `C.load` built: see :func:`manifest`.
+_CFG_CACHE: "dict[str, tuple[tuple, dict]]" = {}
 
 
 def manifest(owner: Owner) -> dict:
@@ -90,18 +64,20 @@ def manifest(owner: Owner) -> dict:
     A path owner is answered from a cache, because it is asked per include
     spelled and per symbol stemmed: 10,116 times in one `jm apply` of
     doppler, against ~130 ms for each `C.load` (measured 2026-10-08).
-    Checking the stamps below costs ~0.3 ms an ask there.
 
-    gh-2095: the cache is valid exactly while every input of `C.load` is
-    unchanged. It was keyed on the central manifest alone, but `C.load`
-    merges `objects/*.toml` and `modules/*.toml` too, so in one process a
-    command that wrote only a fragment (`jm object`, `jm method` on a split
+    gh-2095: it was keyed on the central manifest's mtime alone, but
+    `C.load` merges `objects/*.toml` and `modules/*.toml` too (and reads
+    `pyproject.toml` for an omitted version), so in one process a command
+    that wrote only a fragment (`jm object`, `jm method` on a split
     layout) left every later reader -- `_csym`'s component test, a
     component's class name, the doc reader's methods -- on the manifest
-    from before the write. The key is now the stamp (mtime and size) of
-    the manifest and of every fragment its `include` resolves to; and
-    inside `C.deferred_save`, where `C.load` serves the pending write
-    rather than the disk, so does this.
+    from before the write. What makes it stale is jm's OWN writes of TOML,
+    so the key counts them (:func:`_textio.toml_writes`) rather than
+    re-stamping every fragment per ask, which cost 5x here: a lookup stays
+    one ``stat`` of the manifest and a dict hit. The manifest's own stamp
+    stays in the key, so a hand edit of it is still seen. Inside
+    `C.deferred_save`, where `C.load` serves the pending write rather than
+    the disk, so does this.
     """
     if isinstance(owner, dict):
         return owner
@@ -126,6 +102,7 @@ def manifest(owner: Owner) -> dict:
         # one there was before a manifest could say otherwise.
         return {}
     from . import _config as C
+    from . import _textio
 
     root = toml.parent
     # `C.load` answers from the pending write inside a deferral (gh-764),
@@ -136,22 +113,15 @@ def manifest(owner: Owner) -> dict:
         pending = C._DEFERRED.get(C._deferral_key(root))
         if pending is not None:
             return pending
-    # Stamped BEFORE the load, so a write racing it leaves an older stamp
-    # and the next ask reloads rather than trusting a newer one.
-    head = _stamp(toml)
-    hit = _CFG_CACHE.get(head[0])
-    # The manifest first: its `include` is what the cached patterns are,
-    # so they are only worth resolving while it is unchanged.
-    if (
-        hit is not None
-        and hit[1][0] == head
-        and hit[1] == _stamps(root, head, hit[0])
-    ):
-        return hit[2]
-    includes = C.load_manifest(root).get("include") or []
-    stamps = _stamps(root, head, includes)
+    # Keyed BEFORE the load, so a write racing it leaves an older key and
+    # the next ask reloads rather than trusting a newer one.
+    st = toml.stat()
+    key = (st.st_mtime_ns, st.st_size, _textio.toml_writes())
+    hit = _CFG_CACHE.get(str(toml))
+    if hit is not None and hit[0] == key:
+        return hit[1]
     cfg = C.load(root)
-    _CFG_CACHE[head[0]] = (includes, stamps, cfg)
+    _CFG_CACHE[str(toml)] = (key, cfg)
     return cfg
 
 

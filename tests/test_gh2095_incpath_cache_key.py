@@ -9,9 +9,19 @@ which kept it latent; the test suite drives jm in-process, where it is live,
 and `_csym._is_component` (which `backing_stem` relies on) and the doc
 reader's methods both read through it.
 
-Each test primes the cache, changes one input of `C.load`, and asks again:
-a fragment written by a command, a fragment deleted by hand, and a write
-pending inside `C.deferred_save`, which `C.load` serves instead of the disk.
+What changes a manifest input inside one process is jm writing it, so the
+cache counts jm's TOML writes (`_textio.toml_writes`) instead of
+re-stamping every fragment per lookup. Each test primes the cache, has one input of `C.load`
+change, and asks again:
+
+- written by jm: a command (`jm method`), `C.save` through
+  `_textio.write_text`, `C.save` REMOVING an emptied fragment, `apply`
+  COPYING a fragment in, and `pyproject.toml` (an omitted version is read
+  from it);
+- pending inside `C.deferred_save`, which `C.load` serves instead of disk;
+- by hand: the manifest itself (its own stamp stays in the key), and a
+  fragment deleted between two commands (gh-2072's case), which `run_cli`
+  reads fresh as a child process would.
 """
 
 from __future__ import annotations
@@ -25,6 +35,7 @@ from _jmrun import run_cli
 from just_makeit import _config as C
 from just_makeit import _csym as CSYM
 from just_makeit import _incpath as INC
+from just_makeit import _textio
 
 
 @pytest.fixture
@@ -54,37 +65,74 @@ def test_a_fragment_write_reaches_the_cache(root: Path):
     assert _methods(INC.manifest(root), "o") == _methods(C.load(root), "o")
 
 
-def test_a_fragment_deleted_leaves_the_cache(root: Path):
-    """gh-2072's reader: an undeclare done by deleting the fragment."""
+def test_a_save_reaches_the_cache_without_a_command_between(root: Path):
+    """The same write with no command boundary in between, so nothing but
+    the count of jm's writes can tell the cache the fragment moved."""
+    assert _methods(INC.manifest(root), "o") == []
+    cfg = C.load(root)
+    cfg["o"]["methods"] = [{"name": "m", "arg_type": "void"}]
+    C.save(root, cfg)
+    assert _methods(INC.manifest(root), "o") == ["m"]
+
+
+def test_a_fragment_removed_by_save_leaves_the_cache(root: Path):
+    """`C.save` removes an emptied fragment rather than writing it, and on a
+    split layout that unlink is the ONLY write an undeclare makes."""
     assert run_cli("object", "o2", cwd=root).returncode == 0
     assert CSYM._is_component(root, "o2")
-    (root / "objects" / "o2.toml").unlink()
-    assert "o2" not in C.load(root)
+    cfg = C.load(root)
+    del cfg["o2"]
+    before = _textio.toml_writes()
+    C.save(root, cfg)
+    assert not (root / "objects" / "o2.toml").exists()
+    assert _textio.toml_writes() == before + 1, "the unlink was the only write"
     assert not CSYM._is_component(root, "o2")
 
 
-def test_an_include_dropped_with_its_file_reloads(root: Path):
-    """The cached `include` patterns are the OLD manifest's: resolving an
-    explicit one whose file is gone would raise where `C.load` succeeds, so
-    a changed manifest reloads before they are read."""
-    manifest = root / "just-makeit.toml"
-    before = manifest.read_text(encoding="utf-8")
-    old = 'include = ["objects/*.toml"'
-    assert old in before, before
-    (root / "extra.toml").write_text("", encoding="utf-8")
-    manifest.write_text(
-        before.replace(old, 'include = ["extra.toml", "objects/*.toml"'),
+def test_a_fragment_copied_in_by_apply_reaches_the_cache(root: Path):
+    """`jm apply <fragment>` copies the file into `objects/`."""
+    from just_makeit._apply import _compose_fragment
+
+    incoming = root.parent / "o3.toml"
+    incoming.write_text(
+        (root / "objects" / "o.toml")
+        .read_text(encoding="utf-8")
+        .replace("[o]", "[o3]")
+        .replace("[o.", "[o3."),
         encoding="utf-8",
     )
+    assert "o3" not in INC.manifest(root)
+    _compose_fragment(root, incoming)
+    assert "o3" in C.load(root)
+    assert "o3" in INC.manifest(root)
+
+
+def test_a_fragment_deleted_between_commands_leaves_the_cache(root: Path):
+    """gh-2072's reader: an undeclare done by deleting the fragment by hand,
+    then a command -- a child would read the tree fresh, and so must this."""
+    assert run_cli("object", "o2", cwd=root).returncode == 0
+    assert CSYM._is_component(root, "o2")
+    (root / "objects" / "o2.toml").unlink()
+    assert run_cli("--version", cwd=root).returncode == 0
+    assert not CSYM._is_component(root, "o2")
+
+
+def test_a_hand_edit_of_the_manifest_is_seen(root: Path):
+    """The manifest's own stamp stays in the key, as it was before."""
+    manifest = root / "just-makeit.toml"
+    text = manifest.read_text(encoding="utf-8")
+    old = 'include = ["objects/*.toml", "modules/*.toml"]'
+    assert old in text, text
     assert "o" in INC.manifest(root)
-    manifest.write_text(before + "\n", encoding="utf-8")
-    (root / "extra.toml").unlink()
-    assert "o" in INC.manifest(root)
+    manifest.write_text(
+        text.replace(old, 'include = ["modules/*.toml"]'), encoding="utf-8"
+    )
+    assert "o" not in INC.manifest(root)
 
 
 def test_a_deferred_version_follows_pyproject(root: Path):
     """An omitted `[project] version` is read from `pyproject.toml`
-    (gh-1283), which makes that file an input of `C.load` too."""
+    (gh-1283), which makes jm's write of that file an input too."""
     manifest = root / "just-makeit.toml"
     text = manifest.read_text(encoding="utf-8")
     assert '\nversion = "0.1.0"\n' in text, text
@@ -95,9 +143,9 @@ def test_a_deferred_version_follows_pyproject(root: Path):
     py = pyproject.read_text(encoding="utf-8")
     assert '\nversion = "0.1.0"\n' in py, py
     assert C.project_version(INC.manifest(root)) == "0.1.0"
-    pyproject.write_text(
+    _textio.write_text(
+        pyproject,
         py.replace('\nversion = "0.1.0"\n', '\nversion = "0.1.10"\n'),
-        encoding="utf-8",
     )
     assert C.project_version(C.load(root)) == "0.1.10"
     assert C.project_version(INC.manifest(root)) == "0.1.10"
