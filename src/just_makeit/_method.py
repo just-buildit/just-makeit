@@ -1093,6 +1093,7 @@ _SIGNATURE_COERCIONS: dict = {
     "exact_max_out": (bool, False),
     "count_default": (str, ""),
     "count_name": (str, ""),
+    "out_cols": (str, ""),
     "nogil": (bool, False),
     "status_return": (bool, False),
     "error_negative": (bool, False),
@@ -1224,6 +1225,7 @@ def run(
     exact_max_out: bool = False,
     count_default: str = "",
     count_name: str = "",
+    out_cols: str = "",
     nogil: bool = False,
     status_return: bool = False,
     fn: str = "",
@@ -2272,6 +2274,11 @@ def run(
         method_entry["exact_max_out"] = True
     if count_default:
         method_entry["count_default"] = count_default
+    # gh-2115: written only when set, so an existing manifest gains no key
+    # and `jm status --check` sees no drift on a project that never asked
+    # for a matrix result.
+    if out_cols:
+        method_entry["out_cols"] = out_cols
     # gh-1074: written only when set, like `count_default` beside it, so
     # an existing manifest gains no key and `jm status --check` sees no
     # drift on a project that never asked for the rename.

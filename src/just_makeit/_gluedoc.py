@@ -550,6 +550,17 @@ OUT_PARAM_DOC = (
     "samples produced; when omitted, a fresh array is allocated."
 )
 
+#: The same, for a method whose result is a matrix (``out_cols``, gh-2115).
+#: The shape is part of the contract here: a buffer of the wrong width would
+#: hand back a result shaped differently from the one the caller allocated.
+OUT_PARAM_DOC_MATRIX = (
+    "Optional pre-allocated output buffer: a writable, C-contiguous 2-D "
+    "array of shape (rows, cols), where cols is this method's fixed row "
+    "width. When given, the result is written into it and the returned "
+    "array is a (rows, cols) view of exactly the rows produced; when "
+    "omitted, a fresh array is allocated."
+)
+
 
 #: What the synthesized leading count argument is called when the manifest
 #: does not say. Kept as the default rather than derived from the C parameter
@@ -616,7 +627,11 @@ def count_kwarg_name(count_name: str = "") -> str:
 
 
 def binding_param_docs(
-    count_name: str = "", *, count: bool, out: bool
+    count_name: str = "",
+    *,
+    count: bool,
+    out: bool,
+    out_cols: bool = False,
 ) -> dict[str, str]:
     """jm's default description for each binding argument it synthesized.
 
@@ -644,12 +659,14 @@ def binding_param_docs(
     ['n']
     >>> binding_param_docs(count=False, out=False)
     {}
+    >>> "2-D" in binding_param_docs(count=False, out=True, out_cols=True)["out"]
+    True
     """
     docs: dict[str, str] = {}
     if count:
         docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
     if out:
-        docs["out"] = OUT_PARAM_DOC
+        docs["out"] = OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC
     return docs
 
 

@@ -2343,7 +2343,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # a module object's `help()` listed parameters its stub did not.
             skeleton_fallback=True,
             param_defaults=_gluedoc.binding_param_docs(
-                _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                _count_kw,
+                count=_stub_count_arg,
+                out=_stub_enable_out,
+                out_cols=bool(m.get("out_cols")),
             ),
         )
         header = (

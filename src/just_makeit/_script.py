@@ -661,6 +661,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):
         parts.append(_flag("--count-name", str(m["count_name"])))
+    if m.get("out_cols"):
+        parts.append(_flag("--out-cols", str(m["out_cols"])))
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
     if m.get("exact_max_out"):

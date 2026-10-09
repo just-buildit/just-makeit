@@ -38,6 +38,7 @@ def run(args: list[str]) -> None:
     exact_max_out = False
     count_default = ""
     count_name = ""
+    out_cols = ""
     nogil = False
     varargs = False
     manual_stub = False
@@ -171,6 +172,20 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             count_default = remaining[i]
+            i += 1
+        elif tok == "--out-cols":
+            # gh-2115: the width of a matrix result. A --variable-output
+            # kernel still fills a flat buffer; the binding hands back
+            # (count / width, width). A C expression like `state->nfft`
+            # (the same convention --count-default uses) or an integer.
+            i += 1
+            if i >= len(remaining) or not remaining[i].strip():
+                print(
+                    "error: --out-cols requires an integer or a C expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            out_cols = remaining[i].strip()
             i += 1
         elif tok == "--count-name":
             # gh-1074: what that synthesized kwarg is CALLED. `count_default`
@@ -678,6 +693,28 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-2115: `out_cols` reshapes ONE flat variable_output array, so the
+    # shapes that have none are refused here, by the same validator the
+    # manifest loader runs -- the rules live in `_config._out_cols_errors`
+    # and are not restated.
+    if out_cols:
+        from ._config import _out_cols_errors
+
+        _errs = _out_cols_errors(
+            {
+                "out_cols": out_cols,
+                "variable_output": variable_output,
+                "multi_output": multi_output,
+                "record_dtype": record_dtype,
+                "batch": batch_method,
+            },
+            f"--out-cols on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -758,6 +795,7 @@ def run(args: list[str]) -> None:
         exact_max_out=exact_max_out,
         count_default=count_default,
         count_name=count_name,
+        out_cols=out_cols,
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,

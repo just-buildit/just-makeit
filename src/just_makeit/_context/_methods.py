@@ -2125,7 +2125,10 @@ def make_methods_ctx(
                 _brief or default_summary,
                 raises=_raises_doc,
                 param_defaults=_gluedoc.binding_param_docs(
-                    _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                    _count_kw,
+                    count=_stub_count_arg,
+                    out=_stub_enable_out,
+                    out_cols=bool(m.get("out_cols")),
                 ),
                 authored_doc=m.get("doc") or "",
                 param_docs=authored_param_docs(m),
@@ -3008,6 +3011,41 @@ def make_methods_ctx(
                 "elements" if _vo_e == 1 else f"samples of {_vo_e} elements"
             )
 
+            # gh-2115: `out_cols` makes the single flat result a matrix. The
+            # kernel's contract is unchanged -- it fills a flat buffer and
+            # returns an element count -- so everything above this line, and
+            # `_max_out`, still speak elements; the binding only changes the
+            # SHAPE it hands back, and the shape it accepts for `out=`.
+            #
+            # `_out_cols` is a C expression over the object, evaluated once
+            # per call after the arguments parse (so it sees the object as it
+            # is NOW, not as it was constructed). `state` is aliased to
+            # `self->handle` when mentioned, exactly as `count_default` does;
+            # when that method already declared the alias, it is reused, as
+            # two declarations of `state` do not compile.
+            _out_cols = str(m.get("out_cols", "") or "").strip()
+            _cols_block = ""
+            if _out_cols:
+                _cols_alias = (
+                    ""
+                    if _count_alias
+                    else (
+                        f"    {csym}_state_t *state = self->handle;\n"
+                        if re.search(r"\bstate\b", _out_cols)
+                        else ""
+                    )
+                )
+                _cols_block = (
+                    f"{_cols_alias}"
+                    f"    size_t _cols = (size_t)({_out_cols});\n"
+                    f"    if (_cols == 0) {{\n"
+                    f"        PyErr_SetString(PyExc_RuntimeError,\n"
+                    f'            "{Component}.{name}: out_cols evaluated'
+                    f' to 0");\n'
+                    f"        {_decref_early_vo}return NULL;\n"
+                    f"    }}\n"
+                )
+
             # ── optional out= buffer (single output only) ────────────────
             if _enable_out:
                 _reindent = lambda blk: "".join(  # noqa: E731
@@ -3095,16 +3133,41 @@ def make_methods_ctx(
                     )
                     if record_dtype
                     else (
-                        f"        PyObject *_oview ="
-                        f" PyArray_SimpleNewFromData(\n"
-                        f"            1, &_odim, {_vo_out_np},"
-                        f" PyArray_DATA(out_arr));\n"
+                        "        PyObject *_oview ="
+                        " PyArray_SimpleNewFromData(\n"
+                        + (
+                            f"            2, _odims, {_vo_out_np},"
+                            if _out_cols
+                            else f"            1, &_odim, {_vo_out_np},"
+                        )
+                        + " PyArray_DATA(out_arr));\n"
                     )
+                )
+                # gh-2115: a matrix result takes a matrix `out=`. The view
+                # returned over it is (rows, cols), so a 1-D buffer or one of
+                # another width would hand back a shape the caller did not
+                # allocate -- refused with the shape that was expected.
+                _vo_out_shape = (
+                    (
+                        f"        if (PyArray_NDIM(out_arr) != 2 ||\n"
+                        f"            (size_t)PyArray_DIM(out_arr, 1)"
+                        f" != _cols) {{\n"
+                        f"            PyErr_Format(PyExc_ValueError,\n"
+                        f'                "out must be a 2-D array with'
+                        f' %zu columns, shape (rows, %zu)",\n'
+                        f"                _cols, _cols);\n"
+                        f"            Py_DECREF(out_arr);"
+                        f" {_decref_early_vo}return NULL;\n"
+                        f"        }}\n"
+                    )
+                    if _out_cols
+                    else ""
                 )
                 _out_branch = (
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_vo_out_guard}"
                     f"{_vo_acquire}"
+                    f"{_vo_out_shape}"
                     f"        size_t _cap ="
                     f" {_coerce.array_count_c('out_arr', _vo_e)};\n"
                     f"        size_t _omax ="
@@ -3175,7 +3238,26 @@ def make_methods_ctx(
                     )
                     + f"{_out_none}"
                     f"        npy_intp _odim = (npy_intp){_odim_c};\n"
-                    f"{_vo_view}"
+                    + (
+                        # gh-2115: whole rows only. A kernel that returns a
+                        # count that is not a multiple of the width has broken
+                        # the contract the declaration made, and a ragged
+                        # last row would be a silently wrong shape.
+                        f"        if ((size_t)_odim % _cols != 0) {{\n"
+                        f"            PyErr_Format(PyExc_RuntimeError,\n"
+                        f'                "{Component}.{name}: kernel returned'
+                        f" %zu elements, not a whole number of %zu-wide"
+                        f' rows",\n'
+                        f"                (size_t)_odim, _cols);\n"
+                        f"            Py_DECREF(out_arr); return NULL;\n"
+                        f"        }}\n"
+                        f"        npy_intp _odims[2] = {{\n"
+                        f"            _odim / (npy_intp)_cols,"
+                        f" (npy_intp)_cols}};\n"
+                        if _out_cols
+                        else ""
+                    )
+                    + f"{_vo_view}"
                     f"        if (!_oview)"
                     f" {{ Py_DECREF(out_arr); return NULL; }}\n"
                     # gh-1312: checked, like every other SetBaseObject jm
@@ -3348,8 +3430,24 @@ def make_methods_ctx(
             # over-allocation itself rather than just its retention.
             _vo_views = (
                 f"    npy_intp _odim = (npy_intp){_odim_c};\n"
+                + (
+                    f"    if ((size_t)_odim % _cols != 0) {{\n"
+                    f"        PyErr_Format(PyExc_RuntimeError,\n"
+                    f'            "{Component}.{name}: kernel returned'
+                    f" %zu elements, not a whole number of %zu-wide"
+                    f' rows",\n'
+                    f"            (size_t)_odim, _cols);\n"
+                    f"        {_decref_arrs} return NULL;\n"
+                    f"    }}\n"
+                    f"    npy_intp _odims[2] = {{\n"
+                    f"        _odim / (npy_intp)_cols, (npy_intp)_cols}};\n"
+                    if _out_cols
+                    else ""
+                )
                 + "".join(
-                    f"    PyArray_Dims _rs{i} = {{&_odim, 1}};\n"
+                    f"    PyArray_Dims _rs{i} = "
+                    + ("{_odims, 2}" if _out_cols else "{&_odim, 1}")
+                    + ";\n"
                     f"    PyObject *v{i} = PyArray_Resize(\n"
                     f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
                     f" NPY_CORDER);\n"
@@ -3384,9 +3482,13 @@ def make_methods_ctx(
             # for a generator shape (steps(n) returns exactly n), and without
             # it the trim view is pure overhead on the hot path.
             _vo_exact = (
-                f"    if ((size_t)n_out == _cap) {{\n"
-                f"{_vo_exact_return}"
-                f"    }}\n"
+                ""
+                if _out_cols
+                else (
+                    f"    if ((size_t)n_out == _cap) {{\n"
+                    f"{_vo_exact_return}"
+                    f"    }}\n"
+                )
             )
             # gh-788: the cached descr builder is file-scope, so it is
             # prepended to the wrapper the way the structseq descriptor is —
@@ -3408,6 +3510,7 @@ def make_methods_ctx(
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    f"{_cols_block}"
                     f"{_out_branch}"
                     f"{_vo_alloc}"
                     f"{_kernel_vo}"
@@ -4351,7 +4454,10 @@ def make_methods_ctx(
                     skeleton_fallback=True,
                     raises=_raises_doc,
                     param_defaults=_gluedoc.binding_param_docs(
-                        _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                        _count_kw,
+                        count=_stub_count_arg,
+                        out=_stub_enable_out,
+                        out_cols=bool(m.get("out_cols")),
                     ),
                     authored_doc=m.get("doc") or "",
                     param_docs=authored_param_docs(m),
