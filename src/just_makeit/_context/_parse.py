@@ -424,6 +424,143 @@ def _build_ml_doc(lines: list[str]) -> str:
     return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in flat)
 
 
+def scalar_parse_c(
+    ctype: str,
+    src: str,
+    var: str,
+    fail: str,
+    *,
+    meta: "dict | None" = None,
+    indent: str = "    ",
+) -> str:
+    """Statements declaring the C local *var* of *ctype* from one PyObject.
+
+    The one conversion of a single Python object -- a setter's ``value``, a
+    kwarg pulled out of a dict -- into a C scalar. It parses with the type's
+    own ``_CTYPE_META`` format char, and where that char writes a different
+    width than *ctype* (``i`` writes an ``int``, ``D`` a 16-byte
+    ``Py_complex``) it parses into the row's ``parse_type`` local
+    ``<var>_raw`` first and converts with ``to_c``. So a ``double`` keeps its
+    fraction, a ``float _Complex`` its imaginary part and an ``int8_t`` local
+    is never written four bytes wide.
+
+    gh-2035: written once, for an object's property setter; a composer's
+    settings, segment fields and source fields each converted through
+    ``PyLong_AsLong`` or a hand-kept peer table instead, so a ``double``
+    setting read back truncated. Every one of those faces calls this now.
+
+    Parameters
+    ----------
+    ctype : str
+        The C type of the local, a ``_CTYPE_META`` key.
+    src : str
+        The C expression naming the ``PyObject *`` to convert.
+    var : str
+        The local's name. A ``parse_type`` row also declares ``<var>_raw``.
+    fail : str
+        The C statement run when the parse raises, e.g. ``return -1;``.
+    meta : dict, optional
+        The ``_CTYPE_META`` row, when the caller already looked it up -- a
+        caller that refuses an unknown type passes the row its refusal
+        returned, so nothing here can raise ``KeyError``.
+    indent : str, optional
+        Prefixed to every line.
+
+    Returns
+    -------
+    str
+        The statements, each line ending in a newline.
+
+    Examples
+    --------
+    >>> print(scalar_parse_c("double", "value", "v", "return -1;"), end="")
+        double v = 0.0;
+        if (!PyArg_Parse(value, "d", &v)) return -1;
+    >>> print(scalar_parse_c("int8_t", "_o", "_v", "goto fail;"), end="")
+        int _v_raw = 0;
+        if (!PyArg_Parse(_o, "i", &_v_raw)) goto fail;
+        int8_t _v = (int8_t)_v_raw;
+    """
+    meta = _CTYPE_META[ctype] if meta is None else meta
+    if "parse_type" in meta:
+        return (
+            f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
+            f'{indent}if (!PyArg_Parse({src}, "{meta["fmt"]}", &{var}_raw))'
+            f" {fail}\n"
+            f"{indent}{ctype} {var} = {meta['to_c'](var)};\n"
+        )
+    return (
+        f"{indent}{ctype} {var} = {meta['zero']};\n"
+        f'{indent}if (!PyArg_Parse({src}, "{meta["fmt"]}", &{var}))'
+        f" {fail}\n"
+    )
+
+
+def scalar_arg_c(
+    pname: str, ptype: str, default: str = "", *, meta: "dict | None" = None
+) -> "tuple[str, str, str, str]":
+    """One scalar a ``PyArg_ParseTuple*`` call fills: its four C pieces.
+
+    The tuple-parse twin of :func:`scalar_parse_c`, and the same rule: the
+    format char is the type's own (:func:`~just_makeit._types.param_fmt`), and
+    a ``parse_type`` row is parsed into ``<pname>_raw``, seeded with the
+    default through :func:`~just_makeit._types.parse_seed`, then converted.
+    gh-2035 lifted it out of :func:`_build_params_parse` so a composer's
+    serializer params and source fields stop parsing through a peer table
+    that wrote an ``int`` into an ``int64_t``.
+
+    Parameters
+    ----------
+    pname : str
+        The parameter, which names the C local the call receives.
+    ptype : str
+        Its C type, a ``_CTYPE_META`` key.
+    default : str, optional
+        The declared default; empty for none.
+    meta : dict, optional
+        The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
+
+    Returns
+    -------
+    tuple of str
+        ``(decl, fmt, addr, conv)``: the declaration before the parse, the
+        format char, the address the parse writes, and the conversion after
+        it -- empty when the type parses into its own local.
+
+    Examples
+    --------
+    >>> scalar_arg_c("gain", "double", "1.0")
+    ('    double gain = 1.0;', 'd', '&gain', '')
+    >>> print(*scalar_arg_c("n", "size_t", "16"), sep="\\n")
+        unsigned long long n_raw = 16;
+    K
+    &n_raw
+        size_t n = (size_t)n_raw;
+    """
+    meta = _CTYPE_META[ptype] if meta is None else meta
+    fmt = param_fmt(ptype, default)
+    if "parse_type" in meta:
+        # gh-432 drive-by: seed the raw local with the gh-240 default (not
+        # parse_zero) so an omitted defaulted arg yields the default. gh-1887:
+        # through the one seed, which spells a `Py_complex` default as the
+        # struct's `{re, im}`; verbatim did not compile.
+        raw = f"{pname}_raw"
+        return (
+            f"    {meta['parse_type']} {raw} = {parse_seed(ptype, default)};",
+            fmt,
+            f"&{raw}",
+            f"    {ptype} {pname} = {meta['to_c'](pname)};",
+        )
+    # gh-240: a scalar with a `default` is optional -- seed its C local with
+    # the default literal so an omitted arg yields it.
+    return (
+        f"    {ptype} {pname} = {default or meta['zero']};",
+        fmt,
+        f"&{pname}",
+        "",
+    )
+
+
 def _build_params_parse(
     params: list[dict],
     Component: str = "",
@@ -664,37 +801,18 @@ def _build_params_parse(
                     f'    {{ name = "{pname}", type = "int", '
                     f'enum = "{ptype[len("enum:") :]}" }}'
                 )
-            meta = _CTYPE_META[ptype]
-            disp = ptype
             # gh-1271: `z` where the parameter declared NULL as a value, `s`
-            # otherwise. Through the shared predicate, so the stub's
-            # `str | None` and this char cannot disagree.
-            fmt_chars.append(param_fmt(ptype, p.get("default") or ""))
-
-            if "parse_type" in meta:
-                raw = f"{pname}_raw"
-                # gh-432 drive-by: seed the raw local with the gh-240
-                # default (not parse_zero) so an omitted defaulted arg
-                # yields the default — previously only the non-parse_type
-                # branch honoured `default`, so e.g. `decim: uint32_t = 1`
-                # silently parsed as 0 when omitted. gh-1887: through the
-                # one seed, which spells a `Py_complex` default as the
-                # struct's `{re, im}`; verbatim did not compile.
-                _raw_init = parse_seed(ptype, p.get("default") or "")
-                decl_lines.append(
-                    f"    {meta['parse_type']} {raw} = {_raw_init};"
-                )
-                addr_exprs.append(f"&{raw}")
-                conv_lines.append(
-                    f"    {disp} {pname} = {meta['to_c'](pname)};"
-                )
-            else:
-                # gh-240: a scalar with a `default` is optional — seed its C
-                # local with the default literal so an omitted arg yields it.
-                init = p.get("default") or meta["zero"]
-                decl_lines.append(f"    {disp} {pname} = {init};")
-                addr_exprs.append(f"&{pname}")
-
+            # otherwise -- `scalar_arg_c` asks the shared predicate, so the
+            # stub's `str | None` and this char cannot disagree. gh-2035: the
+            # one tuple-parse slot, which a composer's rows call too.
+            decl, fmt, addr, conv = scalar_arg_c(
+                pname, ptype, p.get("default") or ""
+            )
+            decl_lines.append(decl)
+            fmt_chars.append(fmt)
+            addr_exprs.append(addr)
+            if conv:
+                conv_lines.append(conv)
             call_args.append(pname)
 
     # gh-238/gh-240: named methods are positional-OR-keyword (matching functions
