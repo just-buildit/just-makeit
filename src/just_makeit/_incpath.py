@@ -88,8 +88,9 @@ def manifest(owner: Owner) -> dict:
     of owner: one answer to "which project is this", not two.
 
     A path owner is answered from a cache, because it is asked per include
-    spelled and per symbol stemmed: 16,274 times in one `jm apply` of
+    spelled and per symbol stemmed: 10,116 times in one `jm apply` of
     doppler, against ~130 ms for each `C.load` (measured 2026-10-08).
+    Checking the stamps below costs ~0.3 ms an ask there.
 
     gh-2095: the cache is valid exactly while every input of `C.load` is
     unchanged. It was keyed on the central manifest alone, but `C.load`
