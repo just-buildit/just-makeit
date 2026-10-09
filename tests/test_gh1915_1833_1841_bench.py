@@ -21,6 +21,7 @@ faithful slow run.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -50,6 +51,13 @@ def _bench_project(tmp_path: Path) -> Path:
     site-packages (python finds the venv from the path it was launched by),
     so pytest-benchmark would look absent.
     """
+    # The wrapped interpreter is this test's own. A pytest-benchmark it lacks
+    # would make `jm bench` report "not installed" and skip every case, which
+    # reads as a pass. Fail here instead, and name the declaration to fix.
+    assert importlib.util.find_spec("pytest_benchmark") is not None, (
+        "pytest-benchmark is missing from the test interpreter; declare it "
+        "in PYTEST_DEPS (Makefile)"
+    )
     r = run_cli(
         "new", "p", "--object", "g", "--pytest-benchmark", cwd=tmp_path
     )
