@@ -14,6 +14,33 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import _config as C
+from ._bench import _project_python
+
+# gh-1950. pytest exits 5 when it collects nothing. A functions-only module
+# builds an extension and generates no Python suite, so 5 is a shape, not a
+# failure. `run_generated_pytest` reads it the same way.
+_NO_TESTS_COLLECTED = 5
+
+# gh-1896. Packaging runs under the PROJECT's interpreter, because
+# just_buildit lives in the project's environment, not in jm's own (a
+# `uv tool install` has neither it nor numpy). The child prints the wheel's
+# path so jm does not have to capture it.
+_PACKAGE_SNIPPET = """\
+import os, sys
+try:
+    import just_buildit
+except ImportError:
+    print("error: just-buildit is not installed in the project's interpreter.",
+          file=sys.stderr)
+    print("Install it with:  <project python> -m pip install just-buildit",
+          file=sys.stderr)
+    sys.exit(1)
+wheel_dir = sys.argv[1]
+name = just_buildit.build_wheel(wheel_dir)
+print("just-makeit: " + os.path.join(wheel_dir, name))
+"""
+
 
 def _require(exe: str) -> str:
     path = shutil.which(exe)
@@ -23,11 +50,38 @@ def _require(exe: str) -> str:
     return path
 
 
+def _backend(root: Path) -> str:
+    """Return the project's declared build backend, ``cmake`` or ``make``.
+
+    gh-1896. The backend is ``[project] build``, the one answer
+    ``C.build_system`` reads. A directory with no manifest (a hand-written
+    CMake tree) has no declaration, so it is the default, ``cmake``.
+    """
+    return C.build_system(C.load(root))
+
+
+def _make(root: Path, python: str, targets: list[str]) -> None:
+    """Run the project's Makefile, pointing its ``PYTHON`` at *python*.
+
+    gh-1896. The make backend's Makefile is the SSOT for how its project is
+    built and tested (CLAUDE.md), so jm asks ``make`` rather than
+    re-deriving its steps. ``PYTHON=`` on the command line overrides the
+    Makefile's ``?=`` default, so the extension and the unittest run under
+    the project's own interpreter.
+    """
+    make = _require("make")
+    cmd = [make, f"PYTHON={python}", *targets]
+    print(f"just-makeit: {shlex.join(cmd)}", flush=True)
+    result = subprocess.run(cmd, cwd=str(root))
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
 def _cmake_configure(
     root: Path, build_dir: Path, build_type: str = "Release"
 ) -> None:
     cmake = _require("cmake")
-    python = sys.executable
+    python = _project_python(root)
     cmd = [
         cmake,
         "-B",
@@ -39,7 +93,9 @@ def _cmake_configure(
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
     ]
     print(f"just-makeit: {shlex.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd=str(root), timeout=600)
+    # gh-1832. No timeout: a cold build can outrun any fixed budget (603 s
+    # measured on a slow board), and the CI job bounds its own wall clock.
+    result = subprocess.run(cmd, cwd=str(root))
     if result.returncode != 0:
         sys.exit(result.returncode)
 
@@ -49,7 +105,8 @@ def _cmake_build(root: Path, build_dir: Path) -> None:
     nproc = os.cpu_count() or 4
     cmd = [cmake, "--build", str(build_dir), "--parallel", str(nproc)]
     print(f"just-makeit: {shlex.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd=str(root), timeout=600)
+    # gh-1832. Untimed, for the same reason as `_cmake_configure`.
+    result = subprocess.run(cmd, cwd=str(root))
     if result.returncode != 0:
         sys.exit(result.returncode)
 
@@ -61,54 +118,69 @@ def _ensure_built(root: Path, build_dir: Path) -> None:
 
 
 def cmd_build(rest: list[str]) -> None:
-    """Configure + build C extension, then package a wheel via just-buildit."""
-    root = Path.cwd()
-    build_dir = root / "build"
+    """Build the project with its declared backend, then package a wheel.
 
-    _ensure_built(root, build_dir)
+    gh-1896. The backend is read from ``[project] build``: ``cmake`` runs the
+    CMake configure and build, ``make`` runs the Makefile's default target.
+    Packaging then calls ``just_buildit.build_wheel`` in the project's
+    interpreter, which is the PEP 517 hook the project's own pyproject names.
+    """
+    root = Path.cwd()
+    python = _project_python(root)
+
+    if _backend(root) == "make":
+        _make(root, python, [])
+    else:
+        _ensure_built(root, root / "build")
 
     wheel_dir = Path(rest[0]) if rest else root / "dist"
     wheel_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        import just_buildit
-    except ImportError:
-        print("error: just-buildit is not installed.", file=sys.stderr)
-        print("Install it with:  pip install just-buildit", file=sys.stderr)
-        sys.exit(1)
-
     print(f"just-makeit: packaging wheel into {wheel_dir}", flush=True)
-    name = just_buildit.build_wheel(str(wheel_dir))
-    print(f"just-makeit: {wheel_dir / name}")
+    result = subprocess.run(
+        [python, "-c", _PACKAGE_SNIPPET, str(wheel_dir)], cwd=str(root)
+    )
+    if result.returncode != 0:
+        sys.exit(result.returncode)
 
 
-def _has_pytest() -> bool:
+def _has_pytest(python: str) -> bool:
     r = subprocess.run(
-        [sys.executable, "-c", "import pytest"],
+        [python, "-c", "import pytest"],
         capture_output=True,
-        timeout=600,
     )
     return r.returncode == 0
 
 
 def _run_python_tests(root: Path, extra: list[str]) -> bool:
-    if _has_pytest():
-        cmd = [sys.executable, "-m", "pytest", "src/", "-v", *extra]
+    """Run the project's Python tests under the project's interpreter.
+
+    gh-1896: ``sys.executable`` here was jm's own, so a ``jm test`` run from
+    an installed tool ran the project's tests without its numpy or pytest.
+    gh-1950: a project with no Python tests (only module functions) collects
+    nothing, and pytest's exit 5 for that is a pass. Only pytest says 5; the
+    unittest fallback's empty run already exits 0.
+    """
+    python = _project_python(root)
+    if _has_pytest(python):
+        cmd = [python, "-m", "pytest", "src/", "-v", *extra]
         label = "pytest"
+        passing = (0, _NO_TESTS_COLLECTED)
     else:
-        cmd = [
-            sys.executable,
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "src/",
-            "-v",
-        ]
+        cmd = [python, "-m", "unittest", "discover", "-s", "src/", "-v"]
         label = "unittest discover"
+        passing = (0,)
 
     print(f"just-makeit: {label}: {shlex.join(cmd)}", flush=True)
-    return subprocess.run(cmd, cwd=str(root), timeout=600).returncode == 0
+    # gh-1832. Untimed, as the `jm-run-tests` precedent leaves its tests.
+    returncode = subprocess.run(cmd, cwd=str(root)).returncode
+    if returncode == _NO_TESTS_COLLECTED:
+        print(
+            "just-makeit: pytest collected no tests (a project of only module "
+            "functions has none); passing.",
+            flush=True,
+        )
+    return returncode in passing
 
 
 def run_generated_pytest(proj: Path) -> bool:
@@ -148,9 +220,10 @@ def run_generated_pytest(proj: Path) -> bool:
         return True
     env = os.environ.copy()
     env["PYTHONPATH"] = str(src_dir)
+    # gh-1832. Untimed: the gate reads the suite's verdict, not a budget.
     r = subprocess.run(
         [
-            sys.executable,
+            _project_python(proj),
             "-m",
             "pytest",
             str(src_dir),
@@ -160,14 +233,31 @@ def run_generated_pytest(proj: Path) -> bool:
         ],
         env=env,
         cwd=str(proj),
-        timeout=600,
     )
-    return r.returncode in (0, 5)
+    return r.returncode in (0, _NO_TESTS_COLLECTED)
 
 
 def cmd_test(rest: list[str]) -> None:
-    """Build, then run CTest + pytest."""
+    """Build, then run the project's tests with its declared backend.
+
+    gh-1896. The make backend's ``make test`` owns both the C tests and the
+    Python tests, so jm runs only that. It has no slot for pytest arguments,
+    so passing any is refused rather than silently dropped. The cmake backend
+    runs CTest and then the Python suite, as before.
+    """
     root = Path.cwd()
+
+    if _backend(root) == "make":
+        if rest:
+            print(
+                "error: `jm test` passes its arguments to pytest, and the make "
+                "backend runs `make test`, which takes none.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _make(root, _project_python(root), ["test"])
+        return
+
     build_dir = root / "build"
 
     _ensure_built(root, build_dir)
@@ -175,7 +265,7 @@ def cmd_test(rest: list[str]) -> None:
     ctest = _require("ctest")
     ctest_cmd = [ctest, "--test-dir", str(build_dir), "--output-on-failure"]
     print(f"just-makeit: {shlex.join(ctest_cmd)}", flush=True)
-    r = subprocess.run(ctest_cmd, cwd=str(root), timeout=600)
+    r = subprocess.run(ctest_cmd, cwd=str(root))
     ctest_ok = r.returncode == 0
 
     pytest_ok = _run_python_tests(root, rest)
