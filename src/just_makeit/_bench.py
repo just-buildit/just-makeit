@@ -31,6 +31,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -398,6 +399,22 @@ def _python_bench_files(root: Path, python: str) -> list[str]:
         text=True,
         env=child_pytest_env(),
     )
+    # gh-1950's exit 5: pytest collected nothing, which is a project with no
+    # Python benchmarks, not a failure. Any other non-zero exit means a file
+    # did not collect (an import or syntax error), and the listing above
+    # holds only the files that did. Returning it would drop that file's
+    # results with no error; the failure is the precedent a manifest
+    # component's failed build sets: name it and stop.
+    if r.returncode not in (0, 5):
+        broken = sorted(set(_COLLECT_ERROR_RE.findall(r.stdout + r.stderr)))
+        names = ", ".join(broken) or "a file under src/"
+        print(
+            f"error: pytest could not collect {names}; jm bench would drop "
+            "its results, so it stops here.",
+            file=sys.stderr,
+        )
+        sys.stderr.write(r.stdout + r.stderr)
+        sys.exit(1)
     files: list[str] = []
     for line in r.stdout.splitlines():
         # A collected item is `path::name`; the summary lines have no `::`.
@@ -405,6 +422,11 @@ def _python_bench_files(root: Path, python: str) -> list[str]:
         if sep and path not in files:
             files.append(path)
     return files
+
+
+#: The file a collection error names: pytest prints ``ERROR <path>.py`` or
+#: ``ERROR collecting <path>.py`` for each file it could not import.
+_COLLECT_ERROR_RE = re.compile(r"^ERROR (?:collecting )?(\S+\.py)", re.M)
 
 
 def _run_python(

@@ -140,3 +140,22 @@ def test_1841_one_slow_file_costs_only_itself(tmp_path):
     assert any(t.endswith("test_slow_bench.py") for t in snap["timed_out"]), (
         snap["timed_out"]
     )
+
+
+def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
+    """review of #2145: a benchmark file that fails to collect is an error
+    that names the file, not a quiet drop from the results.
+
+    pytest exits non-zero for a collection error and still lists the files
+    that did collect, so a return on the listing alone would report fewer
+    Python results with exit 0. The gate is the scaffold plus one file that
+    cannot import.
+    """
+    proj = _bench_project(tmp_path)
+    broken = proj / "src" / "p" / "benchmarks" / "bench_broken.py"
+    broken.write_text("import no_such_module_for_jm_gate\n")
+
+    r = run_cli("bench", "--python-only", cwd=proj)
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "bench_broken.py" in r.stderr, r.stderr
