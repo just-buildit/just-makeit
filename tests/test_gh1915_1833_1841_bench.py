@@ -145,9 +145,56 @@ def test_1841_one_slow_file_costs_only_itself(tmp_path):
     names = [b["fullname"] for b in snap["benchmarks"]]
     assert any("test_fast_bench" in n for n in names), names
     assert not any("test_slow_bench" in n for n in names), names
-    assert any(t.endswith("test_slow_bench.py") for t in snap["timed_out"]), (
-        snap["timed_out"]
+    # gh-2135: the slow file is retried one benchmark at a time, so the entry
+    # names the benchmark, not the file.
+    assert any(
+        t.endswith("test_slow_bench.py::test_slow_bench")
+        for t in snap["timed_out"]
+    ), snap["timed_out"]
+
+
+MIXED_BENCH = """\
+import time
+
+
+def test_fast_bench(benchmark):
+    benchmark(lambda: sum(range(100)))
+
+
+def test_slow_bench(benchmark):
+    benchmark(lambda: time.sleep(300))
+"""
+
+
+def test_2135_a_fast_and_a_slow_benchmark_in_one_file(tmp_path):
+    """gh-2135: a file with one fast and one slow benchmark keeps the fast
+    result and names the slow benchmark in timed_out.
+
+    On the file-level budget alone the whole file is lost, the fast result
+    too, because pytest-benchmark writes its JSON once per run. The file is
+    run again one benchmark at a time, each under the same budget, so only the
+    slow one costs anything.
+    """
+    proj = _bench_project(tmp_path)
+    (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
+    (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
+    (proj / "src" / "p" / "tests" / "test_mixed_bench.py").write_text(
+        MIXED_BENCH
     )
+    with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[project.bench]\ntimeout = 15\n")
+
+    r = run_cli("bench", "--python-only", "--tag", "mixed", cwd=proj)
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    snap = _snapshot(proj, "mixed")
+    names = [b["fullname"] for b in snap["benchmarks"]]
+    assert any("test_fast_bench" in n for n in names), names
+    assert not any("test_slow_bench" in n for n in names), names
+    assert any(
+        t.endswith("test_mixed_bench.py::test_slow_bench")
+        for t in snap["timed_out"]
+    ), snap["timed_out"]
 
 
 def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
@@ -167,3 +214,49 @@ def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
 
     assert r.returncode == 1, r.stdout + r.stderr
     assert "bench_broken.py" in r.stderr, r.stderr
+
+
+IMPORT_SLEEP_BENCH = """\
+import time
+
+time.sleep(60)
+
+
+def test_never_reached(benchmark):
+    benchmark(lambda: None)
+"""
+
+
+def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
+    """gh-2135: a file whose import outlasts the budget is named, and jm stops
+    in about three budgets: the whole-tree listing, the file's run, and the
+    file's own listing. Without the listings' timeouts it would wait out the
+    import, which is worse than main."""
+    import time as _time
+
+    proj = _bench_project(tmp_path)
+    (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
+    (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
+    (proj / "src" / "p" / "tests" / "test_import_slow.py").write_text(
+        IMPORT_SLEEP_BENCH
+    )
+    with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[project.bench]\ntimeout = 8\n")
+
+    t0 = _time.monotonic()
+    r = run_cli("bench", "--python-only", "--tag", "slowimport", cwd=proj)
+    elapsed = _time.monotonic() - t0
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    # Three budgets: the whole-tree listing, the file's run, and the file's own
+    # listing, each at most 8 s. Without the bounds it waits out the 60 s import.
+    assert elapsed < 4 * 8, (
+        f"took {elapsed:.0f} s, more than three 8 s budgets"
+    )
+    # No benchmark is ever listed, so no snapshot is written; the file is named
+    # on the output, as every timed-out run is.
+    out = r.stdout + r.stderr
+    assert (
+        "timeout    pytest --benchmark-only src/p/tests/test_import_slow.py"
+        in out
+    ), out
