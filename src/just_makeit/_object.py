@@ -2002,11 +2002,15 @@ def _regenerate_module_now(
 ) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
-    # cname drives the flat native dir / file prefixes; leaf is the .so basename
-    # and the collocated-object name; pypath is the nested Python dir. For a
-    # flat module all three equal `module` (zero churn).
+    # cname drives the flat native dir / file prefixes; leaf is the .so basename;
+    # pypath is the nested Python dir. For a flat module all three equal
+    # `module` (zero churn).
     mp = C.module_paths(module)
     cname = mp.cname
+    # gh-1949: the object whose directory IS the module's -- named for the
+    # cname, never the leaf (an object `filters` in `dsp.filters` lives in
+    # native/src/filters/, a directory of its own).
+    collocated = C.collocated_object(cfg, module)
     Module = _to_title(cname)
     # gh-523: `package` redirects every Python-side artifact (.so output dir,
     # .pyi, __init__ re-exports, tests/, benchmarks/) into a sibling package;
@@ -2153,9 +2157,9 @@ def _regenerate_module_now(
     # <mod>_core; the function sources are appended to that library below.
     # Non-collocated: we define <mod>_core separately so that module-level
     # functions are compiled and linked in.
-    # A collocated object shares the module's leaf name (e.g. module "a.fft",
-    # object "fft"): CMAKE_LISTS_OBJECT_CORE already defines <leaf>_core.
-    has_collocated = mp.leaf in object_names
+    # A collocated object shares the module's cname (e.g. module "a.fft",
+    # object "a_fft"): CMAKE_LISTS_OBJECT_CORE already defines <cname>_core.
+    has_collocated = collocated is not None
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
     inc_dirs_extra = (
         "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
@@ -2216,7 +2220,7 @@ def _regenerate_module_now(
     _varargs_srcs: list[str] = []
     for _obj, _ctx_ in zip(object_names, comp_ctxs):
         for _bf in _ctx_.get("varargs_binding_files", []):
-            if _obj == mp.leaf:
+            if _obj == collocated:
                 _varargs_srcs.append(_bf)
             else:
                 _varargs_srcs.append(f"../{_obj}/{_bf}")
@@ -2250,7 +2254,7 @@ def _regenerate_module_now(
     # have _methods.c — stubs go in _core.c.
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
-        if obj == mp.leaf:
+        if obj == collocated:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
@@ -2346,8 +2350,8 @@ def _regenerate_module_now(
     # find nothing and re-emit the colliding target on every apply. Same
     # override, and the same reason, as the sacred-header lookup above.
     # gh-1055: what the PROJECT claims, and what this module's OWN objects
-    # already emit. A collocated module-object -- a module whose `objects`
-    # list contains its own name -- writes `test_<obj>_core` into the very
+    # already emit. A collocated module-object -- the one named for the
+    # module's cname -- writes `test_<obj>_core` into the very
     # same CMakeLists this module writes to, so gh-1034's identically-named
     # module pair is a second `add_executable` with one name in one file and
     # cmake refuses to configure at all.

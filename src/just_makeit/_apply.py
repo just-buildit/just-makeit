@@ -2668,8 +2668,8 @@ def _sync_aggregates(
             # the link block once it already existed, dropping new deps). The
             # reconcile preserves component extra_include_dirs and user external
             # if(VAR) blocks. Collocated objects share the module CMakeLists
-            # (handled above).
-            if obj != mod:
+            # (handled above); gh-1949: which one that is, the writers' rule.
+            if obj != C.collocated_object(cfg, mod):
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
                 temp_cmake = (
                     temp_root / "native" / "src" / obj / "CMakeLists.txt"
