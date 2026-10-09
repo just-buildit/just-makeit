@@ -51,7 +51,18 @@ def _make_project(tmp_path: Path, name: str, *args: str) -> Path:
     """Scaffold *name* under *tmp_path* with ``just-makeit new``."""
     r = run_cli("new", name, *args, cwd=tmp_path)
     assert r.returncode == 0, r.stderr
-    return tmp_path / name
+    # The wheel's repair step (auditwheel / delvewheel) is not under test here,
+    # and a CI image without patchelf dies in it. Turning it off keeps these
+    # tests about the build backend, and makes them run on any box.
+    proj = tmp_path / name
+    pp = proj / "pyproject.toml"
+    body = pp.read_text(encoding="utf-8")
+    old_tbl = 'command = "make just-build"\n'
+    assert body.count(old_tbl) == 1, "scaffold's [tool.just-buildit] changed"
+    pp.write_text(
+        body.replace(old_tbl, old_tbl + "repair = false\n"), encoding="utf-8"
+    )
+    return proj
 
 
 def _functions_only_module(tmp_path: Path) -> Path:
