@@ -709,9 +709,9 @@ def _leading_docstring(text: str) -> str:
     """The module docstring at the top of *text*, trailing blank lines included.
 
     The inverse of :func:`_merge_module_docstring`'s input: it reads back what
-    that function (or the ``MODULE_INIT_PY`` template) wrote, so ``apply`` can
-    carry a freshly rendered docstring onto the real file without re-deriving
-    it from the manifest. Empty when there is none.
+    that function (or the ``MODULE_INIT_PY_EMPTY`` template) wrote, so
+    ``apply`` can carry a freshly rendered docstring onto the real file
+    without re-deriving it from the manifest. Empty when there is none.
 
     >>> _leading_docstring('\"\"\"Filters.\"\"\"\\n\\nimport os\\n')
     '\"\"\"Filters.\"\"\"\\n\\n'
@@ -2453,21 +2453,18 @@ def _regenerate_module_now(
     if existed:
         base = init_path.read_text(encoding="utf-8")
     else:
-        # Fresh scaffold: render the template with the module's own exports,
-        # then fold in any reexports through the same idempotent merge path.
+        # Fresh scaffold: the template with no exports, which the merge below
+        # fills -- the one path for a module with members and one without
+        # (gh-2070). With none, the merge writes no import line, since an
+        # empty `from .<leaf> import` is a SyntaxError.
         base = R.render(
-            R.MODULE_INIT_PY,
-            {
-                **Ctx.make_module_ctx(
-                    module,
-                    pkg,
-                    C.module_package(cfg, module),
-                    C.module_doc(cfg, module),
-                ),
-                "Module": Module,
-                "object_imports": ", ".join(all_exports),
-                "object_all": ", ".join(f'"{name}"' for name in all_exports),
-            },
+            R.MODULE_INIT_PY_EMPTY,
+            Ctx.make_module_ctx(
+                module,
+                pkg,
+                C.module_package(cfg, module),
+                C.module_doc(cfg, module),
+            ),
         )
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
     # must match/emit against the leaf, not the dotted id.
