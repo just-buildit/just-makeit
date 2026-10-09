@@ -32,8 +32,10 @@ GATE: a manifest `doc` is reported as a duplicated numpy section exactly
   beside it on some face". The test needs no list of positions. A new table
   that renders its `doc` alone fails until it is in `DOC_STANDS_ALONE`. A
   renderer that starts generating sections beside a listed table fails
-  until its entry goes. `RATCHET` pins the rows whose renderer decides per
-  row (gh-2103).
+  until its entry goes. Four tables decide per row (gh-2103): a module
+  function, a handle method and factory, and a codec-pack method. The
+  detector asks each row's own renderer, and this measures both answers
+  of each.
 """
 
 from __future__ import annotations
@@ -71,21 +73,6 @@ ISSUE_DOC = (
     "n : int, optional\n"
     "    Records wanted.\n"
 )
-
-#: Rows that render their `doc` alone yet are reported, because their
-#: renderer generates a section for SOME rows of the table and a table-level
-#: exemption cannot say which. It may only shrink.
-RATCHET = {
-    # A codec-pack method: `_codec.render_method_pyi` writes the doc alone.
-    "fir.methods.add_kw.doc": 2103,
-    # A module function with no header Doxygen and no documented param.
-    "module.dsp.functions.fnop.doc": 2103,
-    "module.dsp.functions.fone.doc": 2103,
-    # A handle factory with no init_params; a handle method with no params
-    # and a None return.
-    "module.ringbuf.factories.zzfactory.doc": 2103,
-    "module.ringbuf.methods.clear.doc": 2103,
-}
 
 
 def _jm(*args: str, cwd: Path) -> None:
@@ -430,7 +417,7 @@ def measured(tmp_path_factory) -> "dict[str, tuple]":
     _jm("apply", cwd=root)
     reported = {
         m.group(0)
-        for d in D.manifest_docs_with_sections(C.load(root))
+        for d in D.manifest_docs_with_sections(C.load(root), root)
         for m in [re.search(r"ZZD\d{3}", d.summary)]
         if m
     }
@@ -466,30 +453,36 @@ class TestEveryPosition:
             for where, (reported, beside, _) in measured.items()
             if reported != bool(beside)
         }
-        false_pos = sorted(w for w in wrong - set(RATCHET) if measured[w][0])
-        false_neg = sorted(
-            w for w in wrong - set(RATCHET) if not measured[w][0]
-        )
+        false_pos = sorted(w for w in wrong if measured[w][0])
+        false_neg = sorted(w for w in wrong if not measured[w][0])
         assert not false_pos, (
             "reported as a duplicated section, but jm generates no section "
             "beside it on any face -- if its whole table renders the doc "
-            "alone, add the table to _docstring.DOC_STANDS_ALONE:\n  "
-            + "\n  ".join(false_pos)
+            "alone, add the table to _docstring.DOC_STANDS_ALONE; if its "
+            "renderer decides per row, add the table to "
+            "_docstring._row_docstring:\n  " + "\n  ".join(false_pos)
         )
         assert not false_neg, (
             "jm generates a section beside it, and it is not reported -- "
             "its table is in _docstring.DOC_STANDS_ALONE and should not be:"
             "\n  " + "\n  ".join(f"{w}: {measured[w][1]}" for w in false_neg)
         )
-        fixed = sorted(set(RATCHET) - wrong)
-        assert not fixed, (
-            "no longer a false positive: delete its RATCHET entry\n  "
-            + "\n  ".join(fixed)
-        )
 
     def test_the_positives_still_report(self, measured: dict) -> None:
-        """An object method's sectioned doc is the finding gh-1493 left."""
-        for where in ("eng.methods.exec.doc", "eng.methods.tick.doc"):
+        """An object method's sectioned doc is the finding gh-1493 left.
+
+        And each per-row table's row that DOES get a section (gh-2103): a
+        function with a documented param, a handle method with params, a
+        factory with `init_params`. Without these the per-row answer could
+        exempt a whole table and pass.
+        """
+        for where in (
+            "eng.methods.exec.doc",
+            "eng.methods.tick.doc",
+            "module.dsp.functions.fmap.doc",
+            "module.ringbuf.methods.push.doc",
+            "module.ringbuf.factories.zzfac2.doc",
+        ):
             reported, beside, _ = measured[where]
             assert reported and beside, (where, beside)
 

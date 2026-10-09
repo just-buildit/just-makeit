@@ -2611,6 +2611,44 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
     return ret, py_params, parts
 
 
+def _module_fn_blocks(root, module: str) -> dict:
+    """The Doxygen blocks of *module*'s header, for its function stubs.
+
+    gh-384: free-function docstrings (incl. @code Examples) come from the
+    module header Doxygen, same as object methods. Only when a project root
+    is supplied (the apply/regenerate path); direct callers without a root
+    keep the historical one-line stubs. Local import avoids a cycle
+    (_object imports _stubs); the loader honours _object's apply-replay
+    _DOC_ROOT_OVERRIDE just like the per-object blocks.
+    """
+    if root is None:
+        return {}
+    from ._object import _load_module_doc_blocks
+
+    return _load_module_doc_blocks(root, module)
+
+
+def _fn_block(cfg: dict, blocks: dict, fn: dict):
+    """The header block documenting module function *fn*, or None.
+
+    gh-1591: the header documents the C SYMBOL -- `<p>_<fn>` under a
+    c_prefix -- so the block is found by the stem; keyed by the bare name,
+    every module function's Doxygen fell off the stub in silence.
+    """
+    return blocks.get(CSYM.stem(cfg, fn["name"]))
+
+
+def function_stub(cfg: dict, root, module: str, fn: dict) -> str:
+    """Module function *fn*'s stub, as `make_module_pyi` writes it.
+
+    gh-2103: `_docstring.manifest_docs_with_sections` asks THIS whether the
+    function's `doc` gets a generated numpy section beside it, rather than
+    restating `_fn_stub`'s rule: with no header Doxygen and no documented
+    param it does not, and the `doc` duplicates nothing.
+    """
+    return _fn_stub(fn, _fn_block(cfg, _module_fn_blocks(root, module), fn))
+
+
 def _fn_stub(fn: dict, block=None) -> str:
     name = fn["name"]
     doc = fn.get("doc", "")
@@ -3012,18 +3050,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # gh-384: header Doxygen for free functions, stashed transiently on cfg by
     # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
     # the module has no header / hand-written function comments.
-    # gh-384: synthesize free-function docstrings (incl. @code Examples) from
-    # the module header Doxygen, same as object methods. Only when a project
-    # root is supplied (the apply/regenerate path); direct callers without a
-    # root keep the historical one-line stubs. Local import avoids a cycle
-    # (_object imports _stubs); the loader honours _object's apply-replay
-    # _DOC_ROOT_OVERRIDE just like the per-object blocks.
-    if root is not None:
-        from ._object import _load_module_doc_blocks
-
-        fn_doc_blocks = _load_module_doc_blocks(root, module)
-    else:
-        fn_doc_blocks = {}
+    fn_doc_blocks = _module_fn_blocks(root, module)
 
     if objects:
         parts.append("")
@@ -3066,12 +3093,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             parts.append("")
 
     for fn in functions:
-        # gh-1591: the header documents the C SYMBOL -- `<p>_<fn>` under a
-        # c_prefix -- so the block is found by the stem; keyed by the bare
-        # name, every module function's Doxygen fell off the stub in silence.
-        parts.append(
-            _fn_stub(fn, fn_doc_blocks.get(CSYM.stem(cfg, fn["name"])))
-        )
+        parts.append(_fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn)))
         parts.append("")
 
     # strip trailing blank line
