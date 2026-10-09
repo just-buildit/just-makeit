@@ -380,6 +380,27 @@ Explicit defaults must be valid C literals for the type:
 > **Note:** Complex defaults are C complex literals:
 > `--state 'pole:double _Complex:1.0+2.0*I'` (the stub shows `(1+2j)`).
 
+A default is one value with two spellings. The C faces write it as declared;
+every Python face (the generated test, the stub's signature and doctest, the
+runtime docstring) writes the same value in Python (gh-1946):
+
+| Declared (C)           | Python spelling                       |
+| ---------------------- | ------------------------------------- |
+| `0.1L`, `1.5f`, `7ULL` | `0.1`, `1.5`, `7` (suffix dropped)    |
+| `017` (octal), `0x1F`  | `0o17`, `0x1F`                        |
+| `2` in a `double`      | `2.0`                                 |
+| `0.1f` in a `double`   | `0.10000000149011612` (what C stores) |
+
+Two literals have no Python spelling and are refused where they are declared:
+an octal with an 8 or 9 in it (`08`, which C refuses too), and a floating
+literal for an integer type (`1.5` or `1e3` into an `int`, which C converts
+silently and Python refuses).
+
+A stub's doctest prints what the getter returns, which for a `float` or
+`float _Complex` field is the declared value rounded to single precision:
+`--state 'z:float _Complex:0.1'` reads back `(0.10000000149011612+0j)`
+(gh-1947).
+
 ## C to Python mapping
 
 Getters return the matching Python scalar (`float`, `int`, `complex`, `bool`);
