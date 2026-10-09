@@ -1038,14 +1038,6 @@ def findings(root: Path) -> "frozenset[str]":
     before = _tree(root)
     a = run_cli("apply", cwd=root)
     after = _tree(root)
-    if a.returncode and _declares_nothing(root):
-        # `apply` refuses a manifest that declares nothing ("nothing to
-        # materialize"), and `status` stops early on one, so on such a tree
-        # (b) cannot speak and (a) checks less than it does elsewhere: the
-        # version copies and a c_dep's wiring go unchecked (gh-2076). The
-        # tree after removing the last component is one; (c) still sees it.
-        assert after == before, "a refused `apply` wrote to the tree"
-        return frozenset(out)
     if a.returncode:
         # A manifest `apply` refuses is a tree no `apply` can reach.
         (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
@@ -1057,11 +1049,6 @@ def findings(root: Path) -> "frozenset[str]":
             )
             out.add(f"apply:{mark} {rel}")
     return frozenset(out)
-
-
-def _declares_nothing(root: Path) -> bool:
-    cfg = C.load(root)
-    return not C.components(cfg) and not C.modules(cfg)
 
 
 def _rewritten_by_apply(root: Path) -> "dict[str, bytes]":
@@ -1096,11 +1083,10 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
         (other / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, other / rel)
     out = set()
-    if not _declares_nothing(other):
-        a = run_cli("apply", cwd=other)
-        if a.returncode:
-            (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
-            out.add(f"fresh:refused {last}")
+    a = run_cli("apply", cwd=other)
+    if a.returncode:
+        (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
+        out.add(f"fresh:refused {last}")
     ours, theirs = _rewritten_by_apply(root), _rewritten_by_apply(other)
     for rel in set(ours) | set(theirs):
         if ours.get(rel) != theirs.get(rel):
