@@ -199,10 +199,9 @@ class TestATimeoutCostsOneBenchmark:
                 project, do_python=False, check=True, timeout=1.0, as_json=True
             )
         assert exc.value.code == 1
-        # The progress lines (`  run  bench_...`) share stdout with the JSON
-        # document today; read the document from where it starts.
-        stdout = capsys.readouterr().out
-        out = json.loads(stdout[stdout.index("\n{") + 1 :])
+        # gh-1833: stdout is the document alone; the progress lines went to
+        # stderr, so the whole of stdout parses.
+        out = json.loads(capsys.readouterr().out)
         assert out["timed_out"] == ["bench_slow_core"]
         missing = [
             r["name"] for r in out["results"] if r["status"] == "missing"
