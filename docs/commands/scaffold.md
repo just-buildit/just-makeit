@@ -86,14 +86,21 @@ stay in a single flat dir (`native/src/dsp_filters/`). Objects are added the
 same way: `just-makeit object fir --module dsp.filters`.
 
 A module can also land its Python artifacts **inside an existing package**
-instead of one named after itself, via the manifest-only `package` key
-(there is no CLI flag — add it to `just-makeit.toml` and run `just-makeit apply`):
+instead of one named after itself, with `--package` (the `package` key):
+
+```sh
+just-makeit module wfm_reader --package wfm
+```
 
 ```toml
 [module.wfm_reader]
 objects = ["wfm_reader"]
 package = "wfm"          # .so, .pyi, tests/ and benchmarks/ go to src/<pkg>/wfm/
 ```
+
+Declare it when you create the module. Added to the manifest later, the key
+moves the module but leaves what `jm module` already wrote in
+`src/<pkg>/wfm_reader/` behind, and `status` does not report it (gh-2081).
 
 `from <pkg>.wfm import Reader` then works alongside whatever `wfm` already
 exports — the package's `__init__.py` gains the re-export rather than being
@@ -128,6 +135,7 @@ and records `[module.<name>]` with an empty `objects` list in
 | `--extra-include-dirs DIR` | CMake include path for the module (e.g. `${DOPPLER_INCLUDE_DIR}`). Repeatable.                                                    |
 | `--extra-link-libs TARGET` | CMake link target for the module (e.g. `PkgConfig::DOPPLER`). Repeatable.                                                         |
 | `--extra-types NAME`       | A hand-written Python type, defined in `<name>_ext_extra.c`, to register in `PyInit_`. Repeatable.                                |
+| `--package DIR`            | Land the module's Python in `src/<pkg>/DIR/` (`[module.<name>] package`), above. `DIR` is `/`-separated identifiers, or `.`.      |
 
 Types are added with `just-makeit object`. Module-level functions are added
 with `just-makeit function`.
