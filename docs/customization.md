@@ -90,6 +90,25 @@ the directory, so a module object that shares its module's directory shares its
 hook. `jm regenerate` and `jm remove` keep it, and an apply that is about to
 drop a statement jm itself never writes names it and points here.
 
+An OBJECT library of your own belongs here too, with the statements that
+configure it. `jm apply` refuses to rewrite a generated CMakeLists that
+declares one, writing nothing and naming the hook to move it to: the rewrite
+would erase it, and leave whatever wires it naming a target that is gone
+(gh-1840). Fold it into the C library from the hook or from the root
+`CMakeLists.txt` (not directly beneath an `add_subdirectory()` line, which
+`apply` rewrites):
+
+```cmake
+add_library(engine_helpers OBJECT helpers.c)
+set_target_properties(engine_helpers PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:engine_helpers>)
+target_sources(<pkg>_lib_static PRIVATE $<TARGET_OBJECTS:engine_helpers>)
+```
+
+`jm status` reads a library declared in the hook like one in a CMakeLists:
+`UNWIRED` names it while nothing folds it in, and a root line wiring it is
+not mistaken for one naming a target that is gone.
+
 The prologue exists because the other two cannot serve the shared case: a
 helper included *after* its callers is not available to them, so two objects
 needing the same hand-written function had nowhere to put it that both
