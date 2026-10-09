@@ -253,10 +253,14 @@ class TestTheDetector:
         _add_doc(project, "objects/eng.toml", 'name = "span"', HEADED)
         _add_doc(project, "objects/eng.toml", "[eng]", HEADED)
         _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
+        # gh-2059: a property's `doc` is its whole docstring, with nothing
+        # generated beside it, so `span` is not a finding -- measured for
+        # every table in tests/test_gh2059_doc_stands_alone.py. `fmap`
+        # (no Doxygen, no documented param) renders alone too, and is still
+        # reported: gh-2103.
         assert _found(project) == {
             "eng.doc": "duplicated",
             "eng.methods.exec.doc": "duplicated",
-            "eng.properties.span.doc": "duplicated",
             "module.dsp.functions.fmap.doc": "duplicated",
         }
 

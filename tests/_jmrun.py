@@ -102,7 +102,13 @@ def run_cli(
     >>> bool(r.stdout.strip())
     True
     """
+    from just_makeit import _incpath
     from just_makeit._cli import main
+
+    # gh-2095: a child starts with jm's manifest cache empty, so a file the
+    # test changed by hand since the last command is read fresh. The cache
+    # follows jm's OWN writes by itself; a hand edit is not one.
+    _incpath._CFG_CACHE.clear()
 
     # Captured at the FILE DESCRIPTOR, not just `sys.stdout`. jm shells out
     # to cmake, ctest and pytest, and a child writes to fd 1 -- which
