@@ -50,7 +50,35 @@ PREFIXED_SCHEMA = 8
 #: as a dict. Never a bare package name: a name does not say which layout.
 Owner = Union[Path, dict]
 
-_CFG_CACHE: "dict[tuple[str, int], dict]" = {}
+#: gh-2095: per manifest path, the merged manifest `C.load` built, the
+#: `include` patterns it resolved, and the stamp of every file it read.
+_CFG_CACHE: "dict[str, tuple[list, tuple, dict]]" = {}
+
+
+def _stamp(path: Path) -> "tuple[str, int, int]":
+    """*path*, its mtime and its size: what moves when the file is written.
+
+    Size beside mtime because a file's mtime has the kernel's coarse tick,
+    so two writes inside one tick share it.
+    """
+    st = path.stat()
+    return (str(path), st.st_mtime_ns, st.st_size)
+
+
+def _stamps(root: Path, head: tuple, includes: list) -> tuple:
+    """The stamp of every file `C.load(root)` reads: the manifest (*head*),
+    `pyproject.toml` (an omitted ``[project] version`` is read from it,
+    gh-1283), and each fragment its *includes* resolve to, through the same
+    `_resolve_includes` `C.load` calls -- so a fragment added, removed or
+    rewritten moves the key exactly when it moves the merge."""
+    from . import _config as C
+
+    pyproject = root / "pyproject.toml"
+    return (
+        head,
+        _stamp(pyproject) if pyproject.is_file() else None,
+        *(_stamp(p) for p in C._resolve_includes(root, includes)),
+    )
 
 
 def manifest(owner: Owner) -> dict:
@@ -58,6 +86,21 @@ def manifest(owner: Owner) -> dict:
 
     Shared with :mod:`_csym` (gh-1591), whose functions take the same kind
     of owner: one answer to "which project is this", not two.
+
+    A path owner is answered from a cache, because it is asked per include
+    spelled and per symbol stemmed: 16,274 times in one `jm apply` of
+    doppler, against ~130 ms for each `C.load` (measured 2026-10-08).
+
+    gh-2095: the cache is valid exactly while every input of `C.load` is
+    unchanged. It was keyed on the central manifest alone, but `C.load`
+    merges `objects/*.toml` and `modules/*.toml` too, so in one process a
+    command that wrote only a fragment (`jm object`, `jm method` on a split
+    layout) left every later reader -- `_csym`'s component test, a
+    component's class name, the doc reader's methods -- on the manifest
+    from before the write. The key is now the stamp (mtime and size) of
+    the manifest and of every fragment its `include` resolves to; and
+    inside `C.deferred_save`, where `C.load` serves the pending write
+    rather than the disk, so does this.
     """
     if isinstance(owner, dict):
         return owner
@@ -81,12 +124,34 @@ def manifest(owner: Owner) -> dict:
         # `C.schema_version` reads as schema 1 -- the legacy layout, the only
         # one there was before a manifest could say otherwise.
         return {}
-    key = (str(toml), toml.stat().st_mtime_ns)
-    if key not in _CFG_CACHE:
-        from . import _config as C
+    from . import _config as C
 
-        _CFG_CACHE[key] = C.load(toml.parent)
-    return _CFG_CACHE[key]
+    root = toml.parent
+    # `C.load` answers from the pending write inside a deferral (gh-764),
+    # and every save there replaces it, so a disk stamp says nothing about
+    # it. Served as is, not copied: like a cached manifest, it is shared
+    # with every reader, and readers only read.
+    if C._DEFERRED is not None:
+        pending = C._DEFERRED.get(C._deferral_key(root))
+        if pending is not None:
+            return pending
+    # Stamped BEFORE the load, so a write racing it leaves an older stamp
+    # and the next ask reloads rather than trusting a newer one.
+    head = _stamp(toml)
+    hit = _CFG_CACHE.get(head[0])
+    # The manifest first: its `include` is what the cached patterns are,
+    # so they are only worth resolving while it is unchanged.
+    if (
+        hit is not None
+        and hit[1][0] == head
+        and hit[1] == _stamps(root, head, hit[0])
+    ):
+        return hit[2]
+    includes = C.load_manifest(root).get("include") or []
+    stamps = _stamps(root, head, includes)
+    cfg = C.load(root)
+    _CFG_CACHE[head[0]] = (includes, stamps, cfg)
+    return cfg
 
 
 def prefixed(owner: Owner) -> bool:
@@ -133,7 +198,10 @@ def prefix(owner: Owner) -> str:
     >>> prefix({"project": {"name": "my_proj", "schema": "8"}})
     'my_proj/'
     """
-    return f"{_pkg(owner)}/" if prefixed(owner) else ""
+    # One manifest for both questions: a path owner is a cache lookup that
+    # stamps every fragment (gh-2095), and this is jm's most-asked one.
+    cfg = manifest(owner)
+    return f"{_pkg(cfg)}/" if prefixed(cfg) else ""
 
 
 def include(name: str, owner: Owner) -> str:
