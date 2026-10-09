@@ -58,7 +58,7 @@ def _fn_module_project(tmp_path: Path) -> Path:
         root,
         "clamp",
         "util",
-        params=[("x", "double")],
+        params=[("x", "double[]")],
         out_type="double",
     )
     return root
@@ -152,7 +152,7 @@ class TestModuleTargets:
             root,
             "scale",
             "util",
-            params=[("x", "double")],
+            params=[("x", "double[]")],
             out_type="double",
         )
         mod_cmake = (
@@ -169,7 +169,7 @@ class TestModuleTargets:
             root,
             "scale",
             "util",
-            params=[("x", "double")],
+            params=[("x", "double[]")],
             out_type="double",
         )
         mod_cmake = (
@@ -196,7 +196,7 @@ class TestModuleTargets:
                 root,
                 name,
                 "util",
-                params=[("x", "double")],
+                params=[("x", "double[]")],
                 out_type="double",
             )
             assert "add_executable(bench_util_core" in mod_cmake.read_text(
@@ -213,7 +213,7 @@ class TestModuleTargets:
             root,
             "scale",
             "util",
-            params=[("x", "double")],
+            params=[("x", "double[]")],
             out_type="double",
         )
         err = capsys.readouterr().err

@@ -189,10 +189,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             # Same allowlist as the function param scalar slot — must be a
-            # type we can return as a numpy array element.
-            if not T.is_out_type(val):
+            # type we can return as a numpy array element. gh-1888: and the
+            # manifest's `T[n]` form, naming the integer param that holds
+            # the length -- asked of its element, as `_out_type_error` asks
+            # the manifest's.
+            if not T.is_out_type(T.parse_out_type(val)[0]):
                 print(
-                    f"error: --out-type '{val}' must be an array-element type.\n"
+                    f"error: --out-type '{val}' must be an array-element type"
+                    ", optionally\nwith the integer param holding its length"
+                    " ('float[n]').\n"
                     f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )

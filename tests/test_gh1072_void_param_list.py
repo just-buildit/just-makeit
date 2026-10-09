@@ -353,9 +353,22 @@ class TestThroughTheCliInterface:
         `out_type` appends `<T> *out` into a freshly built list, so the list
         is never empty while the shape is in play. Asserted so the claim in
         this module's docstring cannot quietly stop being true.
+
+        gh-1888: with no params the output's length has to be declared --
+        a fixed `out_type` has nothing to size from and is refused -- so
+        the zero-param shape is the self-sizing one, `out_size` a constant.
         """
         root = self._project(tmp_path)
-        _quiet(function_run, root, "taps", "dsp", params=[], out_type="double")
+        _quiet(
+            function_run,
+            root,
+            "taps",
+            "dsp",
+            params=[],
+            out_type="double",
+            variable_output=True,
+            out_size="64",
+        )
         header = self._header(root)
         assert offending(header) == [], header
         assert "void taps(double *out);" in header
