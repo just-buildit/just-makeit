@@ -64,9 +64,10 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit import _cli
+from just_makeit import _cli_remove
 from just_makeit import _config as C
 from just_makeit import _createonly as CO
-from just_makeit._upgrade import _manifest_fragments
+from just_makeit._upgrade import MIGRATIONS, AppRows, _manifest_fragments
 from test_cli_dispatch import _dispatched_commands
 from test_gh1648_exports_run_on_windows import CI_YML, _job_block
 from test_own_ci_matrix import _axes
@@ -135,6 +136,23 @@ def _enum(name: str, *values: str):
 
     edit.__name__ = f"enum-{name}"
     return edit
+
+
+def _app_table(root: Path) -> None:
+    """The manifest as the schema before `AppRows` spelled it: its one app
+    a single ``[app]`` table (gh-2074). That schema is read off the
+    migration table, not restated."""
+    (schema,) = [
+        n for n, steps in MIGRATIONS.items() if AppRows() in steps
+    ]  # fmt: skip
+    path = root / C.FILENAME
+    text = path.read_text(encoding="utf-8")
+    text, rows = re.subn(r"(?m)^\[\[app\]\]$", "[app]", text)
+    text, schemas = re.subn(
+        r'(?m)^schema = "\d+"$', f'schema = "{schema}"', text
+    )
+    assert (rows, schemas) == (1, 1), (rows, schemas)
+    path.write_text(text, encoding="utf-8")
 
 
 def _impl_source(root: Path) -> None:
@@ -266,11 +284,42 @@ SHAPES: "dict[str, Shape]" = {
                 "double",
             ),
             ("app", "--object", "o", *_M, "--target", "c"),
-            ("app", "--object", "o", *_M, "--target", "console"),
+            # gh-2074: an app's name is unique; this one's default (`p`)
+            # is the C app's.
+            (
+                "app",
+                "--object",
+                "o",
+                *_M,
+                "--target",
+                "console",
+                "--name",
+                "o-cli",
+            ),
             ("app", "--function", "f", *_M, "--target", "pep723"),
         ),
         _OM | {"function", "apps"},
         "mod",
+    ),  # fmt: skip
+    # gh-2074: an app as schema 8 spelled it, one `[app]` table, then the
+    # `jm upgrade` that rewrites it as `[[app]]`.
+    "app-table": Shape(
+        (),
+        (
+            ("object", "o"),
+            (
+                "app",
+                "--object",
+                "o",
+                "--target",
+                "c",
+                "--flag",
+                "gain:double:1.0:the gain",
+            ),
+            _app_table,
+            ("upgrade",),
+        ),
+        frozenset({"app-table"}),
     ),  # fmt: skip
     # gh-1985: every name added sorts before the ones already there.
     "reverse": Shape(
@@ -305,20 +354,27 @@ class Case(NamedTuple):
     In ``argv``, ``{M}`` is ``--module <id>`` when ``o`` lives in a module
     and nothing when it is standalone; ``{mod}`` is that module's id.
     ``only`` restricts the case to the named shapes; by default it runs on
-    every shape that holds ``needs``. ``refuses``, when not empty, says the
-    verb must refuse there, and is what its one ``error:`` line names: the
-    route it offers instead.
+    every shape that holds ``needs`` and nothing in ``without``. ``refuses``,
+    when not empty, says the verb must refuse there, and is what its one
+    ``error:`` line names: the route it offers instead. A verb that refuses
+    on some shapes only is two cases: one ``without`` what makes it refuse,
+    one that ``needs`` it and ``refuses`` (gh-2075).
     """
 
     argv: tuple
     needs: frozenset = frozenset({"o"})
     only: "frozenset | None" = None
     refuses: tuple = ()
+    without: frozenset = frozenset()
 
 
-def _case(*argv: str, needs=("o",), only=None, refuses=()) -> Case:
+def _case(*argv: str, needs=("o",), only=None, refuses=(), without=()) -> Case:
     return Case(
-        argv, frozenset(needs), frozenset(only) if only else None, refuses
+        argv,
+        frozenset(needs),
+        frozenset(only) if only else None,
+        refuses,
+        frozenset(without),
     )
 
 
@@ -329,6 +385,14 @@ _FN = ("--param", "x:double", "--return-type", "double")
 
 #: What `jm bind` offers instead of a declared component (gh-2072).
 _BIND_ROUTE = ("`jm regenerate o`", "`jm apply`")
+
+#: What `jm remove` offers instead of removing what the `apps` shape's apps
+#: are built from: each app's own removal (gh-2075).
+_APP_ROUTE = {
+    "o": ("`jm remove app p`", "`jm remove app o-cli`"),
+    "f": ("`jm remove app f`",),
+    "mod": ("`jm remove app p`", "`jm remove app o-cli`", "`jm remove app f`"),
+}
 
 #: verb -> case name -> Case. Held to `_cli.COMMANDS` by
 #: `test_every_mutating_command_has_a_case`: the classification is the list.
@@ -519,9 +583,23 @@ CASES: "dict[str, dict[str, Case]]" = {
                           needs=("o", "module", "members")),
     },
     "remove": {
-        "object": _case("remove", "object", "o", "--force"),
+        "object": _case("remove", "object", "o", "--force",
+                        without=("apps",)),
         "module": _case("remove", "module", "{mod}", "--force",
-                        needs=("o", "module")),
+                        needs=("o", "module"), without=("apps",)),
+        # gh-2075: a component an app is built from stays until its apps
+        # go, and the refusal names each app's own removal.
+        "an-apps-object": _case("remove", "object", "o", "--force",
+                                needs=("o", "apps"),
+                                refuses=_APP_ROUTE["o"]),
+        "an-apps-module": _case("remove", "module", "{mod}", "--force",
+                                needs=("o", "apps"),
+                                refuses=_APP_ROUTE["mod"]),
+        "an-apps-function": _case("remove", "function", "f", "--module",
+                                  "{mod}", "--force", needs=("apps",),
+                                  refuses=_APP_ROUTE["f"]),
+        # gh-2074: an app is removed by its name.
+        "app": _case("remove", "app", "p", "--force", needs=("apps",)),
         "method": _case("remove", "method", "m", "--object", "o",
                         "--force", needs=("o", "members")),
         "property": _case("remove", "property", "lvl", "--object", "o",
@@ -533,7 +611,8 @@ CASES: "dict[str, dict[str, Case]]" = {
         "state": _case("remove", "state", "x", "--object", "o", "--force",
                        needs=("o", "members")),
         "function": _case("remove", "function", "f", "--module", "{mod}",
-                          "--force", needs=("o", "function")),
+                          "--force", needs=("o", "function"),
+                          without=("apps",)),
         "a-pair-reader": _case("remove", "method", "wait", "--object", "o",
                                "--force", needs=("o", "pair")),
         "a-pair-writer": _case("remove", "method", "write", "--object",
@@ -651,7 +730,8 @@ CASES: "dict[str, dict[str, Case]]" = {
             "IQ.", needs=("o", "pair")),
     },
     "app": {
-        "c": _case("app", "--object", "o", "{M}", "--target", "c"),
+        "c": _case("app", "--object", "o", "{M}", "--target", "c",
+                   without=("apps",)),
         "pep723": _case("app", "--object", "o", "{M}", "--target",
                         "pep723", only=BASE),
         "console": _case("app", "--object", "o", "{M}", "--target",
@@ -661,10 +741,35 @@ CASES: "dict[str, dict[str, Case]]" = {
         "c-argv": _case("app", "--object", "o", "{M}", "--target", "c",
                         "--argc-argv", only=BASE),
         "function": _case("app", "--function", "f", "--module", "{mod}",
-                          "--target", "pep723", needs=("function",)),
+                          "--target", "pep723", needs=("function",),
+                          without=("apps",)),
+        # gh-2074: a second app is APPENDED beside the first, and the App
+        # block holds both C executables.
+        "beside-the-others": _case("app", "--function", "f", "{M}",
+                                   "--target", "c", "--name", "f-c",
+                                   needs=("apps",)),
+        # ...and an app's name is unique: a taken one is refused, naming
+        # the taken app's removal, and a taken DEFAULT one names `--name`.
+        "a-taken-name": _case("app", "--object", "o", "{M}", "--target",
+                              "pep723", "--name", "f", needs=("apps",),
+                              refuses=("`jm remove app f`",)),
+        "a-taken-default-name": _case(
+            "app", "--object", "o", "{M}", "--target", "c",
+            needs=("apps",), refuses=("`--name`", "`jm remove app p`")),
+        # A console app's module is its package's `cli.py`: a second one
+        # there would overwrite the first's.
+        "a-taken-console-module": _case(
+            "app", "--function", "f", "{M}", "--target", "console",
+            "--name", "f-cli", needs=("apps",),
+            refuses=("`jm remove app o-cli`",)),
     },
     "perf": {"perf": _case("perf")},
-    "upgrade": {"upgrade": _case("upgrade", needs=())},
+    "upgrade": {
+        "upgrade": _case("upgrade", needs=()),
+        # gh-2074: the shape ends in the upgrade that rewrote `[app]`; a
+        # second one is a fixed point.
+        "an-app-table": _case("upgrade", needs=("app-table",)),
+    },
     "apply": {
         "apply": _case("apply"),
         "only": _case("apply", "--only=o"),
@@ -749,8 +854,6 @@ def _stale(*paths: str) -> "tuple[str, ...]":
 #: Removing a module's last object renders the module the way a module with
 #: objects is rendered; `apply` renders an object-less one (gh-2070).
 _EMPTIED = _stale("native/src/mod/CMakeLists.txt", "native/src/mod/mod_ext.c")
-#: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
-_APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
 #: `jm module` before `package` is set leaves the module id's stub (gh-2064).
 _MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
 
@@ -758,8 +861,6 @@ _MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
 def _entries(issue: str, keys, *found: str) -> dict:
     return {key: {issue: frozenset(found)} for key in keys}
 
-
-_REMOVE_FN = "error: function 'f' not found in module 'mod'."
 
 RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
     **_entries(
@@ -781,16 +882,6 @@ RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
                 ("module", "sorts-first", "c-dep"),
                 ("module", "sorts-last", "c-dep")],
                *_stale("CMakeLists.txt")),
-    ("remove", "function", "apps"): {
-        "gh-2075": frozenset({
-            "status:exit 1", f"apply:refused {_REMOVE_FN}",
-            f"fresh:refused {_REMOVE_FN}"}),
-        "gh-2074": frozenset(_APP_ORPHAN),
-    },
-    **_entries("gh-2074",
-               [("shape", "apps", ""), ("remove", "object", "apps"),
-                ("remove", "module", "apps")],
-               *_APP_ORPHAN),
     **_entries("gh-2064",
                [("shape", "package", ""), ("remove", "module", "package")],
                *_MOD_ORPHAN),
@@ -814,7 +905,7 @@ def _admits(case: Case, name: str) -> bool:
     shape = SHAPES[name]
     if case.only is not None and name not in case.only:
         return False
-    return case.needs <= shape.has
+    return case.needs <= shape.has and not case.without & shape.has
 
 
 def _runs() -> "list[tuple[str, str, str]]":
@@ -1153,6 +1244,10 @@ def test_every_flag_has_a_case():
     for (cmd, f), _why in UNCOVERED_FLAGS.items():
         if f not in parser_flags(cmd) or f in _flags_cased(cmd):
             stale.append((cmd, f))
+    # gh-2074: and every kind `jm remove` takes -- a word, not a flag, and a
+    # render path of its own all the same.
+    removed = {case.argv[1] for case in CASES["remove"].values()}
+    missing += [("remove", k) for k in _cli_remove._KINDS if k not in removed]
     assert not missing, f"flags no case passes: {missing}"
     assert not stale, f"UNCOVERED_FLAGS entries to delete: {stale}"
 

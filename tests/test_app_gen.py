@@ -13,6 +13,7 @@ from pathlib import Path
 from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
 from just_makeit._function import run as jm_function
+from just_makeit._app import replay as jm_replay
 from just_makeit._app import run as jm_app
 from just_makeit import _config as C
 
@@ -36,7 +37,7 @@ def _scaffold(root: Path, **obj_kw) -> Path:
 def test_scalar_object_generates_working_faces(tmp_path: Path):
     proj = _scaffold(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gain")
-    jm_app(proj, target="console", name="tool", object_="gain")
+    jm_app(proj, target="console", name="tool-cli", object_="gain")
 
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
@@ -59,37 +60,28 @@ def test_scalar_object_generates_working_faces(tmp_path: Path):
 
 def test_extra_flag_reaches_both_parsers_and_roundtrips(tmp_path: Path):
     proj = _scaffold(tmp_path)
-    jm_app(
-        proj,
-        target="c",
-        name="tool",
-        object_="gain",
-        flags=[
-            {"name": "thr", "type": "float", "default": "0.5", "help": "t"}
-        ],
-    )
-    # Second run without --flag must preserve the stored flag.
-    jm_app(proj, target="console", name="tool", object_="gain")
+    thr = [{"name": "thr", "type": "float", "default": "0.5", "help": "t"}]
+    jm_app(proj, target="c", name="tool", object_="gain", flags=thr)
+    jm_app(proj, target="console", name="tool-cli", object_="gain", flags=thr)
+    # gh-2074: each app's flags are its own row's, and a replay keeps them.
+    jm_replay(proj, C.load(proj))
 
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
 
     assert "float thr = 0.5;" in c and '"--thr"' in c
     assert "(void)thr;" in c  # extra flag unused by the loop -> warning-safe
-    assert '"--thr"' in cli  # persisted across the 2nd run
+    assert '"--thr"' in cli
     # Round-trips through the manifest.
     cfg = C.load(proj)
-    flags = C.app_flags(cfg)
-    assert flags == [
-        {"name": "thr", "type": "float", "default": "0.5", "help": "t"}
-    ]
+    assert [a["flags"] for a in C.apps(cfg)] == [thr, thr]
     assert "[[app.flags]]" in (proj / "just-makeit.toml").read_text()
 
 
 def test_cmake_block_is_idempotent(tmp_path: Path):
     proj = _scaffold(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gain")
-    jm_app(proj, target="c", name="tool", object_="gain")
+    jm_replay(proj, C.load(proj))
     cmake = (proj / "CMakeLists.txt").read_text()
     assert cmake.count("add_executable(tool") == 1
 
@@ -105,14 +97,9 @@ def test_pep723_target_is_generated(tmp_path: Path):
 
 def test_int_flag_uses_strtol_and_int_argparse(tmp_path: Path):
     proj = _scaffold(tmp_path)
-    jm_app(
-        proj,
-        target="c",
-        name="tool",
-        object_="gain",
-        flags=[{"name": "taps", "type": "int32_t", "default": "8"}],
-    )
-    jm_app(proj, target="console", name="tool", object_="gain")
+    taps = [{"name": "taps", "type": "int32_t", "default": "8"}]
+    jm_app(proj, target="c", name="tool", object_="gain", flags=taps)
+    jm_app(proj, target="console", name="tool-cli", object_="gain", flags=taps)
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
     assert "int32_t taps = 8;" in c and "strtol(argv[++i]" in c
@@ -166,7 +153,7 @@ def test_blockwise_shape_generates_steps_loop(tmp_path: Path):
         return_type="float[]",
     )
     jm_app(proj, target="c", name="tool", object_="bw")
-    jm_app(proj, target="console", name="tool", object_="bw")
+    jm_app(proj, target="console", name="tool-cli", object_="bw")
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
     assert "<<IMPLEMENT" not in c
@@ -188,7 +175,7 @@ def test_consumer_shape_no_output(tmp_path: Path):
         mutable=True,
     )
     jm_app(proj, target="c", name="tool", object_="cons")
-    jm_app(proj, target="console", name="tool", object_="cons")
+    jm_app(proj, target="console", name="tool-cli", object_="cons")
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
     assert "cons_steps(state, inbuf, k)" in c
@@ -209,7 +196,7 @@ def test_generator_shape_uses_count(tmp_path: Path):
         mutable=True,
     )
     jm_app(proj, target="c", name="tool", object_="gen")
-    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="console", name="tool-cli", object_="gen")
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
     assert "gen_steps(state, outbuf, k)" in c
@@ -231,7 +218,7 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
         impl_body="return a + b;",
     )
     jm_app(proj, target="c", name="addtool", function_="addn")
-    jm_app(proj, target="console", name="addtool", function_="addn")
+    jm_app(proj, target="console", name="addtool-cli", function_="addn")
     c = (proj / "native" / "src" / "app" / "addtool.c").read_text()
     # gh-187: a module-function console face lives under its module subpackage.
     cli = (proj / "src" / "proj" / "mathx" / "cli.py").read_text()
@@ -248,7 +235,7 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     # CMake links the module core; manifest records the function source.
     cmake = (proj / "CMakeLists.txt").read_text()
     assert "add_executable(addtool" in cmake and "mathx_core" in cmake
-    app = C.app_config(C.load(proj))
+    app = C.apps(C.load(proj))[0]
     assert app["function"] == "addn" and app["module"] == "mathx"
 
 
@@ -264,7 +251,7 @@ def test_command_app_generates_dispatch(tmp_path: Path):
         {"name": "info", "help": "print info"},
     ]
     jm_app(proj, target="c", name="tool", commands=cmds)
-    jm_app(proj, target="console", name="tool", commands=[])  # persist
+    jm_app(proj, target="console", name="tool-cli", commands=cmds)
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
     # C: per-command handlers + flag parse + dispatch + usage.
@@ -279,7 +266,7 @@ def test_command_app_generates_dispatch(tmp_path: Path):
     assert 'p_encode.add_argument(\n        "--rate",' in cli
     assert "set_defaults(_fn=_cmd_encode)" in cli
     # Manifest round-trips the commands.
-    got = C.app_commands(C.load(proj))
+    got = C.apps(C.load(proj))[0]["commands"]
     assert [c["name"] for c in got] == ["encode", "info"]
     assert "[[app.commands]]" in (proj / "just-makeit.toml").read_text()
 
@@ -364,7 +351,7 @@ def test_app_record_survives_apply(tmp_path: Path):
     jm_apply(proj)
     jm_app(proj, target="c", name="gentool", object_="gen")
     jm_apply(proj)  # used to clobber [app] -> a/<project>
-    rec = C.app_config(C.load(proj))
+    rec = C.apps(C.load(proj))[0]
     assert rec.get("name") == "gentool" and rec.get("object") == "gen"
     assert (proj / "native/src/app/gentool.c").exists()
     # no stray default app for the first object / project name
@@ -406,7 +393,7 @@ def test_sample_type_dtype_output_c(tmp_path: Path):
 
 def test_sample_type_dtype_output_python(tmp_path: Path):
     proj = _gen_proj(tmp_path)
-    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="console", name="tool-cli", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
     cli = (proj / "src/proj/cli.py").read_text()
     assert 'choices=["cf32", "cf64", "ci32", "ci16", "ci8"]' in cli
@@ -440,7 +427,7 @@ def test_output_axes_c(tmp_path: Path):
 
 def test_output_axes_python(tmp_path: Path):
     proj = _gen_proj(tmp_path)
-    jm_app(proj, target="console", name="tool", object_="gen")
+    jm_app(proj, target="console", name="tool-cli", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
     cli = (proj / "src/proj/cli.py").read_text()
     assert 'choices=["raw", "csv"]' in cli
@@ -590,7 +577,9 @@ def test_module_object_console_scoped_to_module(tmp_path: Path):
     from just_makeit._apply import run as jm_apply
 
     jm_apply(proj)
-    jm_app(proj, target="console", name="tool", object_="gen", module="wfm")
+    jm_app(
+        proj, target="console", name="tool-cli", object_="gen", module="wfm"
+    )
     assert (proj / "src" / "proj" / "wfm" / "cli.py").exists()
     assert not (proj / "src" / "proj" / "cli.py").exists()
     pyproject = (proj / "pyproject.toml").read_text()
@@ -623,11 +612,11 @@ def test_app_persists_in_manifest_split_layout(tmp_path: Path):
     )
     jm_apply(proj)
     jm_app(proj, target="c", object_="gen", module="wfm", name="tool")
-    assert "[app]" in mani.read_text()
+    assert "[[app]]" in mani.read_text()
     assert 'module = "wfm"' in mani.read_text()
     assert not (proj / "objects" / "app.toml").exists()
     # survives a reconcile
     jm_apply(proj)
     cfg = C.load(proj)
-    assert C.app_config(cfg).get("object") == "gen"
-    assert C.app_config(cfg).get("module") == "wfm"
+    assert C.apps(cfg)[0].get("object") == "gen"
+    assert C.apps(cfg)[0].get("module") == "wfm"

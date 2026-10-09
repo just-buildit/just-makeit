@@ -68,9 +68,10 @@ def run(root: Path) -> None:
     )
 
     # ── 2. Generate all three faces over that one object — NO hand-edit ──
+    # Three apps, one [[app]] row each, so each has its own name (gh-2074).
     jm_app(proj, target="c", name="gaintool", object_="gain")
-    jm_app(proj, target="console", name="gaintool", object_="gain")
-    jm_app(proj, target="pep723", name="gaintool", object_="gain")
+    jm_app(proj, target="console", name="gaintool-py", object_="gain")
+    jm_app(proj, target="pep723", name="gaintool-script", object_="gain")
 
     app_c = (proj / "native" / "src" / "app" / "gaintool.c").read_text(
         encoding="utf-8"
@@ -148,8 +149,7 @@ def run(root: Path) -> None:
     def _floats(b: bytes):
         return list(struct.unpack(f"<{len(b) // 4}f", b))
 
-    # Faces run from src/ (where the package + cmake-built gain.so live; the
-    # pep723 gaintool.py at the root would otherwise shadow the package).
+    # Faces run from src/, where the package + cmake-built gain.so live.
     src = proj / "src"
     # `.exe` on Windows (gh-1368).
     exe = proj / "build" / ("gaintool.exe" if os.name == "nt" else "gaintool")
@@ -166,7 +166,7 @@ def run(root: Path) -> None:
     assert r.returncode == 0, f"C binary failed: {r.stderr!r}"
     c_out = _floats(r.stdout)
 
-    # Face 2 — Python CLI (the same code the `gaintool` console script runs).
+    # Face 2 — Python CLI (the code the `gaintool-py` console script runs).
     r = subprocess.run(
         [sys.executable, "-m", "gaintool.cli", "--gain", str(gain)],
         input=raw,
@@ -209,8 +209,12 @@ def run(root: Path) -> None:
         f"faces disagree: c={c_out} py={py_out} mod={mod_out}"
     )
 
-    app_cfg = C.app_config(C.load(proj))
-    assert app_cfg["object"] == "gain", app_cfg
+    apps = C.apps(C.load(proj))
+    assert [(a["name"], a["object"]) for a in apps] == [
+        ("gaintool", "gain"),
+        ("gaintool-py", "gain"),
+        ("gaintool-script", "gain"),
+    ], apps
 
 
 if __name__ == "__main__":

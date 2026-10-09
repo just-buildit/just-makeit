@@ -27,6 +27,7 @@ from . import _glue
 from . import _incpath as INC
 from ._init import _to_title
 from ._object import _regenerate_module
+from ._report import Refusal
 
 
 _STUB_MARKER = "/* TODO: implement"
@@ -310,6 +311,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
+    _refuse_what_an_app_names(cfg, f"object '{obj}'", objects={obj})
     module = C.component_module(cfg, obj)
 
     core_h = INC.core_h(root, obj)
@@ -406,6 +408,14 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
         sys.exit(1)
 
     objects = C.module_objects(cfg, module)
+    _refuse_what_an_app_names(
+        cfg,
+        f"module '{module}'",
+        objects=set(objects),
+        functions={
+            (module, f["name"]) for f in C.module_functions(cfg, module)
+        },
+    )
     detail = f" and its objects ({', '.join(objects)})" if objects else ""
 
     def _obj_implemented(obj: str) -> bool:
@@ -464,6 +474,87 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     print(f"  update  {root / C.FILENAME}")
     print()
     print(f"Done!  Module '{module}' removed.")
+
+
+def _refuse_what_an_app_names(
+    cfg: dict,
+    what: str,
+    objects: "set[str] | frozenset[str]" = frozenset(),
+    functions: "set[tuple[str, str]] | frozenset[tuple[str, str]]" = (
+        frozenset()
+    ),
+) -> None:
+    """Refuse to remove a component that an ``[[app]]`` row names (gh-2075).
+
+    *objects* are the objects the removal takes out, and *functions* the
+    ``(module, function)`` pairs. An app is author-facing code, so removing
+    its source does not silently delete it -- and leaving its row naming
+    nothing left a manifest `status` and `apply` both refused, which no
+    command could reconcile. The route is the app's own removal, named per
+    app, and the tree is untouched: this runs before anything is written.
+    """
+    naming = [
+        e["name"]
+        for e in C.apps(cfg)
+        if (
+            (e.get("module") or "", e["function"]) in functions
+            if e.get("function") is not None
+            else e.get("object") in objects
+        )
+    ]
+    if not naming:
+        return
+    many = len(naming) > 1
+    them = "them" if many else "it"
+    raise Refusal(
+        f"the app{'s' if many else ''} "
+        + ", ".join(f"'{n}'" for n in naming)
+        + f" {'are' if many else 'is'} built from {what}; removing it would"
+        f" leave {them} naming nothing. Remove {them} first: "
+        + ", ".join(f"`jm remove app {n}`" for n in naming)
+        + "."
+    )
+
+
+def _remove_app(root: Path, cfg: dict, name: str, force: bool) -> None:
+    """Remove the ``[[app]]`` row *name* and its files (gh-2074, gh-2075).
+
+    The app's file goes unless the author edited it -- its bytes are not
+    what jm renders for the row -- and then it stays, with a note, as
+    `remove method` leaves an authored body in ``_core.c``. Its wiring goes
+    either way: a C app's lines in the root CMakeLists App block, a console
+    app's ``[project.scripts]`` entry.
+    """
+    from . import _app
+
+    entry = next((e for e in C.apps(cfg) if e["name"] == name), None)
+    if entry is None:
+        declared = [e["name"] for e in C.apps(cfg)]
+        print(
+            f"error: app '{name}' not found."
+            + (f" Declared: {declared}" if declared else " None declared."),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not _confirm(
+        f"Remove the {entry.get('target')} app '{name}' and its files?", force
+    ):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing app '{name}'")
+    print()
+    kept = _app.remove(root, cfg, entry)
+    C.drop_app(cfg, name)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+    print()
+    note = "".join(
+        f"\n  note: {p.relative_to(root).as_posix()} holds your edits, so it"
+        " remains — delete it by hand."
+        for p in kept
+    )
+    print(f"Done!  App '{name}' removed.{note}")
 
 
 def _drop_named_entry(entries: list[dict], name: str) -> bool:
@@ -778,6 +869,9 @@ def _remove_function(
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_what_an_app_names(
+        cfg, f"function '{name}'", functions={(module, name)}
+    )
     if not _confirm(
         f"Remove function '{name}' from module '{module}'?", force
     ):
@@ -980,6 +1074,8 @@ def run(
             )
             sys.exit(1)
         _remove_function(root, cfg, module, name, force)
+    elif kind == "app":
+        _remove_app(root, cfg, name, force)
     else:
         print(f"error: cannot remove '{kind}'.", file=sys.stderr)
         sys.exit(1)

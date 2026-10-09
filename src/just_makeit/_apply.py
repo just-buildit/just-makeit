@@ -3689,6 +3689,10 @@ def _apply_manifest(
     C.pkg_module_entries(cfg)
     C.public_link_libs(cfg)
     C.public_defines(cfg)
+    # gh-2074: and the apps, which `_app.replay` renders last -- so a
+    # schema-8 `[app]` table is refused (naming `jm upgrade`) before the
+    # first write, not after the last.
+    C.apps(cfg)
     # gh-1600: an additional library the tree cannot build is refused before
     # anything is written -- a missing core is a CMake configure error, and a
     # core also in lib<pkg> puts its objects in a consumer's link twice.

@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _render as R  # noqa: E402
 from just_makeit import _targets  # noqa: E402
+from just_makeit._app import replay as app_replay  # noqa: E402
 from just_makeit._app import run as app_run  # noqa: E402
 from just_makeit._function import run as function_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
@@ -285,10 +286,15 @@ class TestAppTargets:
         frees the name the previous one vacated. A test that sampled only the
         final state passed against that, which is how this assertion came to
         be written the wrong way round first.
+
+        gh-2074: `jm app` declares an app once, so the re-runs are `apply`'s
+        replay of it, which is the render every later run goes through.
         """
         cmake = project / "CMakeLists.txt"
+        _quiet(app_run, project, name="myapp", object_="w", target="c")
         for i in range(4):
-            _quiet(app_run, project, name="myapp", object_="w", target="c")
+            if i:
+                _quiet(app_replay, project, C.load(project))
             targets = [
                 ln
                 for ln in cmake.read_text(encoding="utf-8").splitlines()

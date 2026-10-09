@@ -378,7 +378,7 @@ _HANDLE = {
 }
 
 #: Every shape `_dump` writes, across the fixtures below. One manifest cannot
-#: hold them all -- `[app]` names a function OR an object, and a reserved
+#: hold them all -- an `[[app]]` row names a function OR an object, and a reserved
 #: section no branch renders is written by `_dump_generic` in whichever of
 #: its four shapes it has -- so the later ones carry the other branches.
 FIXTURES: dict[str, dict] = {
@@ -449,40 +449,46 @@ FIXTURES: dict[str, dict] = {
             "ring": _HANDLE,
         },
         "o": _OBJECT,
-        "app": {
-            "target": "cli",
-            "name": "tool",
-            "function": "hello",
-            "module": "filt",
-            "flags": [
-                _row(name="gain", type="double", default="1.0", help="Gain.")
-            ],
-            "commands": [
-                _row(
-                    name="run",
-                    help="Run.",
-                    flags=[
-                        _row(
-                            name="n",
-                            type="int",
-                            default="1",
-                            help="How many.",
-                        )
-                    ],
-                )
-            ],
-        },
+        "app": [
+            {
+                "target": "cli",
+                "name": "tool",
+                "function": "hello",
+                "module": "filt",
+                "flags": [
+                    _row(
+                        name="gain", type="double", default="1.0", help="Gain."
+                    )
+                ],
+                "commands": [
+                    _row(
+                        name="run",
+                        help="Run.",
+                        flags=[
+                            _row(
+                                name="n",
+                                type="int",
+                                default="1",
+                                help="How many.",
+                            )
+                        ],
+                    )
+                ],
+            }
+        ],
         "codec": {"blue": {"entries": ["v"], "label": "Blue"}},
     },
     "object_app": {
         "project": {"name": "p", "version": "0.1.0"},
         "o": {"arg_type": "float", "return_type": "float"},
-        "app": {
-            "target": "console",
-            "name": "tool",
-            "object": "o",
-            "module": "filt",
-        },
+        "app": [
+            {
+                "target": "console",
+                "name": "tool",
+                "object": "o",
+                "module": "filt",
+            }
+        ],
         "template": [_row(name="t", body="x")],
         "codec": {"label": "Blue"},
     },
@@ -543,7 +549,7 @@ def test_the_round_trip_is_armed() -> None:
         "full:module/wfm/source/fields/0/default",  # composer fields
         "full:module/ring/create_args/0/default",  # handle create_args
         "full:o/state/0/default",  # [[state]]
-        "full:app/flags/0/default",  # [[app.flags]]
+        "full:app/0/flags/0/default",  # [[app.flags]]
     ):
         assert want in ids, want
     assert len(_CASES) > 200, len(_CASES)
