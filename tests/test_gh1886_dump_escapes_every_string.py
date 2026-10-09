@@ -378,9 +378,10 @@ _HANDLE = {
 }
 
 #: Every shape `_dump` writes, across the fixtures below. One manifest cannot
-#: hold them all -- an `[[app]]` row names a function OR an object, and a reserved
-#: section no branch renders is written by `_dump_generic` in whichever of
-#: its four shapes it has -- so the later ones carry the other branches.
+#: hold them all -- an `[[app]]` row names a function OR an object, and a
+#: reserved section no branch renders is written by `_dump_generic` in
+#: whichever of its four shapes it has -- so the later ones carry the other
+#: branches.
 FIXTURES: dict[str, dict] = {
     "full": {
         "project": {
