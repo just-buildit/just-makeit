@@ -398,16 +398,6 @@ def run(
             f"{_run} (gh-183) — results may not reflect the pinned version.",
             file=sys.stderr,
         )
-    if not C.components(cfg) and not C.modules(cfg):
-        if as_json:
-            print(json.dumps({"entries": [], "ok": 0}))
-        else:
-            print(
-                "just-makeit: manifest declares no objects or modules; "
-                "nothing to status."
-            )
-        return 0
-
     # gh-784: names that built yesterday and do not today. `valid_identifier`
     # rejects non-ASCII since the term landed, and `apply` replays a manifest
     # through the same declaration commands — so a tree that already carries
