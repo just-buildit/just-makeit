@@ -268,9 +268,12 @@ def test_every_scalar_jm_converts_still_passes(ctype):
     assert _capsule.scalar_meta(ctype, "x") is T._CTYPE_META[ctype]
 
 
-@pytest.mark.parametrize("name", ["_capsule.py", "_handle.py"])
+@pytest.mark.parametrize("name", ["_capsule.py", "_composer.py", "_handle.py"])
 def test_no_generator_indexes_the_type_table_directly(name):
     """The placement half: every lookup goes through `scalar_meta`.
+
+    gh-2035 added the composer: its rows convert by the same row now, and a
+    direct subscript there is a lookup that would not refuse.
 
     A direct ``_CTYPE_META[...]`` is the line that raised the ``KeyError``.
     Read from the AST, so a comment or a docstring naming the table is not a
