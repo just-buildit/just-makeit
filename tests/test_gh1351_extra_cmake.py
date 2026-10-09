@@ -62,13 +62,16 @@ def _include(dirname: str) -> str:
 
 
 def _project(tmp_path: Path) -> Path:
-    """A standalone object, a collocated module object and a separate one."""
+    """A standalone object, a collocated module object and a separate one,
+    and a module with nothing in it -- whose CMakeLists is regenerated too,
+    and was rendered without the hook (gh-2070)."""
     root = tmp_path / "p"
     _quiet(new_run, "p", root)
     _quiet(object_run, root, "o", None, state_vars=[("n", "int", "0")])
     _quiet(module_run, root, "m")
     for obj in ("m", "w"):  # `m` is collocated with its module; `w` is not
         _quiet(object_run, root, obj, "m", state_vars=[("n", "int", "0")])
+    _quiet(module_run, root, "e")
     _quiet(apply_run, root)
     return root
 
@@ -77,7 +80,7 @@ class TestEveryGeneratedCMakeListsCarriesItsHook:
     def test_the_scaffolded_tree(self, tmp_path):
         root = _project(tmp_path)
         files = sorted((root / "native" / "src").glob("*/CMakeLists.txt"))
-        assert {f.parent.name for f in files} >= {"o", "m", "w"}, files
+        assert {f.parent.name for f in files} >= {"o", "m", "w", "e"}, files
         missing = [
             f.parent.name
             for f in files

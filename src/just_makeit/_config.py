@@ -1573,6 +1573,9 @@ def save(root: Path, cfg: dict) -> None:
             _write_doc(fragment_path, sections, None)
         else:
             fragment_path.unlink(missing_ok=True)
+            # gh-2095: a write the merged manifest depends on, and the only
+            # one here that is not a `_textio.write_text`.
+            _textio.wrote_toml()
 
     # Brand-new fragment files (new object/module in a split project).
     for fragment_path, sections in by_file.items():
