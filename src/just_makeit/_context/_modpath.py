@@ -28,14 +28,18 @@ def make_module_ctx(
 ) -> dict[str, str]:
     """Render slots for *module_id* (dotted ids nest; dotless ones don't).
 
-    *package* is the optional ``[module.X] package`` override (gh-523): the
-    package directory the ``.so`` / ``.pyi`` land in when the module lives
-    inside a sibling package rather than one named after itself. It replaces
-    ``module_pypath`` only — the C identifiers, the ``PyInit_`` leaf and the
+    *package* is the package directory the ``.so`` / ``.pyi`` land in, as
+    ``C.module_package_resolved`` answers it from the manifest: the
+    ``[module.X] package`` override (gh-523) when the module lives inside a
+    sibling package, else its own pypath. It sets ``module_pypath`` and
+    ``module_tp`` only — the C identifiers, the ``PyInit_`` leaf and the
     ``.so`` basename are all still the module's own, since the extension keeps
-    its own name inside the shared package. Empty (the default) leaves every
-    slot exactly as before, so unpackaged modules render byte-identically."""
+    its own name inside the shared package. Empty (the default) is the
+    answer for a module that declares no package."""
     mp = C.module_paths(module_id)
+    # gh-2065: the one owner answers the default too, rather than a second
+    # `or <pypath>` spelling of it here.
+    package = package or C.module_package_resolved({}, module_id)
     # gh-645: the two doc faces, from the one manifest string. A module has no
     # header to derive from -- both of these files are wholly jm-generated --
     # so `[module.X] doc` is the only place an author can say what it is for.
@@ -47,7 +51,7 @@ def make_module_ctx(
     return {
         "module": mp.cname,
         "module_leaf": mp.leaf,
-        "module_pypath": package or mp.pypath,
+        "module_pypath": package,
         "module_output_name": (
             f"\n    OUTPUT_NAME {mp.leaf}" if nested else ""
         ),
@@ -57,9 +61,7 @@ def make_module_ctx(
         # bare cname for a flat module, which named a module that does not
         # exist (`dsp.Fir` for `demo.dsp.Fir`), so no class pickled.
         "module_tp": (
-            f"{pkg}.{(package or mp.pypath).replace('/', '.')}"
-            if pkg
-            else mp.cname
+            f"{pkg}.{package.replace('/', '.')}" if pkg else mp.cname
         ),
         "module_docstring_py": docstring_py,
         "module_doc_c": doc_c,
