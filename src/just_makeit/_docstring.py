@@ -1115,6 +1115,20 @@ def max_out_arity_key() -> str:
     return _MAX_OUT_KEY
 
 
+# gh-2184: every `*_max_out` the header declares, whatever its arity -- the
+# `declared_max_outs` set, riding the same map as the arity set above and
+# for the same reason. A `variable_output` method always has one (jm declares
+# it), so for that shape the arity is the only question. A list-of-records
+# method has none unless the AUTHOR declared it, and whether they did is
+# what decides how its binding sizes the result buffer.
+_MAX_OUT_DECLARED_KEY = "<max_out_declared>"
+
+
+def max_out_declared_key() -> str:
+    """The reserved key `declared_max_outs`'s result rides under (gh-2184)."""
+    return _MAX_OUT_DECLARED_KEY
+
+
 def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     """True when *c_name*'s declaration takes only the state (gh-761).
 
@@ -1123,6 +1137,33 @@ def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     prototype to read, and keeps gh-607's count-bearing default.
     """
     return c_name in ((doc_blocks or {}).get(_MAX_OUT_KEY) or frozenset())
+
+
+def max_out_is_declared(doc_blocks: "dict | None", c_name: str) -> bool:
+    """True when the header declares *c_name* at all, at any arity (gh-2184).
+
+    The question a list-of-records method asks before sizing its result
+    buffer: jm declares no ``<c>_<m>_max_out`` for that shape, so one in the
+    header is the author's statement that the method's capacity is known
+    before the call. :func:`max_out_is_state_only` then answers which of the
+    two spellings to call, exactly as it does for ``variable_output``.
+
+    False with no header read (a method being scaffolded for the first time),
+    which keeps the fixed ``max_results`` buffer.
+
+    Examples
+    --------
+    >>> max_out_is_declared(None, "w_push_max_out")
+    False
+    >>> blocks = {max_out_declared_key(): frozenset({"w_push_max_out"})}
+    >>> max_out_is_declared(blocks, "w_push_max_out")
+    True
+    >>> max_out_is_declared(blocks, "w_pull_max_out")
+    False
+    """
+    return c_name in (
+        (doc_blocks or {}).get(_MAX_OUT_DECLARED_KEY) or frozenset()
+    )
 
 
 def _strip_comment(raw: str) -> list[str]:

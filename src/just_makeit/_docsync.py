@@ -1171,6 +1171,16 @@ _REFUSAL_VALUE_RE = re.compile(
     r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
 )
 
+#: A list-of-records result sized by its capacity function (gh-2184): a call
+#: to a ``*_max_out`` and, after it, the ``PyList_New`` only that shape's
+#: wrapper builds among the ``PyMethodDef`` rows. Both halves, because a
+#: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
+#: ndarray -- a hand-written one that sizes some other way must not be told
+#: about records. Code, not text: read on the masked body, in any layout.
+_RECORDS_CAPACITY_RE = re.compile(
+    r"\b\w+_max_out\s*\([\s\S]*\bPyList_New\s*\("
+)
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1277,6 +1287,15 @@ _FEATURE_MARKERS = {
         "this fragment does not test it, so a refusal reaches the overflow "
         "guard and raises RuntimeError instead of the declared error",
     ),
+    # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
+    # in the sacred header after the fragment was rendered. Named for its
+    # consequence, which is silent: the records past the fixed buffer.
+    "records-capacity": _Feature(
+        (_RECORDS_CAPACITY_RE,),
+        "the header declares this method's <name>_max_out capacity and "
+        "this fragment does not ask it, so a call returns at most the "
+        "fixed max_results records and drops the rest",
+    ),
 }
 
 #: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
@@ -1321,6 +1340,13 @@ def _method_feature_symbols(text: str) -> dict:
             )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        # gh-2184: a capacity-sized records buffer is bounded by jm's
+        # output-size guard, which comes WITH the capacity and has no
+        # existence without it. Read as its own marker, every fragment
+        # predating a declared capacity was also told about "a negative
+        # dimension" -- an ndarray's failure, on a method returning a list.
+        if "records-capacity" in found:
+            found.discard("output-size")
         out[name] = frozenset(found)
     return out
 
