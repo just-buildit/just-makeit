@@ -1074,7 +1074,7 @@ way.
 | `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                   | ✅ (0.19.14) |
 | `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                   | ✅ (0.41.0)  |
 | `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                        | ✅ (0.47.0)  |
-| `max_results = N`                      | (TOML only; default 64)                                                                             | 🟡           |
+| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)               | 🟡           |
 | `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418) |
 | `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159) |
 | `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012) |
