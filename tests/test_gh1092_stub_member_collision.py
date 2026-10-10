@@ -166,8 +166,8 @@ class TestTheExcludedShapeStillWorks:
     """The fence the issue asked for by name.
 
     A `multi_output` method gets no `out=`, so no bound is generated for it
-    and a hand-written one is still the right answer. A
-    fix that reserved every `*_max_out` name would refuse it, which is why
+    and a hand-written one is still the right answer. A fix that reserved
+    every `*_max_out` name would refuse it, which is why
     the reservation is derived from `_outbuf.enabled` rather than from the
     name's shape.
     """

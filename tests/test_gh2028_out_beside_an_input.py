@@ -73,8 +73,8 @@ def _quiet(fn, *args, **kwargs):
 
 # -- the doc half: a binding argument takes no positional slot ---------------
 
-#: jm's binding arguments, read off the map both faces document them from.
-#: A third one added there is covered here without an edit.
+#: jm's binding arguments, read off the map both faces document them from
+#: and take the binding's names from, rather than listed here.
 _BINDING = sorted(binding_param_docs(count=True, out=True))
 
 #: The header documents the block input by its C name, as jm scaffolds it.
