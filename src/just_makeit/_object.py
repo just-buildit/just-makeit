@@ -263,11 +263,20 @@ def _load_doc_blocks(
     _arity = scan_max_out_arity(text)
     if _arity:
         out[max_out_arity_key()] = _arity
-    # gh-2184: and which `_max_out`s it declares at all, from the same scan,
-    # under the same only-when-non-empty rule. A list-of-records method's
-    # capacity is the author's to declare, and this is how its binding sees
-    # that they did.
-    _declared = declared_max_outs(text)
+    # gh-2184: and which list-of-records methods' `_max_out` it declares,
+    # from the same scan, under the same only-when-non-empty rule. That
+    # capacity is the author's to declare, and this is how the binding sees
+    # that they did. ONLY those: jm declares every `variable_output`
+    # method's `_max_out` itself, nothing reads them from here, and a map
+    # they made non-empty reads as an authored header to `apply`, whose
+    # post-replay re-render it would then trigger for every such project.
+    _lists = {
+        f"{C.method_c_symbol(stem, m)}_max_out"
+        for m in C.methods(manifest, obj)
+        + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
+        if _record.is_record_list(m)
+    }
+    _declared = declared_max_outs(text) & _lists
     if _declared:
         out[max_out_declared_key()] = _declared
     return out

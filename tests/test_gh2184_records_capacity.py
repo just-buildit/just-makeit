@@ -440,3 +440,29 @@ def test_the_regenerated_fragment_is_quiet(project):
     assert _WHY not in fresh, project.fresh
     text = _fragment_path(project.root, "hits").read_text(encoding="utf-8")
     assert "_push_max_out(self->handle, n_in)" in text
+
+
+# -- every other project reads its header exactly as before -------------------
+
+
+def test_jms_own_max_outs_are_not_an_authored_capacity(tmp_path):
+    """A ``variable_output`` method's ``_max_out`` is jm's declaration, not
+    the author's capacity, so a fresh scaffold still loads as an empty map
+    (gh-666). Counting it made every such header read as authored to
+    ``apply``, whose post-replay re-render then dropped a method's
+    ``extra_args`` from the binding (gh-1977's row turned STALE)."""
+    r = run_cli("new", "p", str(tmp_path / "p"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    root = tmp_path / "p"
+    for argv in (
+        ("object", "fir"),
+        ("method", "fir", "vo", "--arg-type", "float", "--return-type",
+         "float", "--variable-output"),
+        ("method", "fir", "rows", "--arg-type", "float", "--return-type",
+         "div_t", "--result-field", "quot:int"),
+    ):  # fmt: skip
+        r = run_cli(*argv, cwd=root)
+        assert r.returncode == 0, r.stdout + r.stderr
+    header = (root / INC_ROOT / "fir" / "fir_core.h").read_text("utf-8")
+    assert "_vo_max_out(" in header, "armed: jm declared a _max_out"
+    assert _load_doc_blocks(root, "fir", C.load(root)) == {}
