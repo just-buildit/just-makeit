@@ -5280,6 +5280,79 @@ def _multi_output_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+def _out_cols_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``out_cols``; [] when absent or usable.
+
+    gh-2115. ``out_cols`` makes a ``variable_output`` result a matrix: the
+    kernel still fills a flat buffer and returns an element count, and the
+    binding hands back ``(count / out_cols, out_cols)``. That only means
+    something for exactly one flat output array, so the shapes that have no
+    such array are refused here, at load, rather than rendered into a binding
+    that quietly ignores the key.
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _out_cols_errors({"name": "push"}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": "state->n", "variable_output": True}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": 8}, "x")[0]
+    'x: out_cols needs variable_output = true: a fixed-size result has no row count to derive from the kernel.'
+    >>> _out_cols_errors({"out_cols": 0, "variable_output": True}, "x")[0]
+    'x: out_cols must be a positive integer or a non-empty C expression, got 0.'
+    >>> _out_cols_errors(
+    ...     {"out_cols": 4, "variable_output": True, "multi_output": ["int"]},
+    ...     "x",
+    ... )[0]
+    'x: out_cols reshapes ONE output array; this method also declares multi_output.'
+    """
+    if "out_cols" not in entry:
+        return []
+    cols = entry["out_cols"]
+    if isinstance(cols, bool) or not (
+        (isinstance(cols, int) and cols >= 1)
+        or (isinstance(cols, str) and cols.strip())
+    ):
+        return [
+            f"{what}: out_cols must be a positive integer or a non-empty "
+            f"C expression, got {cols!r}."
+        ]
+    errors: list[str] = []
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: out_cols needs variable_output = true: a fixed-size "
+            f"result has no row count to derive from the kernel."
+        )
+    if entry.get("multi_output"):
+        errors.append(
+            f"{what}: out_cols reshapes ONE output array; this method also "
+            f"declares multi_output."
+        )
+    if entry.get("record_dtype"):
+        errors.append(
+            f"{what}: out_cols reshapes a flat array of scalars; "
+            f"record_dtype already gives every row its own columns."
+        )
+    if entry.get("batch"):
+        errors.append(
+            f"{what}: out_cols needs a variable_output method; batch is a "
+            f"1:1 transform whose result has the input's shape."
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -5382,6 +5455,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 errors.append(err)
         if outputs == "method":
             errors.extend(_multi_output_errors(entry, what))
+            errors.extend(_out_cols_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -7352,10 +7426,10 @@ def _shape(path: "tuple[str, ...]") -> str:
 _METHOD_ORDER = (
     "name", "doc", "arg_type", "return_type", "varargs", "manual_stub",
     "variable_output", "pass_capacity", "exact_max_out", "count_default",
-    "count_name", "nogil", "none_on_empty", "error_on_empty", "batch",
-    "multi_output", "extra_args", "params", "out_type", "out_divisor",
-    "bench", "max_results", "result_fields", "single", "py_return_type",
-    "max_out",
+    "count_name", "out_cols", "nogil", "none_on_empty", "error_on_empty",
+    "batch", "multi_output", "extra_args", "params", "out_type",
+    "out_divisor", "bench", "max_results", "result_fields", "single",
+    "py_return_type", "max_out",
 )  # fmt: skip
 _PROPERTY_ORDER = (
     "name", "doc", "type", "enum", "writable", "field", "buf_field",

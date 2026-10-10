@@ -276,6 +276,8 @@ METHOD_KEYS = frozenset(
         # result shape
         "variable_output",
         "multi_output",
+        # gh-2115: a variable_output result that is a matrix, not a vector.
+        "out_cols",
         "out_type",
         "out_divisor",
         "max_out",

@@ -590,6 +590,10 @@ CASES: "dict[str, dict[str, Case]]" = {
             "method", "o", "m2", "{M}", "--arg-type", "void",
             "--return-type", "double", "--variable-output",
             "--count-default", "16", "--count-name", "n", only=BASE),
+        "out-cols": _case(
+            "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
+            "--return-type", "float", "--variable-output",
+            "--pass-capacity", "--out-cols", "4", only=BASE),
         "capacity-nogil": _case(
             "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
             "--variable-output", "--pass-capacity", "--nogil",

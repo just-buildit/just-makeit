@@ -210,6 +210,13 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --out-cols EXPR             Make a --variable-output result a MATRIX: the
+                                kernel still fills a flat buffer and returns an
+                                element count, and the binding returns
+                                (count / EXPR, EXPR). EXPR is an integer or a C
+                                expression over the object ("state->nfft").
+                                A caller-supplied out= must then be 2-D with
+                                that many columns.
     --varargs                   Generate a *args/**kwargs binding. Mutually
                                 exclusive with --arg-type, --param and
                                 --variable-output.
