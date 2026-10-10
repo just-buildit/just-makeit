@@ -88,6 +88,17 @@ def _handle_cfg() -> dict:
                 {"name": "zqc", "type": "float", "default": "1.0f"},
             ],
         },
+        # (b) under `status_return`: the int is a status (gh-2186).
+        {
+            "name": "b_stat",
+            "fn": "h_bt",
+            "returns": "int",
+            "status_return": True,
+            "args": [
+                {"name": "zqa", "type": "float[]"},
+                {"name": "zqb", "type": "double"},
+            ],
+        },
         # (c) int-in -> array-out.
         {
             "name": "c_pop",
