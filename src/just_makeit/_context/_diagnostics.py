@@ -883,6 +883,123 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     ]
 
 
+def empty_is_none(m: dict) -> bool:
+    """Whether *m*'s binding answers ``None`` for an empty result (gh-2183).
+
+    The one reading of ``none_on_empty``, the sibling `declared_raise` gives
+    ``error_on_empty``. The binding's empty-result branches emit
+    ``Py_RETURN_NONE`` when this is true, every return annotation -- both
+    ``.pyi`` producers and the runtime synopsis line -- adds ``| None``
+    through `optional_ann`, and both ``Returns`` sections say when through
+    `empty_is_none_doc`. One answer for all of them, so a stub cannot
+    promise an array the binding may not return.
+
+    That is what gh-2183 was: the borrow route asked the key at its own
+    annotation, the ``variable_output`` route never did, and doppler's nine
+    readouts were stubbed ``-> NDArray[np.float32]`` above a binding that
+    returns ``None`` on both its allocating and its ``out=`` path. A type
+    checker then accepted ``x.value().shape`` and rejected
+    ``if x.value() is None`` -- the opposite of what the binding does.
+
+    Two routes read the key, and they are the two this answers ``True`` for:
+
+    * a ``variable_output`` result, when the kernel's count is zero -- on
+      the allocating route and the ``out=`` route alike;
+    * a ``borrow``, when the kernel lends ``NULL`` and no ``status_errors``
+      row raises first (gh-1418).
+
+    A ``batch`` method is dispatched ahead of both and is 1:1, so it has no
+    empty result to read; the key is inert there, as on every other shape,
+    and the answer is ``False`` so that no face advertises a ``None`` the
+    binding never returns.
+
+    Parameters
+    ----------
+    m : dict
+        One ``[[<comp>.methods]]`` entry.
+
+    Examples
+    --------
+    >>> empty_is_none({"name": "value", "variable_output": True,
+    ...                "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "peek", "borrow": True, "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "value", "variable_output": True})
+    False
+    >>> empty_is_none({"name": "gain", "none_on_empty": True})
+    False
+    >>> empty_is_none({"name": "run", "batch": True, "variable_output": True,
+    ...                "none_on_empty": True})
+    False
+    """
+    if not m.get("none_on_empty") or m.get("batch"):
+        return False
+    # Deferred: `_borrow` imports this module for its raise emitters.
+    from .._borrow import is_borrow
+
+    return bool(m.get("variable_output")) or is_borrow(m)
+
+
+def optional_ann(m: dict, ann: str) -> str:
+    """*ann*, made optional when *m*'s binding can return ``None``.
+
+    Every face that annotates a method's return spells the optional form
+    through here, from `empty_is_none` -- the ``.pyi`` producers and the
+    runtime synopsis line alike (gh-2183).
+
+    Examples
+    --------
+    >>> optional_ann({"name": "peek", "borrow": True, "none_on_empty": True},
+    ...              "NDArray[np.complex64]")
+    'NDArray[np.complex64] | None'
+    >>> optional_ann({"name": "peek", "borrow": True}, "ndarray")
+    'ndarray'
+    """
+    return f"{ann} | None" if empty_is_none(m) else ann
+
+
+def empty_is_none_doc(m: dict) -> str:
+    """The ``Returns`` sentence saying when *m* returns ``None``, or ``""``.
+
+    gh-2183: an optional annotation says THAT the call may return ``None``;
+    this says WHEN, on both doc faces, from the one predicate the binding and
+    the annotation read. It is appended to the ``Returns`` description --
+    the header's ``@return`` or jm's fallback -- rather than replacing it,
+    because the author's prose says what the value is and this says what
+    the binding does when there is none.
+
+    Examples
+    --------
+    >>> empty_is_none_doc({"name": "value", "variable_output": True,
+    ...                    "none_on_empty": True})
+    'None when the C call writes no output.'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True})
+    'None when the C call lends nothing (returns NULL).'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True, "status_fn": "ring_why",
+    ...                    "status_errors": [{"status": "RING_CLOSED",
+    ...                                       "error": "EOFError"}]})
+    'None when the C call lends nothing (returns NULL) and its status has no exception row.'
+    >>> empty_is_none_doc({"name": "value", "variable_output": True})
+    ''
+    """
+    if not empty_is_none(m):
+        return ""
+    from .._borrow import is_borrow, status_rows
+
+    if not is_borrow(m):
+        return "None when the C call writes no output."
+    # gh-1418: a status with a row raises before the fallback is reached,
+    # so with a table the None is the answer for the statuses it omits.
+    return (
+        "None when the C call lends nothing (returns NULL)"
+        + (" and its status has no exception row" if status_rows(m) else "")
+        + "."
+    )
+
+
 def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
     """The ``raises=`` argument for a component's CLASS docstring (gh-805 §F).
 

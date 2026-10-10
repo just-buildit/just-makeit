@@ -60,7 +60,10 @@ from ._diagnostics import (
     _rc_raise_c,
     count_type as count_type_of,
     declared_raise,
+    empty_is_none,
+    empty_is_none_doc,
     empty_raise_c,
+    optional_ann,
     property_declared_raise,
     property_raises_doc,
     raises_doc,
@@ -1874,7 +1877,12 @@ def make_methods_ctx(
         # (`record_module`, the qualifier for the structseq's __module__) are
         # both read straight off `m` by `_record`, which the .pyi writers share
         # — see the descriptor emit below.
-        none_on_empty: bool = m.get("none_on_empty", False)
+        # gh-2183: read through the one predicate the annotations and both
+        # doc faces ask, not off the key -- so every `Py_RETURN_NONE` this
+        # loop emits for an empty result is one an annotation says `| None`
+        # for. Inside the variable-output and borrow branches, its only
+        # readers, it is the key itself.
+        none_on_empty: bool = empty_is_none(m)
         # gh-1426 B: refuse a wrong-dtype / non-1-D / strided INPUT rather
         # than casting, copying and flattening it. The scalar path was the
         # only array surface still converting silently -- `out=` (gh-581)
@@ -2124,9 +2132,12 @@ def make_methods_ctx(
             # view is optional and the stub must say so -- a caller that
             # cannot see `| None` writes `peek(n).mean()` and the checker
             # agrees with them right up until it returns None.
-            _ret_ann = _pyi_ndarray(
-                _borrow.element_type(record_dtype, return_type)
-            ) + (" | None" if none_on_empty else "")
+            # gh-2183: through `optional_ann`, which the variable-output
+            # branch below and the module-aggregated peer ask too.
+            _ret_ann = optional_ann(
+                m,
+                _pyi_ndarray(_borrow.element_type(record_dtype, return_type)),
+            )
         elif status_return:
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
@@ -2161,10 +2172,16 @@ def make_methods_ctx(
             # not this issue's.
             _all_rts = [record_dtype or return_type] + list(multi_output)
             _ndarrays = [_pyi_ndarray(rt) for rt in _all_rts]
-            _ret_ann = (
-                f"tuple[{', '.join(_ndarrays)}]"
-                if len(_ndarrays) > 1
-                else _ndarrays[0]
+            # gh-2183: `none_on_empty` returns None on both of this shape's
+            # routes, and the stub said the array was always there -- the
+            # borrow branch above was the only one asking.
+            _ret_ann = optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join(_ndarrays)}]"
+                    if len(_ndarrays) > 1
+                    else _ndarrays[0]
+                ),
             )
         elif out_type:
             # gh-529: `out_type` on a method allocates a fresh output array
@@ -2232,6 +2249,7 @@ def make_methods_ctx(
                 _ret_ann,
                 _brief or default_summary,
                 raises=_raises_doc,
+                none_when=empty_is_none_doc(m),
                 param_defaults=_gluedoc.binding_param_docs(
                     _count_kw,
                     count=_stub_count_arg,
@@ -3656,10 +3674,14 @@ def make_methods_ctx(
                 ].replace("np.", "")
                 for i, rt in enumerate(_all_rts_vo)
             ]
-            _ret_hint_vo = (
-                f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
-                if len(_all_rts_vo) > 1
-                else "ndarray"
+            # gh-2183: the synopsis line is the runtime face's annotation.
+            _ret_hint_vo = optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
+                    if len(_all_rts_vo) > 1
+                    else "ndarray"
+                ),
             )
             if has_arg or has_params:
                 # Every declared param, not just the first array one: the
@@ -4484,8 +4506,9 @@ def make_methods_ctx(
                 # body that hands back an array -- the same "doc face
                 # describing a different function" defect the comment above
                 # is about.
+                # gh-2183: and optional when a NULL borrow answers None.
                 else (
-                    "ndarray"
+                    optional_ann(m, "ndarray")
                     if out_type or multi_output or borrow
                     else _pyi_scalar(return_type)
                 )
@@ -4598,6 +4621,7 @@ def make_methods_ctx(
                     indent=8,
                     skeleton_fallback=True,
                     raises=_raises_doc,
+                    none_when=empty_is_none_doc(m),
                     param_defaults=_gluedoc.binding_param_docs(
                         _count_kw,
                         count=_stub_count_arg,
