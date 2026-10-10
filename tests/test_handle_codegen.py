@@ -649,8 +649,10 @@ class TestPyi:
         assert "def __init__(self, path: str" in pyi
         # Methods, properties and RAII now have docstrings (gh-374).
         # gh-1724: the arg's declared dtype, not `Any`.
-        assert "def write(self, x: npt.NDArray[np.complex64]) -> int:" in pyi
-        assert '"""write(x) -> int."""' in pyi
+        # gh-2207: the declared name, which the runtime doc uses too -- not
+        # the `x` this pinned while the stub invented it.
+        assert "def write(self, iq: npt.NDArray[np.complex64]) -> int:" in pyi
+        assert '"""write(iq) -> int."""' in pyi
         assert "@property" in pyi
         assert "def clip_fraction(self) -> float:" in pyi
         assert "def __enter__(self) -> Writer:" in pyi

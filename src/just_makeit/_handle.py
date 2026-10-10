@@ -538,6 +538,53 @@ def _array_args(m: dict) -> list:
     ]
 
 
+def py_args(m: dict) -> list:
+    """Method *m*'s ``args`` rows in the order its Python signature takes them.
+
+    The one answer to what each parameter is called and where it sits. The
+    binding parses in this order and its ``kwlist`` is these names; the
+    ``.pyi`` signature, its one-line summary and both numpy ``Parameters``
+    blocks list them in it (gh-2207). The stub used to build its own: shape
+    (b)'s array was ``x`` whatever the manifest declared, so a stub over a
+    binding taking ``iq=`` offered ``x=``, which raises ``TypeError``.
+
+    An array leads, because a scalar after it may carry a default and a
+    required parameter cannot follow an optional one: shape (b) takes the
+    array then the scalars, and shape (d) the input, the caller's buffer,
+    then the scalars (gh-582). Every other shape takes the rows as declared.
+    The scalars keep their declared order, which is also their order in the
+    C call.
+
+    Examples
+    --------
+    >>> [a["name"] for a in py_args({"name": "send", "args": [
+    ...     {"name": "fs", "type": "double"},
+    ...     {"name": "iq", "type": "float _Complex[]"}]})]
+    ['iq', 'fs']
+    >>> [a["name"] for a in py_args({"name": "scale", "returns": "float[]",
+    ...     "args": [{"name": "k", "type": "float"},
+    ...              {"name": "out", "type": "float[]", "writable": True},
+    ...              {"name": "x", "type": "float[]"}]})]
+    ['x', 'out', 'k']
+    """
+    margs = list(m.get("args", []))
+    arrays = _array_args(m)
+    returns = m.get("returns")
+    writable = [a for a in arrays if a.get("writable")]
+    if writable and returns and str(returns).endswith("[]"):
+        lead = [a for a in arrays if not a.get("writable")][:1] + writable[:1]
+    else:
+        lead = arrays[:1]
+    return lead + [a for a in margs if not any(a is b for b in lead)]
+
+
+def _count_name(m: dict) -> str:
+    """The count parameter of shape (c), ``read(n) -> ndarray``: the one
+    declared argument, or ``n`` when the manifest declares none."""
+    margs = m.get("args", [])
+    return str(margs[0]["name"]) if margs else "n"
+
+
 def _data_return(returns: "str | None") -> bool:
     """Whether the C return is the payload's LENGTH rather than a value.
 
@@ -937,7 +984,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # (c) int-in → array-out: an array return with a single integer arg.
     if returns and str(returns).endswith("[]") and not array_in:
         out_elem, out_npy = _array_elem_npy(returns)
-        cnt = margs[0]["name"] if margs else "n"
+        cnt = _count_name(m)
         # gh-1716: `got` becomes the dimension of a `cnt`-element array.
         _got_guard = _coerce.returned_count_c(
             "got", cnt, f"{tname}.{name}", "Py_DECREF(arr);"
@@ -979,24 +1026,23 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # already existed, so the missing scalars were a gap rather than a decision.
     writable_out = [a for a in array_in if a.get("writable")]
     if writable_out and returns and str(returns).endswith("[]"):
-        o = writable_out[0]
         ins = [a for a in array_in if not a.get("writable")]
         if len(writable_out) > 1 or len(ins) != 1:
             raise NotImplementedError(
                 f"handle method '{name}': shape (d) takes exactly one input "
                 "array and one writable output array"
             )
-        a = ins[0]
-        xn, on = a["name"], o["name"]
-        in_elem, in_npy = _array_elem_npy(a["type"])
-        out_elem, out_npy = _array_elem_npy(o["type"])
         # gh-582: trailing scalars, the same feature shape (b) got in gh-308.
         # Everything that is neither the input nor the output array, in DECLARED
         # order — the Python signature follows the manifest, and the C call
         # threads them between n_in and out_data, which is where the natural C
         # signature puts them:
         #   fn(h, in, n_in, <scalars>, out, max_out)
-        d_others = [s for s in margs if s is not a and s is not o]
+        # gh-2207: `py_args` is that order, and the stub's.
+        a, o, *d_others = py_args(m)
+        xn, on = a["name"], o["name"]
+        in_elem, in_npy = _array_elem_npy(a["type"])
+        out_elem, out_npy = _array_elem_npy(o["type"])
         if any(str(s.get("type", "")).endswith("[]") for s in d_others):
             raise NotImplementedError(
                 f"handle method '{name}': shape (d) takes exactly one input "
@@ -1103,9 +1149,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # after it and pass through to fn(self->h, in_data, n_in, <scalars>) — e.g.
     # ZmqSink.send(iq, fs, fc) -> wfm_zmq_sink_send(h, iq, n, fs, fc) (#308).
     if array_in:
-        a = array_in[0]
+        # gh-2207: the array, then the scalars in declared order -- `py_args`,
+        # the order the stub's signature reads too.
+        a, *others = py_args(m)
         in_elem, in_npy = _array_elem_npy(a["type"])
-        others = [s for s in margs if s is not a]
         if any(str(s.get("type", "")).endswith("[]") for s in others):
             raise NotImplementedError(
                 f"handle method '{name}': more than one array arg is "
@@ -1156,7 +1203,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                     _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
                 )
             fmt_b = "".join(fmt_parts)
-            kwnames = [a["name"]] + [s["name"] for s in others]
+            kwnames = [s["name"] for s in (a, *others)]
             kwlist_b = ", ".join(f'"{n}"' for n in kwnames)
             scal_addrs = "".join(f", &{s['name']}" for s in others)
             return f"""static PyObject *
@@ -2244,16 +2291,17 @@ def _arg_array_ann(a: dict) -> str:
 
 
 def py_face(m: dict) -> PyFace:
-    """The Python-facing shape of one handle method."""
-    name = m["name"]
-    margs = list(m.get("args", []))
-    returns = m.get("returns")
+    """The Python-facing shape of one handle method.
+
+    Every parameter is named and placed by `py_args`, the order the binding
+    parses in, so the stub cannot offer a keyword the binding refuses
+    (gh-2207).
+    """
     name = m["name"]
     margs = list(m.get("args", []))
     returns = m.get("returns")
     arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     writable_out = [a for a in arrays if a.get("writable")]
-    scalars = [a for a in margs if a not in arrays]
     ret_arr = bool(returns) and str(returns).endswith("[]")
     if returns == "bytes":
         # (f) scalar/string args -> bytes (len from handle, gh-565).
@@ -2271,9 +2319,7 @@ def py_face(m: dict) -> PyFace:
         # parameter names are what a caller types — they must match the
         # kwlist. Order matches the binding's: x, out, then the scalars
         # (see _emit_method's (d) branch for why out precedes them).
-        _d_out = writable_out[0]
-        _d_in = [a for a in arrays if a is not _d_out][0]
-        _d_scalars = [a for a in margs if a not in arrays]
+        _d_in, _d_out, *_d_scalars = py_args(m)
         # gh-1724: each array arg by the one helper, of its declared type.
         sig = (
             f"self, {_d_in['name']}: {_arg_array_ann(_d_in)}"
@@ -2299,26 +2345,28 @@ def py_face(m: dict) -> PyFace:
         ann = "NDArray[Any]"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
     elif ret_arr and not arrays:
-        # (c) read(n) -> ndarray
-        sig = "self, n: int"
+        # (c) read(n) -> ndarray, the count named as the binding names it.
+        sig = f"self, {_count_name(m)}: int"
         ann = "NDArray[Any]"
-        doc_call = f"{name}(n)"
+        doc_call = f"{name}({_count_name(m)})"
     elif arrays:
         # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
-        # `= ...` (gh-178 review #6).
-        parts = ["self", f"x: {_arg_array_ann(arrays[0])}"] + [
+        # `= ...` (gh-178 review #6). gh-2207: the array is named as declared,
+        # never `x` -- the binding's kwlist takes the declared name.
+        _b_arr, *_b_scalars = py_args(m)
+        parts = ["self", f"{_b_arr['name']}: {_arg_array_ann(_b_arr)}"] + [
             f"{s['name']}: {_pyi_scalar(s['type'])}"
             + (" = ..." if s.get("default") is not None else "")
-            for s in scalars
+            for s in _b_scalars
         ]
         sig = ", ".join(parts)
         ann = _pyi_scalar(returns) if returns else "None"
         # Inline actual scalar defaults in the docstring summary.
-        scalar_doc = ["x"] + [
+        scalar_doc = [_b_arr["name"]] + [
             f"{s['name']}={s['default']}"
             if s.get("default") is not None
             else s["name"]
-            for s in scalars
+            for s in _b_scalars
         ]
         doc_call = f"{name}({', '.join(scalar_doc)})"
     elif margs:
@@ -2358,7 +2406,7 @@ def py_face(m: dict) -> PyFace:
                 if str(a.get("type", "")).endswith("[]")
                 else _pyi_arg_ann(a),
             )
-            for a in margs
+            for a in py_args(m)
         ],
     )
 
