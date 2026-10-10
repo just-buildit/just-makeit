@@ -4053,17 +4053,23 @@ def make_methods_ctx(
             # entry is METH_VARARGS | METH_KEYWORDS. The bare scalar `step`-shape
             # arg (no params) and the no-arg case stay positional / NOARGS --
             # `call_convention` (gh-1959) spells each.
+            # gh-2191: the names the parse's `_kwlist` holds, in its order --
+            # a release asks whether its count was PASSED, and where to look
+            # is this list, not a re-derivation of it.
+            _parsed_names: list[str] = []
             if has_params and has_arg:
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     _combined, Component, enums, records, _sid, strict_in
                 )
+                _parsed_names = [p["name"] for p in _combined]
                 call_args_c = f"self->handle, {_p_call}"
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     params, Component, enums, records, _sid, strict_in
                 )
+                _parsed_names = [p["name"] for p in params]
                 call_args_c = f"self->handle, {_p_call}"
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
@@ -4316,7 +4322,7 @@ def make_methods_ctx(
                     f"{guard}"
                     f"{parse_block}"
                     # gh-1426 A: after the args exist, before the call.
-                    f"{_borrow.release_resolve_c(m)}"
+                    f"{_borrow.release_resolve_c(m, kwlist=_parsed_names)}"
                     f"{ret_body}"
                     f"}}"
                 )
