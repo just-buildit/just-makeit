@@ -449,6 +449,11 @@ PROPERTY_KEYS = frozenset(
         "capsule_type",
         "default",
         "out",
+        # gh-2182: a writable property's setter may refuse a value -- the C
+        # setter returns int, and a non-zero return raises `error` with
+        # `error_message`, spelled as a method's pair.
+        "error",
+        "error_message",
     }
 )
 

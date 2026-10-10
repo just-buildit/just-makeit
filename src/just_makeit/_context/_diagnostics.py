@@ -154,7 +154,12 @@ def _c_string_literal(message: str, indent: int) -> str:
 
 
 def _rc_raise_c(
-    category: str, message: str, indent: int = 21, *, pad: int = 8
+    category: str,
+    message: str,
+    indent: int = 21,
+    *,
+    pad: int = 8,
+    fail: str = "return NULL;",
 ) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
@@ -198,6 +203,12 @@ def _rc_raise_c(
         ``out=`` branch, gh-2012) passes 12, with *indent* moved by the same
         4, so the literal is wrapped for the column it is printed at rather
         than shifted past 79 after wrapping.
+    fail : str, keyword-only
+        The statement that leaves the function once the exception is set.
+        ``return NULL;`` in a wrapper returning a ``PyObject *``; a
+        property's setter is a ``setter`` slot returning ``int``, so it
+        passes ``return -1;`` (gh-2182) -- the same knob, for the same
+        reason, as `_parse.capsule_unwrap_c`'s.
 
     Notes
     -----
@@ -222,7 +233,7 @@ def _rc_raise_c(
         f' "%s (rc=%lld)",\n'
         f"{_c_string_literal(message, indent)},\n"
         f"{' ' * indent}(long long)_rc);\n"
-        f"{lead}return NULL;\n"
+        f"{lead}{fail}\n"
     )
 
 
@@ -693,6 +704,94 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     if not (m.get("error") or m.get("status_return")):
         return None
     return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
+
+
+def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
+    """`declared_raise` for a writable property's setter (gh-2182).
+
+    The trigger is ``error`` alone, as on a handle method: a setter has no
+    other use for its C return, so declaring the exception IS declaring that
+    a non-zero return refuses the value. Without it the setter discards the
+    return -- the binding a property had before this key existed -- and an
+    assignment the core refused succeeded silently while the property kept
+    reading its old value.
+
+    *setter* is the C function the binding calls, `_csym.property_setter`.
+    It names the failure in the derived message for the reason
+    `handle_declared_raise` uses ``fn``: it is what a caller reading the
+    traceback can grep for, where the Python name would read ``alpha
+    failed``.
+
+    `validate_property_error` refuses ``error`` wherever there is no C
+    setter call to check, so a pair here is always a pair the binding
+    raises with.
+
+    Examples
+    --------
+    >>> property_declared_raise({"name": "alpha"}, "acc_set_alpha") is None
+    True
+    >>> property_declared_raise({"name": "alpha", "writable": True,
+    ...                          "error": "ValueError"}, "acc_set_alpha")
+    ('ValueError', 'acc_set_alpha failed')
+    """
+    if not p.get("error"):
+        return None
+    return _raise_pair(p, setter)
+
+
+def setter_return_type(p: dict) -> str:
+    """The C type property *p*'s setter returns: ``int`` when it may refuse.
+
+    Read by every writer of the setter's prototype -- the ``_core.h``
+    declaration and the stub `jm property` appends -- so the prototype and
+    the binding that tests the return cannot disagree (gh-2182). A
+    property declaring no ``error`` keeps ``void``, so its render is the
+    one it had before the key existed.
+
+    Examples
+    --------
+    >>> setter_return_type({"name": "alpha", "writable": True})
+    'void'
+    >>> setter_return_type({"name": "alpha", "writable": True,
+    ...                     "error": "ValueError"})
+    'int'
+    """
+    return "int" if property_declared_raise(p, "") else "void"
+
+
+def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
+    """The ``raises=`` argument for a refusing property's two doc faces.
+
+    `raises_doc`'s reading for a property, built from the same pair
+    `property_declared_raise` hands the binding, so the documented class is
+    the class the setter raises. The sentence says *assignment* because a
+    property's docstring documents the getter too, and only the setter
+    raises.
+
+    Examples
+    --------
+    >>> property_raises_doc({"name": "alpha"}, "acc_set_alpha")
+    []
+    >>> cat, desc = property_raises_doc(
+    ...     {"name": "alpha", "writable": True, "error": "ValueError",
+    ...      "error_message": "alpha must lie in (0, 1]"}, "acc_set_alpha")[0]
+    >>> cat
+    'ValueError'
+    >>> desc.startswith("On assignment, if ``acc_set_alpha`` refuses")
+    True
+    """
+    pair = property_declared_raise(p, setter)
+    if pair is None:
+        return []
+    category, message = pair
+    return [
+        (
+            category,
+            f"On assignment, if ``{setter}`` refuses the value by returning "
+            f"non-zero. The exception message is ``{message}``, with the "
+            f"return code appended.",
+        )
+    ]
 
 
 def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":

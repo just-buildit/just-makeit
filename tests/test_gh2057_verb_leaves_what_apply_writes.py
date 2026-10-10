@@ -746,6 +746,12 @@ CASES: "dict[str, dict[str, Case]]" = {
         "writable": _case("property", "o", "lvl2", "--type", "double",
                           "--writable", "--doc", "A level.", "{M}",
                           only=BASE),
+        # gh-2182: a setter that refuses a value -- an `int` prototype and
+        # stub, and a binding that tests the return.
+        "refusing": _case("property", "o", "lvl2", "--type", "double",
+                          "--writable", "--error", "ValueError",
+                          "--error-message", "lvl2 out of range", "{M}",
+                          only=BASE),
         "field": _case("property", "o", "x", "--type", "double",
                        "--field", "{M}", needs=("o", "members")),
         "expr": _case("property", "o", "twice", "--type", "double",
