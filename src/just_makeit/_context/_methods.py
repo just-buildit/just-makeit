@@ -2709,9 +2709,17 @@ def make_methods_ctx(
                 # params now go through the parse every other params shape
                 # uses -- the single-record shape's route since gh-594 -- with
                 # the input first, as the block (`x`, `x_len`) the prototype
-                # takes as `in, n_in`. No `out=` yet (`_outbuf.why_not`).
+                # takes as `in, n_in`. gh-2028: and the optional `out=` last,
+                # as that parse's trailing argument; the out branch below
+                # validates and acquires it as it does for every other shape.
                 parse_block, _p_call, decref_in = _build_params_parse(
-                    _block_params(), Component, enums, records, _sid, strict_in
+                    _block_params(),
+                    Component,
+                    enums,
+                    records,
+                    _sid,
+                    strict_in,
+                    out_obj="out_obj" if _enable_out else "",
                 )
                 call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
                 # The input sizes the output, as without params: `x_len` is
