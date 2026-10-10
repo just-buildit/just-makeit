@@ -222,6 +222,17 @@ there is no single length to divide (a `T[][]`, or a dtype-dispatch array).
 
 ______________________________________________________________________
 
+### Releasing a borrow (`--releases`)
+
+A release's count param defaults to the outstanding borrow's count only when
+it is **omitted**: `view = buf.wait(512); buf.consume()` releases 512. An
+explicit count is passed to C as given, `0` included, because a consumer's
+`consume(n_processed)` computes 0 whenever a frame yields nothing, and the C
+release decides what releasing 0 means. Until gh-2191 an explicit `0` was
+read as omitted and released the whole borrow.
+
+______________________________________________________________________
+
 ### Varargs methods (`--varargs`)
 
 Use `--varargs` when a method needs fully flexible Python argument
