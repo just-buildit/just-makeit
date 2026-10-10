@@ -63,7 +63,7 @@ timing every declared method it can.
 | `--nogil`                     | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet.                                                                                                                                                                       |
+| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet — and a header that declares the method's `_max_out()` sizes the result from it instead (see [Record shapes](#record-shapes)).                                         |
 | `--single`                    | With `--result-field`, return **one** named record (a `PyStructSequence`: attribute access + unpacking) instead of a `list[tuple]`. The C kernel returns the `--return-type` record struct by value (gh-244).                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--record-name NAME`          | With `--single`, the public name of the record type (e.g. `ToneMetrics`), overriding the name derived from the C `--return-type` (gh-257). Also settable per method in the manifest as `record_name = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `--record-module MOD`         | With `--single`, overrides the `__module__` of the record type (e.g. `my_pkg.dsp`). By default it is the module the object is imported from, `<pkg>.<comp>` or `<pkg>.<module>` (gh-1486), so `type(r).__module__` and `repr(r)` already name an importable path. Also settable per method in the manifest as `record_module = "…"` (gh-261).                                                                                                                                                                                                                                                                                                                    |
@@ -496,6 +496,28 @@ back depends on which of `--single` / `--record-dtype` you pass:
 | neither                 | a `list[tuple]`                               | `<T> *result, size_t max_results` |
 | `--single`              | **one** record, a named `PyStructSequence`    | the struct by value               |
 | `--record-dtype STRUCT` | **an array** of records, a structured ndarray | `<STRUCT> *out`                   |
+
+A plain **list** of records (the first row) is filled into a buffer the
+binding owns, and the kernel can report no more of them than `max_results`
+(TOML, default 64). Its signature has no way to say there were more, so a
+call with more to report returns the first `max_results` and the rest are
+gone. When the count is known before the call, declare the method's capacity
+function in the sacred header, beside its kernel -- the same function, name
+and arity a `--variable-output` method's `_max_out()` has:
+
+```c
+size_t <pkg>_<comp>_<name>_max_out(<pkg>_<comp>_state_t *state, size_t n_in);
+```
+
+The binding then asks it for every call, allocates that many records, and
+passes the same number as `max_results`, so a kernel that bounds its output
+exactly never saturates (gh-2184). The count is the one the kernel is handed:
+`n_in`, or `<param>_len` for a method with no input and an array param; with
+neither, or when the bound does not depend on the call, it takes only the
+state. jm reads the declaration, so there is no flag, and without one the
+fixed buffer is unchanged. A **module** object's binding fragment is not
+re-rendered by `apply`: it reports the method instead, and deleting the
+fragment and re-running `apply` picks the capacity up.
 
 `--record-dtype` names the **element type**; who owns the buffer is a separate
 question, answered by `--variable-output` (the kernel fills a buffer sized for

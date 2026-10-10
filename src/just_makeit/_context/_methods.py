@@ -39,6 +39,7 @@ from .._docstring import (
     name_summary,
     property_doc,
     class_import_line,
+    max_out_is_declared,
     max_out_is_state_only,
     render_numpy_doc,
     render_runtime_doc,
@@ -1249,6 +1250,109 @@ def _max_out_count_param_ctx(
                 return f", size_t {p['name']}_len", f"{p['name']}_len"
         return "", None
     return ", size_t n", "n"
+
+
+def _max_out_call_c(
+    c_fn: str, doc_blocks: "dict | None", count: "str | None"
+) -> str:
+    """The ``<c_fn>_max_out(...)`` call a wrapper sizes its output with.
+
+    One spelling for every wrapper that asks a method's capacity before
+    calling its kernel: the ``variable_output`` shapes (gh-607) and a
+    list-of-records method whose header declares one (gh-2184). *count* is
+    the C expression the kernel is about to be handed as its input length,
+    or ``None`` for a shape with no count to mirror.
+
+    gh-761: the header is the source of truth for the arity. A declaration
+    that takes only the state is called with only the state, whatever count
+    the shape has -- a wrapper calling ``max_out(state, n)`` against a
+    ``max_out(state)`` prototype does not compile.
+
+    Examples
+    --------
+    >>> _max_out_call_c("h_push", None, "n_in")
+    'h_push_max_out(self->handle, n_in)'
+    >>> _max_out_call_c("h_push", None, None)
+    'h_push_max_out(self->handle)'
+    >>> from .._docstring import max_out_arity_key
+    >>> _max_out_call_c(
+    ...     "h_push", {max_out_arity_key(): {"h_push_max_out"}}, "n_in"
+    ... )
+    'h_push_max_out(self->handle)'
+    """
+    state_only = max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
+    arg = f", {count}" if (count and not state_only) else ""
+    return f"{c_fn}_max_out(self->handle{arg})"
+
+
+def _records_buffer_c(
+    ret_disp: str,
+    c_fn: str,
+    doc_blocks: "dict | None",
+    count: "str | None",
+    max_results: int,
+    who: str,
+    release: str,
+) -> "tuple[str, str, str]":
+    """``(declare, capacity, free)`` for a list-of-records result buffer.
+
+    gh-2184. The kernel's contract is ``(..., T *result, size_t
+    max_results) -> count``: it fills at most *max_results* records and has
+    no way to say there were more. So the buffer's size IS the most a call
+    can ever return, and a fixed one silently dropped whatever the C still
+    had to report -- doppler's detectors lost every result past the 64th.
+
+    Without a declared capacity the buffer is what it always was: a stack
+    array of the manifest's ``max_results`` (default 64), byte-identical to
+    every wrapper rendered before this. When the header declares
+    ``<c_fn>_max_out`` -- the ``variable_output`` capacity function, same
+    name, same arity rules, called through :func:`_max_out_call_c` -- the
+    wrapper asks it, heap-allocates that many records, and hands the kernel
+    exactly that capacity. A function that can bound its output then never
+    saturates. The bound is trusted as given, as ``pass_capacity`` trusts a
+    ``variable_output`` one: the kernel is told it, so a capacity of 0 is
+    an empty result, not an overrun. ``PyMem_Malloc(0)`` returns a distinct
+    non-NULL pointer, so that case needs no branch of its own.
+
+    *release* drops what the wrapper already holds (parsed input arrays)
+    on the two failure paths before the kernel runs. The product
+    ``capacity * sizeof(T)`` is bounded first (gh-1710's emitter), so a huge
+    capacity raises ``OverflowError`` instead of allocating a short buffer.
+
+    Returns
+    -------
+    tuple of str
+        The C that declares ``results`` (and, with a capacity, ``_cap``);
+        the capacity expression to pass as ``max_results`` and to bound the
+        returned count with; and the statement that frees ``results``,
+        empty for the stack array.
+    """
+    if not max_out_is_declared(doc_blocks, f"{c_fn}_max_out"):
+        return (
+            f"    {ret_disp} results[{max_results}];\n",
+            str(max_results),
+            "",
+        )
+    rel = release.replace("\n    ", " ").strip()
+    rel_line = f"        {rel}\n" if rel else ""
+    return (
+        _coerce.output_size_c(
+            "_cap",
+            _max_out_call_c(c_fn, doc_blocks, count),
+            who,
+            rel,
+            ctype="size_t",
+            limit=f"(PY_SSIZE_T_MAX / sizeof({ret_disp}))",
+        )
+        + f"    {ret_disp} *results ="
+        f" ({ret_disp} *)PyMem_Malloc(_cap * sizeof({ret_disp}));\n"
+        "    if (!results) {\n"
+        f"{rel_line}"
+        "        return PyErr_NoMemory();\n"
+        "    }\n",
+        "_cap",
+        "PyMem_Free(results);",
+    )
 
 
 def _capacity_exprs(
@@ -2936,12 +3040,12 @@ def make_methods_ctx(
             # the text it was created with, and `refresh_glue_bindings`
             # repairs the `*_max_out` row specifically, not this wrapper. Only
             # a newly added method or a `jm regenerate` renders it fresh.
+            # gh-2184: one spelling, `_max_out_call_c`, shared with the
+            # list-of-records wrapper that now asks the same function.
             _moc_state_only = max_out_is_state_only(
                 doc_blocks, f"{c_fn}_max_out"
             )
-            _moc_call_arg = (
-                f", {_moc_arg}" if (_moc_arg and not _moc_state_only) else ""
-            )
+            _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg)
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
@@ -3109,7 +3213,7 @@ def make_methods_ctx(
                     f"        size_t _cap ="
                     f" {_coerce.array_count_c('out_arr', _vo_e)};\n"
                     f"        size_t _omax ="
-                    f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
+                    f" {_moc_call};\n"
                     # Without pass_capacity, max_out() alone is not always a
                     # true call-independent upper bound — a generator's
                     # steps(count) writes exactly the caller's requested
@@ -3212,7 +3316,7 @@ def make_methods_ctx(
             _vo_alloc = (
                 f"    size_t _need = {_lazy_fallback};\n"
                 f"    size_t _cap ="
-                f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
+                f" {_moc_call};\n"
                 # gh-607: without pass_capacity, the kernel is never told its
                 # capacity, so max_out() is only a sizing HINT and the alloc
                 # is clamped to at least what the call needs — a mechanically
@@ -3831,6 +3935,26 @@ def make_methods_ctx(
             # through record_tuple_build so a field type converts via
             # _CTYPE_META's to_py rather than a cast-less "i" fallback.
             _bv = record_tuple_build(result_fields, "results[i]")
+
+            # gh-2184: where the records go, and how many the kernel may
+            # write -- a fixed stack array, or the capacity the header's
+            # `<c_fn>_max_out` reports for this call. *count* is the length
+            # the kernel is about to be handed, as a `variable_output`
+            # wrapper passes its own (gh-607); *release* what the wrapper
+            # holds before the kernel runs.
+            def _rf_buffer(
+                count: "str | None", release: str
+            ) -> "tuple[str, str, str]":
+                return _records_buffer_c(
+                    ret_disp,
+                    c_fn,
+                    doc_blocks,
+                    count,
+                    max_results,
+                    f"{Component}.{name}",
+                    release,
+                )
+
             if has_params:
                 # gh-1961: the params, through the parse the single-record
                 # branch above uses (gh-594), the input first as its block.
@@ -3840,11 +3964,18 @@ def make_methods_ctx(
                 _rf_parse, _p_call, _p_cleanup = _build_params_parse(
                     _block_params(), Component, enums, records, _sid, strict_in
                 )
+                # The block input is `x` here; without one, the first array
+                # param is the count, as `_max_out_count_param_ctx` declares.
+                _rf_count = "x_len" if has_arg else None
+                for _p in [] if has_arg else params:
+                    if is_array_param_type(_p["type"]):
+                        _rf_count = f"{_p['name']}_len"
+                        break
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(_rf_count, _p_cleanup)
                 _rf_call = (
-                    f"    {ret_disp} results[{max_results}];\n"
+                    _rf_decl
                     + _kernel_call_block(
-                        f"{c_fn}(self->handle, {_p_call}, "
-                        f"results, {max_results})",
+                        f"{c_fn}(self->handle, {_p_call}, results, {_rf_cap})",
                         nogil,
                     )
                     + _p_cleanup
@@ -3858,25 +3989,29 @@ def make_methods_ctx(
                     f"    size_t n_in ="
                     f" (size_t)PyArray_SIZE(in_arr);\n"
                 )
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(
+                    "n_in", "Py_DECREF(in_arr);"
+                )
                 _rf_call = (
-                    f"    {ret_disp} results[{max_results}];\n"
+                    _rf_decl
                     + _kernel_call_block(
                         f"{c_fn}(self->handle, "
                         f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
-                        f"results, {max_results})",
+                        f"results, {_rf_cap})",
                         nogil,
                     )
                     + "    Py_DECREF(in_arr);\n"
                 )
             else:
                 _rf_parse = ""
-                _rf_call = (
-                    f"    {ret_disp} results[{max_results}];\n"
-                    + _kernel_call_block(
-                        f"{c_fn}(self->handle, results, {max_results})",
-                        nogil,
-                    )
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(None, "")
+                _rf_call = _rf_decl + _kernel_call_block(
+                    f"{c_fn}(self->handle, results, {_rf_cap})",
+                    nogil,
                 )
+            # The stack array needs no release; a heap buffer is freed on
+            # every way out once the kernel has filled it.
+            _rf_rel = f" {_rf_free}" if _rf_free else ""
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
             # param is parsed with keywords (gh-1961), as in that shape.
@@ -3895,20 +4030,25 @@ def make_methods_ctx(
                     f"{_rf_call}"
                     # gh-1716: `n_out` records are read from `results[]`.
                     + _coerce.returned_count_c(
-                        "n_out", str(max_results), f"{Component}.{name}"
+                        "n_out", _rf_cap, f"{Component}.{name}", _rf_free
                     )
-                    + f"    PyObject *lst ="
-                    f" PyList_New((Py_ssize_t)n_out);\n"
-                    f"    if (!lst) return NULL;\n"
-                    f"    for (size_t i = 0; i < n_out; i++) {{\n"
+                    + "    PyObject *lst ="
+                    " PyList_New((Py_ssize_t)n_out);\n"
+                    + (
+                        f"    if (!lst) {{{_rf_rel} return NULL; }}\n"
+                        if _rf_free
+                        else "    if (!lst) return NULL;\n"
+                    )
+                    + f"    for (size_t i = 0; i < n_out; i++) {{\n"
                     f"        PyObject *tup ="
                     f" Py_BuildValue({_bv});\n"
                     f"        if (!tup)"
-                    f" {{ Py_DECREF(lst); return NULL; }}\n"
+                    f" {{{_rf_rel} Py_DECREF(lst); return NULL; }}\n"
                     f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
                     f"    }}\n"
-                    f"    return lst;\n"
-                    f"}}"
+                    + (f"    {_rf_free}\n" if _rf_free else "")
+                    + "    return lst;\n"
+                    "}"
                 )
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)

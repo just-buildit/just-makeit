@@ -63,7 +63,9 @@ from ._docstring import (
     authored_class_brief,
     inherit_ctor_params,
     is_scaffold_doc,
+    declared_max_outs,
     max_out_arity_key,
+    max_out_declared_key,
     max_out_is_state_only,
     parse_doxygen_block,
     scan_max_out_arity,
@@ -261,6 +263,13 @@ def _load_doc_blocks(
     _arity = scan_max_out_arity(text)
     if _arity:
         out[max_out_arity_key()] = _arity
+    # gh-2184: and which `_max_out`s it declares at all, from the same scan,
+    # under the same only-when-non-empty rule. A list-of-records method's
+    # capacity is the author's to declare, and this is how its binding sees
+    # that they did.
+    _declared = declared_max_outs(text)
+    if _declared:
+        out[max_out_declared_key()] = _declared
     return out
 
 
