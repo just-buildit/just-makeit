@@ -2,7 +2,8 @@
  *
  * Include in bench_*_core.c.  After timing each section, call
  * jm_bench_add().  At the end of main() call jm_bench_write_json(),
- * which writes bench_<component>_core.json in the current directory.
+ * which writes bench_<component>_core.json in the current directory and
+ * then frees the rows, leaving the bench empty.
  * The JSON format is compatible with pytest-benchmark so C and Python
  * results can be compared directly.  All times are in seconds;
  * ops = iterations / mean (samples per second).
@@ -74,8 +75,7 @@ jm_bench_elapsed_sec(uint64_t t0, uint64_t t1)
 #  define JM_BENCH_TIMER_NAME "clock_gettime"
 #endif
 
-#define JM_BENCH_MAX_ENTRIES 32
-#define JM_BENCH_NAME_LEN    64
+#define JM_BENCH_NAME_LEN 64
 
 typedef struct {
     char    name[JM_BENCH_NAME_LEN];
@@ -84,10 +84,62 @@ typedef struct {
     int     iters;  /* inner calls per round (BENCH_N) */
 } jm_bench_entry_t;
 
+/* gh-2188: `entries` is a heap array that jm_bench_add grows, so a benchmark
+ * may record any number of rows. It was a fixed array of 32, and
+ * jm_bench_add returned without a word once it was full: a 39-row benchmark
+ * printed all 39 rows, exited 0 and wrote a JSON holding 32. `= {0}` is
+ * still the whole initialisation -- NULL, 0, 0 is an empty bench. */
 typedef struct {
-    jm_bench_entry_t entries[JM_BENCH_MAX_ENTRIES];
+    jm_bench_entry_t *entries; /* `count` rows, room for `cap` */
     int count;
+    int cap;
 } jm_bench_t;
+
+/* Say why on stderr and exit non-zero: the one way this header refuses.
+ *
+ * gh-2188: a row the header cannot hold, or one with no time in it, must not
+ * be left out of the JSON (or written as garbage) while the run exits 0. So
+ * the run stops, naming the row when there is one, and `jm bench` reports
+ * the benchmark as failed. */
+static inline void
+jm_bench_fail(const char *row, const char *why)
+{
+    if (row)
+        fprintf(stderr, "jm_bench: row \"%s\": %s\n", row, why);
+    else
+        fprintf(stderr, "jm_bench: %s\n", why);
+    exit(EXIT_FAILURE);
+}
+
+/* realloc() that never hands back NULL: every allocation this header makes
+ * holds a row the benchmark measured, so one that fails goes through
+ * jm_bench_fail rather than dropping the row. `n` is at least 1 because
+ * realloc(p, 0) may free p and return NULL. */
+static inline void *
+jm_bench_xrealloc(void *p, size_t n)
+{
+    void *q = realloc(p, n ? n : 1);
+    if (!q)
+        jm_bench_fail(NULL, "out of memory recording results");
+    return q;
+}
+
+/* Free every row and leave the bench empty, as `= {0}` made it.
+ *
+ * gh-2188: jm_bench_write_json calls this once the file is written, so a
+ * benchmark built with -fsanitize=address exits with nothing leaked. A
+ * benchmark that returns without writing -- a guard refusing a short set --
+ * calls it itself. */
+static inline void
+jm_bench_free(jm_bench_t *b)
+{
+    for (int i = 0; i < b->count; i++)
+        free(b->entries[i].times);
+    free(b->entries);
+    b->entries = NULL;
+    b->count   = 0;
+    b->cap     = 0;
+}
 
 /* Copy src into dst[0..n-1], truncating, always NUL-terminated.
  *
@@ -120,12 +172,22 @@ static inline void
 jm_bench_add(jm_bench_t *b, const char *name,
              const double *times, int rounds, int iters)
 {
-    if (b->count >= JM_BENCH_MAX_ENTRIES)
-        return;
+    /* A row with no rounds has no time to report, and jm_bench_write_json
+     * would read its order statistics out of an empty array. */
+    if (rounds < 1)
+        jm_bench_fail(name, "rounds must be at least 1");
+    /* Grow by doubling: N rows cost O(log N) reallocs. Each entry's `times`
+     * is its own allocation, so moving the array moves only the pointer. */
+    if (b->count == b->cap) {
+        int cap = b->cap ? 2 * b->cap : 16;
+        b->entries = (jm_bench_entry_t *)jm_bench_xrealloc(
+            b->entries, (size_t)cap * sizeof(*b->entries));
+        b->cap = cap;
+    }
     jm_bench_entry_t *e = &b->entries[b->count++];
     jm_bench_strcpy(e->name, sizeof(e->name), name);
-    e->times = (double *)malloc((size_t)rounds * sizeof(double));
-    if (!e->times) { b->count--; return; }
+    e->times = (double *)jm_bench_xrealloc(
+        NULL, (size_t)rounds * sizeof(double));
     memcpy(e->times, times, (size_t)rounds * sizeof(double));
     e->rounds = rounds;
     e->iters  = iters;
@@ -150,15 +212,17 @@ jm_quantile(const double *s, int n, double p)
     return s[lo] * (1.0 - f) + s[lo + 1] * f;
 }
 
-/* Write pytest-benchmark-compatible JSON to bench_<component>_core.json. */
+/* Write pytest-benchmark-compatible JSON to bench_<component>_core.json,
+ * then free the rows (jm_bench_free): the bench is empty afterwards. */
 static void
-jm_bench_write_json(const jm_bench_t *b, const char *component)
+jm_bench_write_json(jm_bench_t *b, const char *component)
 {
     char fname[256];
     snprintf(fname, sizeof(fname), "bench_%s_core.json", component);
     FILE *fp = fopen(fname, "w");
     if (!fp) {
         fprintf(stderr, "jm_bench: cannot open %s\n", fname);
+        jm_bench_free(b);
         return;
     }
 
@@ -217,8 +281,8 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
         int n = e->rounds;
 
         /* Sort a copy for order statistics. */
-        double *s = (double *)malloc((size_t)n * sizeof(double));
-        if (!s) continue;
+        double *s = (double *)jm_bench_xrealloc(
+            NULL, (size_t)n * sizeof(double));
         memcpy(s, e->times, (size_t)n * sizeof(double));
         qsort(s, (size_t)n, sizeof(double), jm_dcmp);
 
@@ -299,6 +363,7 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
                 "bench_%s_core: recorded 0 measurements -- this target"
                 " measures nothing.\n", component);
     }
+    jm_bench_free(b);
 }
 
 #endif /* JM_BENCH_H */
