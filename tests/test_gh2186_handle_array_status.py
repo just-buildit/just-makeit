@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextlib
 import io
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,14 +57,14 @@ sink_t *sink_open(size_t room);
 void sink_close(sink_t *s);
 int sink_send(sink_t *s, const float _Complex *iq, size_t n, double fs,
               double fc);
-int sink_push(sink_t *s, const float *x, size_t n);
+int sink_push(sink_t *s, const float *x, size_t n, int r);
 size_t sink_taken(const sink_t *s);
 #endif
 """
 
 # A stream with room for a fixed number of samples: a block that does not fit
 # is REFUSED whole (rc 7) and takes nothing, which is the reconnect case the
-# issue describes. `push` refuses an empty block (rc 1).
+# issue describes. `push` refuses an empty block with the rc it is handed.
 _SINK_C = """\
 #include "sink/sink.h"
 #include <stdlib.h>
@@ -81,9 +82,9 @@ int sink_send(sink_t *s, const float _Complex *iq, size_t n, double fs,
     s->taken += n;
     return 0;
 }
-int sink_push(sink_t *s, const float *x, size_t n) {
+int sink_push(sink_t *s, const float *x, size_t n, int r) {
     (void)x;
-    if (!n) return 1;
+    if (!n) return r;
     s->taken += n;
     return 0;
 }
@@ -91,7 +92,10 @@ size_t sink_taken(const sink_t *s) { return s->taken; }
 """
 
 #: The issue's method, and the key without `error`, which raises what the
-#: object face raises: `ValueError`.
+#: object face raises: `ValueError`. `push`'s trailing scalar is named `r`
+#: on purpose: that is the result local a count-reading array binding
+#: declares, and a status binding keeps its rc in `_rc` instead, so the name
+#: is free here and `jm apply` must not refuse it as a collision (gh-1525).
 _SEND = {
     "name": "send",
     "fn": "sink_send",
@@ -110,7 +114,10 @@ _PUSH = {
     "fn": "sink_push",
     "returns": "int",
     "status_return": True,
-    "args": [{"name": "x", "type": "float[]"}],
+    "args": [
+        {"name": "x", "type": "float[]"},
+        {"name": "r", "type": "int", "default": "1"},
+    ],
 }
 
 
@@ -149,26 +156,40 @@ def _project(tmp: Path, module: dict) -> Path:
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """The issue's sink, applied by `jm apply`, compiled and imported."""
+    """The issue's sink, applied by `jm apply`, compiled and imported.
+
+    A failed apply or compile is returned rather than raised, so each test
+    that needs the build FAILS on it by name instead of erroring in setup.
+    """
     if default_cc() is None:
         pytest.skip("no C compiler available")
     from test_handle_build import _compile_import
 
     tmp = tmp_path_factory.mktemp("gh2186")
     root = _project(tmp, _sink_module(_SEND, _PUSH))
-    r = run_cli("apply", cwd=root)
-    assert r.returncode == 0, r.stderr
-    with contextlib.redirect_stdout(io.StringIO()):
-        mod = _compile_import(root, "sink", _SINK_H, _SINK_C)
+    applied = run_cli("apply", cwd=root)
+    if applied.returncode != 0:
+        return root, f"jm apply failed:\n{applied.stderr}"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return root, _compile_import(root, "sink", _SINK_H, _SINK_C)
+    except subprocess.CalledProcessError as exc:
+        return root, f"the binding did not compile:\n{exc.stderr}"
+
+
+def _built(built):
+    """``(root, module)``, once the sink is known to have built."""
+    root, mod = built
+    assert not isinstance(mod, str), mod
     return root, mod
 
 
 def test_a_refused_block_raises_the_declared_exception(built):
     """The issue's ask: a send the stream refuses raises; one it takes is
-    ``None``, and the trailing scalars still reach the C call."""
+    ``None``."""
     import numpy as np
 
-    _, mod = built
+    _, mod = _built(built)
     s = mod.Sink(4)
     assert s.send(np.zeros(3, np.complex64), 1e6) is None
     assert s.taken() == 3
@@ -179,20 +200,24 @@ def test_a_refused_block_raises_the_declared_exception(built):
 
 
 def test_status_return_alone_raises_value_error(built):
-    """The object face's meaning, unchanged: no `error` is `ValueError`."""
+    """The object face's meaning, unchanged: no `error` is `ValueError`.
+    The rc in the message is the one the C call returned, through the
+    trailing scalar."""
     import numpy as np
 
-    _, mod = built
+    _, mod = _built(built)
     s = mod.Sink(4)
     with pytest.raises(ValueError, match=r"sink_push failed \(rc=1\)"):
         s.push(np.zeros(0, np.float32))
+    with pytest.raises(ValueError, match=r"sink_push failed \(rc=3\)"):
+        s.push(np.zeros(0, np.float32), r=3)
     assert s.push(np.ones(2, np.float32)) is None
     assert s.taken() == 2
 
 
 def test_both_doc_faces_say_none_and_name_the_raise(built):
     """The `.pyi` and `help()` describe the binding beside them."""
-    root, mod = built
+    root, mod = _built(built)
     pyi = next(root.rglob("sink.pyi")).read_text()
     for name, exc in (("send", "OSError"), ("push", "ValueError")):
         sig = re.search(rf"def {name}\((.*?)\) -> (.+?):\n", pyi, re.S)
@@ -205,7 +230,7 @@ def test_both_doc_faces_say_none_and_name_the_raise(built):
 
 def test_apply_keeps_the_key(built):
     """`jm apply` writes the manifest back; the key must survive it."""
-    root, _ = built
+    root, _ = _built(built)
     methods = C.load(root)["module"]["sink"]["methods"]
     assert [m.get("status_return") for m in methods] == [True, True, None]
 
