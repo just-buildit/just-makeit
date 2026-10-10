@@ -2,7 +2,8 @@
  *
  * Include in bench_*_core.c.  After timing each section, call
  * jm_bench_add().  At the end of main() call jm_bench_write_json(),
- * which writes bench_<component>_core.json in the current directory.
+ * which writes bench_<component>_core.json in the current directory and
+ * then frees the rows, leaving the bench empty.
  * The JSON format is compatible with pytest-benchmark so C and Python
  * results can be compared directly.  All times are in seconds;
  * ops = iterations / mean (samples per second).
@@ -94,22 +95,50 @@ typedef struct {
     int cap;
 } jm_bench_t;
 
-/* realloc() that never hands back NULL.
+/* Say why on stderr and exit non-zero: the one way this header refuses.
  *
- * gh-2188: every allocation this header makes holds a row the benchmark
- * measured, so one that fails cannot be skipped without dropping that row
- * from the JSON while the run still exits 0. It says so on stderr and exits
- * non-zero instead. `n` is at least 1 because realloc(p, 0) may free p and
- * return NULL. */
+ * gh-2188: a row the header cannot hold, or one with no time in it, must not
+ * be left out of the JSON (or written as garbage) while the run exits 0. So
+ * the run stops, naming the row when there is one, and `jm bench` reports
+ * the benchmark as failed. */
+static inline void
+jm_bench_fail(const char *row, const char *why)
+{
+    if (row)
+        fprintf(stderr, "jm_bench: row \"%s\": %s\n", row, why);
+    else
+        fprintf(stderr, "jm_bench: %s\n", why);
+    exit(EXIT_FAILURE);
+}
+
+/* realloc() that never hands back NULL: every allocation this header makes
+ * holds a row the benchmark measured, so one that fails goes through
+ * jm_bench_fail rather than dropping the row. `n` is at least 1 because
+ * realloc(p, 0) may free p and return NULL. */
 static inline void *
 jm_bench_xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n ? n : 1);
-    if (!q) {
-        fprintf(stderr, "jm_bench: out of memory recording results\n");
-        exit(EXIT_FAILURE);
-    }
+    if (!q)
+        jm_bench_fail(NULL, "out of memory recording results");
     return q;
+}
+
+/* Free every row and leave the bench empty, as `= {0}` made it.
+ *
+ * gh-2188: jm_bench_write_json calls this once the file is written, so a
+ * benchmark built with -fsanitize=address exits with nothing leaked. A
+ * benchmark that returns without writing -- a guard refusing a short set --
+ * calls it itself. */
+static inline void
+jm_bench_free(jm_bench_t *b)
+{
+    for (int i = 0; i < b->count; i++)
+        free(b->entries[i].times);
+    free(b->entries);
+    b->entries = NULL;
+    b->count   = 0;
+    b->cap     = 0;
 }
 
 /* Copy src into dst[0..n-1], truncating, always NUL-terminated.
@@ -143,6 +172,10 @@ static inline void
 jm_bench_add(jm_bench_t *b, const char *name,
              const double *times, int rounds, int iters)
 {
+    /* A row with no rounds has no time to report, and jm_bench_write_json
+     * would read its order statistics out of an empty array. */
+    if (rounds < 1)
+        jm_bench_fail(name, "rounds must be at least 1");
     /* Grow by doubling: N rows cost O(log N) reallocs. Each entry's `times`
      * is its own allocation, so moving the array moves only the pointer. */
     if (b->count == b->cap) {
@@ -179,15 +212,17 @@ jm_quantile(const double *s, int n, double p)
     return s[lo] * (1.0 - f) + s[lo + 1] * f;
 }
 
-/* Write pytest-benchmark-compatible JSON to bench_<component>_core.json. */
+/* Write pytest-benchmark-compatible JSON to bench_<component>_core.json,
+ * then free the rows (jm_bench_free): the bench is empty afterwards. */
 static void
-jm_bench_write_json(const jm_bench_t *b, const char *component)
+jm_bench_write_json(jm_bench_t *b, const char *component)
 {
     char fname[256];
     snprintf(fname, sizeof(fname), "bench_%s_core.json", component);
     FILE *fp = fopen(fname, "w");
     if (!fp) {
         fprintf(stderr, "jm_bench: cannot open %s\n", fname);
+        jm_bench_free(b);
         return;
     }
 
@@ -328,6 +363,7 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
                 "bench_%s_core: recorded 0 measurements -- this target"
                 " measures nothing.\n", component);
     }
+    jm_bench_free(b);
 }
 
 #endif /* JM_BENCH_H */
