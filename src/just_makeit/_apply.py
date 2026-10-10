@@ -915,6 +915,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
+            out_cols=str(m.get("out_cols", "") or ""),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a

@@ -175,6 +175,17 @@ _OBJECT = {
             py_return_type="float",
             record_name="Rec",
         ),
+        # gh-2115: a matrix result. A separate row, because `out_cols` is
+        # refused beside `multi_output` (the row above), and the serializer
+        # must still reach and escape the key.
+        _row(
+            name="mat",
+            doc="A matrix.",
+            arg_type="float",
+            return_type="float",
+            variable_output=True,
+            out_cols='state->w["x"]',
+        ),
         _row(
             name="feed",
             arg_type="float",
