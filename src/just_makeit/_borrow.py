@@ -40,6 +40,14 @@ fixed mapping has neither: nothing is reallocated, so the worst case is stale
 values rather than a dangling pointer, and the invalidating call is the
 consumer's own explicit release rather than an unrelated later call.
 
+**Except at teardown, until gh-2187.** The paragraph above held for the
+release call and not for ``destroy()``: an explicit ``destroy()`` or
+``__exit__`` freed the memory every outstanding view points into, and the
+view's pin on ``self`` kept the *object* alive, not the memory. That is a
+dangling pointer, not stale values. A lending object -- one that hands out
+any view, see `lends` -- now defers the free to ``tp_dealloc``, which runs
+only once every view and every in-flight call has let go of ``self``.
+
 The element type, and integer IQ
 --------------------------------
 The view's element type is the method's ``return_type``, and it must be one
@@ -129,6 +137,66 @@ def is_borrow(m: dict) -> bool:
     False
     """
     return bool(m.get("borrow"))
+
+
+def lends(cfg: dict, component: str) -> bool:
+    """True when *component* hands out views into memory it owns (gh-2187).
+
+    Three rows do, and each pins ``self`` as the view's base: a
+    ``borrow = true`` method, a ``buf_field`` property, and a fixed-length
+    array state's ``get_<name>_view()``. The pin keeps the object alive while
+    a view is, but not its memory: an explicit ``destroy()`` freed it anyway.
+    So a lending object's ``destroy()`` and ``__exit__`` defer the free to
+    ``tp_dealloc`` (`_context._destroy.make_destroy_ctx`), and this predicate
+    is the one place that decides which objects lend.
+
+    Examples
+    --------
+    >>> lends({"o": {"methods": [{"name": "wait", "borrow": True}]}}, "o")
+    True
+    >>> lends({"o": {"properties": [{"name": "b", "buf_field": True}]}}, "o")
+    True
+    >>> lends({"o": {"state": [{"name": "h", "type": "float[8]"}]}}, "o")
+    True
+    >>> lends({"o": {"state": [{"name": "g", "type": "double"}]}}, "o")
+    False
+    """
+    return lends_from(
+        C.methods(cfg, component),
+        C.properties(cfg, component),
+        C.state_vars(cfg, component),
+    )
+
+
+def lends_from(
+    methods: "list[dict]",
+    properties: "list[dict]",
+    state_vars: "list[tuple[str, str, str]]",
+) -> bool:
+    """`lends`, from the declarations a render actually holds.
+
+    Creation renders the object before its state reaches the manifest --
+    ``jm object --state buf:float[8]`` passes the state as an argument -- so
+    asking the manifest there said "lends nothing" while ``jm apply``, which
+    reads it, said "lends": the verb and apply wrote different bindings.
+    The rule lives here once, and each render passes what it renders from.
+
+    Examples
+    --------
+    >>> lends_from([], [], [("buf", "float[8]", "0")])
+    True
+    >>> lends_from([{"name": "wait", "borrow": True}], [], [])
+    True
+    >>> lends_from([], [], [("g", "double", "1")])
+    False
+    """
+    from ._types import parse_array_type
+
+    if any(is_borrow(m) for m in methods):
+        return True
+    if any(p.get("buf_field") for p in properties):
+        return True
+    return any(parse_array_type(ct) for _, ct, _ in state_vars)
 
 
 def is_writeable(m: dict) -> bool:

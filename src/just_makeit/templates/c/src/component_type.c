@@ -5,7 +5,7 @@
 /*<<type_core_include>>*/typedef struct {
     PyObject_HEAD
     /*<<csym>>*/_state_t *handle;
-/*<<extra_buf_fields>>*//*<<capsule_owner_fields>>*/} /*<<Component>>*/Object;
+/*<<destroy_fields>>*//*<<extra_buf_fields>>*//*<<capsule_owner_fields>>*/} /*<<Component>>*/Object;
 
 static void
 /*<<ComponentW>>*/_dealloc(/*<<Component>>*/Object *self)

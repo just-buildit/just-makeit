@@ -7563,6 +7563,7 @@ _KEY_ORDER: "dict[str, tuple[str, ...]]" = {
     "<obj>.depends_on": ("name", "link", "test_only"),
     "<obj>.destroy": (
         "name", "aliases", "returns", "error", "error_message", "exit",
+        "wake",
     ),
     "<obj>.array_args": ("name", "type", "dtype"),
     "<obj>.state": _then_sorted(_STATE_ORDER, _STATE_KEYS),

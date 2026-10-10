@@ -62,7 +62,9 @@ _SPEC = {"returns": "int", "error": "ValueError", "exit": "close"}
 
 
 def _ctx(spec=None, methods=None):
-    return make_destroy_ctx("cap", "CapObj", spec, methods, csym="cap")
+    return make_destroy_ctx(
+        "cap", "CapObj", spec, methods, csym="cap", lends=False
+    )
 
 
 class TestValidation:
