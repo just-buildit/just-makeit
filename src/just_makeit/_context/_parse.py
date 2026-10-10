@@ -428,19 +428,11 @@ def _build_ml_doc(lines: list[str]) -> str:
 
 #: The opener of jm's own range guard (gh-2144, :func:`scalar_narrow_c`), in
 #: any layout a formatter gives it: an ``if`` testing a ``<name>_raw`` local
-#: against a ``<stdint.h>`` ``*_MAX`` bound, cast to the parse type.
+#: against a ``<stdint.h>`` ``*_MAX`` bound, cast to the parse type. It is
+#: how ``_docsync`` tells a sacred fragment predating the guard.
 INT_RANGE_GUARD_RE = re.compile(
     r"\bif\s*\([^;{}]*\b[A-Za-z_]\w*_raw\s*>\s*\(\s*[a-z][a-z ]*\)\s*"
     r"[A-Z][A-Z0-9]*_MAX\s*\)\s*\{"
-)
-
-#: The whole guard block, opener through its closing brace -- what
-#: ``_docsync`` removes before asking whether a wrapper raises, because the
-#: raise is jm's guard and not a result shape the manifest declared. The
-#: failure statement may be one braced block (``{ Py_DECREF(kw); return -1;
-#: }``), so one level of nesting is allowed.
-INT_RANGE_BLOCK_RE = re.compile(
-    INT_RANGE_GUARD_RE.pattern + r"(?:[^{}]|\{[^{}]*\})*\}"
 )
 
 

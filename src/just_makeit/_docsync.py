@@ -44,7 +44,7 @@ from . import _gluedoc
 from . import _record
 from . import _report
 from . import _render as R
-from ._context._parse import INT_RANGE_BLOCK_RE, INT_RANGE_GUARD_RE
+from ._context._parse import INT_RANGE_GUARD_RE
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -1132,7 +1132,8 @@ _OUT_CONTIG_RE = re.compile(
 #: the manifest asked for, so it is removed before the raise axis is read:
 #: every fragment rendered before gh-1710 lacks it, and reading it as a
 #: raise told each of them "the manifest's result shape needs raises" for
-#: a manifest nobody changed.
+#: a manifest nobody changed. gh-2144's range guard (`INT_RANGE_GUARD_RE`)
+#: raises the same way and is jm's too, so this removes its raise as well.
 _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
 
 #: The output-size guard's own test, ``<var>_need > (size_t)<limit>``: what
@@ -1361,9 +1362,7 @@ def _method_return_shapes(text: str) -> dict:
         # gh-1710 / gh-1716 / gh-2144: jm's output-size, returned-count and
         # range guards are reported on the feature axis, so none is also
         # read here as a raise the manifest declared.
-        jm_guards = INT_RANGE_BLOCK_RE.sub(
-            "", _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
-        )
+        jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
         if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)

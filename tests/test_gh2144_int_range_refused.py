@@ -225,13 +225,19 @@ print(json.dumps(out))
 """
 
 
+#: Past the type's range by 2**32: where a MASKING format char (``I``,
+#: ``k``) lands back inside it -- ``uint8_t`` given ``2**32 + 255`` read
+#: ``255`` -- so only a checked parse refuses it.
+MASKED = 2**32
+
+
 def _cases() -> "dict[str, tuple[str, str, str, int]]":
     """``{case: (expression, ctype, label, value)}`` for every face."""
     cases = {}
     for t in INTS:
         lo, hi = int_range(t)
         for face, (expr, label) in FACES.items():
-            for v in (lo, hi, lo - 1, hi + 1):
+            for v in (lo, hi, lo - 1, hi + 1, hi + MASKED):
                 cases[f"{face} {t} {v}"] = (
                     expr.format(s=_slug(t), v=v),
                     t,
@@ -247,9 +253,11 @@ def refusal_wrong(
     """Why *got* is the wrong outcome for sending *v* outside *ctype*.
 
     *got* is a driver's record: a list for a value that came back, the
-    ``"<Exception>: <message>"`` string for a raise. Shared with
-    ``tests/test_gh2035_composer_typed_rows``, so the composer rows answer
-    to the same refusal and the same ratchet.
+    ``"<Exception>: <message>"`` string for a raise. One step outside a
+    narrow type is jm's refusal, naming *label* and numpy's bounds; further
+    out, past what the parse type holds, it may be CPython's own. Shared
+    with ``tests/test_gh2035_composer_typed_rows``, so the composer rows
+    answer to the same refusal and the same ratchet.
     """
     lo, hi = int_range(ctype)
     assert not lo <= v <= hi, (case, v)
@@ -262,8 +270,7 @@ def refusal_wrong(
         )
     if not isinstance(got, str) or not got.startswith("OverflowError: "):
         return f"{case}: want OverflowError, got {got}"
-    if "bounds" not in T._CTYPE_META[ctype]:
-        # Past what the parse type holds: CPython's own refusal.
+    if "bounds" not in T._CTYPE_META[ctype] or v not in (lo - 1, hi + 1):
         return None
     want = f"OverflowError: {label}: {v} is out of range for {ctype}"
     want += f" [{lo}, {hi}]"
