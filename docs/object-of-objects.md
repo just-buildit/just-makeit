@@ -651,7 +651,13 @@ With `[module.X.json] enabled = true` the composer gets
 - **Generated (default)** — a generic, SSOT-driven ser/de built from
     `source.fields`/`segment.fields`. One uniform schema:
     `{version, repeat, continuous, segments: [ {<scalar fields>, sources: [{<source fields>}]} ]}`; enum fields serialize as their SSOT string, a `bytes` field as
-    a JSON int array, everything else numeric. Round-trips by construction;
+    a JSON int array, everything else numeric. A field of a 64-bit integer
+    type is a JSON number while its value is within ±(2^53 - 1), the range a
+    double holds exactly (I-JSON, RFC 7493), and a decimal string such as
+    `"18446744073709551615"` past it (gh-2139). `from_json` / `from_file` read either form exactly, and
+    refuse with a `ValueError` naming the field a number outside that range
+    or with a fraction, a string that is not a decimal integer or is out of
+    the type's range, and a sign on an unsigned field. Round-trips by construction;
     reusable by any composer with zero hand-written wire code. (Uses cJSON; the
     project provides the header via `json.include_dir` and links its json lib via
     `extra_link_libs`.)

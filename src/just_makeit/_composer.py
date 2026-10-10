@@ -5300,42 +5300,283 @@ def _default_literal(f: dict) -> str:
     return d if d not in (None, "") else "0"
 
 
-def _ser_ranged(jobj: str, cobj: str, name: str, flag: str) -> str:
+#: gh-2139: the widest integer magnitude the generated JSON face carries as a
+#: JSON number -- I-JSON's interoperable range (RFC 7493, section 2.2),
+#: 2**53 - 1. A double holds every integer up to 2**53, but the text
+#: 9007199254740993 parses TO 2**53, so a reader that accepted 2**53 as a
+#: number would read that text as its neighbour without an error: the bug
+#: this bound exists to refuse. Both directions use it, so everything the
+#: writer emits as a number the reader takes back exactly.
+JSON_SAFE_INT = 2**53 - 1
+
+#: The generated JSON face's reader for a number a double holds -- every
+#: numeric field but a 64-bit one (:func:`_json_get`).
+_JSON_NUM_C = """static double
+_json_num(const cJSON *o, const char *key, double fallback)
+{
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
+    return cJSON_IsNumber(it) ? it->valuedouble : fallback;
+}
+"""
+
+
+def _json_wide_names(parse_type: str) -> "tuple[str, str]":
+    """``(writer, reader)``: the C helpers carrying *parse_type* exactly.
+
+    Examples
+    --------
+    >>> _json_wide_names("unsigned long long")
+    ('_json_ull_item', '_json_ull')
+    >>> _json_wide_names("long long")
+    ('_json_ll_item', '_json_ll')
+    """
+    tag = "ull" if parse_type.startswith("unsigned") else "ll"
+    return f"_json_{tag}_item", f"_json_{tag}"
+
+
+def _json_wide_c(parse_type: str) -> str:
+    """The C writer and reader for one signedness of a 64-bit integer field.
+
+    gh-2139: cJSON's only number is a ``double``, so a JSON face that wrote
+    every field through one changed a ``uint64_t`` past 2**53 on the round
+    trip with no error. The writer emits a value within
+    :data:`JSON_SAFE_INT` as a JSON number, which keeps every small value --
+    a length, a count -- the number it always was, and anything wider as a
+    decimal string. The reader takes either: a number only when it is a
+    whole number within that range, since a wider one may already have been
+    rounded by the parser; a string by ``strtoull`` / ``strtoll``, refusing
+    junk, overflow and, for an unsigned field, a sign. A refusal raises
+    ``ValueError`` naming the field (*what*, from the call site); a value
+    that is neither a number nor a string keeps the field's default, as
+    ``_json_num`` does for every other number.
+
+    *parse_type* is what :func:`~just_makeit._types.wider_than_double`
+    answers for the field's type, so its helper pair follows its type row.
+    """
+    writer, reader = _json_wide_names(parse_type)
+    lim = JSON_SAFE_INT
+    if parse_type.startswith("unsigned"):
+        in_range = f"v <= {lim}ULL"
+        d_range = f"d >= 0.0 && d <= {lim}.0"
+        lo, conv, strto = "0", "%llu", "strtoull"
+        sign = """        if (*s == '-') {
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is negative, and the field is "
+                         "unsigned", what, s);
+            return -1;
+        }
+"""
+        digits = "s"
+    else:
+        in_range = f"v >= -{lim}LL && v <= {lim}LL"
+        d_range = f"d >= -{lim}.0 && d <= {lim}.0"
+        lo, conv, strto = f"-{lim}", "%lld", "strtoll"
+        sign = ""
+        digits = "s + (*s == '-')"
+    return f"""static cJSON *
+{writer}({parse_type} v)
+{{
+    char b[24];
+    if ({in_range})
+        return cJSON_CreateNumber((double)v);
+    snprintf(b, sizeof b, "{conv}", v);
+    return cJSON_CreateString(b);
+}}
+
+static int
+{reader}(const cJSON *it, const char *what, {parse_type} *v)
+{{
+    if (cJSON_IsNumber(it)) {{
+        double d = it->valuedouble;
+        if (!({d_range})
+            || (double)({parse_type})d != d) {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: a JSON number here must be a whole number "
+                         "from {lo} to {lim} (2^53 - 1), the range a "
+                         "double holds exactly; write a wider value as a "
+                         "decimal string", what);
+            return -1;
+        }}
+        *v = ({parse_type})d;
+    }} else if (cJSON_IsString(it)) {{
+        const char *s = cJSON_GetStringValue(it);
+        const char *p = {digits};
+        char *end;
+        {parse_type} x;
+{sign}        if (*p < '0' || *p > '9') {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is not a decimal integer", what, s);
+            return -1;
+        }}
+        errno = 0;
+        x = {strto}(s, &end, 10);
+        if (*end) {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is not a decimal integer", what, s);
+            return -1;
+        }}
+        if (errno == ERANGE) {{
+            PyErr_Format(PyExc_ValueError, "%s: \\"%s\\" is out of range",
+                         what, s);
+            return -1;
+        }}
+        *v = x;
+    }}
+    return 0;
+}}
+"""
+
+
+def _json_put(
+    jobj: str, name: "str | None", ctype: str, value: str, wide: "set[str]"
+) -> str:
+    """The statement writing numeric *value* of *ctype* into *jobj*.
+
+    The ONE write decision of the generated JSON face (gh-2139): member
+    *name* of an object, or the next item of an array when *name* is
+    ``None``. A type a double holds is a JSON number, spelled as it always
+    was; a :func:`~just_makeit._types.wider_than_double` one goes through
+    its exact writer, whose parse type is recorded in *wide* so the caller
+    emits the helpers it calls and no other.
+
+    Examples
+    --------
+    >>> used = set()
+    >>> _json_put("so", "gain", "double", "src->gain", used)
+    'cJSON_AddNumberToObject(so, "gain", (double)src->gain);'
+    >>> _json_put("so", "n", "size_t", "x", used)
+    'cJSON_AddItemToObject(so, "n", _json_ull_item((unsigned long long)x));'
+    >>> sorted(used)
+    ['unsigned long long']
+    """
+    pt = T.wider_than_double(ctype)
+    if pt is None:
+        if name is None:
+            return (
+                f"cJSON_AddItemToArray({jobj},"
+                f" cJSON_CreateNumber((double){value}));"
+            )
+        return f'cJSON_AddNumberToObject({jobj}, "{name}", (double){value});'
+    wide.add(pt)
+    item = f"{_json_wide_names(pt)[0]}(({pt}){value})"
+    if name is None:
+        return f"cJSON_AddItemToArray({jobj}, {item});"
+    return f'cJSON_AddItemToObject({jobj}, "{name}", {item});'
+
+
+def _json_get(
+    src: str,
+    name: "str | None",
+    ctype: str,
+    dest: str,
+    default: str,
+    what: str,
+    fail: str,
+    wide: "set[str]",
+) -> str:
+    """The statement reading a number of *ctype* into *dest*, unindented.
+
+    The ONE read decision of the generated JSON face (gh-2139), the peer of
+    :func:`_json_put`: member *name* of object *src*, or the item *src*
+    itself when *name* is ``None`` (a ranged pair's element). A type a
+    double holds reads as it always did. A wider one reads through its
+    exact reader into the parse type, starting from *default*; a refusal
+    names the field (*what*) and runs *fail*, which leaves the function the
+    way any other malformed record does.
+
+    Examples
+    --------
+    >>> used = set()
+    >>> _json_get("so", "gain", "double", "src->gain", "1.0", "", "", used)
+    'src->gain = (double)_json_num(so, "gain", 1.0);'
+    >>> print(_json_get("so", "n", "int64_t", "src->n", "0",
+    ...                 "source field 'n' (int64_t)", "return -1;", used))
+    {
+        long long _w = (long long)0;
+        if (_json_ll(cJSON_GetObjectItemCaseSensitive(so, "n"),
+                     "source field 'n' (int64_t)", &_w) != 0)
+            return -1;
+        src->n = (int64_t)_w;
+    }
+    """
+    pt = T.wider_than_double(ctype)
+    if pt is None:
+        if name is None:
+            return f"{dest} = ({ctype})cJSON_GetNumberValue({src});"
+        return f'{dest} = ({ctype})_json_num({src}, "{name}", {default});'
+    wide.add(pt)
+    reader = _json_wide_names(pt)[1]
+    item = (
+        src
+        if name is None
+        else f'cJSON_GetObjectItemCaseSensitive({src}, "{name}")'
+    )
+    return (
+        "{\n"
+        f"    {pt} _w = ({pt}){default};\n"
+        f"    if ({reader}({item},\n"
+        f'{" " * (len(reader) + 9)}"{what}", &_w) != 0)\n'
+        f"        {fail}\n"
+        f"    {dest} = ({ctype})_w;\n"
+        "}"
+    )
+
+
+def _json_what(table: str, f: dict) -> str:
+    """How a JSON refusal names field *f* of the source or segment *table*.
+
+    >>> _json_what("source", {"name": "poly", "type": "uint64_t"})
+    "source field 'poly' (uint64_t)"
+    """
+    return f"{table} field '{f['name']}' ({f['type']})"
+
+
+def _ser_ranged(jobj: str, cobj: str, f: dict, wide: "set[str]") -> str:
     """Generic-JSON serialize for a ranged field: a [lo, hi] array when the
     field's ranged bit is set, else a plain number."""
+    name, flag, ct = f["name"], f["_ranged"], f["type"]
     return (
         f"        if ({cobj}->ranged & {flag}) {{\n"
         f'            cJSON *_r = cJSON_AddArrayToObject({jobj}, "{name}");\n'
-        f"            cJSON_AddItemToArray(_r,"
-        f" cJSON_CreateNumber((double){cobj}->{name}));\n"
-        f"            cJSON_AddItemToArray(_r,"
-        f" cJSON_CreateNumber((double){cobj}->{name}_hi));\n"
+        f"            {_json_put('_r', None, ct, f'{cobj}->{name}', wide)}\n"
+        f"            {_json_put('_r', None, ct, f'{cobj}->{name}_hi', wide)}\n"
         f"        }} else {{\n"
-        f'            cJSON_AddNumberToObject({jobj}, "{name}",'
-        f" (double){cobj}->{name});\n"
+        f"            {_json_put(jobj, name, ct, f'{cobj}->{name}', wide)}\n"
         f"        }}"
     )
 
 
 def _parse_ranged(
-    jobj: str, cobj: str, name: str, ct: str, flag: str, default: str
+    jobj: str,
+    cobj: str,
+    f: dict,
+    what: str,
+    fail: str,
+    wide: "set[str]",
 ) -> str:
     """Generic-JSON parse for a ranged field: a two-element [lo, hi] array sets
     the ranged bit + companion; a scalar (or absence) is the constant."""
+    name, flag, ct = f["name"], f["_ranged"], f["type"]
+    default = _default_literal(f)
+
+    def _get(src: str, member: "str | None", dest: str, pad: int) -> str:
+        return textwrap.indent(
+            _json_get(src, member, ct, dest, default, what, fail, wide),
+            " " * pad,
+        )
+
     return (
         f"        {{\n"
         f"            const cJSON *_it ="
         f' cJSON_GetObjectItemCaseSensitive({jobj}, "{name}");\n'
         f"            if (cJSON_IsArray(_it)"
         f" && cJSON_GetArraySize(_it) == 2) {{\n"
-        f"                {cobj}->{name} = ({ct})cJSON_GetNumberValue("
-        f"cJSON_GetArrayItem(_it, 0));\n"
-        f"                {cobj}->{name}_hi = ({ct})cJSON_GetNumberValue("
-        f"cJSON_GetArrayItem(_it, 1));\n"
+        f"{_get('cJSON_GetArrayItem(_it, 0)', None, f'{cobj}->{name}', 16)}\n"
+        f"{_get('cJSON_GetArrayItem(_it, 1)', None, f'{cobj}->{name}_hi', 16)}"
+        f"\n"
         f"                {cobj}->ranged |= {flag};\n"
         f"            }} else {{\n"
-        f'                {cobj}->{name} = ({ct})_json_num({jobj}, "{name}",'
-        f" {default});\n"
+        f"{_get(jobj, name, f'{cobj}->{name}', 16)}\n"
         f"            }}\n"
         f"        }}"
     )
@@ -5350,9 +5591,11 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     is ``{<segment scalar fields>, "sources": [ {<source fields>}, … ]}``; enum
     fields serialize as their SSOT string (via the generated ``_enum_*`` tables —
     one definition, no duplicated table), a ``bytes`` field as a JSON int array,
-    everything else as a number. Round-trips by construction. Uses cJSON for
-    robust parsing/formatting (the project links its json lib via
-    ``extra_link_libs`` and exposes ``cJSON.h``)."""
+    everything else as a number -- except a value of an integer type wider
+    than a double (:func:`~just_makeit._types.wider_than_double`) past
+    :data:`JSON_SAFE_INT`, which is a decimal string (gh-2139). Round-trips
+    by construction. Uses cJSON for robust parsing/formatting (the project
+    links its json lib via ``extra_link_libs`` and exposes ``cJSON.h``)."""
     backing = C.capsule_backing(cfg, module)
     sym = CSYM.backing_stem(cfg, backing)  # gh-1685: C symbols
     src = C.composer_source(cfg, module)
@@ -5368,6 +5611,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     obj = f"{cname}Object"
     segments_fn = f"{sym}_segments"
     destroy_fn = f"{sym}_destroy"
+    # gh-2139: the parse types of the 64-bit fields `_json_put` / `_json_get`
+    # emitted a call for -- so exactly the helpers called are defined, and a
+    # composer with none is byte-identical to before.
+    wide: set[str] = set()
 
     # gh-1184/gh-560: freeing `[k].bits` freed ONE hardcoded member — the
     # wrong one for a source whose bytes field is named anything else, and no
@@ -5461,11 +5708,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             }}
         }}""")
         elif f.get("_ranged"):
-            src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
+            src_ser.append(_ser_ranged("so", "src", f, wide))
         else:
             src_ser.append(
-                f'        cJSON_AddNumberToObject(so, "{n}", '
-                f"(double)src->{n});"
+                f"        {_json_put('so', n, f['type'], f'src->{n}', wide)}"
             )
     src_ser_s = "\n".join(src_ser)
 
@@ -5477,14 +5723,14 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             _one_real_number(f, module, "JSON face (`[module.X.json]`)")
 
     seg_ser = "\n".join(
-        _ser_ranged("sj", "g", f["name"], f["_ranged"])
+        _ser_ranged("sj", "g", f, wide)
         if f.get("_ranged")
         else (
             f'        cJSON_AddStringToObject(sj, "{f["name"]}", '
             f"{_seg_enum_name(f)});"
             if f.get("enum")
-            else f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
-            f"(double)g->{f['name']});"
+            else "        "
+            + _json_put("sj", f["name"], f["type"], f"g->{f['name']}", wide)
         )
         for f in seg_fields
     )
@@ -5542,19 +5788,24 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         elif f.get("_ranged"):
             src_parse.append(
                 _parse_ranged(
-                    "so",
-                    "src",
-                    n,
-                    f["type"],
-                    f["_ranged"],
-                    _default_literal(f),
+                    "so", "src", f, _json_what("source", f), "return -1;", wide
                 )
             )
         else:
-            ct = f["type"]
             src_parse.append(
-                f'        src->{n} = ({ct})_json_num(so, "{n}", '
-                f"{_default_literal(f)});"
+                textwrap.indent(
+                    _json_get(
+                        "so",
+                        n,
+                        f["type"],
+                        f"src->{n}",
+                        _default_literal(f),
+                        _json_what("source", f),
+                        "return -1;",
+                        wide,
+                    ),
+                    " " * 8,
+                )
             )
     src_parse_s = "\n".join(src_parse)
     # gh-1735: a `parse_why` reader's sentence is raised by `from_json` /
@@ -5583,7 +5834,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
 
     seg_parse = "\n".join(
         _parse_ranged(
-            "sj", "sg", f["name"], f["type"], f["_ranged"], _default_literal(f)
+            "sj", "sg", f, _json_what("segment", f), "goto fail;", wide
         )
         if f.get("_ranged")
         else (
@@ -5595,20 +5846,39 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             sg->{f["name"]} = _v < 0 ? 0 : _v;
         }}"""
             if f.get("enum")
-            else f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
-            f'"{f["name"]}", {_default_literal(f)});'
+            else textwrap.indent(
+                _json_get(
+                    "sj",
+                    f["name"],
+                    f["type"],
+                    f"sg->{f['name']}",
+                    _default_literal(f),
+                    _json_what("segment", f),
+                    "goto fail;",
+                    wide,
+                ),
+                " " * 8,
+            )
         )
         for f in seg_fields
     )
 
-    return f"""/* ── generic SSOT-driven JSON (de)serialization ── */
-static double
-_json_num(const cJSON *o, const char *key, double fallback)
-{{
-    const cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
-    return cJSON_IsNumber(it) ? it->valuedouble : fallback;
-}}
+    # gh-2139: a 64-bit field's reader raises the ValueError that names it,
+    # so the factory keeps that exception rather than replacing it with the
+    # generic one. Emitted only with such a field, as the helpers are.
+    wide_c = ""
+    keep_raised = ""
+    if wide:
+        wide_c = "\n#include <errno.h>\n\n" + "\n".join(
+            _json_wide_c(pt) for pt in sorted(wide, reverse=True)
+        )
+        keep_raised = (
+            "        if (PyErr_Occurred()) /* a field the reader refused */\n"
+            "            return NULL;\n"
+        )
 
+    text = f"""/* ── generic SSOT-driven JSON (de)serialization ── */
+{_JSON_NUM_C}{wide_c}
 static void
 _json_add_source(cJSON *so, const {src_struct} *src)
 {{
@@ -5715,7 +5985,7 @@ static PyObject *
 _{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st{wrap_param})
 {{
     if (!st) {{
-{wrap_raise}        return NULL;
+{keep_raised}{wrap_raise}        return NULL;
     }}
     {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
@@ -5775,6 +6045,10 @@ static PyObject *
     return _{cname}_wrap_state((PyTypeObject *)cls, st{why_pass}); /* cls: subclass round-trips */
 }}
 """
+    # gh-2139: a composer whose every plain number is a 64-bit field calls
+    # `_json_num` nowhere, and an uncalled static is -Wunused-function
+    # (gh-1863's rule, by asking the finished text).
+    return _drop_uncalled(text, _JSON_NUM_C, "_json_num")
 
 
 # ── generic composer CLI (c face, gh-287 — retires a hand-written wfmgen) ─────
