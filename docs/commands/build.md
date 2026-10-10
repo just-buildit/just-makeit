@@ -165,6 +165,18 @@ The builds `jm bench` drives are **not** timed: a cold build on the same board
 took 603 s, and a build that is slow has not failed. Bound a CI job's wall
 clock with the job's own `timeout-minutes:`.
 
+**A benchmark that fails (gh-2189).** A `bench_<comp>_core` that exits
+non-zero, dies of a signal, or exits 0 without writing its JSON (or writing one
+that does not parse) is reported as `failed bench_<comp>_core (<why>)`, with
+its stderr quoted beneath. Like a timeout it costs that benchmark and nothing
+else: the remaining benchmarks still run, the ones that finished are saved (the
+snapshot lists the failure under `"failed"`), and the command then exits 1
+naming it. A JSON that a failed binary did write is not read, since the binary
+said its run is not good. Under `--check` the failed benchmark's baseline
+entries are `missing`, the JSON document lists it under `"failed"`, and the
+gate fails. There is no flag that skips a failure; to leave a benchmark out of
+a run, name the components you want instead.
+
 **`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
 empty `"benchmarks": []` is named as `silent bench_<comp>_core`. That is
 read from the JSON the binary wrote, so it holds however the source records —

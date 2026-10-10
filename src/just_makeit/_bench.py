@@ -251,6 +251,7 @@ def _collect_c(
     optional: "frozenset[str]" = frozenset(),
     timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
     timed_out: "list[str] | None" = None,
+    failed: "list[str] | None" = None,
 ) -> dict | None:
     """Build + run each component's bench binary; return one merged report.
 
@@ -267,6 +268,20 @@ def _collect_c(
     slow kernel on a slow board left ``benchmarks/history/`` empty. Its own
     partial sections are lost with it: `jm_bench_write_json` writes once, at
     the end of ``main``.
+
+    A binary that fails costs that binary the same way (gh-2189): it is
+    reported as ``failed`` with its exit status and its stderr, appended to
+    *failed* for the caller to fail on, and the loop moves on. Failing is a
+    non-zero exit, or an exit 0 with no JSON, or with a JSON that does not
+    parse. Before this the exit status was never read and a missing JSON was
+    skipped without a word, so a bench that crashed, or one that refused to
+    write a short set, was simply absent from a run that exited 0. A JSON a
+    failed binary did write is not read: the binary said its run is not
+    good.
+
+    A binary's stderr is captured so a failure can quote it, and is passed
+    on to ours after every run, so a run that did not fail shows what it
+    always showed.
 
     A binary that ran and recorded nothing is reported as ``silent``, read
     from the JSON it wrote rather than predicted from its source (gh-1691):
@@ -286,11 +301,22 @@ def _collect_c(
                 continue
             print(f"  run        bench_{comp}_core", flush=True)
             jf = tmpd / f"bench_{comp}_core.json"
+            ef = tmpd / f"bench_{comp}_core.stderr"
+            rc: "int | None"
             try:
-                subprocess.run(
-                    [str(binary.resolve())], cwd=tmp, timeout=timeout
-                )
+                with open(ef, "wb") as err:
+                    rc = subprocess.run(
+                        [str(binary.resolve())],
+                        cwd=tmp,
+                        timeout=timeout,
+                        stderr=err,
+                    ).returncode
             except subprocess.TimeoutExpired:
+                rc = None
+            stderr = ef.read_text(encoding="utf-8", errors="replace")
+            ef.unlink()
+            if rc is None:
+                sys.stderr.write(stderr)
                 print(
                     f"  timeout    bench_{comp}_core (over {timeout:g} s;"
                     " skipped, the other benchmarks still run)",
@@ -303,13 +329,26 @@ def _collect_c(
                 if jf.exists():
                     jf.unlink()
                 continue
-            if not jf.exists():
-                continue
-            try:
-                data = json.loads(jf.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+            data: dict = {}
+            why: "str | None" = None
+            if rc != 0:
+                # Negative on POSIX: the binary died of a signal (a crash or
+                # an abort), which no exit code was ever written for.
+                why = f"signal {-rc}" if rc < 0 else f"exit {rc}"
+            elif not jf.exists():
+                why = "exit 0, wrote no JSON"
+            else:
+                try:
+                    data = json.loads(jf.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    why = "exit 0, its JSON does not parse"
+            if jf.exists():
                 jf.unlink()
+            if why is not None:
+                _report_failed(f"bench_{comp}_core ({why})", stderr, failed)
                 continue
+            sys.stderr.write(stderr)
+            sys.stderr.flush()
             if not data.get("benchmarks"):
                 print(
                     f"  silent     bench_{comp}_core (ran, and recorded no"
@@ -319,7 +358,6 @@ def _collect_c(
             for entry in data.get("benchmarks", []):
                 entry["name"] = f"{comp}::{entry.get('name', '')}"
                 benchmarks.append(entry)
-            jf.unlink()
 
     if not benchmarks:
         return None
@@ -329,6 +367,25 @@ def _collect_c(
         "commit_info": _commit_info(),
         "benchmarks": benchmarks,
     }
+
+
+def _report_failed(run: str, stderr: str, failed: "list[str] | None") -> None:
+    """Name a benchmark run that failed, quote its stderr, and record it.
+
+    *run* is ``bench_<comp>_core (<why>)``, which is also what *failed*
+    carries and what the snapshot and the closing summary name. The stderr
+    is indented under it so it reads as that run's, not as jm's.
+    """
+    print(
+        f"  failed     {run}; the other benchmarks still run",
+        file=sys.stderr,
+    )
+    lines = stderr.rstrip("\n").splitlines() or ["(nothing on stderr)"]
+    for line in lines:
+        print(f"    {line}", file=sys.stderr)
+    sys.stderr.flush()
+    if failed is not None:
+        failed.append(run)
 
 
 # ── run: Python ────────────────────────────────────────────────────────────────
@@ -1112,6 +1169,7 @@ def run(
     # the first second rather than after a twenty-minute build.
     budget = C.bench_timeout(cfg, timeout)
     timed_out: list[str] = []
+    failed: list[str] = []
 
     runnable, extra, globbed = runnable_comps(root, cfg)
     if globbed:
@@ -1194,6 +1252,7 @@ def run(
             optional=frozenset(extra),
             timeout=budget,
             timed_out=timed_out,
+            failed=failed,
         )
         if creport:
             _trim(creport)
@@ -1202,6 +1261,9 @@ def run(
                 # says itself that it is partial: a later reader comparing
                 # against it should not have to guess why a component is gone.
                 creport["timed_out"] = list(timed_out)
+            if failed:
+                # gh-2189: the same marker, for a binary that failed.
+                creport["failed"] = list(failed)
             prev = _prev_snapshot(hdir, tag, is_c=True)
             _save_snapshot(root, hdir, tag, creport, is_c=True)
             _display_table("C benchmarks", creport, prev)
@@ -1224,27 +1286,41 @@ def run(
         else:
             print("  Python benchmarks: none found.")
 
-    _fail_on_timeouts(timed_out, budget)
+    _fail_on_lost_runs(timed_out, failed, budget)
 
 
-def _fail_on_timeouts(timed_out: list[str], budget: float | None) -> None:
-    """Exit 1 naming every benchmark run that hit the budget (gh-1687).
+def _fail_on_lost_runs(
+    timed_out: list[str], failed: list[str], budget: float | None
+) -> None:
+    """Exit 1 naming every benchmark run whose results this run lacks.
+
+    Two causes, each with its own message because each has its own fix: a
+    run that hit the budget (gh-1687), and a bench binary that failed
+    (gh-2189). Both are said before the one exit, so a run with both names
+    both.
 
     Called last, after everything that DID finish has been saved: the other
-    benchmarks' numbers are kept, and the failure is still loud. A timeout
-    is not a pass -- the run measured less than it was asked to.
+    benchmarks' numbers are kept, and the failure is still loud. Neither is
+    a pass -- the run measured less than it was asked to.
     """
-    if not timed_out:
-        return
-    print(
-        f"TIMEOUT — {len(timed_out)} benchmark run(s) took longer than"
-        f" {budget:g} s and were skipped: {', '.join(timed_out)}.\n"
-        "  Raise the budget with `jm bench --timeout S` for one run, or"
-        " `[project.bench] timeout = S`\n"
-        "  in just-makeit.toml for every run (0 = no limit).",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    if timed_out:
+        print(
+            f"TIMEOUT — {len(timed_out)} benchmark run(s) took longer than"
+            f" {budget:g} s and were skipped: {', '.join(timed_out)}.\n"
+            "  Raise the budget with `jm bench --timeout S` for one run, or"
+            " `[project.bench] timeout = S`\n"
+            "  in just-makeit.toml for every run (0 = no limit).",
+            file=sys.stderr,
+        )
+    if failed:
+        print(
+            f"FAILED — {len(failed)} benchmark binary run(s) failed, so their"
+            f" results are not in this run: {', '.join(failed)}.\n"
+            "  Each one's stderr is quoted above, under `failed`.",
+            file=sys.stderr,
+        )
+    if timed_out or failed:
+        sys.exit(1)
 
 
 def _run_check(
@@ -1267,9 +1343,12 @@ def _run_check(
 
     A benchmark run past *budget* fails the gate too, after the comparison
     of everything that did finish is printed: its baseline entries are
-    already ``missing`` (gh-1029), and `_fail_on_timeouts` says why.
+    already ``missing`` (gh-1029), and `_fail_on_lost_runs` says why. A bench
+    binary that failed (gh-2189) fails it the same way, and the JSON document
+    names it under ``failed``.
     """
     timed_out: list[str] = []
+    failed: list[str] = []
     sides: list[tuple[str, dict | None, dict | None]] = []
     # gh-1833. The benchmarks' own output is progress; the JSON document
     # printed below is the result, so it is the only thing left on stdout.
@@ -1282,6 +1361,7 @@ def _run_check(
                 optional=optional,
                 timeout=budget,
                 timed_out=timed_out,
+                failed=failed,
             )
             if cur:
                 _trim(cur)
@@ -1316,6 +1396,7 @@ def _run_check(
                     "baseline": baseline or "latest",
                     "missing_baseline": missing_baseline,
                     "timed_out": timed_out,
+                    "failed": failed,
                     "results": rows,
                 },
                 indent=2,
@@ -1366,7 +1447,7 @@ def _run_check(
                     " --allow <name>."
                 )
 
-    _fail_on_timeouts(timed_out, budget)
+    _fail_on_lost_runs(timed_out, failed, budget)
     # gh-1029: `missing` fails alongside `regressed`. See `_compare_reports`
     # for why the gate treats a vanished benchmark as a failure rather than
     # as a note, and why `--allow` is the whole escape hatch it needs.
