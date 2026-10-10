@@ -1140,7 +1140,9 @@ doc     = "FFT of interleaved int16 I/Q."
 The `doc` is the method's whole docstring on both faces, the `.pyi` member
 and the runtime `__doc__`, and jm generates nothing beside it. So it can be
 a full numpy docstring with `Parameters`, `Returns` and an `Examples`
-doctest (gh-2059).
+doctest (gh-2059). A `doc` that ends in an example gets a blank line before
+the stub's closing quotes, so a text-mode `.pyi` doctest ends the example
+there (gh-2176).
 
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):
