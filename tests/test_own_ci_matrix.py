@@ -22,6 +22,12 @@ declared once, as the JSON `MATRIX` of the toolchain job's `legs` step, and
 file runs that script for every event the workflow sees, and holds the
 workflow to running what it says.
 
+gh-2179 promoted 3.15 when it went final, and the pre-release leg's expiry
+step named three more places that list the supported Pythons: the
+`pyproject.toml` classifiers and `artifact.yml`'s two pre-publish smoke
+matrices. An error message is a note; the tests here hold all of them to
+the matrix's released Pythons.
+
 Every parser below RAISES rather than returning empty. A parser that quietly
 finds nothing makes every assertion in the file vacuously true, which is how a
 gate ends up passing for months over a thing it stopped being able to see.
@@ -46,6 +52,8 @@ from _pyfloor import python_floor
 ROOT = Path(__file__).parent.parent
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 PLANNER = ROOT / "scripts" / "ci-test-legs.py"
+ARTIFACT_YML = ROOT / ".github" / "workflows" / "artifact.yml"
+PYPROJECT = ROOT / "pyproject.toml"
 
 
 def _load_planner():
@@ -220,6 +228,87 @@ def test_an_exclude_names_a_real_cell() -> None:
         if o not in oses or p not in pys
     ]
     assert not bogus, f"exclude names a cell not in the matrix: {bogus}"
+
+
+def _released_pys() -> "set[str]":
+    """Every Python the matrix tests as a RELEASE, on any OS."""
+    return {p for o in _axes()[0] for p in _released(_full(), o)}
+
+
+def _classifiers() -> "set[str]":
+    """The `Programming Language :: Python :: 3.N` classifiers jm ships."""
+    found = set(
+        re.findall(
+            r'"Programming Language :: Python :: (3\.\d+)"',
+            PYPROJECT.read_text(encoding="utf-8"),
+        )
+    )
+    if not found:
+        raise AssertionError(
+            f"no `Programming Language :: Python :: 3.N` classifier in "
+            f"{PYPROJECT} -- the gate below would compare against nothing"
+        )
+    return found
+
+
+def _artifact_pys() -> "dict[str, list[str]]":
+    """Each artifact.yml job's FULL `python-version` list, by job.
+
+    The list sits in a `fromJSON(inputs.quick && '[...]' || '[...]')`
+    expression; the full one is the branch after `||`. ci.yml calls the
+    workflow `quick` on a PR, and `release.yml` calls it full before it
+    publishes, so the full list is what the wheel PyPI gets was tried on.
+    """
+    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
+    out = {}
+    for name, job in jobs.items():
+        expr = ((job.get("strategy") or {}).get("matrix") or {}).get(
+            "python-version"
+        )
+        if expr is None:
+            continue
+        m = re.search(r"\|\|\s*'(\[[^']*\])'", str(expr))
+        if not m:
+            raise AssertionError(
+                f"artifact.yml job {name!r}: no full python-version list in "
+                f"{expr!r}"
+            )
+        out[name] = [str(v) for v in json.loads(m.group(1))]
+    if not out:
+        raise AssertionError(f"no python-version matrix in {ARTIFACT_YML}")
+    return out
+
+
+def test_the_classifiers_are_the_released_matrix() -> None:
+    """gh-2179: what PyPI says jm supports is what CI tests.
+
+    Both directions. A classifier the matrix does not run is an untested
+    promise; a released Python the matrix runs with no classifier is the
+    half-done promotion the pre-release leg's expiry step asks for, which
+    the step's error message alone could not hold.
+    """
+    shipped, tested = _classifiers(), _released_pys()
+    assert shipped == tested, (
+        f"pyproject classifiers name {sorted(shipped - tested, key=_key)} "
+        f"that no released matrix leg runs, and the matrix runs "
+        f"{sorted(tested - shipped, key=_key)} that no classifier names"
+    )
+
+
+def test_the_prepublish_artifact_runs_the_released_pythons() -> None:
+    """gh-2179: the wheel is smoke-tested on what the matrix promises.
+
+    `smoke` (POSIX) runs every released Python; `smoke-windows` runs the
+    bounds and the middle, so it must hold both bounds. A promotion that
+    moved only ci.yml would publish a wheel never installed on the new
+    Python.
+    """
+    lists, want = _artifact_pys(), _released_pys()
+    edges = {min(want, key=_key), max(want, key=_key)}
+    assert set(lists) == {"smoke", "smoke-windows"}, sorted(lists)
+    assert set(lists["smoke"]) == want, (lists["smoke"], sorted(want))
+    win = set(lists["smoke-windows"])
+    assert edges <= win <= want, (sorted(win), sorted(edges))
 
 
 class TestWhatEachRunOwes:
