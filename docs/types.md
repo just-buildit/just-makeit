@@ -138,6 +138,14 @@ Notes:
     init-param and as a method / module-function `--param`, where Python
     passes a `str`. If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
+
+- **An integer the C type cannot hold is refused, not wrapped**
+    (gh-2144). Passing `300` to an `int8_t` raises
+    `OverflowError: gain: 300 is out of range for int8_t [-128, 127]`,
+    on every face that takes a scalar: a constructor, a setter, a method
+    or function param, `step()`, a composer row. numpy refuses
+    `np.int8(300)` the same way. The exception for now is `uint64_t` and
+    `size_t`, where `-1` still arrives as `2**64 - 1` (gh-2220).
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
     it, as a scalar and as a `T[N]` element, and say so. So do
     `--arg-type` / `--return-type` and a manifest `arg_type` /

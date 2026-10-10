@@ -6,6 +6,8 @@ multiple make_*_ctx() builders.
 
 from __future__ import annotations
 
+import re
+
 from .. import _coerce
 from .. import _record
 from .._types import (
@@ -424,12 +426,120 @@ def _build_ml_doc(lines: list[str]) -> str:
     return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in flat)
 
 
+#: The opener of jm's own range guard (gh-2144, :func:`scalar_narrow_c`), in
+#: any layout a formatter gives it: an ``if`` testing a ``<name>_raw`` local
+#: against a ``<stdint.h>`` ``*_MAX`` bound, cast to the parse type.
+INT_RANGE_GUARD_RE = re.compile(
+    r"\bif\s*\([^;{}]*\b[A-Za-z_]\w*_raw\s*>\s*\(\s*[a-z][a-z ]*\)\s*"
+    r"[A-Z][A-Z0-9]*_MAX\s*\)\s*\{"
+)
+
+#: The whole guard block, opener through its closing brace -- what
+#: ``_docsync`` removes before asking whether a wrapper raises, because the
+#: raise is jm's guard and not a result shape the manifest declared. The
+#: failure statement may be one braced block (``{ Py_DECREF(kw); return -1;
+#: }``), so one level of nesting is allowed.
+INT_RANGE_BLOCK_RE = re.compile(
+    INT_RANGE_GUARD_RE.pattern + r"(?:[^{}]|\{[^{}]*\})*\}"
+)
+
+
+def scalar_narrow_c(
+    ctype: str,
+    var: str,
+    fail: str,
+    *,
+    label: str,
+    meta: "dict | None" = None,
+    indent: str = "    ",
+) -> str:
+    """Statements declaring *var* of *ctype* from its parsed ``<var>_raw``.
+
+    The one place a scalar parsed into its row's wider ``parse_type`` local
+    becomes the C type: every face that converts one -- a method or module
+    function param, a constructor param, a property or ``set_<field>``
+    setter, ``step()``'s input, a composer row -- ends here, and nothing
+    else calls a row's ``to_c``.
+
+    gh-2144: the cast alone wraps. ``int8_t`` given 300 parsed as an ``int``
+    and arrived as 44, on every face, with no error. A row whose C type is
+    narrower than its parse type carries ``bounds`` (`_types._fwint`), and
+    for it this first refuses a value outside them with ``OverflowError``
+    naming *label* -- as numpy 2 refuses ``np.int8(300)``. The bounds are the
+    ``<stdint.h>`` macros, so the compiler states the range, not jm. Every
+    other row with a parse local -- ``int64_t``, ``bool``, a complex -- is
+    the bare conversion, byte for byte what it was.
+
+    Parameters
+    ----------
+    ctype : str
+        The C type of the local, a ``_CTYPE_META`` key with a ``parse_type``.
+    var : str
+        The local's name; ``<var>_raw`` holds the parsed value.
+    fail : str
+        The C statement(s) that leave the wrapper once the exception is set,
+        e.g. ``return NULL;``, releasing whatever it already holds.
+    label : str
+        The Python-facing name the message leads with: the parameter, field
+        or property the caller passed the value as.
+    meta : dict, optional
+        The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
+    indent : str, optional
+        Prefixed to every line.
+
+    Returns
+    -------
+    str
+        The statements, each line ending in a newline.
+
+    Examples
+    --------
+    >>> print(scalar_narrow_c("int64_t", "n", "return NULL;", label="n"),
+    ...       end="")
+        int64_t n = (int64_t)n_raw;
+    >>> print(scalar_narrow_c("int8_t", "v", "return -1;", label="gain"),
+    ...       end="")
+        if (v_raw < (int)INT8_MIN || v_raw > (int)INT8_MAX) {
+            PyErr_Format(PyExc_OverflowError,
+                "gain: %lld is out of range for int8_t [%lld, %lld]",
+                (long long)v_raw, (long long)INT8_MIN, (long long)INT8_MAX);
+            return -1;
+        }
+        int8_t v = (int8_t)v_raw;
+    >>> bool(INT_RANGE_GUARD_RE.search(
+    ...     scalar_narrow_c("uint16_t", "v", "return -1;", label="v")))
+    True
+    """
+    meta = _CTYPE_META[ctype] if meta is None else meta
+    cast = f"{indent}{ctype} {var} = {meta['to_c'](var)};\n"
+    if "bounds" not in meta:
+        return cast
+    lo, hi = meta["bounds"]
+    # Each bound is cast to the parse type, which is signed for every narrow
+    # row: a <stdint.h> may spell a bound unsigned (`UINT32_MAX` is
+    # `4294967295U`), and comparing that with a signed local draws
+    # -Wsign-compare. An unsigned type's floor is the literal 0.
+    pt, raw, i = meta["parse_type"], f"{var}_raw", indent
+    floor = f"{raw} < 0" if lo == "0" else f"{raw} < ({pt}){lo}"
+    msg = f"{label}: %lld is out of range for {ctype} [%lld, %lld]"
+    return (
+        f"{i}if ({floor} || {raw} > ({pt}){hi}) {{\n"
+        f"{i}    PyErr_Format(PyExc_OverflowError,\n"
+        f'{i}        "{msg}",\n'
+        f"{i}        (long long){raw}, (long long){lo}, (long long){hi});\n"
+        f"{i}    {fail}\n"
+        f"{i}}}\n"
+        f"{cast}"
+    )
+
+
 def scalar_parse_c(
     ctype: str,
     src: str,
     var: str,
     fail: str,
     *,
+    label: str,
     meta: "dict | None" = None,
     indent: str = "    ",
 ) -> str:
@@ -440,9 +550,10 @@ def scalar_parse_c(
     own ``_CTYPE_META`` format char, and where that char writes a different
     width than *ctype* (``i`` writes an ``int``, ``D`` a 16-byte
     ``Py_complex``) it parses into the row's ``parse_type`` local
-    ``<var>_raw`` first and converts with ``to_c``. So a ``double`` keeps its
-    fraction, a ``float _Complex`` its imaginary part and an ``int8_t`` local
-    is never written four bytes wide.
+    ``<var>_raw`` first and converts through :func:`scalar_narrow_c`. So a
+    ``double`` keeps its fraction, a ``float _Complex`` its imaginary part, an
+    ``int8_t`` local is never written four bytes wide, and a value an
+    ``int8_t`` cannot hold is refused rather than wrapped (gh-2144).
 
     gh-2035: written once, for an object's property setter; a composer's
     settings, segment fields and source fields each converted through
@@ -458,7 +569,11 @@ def scalar_parse_c(
     var : str
         The local's name. A ``parse_type`` row also declares ``<var>_raw``.
     fail : str
-        The C statement run when the parse raises, e.g. ``return -1;``.
+        The C statement run when the parse raises, e.g. ``return -1;``, and
+        when the parsed value is out of range (:func:`scalar_narrow_c`).
+    label : str
+        The Python-facing name of the value, which a range refusal's message
+        leads with.
     meta : dict, optional
         The ``_CTYPE_META`` row, when the caller already looked it up -- a
         caller that refuses an unknown type passes the row its refusal
@@ -473,13 +588,15 @@ def scalar_parse_c(
 
     Examples
     --------
-    >>> print(scalar_parse_c("double", "value", "v", "return -1;"), end="")
+    >>> print(scalar_parse_c("double", "value", "v", "return -1;",
+    ...                      label="gain"), end="")
         double v = 0.0;
         if (!PyArg_Parse(value, "d", &v)) return -1;
-    >>> print(scalar_parse_c("int8_t", "_o", "_v", "goto fail;"), end="")
-        int _v_raw = 0;
-        if (!PyArg_Parse(_o, "i", &_v_raw)) goto fail;
-        int8_t _v = (int8_t)_v_raw;
+    >>> print(scalar_parse_c("int64_t", "_o", "_v", "goto fail;",
+    ...                      label="n"), end="")
+        long long _v_raw = 0LL;
+        if (!PyArg_Parse(_o, "L", &_v_raw)) goto fail;
+        int64_t _v = (int64_t)_v_raw;
     """
     meta = _CTYPE_META[ctype] if meta is None else meta
     if "parse_type" in meta:
@@ -487,7 +604,8 @@ def scalar_parse_c(
             f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
             f'{indent}if (!PyArg_Parse({src}, "{meta["fmt"]}", &{var}_raw))'
             f" {fail}\n"
-            f"{indent}{ctype} {var} = {meta['to_c'](var)};\n"
+        ) + scalar_narrow_c(
+            ctype, var, fail, label=label, meta=meta, indent=indent
         )
     return (
         f"{indent}{ctype} {var} = {meta['zero']};\n"
@@ -497,7 +615,12 @@ def scalar_parse_c(
 
 
 def scalar_arg_c(
-    pname: str, ptype: str, default: str = "", *, meta: "dict | None" = None
+    pname: str,
+    ptype: str,
+    default: str = "",
+    *,
+    fail: str,
+    meta: "dict | None" = None,
 ) -> "tuple[str, str, str, str]":
     """One scalar a ``PyArg_ParseTuple*`` call fills: its four C pieces.
 
@@ -517,6 +640,11 @@ def scalar_arg_c(
         Its C type, a ``_CTYPE_META`` key.
     default : str, optional
         The declared default; empty for none.
+    fail : str
+        The C statement(s) leaving the wrapper when the parsed value is out
+        of range (:func:`scalar_narrow_c`), releasing whatever the parse
+        already produced: ``return NULL;`` in a method, ``return -1;`` in a
+        ``tp_init``. Required, because only the caller knows which.
     meta : dict, optional
         The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
 
@@ -525,13 +653,15 @@ def scalar_arg_c(
     tuple of str
         ``(decl, fmt, addr, conv)``: the declaration before the parse, the
         format char, the address the parse writes, and the conversion after
-        it -- empty when the type parses into its own local.
+        it -- empty when the type parses into its own local. A range
+        refusal's message leads with *pname*.
 
     Examples
     --------
-    >>> scalar_arg_c("gain", "double", "1.0")
+    >>> scalar_arg_c("gain", "double", "1.0", fail="return NULL;")
     ('    double gain = 1.0;', 'd', '&gain', '')
-    >>> print(*scalar_arg_c("n", "size_t", "16"), sep="\\n")
+    >>> print(*scalar_arg_c("n", "size_t", "16", fail="return NULL;"),
+    ...       sep="\\n")
         unsigned long long n_raw = 16;
     K
     &n_raw
@@ -549,7 +679,9 @@ def scalar_arg_c(
             f"    {meta['parse_type']} {raw} = {parse_seed(ptype, default)};",
             fmt,
             f"&{raw}",
-            f"    {ptype} {pname} = {meta['to_c'](pname)};",
+            scalar_narrow_c(ptype, pname, fail, label=pname, meta=meta).rstrip(
+                "\n"
+            ),
         )
     # gh-240: a scalar with a `default` is optional -- seed its C local with
     # the default literal so an omitted arg yields it.
@@ -600,6 +732,17 @@ def _build_params_parse(
     # block -- unlike an array's, which `arr_acq` owns -- so it goes in the
     # `cleanup` the caller emits before every return, next to the DECREFs.
     path_names: list[str] = []
+    # gh-2144: a scalar's range refusal runs after the parse, which by then has
+    # made EVERY path borrow, declared before the scalar or after it; and
+    # before `arr_acq`, so no array is held yet.
+    range_fail = (
+        "".join(
+            f"{_coerce.path_release(p['name'])} "
+            for p in params
+            if p["type"] == "path"
+        )
+        + "return NULL;"
+    )
 
     for p in params:
         pname = p["name"]
@@ -806,7 +949,7 @@ def _build_params_parse(
             # stub's `str | None` and this char cannot disagree. gh-2035: the
             # one tuple-parse slot, which a composer's rows call too.
             decl, fmt, addr, conv = scalar_arg_c(
-                pname, ptype, p.get("default") or ""
+                pname, ptype, p.get("default") or "", fail=range_fail
             )
             decl_lines.append(decl)
             fmt_chars.append(fmt)
@@ -871,15 +1014,15 @@ def _step_parse_block(
         parse_type = samp["parse_type"]
         parse_zero = samp["parse_zero"]
         fmt = samp["fmt"]
-        to_c_expr = samp["to_c"]("x")
         return (
             f"    {parse_type} x_raw = {parse_zero};\n"
             f"{ctrl_locals}"
             f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
             f" &x_raw{ctrl_refs}))\n"
             f"        return NULL;\n"
-            f"    {disp} x = {to_c_expr};"
-        )
+        ) + scalar_narrow_c(
+            disp, "x", "return NULL;", label="x", meta=samp
+        ).rstrip("\n")
     else:
         fmt = samp["fmt"]
         return (

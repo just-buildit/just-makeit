@@ -1566,7 +1566,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             # gh-2035: the one tuple-parse slot, whose format char is the
             # one `_field_fmt` put in `fmt` above.
             decl, _fc, addr, convs[n] = scalar_arg_c(
-                n, f["type"], f.get("default") or ""
+                n, f["type"], f.get("default") or "", fail="return -1;"
             )
             decls.append(decl)
             addrs.append(addr)
@@ -2030,7 +2030,7 @@ static int
             meta = _number_meta(ctype, _row(module, "source.fields", n))
             to_py = meta["to_py"](f"self->src.{n}")
             parse = scalar_parse_c(
-                ctype, "value", "_v", "return -1;", meta=meta
+                ctype, "value", "_v", "return -1;", label=n, meta=meta
             )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
@@ -2396,6 +2396,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
                     "_o",
                     "_v",
                     "goto fail;",
+                    label=n,
                     meta=_number_meta(ct, _row(module, "segment.fields", n)),
                     indent=" " * 12,
                 )
@@ -2575,7 +2576,9 @@ static int
         # `int`, and a complex parsed through `PyLong_AsLong`.
         meta = _number_meta(ct, _row(module, "segment.fields", n))
         to_py = meta["to_py"](f"self->{n}")
-        parse = scalar_parse_c(ct, "value", "_v", "return -1;", meta=meta)
+        parse = scalar_parse_c(
+            ct, "value", "_v", "return -1;", label=n, meta=meta
+        )
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2854,6 +2857,7 @@ def render_serializers(
                     pn,
                     pt,
                     "" if default is None else str(default),
+                    fail="return NULL;",
                     meta=scalar_meta(
                         pt,
                         f"composer module '{module}' serializer '{name}' "
@@ -4223,7 +4227,9 @@ def _settings_getset_c(
             got = f"{st['getter_fn']}(self->state)"
             get_body = f"    return {meta['to_py'](got)};\n"
             set_body = (
-                scalar_parse_c(ctype, "value", "_v", "return -1;", meta=meta)
+                scalar_parse_c(
+                    ctype, "value", "_v", "return -1;", label=n, meta=meta
+                )
                 + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
@@ -4308,6 +4314,7 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
                     "_o",
                     "_v",
                     "{ Py_DECREF(kw); return -1; }",
+                    label=n,
                     meta=_number_meta(ctype, _row(module, "settings", n)),
                     indent=" " * 12,
                 )
