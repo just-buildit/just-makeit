@@ -588,6 +588,7 @@ just-makeit property <object> <prop_name>
     [--module name]
     [--type TYPE]
     [--writable] [--field] [--enum NAME]
+    [--error EXC [--error-message TEXT]]
     [--buf-field name [--len-field name] [--valid-field name]]
     [--expr "C expr"]
     [--value-type TYPE] [--count-fn FN] [--key-fn FN] [--value-fn FN]
@@ -631,6 +632,8 @@ directly into the state struct and auto-implements the getter as
 | `--len-field name`   | With `--buf-field`: the state member holding the buffer's element count. Default `n`.                                                                                                                                                                                                                                                                                                                |
 | `--valid-field name` | With `--buf-field`: a state member that, while zero, makes the property read `None`.                                                                                                                                                                                                                                                                                                                 |
 | `--expr "C expr"`    | Back the property with an inline C expression, emitted as written. Mutually exclusive with `--buf-field`.                                                                                                                                                                                                                                                                                            |
+| `--error EXC`        | With `--writable`: the C setter returns `int`, and a non-zero return refuses the value — the assignment raises `EXC` (a method's `--error` names, e.g. `ValueError`). Refused with `--field`, which has no C setter to ask. See [A setter that refuses a value](#a-setter-that-refuses-a-value-error). Persists as `error = "EXC"`.                                                                  |
+| `--error-message T`  | With `--error`: the exception's text, with `(rc=N)` appended. Default `"<stem>_set_<prop> failed"`. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                               |
 | `--doc "text"`       | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
 | `--enum NAME`        | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
 | `--value-type TYPE`  | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
@@ -684,6 +687,60 @@ accessor's return value is decoded exactly as a field's would be:
 ```sh
 just-makeit property rdr file_type --type int --enum ftype   # computed + enum
 ```
+
+### A setter that refuses a value (`--error`)
+
+A writable property's binding calls `<stem>_set_<prop>(state, v)`. Without
+`--error` it discards what that returns, so a value the core rejects is
+dropped silently: the assignment succeeds and the property goes on reading
+its old value. `--error` (manifest `error`, spelled like a method's) makes
+the return a verdict:
+
+```toml
+[[acc.properties]]
+name = "alpha"
+type = "double"
+writable = true
+expr = "self->handle->alpha"
+error = "ValueError"
+error_message = "alpha must lie in (0, 1]"
+```
+
+```c
+int <pkg>_acc_set_alpha(<pkg>_acc_state_t *state, double alpha)
+{
+    if (!(alpha > 0.0 && alpha <= 1.0))
+        return -1;          /* refuse: the state keeps its old value */
+    state->alpha = alpha;
+    return 0;
+}
+```
+
+```python
+>>> acc.alpha = -0.5
+ValueError: alpha must lie in (0, 1] (rc=-1)
+>>> acc.alpha
+0.1
+```
+
+**The setter must return `int`**: 0 accepts, anything else refuses. Where jm
+declares the setter (a computed property) it declares it `int`, with an
+`int` stub. Where you declare it yourself (an `--expr`, `--buf-field` or
+capsule property), declare it `int`; a `void` one does not compile against
+the binding. The `.pyi` and `help()` both document the exception in a
+`Raises` section.
+
+`--error` needs a C setter call whose return jm can test, so it is refused
+on a read-only property, with `--field` (the setter assigns the member
+directly: drop `--field` and declare the setter returning `int`), and on a
+property named for a state field (its setter is that field's accessor, which
+jm declares `void`). `--error-message` without `--error` is refused too.
+
+On a module object whose
+[fragment is sacred](../configuration.md#who-owns-a-modules-binding-fragment)
+(the default), a setter already in the fragment keeps its body, as any
+member's does: declare `error` when you add the property, or let jm own the
+fragment with `fragment = "generated"`, whose setters follow the manifest.
 
 ### Enum-valued properties (`--enum`)
 

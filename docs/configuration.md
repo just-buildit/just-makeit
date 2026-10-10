@@ -1104,6 +1104,7 @@ way.
 | `name`, `type`                                                                  | `jm property <obj> <prop> --type T`                                                              | ✅          |
 | `writable = true`                                                               | `jm property --writable`                                                                         | ✅          |
 | `field = true`                                                                  | `jm property --field`                                                                            | ✅          |
+| `error`, `error_message`                                                        | `jm property --writable --error EXC` / `--error-message TEXT` (a setter that refuses, gh-2182)   | ✅          |
 | `buf_field`, `len_field`, `valid_field`, `expr`                                 | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr`                           | ✅ (0.30.2) |
 | `doc = "..."`                                                                   | `jm property --doc "text"`                                                                       | ✅          |
 | `enum = "<name>"`                                                               | `jm property --enum NAME` (decode through a top-level `[[enum]]`)                                | ✅          |
@@ -1674,20 +1675,21 @@ method param only. A function spells a status return as
 
 One entry per `just-makeit property` call.
 
-| Key                                     | Type   | Notes                                                                                                                                                           |
-| --------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | string | Property name                                                                                                                                                   |
-| `type`                                  | string | C type of the value                                                                                                                                             |
-| `writable`                              | bool   | `--writable`                                                                                                                                                    |
-| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                          |
-| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                            |
-| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                       |
-| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                              |
-| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                               |
-| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                            |
-| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`) |
-| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                              |
-| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                    |
+| Key                                     | Type   | Notes                                                                                                                                                                    |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                                  | string | Property name                                                                                                                                                            |
+| `type`                                  | string | C type of the value                                                                                                                                                      |
+| `writable`                              | bool   | `--writable`                                                                                                                                                             |
+| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                                   |
+| `error`, `error_message`                | string | `--error` / `--error-message`: the C setter returns `int`, and a non-zero return refuses the value: the assignment raises `error` with `error_message`. Not with `field` |
+| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                                     |
+| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                                |
+| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                                       |
+| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                                        |
+| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                                     |
+| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`)          |
+| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                                       |
+| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                             |
 
 ### `[[<object>.views]]`
 

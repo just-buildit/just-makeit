@@ -26,7 +26,11 @@ from . import _glue
 from . import _linkcheck
 from . import _types as T
 from . import _incpath as INC
-from ._context._methods import validate_container_property
+from ._context._diagnostics import setter_return_type
+from ._context._methods import (
+    validate_container_property,
+    validate_property_error,
+)
 from ._init import (
     _inject_decls_into_core_h,
     _inject_struct_field,
@@ -40,6 +44,7 @@ def plain_accessor_decls(
     writable: bool,
     *,
     csym: str,
+    setter_type: str = "void",
 ) -> list[str]:
     """Prototypes for a plain getter/setter-backed property.
 
@@ -50,6 +55,16 @@ def plain_accessor_decls(
     Shared by :func:`run` and ``_apply`` (gh-627): apply has to inject the
     same prototypes when a property arrives by manifest rather than by CLI, and
     two copies of a signature rule is how they drift.
+
+    *setter_type* is what the setter returns,
+    `_context._diagnostics.setter_return_type` of the entry: ``int`` for a
+    property declaring ``error``, whose binding tests the return (gh-2182).
+
+    Examples
+    --------
+    >>> plain_accessor_decls("acc", "alpha", "double", True, csym="acc",
+    ...                      setter_type="int")[1]
+    'int acc_set_alpha(acc_state_t *state, double val);'
     """
     disp = ctype
     decls = [
@@ -57,7 +72,8 @@ def plain_accessor_decls(
     ]
     if writable:
         decls.append(
-            f"void {csym}_set_{prop_name}({csym}_state_t *state, {disp} val);"
+            f"{setter_type} {CSYM.property_setter(csym, prop_name)}"
+            f"({csym}_state_t *state, {disp} val);"
         )
     return decls
 
@@ -190,6 +206,8 @@ def run(
     type_field: str = "",
     count_field: str = "",
     value_field: str = "",
+    error: str = "",
+    error_message: str = "",
 ) -> None:
     # gh-625: `jm object` and `jm function` rejected this and these two did
     # not, so `jm property thing level:double` — the shape muscle memory
@@ -264,6 +282,21 @@ def run(
     cfg = C.load(root)
     # gh-1591: the stem every derived accessor name below starts with.
     csym = CSYM.stem(cfg, object_name)
+
+    # gh-2182: a refusing setter needs a C setter call to test. Refused here,
+    # before the manifest is written, by the check every render runs.
+    validate_property_error(
+        object_name,
+        {
+            "name": prop_name,
+            "writable": writable,
+            "field": field,
+            "error": error,
+            "error_message": error_message,
+        },
+        frozenset(n for n, _, _ in C.state_vars(cfg, object_name)),
+        csym=csym,
+    )
     # gh-1321: a header-only component has no `_core.c`, so the guidance below
     # must not send the author there. The getter/setter bodies are the
     # author's either way; only the file named changes.
@@ -383,6 +416,10 @@ def run(
         prop_entry["writable"] = True
     if field:
         prop_entry["field"] = True
+    if error:
+        prop_entry["error"] = error  # gh-2182
+    if error_message:
+        prop_entry["error_message"] = error_message
     if buf_field:
         prop_entry["buf_field"] = buf_field
         prop_entry["len_field"] = len_field
@@ -485,7 +522,12 @@ def run(
             print(f"  update  {core_h}")
     elif not buf_field and not expr and not capsule:
         decls = plain_accessor_decls(
-            object_name, prop_name, ctype, writable, csym=csym
+            object_name,
+            prop_name,
+            ctype,
+            writable,
+            csym=csym,
+            setter_type=setter_return_type(prop_entry),
         )
         scaffold_accessor_bodies(root, object_name, decls)  # first; see above
         if _inject_decls_into_core_h(
@@ -549,4 +591,13 @@ def run(
             f"Done!  Implement {CSYM.property_getter(csym, prop_name)}() in"
             f" {_body_file}"
             f"  [{rw}]"
+        )
+    if error:
+        # gh-2182: the binding tests the setter's return, so it must be an
+        # int -- jm declares it so where it declares the setter at all, and
+        # an author-declared one (an `expr` property's) must say so too.
+        print(
+            f"       {CSYM.property_setter(csym, prop_name)}() returns int:"
+            f" non-zero refuses the value\n"
+            f"       and the assignment raises {error}."
         )

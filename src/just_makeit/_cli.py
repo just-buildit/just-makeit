@@ -302,6 +302,10 @@ Commands:
     --count-fn name             Entry count accessor  (default <stem>_num_<name>).
     --key-fn name               Key accessor, dict only (default <stem>_<name>_key).
     --value-fn name             Value accessor      (default <stem>_<name>_value).
+    --error EXC                 With --writable: the setter's C function returns
+                                int, and a non-zero return refuses the value and
+                                raises EXC (e.g. ValueError). Not with --field.
+    --error-message text        Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -963,6 +967,8 @@ def _main() -> None:
         value_fn = ""
         capsule = ""  # gh-788
         capsule_type = ""  # gh-1235
+        error = ""  # gh-2182
+        error_message = ""
 
         remaining = args[3:]
         i = 0
@@ -1032,6 +1038,9 @@ def _main() -> None:
                 # gh-1235: and what that pointer IS, so a consumer naming
                 # this producer with `object` can line up against it.
                 "--capsule-type",
+                # gh-2182: the exception a refused assignment raises.
+                "--error",
+                "--error-message",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -1058,6 +1067,10 @@ def _main() -> None:
                     capsule = val  # gh-788
                 elif tok == "--capsule-type":
                     capsule_type = val  # gh-1235
+                elif tok == "--error":
+                    error = val  # gh-2182
+                elif tok == "--error-message":
+                    error_message = val
                 else:
                     expr = val
                 i += 1
@@ -1108,6 +1121,8 @@ def _main() -> None:
             value_fn=value_fn,
             capsule=capsule,
             capsule_type=capsule_type,
+            error=error,
+            error_message=error_message,
         )
 
     elif cmd == "warning":

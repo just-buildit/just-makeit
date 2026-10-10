@@ -60,7 +60,10 @@ from ._diagnostics import (
     count_type as count_type_of,
     declared_raise,
     empty_raise_c,
+    property_declared_raise,
+    property_raises_doc,
     raises_doc,
+    setter_return_type,
 )
 from ._parse import (
     _build_ml_doc,
@@ -4694,6 +4697,76 @@ def _property_lookup_enum(
     return _property_enum(component, Component, p, enums)
 
 
+def validate_property_error(
+    component: str,
+    p: dict,
+    state_var_names: "frozenset[str]" = frozenset(),
+    *,
+    csym: str,
+) -> None:
+    """Refuse an ``error`` / ``error_message`` the setter cannot honour.
+
+    gh-2182. ``error`` declares that a non-zero return from the property's C
+    setter refuses the value, and the binding raises it. That needs a C
+    setter call whose return the binding can test, so every shape without
+    one is refused, naming the way out, before anything is written:
+
+    - a read-only property has no setter at all;
+    - ``field = true`` assigns the member directly -- there is no C call;
+    - a property named for a state field calls that field's accessor, which
+      jm declares returning ``void``, so testing it would not compile;
+    - ``error_message`` without ``error`` is the text of an exception
+      nothing raises.
+
+    The exception name is checked against `_config.ERROR_CATEGORIES`, the
+    list a method's ``error`` is checked against, because ``PyExc_<name>``
+    is emitted verbatim into C.
+
+    Shared by `make_properties_ctx`, which every render of the binding goes
+    through, and `_property.run`, so `jm property` refuses before the
+    manifest is written.
+
+    Raises
+    ------
+    Refusal
+        Naming the property and what to change.
+    """
+    category = p.get("error") or ""
+    if not category and not p.get("error_message"):
+        return
+    where = f"{component}.{p['name']}"
+    setter = CSYM.property_setter(csym, p["name"])
+    if not category:
+        raise Refusal(
+            f"{where}: error_message is the text a refused assignment raises "
+            f'with, so it needs error as well (e.g. error = "ValueError").'
+        )
+    if category not in C.ERROR_CATEGORIES:
+        raise Refusal(
+            f"{where}: error {category!r} is not a known exception category. "
+            f"Choose one of: {', '.join(sorted(C.ERROR_CATEGORIES))}."
+        )
+    if not p.get("writable"):
+        raise Refusal(
+            f"{where}: error is raised when the setter refuses a value, and "
+            f"a read-only property has no setter. Add writable = true, or "
+            f"drop error."
+        )
+    if p.get("field"):
+        raise Refusal(
+            f"{where}: error needs a C setter whose return jm can test, and "
+            f"field = true assigns the struct member directly. Drop field "
+            f"and declare {setter} returning int."
+        )
+    if p["name"] in state_var_names:
+        raise Refusal(
+            f"{where}: the setter this property calls, {setter}, is the "
+            f"accessor of the state field '{p['name']}', which jm declares "
+            f"returning void, so there is no status to test. Give the "
+            f"property its own name and declare its setter returning int."
+        )
+
+
 def validate_container_property(component: str, p: dict) -> None:
     """Reject an incoherent container property (gh-543).
 
@@ -4949,6 +5022,13 @@ def make_properties_ctx(
     ordered string instead of the raw int. ``None`` (the default) means the
     caller has no registry to offer, in which case ``enum`` is ignored and the
     output is byte-identical to the pre-gh-519 render.
+
+    gh-2182: a writable property may declare ``error`` / ``error_message``.
+    Its setter then tests the C setter's ``int`` return and raises on a
+    non-zero one, the setter's prototype says ``int``, and both doc faces
+    carry a ``Raises`` section. `validate_property_error` refuses the key
+    wherever there is no C setter call to test. Without it the setter
+    discards the return, as it always has.
     """
     _EMPTY: dict[str, str] = {
         "getset_def": "",
@@ -4998,6 +5078,11 @@ def make_properties_ctx(
         # the user never wrote.
         if container:
             validate_container_property(component, p)
+        validate_property_error(component, p, state_var_names, csym=csym)
+        # gh-2182: what a refused assignment raises, or None; read once, by
+        # the setter's binding, its prototype and both doc faces.
+        setter_fn = CSYM.property_setter(csym, pname)
+        setter_raise = property_declared_raise(p, setter_fn)
 
         # gh-519: an `enum`-decorated property stores the SSOT int in C but
         # presents the value as its string on the Python side.
@@ -5230,18 +5315,39 @@ def make_properties_ctx(
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"
+            elif setter_raise is not None:
+                # gh-2182: the C setter may refuse the value. Its return is
+                # tested the way a `status_return` method's is, through the
+                # one raise emitter -- `return -1;` because a setter slot
+                # returns int, not a PyObject *.
+                assign_line = (
+                    f"    int _rc = {setter_fn}(self->handle, v);\n"
+                    f"    if (_rc != 0) {{\n"
+                    + _rc_raise_c(*setter_raise, fail="return -1;")
+                    + "    }\n"
+                )
             else:
-                assign_line = f"    {csym}_set_{pname}(self->handle, v);\n"
-                if pname not in state_var_names:
-                    decl_lines.append(
-                        f"/**\n"
-                        f" * @brief Set {pname}.\n"
-                        f" * @param state  Must be non-NULL.\n"
-                        f" * @param val    New value ({disp}).\n"
-                        f" */\n"
-                        f"void {csym}_set_{pname}"
-                        f"({csym}_state_t *state, {disp} val);"
-                    )
+                assign_line = f"    {setter_fn}(self->handle, v);\n"
+            if not field and pname not in state_var_names:
+                _set_ret = setter_return_type(p)
+                _set_doc = (
+                    f" * @return 0 to accept the value; non-zero refuses"
+                    f" it,\n"
+                    f" *         which Python raises as"
+                    f" {setter_raise[0]}.\n"
+                    if setter_raise is not None
+                    else ""
+                )
+                decl_lines.append(
+                    f"/**\n"
+                    f" * @brief Set {pname}.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param val    New value ({disp}).\n"
+                    f"{_set_doc}"
+                    f" */\n"
+                    f"{_set_ret} {setter_fn}"
+                    f"({csym}_state_t *state, {disp} val);"
+                )
             setter = (
                 f"static int\n"
                 f"{Component}_setprop_{pname}"
@@ -5273,9 +5379,27 @@ def make_properties_ctx(
         # gh-1394: the one chain, shared with `jm status --docs`, which
         # reports whichever properties it answers with a name stub.
         _pdoc = property_doc(component, p, doc_blocks, csym=csym)[0]
+        # gh-2182: a setter that may refuse documents what it raises, on
+        # both faces, through the renderer a method's Raises goes through --
+        # so the runtime text is the stub's text without its indent. A
+        # property declaring no `error` keeps its one-line summary.
+        _raises = property_raises_doc(p, setter_fn)
+        _rt_doc = (
+            render_runtime_doc(
+                None,
+                pname,
+                [],
+                "None",
+                _pdoc,
+                authored_doc=p.get("doc", ""),
+                raises=_raises,
+            )
+            if _raises
+            else [_pdoc]
+        )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
-            f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
+            f" {setter_name}, {_build_ml_doc(_rt_doc)}, NULL }},"
         )
 
         # gh-446: standalone .pyi stubs for a manifest property (PyGetSetDef
@@ -5319,7 +5443,18 @@ def make_properties_ctx(
             # this already kept it whole, so the two disagreed. A header or
             # struct-field doc is still a summary for jm to wrap.
             *(
-                authored_docstring(authored_doc_lines(p["doc"]), 8)
+                render_numpy_doc(
+                    None,
+                    pname,
+                    [],
+                    "None",
+                    _pdoc,
+                    indent=8,
+                    authored_doc=p.get("doc", ""),
+                    raises=_raises,
+                )
+                if _raises
+                else authored_docstring(authored_doc_lines(p["doc"]), 8)
                 if p.get("doc")
                 else summary_docstring(_pdoc, indent=8)
             ),
