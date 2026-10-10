@@ -750,6 +750,14 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if p.get("field"):
         parts.append(_bool_flag("--field"))
 
+    # gh-2182: a setter that refuses a value. Dropped, the replay rebuilds a
+    # setter that discards the C return -- the silent drop the key exists to
+    # end.
+    if p.get("error"):
+        parts.append(_flag("--error", p["error"]))
+    if p.get("error_message"):
+        parts.append(_flag("--error-message", p["error_message"]))
+
     if p.get("buf_field"):
         parts.append(_flag("--buf-field", p["buf_field"]))
         # len_field only means anything alongside buf_field, and defaults to
