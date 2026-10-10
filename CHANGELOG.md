@@ -1,5 +1,444 @@
 ## [Unreleased]
 
+## [0.102.0] — 2026-10-10
+
+### Breaking
+
+- **`[app]` is now `[[app]]`, one row per app, and an app's name is unique
+    in the project** (gh-2074, schema 9). `jm upgrade` rewrites a schema-8
+    `[app]` table in place as a one-row `[[app]]` -- only the header line
+    changes -- and until then `jm apply`, `jm status` and `jm app` refuse the
+    old spelling, naming `jm upgrade`. A `jm app` whose name another app
+    holds is refused, naming `jm remove app <name>`, where it used to replace
+    that app; one whose DEFAULT name is taken (the project's, or the
+    function's) names `--name` too. So three faces over one core take three
+    names, and a second console app over one package is refused, since both
+    would write its `cli.py`. See docs/upgrading.md.
+
+### Added
+
+- **A project holds several apps, and `jm remove app <name>` takes one
+    out** (gh-2074). Each `jm app` appends an `[[app]]` row, keyed by its
+    `--name`, so a C binary, a console script and a PEP 723 script over one
+    core are three apps, and `jm apply` re-renders every one; the root
+    `CMakeLists.txt`'s App block holds an executable per C app. Before, the
+    manifest held one `[app]` table: a second `jm app` replaced the first and
+    left its files owned by nothing, with `jm status --check` reading clean.
+    `jm remove app <name>` deletes the app's file and its wiring -- its lines
+    in the App block, a console app's `[project.scripts]` entry -- and keeps a
+    file you edited, with a note, as `jm remove method` keeps an authored
+    body. `jm script` replays every app.
+
+### Changed
+
+- **Internal: one owner of where a module's Python lives** (gh-2065). The
+    answer `_config.module_package_resolved` gives (gh-2054) -- a module's
+    `package` when declared, else its own path -- was also spelled inline
+    as `module_package(...) or ...pypath` at 20 sites across ten modules,
+    and that pair drifting apart is what gh-2054 was. They all read the
+    owner now. A source gate refuses a new inline spelling, with one named
+    exception: the re-export `__init__.py` writer, which gh-2054's gate
+    uses as its independent oracle. Generated projects are byte-identical
+    to before.
+
+- **Python 3.15 is supported** (gh-2179). It joins jm's CI test matrix on
+    every OS, the pre-publish wheel smoke tests run on it, the package
+    declares its classifier, and the CI `jm ci` generates for a project
+    tests it too. A test now holds the classifiers and both pre-publish
+    smoke matrices to the Pythons CI tests as released, so a promotion
+    cannot land half done.
+
+### Fixed
+
+- **`jm apply` no longer erases an OBJECT library you add to a generated
+    `native/src/<dir>/CMakeLists.txt`, and `jm status` no longer promises
+    an apply that would** (gh-1840). The file is regenerated, so the next
+    apply dropped the library without a word: gh-1351's warning names a
+    dropped command only when jm never writes it, and jm writes
+    `add_library`. Whatever wired the library was left naming a target that
+    was gone, so cmake refused to configure, and the apply after that
+    deleted the wiring too. `status` meanwhile said "`jm apply` writes the
+    missing target_sources() line" for that library. Now `apply` refuses
+    before writing anything. It names each library and the
+    `<dir>_extra.cmake` hook to move it to, which the generated file
+    includes and jm never writes. A library the rewrite keeps is not
+    refused: one in a preserved `if()` block, or in a file `status_allow`
+    names. A module object's own CMakeLists now honours `status_allow` like
+    the others; it alone was rewritten anyway. `jm status` reads a library
+    declared in the hook, in any command case, so `UNWIRED` names it while
+    nothing wires it. A root line that wires it is no longer reported
+    `DANGLING` and deleted by `apply`. `UNWIRED` says `apply` wires a core
+    only when the replay's apply leaves the core declared and wired.
+
+- **A command that changes the project and then fails leaves the project as
+    it was** (gh-1867, gh-2040). `jm regenerate` deleted every file the
+    component owned and only then ran `apply`, so a refusal in that `apply`
+    lost the component, your edits in `_core.c` included. The refusal could
+    be about another component's manifest row. `jm method` and
+    `jm property` saved `_core.c` and the manifest and only then rendered
+    the binding, so a render that refused left both changed and the binding
+    not, and `jm status` then reported drift you did not make. Now every
+    command that changes the project records the tree before it runs. If it
+    does not succeed (a refusal, an exit, a crash, Ctrl-C), jm puts back
+    every file it had written or deleted and says how many. That widens
+    the undo `jm apply <fragment.toml>` already had for the fragment it
+    composes (gh-1660). It also covers the writes `apply`'s reconcile made
+    before its own stub checks refused (gh-1676), which the message already
+    said were not written. `jm regenerate` also refuses an `impl_file` that
+    names a file inside the component before deleting anything. Before, it
+    deleted that file and then reported it "not found".
+
+- **A function's `out_type` output is sized from a length its call carries,
+    or the function is refused: it no longer gets one element** (gh-1888).
+    `jm function ramp --param n:int --out-type float` generated
+    `void ramp(float *out, int n)` and a binding that allocated ONE float.
+    `jm --help` and `docs/types.md` promised "the first integer scalar
+    param", which this face never read, so a body filling the `n` it was
+    called with wrote past the buffer, a heap overflow AddressSanitizer
+    reports at the second write. A variable-output function with no
+    `out_size` and no array param, `str` included, did the same. One rule,
+    `_outbuf.length`, now sizes every output whose C body is handed a bare
+    pointer and never its length: `out_size`, else the integer param an
+    `out_type = "T[n]"` names, else the first array param's length. A
+    function with none of them is refused before anything is written, by
+    `jm function`, `jm apply` and `jm status` alike, and so is a `[n]`
+    naming no integer param. `--out-type 'float[n]'` is now accepted on the
+    command line, where only the manifest could spell it, and a
+    variable output honours its `[n]`, which it ignored. On a method, a
+    fixed `out_type` over an array `--arg-type` allocated nothing, because
+    the sizing skipped the input `x`. It now reads that input's length,
+    ahead of gh-65's first integer param, as `--help` says (`in_len`). A
+    method with neither still allocates nothing: refusing it stops `apply`
+    on projects that declare one, and that call is left open in gh-2109.
+
+- **`jm bind` with no `just-makeit.toml` binds a `jm new`-scaffolded
+    header: it reads the header layout from where the header is, and the C
+    prefix from the stem it declares** (gh-1895). With no manifest, `bind`
+    looked for the header at the legacy `native/inc/<comp>/` path, compared
+    its symbols with the bare name, and rendered the prefixed `#include`s:
+    a header under `native/inc/<pkg>/` was "not found", one with the
+    default `c_prefix` was "declares component 'p_g', but you asked for
+    'g'", and one moved into the legacy path bound with an `#include` that
+    does not resolve. One owner now answers the header's path, the
+    symbol-stem check, its Doxygen and the render. When neither layout
+    holds the header, or both do, `bind` exits 1 naming both paths and
+    writes nothing.
+
+- **`jm build` and `jm test` drive the project's declared backend, and run
+    its packaging and Python tests under the project's interpreter** (gh-1896).
+    On a `[project] build = "make"` project, both configured CMake against a
+    directory with no `CMakeLists.txt` and exited 1. They now run the
+    Makefile's default target (`jm build`) and `make test` (`jm test`), with
+    `PYTHON=` pointed at the project's `.venv` when there is one. Packaging
+    calls `just_buildit.build_wheel` in that same interpreter, so an
+    installed `uv tool` jm, whose environment has neither numpy nor
+    just-buildit, no longer packages the project. `jm test` on a make project
+    refuses pytest arguments, because `make test` takes none.
+
+- **`jm test` passes a project of only module functions** (gh-1950). pytest
+    exits 5 when it collects nothing, and `jm test` read that as a failure.
+    `run_generated_pytest` already read it as a pass; both now share that
+    verdict.
+
+- **`jm build` and `jm test` carry no fixed time budget** (gh-1832). The
+    configure, build, ctest and pytest calls each had a hard-coded 600 s
+    timeout, so a cold build on a slow board (603 s measured) failed on the
+    budget rather than the build. They are now untimed, as the `jm-run-tests`
+    precedent is.
+
+- **`make build` configures against the interpreter it is given, so a build
+    through an isolated interpreter no longer breaks the next one** (gh-1898).
+    `just-build`, which the PEP 517 frontend runs in an environment it then
+    deletes, configured the shared `build/` with that environment's interpreter.
+    The cache kept its paths, so the next `make` failed on a numpy header that
+    was gone, because `build` configured only when `CMakeCache.txt` was missing.
+    `build` now drops the cache when it names a different interpreter, and the
+    cache rule rebuilds it, NumPy check included. Projects scaffolded before this
+    keep their old `Makefile`: it is create-only (see #2164).
+
+- **Switching `[project] build` reaches the Makefile** (gh-1899). The old
+    backend's Makefile was create-only, so `build = "cmake"` on a make project
+    left the make Makefile in place: `make` kept building without CMake, and on
+    Windows it stopped with a message telling the author to do the switch they had
+    just made. `apply` now replaces a Makefile that is byte-identical to the other
+    backend's render, and leaves an author's edit alone. `status` reports the
+    mismatch as BACKEND drift, not OUTDATED, and `status --json` gains a
+    `backend` key. The Windows `$(error)` text is unchanged, so an existing make
+    project's Makefile does not become OUTDATED on upgrade.
+
+- **`jm bench` finds, prints and keeps its Python results** (gh-1915,
+    gh-1833, gh-1841). Three fixes to the same path:
+
+    - pytest collected only `test_*.py`, so the `bench_*.py` a generated project
+        writes was never run and `jm bench` reported `Python benchmarks: none found` with exit 0. Collection now uses doppler's `python_files`, the
+        set a bench file needs.
+    - `jm bench --check --json` wrote the build's progress, cmake's output and
+        each benchmark's banner to stdout ahead of the JSON document, so the
+        document did not parse. Everything else now goes to stderr for that run.
+    - pytest-benchmark writes its JSON once per session, so one timeout over
+        the whole tree discarded every Python result. Each benchmark file is its
+        own run under its own budget. A file past it is named in the snapshot's
+        `timed_out` marker, as a C binary is.
+
+- The timeit template's `make bench` pointer, which no target ran, is removed.
+
+- **A default is one value on every face, spelled for Python where Python
+    reads it** (gh-1946, gh-1947). A state field declared
+    `a:double:0.1L` scaffolded a test, a stub and a stub doctest that were
+    all SyntaxErrors: the float default kept every suffix but `f`, so `0.1L`
+    reached Python verbatim. A hex default for a float field became
+    `0x10.0`, an octal `010` stayed `010` (a SyntaxError for an integer, and
+    10.0 rather than C's 8.0 for a float), and `0.1f` in a `double` field
+    read as `0.1` in Python while C stored 0.10000000149011612. One function
+    now gives every Python face (the generated test, the stub's signature,
+    Parameters entry and doctest, the runtime docstring, a method or
+    function parameter) the Python spelling of the declared value, from one
+    reader of C literals. A stub doctest prints what the getter returns: a
+    `float _Complex` default of `0.1` showed `(0.1+0j)` where the getter
+    returns `(0.10000000149011612+0j)`, so `pytest --doctest-glob='*.pyi'`
+    failed on a fresh scaffold. Two literals have no Python spelling and are
+    now refused where they are declared, on the command line and in a
+    manifest: an octal with an 8 or 9 in it (`08`), and a floating literal
+    for an integer type (`1.5` or `1e3` into an `int`), which C converted
+    silently and Python refused. An init-param's default refusal is an
+    `error:` line rather than a traceback.
+
+- **An object named for its dotted module's leaf configures and builds;
+    one named for the module's cname is the module's collocated object**
+    (gh-1949). `jm module dsp.filters`, then
+    `jm object filters --module dsp.filters`, exited 0 and left a project
+    that `cmake` refused to configure, because `filters_core` was declared
+    twice. An object's C lives in `native/src/<obj>/`, so only an object
+    named for the module's cname (`dsp_filters`) shares the module's
+    directory and core. The module's CMakeLists asked the leaf instead. It
+    declared the core, C test and bench of `filters` a second time, beside
+    the copies in the object's own directory, and it dropped the module's
+    own `dsp_filters_core`, which the root CMakeLists still named.
+    `jm apply` asked a third spelling, the dotted id, which no object name
+    can equal. So a collocated `dsp_filters` object went STALE as soon as
+    it carried include directories: `apply` added them a second time to the
+    module's CMakeLists. Every writer now asks one rule,
+    `collocated_object`: the object named for the module's cname. A flat
+    module's leaf, cname and id are the same string, so a flat module's
+    tree is unchanged.
+
+- **A composer's settings, segment fields, computed properties, source
+    fields and serializer params convert a value by its declared type**
+    (gh-2035). Every setting crossed through `PyLong_AsLong` /
+    `PyLong_FromLong` whatever its `type`, so a `double` setting whose C
+    value was 0.75 read back as `0`, and `0.5` was refused on the way in
+    (truncated on Python 3.9). The other rows went through a private table
+    of five types that sent every other one through `long`: a `bool` read
+    back as an `int`, a complex computed property as its real part, a
+    complex segment field could not be set, a `size_t` source field refused
+    `2**63`, and a serializer param of a type outside the five was parsed as
+    an `int` -- so an `int64_t` reached C as 4294967295 for `-1` and an
+    `int16_t` as `0`. Each face now converts through the row every object
+    face uses (the type's format char, its `parse_type` local, `to_py`), and
+    the `.pyi` names each row's Python type. A type no face can convert --
+    an array, a spelling jm does not know, a string on a row that holds a
+    number, or a complex segment field the JSON or CLI face would carry as
+    one real number -- is refused by `jm apply` with one `error:` line
+    naming the row, and nothing is written.
+
+- **The types page says which element each array takes, and the
+    configuration page what `apply` does to a generated test** (gh-2041,
+    gh-2043). `docs/types.md` had one "array element" column for three
+    slots that never shared a set, and said `bool`, `int` and
+    `long double _Complex` could not be the element of a step `T[]`, which
+    they can: each scaffolds, builds and passes. Its Supported types table
+    now has a column per slot -- a step `T[]` takes every step type, an
+    array parameter (and `--out-type`) the fixed-width numeric ones, a state
+    `T[N]` those plus `int` and `long double _Complex` -- and the per-slot
+    state table lists `bool`, which it had left out. `docs/configuration.md`
+    said the generated tests are written once, so adding `example_value`
+    later changes nothing; since gh-1489 the next `apply` rewrites the
+    scaffolded Python test and benchmark while they carry `# jm:generated`,
+    and only the C smoke test keeps its zero-seeded call. The page now says
+    so, and links to who owns each file.
+
+- **A whole-manifest rewrite keeps every key the manifest holds, as the
+    type it is** (gh-2045, gh-2046, gh-2036, gh-2047). `jm split-objects`,
+    `jm migrate-to-fragments`, a brand-new fragment and an install without
+    tomlkit all write the manifest through one writer, and it had a
+    hand-written emitter per table that fell a key behind each time a key
+    was added. A method's and a module function's params lost `doc`,
+    `enum`, `out`, `rank`, `elements_per_sample` and `str_hint`. An object
+    lost `records`, `fragment` and its `*_impl_file` keys; a method lost
+    `status_errors` and `releases`; a plain module lost `platforms`; an
+    `[[enum]]` row lost `enumerators`. `streamable = true` came back as
+    `"True"`, which reads as false, so `stream()` disappeared on the next
+    `apply`. An `array_args` row's `dtype` was respelt `type`. A top-level
+    value written after a table bound to that table, and a key that needs
+    quoting, such as a re-exported sub-package with a dot in its name, was
+    written bare. Now one emitter writes every table: every key, each as its
+    own TOML type (`true`, `64`, an array, an inline table), keys quoted
+    where TOML needs it, and top-level values before any table. Layout is
+    unchanged for anything that was written correctly before. An empty
+    value is written too, so a stateless object's new fragment says
+    `state = []`, as the central manifest always has. It leaves out
+    only a key beginning `_` (run-time state, never authored), a value of
+    None, and a field group's expansion (its declaration is what is kept).
+    It reads its own text back and refuses, naming the value, to write one
+    that means anything else. Two old rewrites are gone, because they changed
+    what the author wrote: a function param's `mutable` is no longer respelt
+    `out`, and a hand-written `out_divisor = 1` is no longer dropped.
+
+- **The element contract passes on a first declaration of a `double` or
+    `double _Complex` element** (gh-2067). Its refusal half hands the writer
+    a dtype the binding must refuse, and chose it per C spelling: `int8` for
+    `double`, `float64` for everything else. Both cast safely into some
+    element (`int8` into `float64`, `float64` into `complex128`), so the
+    binding accepted the array and `test_<writer>_speaks_<element>` failed
+    with `DID NOT RAISE` on a project nobody had edited. The choice is now
+    one rule over the element's numpy kind, the property safe casting is
+    decided by: `complex128` for a real element, a string dtype for a
+    complex one, neither of which numpy casts into the element on any
+    platform.
+
+- **`--record-dtype` naming a scalar element is refused, and writes
+    nothing** (gh-2068). `record_dtype` is a struct's spelling: the kernel
+    fills `<name> *out`. A scalar element's name is jm's alias, which no C
+    type carries, so `jm method o read --borrow --record-dtype s` over
+    `jm record o s --type double` wrote `s *p_o_read(...)`, exited 0, and
+    the core did not compile (`unknown type name 's'`). `jm method` now
+    refuses it before it writes anything, `apply` and `status` refuse the
+    same row in a manifest, and `just-makeit record` refuses declaring a
+    scalar under a member that already reads the name that way. The
+    message names the scalar's spelling: `--return-type s`.
+
+- **`jm remove` refuses an object, module or function an app is built
+    from, naming each app's `jm remove app <name>`, and writes nothing**
+    (gh-2075). It removed the component and left `[app]` naming it, so
+    `jm status --check` and `jm apply` both failed ("function 'f' not found
+    in module 'mod'") on a tree no command could reconcile. An app is
+    author-facing code, so removing its source does not silently delete it:
+    remove the app first, then the component.
+
+- **`jm status` and `jm apply` check and write a project that declares no
+    component yet, and `jm new --c-dep` / `--find-package` /
+    `--pkg-module` write their root wiring themselves** (gh-2076, gh-2062).
+    On a manifest with no object or module, `status` printed "nothing to
+    status" and exited 0, and `apply` refused with "nothing to
+    materialize". The project's own files were never looked at: a
+    `[project] version` the copies disagreed with read clean, and so did a
+    `jm new --c-dep vend` project whose root `CMakeLists.txt` had no
+    `add_subdirectory(native/src/vend)` -- which only `apply` wrote, so the
+    first `jm object` or `jm module` left the file STALE. The same held for
+    the `# ── External deps` block a `--find-package` or `--pkg-module`
+    declares. Both commands now do their project-level work whatever the
+    component count: `status` reports the VERSION drift and the STALE
+    wiring, and `apply` writes the wiring. `jm new` writes the
+    `add_subdirectory` and the external-deps block when it creates the
+    project, through the same writers, so a new project is in sync on its
+    merits rather than because nothing was checked.
+
+- **The replay renders the project's version, not `0.1.0`, so an in-sync copy
+    is no longer reported OUTDATED** (gh-2083). `apply` compares every
+    create-only copy of `[project] version` against a replay of the scaffold,
+    and that replay ran with no version. On a project at any other version,
+    `status` named an in-sync `Doxyfile` or `bootstrap.toml` as stale, and
+    `apply` wrote a missing copy at `0.1.0`, then warned that it disagreed
+    with the manifest. Both now read the manifest's version.
+
+- **A PEP 440 pre-release has a CMake spelling: its release segment** (gh-2084).
+    `project(VERSION)` takes integers only, so `1.1.2a47` used to leave
+    `CMakeLists.txt` out of step with the manifest, with no value that both
+    would accept. The CMake copy now carries `1.1.2`, and the pre-release stays
+    the manifest and PyPI version. `jm config version 1.1.2a47` writes it that
+    way, and `status --check` is clean. An epoch (`1!2.0`) or more than four
+    integer components has no CMake spelling, so that copy is still named as
+    unwritable.
+
+- **The VERSION advice names the command that writes every copy** (gh-2102).
+    It used to say "Sync whichever is wrong". It now prints
+    `jm config version <manifest version>` to keep the manifest, and
+    `jm config version <copy version>` for each distinct copy value, to keep
+    that copy instead.
+
+- **`jm apply` refreshes the runtime docs in a dotted module's binding
+    fragments** (gh-2088). The doc sync built each fragment's path from the
+    module id, `native/src/dsp.filt/dsp.filt_ext_o.c`, a file that never
+    exists, so every fragment of a `--module dsp.filt` was skipped as
+    missing: a manifest `doc` edit or a header Doxygen edit reached the
+    `.pyi` but never the extension's `__doc__`, and `apply` said nothing.
+    The path is now the module's cname, `native/src/dsp_filt/`, as every
+    other reader spells it. The refusal for a module key set in two places
+    names the fragment file that holds it, `modules/dsp_filt.toml`, rather
+    than one that does not exist.
+
+- **The cached project manifest is reloaded when jm writes a fragment, not
+    only when `just-makeit.toml` changes** (gh-2095). jm caches the merged
+    manifest it reads per include spelled and per symbol stemmed, and the
+    cache was keyed on the central manifest alone, while the merge also
+    reads `objects/*.toml` and `modules/*.toml`. In one process, a command
+    that wrote only a fragment (`jm object` or `jm method` on a split
+    layout) left every later reader on the manifest from before the write:
+    the new component was not a component, and the new method was not
+    there for the doc reader. Commands run one per process, so this bit
+    the in-process test harness rather than the CLI. The key now also
+    counts the TOML files jm has written, so a lookup still costs one
+    `stat` and a dict hit. Inside a deferred save the cache serves the
+    pending write, as the loader does.
+
+- **`jm bind <comp> --check` reports a binding that is not on disk, on one
+    `error:` line naming the `_ext.c` `jm bind <comp>` would write** (gh-2101).
+    It read the file without asking whether it was there, so a header not
+    bound yet was a `FileNotFoundError` traceback. A stale binding's line
+    now goes to stderr beside it, and names `jm bind <comp>` as the fix.
+
+- **`jm status --check` no longer reports a sectioned `doc` as duplicated
+    on a row where jm generates no section beside it** (gh-2103). Four
+    tables decide row by row whether a docstring gets jm's numpy
+    sections: a module function (none without header Doxygen and without a
+    documented param), a handle method (none with no params and a `None`
+    return), a handle factory (none without `init_params`) and a
+    codec-pack method (never). On the rows that get none, a `doc` carrying
+    its own `Notes` or `Parameters` block is the whole docstring, yet
+    `status` called it "duplicated" and failed `--check`. The check now asks
+    each row's own renderer what it writes, with the project's headers in
+    reach, and reports only the rows where jm's section and the author's
+    would both appear.
+
+- **A codec-pack method's `doc` reaches `help()`, and a multi-line `doc`
+    keeps its indent in the stub** (gh-2104). A `[[<obj>.methods]]` row
+    with `codec` + `sink_fn` pasted its `doc` raw into the `.pyi`, so every
+    line after the first sat in column 0, and its `PyMethodDef` doc was the
+    fixed line `<name>(...) -- add a codec-typed value.` whatever the
+    manifest said. Both faces now carry the `doc` as written, through the
+    helpers every other method uses; with no `doc` the fixed line stays. A
+    `single` record's stub had the same raw paste: its type doc
+    (`record_doc`) and each `result_fields` doc, in `Attributes` and on the
+    field's property. Those are laid out the same way now.
+
+- **A blockwise object with different input and output element types passes
+    its own generated tests** (gh-2133). The scaffolded `test_steps_runs`
+    asserted the output's dtype was the INPUT element's, which held only
+    while the two matched, so `docs/templates/blockwise.md`'s own example
+    (`--arg-type 'int16_t[]' --return-type 'float[]'`) failed `make test`
+    out of the box. It now asserts the dtype of the declared `--return-type`,
+    the one the binding allocates. The generated C test, the `.pyi` and the
+    runtime docstring already read each side from its own declaration.
+
+- **`jm bench`'s timeout costs only the slow benchmark, not its whole file**
+    (gh-2135). A benchmark file past its budget lost every result in it, the
+    fast benchmarks too, because pytest-benchmark writes its JSON once per run. A
+    file that times out is now run again one benchmark at a time, each under the
+    same budget. The fast ones keep their results, and the slow one is named in
+    `timed_out` as `pytest <file>::<benchmark>`. A file that cannot be listed is
+    named as `pytest <file>`. A file that does not time out is still one run, so the
+    common path costs nothing. A file that does costs one budget for the run, then
+    one for each of its k slow benchmarks: 1 + k budgets. The whole-tree listing is
+    budgeted too, and a file whose import outlasts the budget costs three budgets
+    before it is named.
+
+- **A make-backend project links its extension on macOS** (gh-2169). The
+    extension was linked with `-shared` alone, which leaves the interpreter's
+    `_PyCapsule_*` symbols undefined on a Mach-O bundle, so the link failed there
+    and a make-backend project had never built on macOS. The link now adds
+    `-undefined dynamic_lookup` on Darwin, chosen by `uname -s`. A project
+    scaffolded before this keeps its old Makefile: it is create-only (see #2164).
+
 ## [0.101.0] — 2026-10-09
 
 ### Added
