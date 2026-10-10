@@ -112,14 +112,25 @@ def _handle_module(**over):
 
 class TestAWrongKeyIsNamed:
     def test_the_gh1111_case(self):
-        """`status_return` beside a working `error`: inert, and silent."""
+        """`error_negative` beside a working `error`: inert, and silent.
+
+        gh-1111 was reported with `status_return`, which gh-2186 made a
+        handle method key with its object meaning, so the case is held by
+        the other object status key this face does not read.
+        """
         cfg = _handle_module()
-        cfg["module"]["dev"]["methods"][0]["status_return"] = True
+        cfg["module"]["dev"]["methods"][0]["error_negative"] = True
         msgs = _msgs(cfg)
         assert len(msgs) == 1, msgs
-        assert "status_return" in msgs[0]
+        assert "error_negative" in msgs[0]
         # ...and it names the spelling that works here.
-        assert 'error = "<Exception>"' in msgs[0]
+        assert "`status_return = true`" in msgs[0]
+
+    def test_status_return_is_a_handle_method_key(self):
+        """gh-2186: the object face's key, honoured here, so not reported."""
+        cfg = _handle_module()
+        cfg["module"]["dev"]["methods"][0]["status_return"] = True
+        assert _msgs(cfg) == []
 
     def test_an_outright_typo(self):
         cfg = _handle_module()

@@ -43,9 +43,9 @@ _BASE = {
 # One method per shape `_emit_method` distinguishes. The shapes are the axis
 # this bug lives on, so they are enumerated here and nowhere else in the file.
 #
-# They split by whether an `error` declaration is legal at all. On the three
-# STATUS shapes the C return is an rc, so `error` converts it to a raise. On
-# the three DATA shapes the return is the payload length and there is no rc to
+# They split by whether an `error` declaration is legal at all. On the STATUS
+# shapes the C return is an rc, so `error` converts it to a raise. On the
+# three DATA shapes the return is the payload length and there is no rc to
 # check, so gh-1118 refuses the declaration outright — the "accepted and
 # ignored" third state is gone, and its invariant is gated in
 # `test_gh1118_refuse_unhonoured_error.py` rather than duplicated here.
@@ -60,6 +60,13 @@ _STATUS_SHAPES = {
         "args": [{"name": "timeout_ms", "type": "int", "default": "0"}],
     },
     "path_arg": {"returns": "int", "args": [{"name": "p", "type": "path"}]},
+    # gh-2186: an array argument's int is a count unless `status_return`
+    # says it is a status, and then it is one of these.
+    "array_in_status": {
+        "returns": "int",
+        "status_return": True,
+        "args": [{"name": "x", "type": "float[]"}],
+    },
 }
 _DATA_SHAPES = {
     "array_in": {
